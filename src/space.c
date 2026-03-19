@@ -1,4 +1,5 @@
 #include "space.h"
+#include "grounded.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -94,6 +95,30 @@ bool space_remove(Space *s, Atom *atom) {
     return false;
 }
 
+/* ── Type Expression Normalization ───────────────────────────────────────── */
+
+/* Recursively evaluate grounded arithmetic in type expressions.
+   E.g., (VecN String (+ (+ 0 1) 1)) → (VecN String 2) */
+static Atom *normalize_type_expr(Arena *a, Atom *ty) {
+    if (ty->kind != ATOM_EXPR || ty->expr.len < 2) return ty;
+    /* First normalize children */
+    Atom **new_elems = arena_alloc(a, sizeof(Atom *) * ty->expr.len);
+    bool changed = false;
+    for (uint32_t i = 0; i < ty->expr.len; i++) {
+        new_elems[i] = normalize_type_expr(a, ty->expr.elems[i]);
+        if (new_elems[i] != ty->expr.elems[i]) changed = true;
+    }
+    Atom *norm = changed ? atom_expr(a, new_elems, ty->expr.len) : ty;
+    /* Try grounded dispatch on the normalized expression */
+    if (norm->expr.len >= 3 && norm->expr.elems[0]->kind == ATOM_SYMBOL &&
+        is_grounded_op(norm->expr.elems[0]->name)) {
+        Atom *result = grounded_dispatch(a, norm->expr.elems[0],
+            norm->expr.elems + 1, norm->expr.len - 1);
+        if (result) return result;
+    }
+    return norm;
+}
+
 /* ── Type Lookup ─────────────────────────────────────────────────────────── */
 
 Atom *get_grounded_type(Arena *a, Atom *atom) {
@@ -183,11 +208,12 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
             bool tried_func_type = false;
             for (uint32_t oi = 0; oi < nop; oi++) {
                 Atom *ft = op_types[oi];
-                /* Check if it's a function type (-> ...) with matching arity */
+                /* Check if it's a function type (-> ...) */
                 if (ft->kind == ATOM_EXPR && ft->expr.len >= 3 &&
-                    atom_is_symbol(ft->expr.elems[0], "->") &&
-                    ft->expr.len - 2 == atom->expr.len - 1) {
+                    atom_is_symbol(ft->expr.elems[0], "->")) {
                     tried_func_type = true;
+                    /* Check arity match */
+                    if (ft->expr.len - 2 != atom->expr.len - 1) continue;
                     /* Return type is the last element of (-> ... ret) */
                     Atom *ret_type = ft->expr.elems[ft->expr.len - 1];
                     /* Freshen type vars and try to unify args to get concrete ret type */
@@ -213,8 +239,10 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         if (!found) all_ok = false;
                     }
                     if (all_ok) {
-                        /* Apply accumulated type bindings to return type */
-                        Atom *concrete_ret = bindings_apply(&tb, a, fresh_ret);
+                        /* Apply accumulated type bindings to return type,
+                           then normalize arithmetic in type expressions */
+                        Atom *concrete_ret = normalize_type_expr(a,
+                            bindings_apply(&tb, a, fresh_ret));
                         if (count >= 1) {
                             types = realloc(types, sizeof(Atom *) * (count + 1));
                         } else {
