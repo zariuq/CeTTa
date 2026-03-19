@@ -17,6 +17,13 @@ static void print_results(ResultSet *rs) {
     printf("]\n");
 }
 
+static bool result_set_has_error(ResultSet *rs) {
+    for (uint32_t i = 0; i < rs->len; i++) {
+        if (atom_is_error(rs->items[i])) return true;
+    }
+    return false;
+}
+
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta --list-languages\n", out);
@@ -101,6 +108,17 @@ int main(int argc, char **argv) {
         for (const char **op = cmp_ops; *op; op++)
             space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
                 atom_symbol(&arena, *op), arrow_nnb));
+        /* (: = (-> $t $t %Undefined%)) — equality requires same type on both sides */
+        Atom *t_var = atom_var(&arena, "t");
+        Atom *arrow_eq = atom_expr(&arena, (Atom*[]){
+            atom_symbol(&arena, "->"), t_var, t_var, atom_undefined_type(&arena)}, 4);
+        space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
+            atom_symbol(&arena, "="), arrow_eq));
+        /* (: == (-> $t $t Bool)) — structural equality */
+        Atom *arrow_eqeq = atom_expr(&arena, (Atom*[]){
+            atom_symbol(&arena, "->"), t_var, t_var, bool_t}, 4);
+        space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
+            atom_symbol(&arena, "=="), arrow_eqeq));
     }
 
     /* Process top-level atoms */
@@ -115,7 +133,9 @@ int main(int argc, char **argv) {
             result_set_init(&rs);
             eval_top_with_registry(&space, &arena, &registry, expr, &rs);
             print_results(&rs);
+            bool stop_after_error = result_set_has_error(&rs);
             free(rs.items);
+            if (stop_after_error) break;
             i += 2;
             continue;
         }

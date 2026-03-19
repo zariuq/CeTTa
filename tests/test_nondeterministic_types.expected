@@ -1,0 +1,1 @@
+[(Error (assertEqual (Add Z Ten) Ten) "\nExpected: [Ten]\nGot: [(Add Z Ten)]\nMissed results: Ten\nExcessive results: (Add Z Ten)")]
