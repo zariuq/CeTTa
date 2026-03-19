@@ -113,6 +113,8 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
         case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
         case GV_STRING: return strcmp(pattern->ground.sval, target->ground.sval) == 0;
+        case GV_SPACE:
+        case GV_STATE:  return pattern->ground.ptr == target->ground.ptr;
         }
         return false;
 

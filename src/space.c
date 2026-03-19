@@ -45,6 +45,55 @@ static bool is_equation(Atom *a, Atom **lhs_out, Atom **rhs_out) {
     return true;
 }
 
+/* ── Space Registry ─────────────────────────────────────────────────────── */
+
+void registry_init(Registry *r) { r->len = 0; }
+
+void registry_bind(Registry *r, const char *name, Atom *value) {
+    /* Update existing or add new */
+    for (uint32_t i = 0; i < r->len; i++) {
+        if (strcmp(r->entries[i].name, name) == 0) {
+            r->entries[i].value = value;
+            return;
+        }
+    }
+    if (r->len < MAX_REGISTRY) {
+        r->entries[r->len].name = name;
+        r->entries[r->len].value = value;
+        r->len++;
+    }
+}
+
+Atom *registry_lookup(Registry *r, const char *name) {
+    for (uint32_t i = 0; i < r->len; i++)
+        if (strcmp(r->entries[i].name, name) == 0)
+            return r->entries[i].value;
+    return NULL;
+}
+
+Space *resolve_space(Registry *r, Atom *ref) {
+    /* Grounded space atom → direct pointer */
+    if (ref->kind == ATOM_GROUNDED && ref->ground.gkind == GV_SPACE)
+        return (Space *)ref->ground.ptr;
+    /* Symbol like &self → registry lookup */
+    if (ref->kind == ATOM_SYMBOL) {
+        Atom *val = registry_lookup(r, ref->name);
+        if (val && val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE)
+            return (Space *)val->ground.ptr;
+    }
+    return NULL;
+}
+
+bool space_remove(Space *s, Atom *atom) {
+    for (uint32_t i = 0; i < s->len; i++) {
+        if (atom_eq(s->atoms[i], atom)) {
+            s->atoms[i] = s->atoms[--s->len]; /* swap with last */
+            return true;
+        }
+    }
+    return false;
+}
+
 /* ── Type Lookup ─────────────────────────────────────────────────────────── */
 
 Atom *get_grounded_type(Arena *a, Atom *atom) {
@@ -54,6 +103,13 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
     case GV_FLOAT:  return atom_symbol(a, "Number");
     case GV_BOOL:   return atom_symbol(a, "Bool");
     case GV_STRING: return atom_symbol(a, "String");
+    case GV_SPACE:  return atom_symbol(a, "Space");
+    case GV_STATE: {
+        StateCell *cell = (StateCell *)atom->ground.ptr;
+        if (cell->content_type && !atom_is_symbol(cell->content_type, "%Undefined%"))
+            return atom_expr2(a, atom_symbol(a, "StateMonad"), cell->content_type);
+        return atom_symbol(a, "State");
+    }
     }
     return atom_undefined_type(a);
 }
@@ -107,12 +163,31 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
             uint32_t nop = get_annotated_types(s, a, op, &op_types);
+            /* Also try recursively inferred types for the operator */
+            if (nop == 0 && op->kind == ATOM_EXPR) {
+                Atom **recur_types = NULL;
+                nop = get_atom_types(s, a, op, &recur_types);
+                /* Filter: only keep function types */
+                op_types = NULL;
+                uint32_t nfunc = 0;
+                for (uint32_t ri = 0; ri < nop; ri++) {
+                    if (recur_types[ri]->kind == ATOM_EXPR && recur_types[ri]->expr.len >= 3 &&
+                        atom_is_symbol(recur_types[ri]->expr.elems[0], "->")) {
+                        op_types = realloc(op_types, sizeof(Atom *) * (nfunc + 1));
+                        op_types[nfunc++] = recur_types[ri];
+                    }
+                }
+                free(recur_types);
+                nop = nfunc;
+            }
+            bool tried_func_type = false;
             for (uint32_t oi = 0; oi < nop; oi++) {
                 Atom *ft = op_types[oi];
                 /* Check if it's a function type (-> ...) with matching arity */
                 if (ft->kind == ATOM_EXPR && ft->expr.len >= 3 &&
                     atom_is_symbol(ft->expr.elems[0], "->") &&
                     ft->expr.len - 2 == atom->expr.len - 1) {
+                    tried_func_type = true;
                     /* Return type is the last element of (-> ... ret) */
                     Atom *ret_type = ft->expr.elems[ft->expr.len - 1];
                     /* Freshen type vars and try to unify args to get concrete ret type */
@@ -151,6 +226,11 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                 }
             }
             free(op_types);
+            /* If we tried function types but none matched → type error (empty) */
+            if (tried_func_type && count == 0) {
+                *out_types = NULL;
+                return 0;  /* empty = ill-typed */
+            }
         }
         break;
     }

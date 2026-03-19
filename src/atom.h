@@ -19,7 +19,9 @@ typedef enum {
     GV_INT,
     GV_FLOAT,
     GV_BOOL,
-    GV_STRING
+    GV_STRING,
+    GV_SPACE,
+    GV_STATE
 } GroundedKind;
 
 /* ── Atom ───────────────────────────────────────────────────────────────── */
@@ -31,7 +33,7 @@ struct Atom {
         const char *name;   /* ATOM_SYMBOL or ATOM_VAR */
         struct {            /* ATOM_GROUNDED */
             GroundedKind gkind;
-            union { int64_t ival; double fval; const char *sval; bool bval; };
+            union { int64_t ival; double fval; const char *sval; bool bval; void *ptr; };
         } ground;
         struct {            /* ATOM_EXPR */
             Atom **elems;
@@ -67,6 +69,15 @@ Atom *atom_int(Arena *a, int64_t val);
 Atom *atom_float(Arena *a, double val);
 Atom *atom_bool(Arena *a, bool val);
 Atom *atom_string(Arena *a, const char *val);
+Atom *atom_space(Arena *a, void *space_ptr);
+
+/* State cell: holds a mutable value + its content type */
+typedef struct {
+    Atom *value;
+    Atom *content_type; /* for (StateMonad τ) */
+} StateCell;
+
+Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_expr(Arena *a, Atom **elems, uint32_t len);
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2);
 Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);
