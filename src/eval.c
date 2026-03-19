@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "eval.h"
 #include "match.h"
 #include "grounded.h"
@@ -5,7 +6,10 @@
 #include <string.h>
 #include <stdio.h>
 
-#define DEFAULT_FUEL 100
+#define DEFAULT_FUEL 64
+
+/* Global registry for named spaces/values (set by eval_top_with_registry) */
+static Registry *g_registry = NULL;
 
 /* ── Result Set ─────────────────────────────────────────────────────────── */
 
@@ -222,11 +226,21 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
 
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs) {
     if (fuel <= 0) {
-        result_set_add(rs, atom);
+        /* Fuel exhausted — return empty result set (matches HE behavior:
+           infinite recursion produces no output, not an error atom) */
         return;
     }
 
     Atom *etype = type ? type : atom_undefined_type(a);
+
+    /* Resolve registry tokens (&name → bound value) */
+    if (atom->kind == ATOM_SYMBOL && atom->name[0] == '&' && g_registry) {
+        Atom *val = registry_lookup(g_registry, atom->name);
+        if (val) {
+            result_set_add(rs, val);
+            return;
+        }
+    }
 
     /* Empty/Error: return as-is (spec line 253) */
     if (atom_is_empty(atom) || atom_is_error(atom)) {
@@ -391,8 +405,12 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
 
     /* ── match ─────────────────────────────────────────────────────────── */
     if (expr_head_is(atom, "match") && nargs == 3) {
+        Atom *space_ref = expr_arg(atom, 0);
         Atom *pattern = expr_arg(atom, 1);
         Atom *template = expr_arg(atom, 2);
+        /* Resolve space — &self or named space */
+        Space *ms = g_registry ? resolve_space(g_registry, space_ref) : NULL;
+        if (!ms) ms = s;  /* fallback to current space */
 
         /* Conjunction: (, P Q ...) — relational join over space */
         if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
@@ -409,8 +427,8 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                 Bindings *next = NULL;
                 uint32_t nnext = 0, cnext = 0;
                 for (uint32_t bi = 0; bi < ncur; bi++) {
-                    for (uint32_t si = 0; si < s->len; si++) {
-                        Atom *renamed = rename_vars(a, s->atoms[si], fresh_var_suffix());
+                    for (uint32_t si = 0; si < ms->len; si++) {
+                        Atom *renamed = rename_vars(a, ms->atoms[si], fresh_var_suffix());
                         /* Apply current bindings to pattern before matching */
                         Atom *cpat_bound = bindings_apply(&cur[bi], a, cpat);
                         Bindings mb = cur[bi];
@@ -435,8 +453,8 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             free(cur);
         } else {
             /* Simple (non-conjunction) match */
-            for (uint32_t i = 0; i < s->len; i++) {
-                Atom *renamed = rename_vars(a, s->atoms[i], fresh_var_suffix());
+            for (uint32_t i = 0; i < ms->len; i++) {
+                Atom *renamed = rename_vars(a, ms->atoms[i], fresh_var_suffix());
                 Bindings b;
                 bindings_init(&b);
                 if (match_atoms(pattern, renamed, &b)) {
@@ -622,7 +640,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             } else {
                 result_set_add(rs, atom_error(a,
                     atom_expr2(a, atom_symbol(a, "assert"), expr_arg(atom, 0)),
-                    atom_expr3(a, inner.items[i],
+                    atom_expr3(a, expr_arg(atom, 0),
                         atom_symbol(a, "not"), atom_symbol(a, "True"))));
             }
         }
@@ -639,6 +657,270 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
     /* ── eval (minimal instruction) ────────────────────────────────────── */
     if (expr_head_is(atom, "eval") && nargs == 1) {
         metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, rs);
+        return;
+    }
+
+    /* ── new-space ──────────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "new-space") && nargs == 0) {
+        Space *ns = malloc(sizeof(Space));
+        space_init(ns);
+        result_set_add(rs, atom_space(a, ns));
+        return;
+    }
+
+    /* ── bind! ─────────────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "bind!") && nargs == 2 && g_registry) {
+        Atom *name = expr_arg(atom, 0);
+        Atom *val_expr = expr_arg(atom, 1);
+        ResultSet val_rs;
+        result_set_init(&val_rs);
+        metta_eval(s, a, NULL, val_expr, fuel, &val_rs);
+        Atom *val = (val_rs.len > 0) ? val_rs.items[0] : val_expr;
+        if (name->kind == ATOM_SYMBOL)
+            registry_bind(g_registry, name->name, val);
+        free(val_rs.items);
+        result_set_add(rs, atom_unit(a));
+        return;
+    }
+
+    /* ── add-atom ──────────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "add-atom") && nargs == 2 && g_registry) {
+        Atom *space_ref = expr_arg(atom, 0);
+        Atom *atom_to_add = expr_arg(atom, 1);
+        Space *target = resolve_space(g_registry, space_ref);
+        if (target) space_add(target, atom_to_add);
+        result_set_add(rs, atom_unit(a));
+        return;
+    }
+
+    /* ── remove-atom ───────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "remove-atom") && nargs == 2 && g_registry) {
+        Atom *space_ref = expr_arg(atom, 0);
+        Atom *atom_to_rm = expr_arg(atom, 1);
+        Space *target = resolve_space(g_registry, space_ref);
+        if (target) space_remove(target, atom_to_rm);
+        result_set_add(rs, atom_unit(a));
+        return;
+    }
+
+    /* ── get-atoms ─────────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "get-atoms") && nargs == 1 && g_registry) {
+        Atom *space_ref = expr_arg(atom, 0);
+        Space *target = resolve_space(g_registry, space_ref);
+        if (target) {
+            for (uint32_t i = 0; i < target->len; i++)
+                result_set_add(rs, target->atoms[i]);
+        }
+        return;
+    }
+
+    /* ── collapse-bind ───────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "collapse-bind") && nargs == 1) {
+        ResultBindSet inner;
+        rb_set_init(&inner);
+        metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &inner);
+        /* Build list of (atom bindings_grounded) pairs.
+           HE format: each pair is (atom {  }) where {  } is grounded Bindings.
+           Result is a single expression containing all pairs. */
+        Atom **pairs = arena_alloc(a, sizeof(Atom *) * inner.len);
+        for (uint32_t i = 0; i < inner.len; i++) {
+            /* Format bindings as HE's grounded Bindings: { $var = val, ... }
+               Empty bindings = {  } (with spaces) */
+            char buf[512];
+            int pos = 0;
+            pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "{");
+            if (inner.items[i].bindings.len == 0) {
+                pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "  ");
+            } else {
+                for (uint32_t j = 0; j < inner.items[i].bindings.len && pos < 480; j++) {
+                    if (j > 0) pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, ", ");
+                    else pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, " ");
+                    pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "$%s",
+                        inner.items[i].bindings.entries[j].var);
+                }
+                pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, " ");
+            }
+            pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "}");
+            (void)pos;
+            /* Wrap as expression: (atom bindings_symbol) */
+            pairs[i] = atom_expr2(a, inner.items[i].atom, atom_symbol(a, buf));
+        }
+        /* Each pair is a separate result (matching HE behavior) */
+        for (uint32_t i = 0; i < inner.len; i++) {
+            Atom *wrapped = atom_expr(a, &pairs[i], 1);
+            result_set_add(rs, wrapped);
+        }
+        free(inner.items);
+        return;
+    }
+
+    /* ── superpose-bind ────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "superpose-bind") && nargs == 1) {
+        Atom *list = expr_arg(atom, 0);
+        if (list->kind == ATOM_EXPR) {
+            for (uint32_t i = 0; i < list->expr.len; i++) {
+                Atom *pair = list->expr.elems[i];
+                if (pair->kind == ATOM_EXPR && pair->expr.len >= 1)
+                    result_set_add(rs, pair->expr.elems[0]);
+                else
+                    result_set_add(rs, pair);
+            }
+        }
+        return;
+    }
+
+    /* ── metta (self-referential eval with type/space) ─────────────────── */
+    if (expr_head_is(atom, "metta") && nargs == 3 && g_registry) {
+        Atom *to_eval = expr_arg(atom, 0);
+        Atom *type_arg = expr_arg(atom, 1);
+        Atom *space_ref = expr_arg(atom, 2);
+        Space *target = resolve_space(g_registry, space_ref);
+        if (!target) target = s;
+        Atom *etype = atom_is_symbol(type_arg, "%Undefined%") ? NULL : type_arg;
+        metta_eval(target, a, etype, to_eval, fuel, rs);
+        return;
+    }
+
+    /* ── evalc (eval in context space) ─────────────────────────────────── */
+    if (expr_head_is(atom, "evalc") && nargs == 2 && g_registry) {
+        Atom *to_eval = expr_arg(atom, 0);
+        Atom *space_ref = expr_arg(atom, 1);
+        Space *target = resolve_space(g_registry, space_ref);
+        if (!target) target = s;
+        metta_eval(target, a, NULL, to_eval, fuel, rs);
+        return;
+    }
+
+    /* ── new-state / get-state / change-state! ───────────────────────────── */
+    if (expr_head_is(atom, "new-state") && nargs == 1) {
+        Atom *initial = expr_arg(atom, 0);
+        StateCell *cell = malloc(sizeof(StateCell));
+        cell->value = initial;
+        /* Infer content type from initial value */
+        Atom **itypes;
+        uint32_t nit = get_atom_types(s, a, initial, &itypes);
+        cell->content_type = (nit > 0) ? itypes[0] : atom_undefined_type(a);
+        free(itypes);
+        result_set_add(rs, atom_state(a, cell));
+        return;
+    }
+    if (expr_head_is(atom, "get-state") && nargs == 1) {
+        /* Evaluate first arg to resolve to a state atom */
+        ResultSet ref_rs;
+        result_set_init(&ref_rs);
+        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &ref_rs);
+        Atom *state_ref = (ref_rs.len > 0) ? ref_rs.items[0] : expr_arg(atom, 0);
+        free(ref_rs.items);
+        /* Also resolve through registry if it's a symbol */
+        if (state_ref->kind == ATOM_SYMBOL && g_registry) {
+            Atom *val = registry_lookup(g_registry, state_ref->name);
+            if (val) state_ref = val;
+        }
+        if (state_ref->kind == ATOM_GROUNDED && state_ref->ground.gkind == GV_STATE) {
+            StateCell *cell = (StateCell *)state_ref->ground.ptr;
+            result_set_add(rs, cell->value);
+        } else {
+            result_set_add(rs, atom);
+        }
+        return;
+    }
+    if (expr_head_is(atom, "change-state!") && nargs == 2) {
+        /* Evaluate first arg to resolve to a state atom */
+        ResultSet ref_rs;
+        result_set_init(&ref_rs);
+        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &ref_rs);
+        Atom *state_ref = (ref_rs.len > 0) ? ref_rs.items[0] : expr_arg(atom, 0);
+        free(ref_rs.items);
+        Atom *new_val = expr_arg(atom, 1);
+        if (state_ref->kind == ATOM_SYMBOL && g_registry) {
+            Atom *val = registry_lookup(g_registry, state_ref->name);
+            if (val) state_ref = val;
+        }
+        if (state_ref->kind == ATOM_GROUNDED && state_ref->ground.gkind == GV_STATE) {
+            StateCell *cell = (StateCell *)state_ref->ground.ptr;
+            /* Evaluate the new value */
+            ResultSet val_rs;
+            result_set_init(&val_rs);
+            metta_eval(s, a, NULL, new_val, fuel, &val_rs);
+            Atom *new_v = (val_rs.len > 0) ? val_rs.items[0] : new_val;
+            free(val_rs.items);
+            /* Type check: new value must match content type */
+            Atom **new_types;
+            uint32_t nnt = get_atom_types(s, a, new_v, &new_types);
+            bool type_ok = false;
+            for (uint32_t ti = 0; ti < nnt; ti++) {
+                Bindings tb;
+                bindings_init(&tb);
+                if (match_types(cell->content_type, new_types[ti], &tb)) {
+                    type_ok = true; break;
+                }
+            }
+            free(new_types);
+            if (type_ok) {
+                cell->value = new_v;
+                result_set_add(rs, state_ref);
+            } else {
+                /* Type mismatch error */
+                Atom **full = arena_alloc(a, sizeof(Atom *) * 3);
+                full[0] = atom_symbol(a, "change-state!");
+                full[1] = expr_arg(atom, 0);
+                full[2] = new_val;
+                /* Get the actual type again for error message */
+                Atom **et;
+                uint32_t net = get_atom_types(s, a, new_v, &et);
+                Atom *actual_t = (net > 0) ? et[0] : atom_undefined_type(a);
+                free(et);
+                Atom *reason = atom_expr(a, (Atom*[]){
+                    atom_symbol(a, "BadArgType"), atom_int(a, 2),
+                    cell->content_type, actual_t
+                }, 4);
+                result_set_add(rs, atom_error(a, atom_expr(a, full, 3), reason));
+            }
+        } else {
+            result_set_add(rs, atom_unit(a));
+        }
+        return;
+    }
+
+    /* ── nop (evaluate for side effects, return unit) ────────────────────── */
+    if (expr_head_is(atom, "nop") && nargs == 1) {
+        ResultSet inner;
+        result_set_init(&inner);
+        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &inner);
+        free(inner.items);
+        result_set_add(rs, atom_unit(a));
+        return;
+    }
+
+    /* ── get-type ───────────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "get-type") && nargs == 1) {
+        Atom *target = expr_arg(atom, 0);
+        /* Resolve registry tokens for get-type */
+        if (target->kind == ATOM_SYMBOL && target->name[0] == '&' && g_registry) {
+            Atom *val = registry_lookup(g_registry, target->name);
+            if (val) target = val;
+        }
+        Atom **types;
+        uint32_t n = get_atom_types(s, a, target, &types);
+        /* If only %Undefined% and arg is an expression, try evaluating first */
+        if (n == 1 && atom_is_symbol(types[0], "%Undefined%") &&
+            target->kind == ATOM_EXPR) {
+            free(types);
+            ResultSet evr;
+            result_set_init(&evr);
+            metta_eval(s, a, NULL, target, fuel, &evr);
+            if (evr.len > 0) {
+                n = get_atom_types(s, a, evr.items[0], &types);
+            } else {
+                types = malloc(sizeof(Atom *));
+                types[0] = atom_undefined_type(a);
+                n = 1;
+            }
+            free(evr.items);
+        }
+        for (uint32_t i = 0; i < n; i++)
+            result_set_add(rs, types[i]);
+        free(types);
         return;
     }
 
@@ -663,9 +945,8 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         ResultSet actual, expected;
         result_set_init(&actual);
         result_set_init(&expected);
-        metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, &actual);
-        metta_eval(s, a, NULL,expr_arg(atom, 1), fuel, &expected);
-        /* Multiset equality: same length + each actual has a match */
+        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
             bool *used = calloc(expected.len, sizeof(bool));
@@ -680,15 +961,62 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             }
             free(used);
         }
-        free(actual.items);
-        free(expected.items);
         if (ok) {
+            free(actual.items);
+            free(expected.items);
             result_set_add(rs, atom_unit(a));
         } else {
+            /* Build HE-compatible error message:
+               \nExpected: [e1, e2]\nGot: [a1, a2]\nMissed/Excessive */
+            char buf[2048];
+            int pos = 0;
+            pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "\nExpected: [");
+            for (uint32_t i = 0; i < expected.len; i++) {
+                if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, ", ");
+                FILE *tmp = fmemopen(buf + pos, sizeof(buf) - (size_t)pos, "w");
+                if (tmp) { atom_print(expected.items[i], tmp); pos += (int)ftell(tmp); fclose(tmp); }
+            }
+            pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "]\nGot: [");
+            for (uint32_t i = 0; i < actual.len; i++) {
+                if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, ", ");
+                FILE *tmp = fmemopen(buf + pos, sizeof(buf) - (size_t)pos, "w");
+                if (tmp) { atom_print(actual.items[i], tmp); pos += (int)ftell(tmp); fclose(tmp); }
+            }
+            pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "]");
+            /* Missed results (in expected but not actual) */
+            bool has_missed = false;
+            for (uint32_t i = 0; i < expected.len; i++) {
+                bool found = false;
+                for (uint32_t j = 0; j < actual.len; j++)
+                    if (atom_eq(expected.items[i], actual.items[j])) { found = true; break; }
+                if (!found) {
+                    pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos,
+                        has_missed ? ", " : "\nMissed results: ");
+                    has_missed = true;
+                    FILE *tmp = fmemopen(buf + pos, sizeof(buf) - (size_t)pos, "w");
+                    if (tmp) { atom_print(expected.items[i], tmp); pos += (int)ftell(tmp); fclose(tmp); }
+                }
+            }
+            /* Excessive results (in actual but not expected) */
+            bool has_excess = false;
+            for (uint32_t i = 0; i < actual.len; i++) {
+                bool found = false;
+                for (uint32_t j = 0; j < expected.len; j++)
+                    if (atom_eq(actual.items[i], expected.items[j])) { found = true; break; }
+                if (!found) {
+                    pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos,
+                        has_excess ? ", " : "\nExcessive results: ");
+                    has_excess = true;
+                    FILE *tmp = fmemopen(buf + pos, sizeof(buf) - (size_t)pos, "w");
+                    if (tmp) { atom_print(actual.items[i], tmp); pos += (int)ftell(tmp); fclose(tmp); }
+                }
+            }
+            free(actual.items);
+            free(expected.items);
             result_set_add(rs, atom_error(a,
                 atom_expr3(a, atom_symbol(a, "assertEqual"),
                     expr_arg(atom, 0), expr_arg(atom, 1)),
-                atom_string(a, "mismatch")));
+                atom_string(a, buf)));
         }
         return;
     }
@@ -723,6 +1051,110 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                     expr_arg(atom, 0), expected_list),
                 atom_string(a, "mismatch")));
         }
+        return;
+    }
+
+    /* ── assertEqualMsg ──────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "assertEqualMsg") && nargs == 3) {
+        ResultSet actual, expected;
+        result_set_init(&actual);
+        result_set_init(&expected);
+        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &expected);
+        bool ok = (actual.len == expected.len);
+        if (ok && actual.len > 0) {
+            bool *used = calloc(expected.len, sizeof(bool));
+            for (uint32_t i = 0; i < actual.len && ok; i++) {
+                bool found = false;
+                for (uint32_t j = 0; j < expected.len; j++) {
+                    if (!used[j] && atom_eq(actual.items[i], expected.items[j])) {
+                        used[j] = true; found = true; break;
+                    }
+                }
+                if (!found) ok = false;
+            }
+            free(used);
+        }
+        free(actual.items);
+        free(expected.items);
+        if (ok) {
+            result_set_add(rs, atom_unit(a));
+        } else {
+            /* Error message is the 3rd arg (user-provided string) */
+            result_set_add(rs, atom_error(a,
+                atom_expr(a, (Atom*[]){atom_symbol(a, "assertEqualMsg"),
+                    expr_arg(atom, 0), expr_arg(atom, 1)}, 3),
+                expr_arg(atom, 2)));
+        }
+        return;
+    }
+
+    /* ── assertEqualToResultMsg ────────────────────────────────────────── */
+    if (expr_head_is(atom, "assertEqualToResultMsg") && nargs == 3) {
+        ResultSet actual;
+        result_set_init(&actual);
+        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        Atom *expected_list = expr_arg(atom, 1);
+        bool ok = false;
+        if (expected_list->kind == ATOM_EXPR) {
+            if (actual.len == expected_list->expr.len) {
+                ok = true;
+                for (uint32_t i = 0; i < actual.len && ok; i++) {
+                    if (!atom_eq(actual.items[i], expected_list->expr.elems[i]))
+                        ok = false;
+                }
+            }
+        }
+        if (actual.len == 0 && expected_list->kind == ATOM_EXPR &&
+            expected_list->expr.len == 0)
+            ok = true;
+        free(actual.items);
+        if (ok) {
+            result_set_add(rs, atom_unit(a));
+        } else {
+            result_set_add(rs, atom_error(a,
+                atom_expr(a, (Atom*[]){atom_symbol(a, "assertEqualToResultMsg"),
+                    expr_arg(atom, 0), expected_list}, 3),
+                expr_arg(atom, 2)));
+        }
+        return;
+    }
+
+    /* ── assertIncludes ────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "assertIncludes") && nargs == 2) {
+        ResultSet actual;
+        result_set_init(&actual);
+        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        Atom *expected_list = expr_arg(atom, 1);
+        /* Check that every expected item is in the actual results */
+        bool ok = true;
+        if (expected_list->kind == ATOM_EXPR) {
+            for (uint32_t i = 0; i < expected_list->expr.len && ok; i++) {
+                bool found = false;
+                for (uint32_t j = 0; j < actual.len; j++) {
+                    if (atom_eq(expected_list->expr.elems[i], actual.items[j])) {
+                        found = true; break;
+                    }
+                }
+                if (!found) ok = false;
+            }
+        }
+        if (ok) {
+            result_set_add(rs, atom_unit(a));
+        } else {
+            /* Build error: (assertIncludes error: <expected> not included in result: <actual>) */
+            Atom *actual_expr = atom_expr(a, actual.items, actual.len);
+            Atom *msg = atom_expr(a, (Atom*[]){
+                atom_symbol(a, "assertIncludes"), atom_symbol(a, "error:"),
+                expected_list, atom_symbol(a, "not"), atom_symbol(a, "included"),
+                atom_symbol(a, "in"), atom_symbol(a, "result:"),
+                actual_expr}, 8);
+            result_set_add(rs, atom_error(a,
+                atom_expr3(a, atom_symbol(a, "assertIncludes"),
+                    expr_arg(atom, 0), expected_list),
+                msg));
+        }
+        free(actual.items);
         return;
     }
 
@@ -775,35 +1207,62 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                     Bindings empty_ctx;
                     bindings_init(&empty_ctx);
 
-                    /* Evaluate args sequentially with types (Error propagation) */
-                    ResultSet *arg_results = arena_alloc(a, sizeof(ResultSet) * expr_narg);
+                    /* Evaluate args with types + binding threading (THE KEY FIX).
+                       Use ResultBindSet so bindings from arg[i] propagate to arg[i+1].
+                       This is the typed analogue of interpret_tuple's binding threading. */
+                    ResultBindSet *arg_rbs = arena_alloc(a, sizeof(ResultBindSet) * expr_narg);
+                    Bindings arg_ctx;
+                    bindings_init(&arg_ctx);
                     bool arg_ok = true;
                     bool arg_error = false;
                     for (uint32_t ai = 0; ai < expr_narg && ai < narg; ai++) {
-                        result_set_init(&arg_results[ai]);
-                        metta_eval(s, a, arg_types[ai], atom->expr.elems[ai + 1],
-                                   fuel, &arg_results[ai]);
-                        if (arg_results[ai].len == 0) { arg_ok = false; break; }
-                        /* Error propagation (spec interpret_args line 498) */
-                        if (arg_results[ai].len == 1 &&
-                            atom_is_error(arg_results[ai].items[0]) &&
-                            !atom_eq(arg_results[ai].items[0], atom->expr.elems[ai + 1])) {
-                            result_set_add(&func_results, arg_results[ai].items[0]);
+                        rb_set_init(&arg_rbs[ai]);
+                        /* Apply accumulated bindings to arg before evaluation */
+                        Atom *bound_arg = bindings_apply(&arg_ctx, a, atom->expr.elems[ai + 1]);
+                        /* Atom-typed args: pass through unevaluated (laziness).
+                           Use ORIGINAL arg (not bound) so combo_ctx can resolve later. */
+                        if (atom_is_symbol(arg_types[ai], "Atom")) {
+                            Bindings empty_b;
+                            bindings_init(&empty_b);
+                            rb_set_add(&arg_rbs[ai], atom->expr.elems[ai + 1], &empty_b);
+                        } else {
+                            metta_eval_bind(s, a, bound_arg, fuel, &arg_rbs[ai]);
+                        }
+                        if (arg_rbs[ai].len == 0) { arg_ok = false; break; }
+                        /* Error propagation */
+                        if (arg_rbs[ai].len == 1 &&
+                            atom_is_error(arg_rbs[ai].items[0].atom) &&
+                            !atom_eq(arg_rbs[ai].items[0].atom, atom->expr.elems[ai + 1])) {
+                            result_set_add(&func_results, arg_rbs[ai].items[0].atom);
                             arg_error = true;
                             break;
                         }
+                        /* Merge first result's bindings into context for next arg */
+                        for (uint32_t k = 0; k < arg_rbs[ai].items[0].bindings.len; k++)
+                            bindings_add(&arg_ctx,
+                                arg_rbs[ai].items[0].bindings.entries[k].var,
+                                arg_rbs[ai].items[0].bindings.entries[k].val);
                     }
 
                     if (arg_ok && !arg_error && expr_narg > 0) {
                         /* Cartesian product over typed arg results, then dispatch */
                         Atom **prefix = arena_alloc(a, sizeof(Atom *) * expr_narg);
-                        /* Recursive Cartesian product inline */
                         uint32_t stack_idx[32];
                         memset(stack_idx, 0, sizeof(stack_idx));
                         for (;;) {
-                            /* Build call expression from current indices */
-                            for (uint32_t ai = 0; ai < expr_narg; ai++)
-                                prefix[ai] = arg_results[ai].items[stack_idx[ai]];
+                            /* Collect per-combination bindings from all selected results */
+                            Bindings combo_ctx;
+                            bindings_init(&combo_ctx);
+                            for (uint32_t ai = 0; ai < expr_narg; ai++) {
+                                Bindings *rb = &arg_rbs[ai].items[stack_idx[ai]].bindings;
+                                for (uint32_t k = 0; k < rb->len; k++)
+                                    bindings_add(&combo_ctx, rb->entries[k].var, rb->entries[k].val);
+                            }
+                            /* Apply combo bindings to lazy args (Atom-typed) */
+                            for (uint32_t ai = 0; ai < expr_narg; ai++) {
+                                Atom *raw = arg_rbs[ai].items[stack_idx[ai]].atom;
+                                prefix[ai] = bindings_apply(&combo_ctx, a, raw);
+                            }
                             Atom **call_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
                             call_elems[0] = op;
                             for (uint32_t ai = 0; ai < expr_narg; ai++)
@@ -842,7 +1301,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                             while (carry > 0) {
                                 carry--;
                                 stack_idx[carry]++;
-                                if (stack_idx[carry] < arg_results[carry].len) break;
+                                if (stack_idx[carry] < arg_rbs[carry].len) break;
                                 stack_idx[carry] = 0;
                                 if (carry == 0) goto func_done;
                             }
@@ -850,7 +1309,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                     }
                     func_done:
                     for (uint32_t ai = 0; ai < expr_narg && ai < narg; ai++)
-                        free(arg_results[ai].items);
+                        free(arg_rbs[ai].items);
                     free(arg_tuples.items);
                 } else {
                     /* Not applicable — collect errors */
@@ -974,17 +1433,32 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                       strcmp(hd, "let*") == 0 || strcmp(hd, "let") == 0 ||
                       strcmp(hd, "chain") == 0 || strcmp(hd, "function") == 0 ||
                       strcmp(hd, "assert") == 0 || strcmp(hd, "return") == 0 ||
-                      strcmp(hd, "eval") == 0 || strcmp(hd, "if") == 0 ||
+                      strcmp(hd, "eval") == 0 || strcmp(hd, "get-type") == 0 ||
+                      strcmp(hd, "new-space") == 0 || strcmp(hd, "bind!") == 0 ||
+                      strcmp(hd, "add-atom") == 0 || strcmp(hd, "remove-atom") == 0 ||
+                      strcmp(hd, "get-atoms") == 0 ||
+                      strcmp(hd, "nop") == 0 ||
+                      strcmp(hd, "new-state") == 0 || strcmp(hd, "get-state") == 0 ||
+                      strcmp(hd, "change-state!") == 0 ||
+                      strcmp(hd, "collapse-bind") == 0 || strcmp(hd, "superpose-bind") == 0 ||
+                      strcmp(hd, "metta") == 0 || strcmp(hd, "evalc") == 0 ||
+                      strcmp(hd, "if") == 0 ||
                       strcmp(hd, "assertEqual") == 0 ||
-                      strcmp(hd, "assertEqualToResult") == 0);
+                      strcmp(hd, "assertEqualToResult") == 0 ||
+                      strcmp(hd, "assertEqualMsg") == 0 ||
+                      strcmp(hd, "assertEqualToResultMsg") == 0 ||
+                      strcmp(hd, "assertIncludes") == 0);
     }
 
     /* Handle match directly (not via metta_call) to preserve bindings.
        match creates bindings ($x=Plato etc.) that must propagate to callers
        for interpret_tuple to thread them to subsequent elements. */
     if (expr_head_is(atom, "match") && nargs == 3) {
+        Atom *space_ref2 = expr_arg(atom, 0);
         Atom *pattern = expr_arg(atom, 1);
         Atom *template = expr_arg(atom, 2);
+        Space *ms = g_registry ? resolve_space(g_registry, space_ref2) : NULL;
+        if (!ms) ms = s;
 
         /* Conjunction handling */
         if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
@@ -998,8 +1472,8 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 Bindings *next_b = NULL;
                 uint32_t nnext_b = 0, cnext_b = 0;
                 for (uint32_t bi = 0; bi < ncur; bi++) {
-                    for (uint32_t si = 0; si < s->len; si++) {
-                        Atom *renamed = rename_vars(a, s->atoms[si], fresh_var_suffix());
+                    for (uint32_t si = 0; si < ms->len; si++) {
+                        Atom *renamed = rename_vars(a, ms->atoms[si], fresh_var_suffix());
                         Atom *cpat_bound = bindings_apply(&cur[bi], a, cpat);
                         Bindings mb = cur[bi];
                         if (match_atoms(cpat_bound, renamed, &mb)) {
@@ -1033,8 +1507,8 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
             free(cur);
         } else {
             /* Simple match with bindings preservation */
-            for (uint32_t i = 0; i < s->len; i++) {
-                Atom *renamed = rename_vars(a, s->atoms[i], fresh_var_suffix());
+            for (uint32_t i = 0; i < ms->len; i++) {
+                Atom *renamed = rename_vars(a, ms->atoms[i], fresh_var_suffix());
                 Bindings b;
                 bindings_init(&b);
                 if (match_atoms(pattern, renamed, &b)) {
@@ -1164,4 +1638,9 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
 
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     metta_eval(s, a, NULL,expr, DEFAULT_FUEL, rs);
+}
+
+void eval_top_with_registry(Space *s, Arena *a, Registry *r, Atom *expr, ResultSet *rs) {
+    g_registry = r;
+    metta_eval(s, a, NULL, expr, DEFAULT_FUEL, rs);
 }

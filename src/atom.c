@@ -66,6 +66,22 @@ Atom *atom_int(Arena *a, int64_t val) {
     return at;
 }
 
+Atom *atom_space(Arena *a, void *space_ptr) {
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = ATOM_GROUNDED;
+    at->ground.gkind = GV_SPACE;
+    at->ground.ptr = space_ptr;
+    return at;
+}
+
+Atom *atom_state(Arena *a, StateCell *cell) {
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = ATOM_GROUNDED;
+    at->ground.gkind = GV_STATE;
+    at->ground.ptr = cell;
+    return at;
+}
+
 Atom *atom_float(Arena *a, double val) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
@@ -177,6 +193,12 @@ bool atom_eq(Atom *a, Atom *b) {
         case GV_FLOAT:  return a->ground.fval == b->ground.fval;
         case GV_BOOL:   return a->ground.bval == b->ground.bval;
         case GV_STRING: return strcmp(a->ground.sval, b->ground.sval) == 0;
+        case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
+        case GV_STATE: {
+            StateCell *ca = (StateCell *)a->ground.ptr;
+            StateCell *cb = (StateCell *)b->ground.ptr;
+            return atom_eq(ca->value, cb->value);
+        }
         }
         return false;
     case ATOM_EXPR:
@@ -203,7 +225,25 @@ void atom_print(Atom *a, FILE *out) {
         case GV_INT:    fprintf(out, "%ld", (long)a->ground.ival); break;
         case GV_FLOAT:  fprintf(out, "%g", a->ground.fval); break;
         case GV_BOOL:   fputs(a->ground.bval ? "True" : "False", out); break;
-        case GV_STRING: fprintf(out, "\"%s\"", a->ground.sval); break;
+        case GV_STRING: {
+            fputc('"', out);
+            for (const char *p = a->ground.sval; *p; p++) {
+                if (*p == '\n') fputs("\\n", out);
+                else if (*p == '"') fputs("\\\"", out);
+                else if (*p == '\\') fputs("\\\\", out);
+                else fputc(*p, out);
+            }
+            fputc('"', out);
+            break;
+        }
+        case GV_SPACE:  fprintf(out, "<space %p>", a->ground.ptr); break;
+        case GV_STATE: {
+            StateCell *cell = (StateCell *)a->ground.ptr;
+            fputs("(State ", out);
+            atom_print(cell->value, out);
+            fputc(')', out);
+            break;
+        }
         }
         break;
     case ATOM_EXPR:

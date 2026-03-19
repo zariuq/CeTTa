@@ -8,6 +8,7 @@
 #include <string.h>
 
 static void print_results(ResultSet *rs) {
+    if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
     printf("[");
     for (uint32_t i = 0; i < rs->len; i++) {
         if (i > 0) printf(", ");
@@ -80,6 +81,10 @@ int main(int argc, char **argv) {
     Space space;
     space_init(&space);
 
+    Registry registry;
+    registry_init(&registry);
+    registry_bind(&registry, "&self", atom_space(&arena, &space));
+
     /* Add grounded op type declarations (HE stdlib implicit types) */
     {
         Atom *num = atom_symbol(&arena, "Number");
@@ -108,7 +113,7 @@ int main(int argc, char **argv) {
             Atom *expr = atoms[i + 1];
             ResultSet rs;
             result_set_init(&rs);
-            eval_top(&space, &arena, expr, &rs);
+            eval_top_with_registry(&space, &arena, &registry, expr, &rs);
             print_results(&rs);
             free(rs.items);
             i += 2;

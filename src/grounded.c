@@ -33,11 +33,11 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
 
 /* Return int if both inputs were int and result is exact, otherwise float */
 static Atom *make_numeric(Arena *a, double val, bool any_float) {
-    if (!any_float) {
-        long lv = (long)val;
-        if ((double)lv == val)
-            return atom_int(a, (int64_t)lv);
-    }
+    /* If result is exact integer, return int (even for float inputs) */
+    long lv = (long)val;
+    if ((double)lv == val && val >= -9e18 && val <= 9e18)
+        return atom_int(a, (int64_t)lv);
+    (void)any_float;
     return atom_float(a, val);
 }
 
