@@ -48,19 +48,25 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
     /* Expression */
     if (text[*pos] == '(') {
         (*pos)++;
-        /* Collect children */
-        Atom *children[256];
-        uint32_t n = 0;
+        /* Collect children (dynamically sized) */
+        Atom **children = NULL;
+        uint32_t n = 0, ccap = 0;
         for (;;) {
             skip_whitespace_and_comments(text, pos);
             if (!text[*pos] || text[*pos] == ')') break;
-            if (n >= 256) break;
             Atom *child = parse_sexpr(a, text, pos);
             if (!child) break;
+            if (n >= ccap) {
+                ccap = ccap ? ccap * 2 : 16;
+                children = realloc(children, sizeof(Atom *) * ccap);
+                if (!children) return NULL;
+            }
             children[n++] = child;
         }
         if (text[*pos] == ')') (*pos)++;
-        return atom_expr(a, children, n);
+        Atom *expr = atom_expr(a, children, n);
+        free(children);
+        return expr;
     }
 
     /* Token: symbol, variable, or number */
@@ -131,7 +137,9 @@ int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
         if (!at) break;
         if (count >= cap) {
             cap = cap ? cap * 2 : 64;
-            atoms = realloc(atoms, sizeof(Atom *) * (size_t)cap);
+            Atom **tmp = realloc(atoms, sizeof(Atom *) * (size_t)cap);
+            if (!tmp) { free(atoms); free(text); *out_atoms = NULL; return -1; }
+            atoms = tmp;
         }
         atoms[count++] = at;
     }
