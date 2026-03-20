@@ -353,8 +353,6 @@ static void interpret_tuple(Space *s, Arena *a,
             rb_set_add(rbs, sub.items[i].atom, &empty);
         } else {
             prefix[idx] = sub.items[i].atom;
-            /* Merge bindings from this element's evaluation into context
-               for subsequent elements (spec line 376: pass $hb to tail) */
             Bindings merged = *ctx;
             for (uint32_t j = 0; j < sub.items[i].bindings.len; j++) {
                 bindings_add(&merged,

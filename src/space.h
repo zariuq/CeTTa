@@ -4,9 +4,27 @@
 #include "atom.h"
 #include "match.h"
 
+/* ── Equation Index (head-symbol → equations, à la Vampire LiteralIndex) ── */
+
+#define EQ_INDEX_BUCKETS 256
+
+typedef struct {
+    Atom **lhs;   /* equation LHS atoms */
+    Atom **rhs;   /* equation RHS atoms */
+    uint32_t len, cap;
+} EqBucket;
+
+typedef struct {
+    EqBucket buckets[EQ_INDEX_BUCKETS];
+    EqBucket wildcard; /* equations with variable/expression LHS head */
+} EqIndex;
+
+/* ── Space ──────────────────────────────────────────────────────────────── */
+
 typedef struct Space {
     Atom **atoms;
     uint32_t len, cap;
+    EqIndex eq_idx;  /* indexed equations for fast lookup */
 } Space;
 
 void space_init(Space *s);
