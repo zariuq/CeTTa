@@ -80,6 +80,11 @@ int main(int argc, char **argv) {
     arena_init(&arena);
     arena_init(&eval_arena);
 
+    /* Symbol interning for O(1) symbol comparison */
+    InternTable intern_table;
+    intern_init(&intern_table);
+    g_intern = &intern_table;
+
     Atom **atoms = NULL;
     int n = parse_metta_file(filename, &arena, &atoms);
     if (n < 0) {
@@ -169,5 +174,7 @@ int main(int argc, char **argv) {
     space_free(&space);
     arena_free(&eval_arena);
     arena_free(&arena);
+    g_intern = NULL;
+    intern_free(&intern_table);
     return 0;
 }

@@ -19,12 +19,25 @@ typedef struct {
     EqBucket wildcard; /* equations with variable/expression LHS head */
 } EqIndex;
 
+/* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */
+
+typedef struct {
+    Atom **annotated_atoms;  /* the atom in (: atom type) */
+    Atom **types;            /* the type in (: atom type) */
+    uint32_t len, cap;
+} TypeAnnBucket;
+
+typedef struct {
+    TypeAnnBucket buckets[EQ_INDEX_BUCKETS];
+} TypeAnnIndex;
+
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
 typedef struct Space {
     Atom **atoms;
     uint32_t len, cap;
-    EqIndex eq_idx;  /* indexed equations for fast lookup */
+    EqIndex eq_idx;      /* indexed equations for fast lookup */
+    TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
 } Space;
 
 void space_init(Space *s);

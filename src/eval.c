@@ -745,6 +745,25 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         return;
     }
 
+    /* ── add-atom-nodup (dedup variant for forward chaining) ────────────── */
+    if (expr_head_is(atom, "add-atom-nodup") && nargs == 2 && g_registry) {
+        Atom *space_ref = expr_arg(atom, 0);
+        Atom *atom_to_add = expr_arg(atom, 1);
+        Space *target = resolve_space(g_registry, space_ref);
+        if (target) {
+            /* Check if already in space (O(N) but prevents exponential blowup) */
+            bool found = false;
+            for (uint32_t i = 0; i < target->len && !found; i++)
+                if (atom_eq(target->atoms[i], atom_to_add)) found = true;
+            if (!found) {
+                Arena *dst = g_persistent_arena ? g_persistent_arena : a;
+                space_add(target, atom_deep_copy(dst, atom_to_add));
+            }
+        }
+        result_set_add(rs, atom_unit(a));
+        return;
+    }
+
     /* ── remove-atom ───────────────────────────────────────────────────── */
     if (expr_head_is(atom, "remove-atom") && nargs == 2 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
@@ -1723,7 +1742,8 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                       strcmp(hd, "assert") == 0 || strcmp(hd, "return") == 0 ||
                       strcmp(hd, "eval") == 0 || strcmp(hd, "get-type") == 0 ||
                       strcmp(hd, "new-space") == 0 || strcmp(hd, "bind!") == 0 ||
-                      strcmp(hd, "add-atom") == 0 || strcmp(hd, "remove-atom") == 0 ||
+                      strcmp(hd, "add-atom") == 0 || strcmp(hd, "add-atom-nodup") == 0 ||
+                      strcmp(hd, "remove-atom") == 0 ||
                       strcmp(hd, "get-atoms") == 0 ||
                       strcmp(hd, "pragma!") == 0 || strcmp(hd, "nop") == 0 ||
                       strcmp(hd, "new-state") == 0 || strcmp(hd, "get-state") == 0 ||
