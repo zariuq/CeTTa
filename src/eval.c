@@ -469,6 +469,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                 free(cur);
                 cur = next;
                 ncur = nnext;
+                if (ncur == 0) break; /* No matches → stop early */
             }
             /* Apply each successful binding set to template */
             for (uint32_t bi = 0; bi < ncur; bi++) {
@@ -688,6 +689,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
     /* ── new-space ──────────────────────────────────────────────────────── */
     if (expr_head_is(atom, "new-space") && nargs == 0) {
         Space *ns = malloc(sizeof(Space));
+        if (!ns) { result_set_add(rs, atom_error(a, atom, atom_symbol(a, "OutOfMemory"))); return; }
         space_init(ns);
         result_set_add(rs, atom_space(a, ns));
         return;
@@ -820,6 +822,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
     if (expr_head_is(atom, "new-state") && nargs == 1) {
         Atom *initial = expr_arg(atom, 0);
         StateCell *cell = malloc(sizeof(StateCell));
+        if (!cell) { result_set_add(rs, atom_error(a, atom, atom_symbol(a, "OutOfMemory"))); return; }
         cell->value = initial;
         /* Infer content type from initial value */
         Atom **itypes;
@@ -1747,6 +1750,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 free(cur);
                 cur = next_b;
                 ncur = nnext_b;
+                if (ncur == 0) break;
             }
             for (uint32_t bi = 0; bi < ncur; bi++) {
                 Atom *result = bindings_apply(&cur[bi], a, template);
