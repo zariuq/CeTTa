@@ -3,6 +3,7 @@
 #include "space.h"
 #include "eval.h"
 #include "lang.h"
+#include "compile.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,17 +27,23 @@ static bool result_set_has_error(ResultSet *rs) {
 
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
+    fputs("       cetta --compile <file.metta>     # emit LLVM IR to stdout\n", out);
     fputs("       cetta --list-languages\n", out);
 }
 
 int main(int argc, char **argv) {
     const char *lang_name = "he";
     const char *filename = NULL;
+    bool compile_mode = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--list-languages") == 0) {
             cetta_language_print_inventory(stdout);
             return 0;
+        }
+        if (strcmp(argv[i], "--compile") == 0) {
+            compile_mode = true;
+            continue;
         }
         if (strcmp(argv[i], "--lang") == 0) {
             if (i + 1 >= argc) {
@@ -85,6 +92,11 @@ int main(int argc, char **argv) {
     intern_init(&intern_table);
     g_intern = &intern_table;
 
+    /* Hash-consing for structural sharing (reduces memory for large derivations) */
+    HashConsTable hashcons_table;
+    hashcons_init(&hashcons_table);
+    g_hashcons = &hashcons_table;
+
     Atom **atoms = NULL;
     int n = parse_metta_file(filename, &arena, &atoms);
     if (n < 0) {
@@ -126,6 +138,26 @@ int main(int argc, char **argv) {
             atom_symbol(&arena, "->"), t_var, t_var, bool_t}, 4);
         space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
             atom_symbol(&arena, "=="), arrow_eqeq));
+    }
+
+    /* Compile mode: load all atoms into space, emit LLVM IR, exit */
+    if (compile_mode) {
+        for (int pi = 0; pi < n; pi++) {
+            Atom *at = atoms[pi];
+            if (at->kind == ATOM_SYMBOL && strcmp(at->name, "!") == 0) {
+                pi++;
+                continue;
+            }
+            space_add(&space, at);
+        }
+        compile_space_to_llvm(&space, &arena, stdout);
+        free(atoms);
+        space_free(&space);
+        arena_free(&eval_arena);
+        arena_free(&arena);
+        g_intern = NULL;
+        intern_free(&intern_table);
+        return 0;
     }
 
     /* Process top-level atoms */
@@ -176,5 +208,7 @@ int main(int argc, char **argv) {
     arena_free(&arena);
     g_intern = NULL;
     intern_free(&intern_table);
+    g_hashcons = NULL;
+    hashcons_free(&hashcons_table);
     return 0;
 }

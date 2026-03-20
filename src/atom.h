@@ -63,6 +63,29 @@ void  arena_free(Arena *a);
 void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
 
+/* ── Hash-Consing (structural sharing for immutable atoms) ─────────────── */
+
+#define HASHCONS_TABLE_SIZE 65536
+
+typedef struct {
+    Atom **table;
+    uint32_t size, used;
+} HashConsTable;
+
+void hashcons_init(HashConsTable *hc);
+void hashcons_free(HashConsTable *hc);
+/* Return shared atom if identical one exists, otherwise insert and return */
+Atom *hashcons_get(HashConsTable *hc, Arena *a, Atom *atom);
+
+/* Global hash-cons table */
+extern HashConsTable *g_hashcons;
+
+/* Fast equality: if both atoms are hash-consed, pointer comparison suffices */
+bool atom_eq_fast(Atom *a, Atom *b);
+
+/* Compute structural hash of an atom */
+uint32_t atom_hash(Atom *a);
+
 /* ── Symbol Interning (all equal symbols share one pointer) ────────────── */
 
 #define INTERN_TABLE_SIZE 4096
