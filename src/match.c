@@ -1,4 +1,5 @@
 #include "match.h"
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -139,6 +140,28 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
 Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
     const char *seen[MAX_BINDINGS];
     return bindings_apply_seen_epoch(b, a, atom, epoch, true, seen, 0);
+}
+
+void binding_set_init(BindingSet *bs) {
+    bs->items = NULL;
+    bs->len = 0;
+    bs->cap = 0;
+}
+
+void binding_set_free(BindingSet *bs) {
+    free(bs->items);
+    bs->items = NULL;
+    bs->len = 0;
+    bs->cap = 0;
+}
+
+bool binding_set_push(BindingSet *bs, const Bindings *b) {
+    if (bs->len >= bs->cap) {
+        bs->cap = bs->cap ? bs->cap * 2 : 8;
+        bs->items = cetta_realloc(bs->items, sizeof(Bindings) * bs->cap);
+    }
+    bs->items[bs->len++] = *b;
+    return true;
 }
 
 /* ── Variable renaming (standardization apart) ─────────────────────────── */

@@ -17,12 +17,20 @@ typedef struct {
     uint32_t len;
 } Bindings;
 
+typedef struct {
+    Bindings *items;
+    uint32_t len, cap;
+} BindingSet;
+
 void      bindings_init(Bindings *b);
 Atom     *bindings_lookup(Bindings *b, const char *var);
 bool      bindings_add(Bindings *b, const char *var, Atom *val);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
+void      binding_set_init(BindingSet *bs);
+void      binding_set_free(BindingSet *bs);
+bool      binding_set_push(BindingSet *bs, const Bindings *b);
 
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 

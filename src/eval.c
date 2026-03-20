@@ -94,35 +94,6 @@ static void bindings_merge_into(Bindings *dst, const Bindings *src) {
     }
 }
 
-static bool subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
-                                  const Bindings *seed, Arena *a, Bindings *out) {
-    if (sm->atom_idx >= space->len) return false;
-    Bindings merged = *seed;
-    if (!bindings_try_merge(&merged, &sm->bindings)) return false;
-    if (sm->exact) {
-        if (bindings_has_loop(&merged)) return false;
-        *out = merged;
-        return true;
-    }
-    if (match_atoms_epoch(pattern, space->atoms[sm->atom_idx], &merged, a, sm->epoch) &&
-        !bindings_has_loop(&merged)) {
-        *out = merged;
-        return true;
-    }
-
-    /* Fallback oracle for candidates the epoch matcher still mishandles. */
-    {
-        uint32_t suffix = fresh_var_suffix();
-        Atom *renamed = rename_vars(a, space->atoms[sm->atom_idx], suffix);
-        Bindings exact = *seed;
-        if (match_atoms(pattern, renamed, &exact) && !bindings_has_loop(&exact)) {
-            *out = exact;
-            return true;
-        }
-    }
-    return false;
-}
-
 static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
     if (atom->kind == ATOM_SYMBOL && atom->name[0] == '&' && g_registry) {
         Atom *val = registry_lookup(g_registry, atom->name);
@@ -535,41 +506,14 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
             atom_is_symbol(pattern->expr.elems[0], ",")) {
             uint32_t n_conjuncts = pattern->expr.len - 1;
-            Bindings *cur_b = cetta_malloc(sizeof(Bindings));
-            uint32_t ncur_b = 1;
-            bindings_init(&cur_b[0]);
-            for (uint32_t ci = 0; ci < n_conjuncts; ci++) {
-                Atom *cpat = pattern->expr.elems[ci + 1];
-                Bindings *next_b = NULL;
-                uint32_t nnext_b = 0, cnext_b = 0;
-                for (uint32_t bi = 0; bi < ncur_b; bi++) {
-                    Atom *cpat_bound = bindings_apply(&cur_b[bi], a, cpat);
-                    SubstMatchSet smr;
-                    smset_init(&smr);
-                    space_subst_query(ms, a, cpat_bound, &smr);
-                    for (uint32_t ci2 = 0; ci2 < smr.len; ci2++) {
-                        Bindings mb;
-                        if (subst_match_with_seed(ms, cpat_bound, &smr.items[ci2],
-                                                  &cur_b[bi], a, &mb)) {
-                            if (nnext_b >= cnext_b) {
-                                cnext_b = cnext_b ? cnext_b * 2 : 8;
-                                next_b = cetta_realloc(next_b, sizeof(Bindings) * cnext_b);
-                            }
-                            next_b[nnext_b++] = mb;
-                        }
-                    }
-                    free(smr.items);
-                }
-                free(cur_b);
-                cur_b = next_b;
-                ncur_b = nnext_b;
-                if (ncur_b == 0) break;
-            }
-            for (uint32_t bi = 0; bi < ncur_b; bi++) {
-                Atom *result = bindings_apply(&cur_b[bi], a, template);
+            BindingSet matches;
+            space_query_conjunction(ms, a, pattern->expr.elems + 1, n_conjuncts,
+                                    NULL, &matches);
+            for (uint32_t bi = 0; bi < matches.len; bi++) {
+                Atom *result = bindings_apply(&matches.items[bi], a, template);
                 metta_eval(s, a, NULL, result, fuel, rs);
             }
-            free(cur_b);
+            binding_set_free(&matches);
             return;
         }
 
@@ -692,8 +636,8 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                     space_subst_query(step->space, a, grounded, &smr);
                     for (uint32_t ci = 0; ci < smr.len; ci++) {
                         Bindings mb;
-                        if (subst_match_with_seed(step->space, grounded, &smr.items[ci],
-                                                  &cur_binds[bi], a, &mb)) {
+                        if (space_subst_match_with_seed(step->space, grounded, &smr.items[ci],
+                                                        &cur_binds[bi], a, &mb)) {
                             if (nnext >= cnext) {
                                 cnext = cnext ? cnext * 2 : 8;
                                 next_binds = cetta_realloc(next_binds, sizeof(Bindings) * cnext);
@@ -721,8 +665,8 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                     space_subst_query(last->space, a, grounded, &smr);
                     for (uint32_t ci = 0; ci < smr.len; ci++) {
                         Bindings mb;
-                        if (subst_match_with_seed(last->space, grounded, &smr.items[ci],
-                                                  &cur_binds[bi], a, &mb)) {
+                        if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
+                                                        &cur_binds[bi], a, &mb)) {
                             Atom *result = bindings_apply(&mb, a, body);
                             metta_eval(s, a, NULL, result, fuel, rs);
                             g_chain_progress++;
@@ -2052,43 +1996,16 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
         if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
             atom_is_symbol(pattern->expr.elems[0], ",")) {
             uint32_t n_conjuncts = pattern->expr.len - 1;
-            Bindings *cur = cetta_malloc(sizeof(Bindings));
-            uint32_t ncur = 1;
-            bindings_init(&cur[0]);
-            for (uint32_t ci = 0; ci < n_conjuncts; ci++) {
-                Atom *cpat = pattern->expr.elems[ci + 1];
-                Bindings *next_b = NULL;
-                uint32_t nnext_b = 0, cnext_b = 0;
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    Atom *cpat_bound = bindings_apply(&cur[bi], a, cpat);
-                    SubstMatchSet smr;
-                    smset_init(&smr);
-                    space_subst_query(ms, a, cpat_bound, &smr);
-                    for (uint32_t si = 0; si < smr.len; si++) {
-                        Bindings mb;
-                        if (subst_match_with_seed(ms, cpat_bound, &smr.items[si],
-                                                  &cur[bi], a, &mb)) {
-                            if (nnext_b >= cnext_b) {
-                                cnext_b = cnext_b ? cnext_b * 2 : 8;
-                                next_b = cetta_realloc(next_b, sizeof(Bindings) * cnext_b);
-                            }
-                            next_b[nnext_b++] = mb;
-                        }
-                    }
-                    free(smr.items);
-                }
-                free(cur);
-                cur = next_b;
-                ncur = nnext_b;
-                if (ncur == 0) break;
-            }
-            for (uint32_t bi = 0; bi < ncur; bi++) {
-                Atom *result = bindings_apply(&cur[bi], a, template);
+            BindingSet matches;
+            space_query_conjunction(ms, a, pattern->expr.elems + 1, n_conjuncts,
+                                    NULL, &matches);
+            for (uint32_t bi = 0; bi < matches.len; bi++) {
+                Atom *result = bindings_apply(&matches.items[bi], a, template);
                 ResultBindSet inner;
                 rb_set_init(&inner);
                 metta_eval_bind(s, a, result, fuel, &inner);
                 for (uint32_t j = 0; j < inner.len; j++) {
-                    Bindings merged = cur[bi];
+                    Bindings merged = matches.items[bi];
                     for (uint32_t k = 0; k < inner.items[j].bindings.len; k++)
                         bindings_add(&merged,
                             inner.items[j].bindings.entries[k].var,
@@ -2097,7 +2014,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 }
                 free(inner.items);
             }
-            free(cur);
+            binding_set_free(&matches);
         } else {
             /* Simple match with bindings preservation */
             SubstMatchSet smr;
@@ -2107,7 +2024,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 Bindings b;
                 Bindings empty;
                 bindings_init(&empty);
-                if (subst_match_with_seed(ms, pattern, &smr.items[i], &empty, a, &b)) {
+                if (space_subst_match_with_seed(ms, pattern, &smr.items[i], &empty, a, &b)) {
                     Atom *result = bindings_apply(&b, a, template);
                     ResultBindSet inner;
                     rb_set_init(&inner);
