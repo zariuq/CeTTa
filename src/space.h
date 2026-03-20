@@ -137,6 +137,10 @@ uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
    Replaces: space_match_candidates + rename_vars + match_atoms pipeline.
    Caller must free(out->items). */
 void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
+bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
+                                 const Bindings *seed, Arena *a, Bindings *out);
+void space_query_conjunction(Space *s, Arena *a, Atom **patterns, uint32_t npatterns,
+                             const Bindings *seed, BindingSet *out);
 
 /* ── Type Lookup (from HE spec Space.lean) ─────────────────────────────── */
 

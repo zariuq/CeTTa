@@ -13,6 +13,12 @@ static bool g_count_only = false;
 static void print_results(ResultSet *rs) {
     if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
     if (g_count_only) {
+        if (rs->len == 1 &&
+            rs->items[0]->kind == ATOM_GROUNDED &&
+            rs->items[0]->ground.gkind == GV_INT) {
+            printf("%lld\n", (long long)rs->items[0]->ground.ival);
+            return;
+        }
         printf("%u\n", rs->len);
         return;
     }

@@ -106,6 +106,26 @@ bench-d3-backends: $(BIN)
 		fi; \
 	done
 
+bench-d3-nodup: $(BIN)
+	@count=$$(./$(BIN) --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+	echo "depth-3 nodup total: $$count theorems"; \
+	if [ "$$count" = "3268" ]; then \
+		echo "PASS: nodup theorem count matches"; \
+	else \
+		echo "FAIL: expected 3268, got $$count"; exit 1; \
+	fi
+
+bench-d3-nodup-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		count=$$(./$(BIN) --space-match-backend "$$backend" --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+		echo "$$backend depth-3 nodup total: $$count theorems"; \
+		if [ "$$count" = "3268" ]; then \
+			echo "PASS: $$backend nodup theorem count matches"; \
+		else \
+			echo "FAIL: expected 3268, got $$count for $$backend"; exit 1; \
+		fi; \
+	done
+
 bench-d4: $(BIN)
 	@out=$$(ulimit -v 6291456; timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 	status=$$?; \
@@ -116,6 +136,18 @@ bench-d4: $(BIN)
 	else \
 		printf '%s\n' "$$out" | tail -5; \
 		echo "FAIL: depth-4 did not produce a valid count"; exit 1; \
+	fi
+
+bench-d4-nodup: $(BIN)
+	@out=$$(ulimit -v 6291456; timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+	status=$$?; \
+	count=$$(printf '%s\n' "$$out" | tail -1); \
+	echo "depth-4 nodup total: $$count theorems"; \
+	if [ $$status -eq 0 ] && printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
+		echo "PASS: depth-4 nodup produced a count under the memory cap"; \
+	else \
+		printf '%s\n' "$$out" | tail -5; \
+		echo "FAIL: depth-4 nodup did not produce a valid count"; exit 1; \
 	fi
 
 # LLVM IR validation: verify emitted IR compiles through opt/llc.
@@ -132,4 +164,4 @@ compile-test: $(BIN)
 	done; \
 	echo "---"; echo "$$pass passed, $$fail failed"
 
-.PHONY: all clean test test-backends oracle-refresh bench-d3 bench-d3-backends bench-d4 compile-test
+.PHONY: all clean test test-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-d4 bench-d4-nodup compile-test
