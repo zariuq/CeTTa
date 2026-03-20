@@ -15,6 +15,13 @@ static Arena *g_persistent_arena = NULL;
 /* pragma! type-check auto: when true, grounded ops type-check args */
 static bool g_type_check_auto = false;
 
+typedef struct {
+    Space **items;
+    uint32_t len, cap;
+} TempSpaceSet;
+
+static TempSpaceSet g_temp_spaces = {0};
+
 /* ── Result Set ─────────────────────────────────────────────────────────── */
 
 void result_set_init(ResultSet *rs) {
@@ -87,6 +94,35 @@ static void bindings_merge_into(Bindings *dst, const Bindings *src) {
     }
 }
 
+static bool subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
+                                  const Bindings *seed, Arena *a, Bindings *out) {
+    if (sm->atom_idx >= space->len) return false;
+    Bindings merged = *seed;
+    if (!bindings_try_merge(&merged, &sm->bindings)) return false;
+    if (sm->exact) {
+        if (bindings_has_loop(&merged)) return false;
+        *out = merged;
+        return true;
+    }
+    if (match_atoms_epoch(pattern, space->atoms[sm->atom_idx], &merged, a, sm->epoch) &&
+        !bindings_has_loop(&merged)) {
+        *out = merged;
+        return true;
+    }
+
+    /* Fallback oracle for candidates the epoch matcher still mishandles. */
+    {
+        uint32_t suffix = fresh_var_suffix();
+        Atom *renamed = rename_vars(a, space->atoms[sm->atom_idx], suffix);
+        Bindings exact = *seed;
+        if (match_atoms(pattern, renamed, &exact) && !bindings_has_loop(&exact)) {
+            *out = exact;
+            return true;
+        }
+    }
+    return false;
+}
+
 static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
     if (atom->kind == ATOM_SYMBOL && atom->name[0] == '&' && g_registry) {
         Atom *val = registry_lookup(g_registry, atom->name);
@@ -102,6 +138,46 @@ static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
         if (changed) return atom_expr(a, new_elems, atom->expr.len);
     }
     return atom;
+}
+
+static void temp_space_register(Space *space) {
+    if (g_temp_spaces.len >= g_temp_spaces.cap) {
+        g_temp_spaces.cap = g_temp_spaces.cap ? g_temp_spaces.cap * 2 : 4;
+        g_temp_spaces.items = cetta_realloc(g_temp_spaces.items, sizeof(Space *) * g_temp_spaces.cap);
+    }
+    g_temp_spaces.items[g_temp_spaces.len++] = space;
+}
+
+void eval_release_temporary_spaces(void) {
+    for (uint32_t i = 0; i < g_temp_spaces.len; i++) {
+        space_free(g_temp_spaces.items[i]);
+        free(g_temp_spaces.items[i]);
+    }
+    free(g_temp_spaces.items);
+    g_temp_spaces.items = NULL;
+    g_temp_spaces.len = 0;
+    g_temp_spaces.cap = 0;
+}
+
+/* Lightweight snapshot: shares atom pointers (no deep copy).
+   The snapshot's atoms[] is a frozen copy of the source's pointer array.
+   Safe because: atoms in the source live in the persistent arena and are
+   never mutated or freed during evaluation.  The snapshot only needs its
+   own atoms[] array (malloc'd) and indexes; space_free handles that. */
+static Space *space_snapshot_clone(Space *src, Arena *a) {
+    (void)a;
+    Space *clone = cetta_malloc(sizeof(Space));
+    space_init(clone);
+    (void)space_match_backend_try_set(clone, src->match_backend.kind);
+    if (src->len > 0) {
+        clone->cap = src->len;
+        clone->atoms = cetta_malloc(sizeof(Atom *) * clone->cap);
+        memcpy(clone->atoms, src->atoms, sizeof(Atom *) * src->len);
+        clone->len = src->len;
+    }
+    /* Backend indexes are rebuilt lazily on first match against the snapshot. */
+    temp_space_register(clone);
+    return clone;
 }
 
 /* ── Function type utilities (Types.lean:260-281) ──────────────────────── */
@@ -446,7 +522,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         return;
     }
 
-    /* ── match ─────────────────────────────────────────────────────────── */
+    /* ── match (with nested-match fusion + join reordering) ──────────── */
     if (expr_head_is(atom, "match") && nargs == 3) {
         Atom *space_ref = expr_arg(atom, 0);
         Atom *pattern = resolve_registry_refs(a, expr_arg(atom, 1));
@@ -455,57 +531,217 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         Space *ms = g_registry ? resolve_space(g_registry, space_ref) : NULL;
         if (!ms) ms = s;  /* fallback to current space */
 
-        /* Conjunction: (, P Q ...) — relational join over space */
+        /* Conjunction: (, P Q ...) — relational join over single space */
         if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
             atom_is_symbol(pattern->expr.elems[0], ",")) {
             uint32_t n_conjuncts = pattern->expr.len - 1;
-            /* Recursive conjunction: start with empty bindings,
-               for each conjunct, scan space and merge bindings */
-            Bindings *cur = cetta_malloc(sizeof(Bindings));
-            uint32_t ncur = 1;
-            bindings_init(&cur[0]);
-
+            Bindings *cur_b = cetta_malloc(sizeof(Bindings));
+            uint32_t ncur_b = 1;
+            bindings_init(&cur_b[0]);
             for (uint32_t ci = 0; ci < n_conjuncts; ci++) {
                 Atom *cpat = pattern->expr.elems[ci + 1];
-                Bindings *next = NULL;
-                uint32_t nnext = 0, cnext = 0;
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    for (uint32_t si = 0; si < ms->len; si++) {
-                        Atom *renamed = rename_vars(a, ms->atoms[si], fresh_var_suffix());
-                        /* Apply current bindings to pattern before matching */
-                        Atom *cpat_bound = bindings_apply(&cur[bi], a, cpat);
-                        Bindings mb = cur[bi];
-                        if (match_atoms(cpat_bound, renamed, &mb)) {
-                            if (nnext >= cnext) {
-                                cnext = cnext ? cnext * 2 : 8;
-                                next = cetta_realloc(next, sizeof(Bindings) * cnext);
+                Bindings *next_b = NULL;
+                uint32_t nnext_b = 0, cnext_b = 0;
+                for (uint32_t bi = 0; bi < ncur_b; bi++) {
+                    Atom *cpat_bound = bindings_apply(&cur_b[bi], a, cpat);
+                    SubstMatchSet smr;
+                    smset_init(&smr);
+                    space_subst_query(ms, a, cpat_bound, &smr);
+                    for (uint32_t ci2 = 0; ci2 < smr.len; ci2++) {
+                        Bindings mb;
+                        if (subst_match_with_seed(ms, cpat_bound, &smr.items[ci2],
+                                                  &cur_b[bi], a, &mb)) {
+                            if (nnext_b >= cnext_b) {
+                                cnext_b = cnext_b ? cnext_b * 2 : 8;
+                                next_b = cetta_realloc(next_b, sizeof(Bindings) * cnext_b);
                             }
-                            next[nnext++] = mb;
+                            next_b[nnext_b++] = mb;
                         }
                     }
+                    free(smr.items);
                 }
-                free(cur);
-                cur = next;
-                ncur = nnext;
-                if (ncur == 0) break; /* No matches → stop early */
+                free(cur_b);
+                cur_b = next_b;
+                ncur_b = nnext_b;
+                if (ncur_b == 0) break;
             }
-            /* Apply each successful binding set to template */
-            for (uint32_t bi = 0; bi < ncur; bi++) {
-                Atom *result = bindings_apply(&cur[bi], a, template);
+            for (uint32_t bi = 0; bi < ncur_b; bi++) {
+                Atom *result = bindings_apply(&cur_b[bi], a, template);
                 metta_eval(s, a, NULL, result, fuel, rs);
             }
-            free(cur);
-        } else {
-            /* Simple (non-conjunction) match */
-            for (uint32_t i = 0; i < ms->len; i++) {
-                Atom *renamed = rename_vars(a, ms->atoms[i], fresh_var_suffix());
-                Bindings b;
-                bindings_init(&b);
-                if (match_atoms(pattern, renamed, &b) && !bindings_has_loop(&b)) {
-                    Atom *result = bindings_apply(&b, a, template);
+            free(cur_b);
+            return;
+        }
+
+        /* ── Nested match chain fusion ────────────────────────────────── *
+         * Detect (match S1 P1 (match S2 P2 (match S3 P3 body))) chains
+         * and execute them as a single fused join with binding propagation
+         * between steps. Reorder by variable overlap (selectivity heuristic)
+         * so the discrimination trie can prune effectively.
+         *
+         * This is the CeTTa equivalent of MORK's ProductZipper /
+         * Vampire's resolution ordering / DB indexed nested-loop join. */
+        {
+            /* Extract chain: walk nested match templates */
+            #define MAX_CHAIN 16
+            typedef struct { Space *space; Atom *pattern; } MatchStep;
+            MatchStep steps[MAX_CHAIN];
+            uint32_t nsteps = 0;
+
+            steps[nsteps].space = ms;
+            steps[nsteps].pattern = pattern;
+            nsteps++;
+
+            Atom *body = template;
+            while (nsteps < MAX_CHAIN &&
+                   body->kind == ATOM_EXPR && body->expr.len == 4 &&
+                   atom_is_symbol(body->expr.elems[0], "match")) {
+                Atom *inner_ref = resolve_registry_refs(a, body->expr.elems[1]);
+                Atom *inner_pat = resolve_registry_refs(a, body->expr.elems[2]);
+                Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
+                if (!inner_sp) inner_sp = s;
+                steps[nsteps].space = inner_sp;
+                steps[nsteps].pattern = inner_pat;
+                nsteps++;
+                body = body->expr.elems[3];
+            }
+
+            /* Reorder for selectivity (greedy: maximize grounded vars per step).
+             * Only reorder steps[1..nsteps-1]; step 0 stays first. */
+            if (nsteps >= 3) {
+                /* Collect free vars from each pattern */
+                #define MAX_VARS_PER_PAT 32
+                const char *pat_vars[MAX_CHAIN][MAX_VARS_PER_PAT];
+                uint32_t pat_nvars[MAX_CHAIN];
+                for (uint32_t i = 0; i < nsteps; i++) {
+                    pat_nvars[i] = 0;
+                    /* Simple depth-first var collection */
+                    Atom *stack[64];
+                    uint32_t sp = 0;
+                    stack[sp++] = steps[i].pattern;
+                    while (sp > 0) {
+                        Atom *cur = stack[--sp];
+                        if (cur->kind == ATOM_VAR) {
+                            bool dup = false;
+                            for (uint32_t v = 0; v < pat_nvars[i]; v++)
+                                if (strcmp(pat_vars[i][v], cur->name) == 0) { dup = true; break; }
+                            if (!dup && pat_nvars[i] < MAX_VARS_PER_PAT)
+                                pat_vars[i][pat_nvars[i]++] = cur->name;
+                        }
+                        if (cur->kind == ATOM_EXPR)
+                            for (uint32_t j = 0; j < cur->expr.len && sp < 64; j++)
+                                stack[sp++] = cur->expr.elems[j];
+                    }
+                }
+
+                /* Greedy reorder: bound_vars starts with step 0's vars */
+                const char *bound[MAX_CHAIN * MAX_VARS_PER_PAT];
+                uint32_t nbound = 0;
+                for (uint32_t v = 0; v < pat_nvars[0]; v++)
+                    bound[nbound++] = pat_vars[0][v];
+                bool scheduled[MAX_CHAIN];
+                memset(scheduled, 0, sizeof(scheduled));
+                scheduled[0] = true;
+                MatchStep reordered[MAX_CHAIN];
+                reordered[0] = steps[0];
+                for (uint32_t round = 1; round < nsteps; round++) {
+                    int best = -1;
+                    uint32_t best_score = 0;
+                    for (uint32_t j = 1; j < nsteps; j++) {
+                        if (scheduled[j]) continue;
+                        uint32_t score = 0;
+                        for (uint32_t v = 0; v < pat_nvars[j]; v++)
+                            for (uint32_t b = 0; b < nbound; b++)
+                                if (strcmp(pat_vars[j][v], bound[b]) == 0) { score++; break; }
+                        if (best < 0 || score > best_score) {
+                            best = j; best_score = score;
+                        }
+                    }
+                    scheduled[best] = true;
+                    reordered[round] = steps[best];
+                    /* Add this step's vars to bound set */
+                    for (uint32_t v = 0; v < pat_nvars[best]; v++) {
+                        bool dup = false;
+                        for (uint32_t b = 0; b < nbound; b++)
+                            if (strcmp(bound[b], pat_vars[best][v]) == 0) { dup = true; break; }
+                        if (!dup) bound[nbound++] = pat_vars[best][v];
+                    }
+                }
+                memcpy(steps, reordered, sizeof(MatchStep) * nsteps);
+            }
+
+            /* Execute fused chain with binding propagation between steps.
+             * Streaming: accumulate bindings for steps 0..nsteps-2, then
+             * for the last step, evaluate body directly (no accumulation).
+             * This avoids materializing millions of bindings at depth 4+. */
+            Bindings *cur_binds = cetta_malloc(sizeof(Bindings));
+            uint32_t ncur = 1;
+            bindings_init(&cur_binds[0]);
+
+            /* Steps 0..nsteps-2: accumulate binding sets */
+            uint32_t accum_steps = (nsteps > 1) ? nsteps - 1 : nsteps;
+            for (uint32_t si = 0; si < accum_steps; si++) {
+                MatchStep *step = &steps[si];
+                Bindings *next_binds = NULL;
+                uint32_t nnext = 0, cnext = 0;
+                for (uint32_t bi = 0; bi < ncur; bi++) {
+                    Atom *grounded = bindings_apply(&cur_binds[bi], a, step->pattern);
+                    /* Use SubstTree for candidate retrieval in fused chain */
+                    SubstMatchSet smr;
+                    smset_init(&smr);
+                    space_subst_query(step->space, a, grounded, &smr);
+                    for (uint32_t ci = 0; ci < smr.len; ci++) {
+                        Bindings mb;
+                        if (subst_match_with_seed(step->space, grounded, &smr.items[ci],
+                                                  &cur_binds[bi], a, &mb)) {
+                            if (nnext >= cnext) {
+                                cnext = cnext ? cnext * 2 : 8;
+                                next_binds = cetta_realloc(next_binds, sizeof(Bindings) * cnext);
+                            }
+                            next_binds[nnext++] = mb;
+                        }
+                    }
+                    free(smr.items);
+                }
+                free(cur_binds);
+                cur_binds = next_binds;
+                ncur = nnext;
+                if (ncur == 0) break;
+            }
+
+            /* Last step (if >1 step): stream directly — for each match,
+             * immediately eval the body instead of accumulating bindings */
+            if (nsteps > 1 && ncur > 0) {
+                MatchStep *last = &steps[nsteps - 1];
+                static uint64_t g_chain_progress = 0;
+                for (uint32_t bi = 0; bi < ncur; bi++) {
+                    Atom *grounded = bindings_apply(&cur_binds[bi], a, last->pattern);
+                    SubstMatchSet smr;
+                    smset_init(&smr);
+                    space_subst_query(last->space, a, grounded, &smr);
+                    for (uint32_t ci = 0; ci < smr.len; ci++) {
+                        Bindings mb;
+                        if (subst_match_with_seed(last->space, grounded, &smr.items[ci],
+                                                  &cur_binds[bi], a, &mb)) {
+                            Atom *result = bindings_apply(&mb, a, body);
+                            metta_eval(s, a, NULL, result, fuel, rs);
+                            g_chain_progress++;
+                            if ((g_chain_progress % 100000) == 0)
+                                fprintf(stderr, "[chain] %luk results  (step %u/%u, bi=%u/%u)\n",
+                                    (unsigned long)(g_chain_progress / 1000),
+                                    nsteps, nsteps, bi, ncur);
+                        }
+                    }
+                    free(smr.items);
+                }
+            } else {
+                /* Single step or all accumulated: eval body with final bindings */
+                for (uint32_t bi = 0; bi < ncur; bi++) {
+                    Atom *result = bindings_apply(&cur_binds[bi], a, body);
                     metta_eval(s, a, NULL, result, fuel, rs);
                 }
             }
+            free(cur_binds);
         }
         return;
     }
@@ -713,6 +949,31 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         return;
     }
 
+    /* ── with-space-snapshot ───────────────────────────────────────────── */
+    if (expr_head_is(atom, "with-space-snapshot") && nargs == 3 && g_registry) {
+        Atom *binder = expr_arg(atom, 0);
+        Atom *space_ref = resolve_registry_refs(a, expr_arg(atom, 1));
+        Atom *body = expr_arg(atom, 2);
+        Space *target = resolve_space(g_registry, space_ref);
+        if (!target) {
+            result_set_add(rs, atom);
+            return;
+        }
+        Space *snapshot = space_snapshot_clone(target, a);
+        Atom *snapshot_atom = atom_space(a, snapshot);
+        Bindings b;
+        bindings_init(&b);
+        if (binder->kind == ATOM_VAR) {
+            bindings_add(&b, binder->name, snapshot_atom);
+            Atom *subst = bindings_apply(&b, a, body);
+            metta_eval(s, a, NULL, subst, fuel, rs);
+        } else if (simple_match(binder, snapshot_atom, &b)) {
+            Atom *subst = bindings_apply(&b, a, body);
+            metta_eval(s, a, NULL, subst, fuel, rs);
+        }
+        return;
+    }
+
     /* ── bind! ─────────────────────────────────────────────────────────── */
     if (expr_head_is(atom, "bind!") && nargs == 2 && g_registry) {
         Atom *name = expr_arg(atom, 0);
@@ -724,7 +985,10 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         if (name->kind == ATOM_SYMBOL) {
             /* Deep-copy to persistent arena so value survives eval_arena reset */
             Arena *dst = g_persistent_arena ? g_persistent_arena : a;
-            registry_bind(g_registry, name->name, atom_deep_copy(dst, val));
+            Atom *stored = (dst == g_persistent_arena)
+                ? atom_deep_copy_shared(dst, val)
+                : atom_deep_copy(dst, val);
+            registry_bind(g_registry, name->name, stored);
         }
         free(val_rs.items);
         result_set_add(rs, atom_unit(a));
@@ -739,7 +1003,10 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         if (target) {
             /* Deep-copy to persistent arena so atom survives eval_arena reset */
             Arena *dst = g_persistent_arena ? g_persistent_arena : a;
-            space_add(target, atom_deep_copy(dst, atom_to_add));
+            Atom *stored = (dst == g_persistent_arena)
+                ? atom_deep_copy_shared(dst, atom_to_add)
+                : atom_deep_copy(dst, atom_to_add);
+            space_add(target, stored);
         }
         result_set_add(rs, atom_unit(a));
         return;
@@ -757,7 +1024,10 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                 if (atom_eq(target->atoms[i], atom_to_add)) found = true;
             if (!found) {
                 Arena *dst = g_persistent_arena ? g_persistent_arena : a;
-                space_add(target, atom_deep_copy(dst, atom_to_add));
+                Atom *stored = (dst == g_persistent_arena)
+                    ? atom_deep_copy_shared(dst, atom_to_add)
+                    : atom_deep_copy(dst, atom_to_add);
+                space_add(target, stored);
             }
         }
         result_set_add(rs, atom_unit(a));
@@ -782,6 +1052,15 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             for (uint32_t i = 0; i < target->len; i++)
                 result_set_add(rs, target->atoms[i]);
         }
+        return;
+    }
+
+    /* ── count-atoms ──────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "count-atoms") && nargs == 1 && g_registry) {
+        Atom *space_ref = expr_arg(atom, 0);
+        Space *target = resolve_space(g_registry, space_ref);
+        int64_t count = target ? (int64_t)target->len : 0;
+        result_set_add(rs, atom_int(a, count));
         return;
     }
 
@@ -1744,7 +2023,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                       strcmp(hd, "new-space") == 0 || strcmp(hd, "bind!") == 0 ||
                       strcmp(hd, "add-atom") == 0 || strcmp(hd, "add-atom-nodup") == 0 ||
                       strcmp(hd, "remove-atom") == 0 ||
-                      strcmp(hd, "get-atoms") == 0 ||
+                      strcmp(hd, "get-atoms") == 0 || strcmp(hd, "count-atoms") == 0 ||
                       strcmp(hd, "pragma!") == 0 || strcmp(hd, "nop") == 0 ||
                       strcmp(hd, "new-state") == 0 || strcmp(hd, "get-state") == 0 ||
                       strcmp(hd, "change-state!") == 0 ||
@@ -1781,11 +2060,14 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 Bindings *next_b = NULL;
                 uint32_t nnext_b = 0, cnext_b = 0;
                 for (uint32_t bi = 0; bi < ncur; bi++) {
-                    for (uint32_t si = 0; si < ms->len; si++) {
-                        Atom *renamed = rename_vars(a, ms->atoms[si], fresh_var_suffix());
-                        Atom *cpat_bound = bindings_apply(&cur[bi], a, cpat);
-                        Bindings mb = cur[bi];
-                        if (match_atoms(cpat_bound, renamed, &mb)) {
+                    Atom *cpat_bound = bindings_apply(&cur[bi], a, cpat);
+                    SubstMatchSet smr;
+                    smset_init(&smr);
+                    space_subst_query(ms, a, cpat_bound, &smr);
+                    for (uint32_t si = 0; si < smr.len; si++) {
+                        Bindings mb;
+                        if (subst_match_with_seed(ms, cpat_bound, &smr.items[si],
+                                                  &cur[bi], a, &mb)) {
                             if (nnext_b >= cnext_b) {
                                 cnext_b = cnext_b ? cnext_b * 2 : 8;
                                 next_b = cetta_realloc(next_b, sizeof(Bindings) * cnext_b);
@@ -1793,6 +2075,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                             next_b[nnext_b++] = mb;
                         }
                     }
+                    free(smr.items);
                 }
                 free(cur);
                 cur = next_b;
@@ -1817,11 +2100,14 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
             free(cur);
         } else {
             /* Simple match with bindings preservation */
-            for (uint32_t i = 0; i < ms->len; i++) {
-                Atom *renamed = rename_vars(a, ms->atoms[i], fresh_var_suffix());
+            SubstMatchSet smr;
+            smset_init(&smr);
+            space_subst_query(ms, a, pattern, &smr);
+            for (uint32_t i = 0; i < smr.len; i++) {
                 Bindings b;
-                bindings_init(&b);
-                if (match_atoms(pattern, renamed, &b) && !bindings_has_loop(&b)) {
+                Bindings empty;
+                bindings_init(&empty);
+                if (subst_match_with_seed(ms, pattern, &smr.items[i], &empty, a, &b)) {
                     Atom *result = bindings_apply(&b, a, template);
                     ResultBindSet inner;
                     rb_set_init(&inner);
@@ -1838,6 +2124,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                     free(inner.items);
                 }
             }
+            free(smr.items);
         }
         return;
     }

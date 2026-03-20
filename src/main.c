@@ -8,8 +8,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool g_count_only = false;
+
 static void print_results(ResultSet *rs) {
     if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
+    if (g_count_only) {
+        printf("%u\n", rs->len);
+        return;
+    }
     printf("[");
     for (uint32_t i = 0; i < rs->len; i++) {
         if (i > 0) printf(", ");
@@ -28,6 +34,9 @@ static bool result_set_has_error(ResultSet *rs) {
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta --compile <file.metta>     # emit LLVM IR to stdout\n", out);
+    fputs("       cetta --count-only <file.metta>  # print result counts only\n", out);
+    fputs("       cetta --space-match-backend <name> <file.metta>\n", out);
+    fputs("       cetta --list-space-match-backends\n", out);
     fputs("       cetta --list-languages\n", out);
 }
 
@@ -35,14 +44,36 @@ int main(int argc, char **argv) {
     const char *lang_name = "he";
     const char *filename = NULL;
     bool compile_mode = false;
+    bool count_only = false;
+    SpaceMatchBackendKind match_backend_kind = SPACE_MATCH_BACKEND_NATIVE;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--list-languages") == 0) {
             cetta_language_print_inventory(stdout);
             return 0;
         }
+        if (strcmp(argv[i], "--list-space-match-backends") == 0) {
+            space_match_backend_print_inventory(stdout);
+            return 0;
+        }
         if (strcmp(argv[i], "--compile") == 0) {
             compile_mode = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--count-only") == 0) {
+            count_only = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--space-match-backend") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!space_match_backend_kind_from_name(argv[++i], &match_backend_kind)) {
+                fprintf(stderr, "error: unknown space match backend '%s'\n", argv[i]);
+                space_match_backend_print_inventory(stderr);
+                return 2;
+            }
             continue;
         }
         if (strcmp(argv[i], "--lang") == 0) {
@@ -82,6 +113,8 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    g_count_only = count_only;
+
     Arena arena;       /* persistent: parsed atoms, space content, type decls */
     Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
     arena_init(&arena);
@@ -106,6 +139,11 @@ int main(int argc, char **argv) {
 
     Space space;
     space_init(&space);
+    if (!space_match_backend_try_set(&space, match_backend_kind)) {
+        fprintf(stderr, "error: space match backend '%s' is recognized but not implemented yet\n",
+                space_match_backend_kind_name(match_backend_kind));
+        return 2;
+    }
 
     Registry registry;
     registry_init(&registry);
@@ -174,6 +212,7 @@ int main(int argc, char **argv) {
             print_results(&rs);
             bool stop_after_error = result_set_has_error(&rs);
             free(rs.items);
+            eval_release_temporary_spaces();
             /* Reset ephemeral arena — frees all intermediate eval atoms.
                This makes CeTTa safe for unlimited chaining iterations. */
             arena_free(&eval_arena);

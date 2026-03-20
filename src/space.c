@@ -3,13 +3,254 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ── Discrimination Trie ────────────────────────────────────────────────── */
+
+DiscNode *disc_node_new(void) {
+    DiscNode *n = cetta_malloc(sizeof(DiscNode));
+    memset(n, 0, sizeof(DiscNode));
+    return n;
+}
+
+void disc_node_free(DiscNode *n) {
+    if (!n) return;
+    for (uint32_t i = 0; i < n->nsym; i++) disc_node_free(n->sym[i].child);
+    free(n->sym);
+    disc_node_free(n->var_child);
+    for (uint32_t i = 0; i < n->nexpr; i++) disc_node_free(n->expr[i].child);
+    free(n->expr);
+    for (uint32_t i = 0; i < n->nints; i++) disc_node_free(n->ints[i].child);
+    free(n->ints);
+    free(n->leaves);
+    free(n);
+}
+
+static void disc_add_leaf(DiscNode *n, uint32_t idx) {
+    if (n->nleaves >= n->cleaves) {
+        n->cleaves = n->cleaves ? n->cleaves * 2 : 4;
+        n->leaves = cetta_realloc(n->leaves, sizeof(uint32_t) * n->cleaves);
+    }
+    n->leaves[n->nleaves++] = idx;
+}
+
+static DiscNode *disc_get_sym(DiscNode *n, const char *key) {
+    for (uint32_t i = 0; i < n->nsym; i++)
+        if (strcmp(n->sym[i].key, key) == 0) return n->sym[i].child;
+    if (n->nsym >= n->csym) {
+        n->csym = n->csym ? n->csym * 2 : 4;
+        n->sym = cetta_realloc(n->sym, sizeof(n->sym[0]) * n->csym);
+    }
+    DiscNode *child = disc_node_new();
+    n->sym[n->nsym].key = key;
+    n->sym[n->nsym].child = child;
+    n->nsym++;
+    return child;
+}
+
+static DiscNode *disc_get_var(DiscNode *n) {
+    if (!n->var_child) n->var_child = disc_node_new();
+    return n->var_child;
+}
+
+static DiscNode *disc_get_expr(DiscNode *n, uint32_t arity) {
+    for (uint32_t i = 0; i < n->nexpr; i++)
+        if (n->expr[i].arity == arity) return n->expr[i].child;
+    if (n->nexpr >= n->cexpr) {
+        n->cexpr = n->cexpr ? n->cexpr * 2 : 4;
+        n->expr = cetta_realloc(n->expr, sizeof(n->expr[0]) * n->cexpr);
+    }
+    DiscNode *child = disc_node_new();
+    n->expr[n->nexpr].arity = arity;
+    n->expr[n->nexpr].child = child;
+    n->nexpr++;
+    return child;
+}
+
+static DiscNode *disc_get_int(DiscNode *n, int64_t val) {
+    for (uint32_t i = 0; i < n->nints; i++)
+        if (n->ints[i].val == val) return n->ints[i].child;
+    if (n->nints >= n->cints) {
+        n->cints = n->cints ? n->cints * 2 : 4;
+        n->ints = cetta_realloc(n->ints, sizeof(n->ints[0]) * n->cints);
+    }
+    DiscNode *child = disc_node_new();
+    n->ints[n->nints].val = val;
+    n->ints[n->nints].child = child;
+    n->nints++;
+    return child;
+}
+
+/* Insert: walk LHS depth-first, creating trie path */
+static DiscNode *disc_insert_atom(DiscNode *node, Atom *a) {
+    switch (a->kind) {
+    case ATOM_SYMBOL: return disc_get_sym(node, a->name);
+    case ATOM_VAR:    return disc_get_var(node);
+    case ATOM_GROUNDED:
+        if (a->ground.gkind == GV_INT) return disc_get_int(node, a->ground.ival);
+        return disc_get_var(node); /* treat other grounded as wildcard for now */
+    case ATOM_EXPR: {
+        DiscNode *cur = disc_get_expr(node, a->expr.len);
+        for (uint32_t i = 0; i < a->expr.len; i++)
+            cur = disc_insert_atom(cur, a->expr.elems[i]);
+        return cur;
+    }
+    }
+    return node;
+}
+
+void disc_insert(DiscNode *root, Atom *lhs, uint32_t eq_idx) {
+    DiscNode *leaf = disc_insert_atom(root, lhs);
+    disc_add_leaf(leaf, eq_idx);
+}
+
+/* ── Discrimination Trie Lookup (node-set based) ──────────────────────── */
+
+/* A dynamic set of trie nodes — used during lookup to track all reachable
+   positions in the trie after matching a query atom.  The depth-first
+   flattening during insertion means that:
+     symbol/var/int → 1 trie step
+     expression(arity) → 1 step (arity branch) + arity recursive sub-terms
+   Lookup must mirror this structure exactly. */
+
+typedef struct {
+    DiscNode **nodes;
+    uint32_t n, c;
+} DiscNodeSet;
+
+static void dns_init(DiscNodeSet *s) { s->nodes = NULL; s->n = 0; s->c = 0; }
+static void dns_free(DiscNodeSet *s) { free(s->nodes); s->nodes = NULL; s->n = 0; s->c = 0; }
+
+static void dns_push(DiscNodeSet *s, DiscNode *node) {
+    if (!node) return;
+    if (s->n >= s->c) {
+        s->c = s->c ? s->c * 2 : 8;
+        s->nodes = cetta_realloc(s->nodes, sizeof(DiscNode *) * s->c);
+    }
+    s->nodes[s->n++] = node;
+}
+
+/* Forward declarations for mutual recursion */
+static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next);
+static void disc_skip_term(DiscNode *node, DiscNodeSet *next);
+
+/* Skip one complete term from the trie.  A query variable can match any
+   indexed term, so we must advance past the entire depth-first encoding
+   of whatever term appears at this position. */
+static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
+    if (!node) return;
+    /* Symbol branches: one trie step → child is the continuation */
+    for (uint32_t i = 0; i < node->nsym; i++)
+        dns_push(next, node->sym[i].child);
+    /* Variable branches: one trie step */
+    dns_push(next, node->var_child);
+    /* Int branches: one trie step */
+    for (uint32_t i = 0; i < node->nints; i++)
+        dns_push(next, node->ints[i].child);
+    /* Expression branches: arity tag + arity sub-terms (depth-first) */
+    for (uint32_t i = 0; i < node->nexpr; i++) {
+        DiscNodeSet cur;
+        dns_init(&cur);
+        dns_push(&cur, node->expr[i].child);
+        for (uint32_t ci = 0; ci < node->expr[i].arity; ci++) {
+            DiscNodeSet tmp;
+            dns_init(&tmp);
+            for (uint32_t ni = 0; ni < cur.n; ni++)
+                disc_skip_term(cur.nodes[ni], &tmp);
+            dns_free(&cur);
+            cur = tmp;
+        }
+        /* After skipping all sub-terms, cur holds the continuations */
+        for (uint32_t ni = 0; ni < cur.n; ni++)
+            dns_push(next, cur.nodes[ni]);
+        dns_free(&cur);
+    }
+}
+
+/* Advance through one query atom, collecting all reachable next-nodes.
+   Mirrors the depth-first structure of disc_insert_atom exactly. */
+static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
+    if (!node) return;
+    switch (q->kind) {
+    case ATOM_SYMBOL:
+        for (uint32_t i = 0; i < node->nsym; i++)
+            if (strcmp(node->sym[i].key, q->name) == 0)
+                dns_push(next, node->sym[i].child);
+        /* A variable in the indexed LHS matches any query symbol */
+        dns_push(next, node->var_child);
+        break;
+
+    case ATOM_VAR:
+        /* Query variable matches any indexed term — skip one complete term */
+        disc_skip_term(node, next);
+        break;
+
+    case ATOM_GROUNDED:
+        if (q->ground.gkind == GV_INT) {
+            for (uint32_t i = 0; i < node->nints; i++)
+                if (node->ints[i].val == q->ground.ival)
+                    dns_push(next, node->ints[i].child);
+        }
+        /* A variable in the indexed LHS matches any grounded value */
+        dns_push(next, node->var_child);
+        break;
+
+    case ATOM_EXPR:
+        /* Match expression by arity, then chain depth-first through children */
+        for (uint32_t i = 0; i < node->nexpr; i++) {
+            if (node->expr[i].arity == q->expr.len) {
+                /* Start with the arity branch's child, then advance through
+                   each sub-element of the expression */
+                DiscNodeSet cur;
+                dns_init(&cur);
+                dns_push(&cur, node->expr[i].child);
+                for (uint32_t ci = 0; ci < q->expr.len; ci++) {
+                    DiscNodeSet tmp;
+                    dns_init(&tmp);
+                    for (uint32_t ni = 0; ni < cur.n; ni++)
+                        disc_step(cur.nodes[ni], q->expr.elems[ci], &tmp);
+                    dns_free(&cur);
+                    cur = tmp;
+                }
+                /* After all children: cur holds the terminal nodes */
+                for (uint32_t ni = 0; ni < cur.n; ni++)
+                    dns_push(next, cur.nodes[ni]);
+                dns_free(&cur);
+            }
+        }
+        /* A variable in the indexed LHS matches any expression */
+        dns_push(next, node->var_child);
+        break;
+    }
+}
+
+void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, uint32_t *cout) {
+    *out = NULL; *nout = 0; *cout = 0;
+    /* disc_step from root through the query atom */
+    DiscNodeSet final;
+    dns_init(&final);
+    disc_step(root, query, &final);
+    /* Collect equation indices from all terminal nodes' leaves */
+    for (uint32_t i = 0; i < final.n; i++) {
+        DiscNode *n = final.nodes[i];
+        for (uint32_t j = 0; j < n->nleaves; j++) {
+            if (*nout >= *cout) {
+                *cout = *cout ? *cout * 2 : 16;
+                *out = cetta_realloc(*out, sizeof(uint32_t) * *cout);
+            }
+            (*out)[(*nout)++] = n->leaves[j];
+        }
+    }
+    dns_free(&final);
+}
+
 /* ── Equation Index ─────────────────────────────────────────────────────── */
 
 static void eq_bucket_init(EqBucket *b) {
     b->lhs = NULL; b->rhs = NULL; b->len = 0; b->cap = 0;
+    b->trie = NULL;
 }
 
 static void eq_bucket_add(EqBucket *b, Atom *lhs, Atom *rhs) {
+    uint32_t idx = b->len;
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 8;
         b->lhs = cetta_realloc(b->lhs, sizeof(Atom *) * b->cap);
@@ -18,10 +259,14 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, Atom *rhs) {
     b->lhs[b->len] = lhs;
     b->rhs[b->len] = rhs;
     b->len++;
+    /* Add to discrimination trie */
+    if (!b->trie) b->trie = disc_node_new();
+    disc_insert(b->trie, lhs, idx);
 }
 
 static void eq_bucket_free(EqBucket *b) {
     free(b->lhs); free(b->rhs);
+    disc_node_free(b->trie); b->trie = NULL;
     b->lhs = NULL; b->rhs = NULL; b->len = 0; b->cap = 0;
 }
 
@@ -112,6 +357,7 @@ void space_init(Space *s) {
     s->cap = 0;
     eq_index_init(&s->eq_idx);
     ty_ann_index_init(&s->ty_idx);
+    space_match_backend_init(s);
 }
 
 void space_free(Space *s) {
@@ -121,6 +367,7 @@ void space_free(Space *s) {
     s->cap = 0;
     eq_index_free(&s->eq_idx);
     ty_ann_index_free(&s->ty_idx);
+    space_match_backend_free(s);
 }
 
 static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
@@ -136,6 +383,7 @@ void space_add(Space *s, Atom *atom) {
         s->cap = s->cap ? s->cap * 2 : 64;
         s->atoms = cetta_realloc(s->atoms, sizeof(Atom *) * s->cap);
     }
+    uint32_t idx = s->len;
     s->atoms[s->len++] = atom;
     /* Index equations by head symbol */
     Atom *lhs, *rhs;
@@ -145,6 +393,8 @@ void space_add(Space *s, Atom *atom) {
     if (atom->kind == ATOM_EXPR && atom->expr.len == 3 &&
         atom_is_symbol(atom->expr.elems[0], ":"))
         ty_ann_index_add(&s->ty_idx, atom->expr.elems[1], atom->expr.elems[2]);
+    /* Match backend owns its own incremental indexing policy. */
+    space_match_backend_note_add(s, atom, idx);
 }
 
 /* ── Query Results ──────────────────────────────────────────────────────── */
@@ -212,6 +462,7 @@ bool space_remove(Space *s, Atom *atom) {
     for (uint32_t i = 0; i < s->len; i++) {
         if (atom_eq(s->atoms[i], atom)) {
             s->atoms[i] = s->atoms[--s->len]; /* swap with last */
+            space_match_backend_note_remove(s);
             return true;
         }
     }
@@ -397,17 +648,40 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
-/* Try matching equations from a bucket against a query */
+/* Try matching equations from a bucket against a query.
+   Uses discrimination trie to prune candidates when available. */
 static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *out) {
-    for (uint32_t i = 0; i < bucket->len; i++) {
-        uint32_t suffix = fresh_var_suffix();
-        Atom *rlhs = rename_vars(a, bucket->lhs[i], suffix);
-        Atom *rrhs = rename_vars(a, bucket->rhs[i], suffix);
-        Bindings b;
-        bindings_init(&b);
-        if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
-            Atom *result = bindings_apply(&b, a, rrhs);
-            query_results_push(out, result, &b);
+    if (bucket->trie && bucket->len > 4) {
+        /* Use trie for larger buckets — prune candidates */
+        uint32_t *candidates = NULL;
+        uint32_t ncand = 0, ccand = 0;
+        disc_lookup(bucket->trie, query, &candidates, &ncand, &ccand);
+        for (uint32_t ci = 0; ci < ncand; ci++) {
+            uint32_t i = candidates[ci];
+            if (i >= bucket->len) continue;
+            uint32_t suffix = fresh_var_suffix();
+            Atom *rlhs = rename_vars(a, bucket->lhs[i], suffix);
+            Atom *rrhs = rename_vars(a, bucket->rhs[i], suffix);
+            Bindings b;
+            bindings_init(&b);
+            if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
+                Atom *result = bindings_apply(&b, a, rrhs);
+                query_results_push(out, result, &b);
+            }
+        }
+        free(candidates);
+    } else {
+        /* Small bucket: linear scan is fine */
+        for (uint32_t i = 0; i < bucket->len; i++) {
+            uint32_t suffix = fresh_var_suffix();
+            Atom *rlhs = rename_vars(a, bucket->lhs[i], suffix);
+            Atom *rrhs = rename_vars(a, bucket->rhs[i], suffix);
+            Bindings b;
+            bindings_init(&b);
+            if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
+                Atom *result = bindings_apply(&b, a, rrhs);
+                query_results_push(out, result, &b);
+            }
         }
     }
 }

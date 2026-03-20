@@ -165,5 +165,8 @@ char *atom_to_string(Arena *a, Atom *atom);
 
 /* Deep-copy an atom tree into a different arena */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
+/* Deep-copy with structural sharing for immutable atoms.
+   Safe only for arenas whose contents outlive the global hash-cons table. */
+Atom *atom_deep_copy_shared(Arena *dst, Atom *src);
 
 #endif /* CETTA_ATOM_H */
