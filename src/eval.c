@@ -10,6 +10,8 @@
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static Registry *g_registry = NULL;
+/* Persistent arena for atoms that outlive a single evaluation (space, states) */
+static Arena *g_persistent_arena = NULL;
 /* pragma! type-check auto: when true, grounded ops type-check args */
 static bool g_type_check_auto = false;
 
@@ -24,7 +26,7 @@ void result_set_init(ResultSet *rs) {
 void result_set_add(ResultSet *rs, Atom *atom) {
     if (rs->len >= rs->cap) {
         rs->cap = rs->cap ? rs->cap * 2 : 8;
-        rs->items = realloc(rs->items, sizeof(Atom *) * rs->cap);
+        rs->items = cetta_realloc(rs->items, sizeof(Atom *) * rs->cap);
     }
     rs->items[rs->len++] = atom;
 }
@@ -66,7 +68,7 @@ void rb_set_init(ResultBindSet *rbs) {
 void rb_set_add(ResultBindSet *rbs, Atom *atom, Bindings *b) {
     if (rbs->len >= rbs->cap) {
         rbs->cap = rbs->cap ? rbs->cap * 2 : 8;
-        rbs->items = realloc(rbs->items, sizeof(ResultWithBindings) * rbs->cap);
+        rbs->items = cetta_realloc(rbs->items, sizeof(ResultWithBindings) * rbs->cap);
     }
     rbs->items[rbs->len].atom = atom;
     rbs->items[rbs->len].bindings = *b;
@@ -428,6 +430,24 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         return;
     }
 
+    /* ── car-atom / cdr-atom ─────────────────────────────────────────── */
+    if (expr_head_is(atom, "car-atom") && nargs == 1) {
+        Atom *e = expr_arg(atom, 0);
+        if (e->kind == ATOM_EXPR && e->expr.len > 0)
+            result_set_add(rs, e->expr.elems[0]);
+        else
+            result_set_add(rs, atom_empty(a));
+        return;
+    }
+    if (expr_head_is(atom, "cdr-atom") && nargs == 1) {
+        Atom *e = expr_arg(atom, 0);
+        if (e->kind == ATOM_EXPR && e->expr.len > 0)
+            result_set_add(rs, atom_expr(a, e->expr.elems + 1, e->expr.len - 1));
+        else
+            result_set_add(rs, atom_unit(a));
+        return;
+    }
+
     /* ── match ─────────────────────────────────────────────────────────── */
     if (expr_head_is(atom, "match") && nargs == 3) {
         Atom *space_ref = expr_arg(atom, 0);
@@ -443,7 +463,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             uint32_t n_conjuncts = pattern->expr.len - 1;
             /* Recursive conjunction: start with empty bindings,
                for each conjunct, scan space and merge bindings */
-            Bindings *cur = malloc(sizeof(Bindings));
+            Bindings *cur = cetta_malloc(sizeof(Bindings));
             uint32_t ncur = 1;
             bindings_init(&cur[0]);
 
@@ -460,7 +480,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                         if (match_atoms(cpat_bound, renamed, &mb)) {
                             if (nnext >= cnext) {
                                 cnext = cnext ? cnext * 2 : 8;
-                                next = realloc(next, sizeof(Bindings) * cnext);
+                                next = cetta_realloc(next, sizeof(Bindings) * cnext);
                             }
                             next[nnext++] = mb;
                         }
@@ -483,7 +503,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
                 Atom *renamed = rename_vars(a, ms->atoms[i], fresh_var_suffix());
                 Bindings b;
                 bindings_init(&b);
-                if (match_atoms(pattern, renamed, &b)) {
+                if (match_atoms(pattern, renamed, &b) && !bindings_has_loop(&b)) {
                     Atom *result = bindings_apply(&b, a, template);
                     metta_eval(s, a, NULL, result, fuel, rs);
                 }
@@ -500,7 +520,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         Atom *else_br = expr_arg(atom, 3);
         Bindings b;
         bindings_init(&b);
-        if (match_atoms(target, pattern, &b)) {
+        if (match_atoms(target, pattern, &b) && !bindings_has_loop(&b)) {
             Atom *result = bindings_apply(&b, a, then_br);
             result_set_add(rs, result);
         } else {
@@ -688,10 +708,10 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
 
     /* ── new-space ──────────────────────────────────────────────────────── */
     if (expr_head_is(atom, "new-space") && nargs == 0) {
-        Space *ns = malloc(sizeof(Space));
-        if (!ns) { result_set_add(rs, atom_error(a, atom, atom_symbol(a, "OutOfMemory"))); return; }
+        Arena *pa = g_persistent_arena ? g_persistent_arena : a;
+        Space *ns = arena_alloc(pa, sizeof(Space));
         space_init(ns);
-        result_set_add(rs, atom_space(a, ns));
+        result_set_add(rs, atom_space(pa, ns));
         return;
     }
 
@@ -703,8 +723,11 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         result_set_init(&val_rs);
         metta_eval(s, a, NULL, val_expr, fuel, &val_rs);
         Atom *val = (val_rs.len > 0) ? val_rs.items[0] : val_expr;
-        if (name->kind == ATOM_SYMBOL)
-            registry_bind(g_registry, name->name, val);
+        if (name->kind == ATOM_SYMBOL) {
+            /* Deep-copy to persistent arena so value survives eval_arena reset */
+            Arena *dst = g_persistent_arena ? g_persistent_arena : a;
+            registry_bind(g_registry, name->name, atom_deep_copy(dst, val));
+        }
         free(val_rs.items);
         result_set_add(rs, atom_unit(a));
         return;
@@ -715,7 +738,11 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         Atom *space_ref = expr_arg(atom, 0);
         Atom *atom_to_add = expr_arg(atom, 1);
         Space *target = resolve_space(g_registry, space_ref);
-        if (target) space_add(target, atom_to_add);
+        if (target) {
+            /* Deep-copy to persistent arena so atom survives eval_arena reset */
+            Arena *dst = g_persistent_arena ? g_persistent_arena : a;
+            space_add(target, atom_deep_copy(dst, atom_to_add));
+        }
         result_set_add(rs, atom_unit(a));
         return;
     }
@@ -821,15 +848,16 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
     /* ── new-state / get-state / change-state! ───────────────────────────── */
     if (expr_head_is(atom, "new-state") && nargs == 1) {
         Atom *initial = expr_arg(atom, 0);
-        StateCell *cell = malloc(sizeof(StateCell));
-        if (!cell) { result_set_add(rs, atom_error(a, atom, atom_symbol(a, "OutOfMemory"))); return; }
-        cell->value = initial;
+        /* Allocate state in persistent arena (survives eval_arena reset) */
+        Arena *pa = g_persistent_arena ? g_persistent_arena : a;
+        StateCell *cell = arena_alloc(pa, sizeof(StateCell));
+        cell->value = atom_deep_copy(pa, initial);
         /* Infer content type from initial value */
         Atom **itypes;
         uint32_t nit = get_atom_types(s, a, initial, &itypes);
-        cell->content_type = (nit > 0) ? itypes[0] : atom_undefined_type(a);
+        cell->content_type = (nit > 0) ? atom_deep_copy(pa, itypes[0]) : atom_undefined_type(pa);
         free(itypes);
-        result_set_add(rs, atom_state(a, cell));
+        result_set_add(rs, atom_state(pa, cell));
         return;
     }
     if (expr_head_is(atom, "get-state") && nargs == 1) {
@@ -885,7 +913,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             }
             free(new_types);
             if (type_ok) {
-                cell->value = new_v;
+                cell->value = g_persistent_arena ? atom_deep_copy(g_persistent_arena, new_v) : new_v;
                 result_set_add(rs, state_ref);
             } else {
                 /* Type mismatch error */
@@ -949,7 +977,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             if (evr.len > 0) {
                 n = get_atom_types(s, a, evr.items[0], &types);
             } else {
-                types = malloc(sizeof(Atom *));
+                types = cetta_malloc(sizeof(Atom *));
                 types[0] = atom_undefined_type(a);
                 n = 1;
             }
@@ -1688,6 +1716,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
         const char *hd = atom->expr.elems[0]->name;
         is_special = (strcmp(hd, "superpose") == 0 || strcmp(hd, "collapse") == 0 ||
                       strcmp(hd, "cons-atom") == 0 || strcmp(hd, "decons-atom") == 0 ||
+                      strcmp(hd, "car-atom") == 0 || strcmp(hd, "cdr-atom") == 0 ||
                       strcmp(hd, "match") == 0 || strcmp(hd, "unify") == 0 ||
                       strcmp(hd, "case") == 0 || strcmp(hd, "switch") == 0 ||
                       strcmp(hd, "switch-minimal") == 0 ||
@@ -1726,7 +1755,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
         if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
             atom_is_symbol(pattern->expr.elems[0], ",")) {
             uint32_t n_conjuncts = pattern->expr.len - 1;
-            Bindings *cur = malloc(sizeof(Bindings));
+            Bindings *cur = cetta_malloc(sizeof(Bindings));
             uint32_t ncur = 1;
             bindings_init(&cur[0]);
             for (uint32_t ci = 0; ci < n_conjuncts; ci++) {
@@ -1741,7 +1770,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                         if (match_atoms(cpat_bound, renamed, &mb)) {
                             if (nnext_b >= cnext_b) {
                                 cnext_b = cnext_b ? cnext_b * 2 : 8;
-                                next_b = realloc(next_b, sizeof(Bindings) * cnext_b);
+                                next_b = cetta_realloc(next_b, sizeof(Bindings) * cnext_b);
                             }
                             next_b[nnext_b++] = mb;
                         }
@@ -1774,7 +1803,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 Atom *renamed = rename_vars(a, ms->atoms[i], fresh_var_suffix());
                 Bindings b;
                 bindings_init(&b);
-                if (match_atoms(pattern, renamed, &b)) {
+                if (match_atoms(pattern, renamed, &b) && !bindings_has_loop(&b)) {
                     Atom *result = bindings_apply(&b, a, template);
                     ResultBindSet inner;
                     rb_set_init(&inner);
@@ -1870,7 +1899,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 }
                 free(new_types);
                 if (type_ok) {
-                    cell->value = new_v;
+                    cell->value = g_persistent_arena ? atom_deep_copy(g_persistent_arena, new_v) : new_v;
                     rb_set_add(rbs, state_ref, &merged);
                 } else {
                     Atom **et;
@@ -1980,7 +2009,8 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     metta_eval(s, a, NULL,expr, DEFAULT_FUEL, rs);
 }
 
-void eval_top_with_registry(Space *s, Arena *a, Registry *r, Atom *expr, ResultSet *rs) {
+void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs) {
     g_registry = r;
+    g_persistent_arena = persistent;
     metta_eval(s, a, NULL, expr, DEFAULT_FUEL, rs);
 }

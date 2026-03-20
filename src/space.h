@@ -10,6 +10,7 @@ typedef struct Space {
 } Space;
 
 void space_init(Space *s);
+void space_free(Space *s);
 void space_add(Space *s, Atom *atom);
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */

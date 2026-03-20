@@ -75,8 +75,10 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    Arena arena;
+    Arena arena;       /* persistent: parsed atoms, space content, type decls */
+    Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
     arena_init(&arena);
+    arena_init(&eval_arena);
 
     Atom **atoms = NULL;
     int n = parse_metta_file(filename, &arena, &atoms);
@@ -131,10 +133,14 @@ int main(int argc, char **argv) {
             Atom *expr = atoms[i + 1];
             ResultSet rs;
             result_set_init(&rs);
-            eval_top_with_registry(&space, &arena, &registry, expr, &rs);
+            eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
             print_results(&rs);
             bool stop_after_error = result_set_has_error(&rs);
             free(rs.items);
+            /* Reset ephemeral arena — frees all intermediate eval atoms.
+               This makes CeTTa safe for unlimited chaining iterations. */
+            arena_free(&eval_arena);
+            arena_init(&eval_arena);
             if (stop_after_error) break;
             i += 2;
             continue;
@@ -146,7 +152,22 @@ int main(int argc, char **argv) {
     }
 
     free(atoms);
-    free(space.atoms);
+
+    /* Free registry-owned space contents. Space structs themselves may live
+       in the persistent arena, so cleanup must not free the struct pointer. */
+    for (uint32_t ri = 0; ri < registry.len; ri++) {
+        Atom *val = registry.entries[ri].value;
+        if (!val) continue;
+        if (val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE) {
+            Space *sp = (Space *)val->ground.ptr;
+            if (sp != &space) {
+                space_free(sp);
+            }
+        }
+    }
+
+    space_free(&space);
+    arena_free(&eval_arena);
     arena_free(&arena);
     return 0;
 }

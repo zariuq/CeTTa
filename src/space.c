@@ -9,10 +9,17 @@ void space_init(Space *s) {
     s->cap = 0;
 }
 
+void space_free(Space *s) {
+    free(s->atoms);
+    s->atoms = NULL;
+    s->len = 0;
+    s->cap = 0;
+}
+
 void space_add(Space *s, Atom *atom) {
     if (s->len >= s->cap) {
         s->cap = s->cap ? s->cap * 2 : 64;
-        s->atoms = realloc(s->atoms, sizeof(Atom *) * s->cap);
+        s->atoms = cetta_realloc(s->atoms, sizeof(Atom *) * s->cap);
     }
     s->atoms[s->len++] = atom;
 }
@@ -28,7 +35,7 @@ void query_results_init(QueryResults *qr) {
 void query_results_push(QueryResults *qr, Atom *result, Bindings *b) {
     if (qr->len >= qr->cap) {
         qr->cap = qr->cap ? qr->cap * 2 : 8;
-        qr->items = realloc(qr->items, sizeof(QueryResult) * qr->cap);
+        qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * qr->cap);
     }
     qr->items[qr->len].result = result;
     qr->items[qr->len].bindings = *b;
@@ -152,7 +159,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
         /* Found (: atom type) — freshen type variables */
         if (count >= cap) {
             cap = cap ? cap * 2 : 4;
-            types = realloc(types, sizeof(Atom *) * cap);
+            types = cetta_realloc(types, sizeof(Atom *) * cap);
         }
         types[count++] = rename_vars(a, sa->expr.elems[2], fresh_var_suffix());
     }
@@ -172,7 +179,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
     case ATOM_GROUNDED: {
         Atom *ty = get_grounded_type(a, atom);
         if (!atom_is_symbol(ty, "%Undefined%")) {
-            types = malloc(sizeof(Atom *));
+            types = cetta_malloc(sizeof(Atom *));
             types[0] = ty;
             count = 1;
         }
@@ -198,7 +205,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                 for (uint32_t ri = 0; ri < nop; ri++) {
                     if (recur_types[ri]->kind == ATOM_EXPR && recur_types[ri]->expr.len >= 3 &&
                         atom_is_symbol(recur_types[ri]->expr.elems[0], "->")) {
-                        op_types = realloc(op_types, sizeof(Atom *) * (nfunc + 1));
+                        op_types = cetta_realloc(op_types, sizeof(Atom *) * (nfunc + 1));
                         op_types[nfunc++] = recur_types[ri];
                     }
                 }
@@ -244,9 +251,9 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom *concrete_ret = normalize_type_expr(a,
                             bindings_apply(&tb, a, fresh_ret));
                         if (count >= 1) {
-                            types = realloc(types, sizeof(Atom *) * (count + 1));
+                            types = cetta_realloc(types, sizeof(Atom *) * (count + 1));
                         } else {
-                            types = malloc(sizeof(Atom *));
+                            types = cetta_malloc(sizeof(Atom *));
                         }
                         types[count++] = concrete_ret;
                     }
@@ -265,7 +272,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 
     /* If no types found, return [%Undefined%] */
     if (count == 0) {
-        types = malloc(sizeof(Atom *));
+        types = cetta_malloc(sizeof(Atom *));
         types[0] = atom_undefined_type(a);
         count = 1;
     }
@@ -290,7 +297,7 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
 
         Bindings b;
         bindings_init(&b);
-        if (match_atoms(rlhs, query, &b)) {
+        if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
             Atom *result = bindings_apply(&b, a, rrhs);
             query_results_push(out, result, &b);
         }
