@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "atom.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +37,62 @@ void arena_free(Arena *a) {
     a->head = NULL;
 }
 
+/* ── Symbol Interning ───────────────────────────────────────────────────── */
+
+InternTable *g_intern = NULL;
+
+void intern_init(InternTable *t) {
+    t->size = INTERN_TABLE_SIZE;
+    t->used = 0;
+    t->names = cetta_malloc(sizeof(const char *) * t->size);
+    memset(t->names, 0, sizeof(const char *) * t->size);
+}
+
+void intern_free(InternTable *t) {
+    /* Names are arena-allocated or static — don't free them */
+    free(t->names);
+    t->names = NULL;
+    t->size = t->used = 0;
+}
+
+const char *intern(InternTable *t, const char *name) {
+    if (!t || !name) return name;
+    /* Hash lookup */
+    uint32_t h = 5381;
+    for (const char *p = name; *p; p++)
+        h = ((h << 5) + h) ^ (uint32_t)*p;
+    h %= t->size;
+    /* Linear probe */
+    for (uint32_t i = 0; i < t->size; i++) {
+        uint32_t idx = (h + i) % t->size;
+        if (!t->names[idx]) {
+            /* Empty slot — insert (strdup to persistent storage) */
+            t->names[idx] = strdup(name);
+            t->used++;
+            /* Grow if > 70% full */
+            if (t->used * 10 > t->size * 7) {
+                uint32_t old_size = t->size;
+                const char **old_names = t->names;
+                t->size *= 2;
+                t->names = cetta_malloc(sizeof(const char *) * t->size);
+                memset(t->names, 0, sizeof(const char *) * t->size);
+                t->used = 0;
+                for (uint32_t j = 0; j < old_size; j++)
+                    if (old_names[j]) intern(t, old_names[j]);
+                free(old_names);
+                /* Re-lookup after resize */
+                return intern(t, name);
+            }
+            return t->names[idx];
+        }
+        if (strcmp(t->names[idx], name) == 0)
+            return t->names[idx]; /* Already interned */
+    }
+    return name; /* Table full (shouldn't happen with growth) */
+}
+
+/* ── Arena ──────────────────────────────────────────────────────────────── */
+
 void *arena_alloc(Arena *a, size_t size) {
     /* Align to 8 bytes */
     size = (size + 7) & ~(size_t)7;
@@ -65,13 +122,14 @@ char *arena_strdup(Arena *a, const char *s) {
 Atom *atom_symbol(Arena *a, const char *name) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_SYMBOL;
-    at->name = arena_strdup(a, name);
+    at->name = g_intern ? intern(g_intern, name) : arena_strdup(a, name);
     return at;
 }
 
 Atom *atom_var(Arena *a, const char *name) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_VAR;
+    /* Don't intern variables — they have unique freshened names */
     at->name = arena_strdup(a, name);
     return at;
 }
@@ -176,7 +234,10 @@ Atom *atom_error(Arena *a, Atom *source, Atom *message) {
 /* ── Predicates ─────────────────────────────────────────────────────────── */
 
 bool atom_is_symbol(Atom *a, const char *name) {
-    return a->kind == ATOM_SYMBOL && strcmp(a->name, name) == 0;
+    if (a->kind != ATOM_SYMBOL) return false;
+    /* With interning, pointer comparison suffices for interned names */
+    if (g_intern && a->name == intern(g_intern, name)) return true;
+    return strcmp(a->name, name) == 0;
 }
 
 bool atom_is_empty(Atom *a) {

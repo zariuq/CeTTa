@@ -63,6 +63,47 @@ static void eq_index_add(EqIndex *idx, Atom *lhs, Atom *rhs) {
     }
 }
 
+/* ── Type Annotation Index ──────────────────────────────────────────────── */
+
+static void ty_ann_bucket_init(TypeAnnBucket *b) {
+    b->annotated_atoms = NULL; b->types = NULL; b->len = 0; b->cap = 0;
+}
+static void ty_ann_bucket_add(TypeAnnBucket *b, Atom *ann_atom, Atom *type) {
+    if (b->len >= b->cap) {
+        b->cap = b->cap ? b->cap * 2 : 4;
+        b->annotated_atoms = cetta_realloc(b->annotated_atoms, sizeof(Atom *) * b->cap);
+        b->types = cetta_realloc(b->types, sizeof(Atom *) * b->cap);
+    }
+    b->annotated_atoms[b->len] = ann_atom;
+    b->types[b->len] = type;
+    b->len++;
+}
+static void ty_ann_bucket_free(TypeAnnBucket *b) {
+    free(b->annotated_atoms); free(b->types);
+    b->annotated_atoms = NULL; b->types = NULL; b->len = 0; b->cap = 0;
+}
+
+static uint32_t atom_hash_for_index(Atom *a) {
+    /* Hash by name for symbols, or by first element for expressions */
+    if (a->kind == ATOM_SYMBOL) return symbol_hash(a->name);
+    if (a->kind == ATOM_EXPR && a->expr.len > 0 && a->expr.elems[0]->kind == ATOM_SYMBOL)
+        return symbol_hash(a->expr.elems[0]->name);
+    return 0;
+}
+
+static void ty_ann_index_init(TypeAnnIndex *idx) {
+    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+        ty_ann_bucket_init(&idx->buckets[i]);
+}
+static void ty_ann_index_free(TypeAnnIndex *idx) {
+    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+        ty_ann_bucket_free(&idx->buckets[i]);
+}
+static void ty_ann_index_add(TypeAnnIndex *idx, Atom *ann_atom, Atom *type) {
+    uint32_t h = atom_hash_for_index(ann_atom);
+    ty_ann_bucket_add(&idx->buckets[h], ann_atom, type);
+}
+
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
 void space_init(Space *s) {
@@ -70,6 +111,7 @@ void space_init(Space *s) {
     s->len = 0;
     s->cap = 0;
     eq_index_init(&s->eq_idx);
+    ty_ann_index_init(&s->ty_idx);
 }
 
 void space_free(Space *s) {
@@ -78,6 +120,7 @@ void space_free(Space *s) {
     s->len = 0;
     s->cap = 0;
     eq_index_free(&s->eq_idx);
+    ty_ann_index_free(&s->ty_idx);
 }
 
 static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
@@ -98,6 +141,10 @@ void space_add(Space *s, Atom *atom) {
     Atom *lhs, *rhs;
     if (is_equation_atom(atom, &lhs, &rhs))
         eq_index_add(&s->eq_idx, lhs, rhs);
+    /* Index type annotations (: atom type) */
+    if (atom->kind == ATOM_EXPR && atom->expr.len == 3 &&
+        atom_is_symbol(atom->expr.elems[0], ":"))
+        ty_ann_index_add(&s->ty_idx, atom->expr.elems[1], atom->expr.elems[2]);
 }
 
 /* ── Query Results ──────────────────────────────────────────────────────── */
@@ -218,19 +265,18 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
 /* Scan space for (: atom type) annotations */
 static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types) {
+    /* Use type annotation index for O(bucket_size) instead of O(N) */
+    uint32_t h = atom_hash_for_index(atom);
+    TypeAnnBucket *bucket = &s->ty_idx.buckets[h];
     Atom **types = NULL;
     uint32_t count = 0, cap = 0;
-    for (uint32_t i = 0; i < s->len; i++) {
-        Atom *sa = s->atoms[i];
-        if (sa->kind != ATOM_EXPR || sa->expr.len != 3) continue;
-        if (!atom_is_symbol(sa->expr.elems[0], ":")) continue;
-        if (!atom_eq(sa->expr.elems[1], atom)) continue;
-        /* Found (: atom type) — freshen type variables */
+    for (uint32_t i = 0; i < bucket->len; i++) {
+        if (!atom_eq(bucket->annotated_atoms[i], atom)) continue;
         if (count >= cap) {
             cap = cap ? cap * 2 : 4;
             types = cetta_realloc(types, sizeof(Atom *) * cap);
         }
-        types[count++] = rename_vars(a, sa->expr.elems[2], fresh_var_suffix());
+        types[count++] = rename_vars(a, bucket->types[i], fresh_var_suffix());
     }
     *out_types = types;
     return count;

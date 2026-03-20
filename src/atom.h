@@ -63,6 +63,23 @@ void  arena_free(Arena *a);
 void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
 
+/* ── Symbol Interning (all equal symbols share one pointer) ────────────── */
+
+#define INTERN_TABLE_SIZE 4096
+
+typedef struct {
+    const char **names;
+    uint32_t size, used;
+} InternTable;
+
+void    intern_init(InternTable *t);
+void    intern_free(InternTable *t);
+/* Returns interned pointer — same string always returns same pointer */
+const char *intern(InternTable *t, const char *name);
+
+/* Global intern table (set up in main) */
+extern InternTable *g_intern;
+
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
 Atom *atom_symbol(Arena *a, const char *name);
