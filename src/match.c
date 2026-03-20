@@ -205,20 +205,27 @@ bool match_types(Atom *type1, Atom *type2, Bindings *b) {
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
+static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth);
+
 bool match_atoms(Atom *left, Atom *right, Bindings *b) {
+    return match_atoms_depth(left, right, b, 64);
+}
+
+static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {
+    if (depth <= 0) return false; /* prevent infinite recursion */
     if (left->kind == ATOM_VAR) {
         Atom *existing = bindings_lookup(b, left->name);
-        if (existing) return match_atoms(existing, right, b);
+        if (existing) return match_atoms_depth(existing, right, b, depth - 1);
         if (right->kind == ATOM_VAR) {
             Atom *right_existing = bindings_lookup(b, right->name);
-            if (right_existing) return match_atoms(left, right_existing, b);
+            if (right_existing) return match_atoms_depth(left, right_existing, b, depth - 1);
             if (strcmp(left->name, right->name) == 0) return true;
         }
         return bindings_add(b, left->name, right);
     }
     if (right->kind == ATOM_VAR) {
         Atom *existing = bindings_lookup(b, right->name);
-        if (existing) return match_atoms(left, existing, b);
+        if (existing) return match_atoms_depth(left, existing, b, depth - 1);
         return bindings_add(b, right->name, left);
     }
     /* Symbol/Symbol → must be equal */
@@ -233,7 +240,7 @@ bool match_atoms(Atom *left, Atom *right, Bindings *b) {
     if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
         if (left->expr.len != right->expr.len) return false;
         for (uint32_t i = 0; i < left->expr.len; i++) {
-            if (!match_atoms(left->expr.elems[i], right->expr.elems[i], b))
+            if (!match_atoms_depth(left->expr.elems[i], right->expr.elems[i], b, depth - 1))
                 return false;
         }
         return true;

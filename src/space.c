@@ -3,10 +3,73 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ── Equation Index ─────────────────────────────────────────────────────── */
+
+static void eq_bucket_init(EqBucket *b) {
+    b->lhs = NULL; b->rhs = NULL; b->len = 0; b->cap = 0;
+}
+
+static void eq_bucket_add(EqBucket *b, Atom *lhs, Atom *rhs) {
+    if (b->len >= b->cap) {
+        b->cap = b->cap ? b->cap * 2 : 8;
+        b->lhs = cetta_realloc(b->lhs, sizeof(Atom *) * b->cap);
+        b->rhs = cetta_realloc(b->rhs, sizeof(Atom *) * b->cap);
+    }
+    b->lhs[b->len] = lhs;
+    b->rhs[b->len] = rhs;
+    b->len++;
+}
+
+static void eq_bucket_free(EqBucket *b) {
+    free(b->lhs); free(b->rhs);
+    b->lhs = NULL; b->rhs = NULL; b->len = 0; b->cap = 0;
+}
+
+static uint32_t symbol_hash(const char *name) {
+    uint32_t h = 5381;
+    for (const char *p = name; *p; p++)
+        h = ((h << 5) + h) ^ (uint32_t)*p;
+    return h % EQ_INDEX_BUCKETS;
+}
+
+/* Get the head symbol of an equation LHS for indexing.
+   Returns NULL if the head is not a symbol (variable, complex expr). */
+static const char *eq_head_symbol(Atom *lhs) {
+    if (lhs->kind == ATOM_SYMBOL) return lhs->name;
+    if (lhs->kind == ATOM_EXPR && lhs->expr.len > 0 &&
+        lhs->expr.elems[0]->kind == ATOM_SYMBOL)
+        return lhs->expr.elems[0]->name;
+    return NULL;
+}
+
+static void eq_index_init(EqIndex *idx) {
+    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+        eq_bucket_init(&idx->buckets[i]);
+    eq_bucket_init(&idx->wildcard);
+}
+
+static void eq_index_free(EqIndex *idx) {
+    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+        eq_bucket_free(&idx->buckets[i]);
+    eq_bucket_free(&idx->wildcard);
+}
+
+static void eq_index_add(EqIndex *idx, Atom *lhs, Atom *rhs) {
+    const char *head = eq_head_symbol(lhs);
+    if (head) {
+        eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, rhs);
+    } else {
+        eq_bucket_add(&idx->wildcard, lhs, rhs);
+    }
+}
+
+/* ── Space ──────────────────────────────────────────────────────────────── */
+
 void space_init(Space *s) {
     s->atoms = NULL;
     s->len = 0;
     s->cap = 0;
+    eq_index_init(&s->eq_idx);
 }
 
 void space_free(Space *s) {
@@ -14,6 +77,15 @@ void space_free(Space *s) {
     s->atoms = NULL;
     s->len = 0;
     s->cap = 0;
+    eq_index_free(&s->eq_idx);
+}
+
+static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
+    if (a->kind != ATOM_EXPR || a->expr.len != 3) return false;
+    if (!atom_is_symbol(a->expr.elems[0], "=")) return false;
+    *lhs_out = a->expr.elems[1];
+    *rhs_out = a->expr.elems[2];
+    return true;
 }
 
 void space_add(Space *s, Atom *atom) {
@@ -22,6 +94,10 @@ void space_add(Space *s, Atom *atom) {
         s->atoms = cetta_realloc(s->atoms, sizeof(Atom *) * s->cap);
     }
     s->atoms[s->len++] = atom;
+    /* Index equations by head symbol */
+    Atom *lhs, *rhs;
+    if (is_equation_atom(atom, &lhs, &rhs))
+        eq_index_add(&s->eq_idx, lhs, rhs);
 }
 
 /* ── Query Results ──────────────────────────────────────────────────────── */
@@ -44,14 +120,7 @@ void query_results_push(QueryResults *qr, Atom *result, Bindings *b) {
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
-static bool is_equation(Atom *a, Atom **lhs_out, Atom **rhs_out) {
-    if (a->kind != ATOM_EXPR) return false;
-    if (a->expr.len != 3) return false;
-    if (!atom_is_symbol(a->expr.elems[0], "=")) return false;
-    *lhs_out = a->expr.elems[1];
-    *rhs_out = a->expr.elems[2];
-    return true;
-}
+/* is_equation_atom defined above in Space section */
 
 /* ── Space Registry ─────────────────────────────────────────────────────── */
 
@@ -282,19 +351,12 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
-void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
-    for (uint32_t i = 0; i < s->len; i++) {
-        Atom *lhs, *rhs;
-        if (!is_equation(s->atoms[i], &lhs, &rhs)) continue;
-
-        /* Standardization apart: rename equation variables to fresh names
-           so they don't collide with query variables (à la Vampire/Prolog).
-           HE spec metta.md lines 199-207: variables in different scopes
-           are different even if they have the same name. */
+/* Try matching equations from a bucket against a query */
+static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *out) {
+    for (uint32_t i = 0; i < bucket->len; i++) {
         uint32_t suffix = fresh_var_suffix();
-        Atom *rlhs = rename_vars(a, lhs, suffix);
-        Atom *rrhs = rename_vars(a, rhs, suffix);
-
+        Atom *rlhs = rename_vars(a, bucket->lhs[i], suffix);
+        Atom *rrhs = rename_vars(a, bucket->rhs[i], suffix);
         Bindings b;
         bindings_init(&b);
         if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
@@ -302,4 +364,20 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
             query_results_push(out, result, &b);
         }
     }
+}
+
+void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
+    /* Use head-symbol index for O(1) lookup instead of O(N) scan.
+       This is the key optimization from Vampire's LiteralIndex. */
+    const char *head = eq_head_symbol(query);
+    if (head) {
+        /* Query has a known head symbol — look up matching bucket */
+        query_bucket(&s->eq_idx.buckets[symbol_hash(head)], query, a, out);
+    } else {
+        /* Variable or complex head — must scan all buckets */
+        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+            query_bucket(&s->eq_idx.buckets[i], query, a, out);
+    }
+    /* Always check wildcard equations (variable-headed LHS) */
+    query_bucket(&s->eq_idx.wildcard, query, a, out);
 }
