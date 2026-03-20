@@ -45,6 +45,12 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
    On failure, returns false. */
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
 
+/* ── Loop-binding rejection (occurs check, HE spec metta.md line 435) ── */
+
+/* Check if bindings contain a variable loop (variable appears in its
+   own binding value). Such bindings are unsound and must be rejected. */
+bool bindings_has_loop(Bindings *b);
+
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
 
 /* Match two types. %Undefined% and Atom are wildcards (always match).

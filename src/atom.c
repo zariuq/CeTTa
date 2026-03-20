@@ -1,8 +1,26 @@
 #include "atom.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
+
+static void cetta_oom(size_t size) {
+    fprintf(stderr, "fatal: out of memory allocating %zu bytes\n", size);
+    abort();
+}
+
+void *cetta_malloc(size_t size) {
+    void *ptr = malloc(size == 0 ? 1 : size);
+    if (!ptr) cetta_oom(size);
+    return ptr;
+}
+
+void *cetta_realloc(void *ptr, size_t size) {
+    void *out = realloc(ptr, size == 0 ? 1 : size);
+    if (!out) cetta_oom(size);
+    return out;
+}
 
 void arena_init(Arena *a) {
     a->head = NULL;
@@ -25,7 +43,7 @@ void *arena_alloc(Arena *a, size_t size) {
         size_t block_size = sizeof(ArenaBlock);
         if (size > ARENA_BLOCK_SIZE)
             block_size = sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + size;
-        ArenaBlock *b = malloc(block_size);
+        ArenaBlock *b = cetta_malloc(block_size);
         b->used = 0;
         b->next = a->head;
         a->head = b;
@@ -208,6 +226,34 @@ bool atom_eq(Atom *a, Atom *b) {
         return true;
     }
     return false;
+}
+
+/* ── Printing ───────────────────────────────────────────────────────────── */
+
+/* ── Deep copy ──────────────────────────────────────────────────────────── */
+
+Atom *atom_deep_copy(Arena *dst, Atom *src) {
+    switch (src->kind) {
+    case ATOM_SYMBOL:   return atom_symbol(dst, src->name);
+    case ATOM_VAR:      return atom_var(dst, src->name);
+    case ATOM_GROUNDED:
+        switch (src->ground.gkind) {
+        case GV_INT:    return atom_int(dst, src->ground.ival);
+        case GV_FLOAT:  return atom_float(dst, src->ground.fval);
+        case GV_BOOL:   return atom_bool(dst, src->ground.bval);
+        case GV_STRING: return atom_string(dst, src->ground.sval);
+        case GV_SPACE:  return atom_space(dst, src->ground.ptr);
+        case GV_STATE:  return atom_state(dst, (StateCell *)src->ground.ptr);
+        }
+        return atom_symbol(dst, "?");
+    case ATOM_EXPR: {
+        Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
+        for (uint32_t i = 0; i < src->expr.len; i++)
+            elems[i] = atom_deep_copy(dst, src->expr.elems[i]);
+        return atom_expr(dst, elems, src->expr.len);
+    }
+    }
+    return atom_symbol(dst, "?");
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */

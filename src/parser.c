@@ -58,8 +58,7 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
             if (!child) break;
             if (n >= ccap) {
                 ccap = ccap ? ccap * 2 : 16;
-                children = realloc(children, sizeof(Atom *) * ccap);
-                if (!children) return NULL;
+                children = cetta_realloc(children, sizeof(Atom *) * ccap);
             }
             children[n++] = child;
         }
@@ -121,8 +120,7 @@ int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char *text = malloc((size_t)fsize + 1);
-    if (!text) { fclose(f); return -1; }
+    char *text = cetta_malloc((size_t)fsize + 1);
     size_t nread = fread(text, 1, (size_t)fsize, f);
     text[nread] = '\0';
     fclose(f);
@@ -137,9 +135,7 @@ int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
         if (!at) break;
         if (count >= cap) {
             cap = cap ? cap * 2 : 64;
-            Atom **tmp = realloc(atoms, sizeof(Atom *) * (size_t)cap);
-            if (!tmp) { free(atoms); free(text); *out_atoms = NULL; return -1; }
-            atoms = tmp;
+            atoms = cetta_realloc(atoms, sizeof(Atom *) * (size_t)cap);
         }
         atoms[count++] = at;
     }

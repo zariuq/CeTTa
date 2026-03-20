@@ -56,6 +56,8 @@ typedef struct {
     ArenaBlock *head;
 } Arena;
 
+void *cetta_malloc(size_t size);
+void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
 void  arena_free(Arena *a);
 void *arena_alloc(Arena *a, size_t size);
@@ -120,5 +122,8 @@ bool atom_eq(Atom *a, Atom *b);
 void atom_print(Atom *a, FILE *out);
 /* Print into arena-allocated string */
 char *atom_to_string(Arena *a, Atom *atom);
+
+/* Deep-copy an atom tree into a different arena */
+Atom *atom_deep_copy(Arena *dst, Atom *src);
 
 #endif /* CETTA_ATOM_H */
