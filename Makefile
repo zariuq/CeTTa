@@ -3,7 +3,7 @@ CC = gcc
 CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc
 LDFLAGS = -lm
 
-SRC = src/atom.c src/parser.c src/space.c src/match.c src/eval.c src/grounded.c src/lang.c src/main.c
+SRC = src/atom.c src/parser.c src/space.c src/match.c src/eval.c src/grounded.c src/lang.c src/compile.c src/runtime.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 

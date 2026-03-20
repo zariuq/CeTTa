@@ -37,6 +37,99 @@ void arena_free(Arena *a) {
     a->head = NULL;
 }
 
+/* ── Hash-Consing ──────────────────────────────────────────────────────── */
+
+HashConsTable *g_hashcons = NULL;
+
+uint32_t atom_hash(Atom *a) {
+    if (!a) return 0;
+    uint32_t h = 5381;
+    h = ((h << 5) + h) ^ (uint32_t)a->kind;
+    switch (a->kind) {
+    case ATOM_SYMBOL:
+    case ATOM_VAR:
+        for (const char *p = a->name; *p; p++)
+            h = ((h << 5) + h) ^ (uint32_t)*p;
+        break;
+    case ATOM_GROUNDED:
+        h = ((h << 5) + h) ^ (uint32_t)a->ground.gkind;
+        switch (a->ground.gkind) {
+        case GV_INT: h = ((h << 5) + h) ^ (uint32_t)(a->ground.ival & 0xFFFFFFFF); break;
+        case GV_FLOAT: { union { double d; uint64_t u; } conv; conv.d = a->ground.fval;
+                         h = ((h << 5) + h) ^ (uint32_t)(conv.u & 0xFFFFFFFF); break; }
+        case GV_BOOL: h = ((h << 5) + h) ^ (uint32_t)a->ground.bval; break;
+        case GV_STRING: {
+            for (const char *p = a->ground.sval; *p; p++)
+                h = ((h << 5) + h) ^ (uint32_t)*p;
+            break;
+        }
+        case GV_SPACE: case GV_STATE: break; /* mutable — don't hash-cons */
+        }
+        break;
+    case ATOM_EXPR:
+        h = ((h << 5) + h) ^ a->expr.len;
+        for (uint32_t i = 0; i < a->expr.len; i++)
+            h = ((h << 5) + h) ^ atom_hash(a->expr.elems[i]);
+        break;
+    }
+    return h;
+}
+
+bool atom_eq_fast(Atom *a, Atom *b) {
+    if (a == b) return true;
+    /* If both are hash-consed, pointer equality is authoritative for immutable atoms */
+    return atom_eq(a, b);
+}
+
+void hashcons_init(HashConsTable *hc) {
+    hc->size = HASHCONS_TABLE_SIZE;
+    hc->used = 0;
+    hc->table = cetta_malloc(sizeof(Atom *) * hc->size);
+    memset(hc->table, 0, sizeof(Atom *) * hc->size);
+}
+
+void hashcons_free(HashConsTable *hc) {
+    free(hc->table);
+    hc->table = NULL;
+    hc->size = hc->used = 0;
+}
+
+Atom *hashcons_get(HashConsTable *hc, Arena *a, Atom *atom) {
+    if (!hc || !atom) return atom;
+    /* Don't hash-cons mutable atoms (Space, State) or variables (freshened names) */
+    if (atom->kind == ATOM_VAR) return atom;
+    if (atom->kind == ATOM_GROUNDED &&
+        (atom->ground.gkind == GV_SPACE || atom->ground.gkind == GV_STATE))
+        return atom;
+
+    uint32_t h = atom_hash(atom) % hc->size;
+    /* Linear probe */
+    for (uint32_t i = 0; i < hc->size; i++) {
+        uint32_t idx = (h + i) % hc->size;
+        if (!hc->table[idx]) {
+            /* Empty slot — insert */
+            hc->table[idx] = atom;
+            hc->used++;
+            /* Grow at 70% */
+            if (hc->used * 10 > hc->size * 7) {
+                uint32_t old_size = hc->size;
+                Atom **old_table = hc->table;
+                hc->size *= 2;
+                hc->table = cetta_malloc(sizeof(Atom *) * hc->size);
+                memset(hc->table, 0, sizeof(Atom *) * hc->size);
+                hc->used = 0;
+                for (uint32_t j = 0; j < old_size; j++)
+                    if (old_table[j]) hashcons_get(hc, a, old_table[j]);
+                free(old_table);
+            }
+            return atom;
+        }
+        if (atom_eq(hc->table[idx], atom))
+            return hc->table[idx]; /* Already exists — return shared copy */
+    }
+    return atom; /* Table full (shouldn't happen with growth) */
+}
+
 /* ── Symbol Interning ───────────────────────────────────────────────────── */
 
 InternTable *g_intern = NULL;
@@ -187,7 +280,8 @@ Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
     at->kind = ATOM_EXPR;
     at->expr.len = len;
     at->expr.elems = arena_alloc(a, sizeof(Atom *) * len);
-    memcpy(at->expr.elems, elems, sizeof(Atom *) * len);
+    if (elems) memcpy(at->expr.elems, elems, sizeof(Atom *) * len);
+    /* Hash-consing available but NOT automatic — use atom_expr_shared() explicitly */
     return at;
 }
 
