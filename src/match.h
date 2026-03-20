@@ -20,7 +20,9 @@ typedef struct {
 void      bindings_init(Bindings *b);
 Atom     *bindings_lookup(Bindings *b, const char *var);
 bool      bindings_add(Bindings *b, const char *var, Atom *val);
+bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
+Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
 
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 
@@ -44,6 +46,10 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
    On success, fills bindings and returns true.
    On failure, returns false. */
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
+bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
+
+/* Compare bindings as a set of (var,value) pairs, ignoring entry order. */
+bool bindings_eq(Bindings *a, Bindings *b);
 
 /* ── Loop-binding rejection (occurs check, HE spec metta.md line 435) ── */
 

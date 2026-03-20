@@ -1,5 +1,6 @@
 #include "match.h"
 #include <string.h>
+#include <stdio.h>
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
@@ -13,6 +14,16 @@ Atom *bindings_lookup(Bindings *b, const char *var) {
             return b->entries[i].val;
     }
     return NULL;
+}
+
+static void epoch_var_buf(char *buf, size_t buf_size, const char *name, uint32_t epoch) {
+    snprintf(buf, buf_size, "%s#%u", name, epoch);
+}
+
+static Atom *epoch_var_atom(Arena *a, const char *name, uint32_t epoch) {
+    char buf[256];
+    epoch_var_buf(buf, sizeof(buf), name, epoch);
+    return atom_var(a, buf);
 }
 
 bool bindings_add(Bindings *b, const char *var, Atom *val) {
@@ -38,6 +49,16 @@ bool bindings_add(Bindings *b, const char *var, Atom *val) {
     b->entries[b->len].var = var;
     b->entries[b->len].val = val;
     b->len++;
+    return true;
+}
+
+bool bindings_try_merge(Bindings *dst, const Bindings *src) {
+    Bindings merged = *dst;
+    for (uint32_t i = 0; i < src->len; i++) {
+        if (!bindings_add(&merged, src->entries[i].var, src->entries[i].val))
+            return false;
+    }
+    *dst = merged;
     return true;
 }
 
@@ -76,6 +97,48 @@ static Atom *bindings_apply_seen(Bindings *b, Arena *a, Atom *atom,
 Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
     const char *seen[MAX_BINDINGS];
     return bindings_apply_seen(b, a, atom, seen, 0);
+}
+
+static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
+                                       bool original_side,
+                                       const char **seen, uint32_t seen_len) {
+    switch (atom->kind) {
+    case ATOM_VAR: {
+        const char *lookup_name = atom->name;
+        char tagged[256];
+        if (original_side) {
+            epoch_var_buf(tagged, sizeof(tagged), atom->name, epoch);
+            lookup_name = tagged;
+        }
+        if (bindings_seen_var(seen, seen_len, lookup_name)) {
+            return original_side ? epoch_var_atom(a, atom->name, epoch) : atom;
+        }
+        Atom *val = bindings_lookup(b, lookup_name);
+        if (!val) {
+            return original_side ? epoch_var_atom(a, atom->name, epoch) : atom;
+        }
+        seen[seen_len] = lookup_name;
+        return bindings_apply_seen_epoch(b, a, val, epoch, false, seen, seen_len + 1);
+    }
+    case ATOM_EXPR: {
+        Atom **new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+        bool changed = false;
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            new_elems[i] = bindings_apply_seen_epoch(
+                b, a, atom->expr.elems[i], epoch, original_side, seen, seen_len);
+            if (new_elems[i] != atom->expr.elems[i]) changed = true;
+        }
+        if (!changed) return atom;
+        return atom_expr(a, new_elems, atom->expr.len);
+    }
+    default:
+        return atom;
+    }
+}
+
+Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
+    const char *seen[MAX_BINDINGS];
+    return bindings_apply_seen_epoch(b, a, atom, epoch, true, seen, 0);
 }
 
 /* ── Variable renaming (standardization apart) ─────────────────────────── */
@@ -206,9 +269,15 @@ bool match_types(Atom *type1, Atom *type2, Bindings *b) {
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
 static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth);
+static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena *a,
+                                    uint32_t epoch, bool right_original, int depth);
 
 bool match_atoms(Atom *left, Atom *right, Bindings *b) {
     return match_atoms_depth(left, right, b, 64);
+}
+
+bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {
+    return match_atoms_epoch_depth(left, right, b, a, epoch, true, 64);
 }
 
 static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {
@@ -247,4 +316,70 @@ static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {
     }
     /* Different kinds (non-variable) → no match */
     return false;
+}
+
+static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena *a,
+                                    uint32_t epoch, bool right_original, int depth) {
+    if (depth <= 0) return false;
+    if (left->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup(b, left->name);
+        if (existing)
+            return match_atoms_epoch_depth(existing, right, b, a, epoch, right_original, depth - 1);
+        if (right->kind == ATOM_VAR) {
+            const char *right_name = right->name;
+            char tagged[256];
+            if (right_original) {
+                epoch_var_buf(tagged, sizeof(tagged), right->name, epoch);
+                right_name = tagged;
+            }
+            Atom *right_existing = bindings_lookup(b, right_name);
+            if (right_existing)
+                return match_atoms_epoch_depth(left, right_existing, b, a, epoch, false, depth - 1);
+            if (strcmp(left->name, right_name) == 0) return true;
+            return bindings_add(b, left->name,
+                                right_original ? epoch_var_atom(a, right->name, epoch) : right);
+        }
+        return bindings_add(b, left->name,
+                            right_original ? rename_vars(a, right, epoch) : right);
+    }
+    if (right->kind == ATOM_VAR) {
+        const char *right_name = right->name;
+        char tagged[256];
+        if (right_original) {
+            epoch_var_buf(tagged, sizeof(tagged), right->name, epoch);
+            right_name = tagged;
+        }
+        Atom *existing = bindings_lookup(b, right_name);
+        if (existing)
+            return match_atoms_epoch_depth(left, existing, b, a, epoch, false, depth - 1);
+        return bindings_add(b,
+                            right_original ? arena_strdup(a, right_name) : right_name,
+                            left);
+    }
+    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
+        return strcmp(left->name, right->name) == 0;
+    }
+    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
+        return atom_eq(left, right);
+    }
+    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
+        if (left->expr.len != right->expr.len) return false;
+        for (uint32_t i = 0; i < left->expr.len; i++) {
+            if (!match_atoms_epoch_depth(left->expr.elems[i], right->expr.elems[i], b, a,
+                                         epoch, right_original, depth - 1))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool bindings_eq(Bindings *a, Bindings *b) {
+    if (a->len != b->len) return false;
+    for (uint32_t i = 0; i < a->len; i++) {
+        Atom *other = bindings_lookup(b, a->entries[i].var);
+        if (!other || !atom_eq(other, a->entries[i].val))
+            return false;
+    }
+    return true;
 }

@@ -3,6 +3,34 @@
 
 #include "atom.h"
 #include "match.h"
+#include "subst_tree.h"
+
+/* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
+
+typedef struct DiscNode {
+    /* Symbol branches: name → child */
+    struct { const char *key; struct DiscNode *child; } *sym;
+    uint32_t nsym, csym;
+    /* Variable branch: wildcard matches anything */
+    struct DiscNode *var_child;
+    /* Expression branches: arity → child */
+    struct { uint32_t arity; struct DiscNode *child; } *expr;
+    uint32_t nexpr, cexpr;
+    /* Grounded int branches */
+    struct { int64_t val; struct DiscNode *child; } *ints;
+    uint32_t nints, cints;
+    /* Leaf data: indices of equations that match this path */
+    uint32_t *leaves;
+    uint32_t nleaves, cleaves;
+} DiscNode;
+
+DiscNode *disc_node_new(void);
+void disc_node_free(DiscNode *n);
+void disc_insert(DiscNode *root, Atom *lhs, uint32_t eq_idx);
+/* Collect all matching equation indices into result array */
+void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, uint32_t *cout);
+
+#include "space_match_backend.h"
 
 /* ── Equation Index (head-symbol → equations, à la Vampire LiteralIndex) ── */
 
@@ -12,6 +40,7 @@ typedef struct {
     Atom **lhs;   /* equation LHS atoms */
     Atom **rhs;   /* equation RHS atoms */
     uint32_t len, cap;
+    DiscNode *trie; /* discrimination trie over LHS patterns */
 } EqBucket;
 
 typedef struct {
@@ -33,11 +62,16 @@ typedef struct {
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
+#define MATCH_TRIE_THRESHOLD 16
+
 typedef struct Space {
     Atom **atoms;
     uint32_t len, cap;
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
+    /* Matching backend is explicit so future PathMap/MORK import can slot in
+       behind one seam instead of rewriting eval.c again. */
+    SpaceMatchBackend match_backend;
 } Space;
 
 void space_init(Space *s);
@@ -89,6 +123,20 @@ Space *resolve_space(Registry *r, Atom *ref);
 
 /* Remove an atom from a space (by structural equality). Returns true if found. */
 bool space_remove(Space *s, Atom *atom);
+
+/* ── Match Indexing ─────────────────────────────────────────────────────── */
+
+/* Return candidate atom indices for a match pattern via discrimination trie.
+   For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
+   Caller must free(*out). Returns count. */
+uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
+
+/* ── Substitution Tree Query ────────────────────────────────────────────── */
+
+/* Find all atoms in space unifying with query, producing bindings directly.
+   Replaces: space_match_candidates + rename_vars + match_atoms pipeline.
+   Caller must free(out->items). */
+void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 
 /* ── Type Lookup (from HE spec Space.lean) ─────────────────────────────── */
 

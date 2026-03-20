@@ -387,16 +387,28 @@ bool atom_eq(Atom *a, Atom *b) {
 
 /* ── Deep copy ──────────────────────────────────────────────────────────── */
 
-Atom *atom_deep_copy(Arena *dst, Atom *src) {
+static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share) {
     switch (src->kind) {
     case ATOM_SYMBOL:   return atom_symbol(dst, src->name);
     case ATOM_VAR:      return atom_var(dst, src->name);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
-        case GV_INT:    return atom_int(dst, src->ground.ival);
-        case GV_FLOAT:  return atom_float(dst, src->ground.fval);
-        case GV_BOOL:   return atom_bool(dst, src->ground.bval);
-        case GV_STRING: return atom_string(dst, src->ground.sval);
+        case GV_INT: {
+            Atom *at = atom_int(dst, src->ground.ival);
+            return share ? hashcons_get(g_hashcons, dst, at) : at;
+        }
+        case GV_FLOAT: {
+            Atom *at = atom_float(dst, src->ground.fval);
+            return share ? hashcons_get(g_hashcons, dst, at) : at;
+        }
+        case GV_BOOL: {
+            Atom *at = atom_bool(dst, src->ground.bval);
+            return share ? hashcons_get(g_hashcons, dst, at) : at;
+        }
+        case GV_STRING: {
+            Atom *at = atom_string(dst, src->ground.sval);
+            return share ? hashcons_get(g_hashcons, dst, at) : at;
+        }
         case GV_SPACE:  return atom_space(dst, src->ground.ptr);
         case GV_STATE:  return atom_state(dst, (StateCell *)src->ground.ptr);
         }
@@ -404,11 +416,20 @@ Atom *atom_deep_copy(Arena *dst, Atom *src) {
     case ATOM_EXPR: {
         Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
         for (uint32_t i = 0; i < src->expr.len; i++)
-            elems[i] = atom_deep_copy(dst, src->expr.elems[i]);
-        return atom_expr(dst, elems, src->expr.len);
+            elems[i] = atom_deep_copy_impl(dst, src->expr.elems[i], share);
+        Atom *at = atom_expr(dst, elems, src->expr.len);
+        return share ? hashcons_get(g_hashcons, dst, at) : at;
     }
     }
     return atom_symbol(dst, "?");
+}
+
+Atom *atom_deep_copy(Arena *dst, Atom *src) {
+    return atom_deep_copy_impl(dst, src, false);
+}
+
+Atom *atom_deep_copy_shared(Arena *dst, Atom *src) {
+    return atom_deep_copy_impl(dst, src, true);
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */

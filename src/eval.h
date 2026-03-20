@@ -21,6 +21,7 @@ void result_set_free(ResultSet *rs);
    This is the full HE-style evaluation with recursive rewriting. */
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
+void eval_release_temporary_spaces(void);
 
 /* Internal: evaluate an atom fully (recursive).
    type is the expected type (NULL means %Undefined%). */
