@@ -2,6 +2,25 @@
 #include <string.h>
 #include <math.h>
 
+static Atom *grounded_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
+    elems[0] = head;
+    for (uint32_t i = 0; i < nargs; i++)
+        elems[i + 1] = args[i];
+    return atom_expr(a, elems, nargs + 1);
+}
+
+static Atom *grounded_bad_arg_type(Arena *a, Atom *head, Atom **args, uint32_t nargs,
+                                   int bad_idx, Atom *expected_type, Atom *actual_atom) {
+    Atom *reason = atom_expr(a, (Atom*[]){
+        atom_symbol(a, "BadArgType"),
+        atom_int(a, bad_idx),
+        expected_type,
+        get_meta_type(a, actual_atom)
+    }, 4);
+    return atom_error(a, grounded_call_expr(a, head, args, nargs), reason);
+}
+
 bool is_grounded_op(const char *name) {
     return strcmp(name, "+") == 0 || strcmp(name, "-") == 0 ||
            strcmp(name, "*") == 0 || strcmp(name, "/") == 0 ||
@@ -9,7 +28,8 @@ bool is_grounded_op(const char *name) {
            strcmp(name, ">") == 0 || strcmp(name, "<=") == 0 ||
            strcmp(name, ">=") == 0 || strcmp(name, "==") == 0 ||
            strcmp(name, "and") == 0 || strcmp(name, "or") == 0 ||
-           strcmp(name, "not") == 0;
+           strcmp(name, "not") == 0 ||
+           strcmp(name, "size-atom") == 0 || strcmp(name, "index-atom") == 0;
 }
 
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */
@@ -58,6 +78,36 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     const char *op = head->name;
 
+    /* ── Expression introspection ─────────────────────────────────────── */
+    if (strcmp(op, "size-atom") == 0 && nargs == 1) {
+        if (args[0]->kind == ATOM_EXPR)
+            return atom_int(a, args[0]->expr.len);
+        if (args[0]->kind == ATOM_GROUNDED)
+            return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                         atom_expression_type(a), args[0]);
+        return NULL;
+    }
+
+    if (strcmp(op, "index-atom") == 0 && nargs == 2) {
+        if (args[0]->kind != ATOM_EXPR) {
+            if (args[0]->kind == ATOM_GROUNDED)
+                return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                             atom_expression_type(a), args[0]);
+            return NULL;
+        }
+        if (args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT) {
+            if (args[1]->kind == ATOM_GROUNDED)
+                return grounded_bad_arg_type(a, head, args, nargs, 2,
+                                             atom_symbol(a, "Number"), args[1]);
+            return NULL;
+        }
+        int64_t idx = args[1]->ground.ival;
+        if (idx < 0 || (uint64_t)idx >= args[0]->expr.len)
+            return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                              atom_string(a, "Index is out of bounds"));
+        return args[0]->expr.elems[idx];
+    }
+
     /* ── Structural equality (any atom type) ───────────────────────────── */
     if (strcmp(op, "==") == 0 && nargs == 2) {
         return atom_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
@@ -96,25 +146,10 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
            matches HE behavior where type-checker handles symbols. */
         Atom *bad_arg = !na_ok ? args[0] : args[1];
         if (bad_arg->kind == ATOM_GROUNDED) {
-            int bad_idx = !na_ok ? 1 : 2;
-            const char *actual_type = "Grounded";
-            switch (bad_arg->ground.gkind) {
-            case GV_STRING: actual_type = "String"; break;
-            case GV_BOOL:   actual_type = "Bool"; break;
-            default: break;
-            }
-            Atom **full_elems = arena_alloc(a, sizeof(Atom *) * 3);
-            full_elems[0] = head;
-            full_elems[1] = args[0];
-            full_elems[2] = args[1];
-            Atom *full_expr = atom_expr(a, full_elems, 3);
-            Atom *reason = atom_expr(a, (Atom*[]){
-                atom_symbol(a, "BadArgType"),
-                atom_int(a, bad_idx),
-                atom_symbol(a, "Number"),
-                atom_symbol(a, actual_type)
-            }, 4);
-            return atom_error(a, full_expr, reason);
+            return grounded_bad_arg_type(a, head, args, nargs,
+                                         !na_ok ? 1 : 2,
+                                         atom_symbol(a, "Number"),
+                                         bad_arg);
         }
         return NULL; /* Symbol/variable args → return unchanged */
     }
