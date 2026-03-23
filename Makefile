@@ -3,21 +3,42 @@ CC = gcc
 CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc
 LDFLAGS = -lm
 
-SRC = src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/eval.c src/grounded.c src/lang.c src/compile.c src/runtime.c src/main.c
+SRC = src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/eval.c src/grounded.c src/library.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_MATCH_BACKENDS = native-subst-tree native-candidate-exact pathmap-imported
+D4_PROBE_TIMEOUT ?= 60
+
+# Two-stage bootstrap: cetta compiles its own stdlib
+STDLIB_SRC = lib/stdlib.metta
+STDLIB_BLOB = src/stdlib_blob.h
 
 all: $(BIN)
 
+# Stage 0: kernel-only binary (no precompiled stdlib)
+STAGE0_OBJ = $(SRC:.c=.stage0.o)
+src/%.stage0.o: src/%.c
+	$(CC) $(CFLAGS) -DCETTA_NO_STDLIB -c -o $@ $<
+cetta-stage0: $(STAGE0_OBJ)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Stage 1: compile stdlib using stage0
+$(STDLIB_BLOB): cetta-stage0 $(STDLIB_SRC)
+	./cetta-stage0 --compile-stdlib $(STDLIB_SRC) > $(STDLIB_BLOB)
+
+# Stage 2: full binary with precompiled stdlib
 $(BIN): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# stdlib.o depends on the generated blob header
+src/cetta_stdlib.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(BIN)
+	rm -f $(OBJ) $(STAGE0_OBJ) $(BIN) cetta-stage0 $(STDLIB_BLOB)
 
 # Fast test: compare CeTTa output against pre-computed .expected files.
 # No oracle invocation — safe and instant.
@@ -126,6 +147,17 @@ bench-d3-nodup-backends: $(BIN)
 		fi; \
 	done
 
+bench-conj-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		count=$$(./$(BIN) --space-match-backend "$$backend" --count-only tests/bench_conjunction_he.metta 2>&1 | tail -1); \
+		echo "$$backend conjunction total: $$count results"; \
+		if [ "$$count" = "216" ]; then \
+			echo "PASS: $$backend conjunction count matches"; \
+		else \
+			echo "FAIL: expected 216, got $$count for $$backend"; exit 1; \
+		fi; \
+	done
+
 bench-d4: $(BIN)
 	@out=$$(ulimit -v 6291456; timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 	status=$$?; \
@@ -150,6 +182,55 @@ bench-d4-nodup: $(BIN)
 		echo "FAIL: depth-4 nodup did not produce a valid count"; exit 1; \
 	fi
 
+bench-d4-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		out=$$(ulimit -v 6291456; timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-match-backend "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
+		status=$$?; \
+		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
+		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
+		if [ $$status -eq 0 ] && printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
+			echo "$$backend depth-4 complete: $$count theorems"; \
+		elif [ $$status -eq 124 ] && [ -n "$$checkpoint" ]; then \
+			echo "$$backend depth-4 probe ($(D4_PROBE_TIMEOUT)s): $$checkpoint"; \
+		elif [ $$status -eq 124 ]; then \
+			echo "$$backend depth-4 probe ($(D4_PROBE_TIMEOUT)s): no checkpoint yet"; \
+		else \
+			printf '%s\n' "$$out" | tail -10; \
+			echo "FAIL: $$backend depth-4 probe did not produce a valid count or checkpoint"; exit 1; \
+		fi; \
+	done
+
+bench-d4-nodup-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		out=$$(ulimit -v 6291456; timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-match-backend "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+		status=$$?; \
+		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
+		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
+		if [ $$status -eq 0 ] && printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
+			echo "$$backend depth-4 nodup complete: $$count theorems"; \
+		elif [ $$status -eq 124 ] && [ -n "$$checkpoint" ]; then \
+			echo "$$backend depth-4 nodup probe ($(D4_PROBE_TIMEOUT)s): $$checkpoint"; \
+		elif [ $$status -eq 124 ]; then \
+			echo "$$backend depth-4 nodup probe ($(D4_PROBE_TIMEOUT)s): no checkpoint yet"; \
+		else \
+			printf '%s\n' "$$out" | tail -10; \
+			echo "FAIL: $$backend depth-4 nodup probe did not produce a valid count or checkpoint"; exit 1; \
+		fi; \
+	done
+
+bench-compare-petta: $(BIN)
+	@./scripts/bench_compare_cetta_petta.sh
+
+tail-recursion-check: $(BIN)
+	@result=$$(./$(BIN) tests/tail_recursion_deep.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/tail_recursion_deep.expected)" ]; then \
+		echo "PASS: deep tail recursion under explicit fuel"; \
+	else \
+		echo "FAIL: deep tail recursion mismatch"; \
+		diff <(cat tests/tail_recursion_deep.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
 # LLVM IR validation: verify emitted IR compiles through opt/llc.
 compile-test: $(BIN)
 	@pass=0; fail=0; \
@@ -164,4 +245,4 @@ compile-test: $(BIN)
 	done; \
 	echo "---"; echo "$$pass passed, $$fail failed"
 
-.PHONY: all clean test test-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-d4 bench-d4-nodup compile-test
+.PHONY: all clean test test-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test

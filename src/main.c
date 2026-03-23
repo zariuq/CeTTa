@@ -1,12 +1,27 @@
+#define _GNU_SOURCE
 #include "atom.h"
 #include "parser.h"
 #include "space.h"
 #include "eval.h"
+#include "library.h"
 #include "lang.h"
 #include "compile.h"
+#include "cetta_stdlib.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <unistd.h>
+
+static char alt_stack_buf[16384];  /* alternate signal stack for SIGSEGV handler */
+
+static void handle_sigsegv(int sig) {
+    (void)sig;
+    const char msg[] = "\nStack overflow. Use tail recursion or increase stack: ulimit -s unlimited\n";
+    ssize_t r = write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    (void)r;
+    _exit(2);
+}
 
 static bool g_count_only = false;
 
@@ -39,18 +54,37 @@ static bool result_set_has_error(ResultSet *rs) {
 
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
-    fputs("       cetta --compile <file.metta>     # emit LLVM IR to stdout\n", out);
-    fputs("       cetta --count-only <file.metta>  # print result counts only\n", out);
+    fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
+    fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
+    fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
+    fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>\n", out);
     fputs("       cetta --list-space-match-backends\n", out);
     fputs("       cetta --list-languages\n", out);
 }
 
 int main(int argc, char **argv) {
+    /* Install SIGSEGV handler on alternate stack so it works during stack overflow */
+    {
+        stack_t ss;
+        ss.ss_sp = alt_stack_buf;
+        ss.ss_size = sizeof(alt_stack_buf);
+        ss.ss_flags = 0;
+        sigaltstack(&ss, NULL);
+
+        struct sigaction sa;
+        sa.sa_handler = handle_sigsegv;
+        sa.sa_flags = SA_ONSTACK;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGSEGV, &sa, NULL);
+    }
+
     const char *lang_name = "he";
     const char *filename = NULL;
     bool compile_mode = false;
+    bool compile_stdlib_mode = false;
     bool count_only = false;
+    int fuel_override = -1;
     SpaceMatchBackendKind match_backend_kind = SPACE_MATCH_BACKEND_NATIVE;
 
     for (int i = 1; i < argc; i++) {
@@ -66,8 +100,27 @@ int main(int argc, char **argv) {
             compile_mode = true;
             continue;
         }
+        if (strcmp(argv[i], "--compile-stdlib") == 0) {
+            compile_stdlib_mode = true;
+            continue;
+        }
         if (strcmp(argv[i], "--count-only") == 0) {
             count_only = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--fuel") == 0) {
+            char *endp = NULL;
+            long parsed;
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            parsed = strtol(argv[++i], &endp, 10);
+            if (!endp || *endp != '\0' || parsed <= 0 || parsed > 100000000L) {
+                fprintf(stderr, "error: invalid fuel '%s'\n", argv[i]);
+                return 2;
+            }
+            fuel_override = (int)parsed;
             continue;
         }
         if (strcmp(argv[i], "--space-match-backend") == 0) {
@@ -103,6 +156,20 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* --compile-stdlib: parse .metta file, emit C blob header, exit */
+    if (compile_stdlib_mode) {
+        Arena tmp_arena;
+        arena_init(&tmp_arena);
+        InternTable tmp_intern;
+        intern_init(&tmp_intern);
+        g_intern = &tmp_intern;
+        int rc = stdlib_compile(filename, &tmp_arena, stdout);
+        arena_free(&tmp_arena);
+        g_intern = NULL;
+        intern_free(&tmp_intern);
+        return rc < 0 ? 1 : 0;
+    }
+
     const CettaLanguageSpec *lang = cetta_language_lookup(lang_name);
     if (!lang) {
         fprintf(stderr, "error: unknown language '%s'\n", lang_name);
@@ -120,6 +187,7 @@ int main(int argc, char **argv) {
     }
 
     g_count_only = count_only;
+    if (fuel_override > 0) eval_set_default_fuel(fuel_override);
 
     Arena arena;       /* persistent: parsed atoms, space content, type decls */
     Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
@@ -154,6 +222,14 @@ int main(int argc, char **argv) {
     Registry registry;
     registry_init(&registry);
     registry_bind(&registry, "&self", atom_space(&arena, &space));
+
+    CettaLibraryContext libraries;
+    cetta_library_context_init(&libraries);
+    cetta_library_context_set_exec_path(&libraries, argv[0]);
+    eval_set_library_context(&libraries);
+
+    /* Load precompiled stdlib equations into the space */
+    stdlib_load(&space, &arena);
 
     /* Add grounded op type declarations (HE stdlib implicit types) */
     {

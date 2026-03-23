@@ -2,11 +2,12 @@
 #include "eval.h"
 #include "match.h"
 #include "grounded.h"
+#include "library.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-#define DEFAULT_FUEL 64
+static int g_default_fuel = -1;  /* -1 = unlimited (HE spec); positive = opt-in limit */
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static Registry *g_registry = NULL;
@@ -64,28 +65,40 @@ static bool is_true_atom(Atom *a) {
            (a->kind == ATOM_GROUNDED && a->ground.gkind == GV_BOOL && a->ground.bval);
 }
 
-/* ── Result with bindings ───────────────────────────────────────────────── */
+/* ── Outcome set (unified result type: atom + bindings) ─────────────────── */
 
-void rb_set_init(ResultBindSet *rbs) {
-    rbs->items = NULL;
-    rbs->len = 0;
-    rbs->cap = 0;
+void outcome_set_init(OutcomeSet *os) {
+    os->items = NULL;
+    os->len = 0;
+    os->cap = 0;
 }
 
-void rb_set_add(ResultBindSet *rbs, Atom *atom, Bindings *b) {
-    if (rbs->len >= rbs->cap) {
-        rbs->cap = rbs->cap ? rbs->cap * 2 : 8;
-        rbs->items = cetta_realloc(rbs->items, sizeof(ResultWithBindings) * rbs->cap);
+void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env) {
+    if (os->len >= os->cap) {
+        os->cap = os->cap ? os->cap * 2 : 8;
+        os->items = cetta_realloc(os->items, sizeof(Outcome) * os->cap);
     }
-    rbs->items[rbs->len].atom = atom;
-    rbs->items[rbs->len].bindings = *b;
-    rbs->len++;
+    os->items[os->len].atom = atom;
+    os->items[os->len].env = *env;
+    os->len++;
 }
 
-void rb_set_free(ResultBindSet *rbs) {
-    free(rbs->items);
-    rbs->items = NULL;
-    rbs->len = rbs->cap = 0;
+void outcome_set_free(OutcomeSet *os) {
+    free(os->items);
+    os->items = NULL;
+    os->len = os->cap = 0;
+}
+
+/* Active importable library set */
+static CettaLibraryContext *g_library_context = NULL;
+
+static Atom *dispatch_native_op(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    Atom *result = grounded_dispatch(a, head, args, nargs);
+    if (result) return result;
+    if (g_library_context) {
+        return cetta_library_dispatch_native(g_library_context, a, head, args, nargs);
+    }
+    return NULL;
 }
 
 static void bindings_merge_into(Bindings *dst, const Bindings *src) {
@@ -299,7 +312,7 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
 /* ── metta_eval: full recursive evaluation (metta.md lines 240-272) ────── */
 
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs) {
-    if (fuel <= 0) {
+    if (fuel == 0) {
         /* Fuel exhausted — return empty result set (matches HE behavior:
            infinite recursion produces no output, not an error atom) */
         return;
@@ -346,7 +359,7 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
     }
 
     /* Expression: interpret_expression → metta_call (spec line 262) */
-    metta_call(s, a, atom, fuel - 1, rs);
+    metta_call(s, a, atom, fuel > 0 ? fuel - 1 : fuel, rs);
 }
 
 /* ── metta_eval_bind: like metta_eval but returns bindings too ──────────── */
@@ -360,13 +373,13 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
     Bindings empty;
     bindings_init(&empty);
 
-    if (fuel <= 0 || atom->kind == ATOM_SYMBOL || atom->kind == ATOM_GROUNDED ||
+    if (fuel == 0 || atom->kind == ATOM_SYMBOL || atom->kind == ATOM_GROUNDED ||
         atom->kind == ATOM_VAR ||
         (atom->kind == ATOM_EXPR && atom->expr.len == 0)) {
         rb_set_add(rbs, atom, &empty);
         return;
     }
-    metta_call_bind(s, a, atom, fuel - 1, rbs);
+    metta_call_bind(s, a, atom, fuel > 0 ? fuel - 1 : fuel, rbs);
 }
 
 /* ── interpret_tuple: Cartesian product of sub-expression evaluations ──── */
@@ -401,10 +414,10 @@ static void interpret_tuple(Space *s, Arena *a,
         } else {
             prefix[idx] = sub.items[i].atom;
             Bindings merged = *ctx;
-            for (uint32_t j = 0; j < sub.items[i].bindings.len; j++) {
+            for (uint32_t j = 0; j < sub.items[i].env.len; j++) {
                 bindings_add(&merged,
-                    sub.items[i].bindings.entries[j].var,
-                    sub.items[i].bindings.entries[j].val);
+                    sub.items[i].env.entries[j].var,
+                    sub.items[i].env.entries[j].val);
             }
             interpret_tuple(s, a, orig_elems, len, idx + 1, prefix,
                             &merged, fuel, rbs);
@@ -413,10 +426,476 @@ static void interpret_tuple(Space *s, Arena *a,
     free(sub.items);
 }
 
+static __attribute__((noinline)) bool
+handle_match(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) {
+    uint32_t nargs = expr_nargs(atom);
+    if (!expr_head_is(atom, "match") || nargs != 3) return false;
+
+    Atom *space_ref = expr_arg(atom, 0);
+    Atom *pattern = resolve_registry_refs(a, expr_arg(atom, 1));
+    Atom *template = resolve_registry_refs(a, expr_arg(atom, 2));
+    Space *ms = g_registry ? resolve_space(g_registry, space_ref) : NULL;
+    if (!ms) ms = s;
+
+    if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
+        atom_is_symbol(pattern->expr.elems[0], ",")) {
+        uint32_t n_conjuncts = pattern->expr.len - 1;
+        BindingSet matches;
+        space_query_conjunction(ms, a, pattern->expr.elems + 1, n_conjuncts,
+                                NULL, &matches);
+        for (uint32_t bi = 0; bi < matches.len; bi++) {
+            Atom *result = bindings_apply(&matches.items[bi], a, template);
+            metta_eval(s, a, NULL, result, fuel, rs);
+        }
+        binding_set_free(&matches);
+        return true;
+    }
+
+    {
+        #define MAX_CHAIN 16
+        #define MAX_VARS_PER_PAT 32
+        typedef struct { Space *space; Atom *pattern; } MatchStep;
+
+        MatchStep steps[MAX_CHAIN];
+        uint32_t nsteps = 0;
+
+        steps[nsteps].space = ms;
+        steps[nsteps].pattern = pattern;
+        nsteps++;
+
+        Atom *body = template;
+        while (nsteps < MAX_CHAIN &&
+               body->kind == ATOM_EXPR && body->expr.len == 4 &&
+               atom_is_symbol(body->expr.elems[0], "match")) {
+            Atom *inner_ref = resolve_registry_refs(a, body->expr.elems[1]);
+            Atom *inner_pat = resolve_registry_refs(a, body->expr.elems[2]);
+            Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
+            if (!inner_sp) inner_sp = s;
+            steps[nsteps].space = inner_sp;
+            steps[nsteps].pattern = inner_pat;
+            nsteps++;
+            body = body->expr.elems[3];
+        }
+
+        if (nsteps >= 3) {
+            const char *pat_vars[MAX_CHAIN][MAX_VARS_PER_PAT];
+            uint32_t pat_nvars[MAX_CHAIN];
+            for (uint32_t i = 0; i < nsteps; i++) {
+                pat_nvars[i] = 0;
+                Atom *stack[64];
+                uint32_t sp = 0;
+                stack[sp++] = steps[i].pattern;
+                while (sp > 0) {
+                    Atom *cur = stack[--sp];
+                    if (cur->kind == ATOM_VAR) {
+                        bool dup = false;
+                        for (uint32_t v = 0; v < pat_nvars[i]; v++) {
+                            if (strcmp(pat_vars[i][v], cur->name) == 0) {
+                                dup = true;
+                                break;
+                            }
+                        }
+                        if (!dup && pat_nvars[i] < MAX_VARS_PER_PAT)
+                            pat_vars[i][pat_nvars[i]++] = cur->name;
+                    }
+                    if (cur->kind == ATOM_EXPR) {
+                        for (uint32_t j = 0; j < cur->expr.len && sp < 64; j++)
+                            stack[sp++] = cur->expr.elems[j];
+                    }
+                }
+            }
+
+            const char *bound[MAX_CHAIN * MAX_VARS_PER_PAT];
+            uint32_t nbound = 0;
+            for (uint32_t v = 0; v < pat_nvars[0]; v++)
+                bound[nbound++] = pat_vars[0][v];
+
+            bool scheduled[MAX_CHAIN];
+            memset(scheduled, 0, sizeof(scheduled));
+            scheduled[0] = true;
+
+            MatchStep reordered[MAX_CHAIN];
+            reordered[0] = steps[0];
+            for (uint32_t round = 1; round < nsteps; round++) {
+                int best = -1;
+                uint32_t best_score = 0;
+                for (uint32_t j = 1; j < nsteps; j++) {
+                    if (scheduled[j]) continue;
+                    uint32_t score = 0;
+                    for (uint32_t v = 0; v < pat_nvars[j]; v++) {
+                        for (uint32_t b = 0; b < nbound; b++) {
+                            if (strcmp(pat_vars[j][v], bound[b]) == 0) {
+                                score++;
+                                break;
+                            }
+                        }
+                    }
+                    if (best < 0 || score > best_score) {
+                        best = (int)j;
+                        best_score = score;
+                    }
+                }
+                scheduled[best] = true;
+                reordered[round] = steps[best];
+                for (uint32_t v = 0; v < pat_nvars[best]; v++) {
+                    bool dup = false;
+                    for (uint32_t b = 0; b < nbound; b++) {
+                        if (strcmp(bound[b], pat_vars[best][v]) == 0) {
+                            dup = true;
+                            break;
+                        }
+                    }
+                    if (!dup) bound[nbound++] = pat_vars[best][v];
+                }
+            }
+            memcpy(steps, reordered, sizeof(MatchStep) * nsteps);
+        }
+
+        Bindings *cur_binds = cetta_malloc(sizeof(Bindings));
+        uint32_t ncur = 1;
+        bindings_init(&cur_binds[0]);
+
+        uint32_t accum_steps = (nsteps > 1) ? nsteps - 1 : nsteps;
+        for (uint32_t si = 0; si < accum_steps; si++) {
+            MatchStep *step = &steps[si];
+            Bindings *next_binds = NULL;
+            uint32_t nnext = 0, cnext = 0;
+            for (uint32_t bi = 0; bi < ncur; bi++) {
+                Atom *grounded = bindings_apply(&cur_binds[bi], a, step->pattern);
+                SubstMatchSet smr;
+                smset_init(&smr);
+                space_subst_query(step->space, a, grounded, &smr);
+                for (uint32_t ci = 0; ci < smr.len; ci++) {
+                    Bindings mb;
+                    if (space_subst_match_with_seed(step->space, grounded, &smr.items[ci],
+                                                    &cur_binds[bi], a, &mb)) {
+                        if (nnext >= cnext) {
+                            cnext = cnext ? cnext * 2 : 8;
+                            next_binds = cetta_realloc(next_binds, sizeof(Bindings) * cnext);
+                        }
+                        next_binds[nnext++] = mb;
+                    }
+                }
+                free(smr.items);
+            }
+            free(cur_binds);
+            cur_binds = next_binds;
+            ncur = nnext;
+            if (ncur == 0) break;
+        }
+
+        if (nsteps > 1 && ncur > 0) {
+            MatchStep *last = &steps[nsteps - 1];
+            static uint64_t g_chain_progress = 0;
+            for (uint32_t bi = 0; bi < ncur; bi++) {
+                Atom *grounded = bindings_apply(&cur_binds[bi], a, last->pattern);
+                SubstMatchSet smr;
+                smset_init(&smr);
+                space_subst_query(last->space, a, grounded, &smr);
+                for (uint32_t ci = 0; ci < smr.len; ci++) {
+                    Bindings mb;
+                    if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
+                                                    &cur_binds[bi], a, &mb)) {
+                        Atom *result = bindings_apply(&mb, a, body);
+                        metta_eval(s, a, NULL, result, fuel, rs);
+                        g_chain_progress++;
+                        if ((g_chain_progress % 100000) == 0) {
+                            fprintf(stderr, "[chain] %luk results  (step %u/%u, bi=%u/%u)\n",
+                                (unsigned long)(g_chain_progress / 1000),
+                                nsteps, nsteps, bi, ncur);
+                        }
+                    }
+                }
+                free(smr.items);
+            }
+        } else {
+            for (uint32_t bi = 0; bi < ncur; bi++) {
+                Atom *result = bindings_apply(&cur_binds[bi], a, body);
+                metta_eval(s, a, NULL, result, fuel, rs);
+            }
+        }
+        free(cur_binds);
+    }
+
+    return true;
+}
+
+static __attribute__((noinline)) bool
+handle_dispatch(Space *s, Arena *a, Atom *atom, int fuel, Atom **tail_next, ResultSet *rs) {
+    *tail_next = NULL;
+    if (atom->kind != ATOM_EXPR || atom->expr.len < 1) return false;
+
+    Atom *op = atom->expr.elems[0];
+    Atom **op_types;
+    uint32_t n_op_types = get_atom_types(s, a, op, &op_types);
+
+    bool has_func_type = false;
+    bool has_non_func_type = false;
+    ResultSet func_results;
+    result_set_init(&func_results);
+    Atom *func_errors[64];
+    uint32_t n_func_errors = 0;
+
+    for (uint32_t ti = 0; ti < n_op_types; ti++) {
+        if (is_function_type(op_types[ti])) {
+            has_func_type = true;
+            Atom *errors[64];
+            uint32_t n_errors = 0;
+            Bindings succs[64];
+            uint32_t n_succs = 0;
+            Atom *exp_type = atom_undefined_type(a);
+            Atom *fresh_ft = rename_vars(a, op_types[ti], fresh_var_suffix());
+            if (check_function_applicable(atom, fresh_ft, exp_type,
+                                          s, a, fuel,
+                                          errors, &n_errors,
+                                          succs, &n_succs)) {
+                Atom *arg_types[32];
+                uint32_t narg = get_function_arg_types(fresh_ft, arg_types, 32);
+                Atom *ret_type = get_function_ret_type(fresh_ft);
+                if (atom_is_symbol(ret_type, "Expression"))
+                    ret_type = atom_undefined_type(a);
+
+                uint32_t expr_narg = atom->expr.len - 1;
+                ResultBindSet arg_tuples;
+                rb_set_init(&arg_tuples);
+                Atom **arg_prefix = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                arg_prefix[0] = op;
+                Bindings empty_ctx;
+                bindings_init(&empty_ctx);
+
+                ResultBindSet *arg_rbs = arena_alloc(a, sizeof(ResultBindSet) * expr_narg);
+                Bindings arg_ctx;
+                bindings_init(&arg_ctx);
+                bool arg_ok = true;
+                bool arg_error = false;
+                for (uint32_t ai = 0; ai < expr_narg && ai < narg; ai++) {
+                    rb_set_init(&arg_rbs[ai]);
+                    Atom *bound_arg = bindings_apply(&arg_ctx, a, atom->expr.elems[ai + 1]);
+                    if (atom_is_symbol(arg_types[ai], "Atom") ||
+                        atom->expr.elems[ai + 1]->kind == ATOM_VAR) {
+                        Bindings empty_b;
+                        bindings_init(&empty_b);
+                        rb_set_add(&arg_rbs[ai], atom->expr.elems[ai + 1], &empty_b);
+                    } else {
+                        metta_eval_bind(s, a, bound_arg, fuel, &arg_rbs[ai]);
+                    }
+                    if (arg_rbs[ai].len == 0) { arg_ok = false; break; }
+                    if (arg_rbs[ai].len == 1 &&
+                        atom_is_error(arg_rbs[ai].items[0].atom) &&
+                        !atom_eq(arg_rbs[ai].items[0].atom, atom->expr.elems[ai + 1])) {
+                        result_set_add(&func_results, arg_rbs[ai].items[0].atom);
+                        arg_error = true;
+                        break;
+                    }
+                    for (uint32_t k = 0; k < arg_rbs[ai].items[0].env.len; k++) {
+                        bindings_add(&arg_ctx,
+                            arg_rbs[ai].items[0].env.entries[k].var,
+                            arg_rbs[ai].items[0].env.entries[k].val);
+                    }
+                }
+
+                if (arg_ok && !arg_error && expr_narg > 0) {
+                    Atom **prefix = arena_alloc(a, sizeof(Atom *) * expr_narg);
+                    uint32_t stack_idx[32];
+                    memset(stack_idx, 0, sizeof(stack_idx));
+                    for (;;) {
+                        Bindings combo_ctx;
+                        bindings_init(&combo_ctx);
+                        for (uint32_t ai = 0; ai < expr_narg; ai++) {
+                            Bindings *rb = &arg_rbs[ai].items[stack_idx[ai]].env;
+                            for (uint32_t k = 0; k < rb->len; k++)
+                                bindings_add(&combo_ctx, rb->entries[k].var, rb->entries[k].val);
+                        }
+                        for (uint32_t ai = 0; ai < expr_narg; ai++) {
+                            Atom *raw = arg_rbs[ai].items[stack_idx[ai]].atom;
+                            prefix[ai] = bindings_apply(&combo_ctx, a, raw);
+                        }
+                        Atom **call_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                        call_elems[0] = op;
+                        for (uint32_t ai = 0; ai < expr_narg; ai++)
+                            call_elems[ai + 1] = prefix[ai];
+                        Atom *call_atom = atom_expr(a, call_elems, atom->expr.len);
+
+                        bool dispatched = false;
+                        if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 2) {
+                            Atom *h = call_atom->expr.elems[0];
+                            if (h->kind == ATOM_SYMBOL && is_grounded_op(h->name)) {
+                                Atom *gr = dispatch_native_op(a, h,
+                                    call_atom->expr.elems + 1, call_atom->expr.len - 1);
+                                if (gr) {
+                                    metta_eval(s, a, ret_type, gr, fuel, &func_results);
+                                    dispatched = true;
+                                }
+                            }
+                        }
+                        if (!dispatched) {
+                            QueryResults qr;
+                            query_results_init(&qr);
+                            query_equations(s, call_atom, a, &qr);
+                            if (qr.len > 0) {
+                                for (uint32_t qi = 0; qi < qr.len; qi++)
+                                    metta_eval(s, a, ret_type, qr.items[qi].result, fuel, &func_results);
+                                dispatched = true;
+                            }
+                            free(qr.items);
+                        }
+                        if (!dispatched)
+                            result_set_add(&func_results, call_atom);
+
+                        {
+                            uint32_t carry = expr_narg;
+                            while (carry > 0) {
+                                carry--;
+                                stack_idx[carry]++;
+                                if (stack_idx[carry] < arg_rbs[carry].len) break;
+                                stack_idx[carry] = 0;
+                                if (carry == 0) goto func_done;
+                            }
+                        }
+                    }
+                }
+func_done:
+                for (uint32_t ai = 0; ai < expr_narg && ai < narg; ai++)
+                    free(arg_rbs[ai].items);
+                free(arg_tuples.items);
+            } else {
+                for (uint32_t ei = 0; ei < n_errors && n_func_errors < 64; ei++)
+                    func_errors[n_func_errors++] = errors[ei];
+            }
+        } else {
+            has_non_func_type = true;
+        }
+    }
+    free(op_types);
+
+    if (func_results.len > 0 && !has_non_func_type) {
+        for (uint32_t i = 0; i < func_results.len; i++)
+            result_set_add(rs, func_results.items[i]);
+        free(func_results.items);
+        return true;
+    }
+    if (func_results.len > 0) {
+        for (uint32_t i = 0; i < func_results.len; i++)
+            result_set_add(rs, func_results.items[i]);
+        free(func_results.items);
+        if (rs->len > 0) return true;
+    }
+    free(func_results.items);
+
+    if (has_func_type && n_func_errors > 0 &&
+        (!has_non_func_type || g_type_check_auto)) {
+        for (uint32_t i = 0; i < n_func_errors; i++)
+            result_set_add(rs, func_errors[i]);
+        return true;
+    }
+
+    {
+        ResultBindSet tuples;
+        rb_set_init(&tuples);
+        Atom **prefix = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+        Bindings empty_ctx;
+        bindings_init(&empty_ctx);
+        interpret_tuple(s, a, atom->expr.elems, atom->expr.len,
+                        0, prefix, &empty_ctx, fuel, &tuples);
+
+        if (tuples.len == 1) {
+            Atom *call_atom = bindings_apply(&tuples.items[0].env, a, tuples.items[0].atom);
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                result_set_add(rs, call_atom);
+                free(tuples.items);
+                return true;
+            }
+            if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 2) {
+                Atom *h = call_atom->expr.elems[0];
+                if (h->kind == ATOM_SYMBOL && is_grounded_op(h->name)) {
+                    Atom *result = dispatch_native_op(a, h,
+                        call_atom->expr.elems + 1, call_atom->expr.len - 1);
+                    if (result) {
+                        free(tuples.items);
+                        *tail_next = result;
+                        return true;
+                    }
+                }
+            }
+
+            QueryResults qr;
+            query_results_init(&qr);
+            query_equations(s, call_atom, a, &qr);
+            if (qr.len == 1) {
+                *tail_next = qr.items[0].result;
+                free(qr.items);
+                free(tuples.items);
+                return true;
+            }
+            if (qr.len > 0) {
+                for (uint32_t i = 0; i < qr.len; i++)
+                    metta_eval(s, a, NULL, qr.items[i].result, fuel, rs);
+                free(qr.items);
+                free(tuples.items);
+                return true;
+            }
+            free(qr.items);
+            result_set_add(rs, call_atom);
+            free(tuples.items);
+            return true;
+        }
+
+        for (uint32_t ti = 0; ti < tuples.len; ti++) {
+            Atom *call_atom = tuples.items[ti].atom;
+
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                result_set_add(rs, call_atom);
+                continue;
+            }
+
+            call_atom = bindings_apply(&tuples.items[ti].env, a, call_atom);
+
+            if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 2) {
+                Atom *h = call_atom->expr.elems[0];
+                if (h->kind == ATOM_SYMBOL && is_grounded_op(h->name)) {
+                    Atom *result = dispatch_native_op(a, h,
+                        call_atom->expr.elems + 1, call_atom->expr.len - 1);
+                    if (result) {
+                        metta_eval(s, a, NULL, result, fuel, rs);
+                        continue;
+                    }
+                }
+            }
+
+            QueryResults qr;
+            query_results_init(&qr);
+            query_equations(s, call_atom, a, &qr);
+            if (qr.len > 0) {
+                for (uint32_t i = 0; i < qr.len; i++)
+                    metta_eval(s, a, NULL, qr.items[i].result, fuel, rs);
+                free(qr.items);
+                continue;
+            }
+            free(qr.items);
+
+            result_set_add(rs, call_atom);
+        }
+        free(tuples.items);
+    }
+
+    return true;
+}
+
 /* ── metta_call: dispatch expressions ───────────────────────────────────── */
 
 static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) {
+#define TAIL_REENTER(next_atom) do { \
+    atom = resolve_registry_refs(a, (next_atom)); \
+    if (fuel == 0) return; \
+    if (fuel > 0) fuel--; \
+    goto tail_call; \
+} while (0)
+tail_call: ;
     if (atom->kind != ATOM_EXPR || atom->expr.len == 0) {
+        result_set_add(rs, atom);
+        return;
+    }
+    if (atom_is_error(atom) || atom_is_empty(atom)) {
         result_set_add(rs, atom);
         return;
     }
@@ -494,199 +973,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
     }
 
     /* ── match (with nested-match fusion + join reordering) ──────────── */
-    if (expr_head_is(atom, "match") && nargs == 3) {
-        Atom *space_ref = expr_arg(atom, 0);
-        Atom *pattern = resolve_registry_refs(a, expr_arg(atom, 1));
-        Atom *template = resolve_registry_refs(a, expr_arg(atom, 2));
-        /* Resolve space — &self or named space */
-        Space *ms = g_registry ? resolve_space(g_registry, space_ref) : NULL;
-        if (!ms) ms = s;  /* fallback to current space */
-
-        /* Conjunction: (, P Q ...) — relational join over single space */
-        if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
-            atom_is_symbol(pattern->expr.elems[0], ",")) {
-            uint32_t n_conjuncts = pattern->expr.len - 1;
-            BindingSet matches;
-            space_query_conjunction(ms, a, pattern->expr.elems + 1, n_conjuncts,
-                                    NULL, &matches);
-            for (uint32_t bi = 0; bi < matches.len; bi++) {
-                Atom *result = bindings_apply(&matches.items[bi], a, template);
-                metta_eval(s, a, NULL, result, fuel, rs);
-            }
-            binding_set_free(&matches);
-            return;
-        }
-
-        /* ── Nested match chain fusion ────────────────────────────────── *
-         * Detect (match S1 P1 (match S2 P2 (match S3 P3 body))) chains
-         * and execute them as a single fused join with binding propagation
-         * between steps. Reorder by variable overlap (selectivity heuristic)
-         * so the discrimination trie can prune effectively.
-         *
-         * This is the CeTTa equivalent of MORK's ProductZipper /
-         * Vampire's resolution ordering / DB indexed nested-loop join. */
-        {
-            /* Extract chain: walk nested match templates */
-            #define MAX_CHAIN 16
-            typedef struct { Space *space; Atom *pattern; } MatchStep;
-            MatchStep steps[MAX_CHAIN];
-            uint32_t nsteps = 0;
-
-            steps[nsteps].space = ms;
-            steps[nsteps].pattern = pattern;
-            nsteps++;
-
-            Atom *body = template;
-            while (nsteps < MAX_CHAIN &&
-                   body->kind == ATOM_EXPR && body->expr.len == 4 &&
-                   atom_is_symbol(body->expr.elems[0], "match")) {
-                Atom *inner_ref = resolve_registry_refs(a, body->expr.elems[1]);
-                Atom *inner_pat = resolve_registry_refs(a, body->expr.elems[2]);
-                Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
-                if (!inner_sp) inner_sp = s;
-                steps[nsteps].space = inner_sp;
-                steps[nsteps].pattern = inner_pat;
-                nsteps++;
-                body = body->expr.elems[3];
-            }
-
-            /* Reorder for selectivity (greedy: maximize grounded vars per step).
-             * Only reorder steps[1..nsteps-1]; step 0 stays first. */
-            if (nsteps >= 3) {
-                /* Collect free vars from each pattern */
-                #define MAX_VARS_PER_PAT 32
-                const char *pat_vars[MAX_CHAIN][MAX_VARS_PER_PAT];
-                uint32_t pat_nvars[MAX_CHAIN];
-                for (uint32_t i = 0; i < nsteps; i++) {
-                    pat_nvars[i] = 0;
-                    /* Simple depth-first var collection */
-                    Atom *stack[64];
-                    uint32_t sp = 0;
-                    stack[sp++] = steps[i].pattern;
-                    while (sp > 0) {
-                        Atom *cur = stack[--sp];
-                        if (cur->kind == ATOM_VAR) {
-                            bool dup = false;
-                            for (uint32_t v = 0; v < pat_nvars[i]; v++)
-                                if (strcmp(pat_vars[i][v], cur->name) == 0) { dup = true; break; }
-                            if (!dup && pat_nvars[i] < MAX_VARS_PER_PAT)
-                                pat_vars[i][pat_nvars[i]++] = cur->name;
-                        }
-                        if (cur->kind == ATOM_EXPR)
-                            for (uint32_t j = 0; j < cur->expr.len && sp < 64; j++)
-                                stack[sp++] = cur->expr.elems[j];
-                    }
-                }
-
-                /* Greedy reorder: bound_vars starts with step 0's vars */
-                const char *bound[MAX_CHAIN * MAX_VARS_PER_PAT];
-                uint32_t nbound = 0;
-                for (uint32_t v = 0; v < pat_nvars[0]; v++)
-                    bound[nbound++] = pat_vars[0][v];
-                bool scheduled[MAX_CHAIN];
-                memset(scheduled, 0, sizeof(scheduled));
-                scheduled[0] = true;
-                MatchStep reordered[MAX_CHAIN];
-                reordered[0] = steps[0];
-                for (uint32_t round = 1; round < nsteps; round++) {
-                    int best = -1;
-                    uint32_t best_score = 0;
-                    for (uint32_t j = 1; j < nsteps; j++) {
-                        if (scheduled[j]) continue;
-                        uint32_t score = 0;
-                        for (uint32_t v = 0; v < pat_nvars[j]; v++)
-                            for (uint32_t b = 0; b < nbound; b++)
-                                if (strcmp(pat_vars[j][v], bound[b]) == 0) { score++; break; }
-                        if (best < 0 || score > best_score) {
-                            best = j; best_score = score;
-                        }
-                    }
-                    scheduled[best] = true;
-                    reordered[round] = steps[best];
-                    /* Add this step's vars to bound set */
-                    for (uint32_t v = 0; v < pat_nvars[best]; v++) {
-                        bool dup = false;
-                        for (uint32_t b = 0; b < nbound; b++)
-                            if (strcmp(bound[b], pat_vars[best][v]) == 0) { dup = true; break; }
-                        if (!dup) bound[nbound++] = pat_vars[best][v];
-                    }
-                }
-                memcpy(steps, reordered, sizeof(MatchStep) * nsteps);
-            }
-
-            /* Execute fused chain with binding propagation between steps.
-             * Streaming: accumulate bindings for steps 0..nsteps-2, then
-             * for the last step, evaluate body directly (no accumulation).
-             * This avoids materializing millions of bindings at depth 4+. */
-            Bindings *cur_binds = cetta_malloc(sizeof(Bindings));
-            uint32_t ncur = 1;
-            bindings_init(&cur_binds[0]);
-
-            /* Steps 0..nsteps-2: accumulate binding sets */
-            uint32_t accum_steps = (nsteps > 1) ? nsteps - 1 : nsteps;
-            for (uint32_t si = 0; si < accum_steps; si++) {
-                MatchStep *step = &steps[si];
-                Bindings *next_binds = NULL;
-                uint32_t nnext = 0, cnext = 0;
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    Atom *grounded = bindings_apply(&cur_binds[bi], a, step->pattern);
-                    /* Use SubstTree for candidate retrieval in fused chain */
-                    SubstMatchSet smr;
-                    smset_init(&smr);
-                    space_subst_query(step->space, a, grounded, &smr);
-                    for (uint32_t ci = 0; ci < smr.len; ci++) {
-                        Bindings mb;
-                        if (space_subst_match_with_seed(step->space, grounded, &smr.items[ci],
-                                                        &cur_binds[bi], a, &mb)) {
-                            if (nnext >= cnext) {
-                                cnext = cnext ? cnext * 2 : 8;
-                                next_binds = cetta_realloc(next_binds, sizeof(Bindings) * cnext);
-                            }
-                            next_binds[nnext++] = mb;
-                        }
-                    }
-                    free(smr.items);
-                }
-                free(cur_binds);
-                cur_binds = next_binds;
-                ncur = nnext;
-                if (ncur == 0) break;
-            }
-
-            /* Last step (if >1 step): stream directly — for each match,
-             * immediately eval the body instead of accumulating bindings */
-            if (nsteps > 1 && ncur > 0) {
-                MatchStep *last = &steps[nsteps - 1];
-                static uint64_t g_chain_progress = 0;
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    Atom *grounded = bindings_apply(&cur_binds[bi], a, last->pattern);
-                    SubstMatchSet smr;
-                    smset_init(&smr);
-                    space_subst_query(last->space, a, grounded, &smr);
-                    for (uint32_t ci = 0; ci < smr.len; ci++) {
-                        Bindings mb;
-                        if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
-                                                        &cur_binds[bi], a, &mb)) {
-                            Atom *result = bindings_apply(&mb, a, body);
-                            metta_eval(s, a, NULL, result, fuel, rs);
-                            g_chain_progress++;
-                            if ((g_chain_progress % 100000) == 0)
-                                fprintf(stderr, "[chain] %luk results  (step %u/%u, bi=%u/%u)\n",
-                                    (unsigned long)(g_chain_progress / 1000),
-                                    nsteps, nsteps, bi, ncur);
-                        }
-                    }
-                    free(smr.items);
-                }
-            } else {
-                /* Single step or all accumulated: eval body with final bindings */
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    Atom *result = bindings_apply(&cur_binds[bi], a, body);
-                    metta_eval(s, a, NULL, result, fuel, rs);
-                }
-            }
-            free(cur_binds);
-        }
+    if (handle_match(s, a, atom, fuel, rs)) {
         return;
     }
 
@@ -782,20 +1069,32 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
     if (expr_head_is(atom, "let") && nargs == 3) {
         Atom *pat = expr_arg(atom, 0);
         Atom *val_expr = expr_arg(atom, 1);
-        Atom *body = expr_arg(atom, 2);
+        Atom *body_let = expr_arg(atom, 2);
         ResultSet vals;
         result_set_init(&vals);
-        metta_eval(s, a, NULL,val_expr, fuel, &vals);
+        metta_eval(s, a, NULL, val_expr, fuel, &vals);
+        if (vals.len == 1) {
+            /* Single-result fast path with TCO */
+            Bindings b; bindings_init(&b);
+            bool ok = false;
+            if (pat->kind == ATOM_VAR) {
+                bindings_add(&b, pat->name, vals.items[0]);
+                ok = true;
+            } else {
+                ok = simple_match(pat, vals.items[0], &b);
+            }
+            free(vals.items);
+            if (ok) { TAIL_REENTER(bindings_apply(&b, a, body_let)); }
+            return;
+        }
+        /* Multi-result: no TCO */
         for (uint32_t i = 0; i < vals.len; i++) {
-            Bindings b;
-            bindings_init(&b);
+            Bindings b; bindings_init(&b);
             if (pat->kind == ATOM_VAR) {
                 bindings_add(&b, pat->name, vals.items[i]);
-                Atom *subst = bindings_apply(&b, a, body);
-                metta_eval(s, a, NULL,subst, fuel, rs);
+                metta_eval(s, a, NULL, bindings_apply(&b, a, body_let), fuel, rs);
             } else if (simple_match(pat, vals.items[i], &b)) {
-                Atom *subst = bindings_apply(&b, a, body);
-                metta_eval(s, a, NULL,subst, fuel, rs);
+                metta_eval(s, a, NULL, bindings_apply(&b, a, body_let), fuel, rs);
             }
         }
         free(vals.items);
@@ -806,21 +1105,39 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
     if (expr_head_is(atom, "chain") && nargs == 3) {
         Atom *to_eval = expr_arg(atom, 0);
         Atom *var = expr_arg(atom, 1);
-        Atom *template = expr_arg(atom, 2);
+        Atom *tmpl_chain = expr_arg(atom, 2);
         ResultSet inner;
         result_set_init(&inner);
-        metta_eval(s, a, NULL,to_eval, fuel, &inner);
+        metta_eval(s, a, NULL, to_eval, fuel, &inner);
+        if (inner.len == 0) {
+            result_set_add(rs, atom_empty(a));
+            free(inner.items);
+            return;
+        }
+        if (inner.len == 1 && !atom_is_empty(inner.items[0])) {
+            /* Single-result fast path with TCO */
+            Atom *next_atom;
+            if (var->kind == ATOM_VAR) {
+                Bindings b; bindings_init(&b);
+                bindings_add(&b, var->name, inner.items[0]);
+                next_atom = bindings_apply(&b, a, tmpl_chain);
+            } else {
+                next_atom = tmpl_chain;
+            }
+            free(inner.items);
+            TAIL_REENTER(next_atom);
+        }
+        /* Multi-result: no TCO */
         for (uint32_t i = 0; i < inner.len; i++) {
             Atom *r = inner.items[i];
             if (atom_is_empty(r)) continue;
             if (var->kind == ATOM_VAR) {
-                Bindings b;
-                bindings_init(&b);
+                Bindings b; bindings_init(&b);
                 bindings_add(&b, var->name, r);
-                Atom *subst = bindings_apply(&b, a, template);
-                metta_eval(s, a, NULL,subst, fuel, rs);
+                Atom *subst = bindings_apply(&b, a, tmpl_chain);
+                metta_eval(s, a, NULL, subst, fuel, rs);
             } else {
-                result_set_add(rs, template);
+                result_set_add(rs, tmpl_chain);
             }
         }
         if (inner.len == 0)
@@ -880,8 +1197,7 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
 
     /* ── eval (minimal instruction) ────────────────────────────────────── */
     if (expr_head_is(atom, "eval") && nargs == 1) {
-        metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, rs);
-        return;
+        TAIL_REENTER(expr_arg(atom, 0));
     }
 
     /* ── new-space ──────────────────────────────────────────────────────── */
@@ -1023,14 +1339,14 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
             char buf[512];
             int pos = 0;
             pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "{");
-            if (inner.items[i].bindings.len == 0) {
+            if (inner.items[i].env.len == 0) {
                 pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "  ");
             } else {
-                for (uint32_t j = 0; j < inner.items[i].bindings.len && pos < 480; j++) {
+                for (uint32_t j = 0; j < inner.items[i].env.len && pos < 480; j++) {
                     if (j > 0) pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, ", ");
                     else pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, " ");
                     pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "$%s",
-                        inner.items[i].bindings.entries[j].var);
+                        inner.items[i].env.entries[j].var);
                 }
                 pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, " ");
             }
@@ -1243,11 +1559,20 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         ResultBindSet cond;
         rb_set_init(&cond);
         metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &cond);
+        if (cond.len == 1) {
+            /* Single-result fast path with TCO */
+            Atom *branch = is_true_atom(cond.items[0].atom)
+                ? expr_arg(atom, 1)
+                : expr_arg(atom, 2);
+            Atom *next = bindings_apply(&cond.items[0].env, a, branch);
+            free(cond.items);
+            TAIL_REENTER(next);
+        }
         for (uint32_t i = 0; i < cond.len; i++) {
             Atom *branch = is_true_atom(cond.items[i].atom)
                 ? expr_arg(atom, 1)
                 : expr_arg(atom, 2);
-            Atom *bound_branch = bindings_apply(&cond.items[i].bindings, a, branch);
+            Atom *bound_branch = bindings_apply(&cond.items[i].env, a, branch);
             metta_eval(s, a, NULL, bound_branch, fuel, rs);
         }
         free(cond.items);
@@ -1505,255 +1830,12 @@ static void metta_call(Space *s, Arena *a, Atom *atom, int fuel, ResultSet *rs) 
         return;
     }
 
-    /* ── interpret_expression: type-directed dispatch (metta.md:316-355) ─ */
-    /* Check operator types. For function types, go through typed
-       interpret_args path (with laziness control). For non-function or
-       %Undefined%, fall through to interpret_tuple (existing path). */
-    if (atom->kind == ATOM_EXPR && atom->expr.len >= 2) {
-        Atom *op = atom->expr.elems[0];
-        Atom **op_types;
-        uint32_t n_op_types = get_atom_types(s, a, op, &op_types);
-
-        bool has_func_type = false;
-        bool has_non_func_type = false;
-        ResultSet func_results;
-        result_set_init(&func_results);
-        Atom *func_errors[64];
-        uint32_t n_func_errors = 0;
-
-        for (uint32_t ti = 0; ti < n_op_types; ti++) {
-            if (is_function_type(op_types[ti])) {
-                has_func_type = true;
-                Atom *errors[64];
-                uint32_t n_errors = 0;
-                Bindings succs[64];
-                uint32_t n_succs = 0;
-                /* Expected type from metta_eval's etype — but metta_call
-                   doesn't have it. Use %Undefined% for now. */
-                Atom *exp_type = atom_undefined_type(a);
-                /* Freshen type variables (standardization apart for types) */
-                Atom *fresh_ft = rename_vars(a, op_types[ti], fresh_var_suffix());
-                if (check_function_applicable(atom, fresh_ft, exp_type,
-                                              s, a, fuel,
-                                              errors, &n_errors,
-                                              succs, &n_succs)) {
-                    /* Function type is applicable — evaluate args with types */
-                    Atom *arg_types[32];
-                    uint32_t narg = get_function_arg_types(fresh_ft, arg_types, 32);
-                    Atom *ret_type = get_function_ret_type(fresh_ft);
-                    if (atom_is_symbol(ret_type, "Expression"))
-                        ret_type = atom_undefined_type(a);
-
-                    /* Evaluate each arg with its declared type (laziness!) */
-                    uint32_t expr_narg = atom->expr.len - 1;
-                    ResultBindSet arg_tuples;
-                    rb_set_init(&arg_tuples);
-                    Atom **arg_prefix = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                    arg_prefix[0] = op; /* head stays */
-                    /* Use interpret_tuple but with typed eval for args */
-                    Bindings empty_ctx;
-                    bindings_init(&empty_ctx);
-
-                    /* Evaluate args with types + binding threading (THE KEY FIX).
-                       Use ResultBindSet so bindings from arg[i] propagate to arg[i+1].
-                       This is the typed analogue of interpret_tuple's binding threading. */
-                    ResultBindSet *arg_rbs = arena_alloc(a, sizeof(ResultBindSet) * expr_narg);
-                    Bindings arg_ctx;
-                    bindings_init(&arg_ctx);
-                    bool arg_ok = true;
-                    bool arg_error = false;
-                    for (uint32_t ai = 0; ai < expr_narg && ai < narg; ai++) {
-                        rb_set_init(&arg_rbs[ai]);
-                        /* Apply accumulated bindings to arg before evaluation */
-                        Atom *bound_arg = bindings_apply(&arg_ctx, a, atom->expr.elems[ai + 1]);
-                        /* Atom-typed args OR bare variable args: pass through unevaluated.
-                           combo_ctx in the Cartesian product will resolve per-combination. */
-                        if (atom_is_symbol(arg_types[ai], "Atom") ||
-                            atom->expr.elems[ai + 1]->kind == ATOM_VAR) {
-                            Bindings empty_b;
-                            bindings_init(&empty_b);
-                            rb_set_add(&arg_rbs[ai], atom->expr.elems[ai + 1], &empty_b);
-                        } else {
-                            metta_eval_bind(s, a, bound_arg, fuel, &arg_rbs[ai]);
-                        }
-                        if (arg_rbs[ai].len == 0) { arg_ok = false; break; }
-                        /* Error propagation */
-                        if (arg_rbs[ai].len == 1 &&
-                            atom_is_error(arg_rbs[ai].items[0].atom) &&
-                            !atom_eq(arg_rbs[ai].items[0].atom, atom->expr.elems[ai + 1])) {
-                            result_set_add(&func_results, arg_rbs[ai].items[0].atom);
-                            arg_error = true;
-                            break;
-                        }
-                        /* Merge first result's bindings into context for next arg */
-                        for (uint32_t k = 0; k < arg_rbs[ai].items[0].bindings.len; k++)
-                            bindings_add(&arg_ctx,
-                                arg_rbs[ai].items[0].bindings.entries[k].var,
-                                arg_rbs[ai].items[0].bindings.entries[k].val);
-                    }
-
-                    if (arg_ok && !arg_error && expr_narg > 0) {
-                        /* Cartesian product over typed arg results, then dispatch */
-                        Atom **prefix = arena_alloc(a, sizeof(Atom *) * expr_narg);
-                        uint32_t stack_idx[32];
-                        memset(stack_idx, 0, sizeof(stack_idx));
-                        for (;;) {
-                            /* Collect per-combination bindings from all selected results */
-                            Bindings combo_ctx;
-                            bindings_init(&combo_ctx);
-                            for (uint32_t ai = 0; ai < expr_narg; ai++) {
-                                Bindings *rb = &arg_rbs[ai].items[stack_idx[ai]].bindings;
-                                for (uint32_t k = 0; k < rb->len; k++)
-                                    bindings_add(&combo_ctx, rb->entries[k].var, rb->entries[k].val);
-                            }
-                            /* Apply combo bindings to lazy args (Atom-typed) */
-                            for (uint32_t ai = 0; ai < expr_narg; ai++) {
-                                Atom *raw = arg_rbs[ai].items[stack_idx[ai]].atom;
-                                prefix[ai] = bindings_apply(&combo_ctx, a, raw);
-                            }
-                            Atom **call_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                            call_elems[0] = op;
-                            for (uint32_t ai = 0; ai < expr_narg; ai++)
-                                call_elems[ai + 1] = prefix[ai];
-                            Atom *call_atom = atom_expr(a, call_elems, atom->expr.len);
-
-                            /* Dispatch: grounded, then equation query */
-                            bool dispatched = false;
-                            if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 2) {
-                                Atom *h = call_atom->expr.elems[0];
-                                if (h->kind == ATOM_SYMBOL && is_grounded_op(h->name)) {
-                                    Atom *gr = grounded_dispatch(a, h,
-                                        call_atom->expr.elems + 1, call_atom->expr.len - 1);
-                                    if (gr) {
-                                        metta_eval(s, a, ret_type, gr, fuel, &func_results);
-                                        dispatched = true;
-                                    }
-                                }
-                            }
-                            if (!dispatched) {
-                                QueryResults qr;
-                                query_results_init(&qr);
-                                query_equations(s, call_atom, a, &qr);
-                                if (qr.len > 0) {
-                                    for (uint32_t qi = 0; qi < qr.len; qi++)
-                                        metta_eval(s, a, ret_type, qr.items[qi].result, fuel, &func_results);
-                                    dispatched = true;
-                                }
-                                free(qr.items);
-                            }
-                            if (!dispatched)
-                                result_set_add(&func_results, call_atom);
-
-                            /* Advance to next combination (odometer-style) */
-                            uint32_t carry = expr_narg;
-                            while (carry > 0) {
-                                carry--;
-                                stack_idx[carry]++;
-                                if (stack_idx[carry] < arg_rbs[carry].len) break;
-                                stack_idx[carry] = 0;
-                                if (carry == 0) goto func_done;
-                            }
-                        }
-                    }
-                    func_done:
-                    for (uint32_t ai = 0; ai < expr_narg && ai < narg; ai++)
-                        free(arg_rbs[ai].items);
-                    free(arg_tuples.items);
-                } else {
-                    /* Not applicable — collect errors */
-                    for (uint32_t ei = 0; ei < n_errors && n_func_errors < 64; ei++)
-                        func_errors[n_func_errors++] = errors[ei];
-                }
-            } else {
-                has_non_func_type = true;
-            }
-        }
-        free(op_types);
-
-        /* If function path produced results, check if we also need tuple path */
-        if (func_results.len > 0 && !has_non_func_type) {
-            /* Only function results — return them */
-            for (uint32_t i = 0; i < func_results.len; i++)
-                result_set_add(rs, func_results.items[i]);
-            free(func_results.items);
-            return;
-        }
-        if (func_results.len > 0) {
-            /* Has both function and non-function types — combine later */
-            /* For now: prefer function results if we have them */
-            for (uint32_t i = 0; i < func_results.len; i++)
-                result_set_add(rs, func_results.items[i]);
-            free(func_results.items);
-            /* Also run tuple path below... but if func succeeded, skip */
-            if (rs->len > 0) return;
-        }
-        free(func_results.items);
-
-        /* If only function types and all failed → return errors.
-           With pragma! type-check auto: also return errors even with non-func types */
-        if (has_func_type && n_func_errors > 0 &&
-            (!has_non_func_type || g_type_check_auto)) {
-            for (uint32_t i = 0; i < n_func_errors; i++)
-                result_set_add(rs, func_errors[i]);
-            return;
-        }
-    }
-
-    /* ── Default path: interpret_tuple → metta_call ───────────────────── */
-    /* For untyped operators (%Undefined%) or non-function-typed operators,
-       evaluate ALL sub-expressions eagerly, then equation query / grounded. */
     {
-        /* Step 1: Cartesian product of all sub-expression evaluations */
-        ResultBindSet tuples;
-        rb_set_init(&tuples);
-        Atom **prefix = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-        Bindings empty_ctx;
-        bindings_init(&empty_ctx);
-        interpret_tuple(s, a, atom->expr.elems, atom->expr.len,
-                        0, prefix, &empty_ctx, fuel, &tuples);
-
-        /* Step 2: For each tuple variant, try grounded dispatch then eqn query */
-        for (uint32_t ti = 0; ti < tuples.len; ti++) {
-            Atom *call_atom = tuples.items[ti].atom;
-
-            /* Propagate Empty/Error */
-            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
-                result_set_add(rs, call_atom);
-                continue;
-            }
-
-            /* Apply accumulated bindings from interpret_tuple to the atom */
-            call_atom = bindings_apply(&tuples.items[ti].bindings, a, call_atom);
-
-            /* Try grounded dispatch */
-            if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 2) {
-                Atom *h = call_atom->expr.elems[0];
-                if (h->kind == ATOM_SYMBOL && is_grounded_op(h->name)) {
-                    Atom *result = grounded_dispatch(a, h,
-                        call_atom->expr.elems + 1, call_atom->expr.len - 1);
-                    if (result) {
-                        metta_eval(s, a, NULL,result, fuel, rs);
-                        continue;
-                    }
-                }
-            }
-
-            /* Try equation query */
-            QueryResults qr;
-            query_results_init(&qr);
-            query_equations(s, call_atom, a, &qr);
-            if (qr.len > 0) {
-                for (uint32_t i = 0; i < qr.len; i++)
-                    metta_eval(s, a, NULL,qr.items[i].result, fuel, rs);
-                free(qr.items);
-                continue;
-            }
-            free(qr.items);
-
-            /* No match → return as-is */
-            result_set_add(rs, call_atom);
+        Atom *tail_next = NULL;
+        if (handle_dispatch(s, a, atom, fuel, &tail_next, rs)) {
+            if (tail_next) TAIL_REENTER(tail_next);
+            return;
         }
-        free(tuples.items);
     }
 }
 
@@ -1821,11 +1903,11 @@ static bool typed_dispatch_bind(Space *s, Arena *a, Atom *atom, int fuel, Result
                 atom_is_error(arg_rbs[ai].items[0].atom) &&
                 !atom_eq(arg_rbs[ai].items[0].atom, atom->expr.elems[ai + 1])) {
                 rb_set_add(&func_results, arg_rbs[ai].items[0].atom,
-                           &arg_rbs[ai].items[0].bindings);
+                           &arg_rbs[ai].items[0].env);
                 arg_error = true;
                 break;
             }
-            bindings_merge_into(&arg_ctx, &arg_rbs[ai].items[0].bindings);
+            bindings_merge_into(&arg_ctx, &arg_rbs[ai].items[0].env);
         }
 
         if (arg_ok && !arg_error && expr_narg > 0) {
@@ -1836,7 +1918,7 @@ static bool typed_dispatch_bind(Space *s, Arena *a, Atom *atom, int fuel, Result
                 Bindings combo_ctx;
                 bindings_init(&combo_ctx);
                 for (uint32_t ai = 0; ai < expr_narg; ai++)
-                    bindings_merge_into(&combo_ctx, &arg_rbs[ai].items[stack_idx[ai]].bindings);
+                    bindings_merge_into(&combo_ctx, &arg_rbs[ai].items[stack_idx[ai]].env);
 
                 for (uint32_t ai = 0; ai < expr_narg; ai++) {
                     Atom *raw = arg_rbs[ai].items[stack_idx[ai]].atom;
@@ -1853,7 +1935,7 @@ static bool typed_dispatch_bind(Space *s, Arena *a, Atom *atom, int fuel, Result
                 if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 2) {
                     Atom *h = call_atom->expr.elems[0];
                     if (h->kind == ATOM_SYMBOL && is_grounded_op(h->name)) {
-                        Atom *gr = grounded_dispatch(a, h,
+                        Atom *gr = dispatch_native_op(a, h,
                             call_atom->expr.elems + 1, call_atom->expr.len - 1);
                         if (gr) {
                             ResultBindSet inner;
@@ -1861,7 +1943,7 @@ static bool typed_dispatch_bind(Space *s, Arena *a, Atom *atom, int fuel, Result
                             metta_eval_bind(s, a, gr, fuel, &inner);
                             for (uint32_t ii = 0; ii < inner.len; ii++) {
                                 Bindings merged = combo_ctx;
-                                bindings_merge_into(&merged, &inner.items[ii].bindings);
+                                bindings_merge_into(&merged, &inner.items[ii].env);
                                 rb_set_add(&func_results, inner.items[ii].atom, &merged);
                             }
                             free(inner.items);
@@ -1881,7 +1963,7 @@ static bool typed_dispatch_bind(Space *s, Arena *a, Atom *atom, int fuel, Result
                             for (uint32_t ii = 0; ii < inner.len; ii++) {
                                 Bindings merged = combo_ctx;
                                 bindings_merge_into(&merged, &qr.items[qi].bindings);
-                                bindings_merge_into(&merged, &inner.items[ii].bindings);
+                                bindings_merge_into(&merged, &inner.items[ii].env);
                                 rb_set_add(&func_results, inner.items[ii].atom, &merged);
                             }
                             free(inner.items);
@@ -1912,13 +1994,13 @@ typed_func_done:
 
     if (func_results.len > 0 && !has_non_func_type) {
         for (uint32_t i = 0; i < func_results.len; i++)
-            rb_set_add(rbs, func_results.items[i].atom, &func_results.items[i].bindings);
+            rb_set_add(rbs, func_results.items[i].atom, &func_results.items[i].env);
         free(func_results.items);
         return true;
     }
     if (func_results.len > 0) {
         for (uint32_t i = 0; i < func_results.len; i++)
-            rb_set_add(rbs, func_results.items[i].atom, &func_results.items[i].bindings);
+            rb_set_add(rbs, func_results.items[i].atom, &func_results.items[i].env);
         free(func_results.items);
         if (rbs->len > 0) return true;
     }
@@ -2006,10 +2088,10 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                 metta_eval_bind(s, a, result, fuel, &inner);
                 for (uint32_t j = 0; j < inner.len; j++) {
                     Bindings merged = matches.items[bi];
-                    for (uint32_t k = 0; k < inner.items[j].bindings.len; k++)
+                    for (uint32_t k = 0; k < inner.items[j].env.len; k++)
                         bindings_add(&merged,
-                            inner.items[j].bindings.entries[k].var,
-                            inner.items[j].bindings.entries[k].val);
+                            inner.items[j].env.entries[k].var,
+                            inner.items[j].env.entries[k].val);
                     rb_set_add(rbs, inner.items[j].atom, &merged);
                 }
                 free(inner.items);
@@ -2032,10 +2114,10 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                     for (uint32_t j = 0; j < inner.len; j++) {
                         /* Merge match bindings + eval bindings */
                         Bindings merged = b;
-                        for (uint32_t k = 0; k < inner.items[j].bindings.len; k++)
+                        for (uint32_t k = 0; k < inner.items[j].env.len; k++)
                             bindings_add(&merged,
-                                inner.items[j].bindings.entries[k].var,
-                                inner.items[j].bindings.entries[k].val);
+                                inner.items[j].env.entries[k].var,
+                                inner.items[j].env.entries[k].val);
                         rb_set_add(rbs, inner.items[j].atom, &merged);
                     }
                     free(inner.items);
@@ -2054,13 +2136,13 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
             Atom *branch = is_true_atom(cond.items[i].atom)
                 ? expr_arg(atom, 1)
                 : expr_arg(atom, 2);
-            Atom *bound_branch = bindings_apply(&cond.items[i].bindings, a, branch);
+            Atom *bound_branch = bindings_apply(&cond.items[i].env, a, branch);
             ResultBindSet inner;
             rb_set_init(&inner);
             metta_eval_bind(s, a, bound_branch, fuel, &inner);
             for (uint32_t j = 0; j < inner.len; j++) {
-                Bindings merged = cond.items[i].bindings;
-                bindings_merge_into(&merged, &inner.items[j].bindings);
+                Bindings merged = cond.items[i].env;
+                bindings_merge_into(&merged, &inner.items[j].env);
                 rb_set_add(rbs, inner.items[j].atom, &merged);
             }
             free(inner.items);
@@ -2074,13 +2156,13 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
         rb_set_init(&refs);
         metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &refs);
         for (uint32_t i = 0; i < refs.len; i++) {
-            Atom *state_ref = bindings_apply(&refs.items[i].bindings, a, refs.items[i].atom);
+            Atom *state_ref = bindings_apply(&refs.items[i].env, a, refs.items[i].atom);
             state_ref = resolve_registry_refs(a, state_ref);
             if (state_ref->kind == ATOM_GROUNDED && state_ref->ground.gkind == GV_STATE) {
                 StateCell *cell = (StateCell *)state_ref->ground.ptr;
-                rb_set_add(rbs, cell->value, &refs.items[i].bindings);
+                rb_set_add(rbs, cell->value, &refs.items[i].env);
             } else {
-                rb_set_add(rbs, atom, &refs.items[i].bindings);
+                rb_set_add(rbs, atom, &refs.items[i].env);
             }
         }
         free(refs.items);
@@ -2092,22 +2174,22 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
         rb_set_init(&refs);
         metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &refs);
         for (uint32_t i = 0; i < refs.len; i++) {
-            Atom *state_ref = bindings_apply(&refs.items[i].bindings, a, refs.items[i].atom);
+            Atom *state_ref = bindings_apply(&refs.items[i].env, a, refs.items[i].atom);
             state_ref = resolve_registry_refs(a, state_ref);
             if (!(state_ref->kind == ATOM_GROUNDED && state_ref->ground.gkind == GV_STATE)) {
-                rb_set_add(rbs, atom_unit(a), &refs.items[i].bindings);
+                rb_set_add(rbs, atom_unit(a), &refs.items[i].env);
                 continue;
             }
 
             ResultBindSet vals;
             rb_set_init(&vals);
-            Atom *bound_val_expr = bindings_apply(&refs.items[i].bindings, a, expr_arg(atom, 1));
+            Atom *bound_val_expr = bindings_apply(&refs.items[i].env, a, expr_arg(atom, 1));
             metta_eval_bind(s, a, bound_val_expr, fuel, &vals);
             for (uint32_t vi = 0; vi < vals.len; vi++) {
-                Bindings merged = refs.items[i].bindings;
-                bindings_merge_into(&merged, &vals.items[vi].bindings);
+                Bindings merged = refs.items[i].env;
+                bindings_merge_into(&merged, &vals.items[vi].env);
                 StateCell *cell = (StateCell *)state_ref->ground.ptr;
-                Atom *new_v = bindings_apply(&vals.items[vi].bindings, a, vals.items[vi].atom);
+                Atom *new_v = bindings_apply(&vals.items[vi].env, a, vals.items[vi].atom);
                 Atom **new_types;
                 uint32_t nnt = get_atom_types(s, a, new_v, &new_types);
                 bool type_ok = false;
@@ -2167,7 +2249,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
 
         for (uint32_t ti = 0; ti < tuples.len; ti++) {
             Atom *call_atom = tuples.items[ti].atom;
-            Bindings tuple_bindings = tuples.items[ti].bindings;
+            Bindings tuple_bindings = tuples.items[ti].env;
 
             if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
                 rb_set_add(rbs, call_atom, &empty);
@@ -2181,7 +2263,7 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
             if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 2) {
                 Atom *h = call_atom->expr.elems[0];
                 if (h->kind == ATOM_SYMBOL && is_grounded_op(h->name)) {
-                    Atom *result = grounded_dispatch(a, h,
+                    Atom *result = dispatch_native_op(a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1);
                     if (result) {
                         rb_set_add(rbs, result, &tuple_bindings);
@@ -2205,10 +2287,10 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
                             bindings_add(&merged,
                                 qr.items[i].bindings.entries[k].var,
                                 qr.items[i].bindings.entries[k].val);
-                        for (uint32_t k = 0; k < inner.items[j].bindings.len; k++)
+                        for (uint32_t k = 0; k < inner.items[j].env.len; k++)
                             bindings_add(&merged,
-                                inner.items[j].bindings.entries[k].var,
-                                inner.items[j].bindings.entries[k].val);
+                                inner.items[j].env.entries[k].var,
+                                inner.items[j].env.entries[k].val);
                         rb_set_add(rbs, inner.items[j].atom, &merged);
                     }
                     free(inner.items);
@@ -2228,11 +2310,23 @@ static void metta_call_bind(Space *s, Arena *a, Atom *atom, int fuel, ResultBind
 /* ── Top-level evaluation ───────────────────────────────────────────────── */
 
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
-    metta_eval(s, a, NULL,expr, DEFAULT_FUEL, rs);
+    metta_eval(s, a, NULL,expr, g_default_fuel, rs);
 }
 
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs) {
     g_registry = r;
     g_persistent_arena = persistent;
-    metta_eval(s, a, NULL, expr, DEFAULT_FUEL, rs);
+    metta_eval(s, a, NULL, expr, g_default_fuel, rs);
+}
+
+void eval_set_default_fuel(int fuel) {
+    if (fuel > 0) g_default_fuel = fuel;
+}
+
+int eval_get_default_fuel(void) {
+    return g_default_fuel;
+}
+
+void eval_set_library_context(CettaLibraryContext *ctx) {
+    g_library_context = ctx;
 }
