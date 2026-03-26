@@ -77,6 +77,8 @@ typedef struct Space {
 void space_init(Space *s);
 void space_free(Space *s);
 void space_add(Space *s, Atom *atom);
+Space *space_heap_clone_shallow(Space *src);
+void space_replace_contents(Space *dst, Space *src);
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 

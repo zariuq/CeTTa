@@ -250,10 +250,17 @@ static const char *string_like_atom(Atom *atom) {
     return NULL;
 }
 
-static Space *resolve_import_destination(Arena *a, Atom *target, Atom **error_out) {
+typedef struct {
+    Space *space;
+    const char *bind_name;
+    bool is_fresh;
+} ImportDestination;
+
+static ImportDestination resolve_import_destination(Arena *a, Atom *target, Atom **error_out) {
+    ImportDestination dest = {0};
     if (!g_registry || !target || target->kind != ATOM_SYMBOL || target->name[0] != '&') {
         *error_out = atom_symbol(a, "import! destination must be &self or a fresh &name");
-        return NULL;
+        return dest;
     }
 
     if (strcmp(target->name, "&self") == 0) {
@@ -261,20 +268,22 @@ static Space *resolve_import_destination(Arena *a, Atom *target, Atom **error_ou
         if (!self) {
             *error_out = atom_symbol(a, "import! destination space not found");
         }
-        return self;
+        dest.space = self;
+        return dest;
     }
 
     if (registry_lookup(g_registry, target->name)) {
         *error_out = atom_symbol(a,
             "import! destination must be a new &name, or &self");
-        return NULL;
+        return dest;
     }
 
-    Arena *pa = g_persistent_arena ? g_persistent_arena : a;
-    Space *ns = arena_alloc(pa, sizeof(Space));
+    Space *ns = cetta_malloc(sizeof(Space));
     space_init(ns);
-    registry_bind(g_registry, target->name, atom_space(pa, ns));
-    return ns;
+    dest.space = ns;
+    dest.bind_name = target->name;
+    dest.is_fresh = true;
+    return dest;
 }
 
 static void collect_resolved_spaces(Space *s, Arena *a, Atom *space_expr,
@@ -1832,16 +1841,27 @@ tail_call: ;
     if (expr_head_is(atom, "import!") && nargs == 2 && g_registry && g_library_context) {
         const char *spec = string_like_atom(expr_arg(atom, 1));
         Atom *error = NULL;
-        Space *target = spec ? resolve_import_destination(a, expr_arg(atom, 0), &error) : NULL;
+        ImportDestination dest = {0};
+        if (spec) {
+            dest = resolve_import_destination(a, expr_arg(atom, 0), &error);
+        }
         if (!spec && !error) {
             error = atom_symbol(a, "import! expects a module name");
         }
-        if (!error && target &&
-            cetta_library_import_module(g_library_context, spec, target,
+        if (!error && dest.space &&
+            cetta_library_import_module(g_library_context, spec, dest.space, dest.is_fresh,
                                         a, g_persistent_arena ? g_persistent_arena : a,
                                         g_registry, fuel, &error)) {
+            if (dest.is_fresh) {
+                Arena *pa = g_persistent_arena ? g_persistent_arena : a;
+                registry_bind(g_registry, dest.bind_name, atom_space(pa, dest.space));
+            }
             outcome_set_add(os, atom_unit(a), &_empty);
         } else if (error) {
+            if (dest.is_fresh && dest.space) {
+                space_free(dest.space);
+                free(dest.space);
+            }
             outcome_set_add(os, atom_error(a, atom, error), &_empty);
         }
         return;
