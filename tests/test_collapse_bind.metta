@@ -1,4 +1,7 @@
-; collapse-bind — collects all results with bindings
+; Spec-driven: collapse-bind is deterministic and returns ONE packed
+; expression whose items are (<atom> (Bindings ...)) pairs.
 (= (multi) a)
 (= (multi) b)
-!(collapse-bind (multi))
+!(assertEqualToResult
+  (collapse-bind (multi))
+  (((a (Bindings () ())) (b (Bindings () ())))))

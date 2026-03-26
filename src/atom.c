@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,7 +64,10 @@ uint32_t atom_hash(Atom *a) {
                 h = ((h << 5) + h) ^ (uint32_t)*p;
             break;
         }
-        case GV_SPACE: case GV_STATE: break; /* mutable — don't hash-cons */
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+            break; /* mutable/contextual — don't hash-cons */
         }
         break;
     case ATOM_EXPR:
@@ -99,7 +103,9 @@ Atom *hashcons_get(HashConsTable *hc, Arena *a, Atom *atom) {
     /* Don't hash-cons mutable atoms (Space, State) or variables (freshened names) */
     if (atom->kind == ATOM_VAR) return atom;
     if (atom->kind == ATOM_GROUNDED &&
-        (atom->ground.gkind == GV_SPACE || atom->ground.gkind == GV_STATE))
+        (atom->ground.gkind == GV_SPACE ||
+         atom->ground.gkind == GV_STATE ||
+         atom->ground.gkind == GV_CAPTURE))
         return atom;
 
     uint32_t h = atom_hash(atom) % hc->size;
@@ -251,6 +257,14 @@ Atom *atom_state(Arena *a, StateCell *cell) {
     return at;
 }
 
+Atom *atom_capture(Arena *a, CaptureClosure *closure) {
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = ATOM_GROUNDED;
+    at->ground.gkind = GV_CAPTURE;
+    at->ground.ptr = closure;
+    return at;
+}
+
 Atom *atom_float(Arena *a, double val) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
@@ -367,6 +381,7 @@ bool atom_eq(Atom *a, Atom *b) {
         case GV_BOOL:   return a->ground.bval == b->ground.bval;
         case GV_STRING: return strcmp(a->ground.sval, b->ground.sval) == 0;
         case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
+        case GV_CAPTURE: return a->ground.ptr == b->ground.ptr;
         case GV_STATE: {
             StateCell *ca = (StateCell *)a->ground.ptr;
             StateCell *cb = (StateCell *)b->ground.ptr;
@@ -411,6 +426,7 @@ static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share) {
         }
         case GV_SPACE:  return atom_space(dst, src->ground.ptr);
         case GV_STATE:  return atom_state(dst, (StateCell *)src->ground.ptr);
+        case GV_CAPTURE: return atom_capture(dst, (CaptureClosure *)src->ground.ptr);
         }
         return atom_symbol(dst, "?");
     case ATOM_EXPR: {
@@ -445,7 +461,16 @@ void atom_print(Atom *a, FILE *out) {
     case ATOM_GROUNDED:
         switch (a->ground.gkind) {
         case GV_INT:    fprintf(out, "%ld", (long)a->ground.ival); break;
-        case GV_FLOAT:  fprintf(out, "%g", a->ground.fval); break;
+        case GV_FLOAT:
+            if (isnan(a->ground.fval))
+                fputs("NaN", out);
+            else if (isinf(a->ground.fval))
+                fputs(signbit(a->ground.fval) ? "-inf" : "inf", out);
+            else if (isfinite(a->ground.fval) && floor(a->ground.fval) == a->ground.fval)
+                fprintf(out, "%.1f", a->ground.fval);
+            else
+                fprintf(out, "%.16g", a->ground.fval);
+            break;
         case GV_BOOL:   fputs(a->ground.bval ? "True" : "False", out); break;
         case GV_STRING: {
             fputc('"', out);
@@ -466,6 +491,9 @@ void atom_print(Atom *a, FILE *out) {
             fputc(')', out);
             break;
         }
+        case GV_CAPTURE:
+            fputs("capture", out);
+            break;
         }
         break;
     case ATOM_EXPR:
@@ -477,4 +505,21 @@ void atom_print(Atom *a, FILE *out) {
         fputc(')', out);
         break;
     }
+}
+
+char *atom_to_string(Arena *a, Atom *atom) {
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        return arena_strdup(a, atom->ground.sval);
+    }
+    char *buf = NULL;
+    size_t len = 0;
+    FILE *mem = open_memstream(&buf, &len);
+    if (!mem) {
+        return arena_strdup(a, "");
+    }
+    atom_print(atom, mem);
+    fclose(mem);
+    char *out = arena_strdup(a, buf ? buf : "");
+    free(buf);
+    return out;
 }

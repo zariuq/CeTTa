@@ -40,6 +40,9 @@ src/%.o: src/%.c
 clean:
 	rm -f $(OBJ) $(STAGE0_OBJ) $(BIN) cetta-stage0 $(STDLIB_BLOB)
 
+promote-runtime: $(BIN)
+	@./scripts/promote_runtime.sh
+
 # Fast test: compare CeTTa output against pre-computed .expected files.
 # No oracle invocation — safe and instant.
 test: $(BIN)
@@ -234,15 +237,32 @@ tail-recursion-check: $(BIN)
 # LLVM IR validation: verify emitted IR compiles through opt/llc.
 compile-test: $(BIN)
 	@pass=0; fail=0; \
-	for f in tests/test_equations.metta tests/test_basic_eval.metta tests/test_disc_trie.metta; do \
+	for f in tests/test_equations.metta tests/test_basic_eval.metta tests/test_disc_trie.metta tests/test_compile_arity.metta; do \
 		[ -f "$$f" ] || continue; \
 		ir=$$(./$(BIN) --compile "$$f" 2>&1); \
 		if echo "$$ir" | opt -S -o /dev/null 2>/dev/null; then \
-			echo "IR-OK: $$f"; pass=$$((pass + 1)); \
+			if [ "$$f" = "tests/test_compile_arity.metta" ]; then \
+				if printf '%s\n' "$$ir" | grep -q 'define void @cetta_foo__arity_1' && \
+				   printf '%s\n' "$$ir" | grep -q 'define void @cetta_foo__arity_2'; then \
+					echo "IR-OK: $$f"; pass=$$((pass + 1)); \
+				else \
+					echo "IR-FAIL: $$f"; \
+					echo "missing distinct compiled symbols for foo/1 and foo/2"; \
+					fail=$$((fail + 1)); \
+				fi; \
+			else \
+				echo "IR-OK: $$f"; pass=$$((pass + 1)); \
+			fi; \
 		else \
 			echo "IR-FAIL: $$f"; fail=$$((fail + 1)); \
 		fi; \
 	done; \
 	echo "---"; echo "$$pass passed, $$fail failed"
 
-.PHONY: all clean test test-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test
+refresh-he-matrices:
+	@python3 scripts/refresh_he_runtime_matrices.py
+	@python3 -m json.tool specs/he_runtime_impl_matrix.json > /dev/null
+	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
+	@echo "refreshed HE runtime parity matrices"
+
+.PHONY: all clean test test-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime

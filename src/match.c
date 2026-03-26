@@ -168,8 +168,134 @@ bool binding_set_push(BindingSet *bs, const Bindings *b) {
 
 static uint32_t g_var_counter = 0;
 
+typedef struct {
+    const char **items;
+    uint32_t len;
+    uint32_t cap;
+} VarNameSet;
+
+typedef struct {
+    const char *name;
+    Atom *mapped;
+} RenameVarEntry;
+
+typedef struct {
+    RenameVarEntry *items;
+    uint32_t len;
+    uint32_t cap;
+} RenameVarMap;
+
 uint32_t fresh_var_suffix(void) {
     return g_var_counter++;
+}
+
+static void var_name_set_init(VarNameSet *set) {
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static void var_name_set_free(VarNameSet *set) {
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static bool var_name_set_contains(const VarNameSet *set, const char *name) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (strcmp(set->items[i], name) == 0)
+            return true;
+    }
+    return false;
+}
+
+static void var_name_set_add(VarNameSet *set, const char *name) {
+    if (var_name_set_contains(set, name))
+        return;
+    if (set->len >= set->cap) {
+        set->cap = set->cap ? set->cap * 2 : 8;
+        set->items = cetta_realloc(set->items, sizeof(const char *) * set->cap);
+    }
+    set->items[set->len++] = name;
+}
+
+static void collect_var_names(Atom *atom, VarNameSet *set) {
+    switch (atom->kind) {
+    case ATOM_VAR:
+        var_name_set_add(set, atom->name);
+        return;
+    case ATOM_EXPR:
+        for (uint32_t i = 0; i < atom->expr.len; i++)
+            collect_var_names(atom->expr.elems[i], set);
+        return;
+    default:
+        return;
+    }
+}
+
+static void rename_var_map_init(RenameVarMap *map) {
+    map->items = NULL;
+    map->len = 0;
+    map->cap = 0;
+}
+
+static void rename_var_map_free(RenameVarMap *map) {
+    free(map->items);
+    map->items = NULL;
+    map->len = 0;
+    map->cap = 0;
+}
+
+static Atom *rename_var_map_lookup(RenameVarMap *map, const char *name) {
+    for (uint32_t i = 0; i < map->len; i++) {
+        if (strcmp(map->items[i].name, name) == 0)
+            return map->items[i].mapped;
+    }
+    return NULL;
+}
+
+static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, const char *name) {
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s#%u", name, fresh_var_suffix());
+    Atom *fresh = atom_var(a, buf);
+    if (map->len >= map->cap) {
+        map->cap = map->cap ? map->cap * 2 : 8;
+        map->items = cetta_realloc(map->items, sizeof(RenameVarEntry) * map->cap);
+    }
+    map->items[map->len].name = name;
+    map->items[map->len].mapped = fresh;
+    map->len++;
+    return fresh;
+}
+
+static Atom *rename_vars_except_rec(Arena *a, Atom *atom,
+                                    const VarNameSet *ignore,
+                                    RenameVarMap *map) {
+    switch (atom->kind) {
+    case ATOM_VAR: {
+        if (var_name_set_contains(ignore, atom->name))
+            return atom;
+        Atom *mapped = rename_var_map_lookup(map, atom->name);
+        if (mapped)
+            return mapped;
+        return rename_var_map_add_fresh(map, a, atom->name);
+    }
+    case ATOM_EXPR: {
+        Atom **new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+        bool changed = false;
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            new_elems[i] = rename_vars_except_rec(a, atom->expr.elems[i], ignore, map);
+            if (new_elems[i] != atom->expr.elems[i])
+                changed = true;
+        }
+        if (!changed)
+            return atom;
+        return atom_expr(a, new_elems, atom->expr.len);
+    }
+    default:
+        return atom;
+    }
 }
 
 Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
@@ -195,6 +321,18 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
     }
 }
 
+Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec) {
+    VarNameSet ignore;
+    RenameVarMap map;
+    var_name_set_init(&ignore);
+    rename_var_map_init(&map);
+    collect_var_names(ignore_spec, &ignore);
+    Atom *result = rename_vars_except_rec(a, atom, &ignore, &map);
+    rename_var_map_free(&map);
+    var_name_set_free(&ignore);
+    return result;
+}
+
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 
 bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
@@ -218,7 +356,9 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
         case GV_STRING: return strcmp(pattern->ground.sval, target->ground.sval) == 0;
         case GV_SPACE:
-        case GV_STATE:  return pattern->ground.ptr == target->ground.ptr;
+        case GV_STATE:
+        case GV_CAPTURE:
+            return pattern->ground.ptr == target->ground.ptr;
         }
         return false;
 
@@ -301,6 +441,113 @@ bool match_atoms(Atom *left, Atom *right, Bindings *b) {
 
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {
     return match_atoms_epoch_depth(left, right, b, a, epoch, true, 64);
+}
+
+typedef struct {
+    const char *left;
+    const char *right;
+} AlphaPair;
+
+typedef struct {
+    AlphaPair *items;
+    uint32_t len;
+    uint32_t cap;
+} AlphaPairSet;
+
+static void alpha_pair_set_init(AlphaPairSet *pairs) {
+    pairs->items = NULL;
+    pairs->len = 0;
+    pairs->cap = 0;
+}
+
+static void alpha_pair_set_free(AlphaPairSet *pairs) {
+    free(pairs->items);
+    pairs->items = NULL;
+    pairs->len = 0;
+    pairs->cap = 0;
+}
+
+static const char *alpha_lookup_left(const AlphaPairSet *pairs, const char *left) {
+    for (uint32_t i = 0; i < pairs->len; i++) {
+        const char *stored = pairs->items[i].left;
+        size_t slen = strcspn(stored, "#");
+        size_t llen = strcspn(left, "#");
+        if (slen == llen && strncmp(stored, left, slen) == 0)
+            return pairs->items[i].right;
+    }
+    return NULL;
+}
+
+static const char *alpha_lookup_right(const AlphaPairSet *pairs, const char *right) {
+    for (uint32_t i = 0; i < pairs->len; i++) {
+        const char *stored = pairs->items[i].right;
+        size_t slen = strcspn(stored, "#");
+        size_t rlen = strcspn(right, "#");
+        if (slen == rlen && strncmp(stored, right, slen) == 0)
+            return pairs->items[i].left;
+    }
+    return NULL;
+}
+
+static bool alpha_add_pair(AlphaPairSet *pairs, const char *left, const char *right) {
+    if (pairs->len >= pairs->cap) {
+        pairs->cap = pairs->cap ? pairs->cap * 2 : 8;
+        pairs->items = cetta_realloc(pairs->items, sizeof(AlphaPair) * pairs->cap);
+    }
+    pairs->items[pairs->len].left = left;
+    pairs->items[pairs->len].right = right;
+    pairs->len++;
+    return true;
+}
+
+static bool atom_alpha_eq_rec(Atom *left, Atom *right, AlphaPairSet *pairs) {
+    if (left->kind == ATOM_VAR || right->kind == ATOM_VAR) {
+        if (left->kind != ATOM_VAR || right->kind != ATOM_VAR)
+            return false;
+        const char *mapped_right = alpha_lookup_left(pairs, left->name);
+        const char *mapped_left = alpha_lookup_right(pairs, right->name);
+        if (mapped_right || mapped_left) {
+            size_t mr_len = mapped_right ? strcspn(mapped_right, "#") : 0;
+            size_t rl_len = strcspn(right->name, "#");
+            size_t ml_len = mapped_left ? strcspn(mapped_left, "#") : 0;
+            size_t ll_len = strcspn(left->name, "#");
+            return mapped_right && mapped_left &&
+                   mr_len == rl_len &&
+                   ml_len == ll_len &&
+                   strncmp(mapped_right, right->name, mr_len) == 0 &&
+                   strncmp(mapped_left, left->name, ml_len) == 0;
+        }
+        return alpha_add_pair(pairs, left->name, right->name);
+    }
+
+    if (left->kind != right->kind)
+        return false;
+
+    switch (left->kind) {
+    case ATOM_SYMBOL:
+        return strcmp(left->name, right->name) == 0;
+    case ATOM_GROUNDED:
+        return atom_eq(left, right);
+    case ATOM_EXPR:
+        if (left->expr.len != right->expr.len)
+            return false;
+        for (uint32_t i = 0; i < left->expr.len; i++) {
+            if (!atom_alpha_eq_rec(left->expr.elems[i], right->expr.elems[i], pairs))
+                return false;
+        }
+        return true;
+    case ATOM_VAR:
+        return false;
+    }
+    return false;
+}
+
+bool atom_alpha_eq(Atom *left, Atom *right) {
+    AlphaPairSet pairs;
+    alpha_pair_set_init(&pairs);
+    bool ok = atom_alpha_eq_rec(left, right, &pairs);
+    alpha_pair_set_free(&pairs);
+    return ok;
 }
 
 static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {

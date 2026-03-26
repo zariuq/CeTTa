@@ -3,6 +3,15 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#ifndef M_E
+#define M_E 2.71828182845904523536
+#endif
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
@@ -87,6 +96,10 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
     /* Boolean */
     if (strcmp(tok, "True") == 0)  return atom_bool(a, true);
     if (strcmp(tok, "False") == 0) return atom_bool(a, false);
+
+    /* HE math.rs registers PI and EXP as grounded numeric tokens. */
+    if (strcmp(tok, "PI") == 0)  return atom_float(a, M_PI);
+    if (strcmp(tok, "EXP") == 0) return atom_float(a, M_E);
 
     /* Integer: try to parse */
     char *endp;

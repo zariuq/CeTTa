@@ -25,24 +25,73 @@ static void handle_sigsegv(int sig) {
 
 static bool g_count_only = false;
 
-static void print_results(ResultSet *rs) {
+typedef struct {
+    char **items;
+    uint32_t len;
+    uint32_t cap;
+} OutputBuffer;
+
+static void output_buffer_init(OutputBuffer *buf) {
+    buf->items = NULL;
+    buf->len = 0;
+    buf->cap = 0;
+}
+
+static void output_buffer_free(OutputBuffer *buf) {
+    for (uint32_t i = 0; i < buf->len; i++) free(buf->items[i]);
+    free(buf->items);
+}
+
+static bool output_buffer_push(OutputBuffer *buf, char *text) {
+    if (!text || text[0] == '\0') {
+        free(text);
+        return true;
+    }
+    if (buf->len == buf->cap) {
+        uint32_t new_cap = buf->cap ? buf->cap * 2 : 8;
+        char **new_items = realloc(buf->items, new_cap * sizeof(char *));
+        if (!new_items) {
+            free(text);
+            return false;
+        }
+        buf->items = new_items;
+        buf->cap = new_cap;
+    }
+    buf->items[buf->len++] = text;
+    return true;
+}
+
+static void write_results(FILE *out, ResultSet *rs) {
     if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
     if (g_count_only) {
         if (rs->len == 1 &&
             rs->items[0]->kind == ATOM_GROUNDED &&
             rs->items[0]->ground.gkind == GV_INT) {
-            printf("%lld\n", (long long)rs->items[0]->ground.ival);
+            fprintf(out, "%lld\n", (long long)rs->items[0]->ground.ival);
             return;
         }
-        printf("%u\n", rs->len);
+        fprintf(out, "%u\n", rs->len);
         return;
     }
-    printf("[");
+    fprintf(out, "[");
     for (uint32_t i = 0; i < rs->len; i++) {
-        if (i > 0) printf(", ");
-        atom_print(rs->items[i], stdout);
+        if (i > 0) fprintf(out, ", ");
+        atom_print(rs->items[i], out);
     }
-    printf("]\n");
+    fprintf(out, "]\n");
+}
+
+static bool capture_results(OutputBuffer *buf, ResultSet *rs) {
+    char *text = NULL;
+    size_t text_len = 0;
+    FILE *mem = open_memstream(&text, &text_len);
+    if (!mem) return false;
+    write_results(mem, rs);
+    if (fclose(mem) != 0) {
+        free(text);
+        return false;
+    }
+    return output_buffer_push(buf, text);
 }
 
 static bool result_set_has_error(ResultSet *rs) {
@@ -226,6 +275,7 @@ int main(int argc, char **argv) {
     CettaLibraryContext libraries;
     cetta_library_context_init(&libraries);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
+    cetta_library_context_set_script_path(&libraries, filename);
     eval_set_library_context(&libraries);
 
     /* Load precompiled stdlib equations into the space */
@@ -282,6 +332,8 @@ int main(int argc, char **argv) {
 
     /* Process top-level atoms */
     int i = 0;
+    OutputBuffer outputs;
+    output_buffer_init(&outputs);
     while (i < n) {
         Atom *at = atoms[i];
 
@@ -291,7 +343,20 @@ int main(int argc, char **argv) {
             ResultSet rs;
             result_set_init(&rs);
             eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
-            print_results(&rs);
+            if (!capture_results(&outputs, &rs)) {
+                fprintf(stderr, "error: could not buffer evaluation output\n");
+                free(rs.items);
+                output_buffer_free(&outputs);
+                free(atoms);
+                space_free(&space);
+                arena_free(&eval_arena);
+                arena_free(&arena);
+                g_intern = NULL;
+                intern_free(&intern_table);
+                g_hashcons = NULL;
+                hashcons_free(&hashcons_table);
+                return 1;
+            }
             bool stop_after_error = result_set_has_error(&rs);
             free(rs.items);
             eval_release_temporary_spaces();
@@ -309,7 +374,12 @@ int main(int argc, char **argv) {
         i++;
     }
 
+    for (uint32_t oi = 0; oi < outputs.len; oi++) {
+        fputs(outputs.items[oi], stdout);
+    }
+
     free(atoms);
+    output_buffer_free(&outputs);
 
     /* Free registry-owned space contents. Space structs themselves may live
        in the persistent arena, so cleanup must not free the struct pointer. */

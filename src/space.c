@@ -502,7 +502,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
     case GV_FLOAT:  return atom_symbol(a, "Number");
     case GV_BOOL:   return atom_symbol(a, "Bool");
     case GV_STRING: return atom_symbol(a, "String");
-    case GV_SPACE:  return atom_symbol(a, "Space");
+    case GV_SPACE:  return atom_symbol(a, "SpaceType");
+    case GV_CAPTURE:
+        return atom_expr3(a, atom_symbol(a, "->"),
+                          atom_atom_type(a), atom_atom_type(a));
     case GV_STATE: {
         StateCell *cell = (StateCell *)atom->ground.ptr;
         if (cell->content_type && !atom_is_symbol(cell->content_type, "%Undefined%"))
@@ -693,11 +696,11 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
     if (head) {
         /* Query has a known head symbol — look up matching bucket */
         query_bucket(&s->eq_idx.buckets[symbol_hash(head)], query, a, out);
-    } else {
-        /* Variable or complex head — must scan all buckets */
-        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-            query_bucket(&s->eq_idx.buckets[i], query, a, out);
     }
-    /* Always check wildcard equations (variable-headed LHS) */
+    /* Non-symbol-headed queries may still match wildcard equations whose LHS
+       head is itself a variable or complex term, but they must not unlock
+       every named equation bucket by unifying the head variable with an
+       unrelated function symbol. HE treats ($f x) as data unless a wildcard
+       equation explicitly matches it. */
     query_bucket(&s->eq_idx.wildcard, query, a, out);
 }

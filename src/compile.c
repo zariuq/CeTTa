@@ -12,6 +12,7 @@ typedef struct {
     Atom **lhs;
     Atom **rhs;
     uint32_t arity;
+    bool direct_call_safe;
     uint32_t len, cap;
 } EqGroup;
 
@@ -26,7 +27,8 @@ static void eq_group_set_init(EqGroupSet *gs) {
 
 static EqGroup *eq_group_find_or_create(EqGroupSet *gs, const char *head, uint32_t arity) {
     for (uint32_t i = 0; i < gs->len; i++)
-        if (strcmp(gs->groups[i].head, head) == 0) return &gs->groups[i];
+        if (strcmp(gs->groups[i].head, head) == 0 && gs->groups[i].arity == arity)
+            return &gs->groups[i];
     if (gs->len >= gs->cap) {
         gs->cap = gs->cap ? gs->cap * 2 : 8;
         gs->groups = cetta_realloc(gs->groups, sizeof(EqGroup) * gs->cap);
@@ -34,6 +36,7 @@ static EqGroup *eq_group_find_or_create(EqGroupSet *gs, const char *head, uint32
     EqGroup *g = &gs->groups[gs->len++];
     g->head = head; g->lhs = NULL; g->rhs = NULL;
     g->arity = arity; g->len = 0; g->cap = 0;
+    g->direct_call_safe = false;
     return g;
 }
 
@@ -46,13 +49,69 @@ static void eq_group_add(EqGroup *g, Atom *lhs, Atom *rhs) {
     g->lhs[g->len] = lhs; g->rhs[g->len] = rhs; g->len++;
 }
 
-static EqGroup *eq_group_lookup(EqGroupSet *gs, const char *head) {
+static EqGroup *eq_group_lookup(EqGroupSet *gs, const char *head, uint32_t arity) {
     for (uint32_t i = 0; i < gs->len; i++)
-        if (strcmp(gs->groups[i].head, head) == 0) return &gs->groups[i];
+        if (strcmp(gs->groups[i].head, head) == 0 && gs->groups[i].arity == arity)
+            return &gs->groups[i];
     return NULL;
 }
 
-static void analyze_equations(Space *s, EqGroupSet *out) {
+static bool compile_is_function_type(Atom *a) {
+    return a && a->kind == ATOM_EXPR && a->expr.len >= 3 &&
+           atom_is_symbol(a->expr.elems[0], "->");
+}
+
+static bool atom_is_compile_stable_value(Atom *atom, EqGroupSet *groups) {
+    switch (atom->kind) {
+    case ATOM_VAR:
+    case ATOM_SYMBOL:
+    case ATOM_GROUNDED:
+        return true;
+    case ATOM_EXPR:
+        if (atom->expr.len == 0) return true;
+        if (atom->expr.elems[0]->kind != ATOM_SYMBOL) return false;
+        if (is_grounded_op(atom->expr.elems[0]->name)) return false;
+        if (eq_group_lookup(groups, atom->expr.elems[0]->name, atom->expr.len - 1))
+            return false;
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (!atom_is_compile_stable_value(atom->expr.elems[i], groups))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool group_has_known_strict_types(Space *s, Arena *a, EqGroup *g) {
+    Atom **types = NULL;
+    uint32_t ntypes = get_atom_types(s, a, atom_symbol(a, g->head), &types);
+    Atom *ft = NULL;
+    for (uint32_t i = 0; i < ntypes; i++) {
+        Atom *ty = types[i];
+        if (!compile_is_function_type(ty)) continue;
+        if (ty->expr.len - 2 != g->arity) continue;
+        if (ft) {
+            free(types);
+            return false;
+        }
+        ft = ty;
+    }
+    if (!ft) {
+        free(types);
+        return false;
+    }
+    for (uint32_t i = 0; i < g->arity; i++) {
+        Atom *arg_ty = ft->expr.elems[i + 1];
+        if (atom_is_symbol(arg_ty, "Atom") || atom_is_symbol(arg_ty, "%Undefined%")) {
+            free(types);
+            return false;
+        }
+    }
+    free(types);
+    return true;
+}
+
+static void analyze_equations(Space *s, Arena *a, EqGroupSet *out) {
     eq_group_set_init(out);
     for (uint32_t i = 0; i < s->len; i++) {
         Atom *a = s->atoms[i];
@@ -69,6 +128,13 @@ static void analyze_equations(Space *s, EqGroupSet *out) {
         EqGroup *g = eq_group_find_or_create(out, head, arity);
         eq_group_add(g, lhs, rhs);
     }
+    for (uint32_t i = 0; i < out->len; i++) {
+        EqGroup *g = &out->groups[i];
+        g->direct_call_safe =
+            (g->len == 1) &&
+            group_has_known_strict_types(s, a, g) &&
+            atom_is_compile_stable_value(g->rhs[0], out);
+    }
 }
 
 /* ── LLVM IR Helpers ────────────────────────────────────────────────────── */
@@ -82,6 +148,12 @@ static void emit_mangled(FILE *out, const char *name) {
             (*p >= '0' && *p <= '9') || *p == '_') fputc(*p, out);
         else fprintf(out, "_%02x", (unsigned char)*p);
     }
+}
+
+static void emit_compiled_symbol_name(FILE *out, const char *head, uint32_t arity) {
+    fprintf(out, "cetta_");
+    emit_mangled(out, head);
+    fprintf(out, "__arity_%u", arity);
 }
 
 /* ── Variable Capture Table ─────────────────────────────────────────────── */
@@ -199,30 +271,18 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
                              EqGroupSet *all_groups);
 
 /* Emit a direct call to a compiled function, returning the first result as
-   an Atom* register. Uses a temporary ResultSet on the stack. */
+   an Atom* register. This path is only used for groups already proven safe
+   for direct singleton calls, so arguments are passed directly as stable
+   values instead of being re-evaluated here. */
 static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_expr,
                                      CaptureTable *captures, EqGroupSet *all_groups) {
     static char reg[32];
 
-    /* Build args (children of the call expr, skipping head symbol).
-       Each arg must be evaluated before passing to the compiled function,
-       because the function pattern-matches on evaluated values (not raw exprs). */
+    /* Build already-stable argument atoms (children of the call expr, skipping head symbol). */
     uint32_t nargs = call_expr->expr.len - 1;
     const char **arg_regs = cetta_malloc(sizeof(const char *) * (nargs ? nargs : 1));
     for (uint32_t i = 0; i < nargs; i++) {
-        /* Build the raw arg atom */
-        const char *raw = emit_rhs(out, call_expr->expr.elems[i + 1], captures, all_groups);
-        /* Evaluate it via metta_eval to get the value */
-        int eval_rs = g_tmp++;
-        fprintf(out, "  %%evalrs%d = call %%ResultSet* @cetta_rs_alloc()\n", eval_rs);
-        fprintf(out, "  call void @metta_eval(%%Space* %%space, %%Arena* %%arena, "
-                "%%Atom* null, %%Atom* %s, i32 %%fuel, %%ResultSet* %%evalrs%d)\n", raw, eval_rs);
-        int eval_res = g_tmp++;
-        char eval_reg[32];
-        snprintf(eval_reg, sizeof(eval_reg), "%%evr%d", eval_res);
-        fprintf(out, "  %s = call %%Atom* @cetta_rs_first(%%ResultSet* %%evalrs%d)\n", eval_reg, eval_rs);
-        fprintf(out, "  call void @cetta_rs_free(%%ResultSet* %%evalrs%d)\n", eval_rs);
-        arg_regs[i] = strdup(eval_reg);
+        arg_regs[i] = strdup(emit_rhs(out, call_expr->expr.elems[i + 1], captures, all_groups));
     }
 
     /* Allocate temporary ResultSet for the compiled function's results */
@@ -230,8 +290,8 @@ static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_expr,
     fprintf(out, "  %%tmprs%d = call %%ResultSet* @cetta_rs_alloc()\n", rs_id);
 
     /* Call the compiled function directly */
-    fprintf(out, "  call void @cetta_");
-    emit_mangled(out, g->head);
+    fprintf(out, "  call void @");
+    emit_compiled_symbol_name(out, g->head, g->arity);
     fprintf(out, "(%%Space* %%space, %%Arena* %%arena");
     for (uint32_t i = 0; i < nargs; i++)
         fprintf(out, ", %%Atom* %s", arg_regs[i]);
@@ -314,8 +374,10 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
 
         /* Check if this is a call to a compiled head → direct call */
         if (rhs->expr.elems[0]->kind == ATOM_SYMBOL) {
-            EqGroup *target = eq_group_lookup(all_groups, rhs->expr.elems[0]->name);
-            if (target && target->arity == rhs->expr.len - 1) {
+            EqGroup *target = eq_group_lookup(all_groups, rhs->expr.elems[0]->name,
+                                              rhs->expr.len - 1);
+            if (target && target->direct_call_safe &&
+                atom_is_compile_stable_value(rhs, all_groups)) {
                 return emit_direct_call(out, target, rhs, captures, all_groups);
             }
         }
@@ -386,7 +448,7 @@ static void collect_syms(Atom *a, const char ***syms, uint32_t *n, uint32_t *cap
 void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     (void)a;
     EqGroupSet gs;
-    analyze_equations(s, &gs);
+    analyze_equations(s, a, &gs);
     if (gs.len == 0) { fprintf(out, "; No compilable equations\n"); return; }
 
     /* Collect all string constants */
@@ -437,7 +499,7 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     for (uint32_t i = 0; i < nsyms; i++) emit_str_const(out, syms[i]);
     fprintf(out, "\n");
 
-    /* Note: compiled functions call each other directly via @cetta_<name>.
+    /* Note: compiled functions call each other directly via head+arity symbols.
        LLVM resolves forward references within the same module automatically. */
 
     /* Emit compiled functions */
@@ -446,8 +508,8 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
         g_label = 0; g_tmp = 0;
 
         fprintf(out, "; === %s (arity %u, %u equations) ===\n", g->head, g->arity, g->len);
-        fprintf(out, "define void @cetta_");
-        emit_mangled(out, g->head);
+        fprintf(out, "define void @");
+        emit_compiled_symbol_name(out, g->head, g->arity);
         fprintf(out, "(%%Space* %%space, %%Arena* %%arena");
         for (uint32_t ai = 0; ai < g->arity; ai++)
             fprintf(out, ", %%Atom* %%arg%u", ai);
