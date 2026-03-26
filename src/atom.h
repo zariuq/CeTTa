@@ -21,7 +21,8 @@ typedef enum {
     GV_BOOL,
     GV_STRING,
     GV_SPACE,
-    GV_STATE
+    GV_STATE,
+    GV_CAPTURE
 } GroundedKind;
 
 /* ── Atom ───────────────────────────────────────────────────────────────── */
@@ -119,7 +120,14 @@ typedef struct {
     Atom *content_type; /* for (StateMonad τ) */
 } StateCell;
 
+typedef struct {
+    void *space_ptr;
+    bool type_check_auto;
+    bool pragma_bare_minimal;
+} CaptureClosure;
+
 Atom *atom_state(Arena *a, StateCell *cell);
+Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_expr(Arena *a, Atom **elems, uint32_t len);
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2);
 Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);

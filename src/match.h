@@ -48,6 +48,11 @@ uint32_t fresh_var_suffix(void);
    Returns new arena-allocated atom. Non-variable atoms returned as-is. */
 Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
 
+/* Rename all variables in atom except the variables mentioned anywhere inside
+   `ignore_spec`. Non-ignored variables are freshened consistently per original
+   name. Returns new arena-allocated atom, or the original atom if unchanged. */
+Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);
+
 /* ── Bidirectional matching (match_atoms from HE spec) ─────────────────── */
 
 /* Match left against right. Variables on EITHER side can bind.
@@ -55,6 +60,10 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
    On failure, returns false. */
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
+
+/* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
+   renaming of variable names. */
+bool atom_alpha_eq(Atom *left, Atom *right);
 
 /* Compare bindings as a set of (var,value) pairs, ignoring entry order. */
 bool bindings_eq(Bindings *a, Bindings *b);
