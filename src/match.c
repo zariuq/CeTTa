@@ -5,13 +5,17 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
+static inline bool binding_name_eq(const char *lhs, const char *rhs) {
+    return lhs == rhs || strcmp(lhs, rhs) == 0;
+}
+
 void bindings_init(Bindings *b) {
     b->len = 0;
 }
 
 Atom *bindings_lookup(Bindings *b, const char *var) {
     for (uint32_t i = 0; i < b->len; i++) {
-        if (strcmp(b->entries[i].var, var) == 0)
+        if (binding_name_eq(b->entries[i].var, var))
             return b->entries[i].val;
     }
     return NULL;
@@ -28,12 +32,12 @@ static Atom *epoch_var_atom(Arena *a, const char *name, uint32_t epoch) {
 }
 
 bool bindings_add(Bindings *b, const char *var, Atom *val) {
-    if (val->kind == ATOM_VAR && strcmp(var, val->name) == 0) {
+    if (val->kind == ATOM_VAR && binding_name_eq(var, val->name)) {
         return true;
     }
     if (val->kind == ATOM_VAR) {
         Atom *other = bindings_lookup(b, val->name);
-        if (other && other->kind == ATOM_VAR && strcmp(other->name, var) == 0) {
+        if (other && other->kind == ATOM_VAR && binding_name_eq(other->name, var)) {
             return true;
         }
     }
@@ -65,7 +69,7 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
 
 static bool bindings_seen_var(const char **seen, uint32_t len, const char *name) {
     for (uint32_t i = 0; i < len; i++) {
-        if (strcmp(seen[i], name) == 0) return true;
+        if (binding_name_eq(seen[i], name)) return true;
     }
     return false;
 }

@@ -34,7 +34,7 @@ static void disc_add_leaf(DiscNode *n, uint32_t idx) {
 
 static DiscNode *disc_get_sym(DiscNode *n, const char *key) {
     for (uint32_t i = 0; i < n->nsym; i++)
-        if (strcmp(n->sym[i].key, key) == 0) return n->sym[i].child;
+        if (n->sym[i].key == key || strcmp(n->sym[i].key, key) == 0) return n->sym[i].child;
     if (n->nsym >= n->csym) {
         n->csym = n->csym ? n->csym * 2 : 4;
         n->sym = cetta_realloc(n->sym, sizeof(n->sym[0]) * n->csym);
