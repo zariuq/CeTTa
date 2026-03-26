@@ -115,7 +115,49 @@ void outcome_set_free(OutcomeSet *os) {
 /* Active importable library set */
 static CettaLibraryContext *g_library_context = NULL;
 
+static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+
+static const CettaProfile *active_profile(void) {
+    return g_library_context ? g_library_context->session.profile : NULL;
+}
+
+static Atom *profile_surface_error(Arena *a, Atom *call, const char *surface_name) {
+    const CettaProfile *profile = active_profile();
+    char buf[256];
+    snprintf(buf, sizeof(buf), "surface %s is unavailable in profile %s",
+             surface_name, profile ? profile->name : "unknown");
+    return atom_error(a, call, atom_symbol(a, buf));
+}
+
+static Atom *bad_arg_type_error(Space *s, Arena *a, Atom *call, int64_t arg_index,
+                                Atom *expected_type, Atom *actual) {
+    Atom **actual_types = NULL;
+    uint32_t nat = get_atom_types(s, a, actual, &actual_types);
+    Atom *actual_type = (nat > 0) ? actual_types[0] : atom_undefined_type(a);
+    Atom *reason = atom_expr(a, (Atom *[]) {
+        atom_symbol(a, "BadArgType"),
+        atom_int(a, arg_index),
+        expected_type,
+        actual_type
+    }, 4);
+    free(actual_types);
+    return atom_error(a, call, reason);
+}
+
+static Atom *state_bad_arg_type_error(Space *s, Arena *a, Atom *call,
+                                      int64_t arg_index, Atom *actual) {
+    char fresh_name[48];
+    snprintf(fresh_name, sizeof(fresh_name), "$__state#%u", fresh_var_suffix());
+    Atom *expected_type =
+        atom_expr2(a, atom_symbol(a, "StateMonad"), atom_var(a, fresh_name));
+    return bad_arg_type_error(s, a, call, arg_index, expected_type, actual);
+}
+
 static Atom *dispatch_native_op(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (head && head->kind == ATOM_SYMBOL && active_profile() &&
+        !cetta_profile_allows_surface(active_profile(), head->name)) {
+        return profile_surface_error(a, make_call_expr(a, head, args, nargs), head->name);
+    }
     Atom *result = grounded_dispatch(a, head, args, nargs);
     if (result) return result;
     if (g_library_context) {
@@ -1442,7 +1484,13 @@ tail_call: ;
     /* ── Special forms (arguments NOT pre-evaluated) ───────────────────── */
 
     /* ── superpose ─────────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "superpose") && nargs == 1) {
+    if (expr_head_is(atom, "superpose")) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Atom *list = expr_arg(atom, 0);
         if (list->kind == ATOM_EXPR) {
             for (uint32_t i = 0; i < list->expr.len; i++)
@@ -1548,7 +1596,13 @@ tail_call: ;
     }
 
     /* ── unify ─────────────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "unify") && nargs == 4) {
+    if (expr_head_is(atom, "unify")) {
+        if (nargs != 4) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Atom *target = expr_arg(atom, 0);
         Atom *pattern = expr_arg(atom, 1);
         Atom *then_br = expr_arg(atom, 2);
@@ -1565,7 +1619,13 @@ tail_call: ;
     }
 
     /* ── case ──────────────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "case") && nargs == 2) {
+    if (expr_head_is(atom, "case")) {
+        if (nargs != 2) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         ResultSet scrut;
         result_set_init(&scrut);
         metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, &scrut);
@@ -1595,7 +1655,13 @@ tail_call: ;
     }
 
     /* ── switch ────────────────────────────────────────────────────────── */
-    if ((expr_head_is(atom, "switch") || expr_head_is(atom, "switch-minimal")) && nargs == 2) {
+    if (expr_head_is(atom, "switch") || expr_head_is(atom, "switch-minimal")) {
+        if (nargs != 2) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Atom *scrutinee = expr_arg(atom, 0);
         Atom *branches = expr_arg(atom, 1);
         if (branches->kind == ATOM_EXPR) {
@@ -1685,7 +1751,13 @@ tail_call: ;
     }
 
     /* ── chain ─────────────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "chain") && nargs == 3) {
+    if (expr_head_is(atom, "chain")) {
+        if (nargs != 3) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Atom *to_eval = expr_arg(atom, 0);
         Atom *var = expr_arg(atom, 1);
         Atom *tmpl_chain = expr_arg(atom, 2);
@@ -1791,12 +1863,49 @@ tail_call: ;
     }
 
     /* ── eval (minimal instruction) ────────────────────────────────────── */
-    if (expr_head_is(atom, "eval") && nargs == 1) {
+    if (expr_head_is(atom, "eval")) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         TAIL_REENTER(expr_arg(atom, 0));
     }
 
+    /* ── foldl-atom-in-space (clean extension surface) ────────────────── */
+    if (expr_head_is(atom, "foldl-atom-in-space")) {
+        if (active_profile() &&
+            !cetta_profile_allows_surface(active_profile(), "foldl-atom-in-space")) {
+            outcome_set_add(os,
+                profile_surface_error(a, atom, "foldl-atom-in-space"), &_empty);
+            return;
+        }
+        if (nargs != 6) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Atom **helper_elems = arena_alloc(a, sizeof(Atom *) * 7);
+        helper_elems[0] = atom_symbol(a, "_minimal-foldl-atom");
+        for (uint32_t i = 0; i < 6; i++) {
+            helper_elems[i + 1] = expr_arg(atom, i);
+        }
+        Atom *helper_call = atom_expr(a, helper_elems, 7);
+        Atom *eval_helper = atom_expr2(a, atom_symbol(a, "eval"), helper_call);
+        Atom *rewrite = atom_expr2(a, atom_symbol(a, "function"), eval_helper);
+        TAIL_REENTER(rewrite);
+    }
+
     /* ── new-space ──────────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "new-space") && nargs == 0) {
+    if (expr_head_is(atom, "new-space")) {
+        if (nargs != 0) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Arena *pa = g_persistent_arena ? g_persistent_arena : a;
         Space *ns = arena_alloc(pa, sizeof(Space));
         space_init(ns);
@@ -1826,6 +1935,34 @@ tail_call: ;
     }
 
     /* ── register-module! / import! ───────────────────────────────────── */
+    if (expr_head_is(atom, "git-module!") && g_library_context) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        const char *url = string_like_atom(expr_arg(atom, 0));
+        Atom *error = NULL;
+        if (!url) {
+            error = atom_symbol(a, "git-module! expects a URL; use quotes if needed");
+        }
+        if (!error && cetta_library_register_git_module(g_library_context, url, a, &error)) {
+            outcome_set_add(os, atom_unit(a), &_empty);
+        } else {
+            outcome_set_add(os, atom_error(a, atom,
+                error ? error : atom_symbol(a, "git-module! failed")), &_empty);
+        }
+        return;
+    }
+
+    if (expr_head_is(atom, "register-module!") && nargs != 1) {
+        outcome_set_add(os,
+            atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+            &_empty);
+        return;
+    }
+
     if (expr_head_is(atom, "register-module!") && nargs == 1 && g_library_context) {
         const char *path = string_like_atom(expr_arg(atom, 0));
         Atom *error = NULL;
@@ -1835,6 +1972,13 @@ tail_call: ;
             outcome_set_add(os, atom_error(a, atom,
                 error ? error : atom_symbol(a, "register-module! failed")), &_empty);
         }
+        return;
+    }
+
+    if (expr_head_is(atom, "import!") && nargs != 2) {
+        outcome_set_add(os,
+            atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+            &_empty);
         return;
     }
 
@@ -1867,6 +2011,98 @@ tail_call: ;
         return;
     }
 
+    if (expr_head_is(atom, "include") && g_library_context) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        const char *spec = string_like_atom(expr_arg(atom, 0));
+        Atom *error = NULL;
+        if (!spec) {
+            error = atom_symbol(a, "include expects a module name argument");
+        }
+        if (!error &&
+            cetta_library_include_module(g_library_context, spec, s, a,
+                                        g_persistent_arena ? g_persistent_arena : a,
+                                        g_registry, fuel, &error)) {
+            outcome_set_add(os, atom_unit(a), &_empty);
+        } else {
+            outcome_set_add(os, atom_error(a, atom,
+                error ? error : atom_symbol(a, "include failed")), &_empty);
+        }
+        return;
+    }
+
+    if (expr_head_is(atom, "mod-space!") && g_library_context) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        const char *spec = string_like_atom(expr_arg(atom, 0));
+        Atom *error = NULL;
+        if (!spec) {
+            error = atom_symbol(a, "mod-space! expects a module name argument");
+        }
+        Atom *space_atom = NULL;
+        if (!error) {
+            space_atom = cetta_library_mod_space(g_library_context, spec, a,
+                                                g_persistent_arena ? g_persistent_arena : a,
+                                                g_registry, fuel, &error);
+        }
+        if (space_atom) {
+            outcome_set_add(os, space_atom, &_empty);
+        } else {
+            outcome_set_add(os, atom_error(a, atom,
+                error ? error : atom_symbol(a, "mod-space! failed")), &_empty);
+        }
+        return;
+    }
+
+    if (expr_head_is(atom, "print-mods!") && g_library_context) {
+        if (nargs != 0) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Atom *error = NULL;
+        if (cetta_library_print_loaded_modules(g_library_context, stdout, a, &error)) {
+            outcome_set_add(os, atom_unit(a), &_empty);
+        } else {
+            outcome_set_add(os, atom_error(a, atom,
+                error ? error : atom_symbol(a, "print-mods! failed")), &_empty);
+        }
+        return;
+    }
+
+    if (expr_head_is(atom, "module-inventory!") && g_library_context) {
+        if (nargs != 0) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        if (active_profile() &&
+            !cetta_profile_allows_surface(active_profile(), "module-inventory!")) {
+            outcome_set_add(os, profile_surface_error(a, atom, "module-inventory!"), &_empty);
+            return;
+        }
+        Atom *error = NULL;
+        Atom *inventory = cetta_library_module_inventory_space(
+            g_library_context, a, g_persistent_arena ? g_persistent_arena : a, &error);
+        if (inventory) {
+            outcome_set_add(os, inventory, &_empty);
+        } else {
+            outcome_set_add(os, atom_error(a, atom,
+                error ? error : atom_symbol(a, "module-inventory! failed")), &_empty);
+        }
+        return;
+    }
+
     /* ── with-space-snapshot ───────────────────────────────────────────── */
     if (expr_head_is(atom, "with-space-snapshot") && nargs == 3 && g_registry) {
         Atom *binder = expr_arg(atom, 0);
@@ -1893,6 +2129,13 @@ tail_call: ;
     }
 
     /* ── bind! ─────────────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "bind!") && nargs != 2) {
+        outcome_set_add(os,
+            atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+            &_empty);
+        return;
+    }
+
     if (expr_head_is(atom, "bind!") && nargs == 2 && g_registry) {
         Atom *name = expr_arg(atom, 0);
         Atom *val_expr = expr_arg(atom, 1);
@@ -2017,6 +2260,10 @@ tail_call: ;
 
     /* ── count-atoms ──────────────────────────────────────────────────── */
     if (expr_head_is(atom, "count-atoms") && nargs == 1 && g_registry) {
+        if (active_profile() && !cetta_profile_allows_surface(active_profile(), "count-atoms")) {
+            outcome_set_add(os, profile_surface_error(a, atom, "count-atoms"), &_empty);
+            return;
+        }
         Atom *space_ref = expr_arg(atom, 0);
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
@@ -2028,7 +2275,13 @@ tail_call: ;
     }
 
     /* ── collapse-bind ───────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "collapse-bind") && nargs == 1) {
+    if (expr_head_is(atom, "collapse-bind")) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         ResultBindSet inner;
         rb_set_init(&inner);
         metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &inner);
@@ -2045,8 +2298,20 @@ tail_call: ;
     }
 
     /* ── superpose-bind ────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "superpose-bind") && nargs == 1) {
+    if (expr_head_is(atom, "superpose-bind")) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Atom *list = expr_arg(atom, 0);
+        if (list->kind != ATOM_EXPR) {
+            outcome_set_add(os,
+                bad_arg_type_error(s, a, atom, 1, atom_expression_type(a), list),
+                &_empty);
+            return;
+        }
         if (list->kind == ATOM_EXPR) {
             for (uint32_t i = 0; i < list->expr.len; i++) {
                 Atom *pair = list->expr.elems[i];
@@ -2091,7 +2356,13 @@ tail_call: ;
     }
 
     /* ── new-state / get-state / change-state! ───────────────────────────── */
-    if (expr_head_is(atom, "new-state") && nargs == 1) {
+    if (expr_head_is(atom, "new-state")) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Atom *initial = expr_arg(atom, 0);
         /* Allocate state in persistent arena (survives eval_arena reset) */
         Arena *pa = g_persistent_arena ? g_persistent_arena : a;
@@ -2105,7 +2376,13 @@ tail_call: ;
         outcome_set_add(os, atom_state(pa, cell), &_empty);
         return;
     }
-    if (expr_head_is(atom, "get-state") && nargs == 1) {
+    if (expr_head_is(atom, "get-state")) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         ResultBindSet refs;
         rb_set_init(&refs);
         metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &refs);
@@ -2116,13 +2393,21 @@ tail_call: ;
                 StateCell *cell = (StateCell *)state_ref->ground.ptr;
                 outcome_set_add(os, cell->value, &refs.items[i].env);
             } else {
-                outcome_set_add(os, atom, &refs.items[i].env);
+                outcome_set_add(os,
+                    state_bad_arg_type_error(s, a, atom, 1, state_ref),
+                    &refs.items[i].env);
             }
         }
         outcome_set_free(&refs);
         return;
     }
-    if (expr_head_is(atom, "change-state!") && nargs == 2) {
+    if (expr_head_is(atom, "change-state!")) {
+        if (nargs != 2) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         ResultBindSet refs;
         rb_set_init(&refs);
         metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &refs);
@@ -2130,8 +2415,8 @@ tail_call: ;
             Atom *state_ref = bindings_apply(&refs.items[i].env, a, refs.items[i].atom);
             state_ref = resolve_registry_refs(a, state_ref);
             if (!(state_ref->kind == ATOM_GROUNDED && state_ref->ground.gkind == GV_STATE)) {
-                outcome_set_add(os, atom_error(a, atom,
-                    atom_symbol(a, "change-state! expects a state as the first argument")),
+                outcome_set_add(os,
+                    state_bad_arg_type_error(s, a, atom, 1, state_ref),
                     &refs.items[i].env);
                 continue;
             }
@@ -2207,6 +2492,24 @@ tail_call: ;
                    atom_is_symbol(value, "bare-minimal")) {
             g_pragma_bare_minimal = true;
             handled = true;
+        } else if (!g_pragma_bare_minimal &&
+                   atom_is_symbol(key, "max-stack-depth")) {
+            if (value->kind == ATOM_GROUNDED &&
+                value->ground.gkind == GV_INT &&
+                value->ground.ival >= 0) {
+                eval_set_default_fuel((int)value->ground.ival);
+                handled = true;
+            } else {
+                outcome_set_add(os, atom_error(a, atom,
+                    atom_symbol(a, "UnsignedIntegerIsExpected")),
+                    &_empty);
+                return;
+            }
+        } else if (!g_pragma_bare_minimal && key->kind != ATOM_SYMBOL) {
+            outcome_set_add(os, atom_error(a, atom,
+                atom_symbol(a, "pragma! expects symbol atom as a key")),
+                &_empty);
+            return;
         } else if (!g_pragma_bare_minimal) {
             handled = true;
         }
@@ -2226,7 +2529,13 @@ tail_call: ;
     }
 
     /* ── get-metatype ───────────────────────────────────────────────────── */
-    if (expr_head_is(atom, "get-metatype") && nargs == 1) {
+    if (expr_head_is(atom, "get-metatype")) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
         Atom *target = expr_arg(atom, 0);
         if (target->kind == ATOM_SYMBOL && target->name[0] == '&' && g_registry) {
             Atom *val = registry_lookup(g_registry, target->name);
@@ -2613,7 +2922,7 @@ void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, 
 }
 
 void eval_set_default_fuel(int fuel) {
-    if (fuel > 0) g_default_fuel = fuel;
+    g_default_fuel = fuel > 0 ? fuel : -1;
 }
 
 int eval_get_default_fuel(void) {

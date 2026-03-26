@@ -103,13 +103,63 @@ static bool result_set_has_error(ResultSet *rs) {
 
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
+    fputs("       cetta [--profile <he_compat|he_extended>] <file.metta>\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>\n", out);
+    fputs("       cetta --list-profiles\n", out);
     fputs("       cetta --list-space-match-backends\n", out);
     fputs("       cetta --list-languages\n", out);
+}
+
+static const char *find_profile_blocked_surface(const CettaProfile *profile, Atom *atom) {
+    if (!profile || !atom) return NULL;
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0) return NULL;
+
+    Atom *head = atom->expr.elems[0];
+    if (head->kind == ATOM_SYMBOL) {
+        if (strcmp(head->name, "quote") == 0) {
+            return NULL;
+        }
+        if (!cetta_profile_allows_surface(profile, head->name)) {
+            return head->name;
+        }
+        if (strcmp(head->name, ":") == 0 && atom->expr.len >= 2 &&
+            atom->expr.elems[1]->kind == ATOM_SYMBOL &&
+            !cetta_profile_allows_surface(profile, atom->expr.elems[1]->name)) {
+            return atom->expr.elems[1]->name;
+        }
+    }
+
+    for (uint32_t i = 1; i < atom->expr.len; i++) {
+        const char *blocked = find_profile_blocked_surface(profile, atom->expr.elems[i]);
+        if (blocked) return blocked;
+    }
+    return NULL;
+}
+
+static bool compile_profile_guard_ok(const CettaProfile *profile, Atom **atoms, int n) {
+    for (int i = 0; i < n; i++) {
+        Atom *at = atoms[i];
+        if (at->kind == ATOM_SYMBOL && strcmp(at->name, "!") == 0) {
+            i++;
+            continue;
+        }
+        const char *blocked = find_profile_blocked_surface(profile, at);
+        if (blocked) {
+            const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
+            fprintf(stderr, "error: surface '%s' is unavailable in profile '%s'",
+                    blocked, profile ? profile->name : "unknown");
+            if (policy && policy->surface_classification) {
+                fprintf(stderr, " (%s)", policy->surface_classification);
+            }
+            fputc('\n', stderr);
+            return false;
+        }
+    }
+    return true;
 }
 
 int main(int argc, char **argv) {
@@ -129,6 +179,7 @@ int main(int argc, char **argv) {
     }
 
     const char *lang_name = "he";
+    const CettaProfile *profile = cetta_profile_he_extended();
     const char *filename = NULL;
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
@@ -143,6 +194,10 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--list-space-match-backends") == 0) {
             space_match_backend_print_inventory(stdout);
+            return 0;
+        }
+        if (strcmp(argv[i], "--list-profiles") == 0) {
+            cetta_profile_print_inventory(stdout);
             return 0;
         }
         if (strcmp(argv[i], "--compile") == 0) {
@@ -190,6 +245,19 @@ int main(int argc, char **argv) {
                 return 1;
             }
             lang_name = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--profile") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            profile = cetta_profile_from_name(argv[++i]);
+            if (!profile) {
+                fprintf(stderr, "error: unknown profile '%s'\n", argv[i]);
+                cetta_profile_print_inventory(stderr);
+                return 2;
+            }
             continue;
         }
         if (!filename) {
@@ -273,7 +341,7 @@ int main(int argc, char **argv) {
     registry_bind(&registry, "&self", atom_space(&arena, &space));
 
     CettaLibraryContext libraries;
-    cetta_library_context_init(&libraries);
+    cetta_library_context_init_with_profile(&libraries, profile);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, filename);
     eval_set_library_context(&libraries);
@@ -312,6 +380,18 @@ int main(int argc, char **argv) {
 
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
+        if (!compile_profile_guard_ok(profile, atoms, n)) {
+            free(atoms);
+            cetta_library_context_free(&libraries);
+            space_free(&space);
+            arena_free(&eval_arena);
+            arena_free(&arena);
+            g_intern = NULL;
+            intern_free(&intern_table);
+            g_hashcons = NULL;
+            hashcons_free(&hashcons_table);
+            return 2;
+        }
         for (int pi = 0; pi < n; pi++) {
             Atom *at = atoms[pi];
             if (at->kind == ATOM_SYMBOL && strcmp(at->name, "!") == 0) {
@@ -394,6 +474,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    cetta_library_context_free(&libraries);
     space_free(&space);
     arena_free(&eval_arena);
     arena_free(&arena);

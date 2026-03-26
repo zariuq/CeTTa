@@ -64,13 +64,13 @@
     (chain (eval (noeval $atom)) $var
       (return $templ))))
 
-; Public fold wrapper: CeTTa exposes the cleaner explicit-space helper
-; `foldl-atom-in-space`, while `_minimal-foldl-atom` remains as the HE
-; compatibility alias to the same grounded engine.
+; Public fold wrapper: CeTTa keeps the HE surface by calling the compatibility
+; alias `_minimal-foldl-atom`, while `foldl-atom-in-space` remains the clearer
+; explicit-space extension name over the same grounded engine.
 (= (foldl-atom $list $init $a $b $op)
   (function
     (chain (context-space) $space
-      (eval (foldl-atom-in-space $list $init $a $b $op $space)))))
+      (eval (_minimal-foldl-atom $list $init $a $b $op $space)))))
 
 ; quote itself is evaluator-backed so it preserves syntax without evaluating
 ; its body. Once that syntax is preserved, unquote can stay as an ordinary

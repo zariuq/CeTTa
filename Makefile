@@ -1,6 +1,7 @@
 SHELL = /bin/bash
 CC = gcc
 CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc
+DEPFLAGS = -MMD -MP
 LDFLAGS = -lm
 
 SRC = src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/eval.c src/grounded.c src/library.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c src/main.c
@@ -8,6 +9,11 @@ OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_MATCH_BACKENDS = native-subst-tree native-candidate-exact pathmap-imported
 D4_PROBE_TIMEOUT ?= 60
+GIT_TEST_FIXTURE_ROOT = $(CURDIR)/runtime/git_module_fixture
+GIT_TEST_CACHE_DIR = $(CURDIR)/runtime/test-git-module-cache
+GIT_TEST_URL = file://$(GIT_TEST_FIXTURE_ROOT)
+GIT_TEST_DYNAMIC = $(CURDIR)/runtime/test-git-module-dynamic.metta
+GIT_TEST_COMPAT_DYNAMIC = $(CURDIR)/runtime/test-git-module-compat.metta
 
 # Two-stage bootstrap: cetta compiles its own stdlib
 STDLIB_SRC = lib/stdlib.metta
@@ -15,10 +21,17 @@ STDLIB_BLOB = src/stdlib_blob.h
 
 all: $(BIN)
 
+bench-metamath-d5: $(BIN)
+	@./scripts/bench_metamath_d5.sh
+
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.stage0.o)
+DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d)
+
+-include $(DEPS)
+
 src/%.stage0.o: src/%.c
-	$(CC) $(CFLAGS) -DCETTA_NO_STDLIB -c -o $@ $<
+	$(CC) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 cetta-stage0: $(STAGE0_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -32,22 +45,110 @@ $(BIN): $(OBJ)
 
 # stdlib.o depends on the generated blob header
 src/cetta_stdlib.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 src/%.o: src/%.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(STAGE0_OBJ) $(BIN) cetta-stage0 $(STDLIB_BLOB)
+	rm -f $(OBJ) $(STAGE0_OBJ) $(DEPS) $(BIN) cetta-stage0 $(STDLIB_BLOB)
 
 promote-runtime: $(BIN)
 	@./scripts/promote_runtime.sh
 
 # Fast test: compare CeTTa output against pre-computed .expected files.
 # No oracle invocation — safe and instant.
-test: $(BIN)
+prepare-git-test-fixture:
+	@mkdir -p "$(GIT_TEST_FIXTURE_ROOT)" "$(GIT_TEST_CACHE_DIR)"
+	@cp -R tests/support/git_module_seed/. "$(GIT_TEST_FIXTURE_ROOT)/"
+	@if [ ! -d "$(GIT_TEST_FIXTURE_ROOT)/.git" ]; then \
+		git -C "$(GIT_TEST_FIXTURE_ROOT)" init -q -b master >/dev/null; \
+		git -C "$(GIT_TEST_FIXTURE_ROOT)" config user.email "cetta-tests@example.invalid"; \
+		git -C "$(GIT_TEST_FIXTURE_ROOT)" config user.name "CeTTa Tests"; \
+	fi
+	@git -C "$(GIT_TEST_FIXTURE_ROOT)" add . >/dev/null
+	@if ! git -C "$(GIT_TEST_FIXTURE_ROOT)" rev-parse --verify HEAD >/dev/null 2>&1 || \
+	    ! git -C "$(GIT_TEST_FIXTURE_ROOT)" diff --cached --quiet; then \
+		git -C "$(GIT_TEST_FIXTURE_ROOT)" commit -m "cetta git fixture" >/dev/null; \
+	fi
+
+test-git-module: $(BIN) prepare-git-test-fixture
+	@pass=0; fail=0; \
+	update_mod="update_$$(date +%s)"; \
+	printf '%s\n' \
+		'; Local git-module! fixture through the typed git-remote provider.' \
+		'!(git-module! "$(GIT_TEST_URL)")' \
+		'!(bind! &mods (module-inventory!))' \
+		'!(assertEqualToResult (match &mods (module-provider git-remote enabled) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-provider-implementation git-remote implemented) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-provider-transport git-remote remote) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-provider-locator-kind git-remote git-url) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-provider-update-policy git-remote try-fetch-latest) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-provider-revision-policy git-remote default-branch-only) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-mount git_module_fixture $$path git-remote) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-mount-source git_module_fixture "$(GIT_TEST_URL)" git-url) ok) (ok))' \
+		'!(assertEqualToResult (match &mods (module-mount-revision-policy git_module_fixture default-branch-only "none") ok) (ok))' \
+		'!(import! &gitdb git_module_fixture)' \
+		'!(assertEqualToResult (match &gitdb (git-root $$x) $$x) (loaded))' \
+		> "$(GIT_TEST_DYNAMIC)"; \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he_extended --lang he "$(GIT_TEST_DYNAMIC)" 2>&1); \
+	expected=$$'[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]'; \
+	if [ "$$result" = "$$expected" ]; then \
+		echo "PASS: dynamic git-module! fixture"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: dynamic git-module! fixture"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	printf '%s\n%s\n' "; $$update_mod fetched via TryFetchLatest" "(git-update fetched)" > "$(GIT_TEST_FIXTURE_ROOT)/$$update_mod.metta"; \
+	git -C "$(GIT_TEST_FIXTURE_ROOT)" add "$$update_mod.metta" >/dev/null; \
+	if ! git -C "$(GIT_TEST_FIXTURE_ROOT)" diff --cached --quiet; then \
+		git -C "$(GIT_TEST_FIXTURE_ROOT)" commit -m "cetta git fixture $$update_mod" >/dev/null; \
+	fi; \
+	printf '%s\n' \
+		'; Re-running git-module! should soft-refresh an existing cache entry.' \
+		'!(git-module! "$(GIT_TEST_URL)")' \
+		'!(import! &gitupd git_module_fixture:'"$$update_mod"')' \
+		'!(assertEqualToResult (match &gitupd (git-update $$x) $$x) (fetched))' \
+		> "$(GIT_TEST_COMPAT_DYNAMIC)"; \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he_extended --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
+	expected=$$'[()]\n[()]\n[()]'; \
+	if [ "$$result" = "$$expected" ]; then \
+		echo "PASS: git-module! cache refresh"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: git-module! cache refresh"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
+	@pass=0; fail=0; \
+	printf '%s\n' \
+		'; he_compat should still expose the public HE git-module! surface.' \
+		'!(git-module! "$(GIT_TEST_URL)")' \
+		'!(import! &gitdb git_module_fixture)' \
+		'!(assertEqualToResult (match &gitdb (git-root $$x) $$x) (loaded))' \
+		> "$(GIT_TEST_COMPAT_DYNAMIC)"; \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he_compat --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
+	expected=$$'[()]\n[()]\n[()]'; \
+	if [ "$$result" = "$$expected" ]; then \
+		echo "PASS: he_compat git-module! surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_compat git-module! surface"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test: $(BIN) test-git-module
 	@pass=0; fail=0; skip=0; \
-	for f in tests/test_*.metta tests/he_*.metta; do \
+	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
+	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
 		[ -f "$$f" ] || continue; \
 		exp="$${f%.metta}.expected"; \
 		if [ ! -f "$$exp" ]; then \
@@ -67,6 +168,118 @@ test: $(BIN)
 	done; \
 	echo "---"; \
 	echo "$$pass passed, $$fail failed, $$skip skipped"
+
+test-profiles: $(BIN) test-git-module-profiles
+	@pass=0; fail=0; \
+	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
+	profiles=$$(./$(BIN) --list-profiles 2>&1); \
+	if printf '%s\n' "$$profiles" | grep -Eq '^he_compat[[:space:]]' && \
+	   printf '%s\n' "$$profiles" | grep -Eq '^he_extended[[:space:]]'; then \
+		echo "PASS: profile inventory"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: profile inventory"; \
+		printf '%s\n' "$$profiles"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	for profile in he_compat he_extended; do \
+		result=$$(./$(BIN) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \
+			echo "PASS: $$profile import modules"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$profile import modules"; \
+			diff <(cat tests/test_import_modules.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_count_atoms.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_profile_count_atoms.expected)" ]; then \
+		echo "PASS: he_extended count-atoms extension"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_extended count-atoms extension"; \
+		diff <(cat tests/spec_profile_count_atoms.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_count_atoms.metta 2>&1); \
+	if printf '%s\n' "$$result" | grep -Fq "surface count-atoms is unavailable in profile he_compat"; then \
+		echo "PASS: he_compat count-atoms guard"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_compat count-atoms guard"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_profile_foldl_extension.expected)" ]; then \
+		echo "PASS: he_extended foldl-atom-in-space extension"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_extended foldl-atom-in-space extension"; \
+		diff <(cat tests/spec_profile_foldl_extension.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
+	if printf '%s\n' "$$result" | grep -Fq "surface foldl-atom-in-space is unavailable in profile he_compat"; then \
+		echo "PASS: he_compat foldl-atom-in-space guard"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_compat foldl-atom-in-space guard"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_foldl_public.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_profile_foldl_public.expected)" ]; then \
+		echo "PASS: he_compat foldl-atom public surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_compat foldl-atom public surface"; \
+		diff <(cat tests/spec_profile_foldl_public.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
+	status=$$?; \
+	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'count-atoms' is unavailable in profile 'he_compat'"; then \
+		echo "PASS: he_compat compile guard"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_compat compile guard"; \
+		printf '%s\n' "$$compile_output"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
+		echo "PASS: he_extended compile extension"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_extended compile extension"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_extended --lang he tests/spec_module_inventory.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_module_inventory.expected)" ]; then \
+		echo "PASS: he_extended module-inventory extension"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_extended module-inventory extension"; \
+		diff <(cat tests/spec_module_inventory.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_compat --lang he tests/support/profile_module_inventory_runtime.metta 2>&1); \
+	if printf '%s\n' "$$result" | grep -Fq "surface module-inventory! is unavailable in profile he_compat"; then \
+		echo "PASS: he_compat module-inventory guard"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_compat module-inventory guard"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
+	status=$$?; \
+	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'module-inventory!' is unavailable in profile 'he_compat'"; then \
+		echo "PASS: he_compat module-inventory compile guard"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_compat module-inventory compile guard"; \
+		printf '%s\n' "$$compile_output"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
+		echo "PASS: he_extended compile module-inventory"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_extended compile module-inventory"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 test-backends: $(BIN)
 	@for backend in $(SPACE_MATCH_BACKENDS); do \

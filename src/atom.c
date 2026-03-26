@@ -140,6 +140,16 @@ Atom *hashcons_get(HashConsTable *hc, Arena *a, Atom *atom) {
 
 InternTable *g_intern = NULL;
 
+#define INTERN_LITERAL_CACHE_SIZE 64
+
+typedef struct {
+    const InternTable *table;
+    const char *literal;
+    const char *interned;
+} InternLiteralCacheEntry;
+
+static InternLiteralCacheEntry g_intern_literal_cache[INTERN_LITERAL_CACHE_SIZE];
+
 void intern_init(InternTable *t) {
     t->size = INTERN_TABLE_SIZE;
     t->used = 0;
@@ -188,6 +198,24 @@ const char *intern(InternTable *t, const char *name) {
             return t->names[idx]; /* Already interned */
     }
     return name; /* Table full (shouldn't happen with growth) */
+}
+
+static const char *intern_cached_literal(const char *name) {
+    if (!g_intern || !name) return name;
+
+    uintptr_t key = (((uintptr_t)g_intern) >> 4) ^ (((uintptr_t)name) >> 4);
+    uint32_t idx = (uint32_t)(key % INTERN_LITERAL_CACHE_SIZE);
+    InternLiteralCacheEntry *entry = &g_intern_literal_cache[idx];
+
+    if (entry->table == g_intern && entry->literal == name && entry->interned) {
+        return entry->interned;
+    }
+
+    const char *interned = intern(g_intern, name);
+    entry->table = g_intern;
+    entry->literal = name;
+    entry->interned = interned;
+    return interned;
 }
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
@@ -343,8 +371,8 @@ Atom *atom_error(Arena *a, Atom *source, Atom *message) {
 
 bool atom_is_symbol(Atom *a, const char *name) {
     if (a->kind != ATOM_SYMBOL) return false;
-    /* With interning, pointer comparison suffices for interned names */
-    if (g_intern && a->name == intern(g_intern, name)) return true;
+    if (a->name == name) return true;
+    if (g_intern && a->name == intern_cached_literal(name)) return true;
     return strcmp(a->name, name) == 0;
 }
 
