@@ -378,6 +378,27 @@ static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
     return true;
 }
 
+static void eq_index_rebuild(Space *s) {
+    eq_index_free(&s->eq_idx);
+    eq_index_init(&s->eq_idx);
+    for (uint32_t i = 0; i < s->len; i++) {
+        Atom *lhs, *rhs;
+        if (is_equation_atom(s->atoms[i], &lhs, &rhs))
+            eq_index_add(&s->eq_idx, lhs, rhs);
+    }
+}
+
+static void ty_ann_index_rebuild(Space *s) {
+    ty_ann_index_free(&s->ty_idx);
+    ty_ann_index_init(&s->ty_idx);
+    for (uint32_t i = 0; i < s->len; i++) {
+        Atom *atom = s->atoms[i];
+        if (atom->kind == ATOM_EXPR && atom->expr.len == 3 &&
+            atom_is_symbol(atom->expr.elems[0], ":"))
+            ty_ann_index_add(&s->ty_idx, atom->expr.elems[1], atom->expr.elems[2]);
+    }
+}
+
 void space_add(Space *s, Atom *atom) {
     if (s->len >= s->cap) {
         s->cap = s->cap ? s->cap * 2 : 64;
@@ -395,6 +416,27 @@ void space_add(Space *s, Atom *atom) {
         ty_ann_index_add(&s->ty_idx, atom->expr.elems[1], atom->expr.elems[2]);
     /* Match backend owns its own incremental indexing policy. */
     space_match_backend_note_add(s, atom, idx);
+}
+
+Space *space_heap_clone_shallow(Space *src) {
+    Space *clone = cetta_malloc(sizeof(Space));
+    space_init(clone);
+    (void)space_match_backend_try_set(clone, src->match_backend.kind);
+    for (uint32_t i = 0; i < src->len; i++) {
+        space_add(clone, src->atoms[i]);
+    }
+    return clone;
+}
+
+void space_replace_contents(Space *dst, Space *src) {
+    space_free(dst);
+    *dst = *src;
+    src->atoms = NULL;
+    src->len = 0;
+    src->cap = 0;
+    eq_index_init(&src->eq_idx);
+    ty_ann_index_init(&src->ty_idx);
+    space_match_backend_init(src);
 }
 
 /* ── Query Results ──────────────────────────────────────────────────────── */
@@ -462,6 +504,8 @@ bool space_remove(Space *s, Atom *atom) {
     for (uint32_t i = 0; i < s->len; i++) {
         if (atom_eq(s->atoms[i], atom)) {
             s->atoms[i] = s->atoms[--s->len]; /* swap with last */
+            eq_index_rebuild(s);
+            ty_ann_index_rebuild(s);
             space_match_backend_note_remove(s);
             return true;
         }
