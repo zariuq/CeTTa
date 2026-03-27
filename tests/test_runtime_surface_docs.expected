@@ -1,0 +1,27 @@
+Function with-space-snapshot: %Undefined% CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.
+Parameters:
+  %Undefined% Binder or pattern that receives the snapshot space
+  %Undefined% Live source space to snapshot
+  %Undefined% Body evaluated with the snapshot binding in scope
+Return: (type %Undefined%) Results produced by evaluating the body against the snapshot-bound space
+Function import!: (-> Atom Atom (->)) Loads a module into &self or a fresh &name. CeTTa keeps imports transactional: failed imports do not leak partial atoms, and loader failures can surface ModuleImportCycle or ModuleParseFailed.
+Parameters:
+  Atom Destination space reference: &self or a fresh &name
+  Atom Module spec or path to import
+Return: (type (->)) Unit on success, or an Error value on failure
+Function MathDomainError: (-> Number Atom ErrorType) Structured runtime error constructor for invalid real-domain math calls. The first argument is the 1-based argument index, and the second is a symbolic domain constraint tag.
+Parameters:
+  Number 1-based argument index that violated the domain
+  Atom Symbolic domain constraint tag, such as NonNegativeReal or PositiveRealNotOne
+Return: (type ErrorType) ErrorType payload describing the violated real-domain contract
+[(@doc-formal (@item with-space-snapshot) (@kind function) (@type %Undefined%) (@desc "CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.") (@params ((@param (@type %Undefined%) (@desc "Binder or pattern that receives the snapshot space")) (@param (@type %Undefined%) (@desc "Live source space to snapshot")) (@param (@type %Undefined%) (@desc "Body evaluated with the snapshot binding in scope")))) (@return (@type %Undefined%) (@desc "Results produced by evaluating the body against the snapshot-bound space")))]
+[(@doc-formal (@item import!) (@kind function) (@type (-> Atom Atom (->))) (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional: failed imports do not leak partial atoms, and loader failures can surface ModuleImportCycle or ModuleParseFailed.") (@params ((@param (@type Atom) (@desc "Destination space reference: &self or a fresh &name")) (@param (@type Atom) (@desc "Module spec or path to import")))) (@return (@type (->)) (@desc "Unit on success, or an Error value on failure")))]
+[(@doc-formal (@item MathDomainError) (@kind function) (@type (-> Number Atom ErrorType)) (@desc "Structured runtime error constructor for invalid real-domain math calls. The first argument is the 1-based argument index, and the second is a symbolic domain constraint tag.") (@params ((@param (@type Number) (@desc "1-based argument index that violated the domain")) (@param (@type Atom) (@desc "Symbolic domain constraint tag, such as NonNegativeReal or PositiveRealNotOne")))) (@return (@type ErrorType) (@desc "ErrorType payload describing the violated real-domain contract")))]
+[(@doc-formal (@item ModuleImportCycle) (@kind function) (@type (-> String ErrorType)) (@desc "Structured runtime error constructor for cyclic module imports.") (@params ((@param (@type String) (@desc "Canonical path of the module that was already loading")))) (@return (@type ErrorType) (@desc "ErrorType payload describing the detected import cycle")))]
+[(@doc-formal (@item ModuleParseFailed) (@kind function) (@type (-> String ErrorType)) (@desc "Structured runtime error constructor for malformed module files that fail CeTTa's file parser checks.") (@params ((@param (@type String) (@desc "Canonical path of the module file that could not be parsed")))) (@return (@type ErrorType) (@desc "ErrorType payload describing the module parse failure")))]
+[(@doc-formal (@item sqrt-math) (@kind function) (@type (-> Number Number)) (@desc "Square root over the reals. Negative input returns (MathDomainError 1 NonNegativeReal) instead of a silent NaN.") (@params ((@param (@type Number) (@desc "Input real number")))) (@return (@type Number) (@desc "Square root as a Number when the input is within the real domain")))]
+[(@doc-formal (@item log-math) (@kind function) (@type (-> Number Number Number)) (@desc "Logarithm over the reals. The base must be positive and not equal to 1, and the input must be positive; otherwise CeTTa returns a MathDomainError.") (@params ((@param (@type Number) (@desc "Logarithm base")) (@param (@type Number) (@desc "Input value")))) (@return (@type Number) (@desc "Logarithm result as a Number when both arguments are in the real domain")))]
+[(@doc-formal (@item pow-math) (@kind function) (@type (-> Number Number Number)) (@desc "Exponentiation over the reals. Negative bases require integral exponents, and zero cannot be raised to a negative power; invalid combinations return MathDomainError.") (@params ((@param (@type Number) (@desc "Base")) (@param (@type Number) (@desc "Exponent")))) (@return (@type Number) (@desc "Exponentiation result as a Number when the arguments are within the real domain")))]
+[()]
+[()]
+[()]
