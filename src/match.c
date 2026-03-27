@@ -5,12 +5,172 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
+#define BINDINGS_RECURSION_LIMIT 512
+#define BINDINGS_MIN_CAPACITY 8
+
 static inline bool binding_name_eq(const char *lhs, const char *rhs) {
     return lhs == rhs || strcmp(lhs, rhs) == 0;
 }
 
+static Atom *bindings_resolve_atom(Bindings *b, Atom *atom, uint32_t depth) {
+    if (!atom || depth > BINDINGS_RECURSION_LIMIT) return atom;
+    while (atom->kind == ATOM_VAR) {
+        Atom *next = bindings_lookup(b, atom->name);
+        if (!next) return atom;
+        if (next == atom) return atom;
+        if (next->kind == ATOM_VAR && binding_name_eq(next->name, atom->name))
+            return atom;
+        atom = next;
+        if (++depth > BINDINGS_RECURSION_LIMIT) return atom;
+    }
+    return atom;
+}
+
+static bool atom_contains_unbound_var(Bindings *b, Atom *atom, uint32_t depth) {
+    atom = bindings_resolve_atom(b, atom, depth);
+    switch (atom->kind) {
+    case ATOM_VAR:
+        return true;
+    case ATOM_EXPR:
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (atom_contains_unbound_var(b, atom->expr.elems[i], depth + 1))
+                return true;
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+static bool atom_eq_under_bindings(Bindings *b, Atom *lhs, Atom *rhs, uint32_t depth) {
+    lhs = bindings_resolve_atom(b, lhs, depth);
+    rhs = bindings_resolve_atom(b, rhs, depth);
+    if (lhs == rhs) return true;
+    if (lhs->kind != rhs->kind) return false;
+    switch (lhs->kind) {
+    case ATOM_VAR:
+        return binding_name_eq(lhs->name, rhs->name);
+    case ATOM_SYMBOL:
+        return binding_name_eq(lhs->name, rhs->name);
+    case ATOM_GROUNDED:
+        return atom_eq(lhs, rhs);
+    case ATOM_EXPR:
+        if (lhs->expr.len != rhs->expr.len) return false;
+        for (uint32_t i = 0; i < lhs->expr.len; i++) {
+            if (!atom_eq_under_bindings(b, lhs->expr.elems[i], rhs->expr.elems[i], depth + 1))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool constraint_pair_eq(const BindingConstraint *lhs, const BindingConstraint *rhs) {
+    return (atom_eq(lhs->lhs, rhs->lhs) && atom_eq(lhs->rhs, rhs->rhs)) ||
+           (atom_eq(lhs->lhs, rhs->rhs) && atom_eq(lhs->rhs, rhs->lhs));
+}
+
+static bool bindings_reserve_entries(Bindings *b, uint32_t needed) {
+    if (needed <= b->cap) return true;
+    uint32_t next_cap = b->cap ? b->cap : BINDINGS_MIN_CAPACITY;
+    while (next_cap < needed) next_cap *= 2;
+    b->entries = cetta_realloc(b->entries, sizeof(Binding) * next_cap);
+    b->cap = next_cap;
+    return true;
+}
+
+static bool bindings_reserve_constraints(Bindings *b, uint32_t needed) {
+    if (needed <= b->eq_cap) return true;
+    uint32_t next_cap = b->eq_cap ? b->eq_cap : BINDINGS_MIN_CAPACITY;
+    while (next_cap < needed) next_cap *= 2;
+    b->constraints = cetta_realloc(b->constraints, sizeof(BindingConstraint) * next_cap);
+    b->eq_cap = next_cap;
+    return true;
+}
+
+static bool bindings_store_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
+    BindingConstraint next = {.lhs = lhs, .rhs = rhs};
+    for (uint32_t i = 0; i < b->eq_len; i++) {
+        if (constraint_pair_eq(&b->constraints[i], &next))
+            return true;
+    }
+    if (!bindings_reserve_constraints(b, b->eq_len + 1)) return false;
+    b->constraints[b->eq_len++] = next;
+    return true;
+}
+
+static bool bindings_add_internal(Bindings *b, const char *var, Atom *val, bool normalize_constraints);
+static bool bindings_add_constraint_internal(Bindings *b, Atom *lhs, Atom *rhs,
+                                            bool normalize_constraints);
+
+static bool bindings_normalize_constraints(Bindings *b) {
+    if (b->eq_len == 0) return true;
+    BindingConstraint *pending = cetta_malloc(sizeof(BindingConstraint) * b->eq_len);
+    uint32_t npending = b->eq_len;
+    for (uint32_t i = 0; i < npending; i++)
+        pending[i] = b->constraints[i];
+    b->eq_len = 0;
+    for (uint32_t i = 0; i < npending; i++) {
+        if (!bindings_add_constraint_internal(b, pending[i].lhs, pending[i].rhs, false)) {
+            free(pending);
+            return false;
+        }
+    }
+    free(pending);
+    return true;
+}
+
 void bindings_init(Bindings *b) {
+    b->entries = NULL;
     b->len = 0;
+    b->cap = 0;
+    b->constraints = NULL;
+    b->eq_len = 0;
+    b->eq_cap = 0;
+}
+
+void bindings_free(Bindings *b) {
+    free(b->entries);
+    free(b->constraints);
+    bindings_init(b);
+}
+
+bool bindings_clone(Bindings *dst, const Bindings *src) {
+    bindings_init(dst);
+    if (src->len > 0) {
+        if (!bindings_reserve_entries(dst, src->len)) return false;
+        memcpy(dst->entries, src->entries, sizeof(Binding) * src->len);
+        dst->len = src->len;
+    }
+    if (src->eq_len > 0) {
+        if (!bindings_reserve_constraints(dst, src->eq_len)) {
+            bindings_free(dst);
+            return false;
+        }
+        memcpy(dst->constraints, src->constraints,
+               sizeof(BindingConstraint) * src->eq_len);
+        dst->eq_len = src->eq_len;
+    }
+    return true;
+}
+
+bool bindings_copy(Bindings *dst, const Bindings *src) {
+    if (dst == src) return true;
+    Bindings tmp;
+    if (!bindings_clone(&tmp, src)) return false;
+    bindings_free(dst);
+    *dst = tmp;
+    return true;
+}
+
+void bindings_move(Bindings *dst, Bindings *src) {
+    *dst = *src;
+    bindings_init(src);
+}
+
+void bindings_replace(Bindings *dst, Bindings *src) {
+    bindings_free(dst);
+    bindings_move(dst, src);
 }
 
 Atom *bindings_lookup(Bindings *b, const char *var) {
@@ -21,49 +181,146 @@ Atom *bindings_lookup(Bindings *b, const char *var) {
     return NULL;
 }
 
-static void epoch_var_buf(char *buf, size_t buf_size, const char *name, uint32_t epoch) {
-    snprintf(buf, buf_size, "%s#%u", name, epoch);
+char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix) {
+    size_t name_len = strlen(name);
+    size_t needed = name_len + 1 + 10 + 1;
+    char *buf = arena_alloc(a, needed);
+    snprintf(buf, needed, "%s#%u", name, suffix);
+    return buf;
 }
 
 static Atom *epoch_var_atom(Arena *a, const char *name, uint32_t epoch) {
-    char buf[256];
-    epoch_var_buf(buf, sizeof(buf), name, epoch);
-    return atom_var(a, buf);
+    return atom_var(a, arena_tagged_var_name(a, name, epoch));
 }
 
-bool bindings_add(Bindings *b, const char *var, Atom *val) {
+static bool bindings_add_internal(Bindings *b, const char *var, Atom *val,
+                                  bool normalize_constraints) {
+    Bindings next;
+    if (!bindings_clone(&next, b)) return false;
     if (val->kind == ATOM_VAR && binding_name_eq(var, val->name)) {
+        bindings_free(&next);
         return true;
     }
     if (val->kind == ATOM_VAR) {
-        Atom *other = bindings_lookup(b, val->name);
+        Atom *other = bindings_lookup(&next, val->name);
         if (other && other->kind == ATOM_VAR && binding_name_eq(other->name, var)) {
+            bindings_free(&next);
             return true;
         }
     }
     /* Check for existing binding */
-    Atom *existing = bindings_lookup(b, var);
+    Atom *existing = bindings_lookup(&next, var);
     if (existing) {
         /* Already bound — unify structurally instead of demanding
            literal equality, so repeated higher-order type constraints
            can refine earlier variable bindings. */
-        if (existing == val || atom_eq(existing, val)) return true;
-        return match_atoms(existing, val, b);
+        bool ok = (existing == val || atom_eq(existing, val))
+            ? true
+            : match_atoms(existing, val, &next);
+        if (!ok) {
+            bindings_free(&next);
+            return false;
+        }
+        if (normalize_constraints && !bindings_normalize_constraints(&next)) {
+            bindings_free(&next);
+            return false;
+        }
+        bindings_replace(b, &next);
+        return true;
     }
-    if (b->len >= MAX_BINDINGS) return false;
-    b->entries[b->len].var = var;
-    b->entries[b->len].val = val;
-    b->len++;
+    if (!bindings_reserve_entries(&next, next.len + 1)) {
+        bindings_free(&next);
+        return false;
+    }
+    next.entries[next.len].var = var;
+    next.entries[next.len].val = val;
+    next.len++;
+    if (normalize_constraints && !bindings_normalize_constraints(&next)) {
+        bindings_free(&next);
+        return false;
+    }
+    bindings_replace(b, &next);
     return true;
 }
 
-bool bindings_try_merge(Bindings *dst, const Bindings *src) {
-    Bindings merged = *dst;
-    for (uint32_t i = 0; i < src->len; i++) {
-        if (!bindings_add(&merged, src->entries[i].var, src->entries[i].val))
-            return false;
+bool bindings_add(Bindings *b, const char *var, Atom *val) {
+    return bindings_add_internal(b, var, val, true);
+}
+
+static bool bindings_add_constraint_internal(Bindings *b, Atom *lhs, Atom *rhs,
+                                            bool normalize_constraints) {
+    Bindings next;
+    if (!bindings_clone(&next, b)) return false;
+    lhs = bindings_resolve_atom(&next, lhs, 0);
+    rhs = bindings_resolve_atom(&next, rhs, 0);
+
+    if (atom_eq_under_bindings(&next, lhs, rhs, 0)) {
+        bindings_free(&next);
+        return true;
     }
-    *dst = merged;
+    if (lhs->kind == ATOM_VAR) {
+        if (!bindings_add_internal(&next, lhs->name, rhs, false)) {
+            bindings_free(&next);
+            return false;
+        }
+    } else if (rhs->kind == ATOM_VAR) {
+        if (!bindings_add_internal(&next, rhs->name, lhs, false)) {
+            bindings_free(&next);
+            return false;
+        }
+    } else if (!atom_contains_unbound_var(&next, lhs, 0) &&
+               !atom_contains_unbound_var(&next, rhs, 0)) {
+        bindings_free(&next);
+        return false;
+    } else if (!bindings_store_constraint(&next, lhs, rhs)) {
+        bindings_free(&next);
+        return false;
+    }
+
+    if (normalize_constraints && !bindings_normalize_constraints(&next)) {
+        bindings_free(&next);
+        return false;
+    }
+    bindings_replace(b, &next);
+    return true;
+}
+
+bool bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
+    return bindings_add_constraint_internal(b, lhs, rhs, true);
+}
+
+bool bindings_try_merge(Bindings *dst, const Bindings *src) {
+    Bindings merged;
+    if (!bindings_clone(&merged, dst)) return false;
+    BindingConstraint *pending = cetta_malloc(sizeof(BindingConstraint) *
+                                              (merged.eq_len + src->eq_len + 1));
+    uint32_t npending = 0;
+    for (uint32_t i = 0; i < merged.eq_len; i++)
+        pending[npending++] = merged.constraints[i];
+    for (uint32_t i = 0; i < src->eq_len; i++) {
+        pending[npending++] = src->constraints[i];
+    }
+    merged.eq_len = 0;
+    for (uint32_t i = 0; i < src->len; i++) {
+        if (!bindings_add_internal(&merged, src->entries[i].var, src->entries[i].val, false)) {
+            free(pending);
+            bindings_free(&merged);
+            return false;
+        }
+    }
+    for (uint32_t i = 0; i < npending; i++) {
+        if (!bindings_add_constraint_internal(&merged, pending[i].lhs, pending[i].rhs, false)) {
+            free(pending);
+            bindings_free(&merged);
+            return false;
+        }
+    }
+    free(pending);
+    if (!bindings_normalize_constraints(&merged)) {
+        bindings_free(&merged);
+        return false;
+    }
+    bindings_replace(dst, &merged);
     return true;
 }
 
@@ -100,8 +357,11 @@ static Atom *bindings_apply_seen(Bindings *b, Arena *a, Atom *atom,
 }
 
 Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
-    const char *seen[MAX_BINDINGS];
-    return bindings_apply_seen(b, a, atom, seen, 0);
+    uint32_t seen_cap = b->len ? b->len : 1;
+    const char **seen = cetta_malloc(sizeof(const char *) * seen_cap);
+    Atom *result = bindings_apply_seen(b, a, atom, seen, 0);
+    free(seen);
+    return result;
 }
 
 static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
@@ -110,10 +370,8 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
     switch (atom->kind) {
     case ATOM_VAR: {
         const char *lookup_name = atom->name;
-        char tagged[256];
         if (original_side) {
-            epoch_var_buf(tagged, sizeof(tagged), atom->name, epoch);
-            lookup_name = tagged;
+            lookup_name = arena_tagged_var_name(a, atom->name, epoch);
         }
         if (bindings_seen_var(seen, seen_len, lookup_name)) {
             return original_side ? epoch_var_atom(a, atom->name, epoch) : atom;
@@ -142,8 +400,81 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
 }
 
 Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
-    const char *seen[MAX_BINDINGS];
-    return bindings_apply_seen_epoch(b, a, atom, epoch, true, seen, 0);
+    uint32_t seen_cap = b->len ? b->len : 1;
+    const char **seen = cetta_malloc(sizeof(const char *) * seen_cap);
+    Atom *result = bindings_apply_seen_epoch(b, a, atom, epoch, true, seen, 0);
+    free(seen);
+    return result;
+}
+
+Atom *bindings_to_atom(Arena *a, const Bindings *b) {
+    Atom **assigns = NULL;
+    if (b->len > 0) {
+        assigns = arena_alloc(a, sizeof(Atom *) * b->len);
+        for (uint32_t i = 0; i < b->len; i++) {
+            assigns[i] = atom_expr2(a,
+                atom_symbol(a, b->entries[i].var),
+                b->entries[i].val);
+        }
+    }
+    Atom **equalities = NULL;
+    if (b->eq_len > 0) {
+        equalities = arena_alloc(a, sizeof(Atom *) * b->eq_len);
+        for (uint32_t i = 0; i < b->eq_len; i++) {
+            equalities[i] = atom_expr2(a,
+                b->constraints[i].lhs,
+                b->constraints[i].rhs);
+        }
+    }
+    return atom_expr3(a,
+        atom_symbol(a, "Bindings"),
+        atom_expr(a, assigns, b->len),
+        atom_expr(a, equalities, b->eq_len));
+}
+
+bool bindings_from_atom(Atom *atom, Bindings *out) {
+    bindings_init(out);
+    if (atom->kind != ATOM_EXPR || atom->expr.len != 3 ||
+        !atom_is_symbol(atom->expr.elems[0], "Bindings")) {
+        return false;
+    }
+
+    Atom *assigns = atom->expr.elems[1];
+    Atom *equalities = atom->expr.elems[2];
+    if (assigns->kind != ATOM_EXPR || equalities->kind != ATOM_EXPR) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < assigns->expr.len; i++) {
+        Atom *assign = assigns->expr.elems[i];
+        if (assign->kind != ATOM_EXPR || assign->expr.len != 2 ||
+            assign->expr.elems[0]->kind != ATOM_SYMBOL) {
+            bindings_free(out);
+            return false;
+        }
+        if (!bindings_add(out, assign->expr.elems[0]->name, assign->expr.elems[1])) {
+            bindings_free(out);
+            return false;
+        }
+    }
+
+    for (uint32_t i = 0; i < equalities->expr.len; i++) {
+        Atom *pair = equalities->expr.elems[i];
+        if (pair->kind != ATOM_EXPR || pair->expr.len != 2) {
+            bindings_free(out);
+            return false;
+        }
+        if (!bindings_add_constraint(out, pair->expr.elems[0], pair->expr.elems[1])) {
+            bindings_free(out);
+            return false;
+        }
+    }
+
+    if (bindings_has_loop(out)) {
+        bindings_free(out);
+        return false;
+    }
+    return true;
 }
 
 void binding_set_init(BindingSet *bs) {
@@ -153,6 +484,8 @@ void binding_set_init(BindingSet *bs) {
 }
 
 void binding_set_free(BindingSet *bs) {
+    for (uint32_t i = 0; i < bs->len; i++)
+        bindings_free(&bs->items[i]);
     free(bs->items);
     bs->items = NULL;
     bs->len = 0;
@@ -164,7 +497,9 @@ bool binding_set_push(BindingSet *bs, const Bindings *b) {
         bs->cap = bs->cap ? bs->cap * 2 : 8;
         bs->items = cetta_realloc(bs->items, sizeof(Bindings) * bs->cap);
     }
-    bs->items[bs->len++] = *b;
+    if (!bindings_clone(&bs->items[bs->len], b))
+        return false;
+    bs->len++;
     return true;
 }
 
@@ -260,9 +595,7 @@ static Atom *rename_var_map_lookup(RenameVarMap *map, const char *name) {
 }
 
 static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, const char *name) {
-    char buf[256];
-    snprintf(buf, sizeof(buf), "%s#%u", name, fresh_var_suffix());
-    Atom *fresh = atom_var(a, buf);
+    Atom *fresh = atom_var(a, arena_tagged_var_name(a, name, fresh_var_suffix()));
     if (map->len >= map->cap) {
         map->cap = map->cap ? map->cap * 2 : 8;
         map->items = cetta_realloc(map->items, sizeof(RenameVarEntry) * map->cap);
@@ -306,9 +639,7 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
     switch (atom->kind) {
     case ATOM_VAR: {
         /* $name → $name#suffix */
-        char buf[256];
-        snprintf(buf, sizeof(buf), "%s#%u", atom->name, suffix);
-        return atom_var(a, buf);
+        return atom_var(a, arena_tagged_var_name(a, atom->name, suffix));
     }
     case ATOM_EXPR: {
         Atom **new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
@@ -362,6 +693,7 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
         }
         return false;
@@ -389,7 +721,7 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
    eventually leads back to that variable (transitive loop detection) */
 static bool has_transitive_loop(Bindings *b, const char *start_var,
                                  Atom *val, const char **visited, uint32_t depth) {
-    if (depth > MAX_BINDINGS) return true; /* safety cap */
+    if (depth > BINDINGS_RECURSION_LIMIT) return true; /* safety cap */
     switch (val->kind) {
     case ATOM_VAR:
         if (strcmp(val->name, start_var) == 0) return true;
@@ -414,9 +746,13 @@ bool bindings_has_loop(Bindings *b) {
         Atom *val = b->entries[i].val;
         if (val->kind == ATOM_VAR && strcmp(val->name, b->entries[i].var) == 0)
             continue; /* $x = $x is not a loop */
-        const char *visited[MAX_BINDINGS];
+        uint32_t visited_cap = (b->len + b->eq_len + 1);
+        if (visited_cap == 0) visited_cap = 1;
+        const char **visited = cetta_malloc(sizeof(const char *) * visited_cap);
         visited[0] = b->entries[i].var;
-        if (has_transitive_loop(b, b->entries[i].var, val, visited, 1))
+        bool has_loop = has_transitive_loop(b, b->entries[i].var, val, visited, 1);
+        free(visited);
+        if (has_loop)
             return true;
     }
     return false;
@@ -601,10 +937,8 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
             return match_atoms_epoch_depth(existing, right, b, a, epoch, right_original, depth - 1);
         if (right->kind == ATOM_VAR) {
             const char *right_name = right->name;
-            char tagged[256];
             if (right_original) {
-                epoch_var_buf(tagged, sizeof(tagged), right->name, epoch);
-                right_name = tagged;
+                right_name = arena_tagged_var_name(a, right->name, epoch);
             }
             Atom *right_existing = bindings_lookup(b, right_name);
             if (right_existing)
@@ -618,10 +952,8 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
     }
     if (right->kind == ATOM_VAR) {
         const char *right_name = right->name;
-        char tagged[256];
         if (right_original) {
-            epoch_var_buf(tagged, sizeof(tagged), right->name, epoch);
-            right_name = tagged;
+            right_name = arena_tagged_var_name(a, right->name, epoch);
         }
         Atom *existing = bindings_lookup(b, right_name);
         if (existing)
@@ -650,10 +982,32 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
 
 bool bindings_eq(Bindings *a, Bindings *b) {
     if (a->len != b->len) return false;
+    if (a->eq_len != b->eq_len) return false;
     for (uint32_t i = 0; i < a->len; i++) {
         Atom *other = bindings_lookup(b, a->entries[i].var);
         if (!other || !atom_eq(other, a->entries[i].val))
             return false;
     }
+    bool *matched = NULL;
+    if (b->eq_len > 0) {
+        matched = cetta_malloc(sizeof(bool) * b->eq_len);
+        memset(matched, 0, sizeof(bool) * b->eq_len);
+    }
+    for (uint32_t i = 0; i < a->eq_len; i++) {
+        bool found = false;
+        for (uint32_t j = 0; j < b->eq_len; j++) {
+            if (!matched[j] &&
+                constraint_pair_eq(&a->constraints[i], &b->constraints[j])) {
+                matched[j] = true;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            free(matched);
+            return false;
+        }
+    }
+    free(matched);
     return true;
 }

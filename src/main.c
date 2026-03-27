@@ -181,6 +181,7 @@ int main(int argc, char **argv) {
     const char *lang_name = "he";
     const CettaProfile *profile = cetta_profile_he_extended();
     const char *filename = NULL;
+    int script_arg_start = -1;
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
     bool count_only = false;
@@ -262,10 +263,9 @@ int main(int argc, char **argv) {
         }
         if (!filename) {
             filename = argv[i];
-            continue;
+            script_arg_start = i + 1;
+            break;
         }
-        print_usage(stderr);
-        return 1;
     }
 
     if (!filename) {
@@ -325,6 +325,12 @@ int main(int argc, char **argv) {
     int n = parse_metta_file(filename, &arena, &atoms);
     if (n < 0) {
         fprintf(stderr, "error: could not read %s\n", filename);
+        arena_free(&eval_arena);
+        arena_free(&arena);
+        g_intern = NULL;
+        intern_free(&intern_table);
+        g_hashcons = NULL;
+        hashcons_free(&hashcons_table);
         return 1;
     }
 
@@ -333,6 +339,13 @@ int main(int argc, char **argv) {
     if (!space_match_backend_try_set(&space, match_backend_kind)) {
         fprintf(stderr, "error: space match backend '%s' is recognized but not implemented yet\n",
                 space_match_backend_kind_name(match_backend_kind));
+        free(atoms);
+        arena_free(&eval_arena);
+        arena_free(&arena);
+        g_intern = NULL;
+        intern_free(&intern_table);
+        g_hashcons = NULL;
+        hashcons_free(&hashcons_table);
         return 2;
     }
 
@@ -344,6 +357,7 @@ int main(int argc, char **argv) {
     cetta_library_context_init_with_profile(&libraries, profile);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, filename);
+    cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
     eval_set_library_context(&libraries);
 
     /* Load precompiled stdlib equations into the space */
@@ -407,6 +421,8 @@ int main(int argc, char **argv) {
         arena_free(&arena);
         g_intern = NULL;
         intern_free(&intern_table);
+        g_hashcons = NULL;
+        hashcons_free(&hashcons_table);
         return 0;
     }
 

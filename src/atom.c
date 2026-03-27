@@ -67,6 +67,7 @@ uint32_t atom_hash(Atom *a) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_FOREIGN:
             break; /* mutable/contextual — don't hash-cons */
         }
         break;
@@ -105,7 +106,8 @@ Atom *hashcons_get(HashConsTable *hc, Arena *a, Atom *atom) {
     if (atom->kind == ATOM_GROUNDED &&
         (atom->ground.gkind == GV_SPACE ||
          atom->ground.gkind == GV_STATE ||
-         atom->ground.gkind == GV_CAPTURE))
+         atom->ground.gkind == GV_CAPTURE ||
+         atom->ground.gkind == GV_FOREIGN))
         return atom;
 
     uint32_t h = atom_hash(atom) % hc->size;
@@ -150,54 +152,75 @@ typedef struct {
 
 static InternLiteralCacheEntry g_intern_literal_cache[INTERN_LITERAL_CACHE_SIZE];
 
+static uint32_t intern_hash_name(const char *name) {
+    uint32_t h = 5381;
+    for (const char *p = name; *p; p++)
+        h = ((h << 5) + h) ^ (uint32_t)*p;
+    return h;
+}
+
+static void intern_insert_owned(InternTable *t, const char *name) {
+    uint32_t h = intern_hash_name(name) % t->size;
+    for (uint32_t i = 0; i < t->size; i++) {
+        uint32_t idx = (h + i) % t->size;
+        if (!t->names[idx]) {
+            t->names[idx] = name;
+            t->used++;
+            return;
+        }
+    }
+    fprintf(stderr, "fatal: intern table insertion failed during resize\n");
+    abort();
+}
+
+static void intern_resize(InternTable *t, uint32_t new_size) {
+    const char **old_names = t->names;
+    uint32_t old_size = t->size;
+    t->size = new_size;
+    t->used = 0;
+    t->names = cetta_malloc(sizeof(const char *) * t->size);
+    memset(t->names, 0, sizeof(const char *) * t->size);
+    for (uint32_t i = 0; i < old_size; i++) {
+        if (old_names[i])
+            intern_insert_owned(t, old_names[i]);
+    }
+    free(old_names);
+}
+
 void intern_init(InternTable *t) {
     t->size = INTERN_TABLE_SIZE;
     t->used = 0;
     t->names = cetta_malloc(sizeof(const char *) * t->size);
     memset(t->names, 0, sizeof(const char *) * t->size);
+    memset(g_intern_literal_cache, 0, sizeof(g_intern_literal_cache));
 }
 
 void intern_free(InternTable *t) {
-    /* Names are arena-allocated or static — don't free them */
+    for (uint32_t i = 0; i < t->size; i++)
+        free((void *)t->names[i]);
     free(t->names);
     t->names = NULL;
     t->size = t->used = 0;
+    memset(g_intern_literal_cache, 0, sizeof(g_intern_literal_cache));
 }
 
 const char *intern(InternTable *t, const char *name) {
     if (!t || !name) return name;
-    /* Hash lookup */
-    uint32_t h = 5381;
-    for (const char *p = name; *p; p++)
-        h = ((h << 5) + h) ^ (uint32_t)*p;
-    h %= t->size;
-    /* Linear probe */
+    if ((t->used + 1) * 10 > t->size * 7)
+        intern_resize(t, t->size ? t->size * 2 : INTERN_TABLE_SIZE);
+    uint32_t h = intern_hash_name(name) % t->size;
     for (uint32_t i = 0; i < t->size; i++) {
         uint32_t idx = (h + i) % t->size;
         if (!t->names[idx]) {
-            /* Empty slot — insert (strdup to persistent storage) */
             t->names[idx] = strdup(name);
+            if (!t->names[idx]) cetta_oom(strlen(name) + 1);
             t->used++;
-            /* Grow if > 70% full */
-            if (t->used * 10 > t->size * 7) {
-                uint32_t old_size = t->size;
-                const char **old_names = t->names;
-                t->size *= 2;
-                t->names = cetta_malloc(sizeof(const char *) * t->size);
-                memset(t->names, 0, sizeof(const char *) * t->size);
-                t->used = 0;
-                for (uint32_t j = 0; j < old_size; j++)
-                    if (old_names[j]) intern(t, old_names[j]);
-                free(old_names);
-                /* Re-lookup after resize */
-                return intern(t, name);
-            }
             return t->names[idx];
         }
         if (strcmp(t->names[idx], name) == 0)
-            return t->names[idx]; /* Already interned */
+            return t->names[idx];
     }
-    return name; /* Table full (shouldn't happen with growth) */
+    return name;
 }
 
 static const char *intern_cached_literal(const char *name) {
@@ -290,6 +313,14 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     at->kind = ATOM_GROUNDED;
     at->ground.gkind = GV_CAPTURE;
     at->ground.ptr = closure;
+    return at;
+}
+
+Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = ATOM_GROUNDED;
+    at->ground.gkind = GV_FOREIGN;
+    at->ground.ptr = value;
     return at;
 }
 
@@ -410,6 +441,7 @@ bool atom_eq(Atom *a, Atom *b) {
         case GV_STRING: return strcmp(a->ground.sval, b->ground.sval) == 0;
         case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
         case GV_CAPTURE: return a->ground.ptr == b->ground.ptr;
+        case GV_FOREIGN: return a->ground.ptr == b->ground.ptr;
         case GV_STATE: {
             StateCell *ca = (StateCell *)a->ground.ptr;
             StateCell *cb = (StateCell *)b->ground.ptr;
@@ -455,6 +487,7 @@ static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share) {
         case GV_SPACE:  return atom_space(dst, src->ground.ptr);
         case GV_STATE:  return atom_state(dst, (StateCell *)src->ground.ptr);
         case GV_CAPTURE: return atom_capture(dst, (CaptureClosure *)src->ground.ptr);
+        case GV_FOREIGN: return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
         }
         return atom_symbol(dst, "?");
     case ATOM_EXPR: {
@@ -521,6 +554,9 @@ void atom_print(Atom *a, FILE *out) {
         }
         case GV_CAPTURE:
             fputs("capture", out);
+            break;
+        case GV_FOREIGN:
+            fprintf(out, "<foreign %p>", a->ground.ptr);
             break;
         }
         break;

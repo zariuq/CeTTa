@@ -10,4 +10,4 @@
 [()]
 [()]
 [()]
-[(Error (assertEqual (= (Mortal Plato) T) T) "\nExpected: [T]\nGot: [(empty), T, (empty)]\nExcessive results: (empty), (empty)")]
+[(Error (assertEqual (= (Mortal Plato) T) T) "\nExpected: [T]\nGot: [Empty, T, Empty]\nExcessive results: Empty, Empty")]

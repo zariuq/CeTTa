@@ -2,8 +2,8 @@
 ; Ref: metta.md grounded atoms
 
 ; Float arithmetic
-!(assertEqual (+ 1.5 2.5) 4)
-!(assertEqual (* 2.0 3.5) 7)
+!(assertEqual (+ 1.5 2.5) 4.0)
+!(assertEqual (* 2.0 3.5) 7.0)
 !(assertEqual (- 10.5 3.2) 7.3)
 !(assertEqual (/ 7.0 2.0) 3.5)
 

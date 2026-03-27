@@ -1,0 +1,2 @@
+[((Error (import! &self support/import_parse_fail/module.metta) (ModuleParseFailed "/home/zar/claude/c-projects/cetta/tests/support/import_parse_fail/module.metta")))]
+[((base))]

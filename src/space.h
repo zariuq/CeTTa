@@ -96,6 +96,7 @@ typedef struct {
 
 void query_results_init(QueryResults *qr);
 void query_results_push(QueryResults *qr, Atom *result, Bindings *b);
+void query_results_free(QueryResults *qr);
 
 /* Find all (= lhs rhs) in space where lhs matches query (bidirectional).
    Returns substituted RHS for each match, plus bindings. */

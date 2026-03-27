@@ -1,0 +1,4 @@
+[((Error (import! &self support/import_cycle/A.metta) (Error (import! &self B) (Error (import! &self A) (ModuleImportCycle "/home/zar/claude/c-projects/cetta/tests/support/import_cycle/A.metta")))))]
+[((base))]
+[()]
+[()]
