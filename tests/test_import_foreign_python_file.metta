@@ -1,0 +1,6 @@
+(foo)
+(foo)
+!(import! &self support/import_foreign_pyfile)
+!(file-loaded)
+!(file-double 5)
+!(count-foo)

@@ -1,0 +1,1 @@
+[(Error (get-type-space baz foo) get-type-space expects a space as the first argument)]

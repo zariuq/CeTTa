@@ -1,0 +1,1 @@
+[(Error (log-math 10 foo) log-math expects two arguments: base (number) and input value (number))]

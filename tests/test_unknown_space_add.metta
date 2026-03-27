@@ -1,0 +1,1 @@
+!(add-atom &fresh foo)

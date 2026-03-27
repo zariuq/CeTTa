@@ -1,0 +1,2 @@
+[((foo bar))]
+[(Error (_collapse-add-next-atom-from-collapse-bind-result) IncorrectNumberOfArguments)]

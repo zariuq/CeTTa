@@ -1,0 +1,1 @@
+[(Error (pow-math 2 foo) pow-math expects two arguments: number (base) and number (power))]

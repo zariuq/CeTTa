@@ -1,0 +1,12 @@
+!(import! &self path)
+
+!(assertEqual (path-is-absolute? "/a/b") True)
+!(assertEqual (path-is-absolute? "a/b") False)
+!(assertEqual (path-normalize "/a/./b/../c") "/a/c")
+!(assertEqual (path-normalize "a/./b/../c") "a/c")
+!(assertEqual (path-normalize "../a/../b") "../b")
+!(assertEqual (path-dirname "/a/b/file.mm") "/a/b")
+!(assertEqual (path-dirname "file.mm") ".")
+!(assertEqual (path-join "/a/b" "c.mm") "/a/b/c.mm")
+!(assertEqual (path-join "/a/b" "../c.mm") "/a/c.mm")
+!(assertEqual (path-resolve-from "/tmp/demo/file.mm" "./helper.mm") "/tmp/demo/helper.mm")

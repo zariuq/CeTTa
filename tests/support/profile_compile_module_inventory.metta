@@ -1,0 +1,1 @@
+(= (mods) (module-inventory!))

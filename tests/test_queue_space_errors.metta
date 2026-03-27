@@ -1,0 +1,6 @@
+!(bind! &q (new-space queue))
+!(assertEqualToResult (space-pop &q) ((Error (space-pop &q) EmptyQueueSpace)))
+!(assertEqualToResult (space-peek &q) ((Error (space-peek &q) EmptyQueueSpace)))
+!(assertEqualToResult (space-get &q 0) ((Error (space-get &q 0) IndexOutOfBounds)))
+!(assertEqualToResult (space-truncate &q 1) ((Error (space-truncate &q 1) IndexOutOfBounds)))
+!(assertEqualToResult (space-get &q nope) ((Error (space-get &q nope) ExpectedNonNegativeIndex)))
