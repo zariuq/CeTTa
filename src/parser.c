@@ -72,9 +72,50 @@ static bool parser_text_well_formed(const char *text) {
     return depth == 0;
 }
 
+typedef struct {
+    const char **names;
+    VarId *ids;
+    uint32_t len;
+    uint32_t cap;
+} ParserVarScope;
+
+static void parser_var_scope_init(ParserVarScope *scope) {
+    scope->names = NULL;
+    scope->ids = NULL;
+    scope->len = 0;
+    scope->cap = 0;
+}
+
+static void parser_var_scope_free(ParserVarScope *scope) {
+    free(scope->names);
+    free(scope->ids);
+    scope->names = NULL;
+    scope->ids = NULL;
+    scope->len = 0;
+    scope->cap = 0;
+}
+
+static VarId parser_var_scope_id(ParserVarScope *scope, const char *name) {
+    for (uint32_t i = 0; i < scope->len; i++) {
+        if (strcmp(scope->names[i], name) == 0)
+            return scope->ids[i];
+    }
+    if (scope->len >= scope->cap) {
+        scope->cap = scope->cap ? scope->cap * 2 : 8;
+        scope->names = cetta_realloc(scope->names, sizeof(const char *) * scope->cap);
+        scope->ids = cetta_realloc(scope->ids, sizeof(VarId) * scope->cap);
+    }
+    VarId id = fresh_var_id();
+    scope->names[scope->len] = name;
+    scope->ids[scope->len] = id;
+    scope->len++;
+    return id;
+}
+
 /* ── Parse a single token or expression ─────────────────────────────────── */
 
-Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
+static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
+                                ParserVarScope *scope) {
     skip_whitespace_and_comments(text, pos);
     if (!text[*pos]) return NULL;
 
@@ -110,7 +151,7 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
         for (;;) {
             skip_whitespace_and_comments(text, pos);
             if (!text[*pos] || text[*pos] == ')') break;
-            Atom *child = parse_sexpr(a, text, pos);
+            Atom *child = parse_sexpr_scoped(a, text, pos, scope);
             if (!child) break;
             if (n >= ccap) {
                 ccap = ccap ? ccap * 2 : 16;
@@ -137,7 +178,8 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
 
     /* Variable: starts with $ */
     if (tok[0] == '$' && len > 1) {
-        return atom_var(a, tok + 1);
+        VarId id = parser_var_scope_id(scope, tok + 1);
+        return atom_var_with_id(a, tok + 1, id);
     }
 
     /* Boolean */
@@ -168,6 +210,14 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
 
     /* Symbol */
     return atom_symbol(a, tok);
+}
+
+Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
+    ParserVarScope scope;
+    parser_var_scope_init(&scope);
+    Atom *result = parse_sexpr_scoped(a, text, pos, &scope);
+    parser_var_scope_free(&scope);
+    return result;
 }
 
 /* ── Parse entire file ──────────────────────────────────────────────────── */

@@ -25,42 +25,6 @@ static void handle_sigsegv(int sig) {
 
 static bool g_count_only = false;
 
-typedef struct {
-    char **items;
-    uint32_t len;
-    uint32_t cap;
-} OutputBuffer;
-
-static void output_buffer_init(OutputBuffer *buf) {
-    buf->items = NULL;
-    buf->len = 0;
-    buf->cap = 0;
-}
-
-static void output_buffer_free(OutputBuffer *buf) {
-    for (uint32_t i = 0; i < buf->len; i++) free(buf->items[i]);
-    free(buf->items);
-}
-
-static bool output_buffer_push(OutputBuffer *buf, char *text) {
-    if (!text || text[0] == '\0') {
-        free(text);
-        return true;
-    }
-    if (buf->len == buf->cap) {
-        uint32_t new_cap = buf->cap ? buf->cap * 2 : 8;
-        char **new_items = realloc(buf->items, new_cap * sizeof(char *));
-        if (!new_items) {
-            free(text);
-            return false;
-        }
-        buf->items = new_items;
-        buf->cap = new_cap;
-    }
-    buf->items[buf->len++] = text;
-    return true;
-}
-
 static void write_results(FILE *out, ResultSet *rs) {
     if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
     if (g_count_only) {
@@ -81,19 +45,6 @@ static void write_results(FILE *out, ResultSet *rs) {
     fprintf(out, "]\n");
 }
 
-static bool capture_results(OutputBuffer *buf, ResultSet *rs) {
-    char *text = NULL;
-    size_t text_len = 0;
-    FILE *mem = open_memstream(&text, &text_len);
-    if (!mem) return false;
-    write_results(mem, rs);
-    if (fclose(mem) != 0) {
-        free(text);
-        return false;
-    }
-    return output_buffer_push(buf, text);
-}
-
 static bool result_set_has_error(ResultSet *rs) {
     for (uint32_t i = 0; i < rs->len; i++) {
         if (atom_is_error(rs->items[i])) return true;
@@ -103,7 +54,7 @@ static bool result_set_has_error(ResultSet *rs) {
 
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
-    fputs("       cetta [--profile <he_compat|he_extended>] <file.metta>\n", out);
+    fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
@@ -279,10 +230,15 @@ int main(int argc, char **argv) {
         arena_init(&tmp_arena);
         InternTable tmp_intern;
         intern_init(&tmp_intern);
+        VarInternTable tmp_var_intern;
+        var_intern_init(&tmp_var_intern);
         g_intern = &tmp_intern;
+        g_var_intern = &tmp_var_intern;
         int rc = stdlib_compile(filename, &tmp_arena, stdout);
         arena_free(&tmp_arena);
         g_intern = NULL;
+        g_var_intern = NULL;
+        var_intern_free(&tmp_var_intern);
         intern_free(&tmp_intern);
         return rc < 0 ? 1 : 0;
     }
@@ -315,6 +271,9 @@ int main(int argc, char **argv) {
     InternTable intern_table;
     intern_init(&intern_table);
     g_intern = &intern_table;
+    VarInternTable var_intern_table;
+    var_intern_init(&var_intern_table);
+    g_var_intern = &var_intern_table;
 
     /* Hash-consing for structural sharing (reduces memory for large derivations) */
     HashConsTable hashcons_table;
@@ -327,6 +286,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: could not read %s\n", filename);
         arena_free(&eval_arena);
         arena_free(&arena);
+        g_var_intern = NULL;
+        var_intern_free(&var_intern_table);
         g_intern = NULL;
         intern_free(&intern_table);
         g_hashcons = NULL;
@@ -342,6 +303,8 @@ int main(int argc, char **argv) {
         free(atoms);
         arena_free(&eval_arena);
         arena_free(&arena);
+        g_var_intern = NULL;
+        var_intern_free(&var_intern_table);
         g_intern = NULL;
         intern_free(&intern_table);
         g_hashcons = NULL;
@@ -400,6 +363,8 @@ int main(int argc, char **argv) {
             space_free(&space);
             arena_free(&eval_arena);
             arena_free(&arena);
+            g_var_intern = NULL;
+            var_intern_free(&var_intern_table);
             g_intern = NULL;
             intern_free(&intern_table);
             g_hashcons = NULL;
@@ -419,6 +384,8 @@ int main(int argc, char **argv) {
         space_free(&space);
         arena_free(&eval_arena);
         arena_free(&arena);
+        g_var_intern = NULL;
+        var_intern_free(&var_intern_table);
         g_intern = NULL;
         intern_free(&intern_table);
         g_hashcons = NULL;
@@ -428,8 +395,22 @@ int main(int argc, char **argv) {
 
     /* Process top-level atoms */
     int i = 0;
-    OutputBuffer outputs;
-    output_buffer_init(&outputs);
+    FILE *output_spool = tmpfile();
+    if (!output_spool) {
+        fprintf(stderr, "error: could not create output spool\n");
+        free(atoms);
+        cetta_library_context_free(&libraries);
+        space_free(&space);
+        arena_free(&eval_arena);
+        arena_free(&arena);
+        g_var_intern = NULL;
+        var_intern_free(&var_intern_table);
+        g_intern = NULL;
+        intern_free(&intern_table);
+        g_hashcons = NULL;
+        hashcons_free(&hashcons_table);
+        return 1;
+    }
     while (i < n) {
         Atom *at = atoms[i];
 
@@ -439,14 +420,17 @@ int main(int argc, char **argv) {
             ResultSet rs;
             result_set_init(&rs);
             eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
-            if (!capture_results(&outputs, &rs)) {
-                fprintf(stderr, "error: could not buffer evaluation output\n");
+            write_results(output_spool, &rs);
+            if (fflush(output_spool) != 0) {
+                fprintf(stderr, "error: could not write output spool\n");
                 free(rs.items);
-                output_buffer_free(&outputs);
+                fclose(output_spool);
                 free(atoms);
                 space_free(&space);
                 arena_free(&eval_arena);
                 arena_free(&arena);
+                g_var_intern = NULL;
+                var_intern_free(&var_intern_table);
                 g_intern = NULL;
                 intern_free(&intern_table);
                 g_hashcons = NULL;
@@ -470,12 +454,47 @@ int main(int argc, char **argv) {
         i++;
     }
 
-    for (uint32_t oi = 0; oi < outputs.len; oi++) {
-        fputs(outputs.items[oi], stdout);
+    if (fseek(output_spool, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "error: could not rewind output spool\n");
+        fclose(output_spool);
+        free(atoms);
+        cetta_library_context_free(&libraries);
+        space_free(&space);
+        arena_free(&eval_arena);
+        arena_free(&arena);
+        g_var_intern = NULL;
+        var_intern_free(&var_intern_table);
+        g_intern = NULL;
+        intern_free(&intern_table);
+        g_hashcons = NULL;
+        hashcons_free(&hashcons_table);
+        return 1;
     }
+    {
+        char io_buf[8192];
+        size_t nread;
+        while ((nread = fread(io_buf, 1, sizeof(io_buf), output_spool)) > 0) {
+            if (fwrite(io_buf, 1, nread, stdout) != nread) {
+                fprintf(stderr, "error: could not flush output spool to stdout\n");
+                fclose(output_spool);
+                free(atoms);
+                cetta_library_context_free(&libraries);
+                space_free(&space);
+                arena_free(&eval_arena);
+                arena_free(&arena);
+                g_var_intern = NULL;
+                var_intern_free(&var_intern_table);
+                g_intern = NULL;
+                intern_free(&intern_table);
+                g_hashcons = NULL;
+                hashcons_free(&hashcons_table);
+                return 1;
+            }
+        }
+    }
+    fclose(output_spool);
 
     free(atoms);
-    output_buffer_free(&outputs);
 
     /* Free registry-owned space contents. Space structs themselves may live
        in the persistent arena, so cleanup must not free the struct pointer. */
@@ -494,6 +513,8 @@ int main(int argc, char **argv) {
     space_free(&space);
     arena_free(&eval_arena);
     arena_free(&arena);
+    g_var_intern = NULL;
+    var_intern_free(&var_intern_table);
     g_intern = NULL;
     intern_free(&intern_table);
     g_hashcons = NULL;

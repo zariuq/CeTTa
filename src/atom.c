@@ -48,9 +48,12 @@ uint32_t atom_hash(Atom *a) {
     h = ((h << 5) + h) ^ (uint32_t)a->kind;
     switch (a->kind) {
     case ATOM_SYMBOL:
-    case ATOM_VAR:
         for (const char *p = a->name; *p; p++)
             h = ((h << 5) + h) ^ (uint32_t)*p;
+        break;
+    case ATOM_VAR:
+        h = ((h << 5) + h) ^ (uint32_t)(a->var_id & 0xFFFFFFFFu);
+        h = ((h << 5) + h) ^ (uint32_t)(a->var_id >> 32);
         break;
     case ATOM_GROUNDED:
         h = ((h << 5) + h) ^ (uint32_t)a->ground.gkind;
@@ -141,6 +144,7 @@ Atom *hashcons_get(HashConsTable *hc, Arena *a, Atom *atom) {
 /* ── Symbol Interning ───────────────────────────────────────────────────── */
 
 InternTable *g_intern = NULL;
+VarInternTable *g_var_intern = NULL;
 
 #define INTERN_LITERAL_CACHE_SIZE 64
 
@@ -157,6 +161,32 @@ static uint32_t intern_hash_name(const char *name) {
     for (const char *p = name; *p; p++)
         h = ((h << 5) + h) ^ (uint32_t)*p;
     return h;
+}
+
+static uint32_t var_intern_hash_name(const char *name) {
+    return intern_hash_name(name);
+}
+
+static uint32_t g_var_base_counter = 1;
+
+VarId fresh_var_id(void) {
+    return (VarId)g_var_base_counter++;
+}
+
+uint32_t var_base_id(VarId id) {
+    return (uint32_t)(id & 0xFFFFFFFFu);
+}
+
+uint32_t var_epoch_suffix(VarId id) {
+    return (uint32_t)(id >> 32);
+}
+
+VarId var_epoch_id(VarId id, uint32_t epoch) {
+    uint32_t base = var_base_id(id);
+    if (base == 0) {
+        base = (uint32_t)fresh_var_id();
+    }
+    return ((VarId)epoch << 32) | (VarId)base;
 }
 
 static void intern_insert_owned(InternTable *t, const char *name) {
@@ -223,6 +253,78 @@ const char *intern(InternTable *t, const char *name) {
     return name;
 }
 
+void var_intern_init(VarInternTable *t) {
+    t->size = INTERN_TABLE_SIZE;
+    t->used = 0;
+    t->names = cetta_malloc(sizeof(const char *) * t->size);
+    t->ids = cetta_malloc(sizeof(VarId) * t->size);
+    memset(t->names, 0, sizeof(const char *) * t->size);
+    memset(t->ids, 0, sizeof(VarId) * t->size);
+}
+
+void var_intern_free(VarInternTable *t) {
+    free(t->names);
+    free(t->ids);
+    t->names = NULL;
+    t->ids = NULL;
+    t->size = t->used = 0;
+}
+
+static void var_intern_insert_owned(VarInternTable *t, const char *name, VarId id) {
+    uint32_t h = var_intern_hash_name(name) % t->size;
+    for (uint32_t i = 0; i < t->size; i++) {
+        uint32_t idx = (h + i) % t->size;
+        if (!t->names[idx]) {
+            t->names[idx] = name;
+            t->ids[idx] = id;
+            t->used++;
+            return;
+        }
+    }
+    fprintf(stderr, "fatal: variable intern table insertion failed during resize\n");
+    abort();
+}
+
+static void var_intern_resize(VarInternTable *t, uint32_t new_size) {
+    const char **old_names = t->names;
+    VarId *old_ids = t->ids;
+    uint32_t old_size = t->size;
+    t->size = new_size;
+    t->used = 0;
+    t->names = cetta_malloc(sizeof(const char *) * t->size);
+    t->ids = cetta_malloc(sizeof(VarId) * t->size);
+    memset(t->names, 0, sizeof(const char *) * t->size);
+    memset(t->ids, 0, sizeof(VarId) * t->size);
+    for (uint32_t i = 0; i < old_size; i++) {
+        if (old_names[i])
+            var_intern_insert_owned(t, old_names[i], old_ids[i]);
+    }
+    free(old_names);
+    free(old_ids);
+}
+
+VarId var_intern(VarInternTable *t, const char *name) {
+    if (!t || !name) return fresh_var_id();
+    if ((t->used + 1) * 10 > t->size * 7)
+        var_intern_resize(t, t->size ? t->size * 2 : INTERN_TABLE_SIZE);
+    uint32_t h = var_intern_hash_name(name) % t->size;
+    for (uint32_t i = 0; i < t->size; i++) {
+        uint32_t idx = (h + i) % t->size;
+        if (!t->names[idx]) {
+            const char *stored = g_intern ? intern(g_intern, name) : strdup(name);
+            if (!stored) cetta_oom(strlen(name) + 1);
+            VarId id = fresh_var_id();
+            t->names[idx] = stored;
+            t->ids[idx] = id;
+            t->used++;
+            return id;
+        }
+        if (strcmp(t->names[idx], name) == 0)
+            return t->ids[idx];
+    }
+    return fresh_var_id();
+}
+
 static const char *intern_cached_literal(const char *name) {
     if (!g_intern || !name) return name;
 
@@ -272,21 +374,29 @@ char *arena_strdup(Arena *a, const char *s) {
 Atom *atom_symbol(Arena *a, const char *name) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_SYMBOL;
+    at->var_id = VAR_ID_NONE;
+    at->name = g_intern ? intern(g_intern, name) : arena_strdup(a, name);
+    return at;
+}
+
+Atom *atom_var_with_id(Arena *a, const char *name, VarId id) {
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = ATOM_VAR;
+    at->var_id = id ? id : fresh_var_id();
     at->name = g_intern ? intern(g_intern, name) : arena_strdup(a, name);
     return at;
 }
 
 Atom *atom_var(Arena *a, const char *name) {
-    Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_VAR;
-    /* Don't intern variables — they have unique freshened names */
-    at->name = arena_strdup(a, name);
+    VarId id = g_var_intern ? var_intern(g_var_intern, name) : fresh_var_id();
+    Atom *at = atom_var_with_id(a, name, id);
     return at;
 }
 
 Atom *atom_int(Arena *a, int64_t val) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_INT;
     at->ground.ival = val;
     return at;
@@ -295,6 +405,7 @@ Atom *atom_int(Arena *a, int64_t val) {
 Atom *atom_space(Arena *a, void *space_ptr) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_SPACE;
     at->ground.ptr = space_ptr;
     return at;
@@ -303,6 +414,7 @@ Atom *atom_space(Arena *a, void *space_ptr) {
 Atom *atom_state(Arena *a, StateCell *cell) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_STATE;
     at->ground.ptr = cell;
     return at;
@@ -311,6 +423,7 @@ Atom *atom_state(Arena *a, StateCell *cell) {
 Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_CAPTURE;
     at->ground.ptr = closure;
     return at;
@@ -319,6 +432,7 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure) {
 Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_FOREIGN;
     at->ground.ptr = value;
     return at;
@@ -327,6 +441,7 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
 Atom *atom_float(Arena *a, double val) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_FLOAT;
     at->ground.fval = val;
     return at;
@@ -335,6 +450,7 @@ Atom *atom_float(Arena *a, double val) {
 Atom *atom_bool(Arena *a, bool val) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_BOOL;
     at->ground.bval = val;
     return at;
@@ -343,6 +459,7 @@ Atom *atom_bool(Arena *a, bool val) {
 Atom *atom_string(Arena *a, const char *val) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->var_id = VAR_ID_NONE;
     at->ground.gkind = GV_STRING;
     at->ground.sval = arena_strdup(a, val);
     return at;
@@ -351,6 +468,7 @@ Atom *atom_string(Arena *a, const char *val) {
 Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_EXPR;
+    at->var_id = VAR_ID_NONE;
     at->expr.len = len;
     at->expr.elems = arena_alloc(a, sizeof(Atom *) * len);
     if (elems) memcpy(at->expr.elems, elems, sizeof(Atom *) * len);
@@ -430,8 +548,9 @@ bool atom_eq(Atom *a, Atom *b) {
     if (a->kind != b->kind) return false;
     switch (a->kind) {
     case ATOM_SYMBOL:
-    case ATOM_VAR:
         return strcmp(a->name, b->name) == 0;
+    case ATOM_VAR:
+        return a->var_id == b->var_id;
     case ATOM_GROUNDED:
         if (a->ground.gkind != b->ground.gkind) return false;
         switch (a->ground.gkind) {
@@ -465,7 +584,7 @@ bool atom_eq(Atom *a, Atom *b) {
 static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share) {
     switch (src->kind) {
     case ATOM_SYMBOL:   return atom_symbol(dst, src->name);
-    case ATOM_VAR:      return atom_var(dst, src->name);
+    case ATOM_VAR:      return atom_var_with_id(dst, src->name, src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT: {
@@ -518,6 +637,11 @@ void atom_print(Atom *a, FILE *out) {
         break;
     case ATOM_VAR:
         fprintf(out, "$%s", a->name);
+        if (!strchr(a->name, '#')) {
+            uint32_t epoch = var_epoch_suffix(a->var_id);
+            if (epoch != 0)
+                fprintf(out, "#%u", epoch);
+        }
         break;
     case ATOM_GROUNDED:
         switch (a->ground.gkind) {

@@ -36,6 +36,7 @@
 (: select (-> Atom %Undefined%))
 (: collect (-> Atom Expression))
 (: once (-> Atom %Undefined%))
+(: search-policy (-> Atom Atom))
 (: is-function (-> Type Bool))
 (: type-cast (-> Atom Type SpaceType %Undefined%))
 (: match-types (-> Type Type Atom Atom %Undefined%))
@@ -117,22 +118,28 @@
   (@return "List with new atom as a head"))
 
 (@doc select
-  (@desc "HE-extended committed choice over a nondeterministic stream. The primary form (select stream) returns the first non-empty result. The extended form (select k stream) returns up to k results, with k=0 yielding ().")
+  (@desc "HE-extended committed choice over a nondeterministic stream. The primary form (select stream) returns the first non-empty result. The extended forms (select k stream), (select (search-policy lane) stream), and (select k (search-policy lane) stream) expose bounded selection and explicit search-lane choice.")
   (@params (
     (@param "Stream expression to evaluate")))
   (@return "Selected result, or a bounded packet in the two-argument extended form"))
 
 (@doc collect
-  (@desc "HE-extended stream collector paired with select. Evaluates a nondeterministic stream and packages all non-empty results into one expression.")
+  (@desc "HE-extended stream collector paired with select. Evaluates a nondeterministic stream and packages all non-empty results into one expression. The policy form (collect (search-policy lane) stream) makes the search lane explicit.")
   (@params (
     (@param "Stream expression to evaluate")))
   (@return "Collected expression of surviving results"))
 
 (@doc once
-  (@desc "Compatibility alias for select. Prefer select in new code.")
+  (@desc "Compatibility alias for select. Prefer select in new code. The policy form (once (search-policy lane) stream) is supported for legacy call sites that still want explicit search-lane choice.")
   (@params (
     (@param "Stream expression to evaluate")))
   (@return "First non-empty result from the stream"))
+
+(@doc search-policy
+  (@desc "Search-policy literal constructor for explicit controlled-search calls. The current native CeTTa lane is recursive-dependent-proof, and it supports result-order control through (search-policy recursive-dependent-proof), (search-policy recursive-dependent-proof (order reverse)), (search-policy recursive-dependent-proof (order lex)), and (search-policy recursive-dependent-proof (order shortlex)). The lex mode orders results by canonical rendered-atom bytes. The shortlex mode orders results by canonical rendered-atom length first, then bytewise lexical order. ATP and solver lanes are named here for future explicit oracle work, but are not executed by the native evaluator yet.")
+  (@params (
+    (@param "Search lane name such as recursive-dependent-proof")))
+  (@return "Opaque policy atom consumed by select, collect, or once"))
 
 (@doc with-space-snapshot
   (@desc "CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.")

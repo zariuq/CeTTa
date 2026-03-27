@@ -3,11 +3,11 @@ CC = gcc
 PY_CFLAGS = $(shell python3-config --includes)
 PY_LDFLAGS = $(shell python3-config --embed --ldflags)
 PY_RPATH = -Wl,-rpath,$(shell python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')
-CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc $(PY_CFLAGS)
+CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc -I. $(PY_CFLAGS)
 DEPFLAGS = -MMD -MP
 LDFLAGS = -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/eval.c src/grounded.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c src/main.c
+SRC = src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c native/metamath/parser.c native/metamath/module.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_MATCH_BACKENDS = native-subst-tree native-candidate-exact pathmap-imported
@@ -27,13 +27,18 @@ all: $(BIN)
 bench-metamath-d5: $(BIN)
 	@./scripts/bench_metamath_d5.sh
 
+perf-runtime-stats: $(BIN)
+	@./scripts/bench_runtime_stats_probe.sh
+
+perf-stable: perf-runtime-stats
+
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.stage0.o)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d)
 
 -include $(DEPS)
 
-src/%.stage0.o: src/%.c
+%.stage0.o: %.c
 	$(CC) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 cetta-stage0: $(STAGE0_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -177,14 +182,15 @@ test-profiles: $(BIN) test-git-module-profiles
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$(./$(BIN) --list-profiles 2>&1); \
 	if printf '%s\n' "$$profiles" | grep -Eq '^he_compat[[:space:]]' && \
-	   printf '%s\n' "$$profiles" | grep -Eq '^he_extended[[:space:]]'; then \
+	   printf '%s\n' "$$profiles" | grep -Eq '^he_extended[[:space:]]' && \
+	   printf '%s\n' "$$profiles" | grep -Eq '^he_prime[[:space:]]'; then \
 		echo "PASS: profile inventory"; pass=$$((pass + 1)); \
 	else \
 		echo "FAIL: profile inventory"; \
 		printf '%s\n' "$$profiles"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for profile in he_compat he_extended; do \
+	for profile in he_compat he_extended he_prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \
 			echo "PASS: $$profile import modules"; pass=$$((pass + 1)); \
@@ -266,6 +272,22 @@ test-profiles: $(BIN) test-git-module-profiles
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
+		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_runtime_stats_extension.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/spec_profile_runtime_stats_extension.expected)" ]; then \
+			echo "PASS: he_extended runtime-stats extension"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended runtime-stats extension"; \
+			diff <(cat tests/spec_profile_runtime_stats_extension.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_compat --lang he tests/support/profile_runtime_stats_runtime.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface runtime-stats! is unavailable in profile he_compat"; then \
+			echo "PASS: he_compat runtime-stats guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat runtime-stats guard"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
 		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_once_alias_extension.expected)" ]; then \
 			echo "PASS: he_extended once alias"; pass=$$((pass + 1)); \
@@ -280,6 +302,37 @@ test-profiles: $(BIN) test-git-module-profiles
 		else \
 			echo "FAIL: he_compat once guard"; \
 			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/spec_profile_search_policy_extension.expected)" ]; then \
+			echo "PASS: he_extended search-policy capability"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended search-policy capability"; \
+			diff <(cat tests/spec_profile_search_policy_extension.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface search-policy is unavailable in profile he_compat"; then \
+			echo "PASS: he_compat search-policy guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat search-policy guard"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_search_policy_extension.metta 2>&1 >/dev/null); \
+		status=$$?; \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'search-policy' is unavailable in profile 'he_compat'"; then \
+			echo "PASS: he_compat compile search-policy guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat compile search-policy guard"; \
+			printf '%s\n' "$$compile_output"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he_extended compile search-policy"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended compile search-policy"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
@@ -327,6 +380,21 @@ test-profiles: $(BIN) test-git-module-profiles
 			echo "FAIL: he_extended compile select"; \
 			fail=$$((fail + 1)); \
 		fi; \
+		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_runtime_stats_extension.metta 2>&1 >/dev/null); \
+		status=$$?; \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'runtime-stats!' is unavailable in profile 'he_compat'"; then \
+			echo "PASS: he_compat compile runtime-stats guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat compile runtime-stats guard"; \
+			printf '%s\n' "$$compile_output"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he_extended compile runtime-stats"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended compile runtime-stats"; \
+			fail=$$((fail + 1)); \
+		fi; \
 		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_module_inventory.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_module_inventory.expected)" ]; then \
 			echo "PASS: he_extended module-inventory extension"; pass=$$((pass + 1)); \
@@ -343,7 +411,7 @@ test-profiles: $(BIN) test-git-module-profiles
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for profile in he_compat he_extended; do \
+	for profile in he_compat he_extended he_prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_system_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_system_extension.expected)" ]; then \
 			echo "PASS: $$profile system capability"; pass=$$((pass + 1)); \
@@ -359,7 +427,7 @@ test-profiles: $(BIN) test-git-module-profiles
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	for profile in he_compat he_extended; do \
+	for profile in he_compat he_extended he_prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_fs_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fs_extension.expected)" ]; then \
 			echo "PASS: $$profile fs capability"; pass=$$((pass + 1)); \
@@ -375,7 +443,7 @@ test-profiles: $(BIN) test-git-module-profiles
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	for profile in he_compat he_extended; do \
+	for profile in he_compat he_extended he_prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_str_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_str_extension.expected)" ]; then \
 			echo "PASS: $$profile str capability"; pass=$$((pass + 1)); \
@@ -391,6 +459,30 @@ test-profiles: $(BIN) test-git-module-profiles
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	result=$$(./$(BIN) --profile he_extended --lang he tests/profile_he_prime_dependent_binders_compat.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_dependent_binders_compat.expected)" ]; then \
+		echo "PASS: he_extended keeps literal binder-domain behavior"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_extended keeps literal binder-domain behavior"; \
+		diff <(cat tests/profile_he_prime_dependent_binders_compat.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_prime --lang he tests/profile_he_prime_dependent_binders.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_dependent_binders.expected)" ]; then \
+		echo "PASS: he_prime dependent binder telescope"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_prime dependent binder telescope"; \
+		diff <(cat tests/profile_he_prime_dependent_binders.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_prime --lang he tests/profile_he_prime_recursive_search.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_recursive_search.expected)" ]; then \
+		echo "PASS: he_prime recursive dependent search"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he_prime recursive dependent search"; \
+		diff <(cat tests/profile_he_prime_recursive_search.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
 	compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
 	status=$$?; \
 	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'module-inventory!' is unavailable in profile 'he_compat'"; then \

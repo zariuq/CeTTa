@@ -9,6 +9,9 @@
 #include "session.h"
 
 typedef struct CettaForeignValue CettaForeignValue;
+typedef uint64_t VarId;
+
+#define VAR_ID_NONE ((VarId)0)
 
 /* ── Atom kinds ─────────────────────────────────────────────────────────── */
 
@@ -35,6 +38,7 @@ typedef enum {
 typedef struct Atom Atom;
 struct Atom {
     AtomKind kind;
+    VarId var_id;            /* ATOM_VAR only */
     union {
         const char *name;   /* ATOM_SYMBOL or ATOM_VAR */
         struct {            /* ATOM_GROUNDED */
@@ -109,10 +113,29 @@ const char *intern(InternTable *t, const char *name);
 /* Global intern table (set up in main) */
 extern InternTable *g_intern;
 
+/* ── Variable identity intern/freshening ──────────────────────────────── */
+
+typedef struct {
+    const char **names;
+    VarId *ids;
+    uint32_t size, used;
+} VarInternTable;
+
+void    var_intern_init(VarInternTable *t);
+void    var_intern_free(VarInternTable *t);
+VarId   var_intern(VarInternTable *t, const char *name);
+VarId   fresh_var_id(void);
+VarId   var_epoch_id(VarId id, uint32_t epoch);
+uint32_t var_base_id(VarId id);
+uint32_t var_epoch_suffix(VarId id);
+
+extern VarInternTable *g_var_intern;
+
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
 Atom *atom_symbol(Arena *a, const char *name);
 Atom *atom_var(Arena *a, const char *name);
+Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_int(Arena *a, int64_t val);
 Atom *atom_float(Arena *a, double val);
 Atom *atom_bool(Arena *a, bool val);
