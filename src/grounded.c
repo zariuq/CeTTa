@@ -79,9 +79,7 @@ static Atom *fold_var_map_lookup(FoldVarMap *map, const char *name) {
 }
 
 static Atom *fold_var_map_add_fresh(FoldVarMap *map, Arena *a, const char *name) {
-    char buf[256];
-    snprintf(buf, sizeof(buf), "%s#%u", name, fresh_var_suffix());
-    Atom *fresh = atom_var(a, buf);
+    Atom *fresh = atom_var(a, arena_tagged_var_name(a, name, fresh_var_suffix()));
     if (map->len >= map->cap) {
         map->cap = map->cap ? map->cap * 2 : 8;
         map->items = cetta_realloc(map->items, sizeof(FoldVarMapEntry) * map->cap);
@@ -187,6 +185,9 @@ static int find_unused_alpha_equal_atom(Atom **elems, bool *used, uint32_t len, 
 }
 
 bool is_grounded_op(const char *name) {
+    if (strncmp(name, "__cetta_lib_", 12) == 0) {
+        return true;
+    }
     return strcmp(name, "+") == 0 || strcmp(name, "-") == 0 ||
            strcmp(name, "*") == 0 || strcmp(name, "/") == 0 ||
            strcmp(name, "%") == 0 || strcmp(name, "<") == 0 ||
@@ -196,12 +197,17 @@ bool is_grounded_op(const char *name) {
            strcmp(name, "if-equal") == 0 ||
            strcmp(name, "sealed") == 0 ||
            strcmp(name, "_minimal-foldl-atom") == 0 ||
+           strcmp(name, "_collapse-add-next-atom-from-collapse-bind-result") == 0 ||
            strcmp(name, "foldl-atom-in-space") == 0 ||
            strcmp(name, "and") == 0 || strcmp(name, "or") == 0 ||
            strcmp(name, "not") == 0 || strcmp(name, "xor") == 0 ||
            strcmp(name, "println!") == 0 ||
            strcmp(name, "trace!") == 0 ||
            strcmp(name, "format-args") == 0 ||
+           strcmp(name, "py-atom") == 0 ||
+           strcmp(name, "py-dot") == 0 ||
+           strcmp(name, "py-call") == 0 ||
+           strcmp(name, "sort-strings") == 0 ||
            strcmp(name, "print-alternatives!") == 0 ||
            strcmp(name, "unique-atom") == 0 ||
            strcmp(name, "intersection-atom") == 0 ||
@@ -229,17 +235,23 @@ bool is_grounded_op(const char *name) {
 
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */
 
-typedef struct { double val; bool is_float; } NumArg;
+typedef struct {
+    double val;
+    int64_t ival;
+    bool is_float;
+} NumArg;
 
 static bool get_numeric_arg(Atom *a, NumArg *out) {
     if (a->kind != ATOM_GROUNDED) return false;
     if (a->ground.gkind == GV_INT) {
         out->val = (double)a->ground.ival;
+        out->ival = a->ground.ival;
         out->is_float = false;
         return true;
     }
     if (a->ground.gkind == GV_FLOAT) {
         out->val = a->ground.fval;
+        out->ival = 0;
         out->is_float = true;
         return true;
     }
@@ -248,12 +260,39 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
 
 /* Return int if both inputs were int and result is exact, otherwise float */
 static Atom *make_numeric(Arena *a, double val, bool any_float) {
-    /* If result is exact integer, return int (even for float inputs) */
-    long lv = (long)val;
-    if ((double)lv == val && val >= -9e18 && val <= 9e18)
-        return atom_int(a, (int64_t)lv);
-    (void)any_float;
+    if (any_float)
+        return atom_float(a, val);
+    if (!isfinite(val))
+        return atom_float(a, val);
+    if (val < (double)INT64_MIN || val > (double)INT64_MAX)
+        return atom_float(a, val);
+    int64_t lv = (int64_t)val;
+    if ((double)lv == val)
+        return atom_int(a, lv);
     return atom_float(a, val);
+}
+
+static Atom *grounded_division_by_zero(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                      atom_symbol(a, "DivisionByZero"));
+}
+
+static Atom *grounded_math_domain_error(Arena *a, Atom *head, Atom **args,
+                                        uint32_t nargs, int bad_idx,
+                                        const char *constraint) {
+    Atom *reason = atom_expr(a, (Atom *[]){
+        atom_symbol(a, "MathDomainError"),
+        atom_int(a, bad_idx),
+        atom_symbol(a, constraint)
+    }, 3);
+    return atom_error(a, grounded_call_expr(a, head, args, nargs), reason);
+}
+
+static bool numeric_arg_is_integral(const NumArg *arg) {
+    if (!arg->is_float) return true;
+    if (!isfinite(arg->val)) return false;
+    double whole = 0.0;
+    return modf(arg->val, &whole) == 0.0;
 }
 
 /* ── Boolean arg extraction (True/False symbols) ──────────────────────── */
@@ -301,6 +340,65 @@ static Atom *grounded_format_args(Arena *a, Atom *head, Atom **args, uint32_t na
     Atom *out = atom_string(a, sb.buf ? sb.buf : "");
     sb_free(&sb);
     return out;
+}
+
+static int grounded_sort_strings_cmp(const void *lhs, const void *rhs) {
+    const char *const *a = lhs;
+    const char *const *b = rhs;
+    return strcmp(*a, *b);
+}
+
+static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR)
+        return grounded_string_error(a, head, args, nargs,
+                                     "sort-strings expects expression with strings as a first argument");
+
+    Atom *list = args[0];
+    const char **strings = arena_alloc(a, sizeof(const char *) * list->expr.len);
+    Atom **sorted = arena_alloc(a, sizeof(Atom *) * list->expr.len);
+    for (uint32_t i = 0; i < list->expr.len; i++) {
+        Atom *elem = list->expr.elems[i];
+        if (!(elem->kind == ATOM_GROUNDED && elem->ground.gkind == GV_STRING)) {
+            return grounded_string_error(a, head, args, nargs,
+                                         "sort-strings expects expression with strings as a first argument");
+        }
+        strings[i] = elem->ground.sval;
+    }
+
+    qsort(strings, list->expr.len, sizeof(const char *), grounded_sort_strings_cmp);
+    for (uint32_t i = 0; i < list->expr.len; i++)
+        sorted[i] = atom_string(a, strings[i]);
+    return atom_expr(a, sorted, list->expr.len);
+}
+
+static Atom *grounded_collapse_add_next(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 2)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR)
+        return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                     atom_expression_type(a), args[0]);
+
+    Atom *pair = args[1];
+    if (pair->kind != ATOM_EXPR || pair->expr.len != 2)
+        return grounded_string_error(a, head, args, nargs,
+                                     "(Atom Bindings) pair is expected as a second argument");
+
+    Bindings bindings;
+    if (!bindings_from_atom(pair->expr.elems[1], &bindings))
+        return grounded_string_error(a, head, args, nargs,
+                                     "(Atom Bindings) pair is expected as a second argument");
+
+    Atom *next_atom = bindings_apply(&bindings, a, pair->expr.elems[0]);
+    bindings_free(&bindings);
+
+    Atom *list = args[0];
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (list->expr.len + 1));
+    for (uint32_t i = 0; i < list->expr.len; i++)
+        elems[i] = list->expr.elems[i];
+    elems[list->expr.len] = next_atom;
+    return atom_expr(a, elems, list->expr.len + 1);
 }
 
 static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
@@ -398,6 +496,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (strcmp(op, "format-args") == 0)
         return grounded_format_args(a, head, args, nargs);
 
+    if (strcmp(op, "sort-strings") == 0)
+        return grounded_sort_strings(a, head, args, nargs);
+
+    if (strcmp(op, "_collapse-add-next-atom-from-collapse-bind-result") == 0)
+        return grounded_collapse_add_next(a, head, args, nargs);
+
     if (strcmp(op, "_minimal-foldl-atom") == 0 ||
         strcmp(op, "foldl-atom-in-space") == 0)
         return grounded_foldl_in_space(a, head, args, nargs);
@@ -442,20 +546,30 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (!get_numeric_arg(args[0], &base))
             return grounded_string_error(a, head, args, nargs,
                                          "pow-math expects two arguments: number (base) and number (power)");
-        double res;
+        NumArg power;
+        double power_val;
         if (args[1]->kind == ATOM_GROUNDED && args[1]->ground.gkind == GV_INT) {
             int64_t n = args[1]->ground.ival;
             if (n > INT32_MAX || n < INT32_MIN)
                 return grounded_string_error(a, head, args, nargs,
                                              "power argument is too big, try using float value");
-            res = pow(base.val, (double)n);
+            power.ival = n;
+            power.val = (double)n;
+            power.is_float = false;
+            power_val = (double)n;
         } else {
-            NumArg power;
             if (!get_numeric_arg(args[1], &power))
                 return grounded_string_error(a, head, args, nargs,
                                              "pow-math expects two arguments: number (base) and number (power)");
-            res = pow(base.val, power.val);
+            power_val = power.val;
         }
+        if (base.val == 0.0 && power.val < 0.0)
+            return grounded_math_domain_error(a, head, args, nargs, 1,
+                                              "NonZeroBaseWhenExponentNegative");
+        if (base.val < 0.0 && !numeric_arg_is_integral(&power))
+            return grounded_math_domain_error(a, head, args, nargs, 2,
+                                              "IntegralExponentWhenBaseNegative");
+        double res = pow(base.val, power_val);
         return atom_float(a, res);
     }
 
@@ -466,6 +580,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (!get_numeric_arg(args[0], &base) || !get_numeric_arg(args[1], &input))
             return grounded_string_error(a, head, args, nargs,
                                          "log-math expects two arguments: base (number) and input value (number)");
+        if (!(base.val > 0.0) || base.val == 1.0)
+            return grounded_math_domain_error(a, head, args, nargs, 1,
+                                              "PositiveRealNotOne");
+        if (!(input.val > 0.0))
+            return grounded_math_domain_error(a, head, args, nargs, 2,
+                                              "PositiveReal");
         return atom_float(a, log(input.val) / log(base.val));
     }
 
@@ -512,8 +632,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return grounded_string_error(a, head, args, nargs, msg);
         }
 
-        if (strcmp(op, "sqrt-math") == 0)
+        if (strcmp(op, "sqrt-math") == 0) {
+            if (input.val < 0.0)
+                return grounded_math_domain_error(a, head, args, nargs, 1,
+                                                  "NonNegativeReal");
             return atom_float(a, sqrt(input.val));
+        }
         if (strcmp(op, "abs-math") == 0) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, llabs(args[0]->ground.ival));
@@ -541,12 +665,20 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         }
         if (strcmp(op, "sin-math") == 0)
             return atom_float(a, sin(input.val));
-        if (strcmp(op, "asin-math") == 0)
+        if (strcmp(op, "asin-math") == 0) {
+            if (input.val < -1.0 || input.val > 1.0)
+                return grounded_math_domain_error(a, head, args, nargs, 1,
+                                                  "ClosedUnitInterval");
             return atom_float(a, asin(input.val));
+        }
         if (strcmp(op, "cos-math") == 0)
             return atom_float(a, cos(input.val));
-        if (strcmp(op, "acos-math") == 0)
+        if (strcmp(op, "acos-math") == 0) {
+            if (input.val < -1.0 || input.val > 1.0)
+                return grounded_math_domain_error(a, head, args, nargs, 1,
+                                                  "ClosedUnitInterval");
             return atom_float(a, acos(input.val));
+        }
         if (strcmp(op, "tan-math") == 0)
             return atom_float(a, tan(input.val));
         if (strcmp(op, "atan-math") == 0)
@@ -754,11 +886,53 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     /* Both args are numeric from here */
     bool fl = na.is_float || nb.is_float;
 
+    if (!fl) {
+        int64_t ai = na.ival;
+        int64_t bi = nb.ival;
+
+        if (strcmp(op, "+") == 0) {
+            __int128 sum = (__int128)ai + (__int128)bi;
+            if (sum >= INT64_MIN && sum <= INT64_MAX)
+                return atom_int(a, (int64_t)sum);
+            return atom_float(a, (double)ai + (double)bi);
+        }
+        if (strcmp(op, "-") == 0) {
+            __int128 diff = (__int128)ai - (__int128)bi;
+            if (diff >= INT64_MIN && diff <= INT64_MAX)
+                return atom_int(a, (int64_t)diff);
+            return atom_float(a, (double)ai - (double)bi);
+        }
+        if (strcmp(op, "*") == 0) {
+            __int128 prod = (__int128)ai * (__int128)bi;
+            if (prod >= INT64_MIN && prod <= INT64_MAX)
+                return atom_int(a, (int64_t)prod);
+            return atom_float(a, (double)ai * (double)bi);
+        }
+        if (strcmp(op, "/") == 0) {
+            if (bi == 0)
+                return grounded_division_by_zero(a, head, args, nargs);
+            if (ai % bi == 0)
+                return atom_int(a, ai / bi);
+            return atom_float(a, (double)ai / (double)bi);
+        }
+        if (strcmp(op, "%") == 0) {
+            if (bi == 0)
+                return grounded_division_by_zero(a, head, args, nargs);
+            return atom_int(a, ai % bi);
+        }
+        if (strcmp(op, "<") == 0)  return ai < bi  ? atom_true(a) : atom_false(a);
+        if (strcmp(op, ">") == 0)  return ai > bi  ? atom_true(a) : atom_false(a);
+        if (strcmp(op, "<=") == 0) return ai <= bi ? atom_true(a) : atom_false(a);
+        if (strcmp(op, ">=") == 0) return ai >= bi ? atom_true(a) : atom_false(a);
+    }
+
     if (strcmp(op, "+") == 0) return make_numeric(a, na.val + nb.val, fl);
     if (strcmp(op, "-") == 0) return make_numeric(a, na.val - nb.val, fl);
     if (strcmp(op, "*") == 0) return make_numeric(a, na.val * nb.val, fl);
-    if (strcmp(op, "/") == 0) return nb.val != 0 ? make_numeric(a, na.val / nb.val, fl) : NULL;
-    if (strcmp(op, "%") == 0) return nb.val != 0 ? make_numeric(a, fmod(na.val, nb.val), fl) : NULL;
+    if (strcmp(op, "/") == 0) return nb.val != 0 ? make_numeric(a, na.val / nb.val, fl)
+                                                 : atom_float(a, na.val / nb.val);
+    if (strcmp(op, "%") == 0) return nb.val != 0 ? make_numeric(a, fmod(na.val, nb.val), fl)
+                                                 : grounded_division_by_zero(a, head, args, nargs);
     if (strcmp(op, "<") == 0)  return na.val < nb.val  ? atom_true(a) : atom_false(a);
     if (strcmp(op, ">") == 0)  return na.val > nb.val  ? atom_true(a) : atom_false(a);
     if (strcmp(op, "<=") == 0) return na.val <= nb.val ? atom_true(a) : atom_false(a);

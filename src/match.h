@@ -5,16 +5,23 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
-#define MAX_BINDINGS 64
-
 typedef struct {
     const char *var;
     Atom *val;
 } Binding;
 
 typedef struct {
-    Binding entries[MAX_BINDINGS];
+    Atom *lhs;
+    Atom *rhs;
+} BindingConstraint;
+
+typedef struct {
+    Binding *entries;
     uint32_t len;
+    uint32_t cap;
+    BindingConstraint *constraints;
+    uint32_t eq_len;
+    uint32_t eq_cap;
 } Bindings;
 
 typedef struct {
@@ -23,11 +30,19 @@ typedef struct {
 } BindingSet;
 
 void      bindings_init(Bindings *b);
+void      bindings_free(Bindings *b);
+bool      bindings_clone(Bindings *dst, const Bindings *src);
+bool      bindings_copy(Bindings *dst, const Bindings *src);
+void      bindings_move(Bindings *dst, Bindings *src);
+void      bindings_replace(Bindings *dst, Bindings *src);
 Atom     *bindings_lookup(Bindings *b, const char *var);
 bool      bindings_add(Bindings *b, const char *var, Atom *val);
+bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
+Atom     *bindings_to_atom(Arena *a, const Bindings *b);
+bool      bindings_from_atom(Atom *atom, Bindings *out);
 void      binding_set_init(BindingSet *bs);
 void      binding_set_free(BindingSet *bs);
 bool      binding_set_push(BindingSet *bs, const Bindings *b);
@@ -67,6 +82,7 @@ bool atom_alpha_eq(Atom *left, Atom *right);
 
 /* Compare bindings as a set of (var,value) pairs, ignoring entry order. */
 bool bindings_eq(Bindings *a, Bindings *b);
+char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix);
 
 /* ── Loop-binding rejection (occurs check, HE spec metta.md line 435) ── */
 

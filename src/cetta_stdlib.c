@@ -128,6 +128,7 @@ static void serialize_atom(Atom *atom, StringTable *st, ByteBuf *b) {
         case GV_FLOAT:  buf_u8(b, BLOB_TAG_FLOAT);  buf_f64(b, atom->ground.fval); break;
         case GV_BOOL:   buf_u8(b, BLOB_TAG_BOOL);   buf_u8(b, atom->ground.bval ? 1 : 0); break;
         case GV_STRING: buf_u8(b, BLOB_TAG_STRING);  buf_u16(b, strtab_add(st, atom->ground.sval)); break;
+        case GV_FOREIGN:
         default:
             fprintf(stderr, "stdlib_compile: cannot serialize grounded kind %d\n", atom->ground.gkind);
             break;

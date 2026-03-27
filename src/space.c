@@ -453,8 +453,18 @@ void query_results_push(QueryResults *qr, Atom *result, Bindings *b) {
         qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * qr->cap);
     }
     qr->items[qr->len].result = result;
-    qr->items[qr->len].bindings = *b;
+    if (!bindings_clone(&qr->items[qr->len].bindings, b))
+        return;
     qr->len++;
+}
+
+void query_results_free(QueryResults *qr) {
+    for (uint32_t i = 0; i < qr->len; i++)
+        bindings_free(&qr->items[i].bindings);
+    free(qr->items);
+    qr->items = NULL;
+    qr->len = 0;
+    qr->cap = 0;
 }
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
@@ -547,6 +557,8 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
     case GV_BOOL:   return atom_symbol(a, "Bool");
     case GV_STRING: return atom_symbol(a, "String");
     case GV_SPACE:  return atom_symbol(a, "SpaceType");
+    case GV_FOREIGN:
+        return atom_symbol(a, "Foreign");
     case GV_CAPTURE:
         return atom_expr3(a, atom_symbol(a, "->"),
                           atom_atom_type(a), atom_atom_type(a));
@@ -670,6 +682,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         }
                         types[count++] = concrete_ret;
                     }
+                    bindings_free(&tb);
                     (void)ret_type;
                 }
             }
@@ -715,6 +728,7 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
                 Atom *result = bindings_apply(&b, a, rrhs);
                 query_results_push(out, result, &b);
             }
+            bindings_free(&b);
         }
         free(candidates);
     } else {
@@ -729,6 +743,7 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
                 Atom *result = bindings_apply(&b, a, rrhs);
                 query_results_push(out, result, &b);
             }
+            bindings_free(&b);
         }
     }
 }

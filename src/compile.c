@@ -57,7 +57,9 @@ static EqGroup *eq_group_lookup(EqGroupSet *gs, const char *head, uint32_t arity
 }
 
 static bool compile_is_function_type(Atom *a) {
-    return a && a->kind == ATOM_EXPR && a->expr.len >= 3 &&
+    /* Keep compile-time function recognition aligned with runtime: zero-arg
+       function types use the HE form (-> (->)). */
+    return a && a->kind == ATOM_EXPR && a->expr.len >= 2 &&
            atom_is_symbol(a->expr.elems[0], "->");
 }
 
@@ -236,6 +238,7 @@ static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
             emit_mangled(out, pattern->ground.sval);
             fprintf(out, ", i32 0, i32 0))\n");
             break;
+        case GV_FOREIGN:
         default:
             fprintf(out, "  br label %%fail%d ; unsupported grounded pattern\n", fail_label);
             return;
@@ -360,6 +363,7 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
             emit_mangled(out, rhs->ground.sval);
             fprintf(out, ", i32 0, i32 0))\n");
             return reg;
+        case GV_FOREIGN:
         default:
             return "null";
         }

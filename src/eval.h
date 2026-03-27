@@ -11,12 +11,12 @@ typedef struct CettaLibraryContext CettaLibraryContext;
    This replaces the former split between ResultSet and ResultBindSet.
    "Plain" evaluation is just projection: outcome.atom. */
 
-typedef struct {
+typedef struct Outcome {
     Atom *atom;
     Bindings env;
 } Outcome;
 
-typedef struct {
+typedef struct OutcomeSet {
     Outcome *items;
     uint32_t len, cap;
 } OutcomeSet;
@@ -29,7 +29,7 @@ void outcome_set_free(OutcomeSet *os);
 /* This is the user-facing result type. Internally, the evaluator works
    with OutcomeSet; ResultSet is produced by dropping bindings at the end. */
 
-typedef struct {
+typedef struct ResultSet {
     Atom **items;
     uint32_t len, cap;
 } ResultSet;
@@ -46,6 +46,8 @@ void eval_release_temporary_spaces(void);
 void eval_set_default_fuel(int fuel);
 int eval_get_default_fuel(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
+Registry *eval_current_registry(void);
+Arena *eval_current_persistent_arena(void);
 
 /* Internal: evaluate an atom fully (recursive).
    type is the expected type (NULL means %Undefined%). */
