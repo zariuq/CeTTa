@@ -6,8 +6,10 @@
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
 typedef struct {
-    const char *var;
+    VarId var_id;
+    const char *name;
     Atom *val;
+    bool legacy_name_fallback;
 } Binding;
 
 typedef struct {
@@ -35,8 +37,10 @@ bool      bindings_clone(Bindings *dst, const Bindings *src);
 bool      bindings_copy(Bindings *dst, const Bindings *src);
 void      bindings_move(Bindings *dst, Bindings *src);
 void      bindings_replace(Bindings *dst, Bindings *src);
-Atom     *bindings_lookup(Bindings *b, const char *var);
-bool      bindings_add(Bindings *b, const char *var, Atom *val);
+Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
+Atom     *bindings_lookup_var(Bindings *b, Atom *var);
+bool      bindings_add_id(Bindings *b, VarId var_id, const char *name, Atom *val);
+bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);

@@ -1,5 +1,6 @@
 #include "space.h"
 #include "grounded.h"
+#include "stats.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -379,6 +380,7 @@ static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
 }
 
 static void eq_index_rebuild(Space *s) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EQ_INDEX_REBUILD);
     eq_index_free(&s->eq_idx);
     eq_index_init(&s->eq_idx);
     for (uint32_t i = 0; i < s->len; i++) {
@@ -389,6 +391,7 @@ static void eq_index_rebuild(Space *s) {
 }
 
 static void ty_ann_index_rebuild(Space *s) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TY_INDEX_REBUILD);
     ty_ann_index_free(&s->ty_idx);
     ty_ann_index_init(&s->ty_idx);
     for (uint32_t i = 0; i < s->len; i++) {
@@ -716,6 +719,8 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
         uint32_t *candidates = NULL;
         uint32_t ncand = 0, ccand = 0;
         disc_lookup(bucket->trie, query, &candidates, &ncand, &ccand);
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
+                                ncand);
         for (uint32_t ci = 0; ci < ncand; ci++) {
             uint32_t i = candidates[ci];
             if (i >= bucket->len) continue;
@@ -733,6 +738,8 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
         free(candidates);
     } else {
         /* Small bucket: linear scan is fine */
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
+                                bucket->len);
         for (uint32_t i = 0; i < bucket->len; i++) {
             uint32_t suffix = fresh_var_suffix();
             Atom *rlhs = rename_vars(a, bucket->lhs[i], suffix);
@@ -749,6 +756,7 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
 }
 
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
     /* Use head-symbol index for O(1) lookup instead of O(N) scan.
        This is the key optimization from Vampire's LiteralIndex. */
     const char *head = eq_head_symbol(query);

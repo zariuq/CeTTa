@@ -2,6 +2,7 @@
 #include "library.h"
 
 #include "eval.h"
+#include "native/native_modules.h"
 #include "parser.h"
 #include <ctype.h>
 #include <dirent.h>
@@ -16,10 +17,9 @@
 #include <unistd.h>
 
 enum {
-    CETTA_LIBRARY_METAMATH = 1u << 0,
-    CETTA_LIBRARY_SYSTEM = 1u << 1,
-    CETTA_LIBRARY_FS = 1u << 2,
-    CETTA_LIBRARY_STR = 1u << 3
+    CETTA_LIBRARY_SYSTEM = 1u << 0,
+    CETTA_LIBRARY_FS = 1u << 1,
+    CETTA_LIBRARY_STR = 1u << 2
 };
 
 typedef struct {
@@ -28,7 +28,6 @@ typedef struct {
 } CettaLibrarySpec;
 
 static const CettaLibrarySpec CETTA_LIBRARIES[] = {
-    {"metamath", CETTA_LIBRARY_METAMATH},
     {"system", CETTA_LIBRARY_SYSTEM},
     {"fs", CETTA_LIBRARY_FS},
     {"str", CETTA_LIBRARY_STR},
@@ -112,6 +111,8 @@ void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
     ctx->import_space_alias_len = 0;
     ctx->cmdline_arg_len = 0;
     ctx->loaded_module_len = 0;
+    ctx->native_handle_len = 0;
+    ctx->native_handle_next_id = 1;
     ctx->foreign_runtime = cetta_foreign_runtime_new();
 }
 
@@ -125,6 +126,7 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->loaded_modules[i].space = NULL;
     }
     ctx->loaded_module_len = 0;
+    cetta_native_handle_cleanup_all(ctx);
     if (ctx->foreign_runtime) {
         cetta_foreign_runtime_free(ctx->foreign_runtime);
         ctx->foreign_runtime = NULL;
@@ -1142,418 +1144,6 @@ static Atom *library_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs
     elems[0] = head;
     for (uint32_t i = 0; i < nargs; i++) elems[i + 1] = args[i];
     return atom_expr(a, elems, nargs + 1);
-}
-
-static const char *library_filename_arg(Atom *arg) {
-    if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_STRING) {
-        return arg->ground.sval;
-    }
-    if (arg->kind == ATOM_SYMBOL) {
-        return arg->name;
-    }
-    return NULL;
-}
-
-static Atom *metamath_read_tokens(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *fname;
-    FILE *fp;
-    char *buf;
-    char *p;
-    Atom **tokens = NULL;
-    uint32_t ntokens = 0, ctokens = 0;
-    Atom *result;
-
-    if (nargs != 1) return NULL;
-    fname = library_filename_arg(args[0]);
-    if (!fname) {
-        return atom_error(a, library_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "expected filename"));
-    }
-    fp = fopen(fname, "r");
-    if (!fp) {
-        return atom_error(a, library_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "cannot open file"));
-    }
-    fseek(fp, 0, SEEK_END);
-    long fsize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    buf = cetta_malloc((size_t)fsize + 1);
-    size_t nread = fread(buf, 1, (size_t)fsize, fp);
-    buf[nread] = '\0';
-    fclose(fp);
-
-    p = buf;
-    while (*p) {
-        if (p[0] == '$' && p[1] == '(') {
-            *p++ = ' ';
-            *p++ = ' ';
-            while (*p && !(p[0] == '$' && p[1] == ')')) *p++ = ' ';
-            if (*p) {
-                *p++ = ' ';
-                *p++ = ' ';
-            }
-        } else {
-            p++;
-        }
-    }
-
-    p = buf;
-    while (*p) {
-        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
-        if (!*p) break;
-        char *start = p;
-        while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') p++;
-        size_t len = (size_t)(p - start);
-        const char *mapped = NULL;
-        if (len == 2 && start[0] == '$') {
-            switch (start[1]) {
-            case 'c': mapped = "kw.c"; break;
-            case 'v': mapped = "kw.v"; break;
-            case 'f': mapped = "kw.f"; break;
-            case 'e': mapped = "kw.e"; break;
-            case 'a': mapped = "kw.a"; break;
-            case 'p': mapped = "kw.p"; break;
-            case 'd': mapped = "kw.d"; break;
-            case '{': mapped = "kw.open"; break;
-            case '}': mapped = "kw.close"; break;
-            case '=': mapped = "kw.eq"; break;
-            case '.': mapped = "kw.end"; break;
-            }
-        }
-        if (ntokens >= ctokens) {
-            ctokens = ctokens ? ctokens * 2 : 64;
-            tokens = cetta_realloc(tokens, sizeof(Atom *) * ctokens);
-        }
-        if (mapped) {
-            tokens[ntokens++] = atom_symbol(a, mapped);
-        } else {
-            char *tok = arena_alloc(a, len + 1);
-            memcpy(tok, start, len);
-            tok[len] = '\0';
-            tokens[ntokens++] = atom_symbol(a, tok);
-        }
-    }
-    free(buf);
-
-    result = atom_symbol(a, "Nil");
-    for (int ti = (int)ntokens - 1; ti >= 0; ti--) {
-        result = atom_expr3(a, atom_symbol(a, "Cons"), tokens[ti], result);
-    }
-    free(tokens);
-    return result;
-}
-
-static bool cetta_cli_has_flag(const CettaLibraryContext *ctx, const char *flag) {
-    if (!ctx || !flag) return false;
-    for (uint32_t i = 0; i < ctx->cmdline_arg_len; i++) {
-        if (ctx->cmdline_args[i] && strcmp(ctx->cmdline_args[i], flag) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool cetta_env_var_true(const char *name) {
-    const char *value = getenv(name);
-    return value && strcmp(value, "true") == 0;
-}
-
-static bool metamath_use_dag_format(const CettaLibraryContext *ctx) {
-    return cetta_env_var_true("MM_COMPRESSED_DAG") ||
-           cetta_cli_has_flag(ctx, "--compressed-dag");
-}
-
-static const char *metamath_map_token_name(const char *tok) {
-    if (strcmp(tok, "=") == 0) return "mm.=";
-    if (strcmp(tok, "+") == 0) return "mm.+";
-    if (strcmp(tok, "-") == 0) return "mm.-";
-    if (strcmp(tok, "*") == 0) return "mm.*";
-    if (strcmp(tok, "/") == 0) return "mm./";
-    if (strcmp(tok, "<") == 0) return "mm.<";
-    if (strcmp(tok, ">") == 0) return "mm.>";
-    if (strcmp(tok, "->") == 0) return "mm.->";
-    return tok;
-}
-
-static Atom *metamath_token_atom(Arena *a, const char *tok, bool as_string) {
-    const char *mapped = metamath_map_token_name(tok);
-    return as_string ? atom_string(a, mapped) : atom_symbol(a, mapped);
-}
-
-static Atom *metamath_parse_file_mode(const CettaLibraryContext *ctx, Arena *a,
-                                      Atom *head, Atom **args, uint32_t nargs,
-                                      bool pverify_shape) {
-    const char *fname;
-    FILE *fp;
-    char *buf;
-    char *p;
-    const char **toks = NULL;
-    uint32_t ntoks = 0, ctoks = 0;
-    Atom **stmts = NULL;
-    uint32_t nstmts = 0, cstmts = 0;
-    uint32_t ti = 0;
-
-    if (nargs != 1) return NULL;
-    fname = library_filename_arg(args[0]);
-    if (!fname) {
-        return atom_error(a, library_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "expected filename"));
-    }
-    fp = fopen(fname, "r");
-    if (!fp) {
-        return atom_error(a, library_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "cannot open file"));
-    }
-    fseek(fp, 0, SEEK_END);
-    long fsize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    buf = cetta_malloc((size_t)fsize + 1);
-    size_t nread = fread(buf, 1, (size_t)fsize, fp);
-    buf[nread] = '\0';
-    fclose(fp);
-
-    p = buf;
-    while (*p) {
-        if (p[0] == '$' && p[1] == '(') {
-            *p++ = ' ';
-            *p++ = ' ';
-            while (*p && !(p[0] == '$' && p[1] == ')')) *p++ = ' ';
-            if (*p) {
-                *p++ = ' ';
-                *p++ = ' ';
-            }
-        } else {
-            p++;
-        }
-    }
-
-    p = buf;
-    while (*p) {
-        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
-        if (!*p) break;
-        char *start = p;
-        while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') p++;
-        size_t len = (size_t)(p - start);
-        char *tok = arena_alloc(a, len + 1);
-        memcpy(tok, start, len);
-        tok[len] = '\0';
-        if (ntoks >= ctoks) {
-            ctoks = ctoks ? ctoks * 2 : 256;
-            toks = cetta_realloc(toks, sizeof(const char *) * ctoks);
-        }
-        toks[ntoks++] = tok;
-    }
-    free(buf);
-
-    #define MM_IS_KW(t, kw) (strcmp((t), "$" kw) == 0)
-    #define MM_PUSH_STMT(stmt) do { \
-        if (nstmts >= cstmts) { \
-            cstmts = cstmts ? cstmts * 2 : 32; \
-            stmts = cetta_realloc(stmts, sizeof(Atom *) * cstmts); \
-        } \
-        stmts[nstmts++] = (stmt); \
-    } while (0)
-
-    while (ti < ntoks) {
-        const char *t = toks[ti];
-        const char *label = "";
-        const char *kw = NULL;
-        uint32_t body_start;
-
-        if (MM_IS_KW(t, "{")) {
-            if (pverify_shape) {
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, "open_frame") }, 1));
-            } else {
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, "mm-stmt"), atom_symbol(a, "open"),
-                    atom_symbol(a, "()"), atom_symbol(a, "()") }, 4));
-            }
-            ti++;
-            continue;
-        }
-        if (MM_IS_KW(t, "}")) {
-            if (pverify_shape) {
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, "close_frame") }, 1));
-            } else {
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, "mm-stmt"), atom_symbol(a, "close"),
-                    atom_symbol(a, "()"), atom_symbol(a, "()") }, 4));
-            }
-            ti++;
-            continue;
-        }
-
-        if (t[0] == '$' && strlen(t) == 2) {
-            kw = t;
-            label = "";
-            body_start = ti + 1;
-        } else if (ti + 1 < ntoks && toks[ti + 1][0] == '$' && strlen(toks[ti + 1]) == 2) {
-            label = t;
-            kw = toks[ti + 1];
-            body_start = ti + 2;
-        } else {
-            ti++;
-            continue;
-        }
-
-        uint32_t end = body_start;
-        while (end < ntoks && !MM_IS_KW(toks[end], ".")) end++;
-        if (end >= ntoks) break;
-
-        char type = kw[1];
-        if (type == 'p') {
-            uint32_t eq_pos = body_start;
-            while (eq_pos < end && !MM_IS_KW(toks[eq_pos], "=")) eq_pos++;
-
-            uint32_t nmath = eq_pos - body_start;
-            Atom **math = arena_alloc(a, sizeof(Atom *) * (nmath ? nmath : 1));
-            for (uint32_t j = 0; j < nmath; j++) {
-                math[j] = metamath_token_atom(a, toks[body_start + j], pverify_shape);
-            }
-            Atom *math_expr = atom_expr(a, math, nmath);
-
-            uint32_t proof_start = eq_pos + 1;
-            Atom *proof_expr;
-            if (proof_start < end && strcmp(toks[proof_start], "(") == 0) {
-                bool dag_format = metamath_use_dag_format(ctx);
-                uint32_t cp = proof_start + 1;
-                while (cp < end && strcmp(toks[cp], ")") != 0) cp++;
-                uint32_t nlabels = cp - proof_start - 1;
-                Atom **labels = arena_alloc(a, sizeof(Atom *) * (nlabels ? nlabels : 1));
-                for (uint32_t j = 0; j < nlabels; j++) {
-                    labels[j] = metamath_token_atom(a, toks[proof_start + 1 + j],
-                                                    pverify_shape);
-                }
-                Atom *labels_expr = atom_expr(a, labels, nlabels);
-
-                Atom **steps = NULL;
-                uint32_t nsteps_arr = 0, csteps_arr = 0;
-                int64_t acc = 0;
-                for (uint32_t j = cp + 1; j < end; j++) {
-                    const char *s = toks[j];
-                    for (const char *ch = s; *ch; ch++) {
-                        if (*ch == 'Z') {
-                            if (nsteps_arr >= csteps_arr) {
-                                csteps_arr = csteps_arr ? csteps_arr * 2 : 32;
-                                steps = cetta_realloc(steps, sizeof(Atom *) * csteps_arr);
-                            }
-                            steps[nsteps_arr++] =
-                                dag_format ? atom_symbol(a, "save") : atom_int(a, -1);
-                            acc = 0;
-                        } else if (*ch == '?') {
-                            if (nsteps_arr >= csteps_arr) {
-                                csteps_arr = csteps_arr ? csteps_arr * 2 : 32;
-                                steps = cetta_realloc(steps, sizeof(Atom *) * csteps_arr);
-                            }
-                            steps[nsteps_arr++] =
-                                dag_format ? atom_symbol(a, "incomplete")
-                                           : atom_symbol(a, "?");
-                            acc = 0;
-                        } else if (*ch >= 'A' && *ch <= 'T') {
-                            int64_t n = 20 * acc + (*ch - 'A');
-                            if (nsteps_arr >= csteps_arr) {
-                                csteps_arr = csteps_arr ? csteps_arr * 2 : 32;
-                                steps = cetta_realloc(steps, sizeof(Atom *) * csteps_arr);
-                            }
-                            steps[nsteps_arr++] = atom_int(a, n);
-                            acc = 0;
-                        } else if (*ch >= 'U' && *ch <= 'Y') {
-                            acc = 5 * acc + (*ch - 'U' + 1);
-                        }
-                    }
-                }
-                Atom *steps_expr = atom_expr(a, steps, nsteps_arr);
-                free(steps);
-                proof_expr = atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, dag_format ? "compressed_dag" : "compressed"),
-                    labels_expr, steps_expr }, 3);
-            } else {
-                uint32_t nproof = end - proof_start;
-                Atom **proof = arena_alloc(a, sizeof(Atom *) * (nproof ? nproof : 1));
-                for (uint32_t j = 0; j < nproof; j++) {
-                    proof[j] = metamath_token_atom(a, toks[proof_start + j], pverify_shape);
-                }
-                proof_expr = atom_expr(a, proof, nproof);
-            }
-
-            char type_str[2] = {type, '\0'};
-            if (pverify_shape) {
-                Atom *stmt_type = nmath > 0 ? math[0] : atom_string(a, "");
-                Atom *stmt_math = atom_expr(a, nmath > 1 ? math + 1 : math,
-                                            nmath > 0 ? nmath - 1 : 0);
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, type_str), atom_string(a, label),
-                    stmt_type, stmt_math, proof_expr }, 5));
-            } else {
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, "mm-stmt"), atom_symbol(a, type_str),
-                    atom_symbol(a, label), math_expr, proof_expr }, 5));
-            }
-        } else {
-            uint32_t nbody = end - body_start;
-            Atom **body = arena_alloc(a, sizeof(Atom *) * (nbody ? nbody : 1));
-            for (uint32_t j = 0; j < nbody; j++) {
-                body[j] = metamath_token_atom(a, toks[body_start + j], pverify_shape);
-            }
-            char type_str[2] = {type, '\0'};
-            if (!pverify_shape) {
-                Atom *body_expr = atom_expr(a, body, nbody);
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, "mm-stmt"), atom_symbol(a, type_str),
-                    atom_symbol(a, label), body_expr }, 4));
-            } else if (type == 'c' || type == 'v' || type == 'd') {
-                Atom *body_expr = atom_expr(a, body, nbody);
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, type_str), body_expr }, 2));
-            } else if (type == 'f') {
-                Atom *type_atom = nbody > 0 ? body[0] : atom_string(a, "");
-                Atom *var_atom = nbody > 1 ? body[1] : atom_string(a, "");
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, "f"), atom_string(a, label), type_atom,
-                    var_atom }, 4));
-            } else {
-                Atom *type_atom = nbody > 0 ? body[0] : atom_string(a, "");
-                Atom *math_expr = atom_expr(a, nbody > 1 ? body + 1 : body,
-                                            nbody > 0 ? nbody - 1 : 0);
-                MM_PUSH_STMT(atom_expr(a, (Atom *[]) {
-                    atom_symbol(a, type_str), atom_string(a, label),
-                    type_atom, math_expr }, 4));
-            }
-        }
-        ti = end + 1;
-    }
-
-    free(toks);
-    Atom *result = atom_expr(a, stmts, nstmts);
-    free(stmts);
-    return result;
-}
-
-static Atom *metamath_parse_file(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    return metamath_parse_file_mode(NULL, a, head, args, nargs, false);
-}
-
-static Atom *metamath_parse_file_pverify(const CettaLibraryContext *ctx, Arena *a,
-                                         Atom *head, Atom **args, uint32_t nargs) {
-    return metamath_parse_file_mode(ctx, a, head, args, nargs, true);
-}
-
-static Atom *cetta_library_dispatch_metamath(const CettaLibraryContext *ctx,
-                                             Arena *a, Atom *head,
-                                             Atom **args, uint32_t nargs) {
-    if (head->kind != ATOM_SYMBOL) return NULL;
-    if (strcmp(head->name, "__cetta_lib_metamath_read_tokens") == 0) {
-        return metamath_read_tokens(a, head, args, nargs);
-    }
-    if (strcmp(head->name, "__cetta_lib_metamath_parse_file") == 0) {
-        return metamath_parse_file(a, head, args, nargs);
-    }
-    if (strcmp(head->name, "__cetta_lib_metamath_parse_file_pverify") == 0) {
-        return metamath_parse_file_pverify(ctx, a, head, args, nargs);
-    }
-    return NULL;
 }
 
 static Atom *library_signature_error(Arena *a, Atom *head, Atom **args,
@@ -2593,25 +2183,30 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
                           Arena *persistent_arena, Registry *registry,
                           int fuel, Atom **error_out) {
     const CettaLibrarySpec *spec = cetta_library_lookup(name);
+    const CettaNativeBuiltinModule *native_spec = spec ? NULL : cetta_native_module_lookup(name);
     CettaModuleSpec parsed_spec;
     CettaImportPlan plan;
+    uint32_t import_bit;
+    const char *import_name;
 
-    if (!spec) {
+    if (!spec && !native_spec) {
         *error_out = atom_symbol(eval_arena, "unknown library");
         return false;
     }
-    if (ctx->active_mask & spec->bit) return true;
+    import_bit = spec ? spec->bit : native_spec->import_bit;
+    import_name = spec ? spec->name : native_spec->name;
+    if (ctx->active_mask & import_bit) return true;
 
-    ctx->active_mask |= spec->bit;
+    ctx->active_mask |= import_bit;
     memset(&parsed_spec, 0, sizeof(parsed_spec));
     parsed_spec.kind = CETTA_MODULE_SPEC_STDLIB;
-    snprintf(parsed_spec.raw_spec, sizeof(parsed_spec.raw_spec), "%s", spec->name);
-    snprintf(parsed_spec.path_or_member, sizeof(parsed_spec.path_or_member), "%s", spec->name);
+    snprintf(parsed_spec.raw_spec, sizeof(parsed_spec.raw_spec), "%s", import_name);
+    snprintf(parsed_spec.path_or_member, sizeof(parsed_spec.path_or_member), "%s", import_name);
     if (!resolve_import_plan(ctx, &parsed_spec, space, space, false,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                              registry, fuel, error_out)) {
-        ctx->active_mask &= ~spec->bit;
+        ctx->active_mask &= ~import_bit;
         return false;
     }
     return true;
@@ -2701,7 +2296,7 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
     CettaModuleSpec parsed_spec;
     CettaImportPlan plan;
 
-    if (spec && cetta_library_lookup(spec)) {
+    if (spec && (cetta_library_lookup(spec) || cetta_native_module_lookup(spec))) {
         if (target_is_fresh) {
             *error_out = atom_symbol(eval_arena,
                                      "builtin libraries can only import into existing spaces");
@@ -2726,10 +2321,6 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
                                     Arena *a,
                                     Atom *head, Atom **args, uint32_t nargs) {
     if (!ctx || !head || head->kind != ATOM_SYMBOL) return NULL;
-    if (ctx->active_mask & CETTA_LIBRARY_METAMATH) {
-        Atom *result = cetta_library_dispatch_metamath(ctx, a, head, args, nargs);
-        if (result) return result;
-    }
     if (ctx->active_mask & CETTA_LIBRARY_SYSTEM) {
         Atom *result = cetta_library_dispatch_system(ctx, a, head, args, nargs);
         if (result) return result;
@@ -2740,6 +2331,11 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
     }
     if (ctx->active_mask & CETTA_LIBRARY_STR) {
         Atom *result = cetta_library_dispatch_str(a, head, args, nargs);
+        if (result) return result;
+    }
+    {
+        Atom *result = cetta_native_module_dispatch_active(ctx, space, a, head, args,
+                                                           nargs, ctx->active_mask);
         if (result) return result;
     }
     if (ctx->foreign_runtime) {

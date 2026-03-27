@@ -3,6 +3,7 @@
 #include "match.h"
 #include "grounded.h"
 #include "library.h"
+#include "stats.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -206,6 +207,171 @@ static Atom *state_bad_arg_type_error(Space *s, Arena *a, Atom *call,
     return bad_arg_type_error(s, a, call, arg_index, expected_type, actual);
 }
 
+typedef enum {
+    CETTA_SEARCH_POLICY_LANE_NONE = 0,
+    CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF = 1,
+    CETTA_SEARCH_POLICY_LANE_ATP_SATURATION = 2,
+    CETTA_SEARCH_POLICY_LANE_SOLVER_ORACLE = 3
+} CettaSearchPolicyLane;
+
+typedef enum {
+    CETTA_SEARCH_POLICY_ORDER_NATIVE = 0,
+    CETTA_SEARCH_POLICY_ORDER_REVERSE = 1,
+    CETTA_SEARCH_POLICY_ORDER_LEX = 2,
+    CETTA_SEARCH_POLICY_ORDER_SHORTLEX = 3
+} CettaSearchPolicyOrder;
+
+typedef struct {
+    bool present;
+    CettaSearchPolicyLane lane;
+    CettaSearchPolicyOrder order;
+    Atom *policy_atom;
+} CettaSearchPolicySpec;
+
+typedef struct {
+    Atom *raw_atom;
+    Atom *render_atom;
+    const Bindings *env;
+    char *key;
+    uint32_t ordinal;
+} SearchEmitCandidate;
+
+typedef enum {
+    CETTA_SEARCH_POLICY_PARSE_NOT_POLICY = 0,
+    CETTA_SEARCH_POLICY_PARSE_OK = 1,
+    CETTA_SEARCH_POLICY_PARSE_ERROR = 2
+} CettaSearchPolicyParseStatus;
+
+static const char *search_policy_lane_name(CettaSearchPolicyLane lane) {
+    switch (lane) {
+    case CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF:
+        return "recursive-dependent-proof";
+    case CETTA_SEARCH_POLICY_LANE_ATP_SATURATION:
+        return "atp-saturation";
+    case CETTA_SEARCH_POLICY_LANE_SOLVER_ORACLE:
+        return "solver-oracle";
+    case CETTA_SEARCH_POLICY_LANE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static Atom *search_policy_reason_unknown(Arena *a, Atom *lane_atom) {
+    return atom_expr2(a, atom_symbol(a, "UnknownSearchPolicy"), lane_atom);
+}
+
+static Atom *search_policy_reason_unavailable(Arena *a, CettaSearchPolicyLane lane) {
+    return atom_expr2(a, atom_symbol(a, "SearchPolicyLaneUnavailable"),
+                      atom_symbol(a, search_policy_lane_name(lane)));
+}
+
+static Atom *search_policy_reason_bad_order(Arena *a, Atom *order_atom) {
+    return atom_expr2(a, atom_symbol(a, "UnsupportedSearchPolicyOrder"), order_atom);
+}
+
+static int compare_stream_candidates(const void *lhs, const void *rhs) {
+    const SearchEmitCandidate *left = lhs;
+    const SearchEmitCandidate *right = rhs;
+    int cmp = strcmp(left->key, right->key);
+    if (cmp != 0) return cmp;
+    if (left->ordinal < right->ordinal) return -1;
+    if (left->ordinal > right->ordinal) return 1;
+    return 0;
+}
+
+static int compare_stream_candidates_shortlex(const void *lhs, const void *rhs) {
+    const SearchEmitCandidate *left = lhs;
+    const SearchEmitCandidate *right = rhs;
+    size_t left_len = strlen(left->key);
+    size_t right_len = strlen(right->key);
+    if (left_len < right_len) return -1;
+    if (left_len > right_len) return 1;
+    int cmp = strcmp(left->key, right->key);
+    if (cmp != 0) return cmp;
+    if (left->ordinal < right->ordinal) return -1;
+    if (left->ordinal > right->ordinal) return 1;
+    return 0;
+}
+
+static Atom *search_policy_reason_bad_option(Arena *a, Atom *option_atom) {
+    return atom_expr2(a, atom_symbol(a, "UnsupportedSearchPolicyOption"), option_atom);
+}
+
+static CettaSearchPolicyParseStatus parse_search_policy_atom(
+    Arena *a, Atom *policy_atom, CettaSearchPolicySpec *spec, Atom **reason_out) {
+    if (!expr_head_is(policy_atom, "search-policy"))
+        return CETTA_SEARCH_POLICY_PARSE_NOT_POLICY;
+    if (spec) {
+        spec->present = false;
+        spec->lane = CETTA_SEARCH_POLICY_LANE_NONE;
+        spec->order = CETTA_SEARCH_POLICY_ORDER_NATIVE;
+        spec->policy_atom = policy_atom;
+    }
+    if (reason_out) *reason_out = NULL;
+
+    uint32_t nargs = expr_nargs(policy_atom);
+    if (nargs == 0 || nargs > 2) {
+        if (reason_out) *reason_out = atom_symbol(a, "IncorrectNumberOfArguments");
+        return CETTA_SEARCH_POLICY_PARSE_ERROR;
+    }
+
+    Atom *lane_atom = expr_arg(policy_atom, 0);
+    if (lane_atom->kind != ATOM_SYMBOL) {
+        if (reason_out) *reason_out = atom_symbol(a, "SearchPolicyLaneNameSymbolIsExpected");
+        return CETTA_SEARCH_POLICY_PARSE_ERROR;
+    }
+
+    CettaSearchPolicyLane lane = CETTA_SEARCH_POLICY_LANE_NONE;
+    if (strcmp(lane_atom->name, "recursive-dependent-proof") == 0) {
+        lane = CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF;
+    } else if (strcmp(lane_atom->name, "atp-saturation") == 0) {
+        lane = CETTA_SEARCH_POLICY_LANE_ATP_SATURATION;
+    } else if (strcmp(lane_atom->name, "solver-oracle") == 0) {
+        lane = CETTA_SEARCH_POLICY_LANE_SOLVER_ORACLE;
+    } else {
+        if (reason_out) *reason_out = search_policy_reason_unknown(a, lane_atom);
+        return CETTA_SEARCH_POLICY_PARSE_ERROR;
+    }
+
+    CettaSearchPolicyOrder order = CETTA_SEARCH_POLICY_ORDER_NATIVE;
+    if (nargs == 2) {
+        Atom *option_atom = expr_arg(policy_atom, 1);
+        if (!expr_head_is(option_atom, "order") || expr_nargs(option_atom) != 1) {
+            if (reason_out) *reason_out = search_policy_reason_bad_option(a, option_atom);
+            return CETTA_SEARCH_POLICY_PARSE_ERROR;
+        }
+        Atom *order_atom = expr_arg(option_atom, 0);
+        if (order_atom->kind != ATOM_SYMBOL) {
+            if (reason_out) *reason_out = atom_symbol(a, "SearchPolicyOrderSymbolIsExpected");
+            return CETTA_SEARCH_POLICY_PARSE_ERROR;
+        }
+        if (strcmp(order_atom->name, "native") == 0) {
+            order = CETTA_SEARCH_POLICY_ORDER_NATIVE;
+        } else if (strcmp(order_atom->name, "reverse") == 0) {
+            order = CETTA_SEARCH_POLICY_ORDER_REVERSE;
+        } else if (strcmp(order_atom->name, "lex") == 0) {
+            order = CETTA_SEARCH_POLICY_ORDER_LEX;
+        } else if (strcmp(order_atom->name, "shortlex") == 0) {
+            order = CETTA_SEARCH_POLICY_ORDER_SHORTLEX;
+        } else {
+            if (reason_out) *reason_out = search_policy_reason_bad_order(a, order_atom);
+            return CETTA_SEARCH_POLICY_PARSE_ERROR;
+        }
+        if (lane != CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF &&
+            order != CETTA_SEARCH_POLICY_ORDER_NATIVE) {
+            if (reason_out) *reason_out = search_policy_reason_bad_order(a, order_atom);
+            return CETTA_SEARCH_POLICY_PARSE_ERROR;
+        }
+    }
+
+    if (spec) {
+        spec->present = true;
+        spec->lane = lane;
+        spec->order = order;
+    }
+    return CETTA_SEARCH_POLICY_PARSE_OK;
+}
+
 static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head && head->kind == ATOM_SYMBOL && active_profile() &&
         !cetta_profile_allows_surface(active_profile(), head->name)) {
@@ -253,11 +419,15 @@ static bool bindings_merge_into(Bindings *dst, const Bindings *src) {
     return bindings_try_merge(dst, src);
 }
 
+static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
+                                        Atom ***out_types);
+
 /* Forward-declared below with the rest of the evaluator entry points. */
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os);
 
 static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
                         bool bounded, int64_t limit, bool preserve_bindings,
+                        CettaSearchPolicyOrder order,
                         OutcomeSet *os) {
     Bindings _empty;
     bindings_init(&_empty);
@@ -266,15 +436,82 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     rb_set_init(&inner);
     metta_eval_bind(s, a, stream_expr, fuel, &inner);
 
-    if (bounded && limit == 1) {
-        bool emitted = false;
+    bool sorted_order = order == CETTA_SEARCH_POLICY_ORDER_LEX ||
+                        order == CETTA_SEARCH_POLICY_ORDER_SHORTLEX;
+
+    if (sorted_order) {
+        uint32_t candidate_cap = inner.len > 0 ? inner.len : 1;
+        SearchEmitCandidate *candidates =
+            arena_alloc(a, sizeof(SearchEmitCandidate) * candidate_cap);
+        uint32_t candidate_len = 0;
         for (uint32_t i = 0; i < inner.len; i++) {
             Atom *r = inner.items[i].atom;
             if (atom_is_empty(r))
                 continue;
-            outcome_set_add(os, r, &inner.items[i].env);
-            emitted = true;
-            break;
+            Atom *render_atom = preserve_bindings
+                ? bindings_apply(&inner.items[i].env, a, r)
+                : r;
+            candidates[candidate_len].raw_atom = r;
+            candidates[candidate_len].render_atom = render_atom;
+            candidates[candidate_len].env = &inner.items[i].env;
+            candidates[candidate_len].key = atom_to_string(a, render_atom);
+            candidates[candidate_len].ordinal = candidate_len;
+            candidate_len++;
+        }
+        if (candidate_len == 0) {
+            if (bounded && limit == 1)
+                outcome_set_add(os, atom_empty(a), &_empty);
+            else
+                outcome_set_add(os, atom_expr(a, NULL, 0), &_empty);
+            rb_set_free(&inner);
+            return;
+        }
+        qsort(candidates, candidate_len, sizeof(SearchEmitCandidate),
+              order == CETTA_SEARCH_POLICY_ORDER_LEX
+                  ? compare_stream_candidates
+                  : compare_stream_candidates_shortlex);
+        if (bounded && limit == 1) {
+            outcome_set_add(os, candidates[0].raw_atom, candidates[0].env);
+            rb_set_free(&inner);
+            return;
+        }
+        uint32_t sorted_cap = 0;
+        if (bounded && limit > 0 && (uint64_t)limit < UINT32_MAX)
+            sorted_cap = (uint32_t)limit;
+        uint32_t count = candidate_len;
+        if (bounded && sorted_cap > 0 && count > sorted_cap)
+            count = sorted_cap;
+        Atom **items = arena_alloc(a, sizeof(Atom *) * (count > 0 ? count : 1));
+        for (uint32_t i = 0; i < count; i++) {
+            items[i] = preserve_bindings
+                ? candidates[i].render_atom
+                : candidates[i].raw_atom;
+        }
+        outcome_set_add(os, atom_expr(a, items, count), &_empty);
+        rb_set_free(&inner);
+        return;
+    }
+
+    if (bounded && limit == 1) {
+        bool emitted = false;
+        if (order == CETTA_SEARCH_POLICY_ORDER_REVERSE) {
+            for (uint32_t i = inner.len; i > 0; i--) {
+                Atom *r = inner.items[i - 1].atom;
+                if (atom_is_empty(r))
+                    continue;
+                outcome_set_add(os, r, &inner.items[i - 1].env);
+                emitted = true;
+                break;
+            }
+        } else {
+            for (uint32_t i = 0; i < inner.len; i++) {
+                Atom *r = inner.items[i].atom;
+                if (atom_is_empty(r))
+                    continue;
+                outcome_set_add(os, r, &inner.items[i].env);
+                emitted = true;
+                break;
+            }
         }
         if (!emitted)
             outcome_set_add(os, atom_empty(a), &_empty);
@@ -293,15 +530,28 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     uint32_t alloc_len = bounded ? (cap > 0 ? cap : 1) : (inner.len > 0 ? inner.len : 1);
     Atom **items = arena_alloc(a, sizeof(Atom *) * alloc_len);
     uint32_t count = 0;
-    for (uint32_t i = 0; i < inner.len; i++) {
-        Atom *r = inner.items[i].atom;
-        if (atom_is_empty(r))
-            continue;
-        if (bounded && cap > 0 && count >= cap)
-            break;
-        items[count++] = preserve_bindings
-            ? bindings_apply(&inner.items[i].env, a, r)
-            : r;
+    if (order == CETTA_SEARCH_POLICY_ORDER_REVERSE) {
+        for (uint32_t i = inner.len; i > 0; i--) {
+            Atom *r = inner.items[i - 1].atom;
+            if (atom_is_empty(r))
+                continue;
+            if (bounded && cap > 0 && count >= cap)
+                break;
+            items[count++] = preserve_bindings
+                ? bindings_apply(&inner.items[i - 1].env, a, r)
+                : r;
+        }
+    } else {
+        for (uint32_t i = 0; i < inner.len; i++) {
+            Atom *r = inner.items[i].atom;
+            if (atom_is_empty(r))
+                continue;
+            if (bounded && cap > 0 && count >= cap)
+                break;
+            items[count++] = preserve_bindings
+                ? bindings_apply(&inner.items[i].env, a, r)
+                : r;
+        }
     }
     outcome_set_add(os, atom_expr(a, items, count), &_empty);
     rb_set_free(&inner);
@@ -330,6 +580,25 @@ static void temp_space_register(Space *space) {
         g_temp_spaces.items = cetta_realloc(g_temp_spaces.items, sizeof(Space *) * g_temp_spaces.cap);
     }
     g_temp_spaces.items[g_temp_spaces.len++] = space;
+}
+
+static bool temp_space_is_registered(Space *space) {
+    if (!space) return false;
+    for (uint32_t i = 0; i < g_temp_spaces.len; i++) {
+        if (g_temp_spaces.items[i] == space)
+            return true;
+    }
+    return false;
+}
+
+static Space *space_persistent_clone(Space *src, Arena *dst) {
+    Space *clone = arena_alloc(dst, sizeof(Space));
+    space_init(clone);
+    (void)space_match_backend_try_set(clone, src->match_backend.kind);
+    for (uint32_t i = 0; i < src->len; i++) {
+        space_add(clone, atom_deep_copy_shared(dst, src->atoms[i]));
+    }
+    return clone;
 }
 
 void eval_release_temporary_spaces(void) {
@@ -482,6 +751,16 @@ static Space *space_snapshot_clone(Space *src, Arena *a) {
     return clone;
 }
 
+static Atom *runtime_stats_inventory_atom(Arena *a) {
+    Space *inventory = cetta_malloc(sizeof(Space));
+    CettaRuntimeStats stats;
+    space_init(inventory);
+    temp_space_register(inventory);
+    cetta_runtime_stats_snapshot(&stats);
+    cetta_runtime_stats_populate_space(inventory, a, &stats);
+    return atom_space(a, inventory);
+}
+
 /* ── Function type utilities (Types.lean:260-281) ──────────────────────── */
 
 static bool is_function_type(Atom *a) {
@@ -507,12 +786,149 @@ static Atom *get_function_ret_type(Atom *ft) {
     return ft->expr.elems[ft->expr.len - 1];
 }
 
+static bool eval_dependent_telescope_enabled(void) {
+    return cetta_profile_enables_dependent_telescope(active_eval_session()->profile);
+}
+
+static bool split_dependent_domain(Atom *domain, Atom **binder_out, Atom **type_out) {
+    if (eval_dependent_telescope_enabled() &&
+        domain &&
+        domain->kind == ATOM_EXPR &&
+        domain->expr.len == 3 &&
+        atom_is_symbol(domain->expr.elems[0], ":") &&
+        domain->expr.elems[1]->kind == ATOM_VAR) {
+        *binder_out = domain->expr.elems[1];
+        *type_out = domain->expr.elems[2];
+        return true;
+    }
+    *binder_out = NULL;
+    *type_out = domain;
+    return false;
+}
+
+static Atom *function_domain_type(Bindings *env, Arena *a, Atom *domain, Atom **binder_out) {
+    Atom *binder = NULL;
+    Atom *body = domain;
+    split_dependent_domain(domain, &binder, &body);
+    if (binder_out) *binder_out = binder;
+    return bindings_apply(env, a, body);
+}
+
+static bool bind_domain_binder(Bindings *env, Atom *domain, Atom *term) {
+    Atom *binder = NULL;
+    Atom *body = domain;
+    if (!split_dependent_domain(domain, &binder, &body) || !binder) {
+        return true;
+    }
+    return bindings_add_var(env, binder, term);
+}
+
+static Atom *normalize_type_expr_profiled(Arena *a, Atom *ty) {
+    if (ty->kind != ATOM_EXPR || ty->expr.len < 2) return ty;
+    Atom **new_elems = arena_alloc(a, sizeof(Atom *) * ty->expr.len);
+    bool changed = false;
+    for (uint32_t i = 0; i < ty->expr.len; i++) {
+        new_elems[i] = normalize_type_expr_profiled(a, ty->expr.elems[i]);
+        if (new_elems[i] != ty->expr.elems[i]) changed = true;
+    }
+    Atom *norm = changed ? atom_expr(a, new_elems, ty->expr.len) : ty;
+    if (norm->expr.len >= 3 && norm->expr.elems[0]->kind == ATOM_SYMBOL &&
+        is_grounded_op(norm->expr.elems[0]->name)) {
+        Atom *result = grounded_dispatch(a, norm->expr.elems[0],
+                                         norm->expr.elems + 1, norm->expr.len - 1);
+        if (result) return result;
+    }
+    return norm;
+}
+
+static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom,
+                                                  Atom ***out_types) {
+    Atom *op = atom->expr.elems[0];
+    Atom **op_types = NULL;
+    uint32_t nop = get_atom_types_profiled(s, a, op, &op_types);
+    Atom **types = NULL;
+    uint32_t count = 0;
+    bool tried_func_type = false;
+
+    for (uint32_t oi = 0; oi < nop; oi++) {
+        Atom *ft = op_types[oi];
+        if (!is_function_type(ft)) {
+            continue;
+        }
+        tried_func_type = true;
+        if (ft->expr.len - 2 != atom->expr.len - 1) {
+            continue;
+        }
+
+        Atom *fresh_ft = rename_vars(a, ft, fresh_var_suffix());
+        Atom *fresh_ret = get_function_ret_type(fresh_ft);
+        Bindings tb;
+        bindings_init(&tb);
+        bool all_ok = true;
+
+        for (uint32_t ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
+            Atom *binder = NULL;
+            Atom *decl = function_domain_type(&tb, a, fresh_ft->expr.elems[ai + 1], &binder);
+            Atom **atypes = NULL;
+            uint32_t nat = get_atom_types_profiled(s, a, atom->expr.elems[ai + 1], &atypes);
+            bool found = false;
+
+            for (uint32_t ti = 0; ti < nat; ti++) {
+                Bindings trial;
+                if (!bindings_clone(&trial, &tb)) {
+                    continue;
+                }
+                if (match_types(decl, atypes[ti], &trial)) {
+                    Atom *arg_term = bindings_apply(&trial, a, atom->expr.elems[ai + 1]);
+                    if (bind_domain_binder(&trial, fresh_ft->expr.elems[ai + 1], arg_term)) {
+                        bindings_replace(&tb, &trial);
+                        found = true;
+                        bindings_free(&trial);
+                        break;
+                    }
+                }
+                bindings_free(&trial);
+            }
+            free(atypes);
+            if (!found) {
+                all_ok = false;
+            }
+        }
+
+        if (all_ok) {
+            Atom *concrete_ret =
+                normalize_type_expr_profiled(a, bindings_apply(&tb, a, fresh_ret));
+            types = types ? cetta_realloc(types, sizeof(Atom *) * (count + 1))
+                          : cetta_malloc(sizeof(Atom *));
+            types[count++] = concrete_ret;
+        }
+        bindings_free(&tb);
+    }
+
+    free(op_types);
+    if (tried_func_type && count == 0) {
+        *out_types = NULL;
+        return 0;
+    }
+    *out_types = types;
+    return count;
+}
+
+static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
+                                        Atom ***out_types) {
+    uint32_t count = get_atom_types(s, a, atom, out_types);
+    if (!eval_dependent_telescope_enabled() || atom->kind != ATOM_EXPR || count != 0) {
+        return count;
+    }
+    return infer_dependent_application_types(s, a, atom, out_types);
+}
+
 /* ── Type cast (TypeCheck.lean:126-148) ────────────────────────────────── */
 
 static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
                          int fuel, ResultSet *rs) {
     Atom **types;
-    uint32_t ntypes = get_atom_types(s, a, atom, &types);
+    uint32_t ntypes = get_atom_types_profiled(s, a, atom, &types);
     /* Try each type — return on FIRST match (early return per spec) */
     for (uint32_t i = 0; i < ntypes; i++) {
         Bindings mb;
@@ -578,7 +994,8 @@ static bool check_function_applicable(
             bool found = false;
             /* Apply accumulated bindings to expected arg type
                (resolves type variables bound by previous args) */
-            Atom *expected = bindings_apply(&results[r], a, arg_types[i]);
+            Atom *expected =
+                function_domain_type(&results[r], a, arg_types[i], NULL);
             if (atom_is_symbol(expected, "Atom") ||
                 atom_is_symbol(expected, "%Undefined%")) {
                 if (nnext < 64 && bindings_clone(&next[nnext], &results[r]))
@@ -587,7 +1004,7 @@ static bool check_function_applicable(
             }
 
             Atom **atypes;
-            uint32_t natypes = get_atom_types(s, a, arg, &atypes);
+            uint32_t natypes = get_atom_types_profiled(s, a, arg, &atypes);
             if (natypes == 0) {
                 if (nnext < 64 && bindings_clone(&next[nnext], &results[r]))
                     nnext++;
@@ -599,6 +1016,10 @@ static bool check_function_applicable(
                 if (!bindings_clone(&mb, &results[r]))
                     continue;
                 if (match_types(expected, atypes[t], &mb)) {
+                    if (!bind_domain_binder(&mb, arg_types[i], arg)) {
+                        bindings_free(&mb);
+                        continue;
+                    }
                     if (nnext < 64) {
                         bindings_move(&next[nnext], &mb);
                         nnext++;
@@ -641,14 +1062,16 @@ static bool check_function_applicable(
         Bindings mb;
         if (!bindings_clone(&mb, &results[r]))
             continue;
-        if (match_types(expectedType, retType, &mb)) {
+        Atom *inst_ret =
+            eval_dependent_telescope_enabled() ? bindings_apply(&results[r], a, retType) : retType;
+        if (match_types(expectedType, inst_ret, &mb)) {
             if (ret_ok < 64) {
                 bindings_move(&success_bindings[ret_ok], &mb);
                 ret_ok++;
             }
         } else {
             Atom *reason = atom_expr3(a, atom_symbol(a, "BadType"),
-                                      expectedType, retType);
+                                      expectedType, inst_ret);
             if (*n_errors < 64)
                 errors[(*n_errors)++] = atom_error(a, expr, reason);
         }
@@ -940,12 +1363,25 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
     }
 
     Atom *orig_arg = orig_args[idx];
-    Atom *arg_type = bindings_apply((Bindings *)env, a, arg_types[idx]);
+    Atom *arg_type = function_domain_type((Bindings *)env, a, arg_types[idx], NULL);
     Atom *bound_arg = bindings_apply((Bindings *)env, a, orig_arg);
     if (atom_is_symbol(arg_type, "Atom") || orig_arg->kind == ATOM_VAR) {
         prefix[idx] = bound_arg;
-        interpret_function_args(s, a, op, orig_args, arg_types, nargs,
-                                idx + 1, prefix, env, fuel, os);
+        if (eval_dependent_telescope_enabled()) {
+            Bindings merged;
+            if (!bindings_clone(&merged, env))
+                return;
+            if (!bind_domain_binder(&merged, arg_types[idx], bound_arg)) {
+                bindings_free(&merged);
+                return;
+            }
+            interpret_function_args(s, a, op, orig_args, arg_types, nargs,
+                                    idx + 1, prefix, &merged, fuel, os);
+            bindings_free(&merged);
+        } else {
+            interpret_function_args(s, a, op, orig_args, arg_types, nargs,
+                                    idx + 1, prefix, env, fuel, os);
+        }
         return;
     }
 
@@ -968,6 +1404,10 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
             continue;
         }
         prefix[idx] = arg_os.items[i].atom;
+        if (!bind_domain_binder(&merged, arg_types[idx], arg_os.items[i].atom)) {
+            bindings_free(&merged);
+            continue;
+        }
         interpret_function_args(s, a, op, orig_args, arg_types, nargs,
                                 idx + 1, prefix, &merged, fuel, os);
         bindings_free(&merged);
@@ -1238,7 +1678,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         }
 
         if (nsteps >= 3) {
-            const char *pat_vars[MAX_CHAIN][MAX_VARS_PER_PAT];
+            VarId pat_vars[MAX_CHAIN][MAX_VARS_PER_PAT];
             uint32_t pat_nvars[MAX_CHAIN];
             for (uint32_t i = 0; i < nsteps; i++) {
                 pat_nvars[i] = 0;
@@ -1250,13 +1690,13 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     if (cur->kind == ATOM_VAR) {
                         bool dup = false;
                         for (uint32_t v = 0; v < pat_nvars[i]; v++) {
-                            if (strcmp(pat_vars[i][v], cur->name) == 0) {
+                            if (pat_vars[i][v] == cur->var_id) {
                                 dup = true;
                                 break;
                             }
                         }
                         if (!dup && pat_nvars[i] < MAX_VARS_PER_PAT)
-                            pat_vars[i][pat_nvars[i]++] = cur->name;
+                            pat_vars[i][pat_nvars[i]++] = cur->var_id;
                     }
                     if (cur->kind == ATOM_EXPR) {
                         for (uint32_t j = 0; j < cur->expr.len && sp < 64; j++)
@@ -1265,7 +1705,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 }
             }
 
-            const char *bound[MAX_CHAIN * MAX_VARS_PER_PAT];
+            VarId bound[MAX_CHAIN * MAX_VARS_PER_PAT];
             uint32_t nbound = 0;
             for (uint32_t v = 0; v < pat_nvars[0]; v++)
                 bound[nbound++] = pat_vars[0][v];
@@ -1284,7 +1724,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     uint32_t score = 0;
                     for (uint32_t v = 0; v < pat_nvars[j]; v++) {
                         for (uint32_t b = 0; b < nbound; b++) {
-                            if (strcmp(pat_vars[j][v], bound[b]) == 0) {
+                            if (pat_vars[j][v] == bound[b]) {
                                 score++;
                                 break;
                             }
@@ -1300,7 +1740,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 for (uint32_t v = 0; v < pat_nvars[best]; v++) {
                     bool dup = false;
                     for (uint32_t b = 0; b < nbound; b++) {
-                        if (strcmp(bound[b], pat_vars[best][v]) == 0) {
+                        if (bound[b] == pat_vars[best][v]) {
                             dup = true;
                             break;
                         }
@@ -1396,7 +1836,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
 
     Atom *op = atom->expr.elems[0];
     Atom **op_types;
-    uint32_t n_op_types = get_atom_types(s, a, op, &op_types);
+    uint32_t n_op_types = get_atom_types_profiled(s, a, op, &op_types);
     bool only_function_types = (n_op_types > 0);
     for (uint32_t ti = 0; ti < n_op_types; ti++) {
         if (!is_function_type(op_types[ti])) {
@@ -1441,8 +1881,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     Bindings head_env;
                     if (!bindings_clone(&head_env, &heads.items[hi].env))
                         continue;
-                    Atom *inst_ret_type = bindings_apply(&head_env, a, ret_type);
-
                     if (atom_is_empty_or_error(head_atom) && !atom_eq(head_atom, op)) {
                         outcome_set_add(&func_results, head_atom, &head_env);
                         bindings_free(&head_env);
@@ -1461,6 +1899,10 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                         Bindings combo_ctx;
                         if (!bindings_clone(&combo_ctx, &call_terms.items[ci].env))
                             continue;
+                        Atom *inst_ret_type =
+                            eval_dependent_telescope_enabled()
+                                ? bindings_apply(&combo_ctx, a, ret_type)
+                                : bindings_apply(&head_env, a, ret_type);
 
                         bool dispatched = false;
                         if (!dispatched &&
@@ -2219,7 +2661,7 @@ tail_call: ;
             Bindings b; bindings_init(&b);
             bool ok = false;
             if (pat->kind == ATOM_VAR) {
-                bindings_add(&b, pat->name, vals.items[0]);
+                bindings_add_var(&b, pat, vals.items[0]);
                 ok = true;
             } else {
                 ok = simple_match(pat, vals.items[0], &b);
@@ -2242,7 +2684,7 @@ tail_call: ;
         for (uint32_t i = 0; i < vals.len; i++) {
             Bindings b; bindings_init(&b);
             if (pat->kind == ATOM_VAR) {
-                bindings_add(&b, pat->name, vals.items[i]);
+                bindings_add_var(&b, pat, vals.items[i]);
                 eval_for_current_caller(s, a, NULL,
                                         bindings_apply(&b, a, body_let), fuel, &b,
                                         &current_env, preserve_bindings, os);
@@ -2284,7 +2726,7 @@ tail_call: ;
             if (var->kind == ATOM_VAR) {
                 bindings_init(&b);
                 has_binding = true;
-                bindings_add(&b, var->name, inner.items[0]);
+                bindings_add_var(&b, var, inner.items[0]);
                 next_atom = bindings_apply(&b, a, tmpl_chain);
             } else {
                 next_atom = tmpl_chain;
@@ -2305,7 +2747,7 @@ tail_call: ;
             if (atom_is_empty(r)) continue;
             if (var->kind == ATOM_VAR) {
                 Bindings b; bindings_init(&b);
-                bindings_add(&b, var->name, r);
+                bindings_add_var(&b, var, r);
                 Atom *subst = bindings_apply(&b, a, tmpl_chain);
                 eval_for_current_caller(s, a, NULL, subst, fuel, &b,
                                         &current_env, preserve_bindings, os);
@@ -2320,6 +2762,27 @@ tail_call: ;
         return;
     }
 
+    /* ── search-policy ─────────────────────────────────────────────────── */
+    if (expr_head_is(atom, "search-policy")) {
+        if (active_profile() &&
+            !cetta_profile_allows_surface(active_profile(), "search-policy")) {
+            outcome_set_add(os, profile_surface_error(a, atom, "search-policy"), &_empty);
+            return;
+        }
+        CettaSearchPolicySpec spec = {0};
+        Atom *reason = NULL;
+        CettaSearchPolicyParseStatus parsed =
+            parse_search_policy_atom(a, atom, &spec, &reason);
+        if (parsed == CETTA_SEARCH_POLICY_PARSE_OK) {
+            outcome_set_add(os, atom, &_empty);
+        } else {
+            outcome_set_add(os,
+                atom_error(a, atom, reason ? reason : atom_symbol(a, "MalformedSearchPolicy")),
+                &_empty);
+        }
+        return;
+    }
+
     /* ── collect / select / once ───────────────────────────────────────── */
     if (expr_head_is(atom, "collect") ||
         expr_head_is(atom, "select") ||
@@ -2327,6 +2790,8 @@ tail_call: ;
         bool is_collect = expr_head_is(atom, "collect");
         bool is_once = expr_head_is(atom, "once");
         const char *surface = is_collect ? "collect" : (is_once ? "once" : "select");
+        CettaSearchPolicySpec policy = {0};
+        policy.order = CETTA_SEARCH_POLICY_ORDER_NATIVE;
         if (active_profile() && !cetta_profile_allows_surface(active_profile(), surface)) {
             outcome_set_add(os, profile_surface_error(a, atom, surface), &_empty);
             return;
@@ -2336,29 +2801,109 @@ tail_call: ;
         Atom *stream_expr = NULL;
 
         if (is_collect) {
-            if (nargs != 1) {
+            if (nargs == 1) {
+                stream_expr = expr_arg(atom, 0);
+            } else if (nargs == 2) {
+                Atom *reason = NULL;
+                CettaSearchPolicyParseStatus parsed =
+                    parse_search_policy_atom(a, expr_arg(atom, 0), &policy, &reason);
+                if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                    outcome_set_add(os,
+                        bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "SearchPolicy"),
+                                           expr_arg(atom, 0)),
+                        &_empty);
+                    return;
+                }
+                if (parsed != CETTA_SEARCH_POLICY_PARSE_OK) {
+                    outcome_set_add(os,
+                        atom_error(a, atom,
+                                   reason ? reason : atom_symbol(a, "MalformedSearchPolicy")),
+                        &_empty);
+                    return;
+                }
+                stream_expr = expr_arg(atom, 1);
+            } else {
                 outcome_set_add(os,
                     atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
                     &_empty);
                 return;
             }
-            stream_expr = expr_arg(atom, 0);
-            stream_emit(s, a, stream_expr, fuel, false, 0, preserve_bindings, os);
+            if (policy.present &&
+                policy.lane != CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF) {
+                outcome_set_add(os,
+                    atom_error(a, atom, search_policy_reason_unavailable(a, policy.lane)),
+                    &_empty);
+                return;
+            }
+            stream_emit(s, a, stream_expr, fuel, false, 0, preserve_bindings,
+                        policy.order, os);
             return;
         }
 
         if (is_once) {
-            if (nargs != 1) {
+            if (nargs == 1) {
+                stream_expr = expr_arg(atom, 0);
+            } else if (nargs == 2) {
+                Atom *reason = NULL;
+                CettaSearchPolicyParseStatus parsed =
+                    parse_search_policy_atom(a, expr_arg(atom, 0), &policy, &reason);
+                if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                    outcome_set_add(os,
+                        bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "SearchPolicy"),
+                                           expr_arg(atom, 0)),
+                        &_empty);
+                    return;
+                }
+                if (parsed != CETTA_SEARCH_POLICY_PARSE_OK) {
+                    outcome_set_add(os,
+                        atom_error(a, atom,
+                                   reason ? reason : atom_symbol(a, "MalformedSearchPolicy")),
+                        &_empty);
+                    return;
+                }
+                stream_expr = expr_arg(atom, 1);
+            } else {
                 outcome_set_add(os,
                     atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
                     &_empty);
                 return;
             }
-            stream_expr = expr_arg(atom, 0);
         } else if (nargs == 1) {
             stream_expr = expr_arg(atom, 0);
         } else if (nargs == 2) {
+            Atom *reason = NULL;
+            CettaSearchPolicyParseStatus parsed =
+                parse_search_policy_atom(a, expr_arg(atom, 0), &policy, &reason);
+            if (parsed == CETTA_SEARCH_POLICY_PARSE_OK) {
+                stream_expr = expr_arg(atom, 1);
+            } else if (parsed == CETTA_SEARCH_POLICY_PARSE_ERROR) {
+                outcome_set_add(os,
+                    atom_error(a, atom,
+                               reason ? reason : atom_symbol(a, "MalformedSearchPolicy")),
+                    &_empty);
+                return;
+            } else {
+                Atom *limit_atom = expr_arg(atom, 0);
+                if (limit_atom->kind != ATOM_GROUNDED || limit_atom->ground.gkind != GV_INT) {
+                    outcome_set_add(os,
+                        bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "Number"), limit_atom),
+                        &_empty);
+                    return;
+                }
+                if (limit_atom->ground.ival < 0) {
+                    outcome_set_add(os,
+                        atom_error(a, atom, atom_symbol(a, "UnsignedIntegerIsExpected")),
+                        &_empty);
+                    return;
+                }
+                limit = limit_atom->ground.ival;
+                stream_expr = expr_arg(atom, 1);
+            }
+        } else if (nargs == 3) {
             Atom *limit_atom = expr_arg(atom, 0);
+            Atom *reason = NULL;
+            CettaSearchPolicyParseStatus parsed =
+                parse_search_policy_atom(a, expr_arg(atom, 1), &policy, &reason);
             if (limit_atom->kind != ATOM_GROUNDED || limit_atom->ground.gkind != GV_INT) {
                 outcome_set_add(os,
                     bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "Number"), limit_atom),
@@ -2371,8 +2916,22 @@ tail_call: ;
                     &_empty);
                 return;
             }
+            if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                outcome_set_add(os,
+                    bad_arg_type_error(s, a, atom, 2, atom_symbol(a, "SearchPolicy"),
+                                       expr_arg(atom, 1)),
+                    &_empty);
+                return;
+            }
+            if (parsed != CETTA_SEARCH_POLICY_PARSE_OK) {
+                outcome_set_add(os,
+                    atom_error(a, atom,
+                               reason ? reason : atom_symbol(a, "MalformedSearchPolicy")),
+                    &_empty);
+                return;
+            }
             limit = limit_atom->ground.ival;
-            stream_expr = expr_arg(atom, 1);
+            stream_expr = expr_arg(atom, 2);
         } else {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
@@ -2380,7 +2939,16 @@ tail_call: ;
             return;
         }
 
-        stream_emit(s, a, stream_expr, fuel, true, limit, preserve_bindings, os);
+        if (policy.present &&
+            policy.lane != CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF) {
+            outcome_set_add(os,
+                atom_error(a, atom, search_policy_reason_unavailable(a, policy.lane)),
+                &_empty);
+            return;
+        }
+
+        stream_emit(s, a, stream_expr, fuel, true, limit, preserve_bindings,
+                    policy.order, os);
         return;
     }
 
@@ -2686,6 +3254,41 @@ tail_call: ;
         return;
     }
 
+    if (expr_head_is(atom, "reset-runtime-stats!")) {
+        if (nargs != 0) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        if (active_profile() &&
+            !cetta_profile_allows_surface(active_profile(), "reset-runtime-stats!")) {
+            outcome_set_add(os,
+                profile_surface_error(a, atom, "reset-runtime-stats!"), &_empty);
+            return;
+        }
+        cetta_runtime_stats_reset();
+        outcome_set_add(os, atom_unit(a), &_empty);
+        return;
+    }
+
+    if (expr_head_is(atom, "runtime-stats!")) {
+        if (nargs != 0) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        if (active_profile() &&
+            !cetta_profile_allows_surface(active_profile(), "runtime-stats!")) {
+            outcome_set_add(os,
+                profile_surface_error(a, atom, "runtime-stats!"), &_empty);
+            return;
+        }
+        outcome_set_add(os, runtime_stats_inventory_atom(a), &_empty);
+        return;
+    }
+
     /* ── with-space-snapshot ───────────────────────────────────────────── */
     if (expr_head_is(atom, "with-space-snapshot") && nargs == 3 && g_registry) {
         Atom *binder = expr_arg(atom, 0);
@@ -2701,7 +3304,7 @@ tail_call: ;
         Bindings b;
         bindings_init(&b);
         if (binder->kind == ATOM_VAR) {
-            bindings_add(&b, binder->name, snapshot_atom);
+            bindings_add_var(&b, binder, snapshot_atom);
             Atom *subst = bindings_apply(&b, a, body);
             eval_for_current_caller(s, a, NULL, subst, fuel, &b, &current_env,
                                     preserve_bindings, os);
@@ -2732,9 +3335,18 @@ tail_call: ;
         if (name->kind == ATOM_SYMBOL) {
             /* Deep-copy to persistent arena so value survives eval_arena reset */
             Arena *dst = g_persistent_arena ? g_persistent_arena : a;
-            Atom *stored = (dst == g_persistent_arena)
-                ? atom_deep_copy_shared(dst, val)
-                : atom_deep_copy(dst, val);
+            Atom *stored = NULL;
+            if (dst == g_persistent_arena &&
+                val->kind == ATOM_GROUNDED &&
+                val->ground.gkind == GV_SPACE &&
+                temp_space_is_registered((Space *)val->ground.ptr)) {
+                stored = atom_space(dst,
+                    space_persistent_clone((Space *)val->ground.ptr, dst));
+            } else {
+                stored = (dst == g_persistent_arena)
+                    ? atom_deep_copy_shared(dst, val)
+                    : atom_deep_copy(dst, val);
+            }
             registry_bind(g_registry, name->name, stored);
         }
         free(val_rs.items);
@@ -3170,7 +3782,7 @@ tail_call: ;
             if (val) target = val;
         }
         Atom **types;
-        uint32_t n = get_atom_types(s, a, target, &types);
+        uint32_t n = get_atom_types_profiled(s, a, target, &types);
         /* If only %Undefined% and arg is an expression, try evaluating first */
         if (n == 1 && atom_is_symbol(types[0], "%Undefined%") &&
             target->kind == ATOM_EXPR) {
@@ -3179,7 +3791,7 @@ tail_call: ;
             result_set_init(&evr);
             metta_eval(s, a, NULL, target, fuel, &evr);
             if (evr.len > 0) {
-                n = get_atom_types(s, a, evr.items[0], &types);
+                n = get_atom_types_profiled(s, a, evr.items[0], &types);
             } else {
                 types = cetta_malloc(sizeof(Atom *));
                 types[0] = atom_undefined_type(a);
