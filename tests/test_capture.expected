@@ -1,0 +1,6 @@
+[7]
+[quote]
+[(quote (+ 1 2))]
+[capture]
+[8]
+[(quote (+ 1 2))]

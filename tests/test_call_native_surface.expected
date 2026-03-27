@@ -1,0 +1,1 @@
+[(Error (call-native + (1 2)) expected: (call-native func args), found: (call-native + (1 2)))]

@@ -1,0 +1,1 @@
+!(remove-atom &fresh foo)

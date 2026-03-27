@@ -1,0 +1,1 @@
+[(Error (if-equal foo) IncorrectNumberOfArguments)]

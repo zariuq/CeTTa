@@ -1,0 +1,5 @@
+!(bind! &pow (py-atom math.pow))
+!(&pow 2 3)
+!(bind! &math (py-atom math))
+!((py-dot &math floor) (py-dot &math pi))
+!((py-atom str) 5)

@@ -1,0 +1,7 @@
+!(bind! &bag (new-space))
+!(assertEqualToResult (space-peek &bag) ((Error (space-peek &bag) UnsupportedSpaceKind)))
+!(bind! &stk (new-space stack))
+!(assertEqualToResult (space-pop &stk) ((Error (space-pop &stk) EmptyStackSpace)))
+!(assertEqualToResult (space-get &stk 0) ((Error (space-get &stk 0) IndexOutOfBounds)))
+!(assertEqualToResult (space-truncate &stk 1) ((Error (space-truncate &stk 1) IndexOutOfBounds)))
+!(assertEqualToResult (space-get &stk foo) ((Error (space-get &stk foo) ExpectedNonNegativeIndex)))

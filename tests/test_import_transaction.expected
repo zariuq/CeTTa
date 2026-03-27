@@ -1,0 +1,5 @@
+[((Error (import! &self support/import_fail/module.metta) (Error (capture) IncorrectNumberOfArguments)))]
+[((base))]
+[()]
+[((Error (import! &freshfail support/import_fail/module.metta) (Error (capture) IncorrectNumberOfArguments)))]
+[((Error (get-atoms &freshfail) get-atoms expects a space as its argument))]

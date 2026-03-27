@@ -1,0 +1,1 @@
+[(Error (select nope (coin)) (BadArgType 1 Number %Undefined%))]

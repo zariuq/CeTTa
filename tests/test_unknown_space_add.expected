@@ -1,0 +1,1 @@
+[(Error (add-atom &fresh foo) add-atom expects a space as the first argument)]

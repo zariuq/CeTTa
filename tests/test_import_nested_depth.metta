@@ -1,0 +1,6 @@
+!(import! &deep support/import_deep/root.metta)
+!(assertEqualToResult (match &deep (deep-root $x) $x) (loaded))
+!(assertEqualToResult (match &deep (deep-mid $x) $x) (loaded))
+!(assertEqualToResult (match &deep (deep-helper $x) $x) (loaded))
+!(assertEqualToResult (match &deep (deep-leaf $x) $x) (loaded))
+!(assertEqualToResult (match &deep (deep-leaf-helper $x) $x) (loaded))

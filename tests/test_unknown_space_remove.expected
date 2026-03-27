@@ -1,0 +1,1 @@
+[(Error (remove-atom &fresh foo) remove-atom expects a space as the first argument)]

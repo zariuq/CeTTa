@@ -1,0 +1,16 @@
+!(import! &self pverify-utils)
+
+(= (unify $space $pattern $then $else)
+   (if (is-space $space)
+       (case (match $space $pattern $pattern)
+         (($pattern (eval $then))
+          (Empty (eval $else))))
+       (empty)))
+
+!(bind! &subst_probe (new-space))
+!(add-atom &subst_probe ("P" ("t" "mm.=" "r")))
+!(match &subst_probe ("P" $x) $x)
+!(collapse (match &subst_probe ("P" $x) $x))
+!(once (match &subst_probe ("P" $x) $x))
+!(unify &subst_probe ("P" $x) $x nope)
+!(apply_subst &subst_probe ("|-" "P"))
