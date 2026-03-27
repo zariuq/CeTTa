@@ -32,6 +32,7 @@
 (: quote (-> Atom Atom))
 (: unquote (-> %Undefined% %Undefined%))
 (: switch-internal (-> Atom Expression Atom))
+(: import! (-> Atom Atom (->)))
 (: select (-> Atom %Undefined%))
 (: collect (-> Atom Expression))
 (: once (-> Atom %Undefined%))
@@ -80,6 +81,9 @@
 (: assertAlphaEqualToResultMsg (-> Atom Atom Atom (->)))
 (: max-atom (-> %Undefined% Number))
 (: min-atom (-> %Undefined% Number))
+(: MathDomainError (-> Number Atom ErrorType))
+(: ModuleImportCycle (-> String ErrorType))
+(: ModuleParseFailed (-> String ErrorType))
 (: pow-math (-> Number Number Number))
 (: sqrt-math (-> Number Number))
 (: abs-math (-> Number Number))
@@ -129,6 +133,72 @@
   (@params (
     (@param "Stream expression to evaluate")))
   (@return "First non-empty result from the stream"))
+
+(@doc with-space-snapshot
+  (@desc "CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.")
+  (@params (
+    (@param "Binder or pattern that receives the snapshot space")
+    (@param "Live source space to snapshot")
+    (@param "Body evaluated with the snapshot binding in scope")))
+  (@return "Results produced by evaluating the body against the snapshot-bound space"))
+
+(@doc import!
+  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional: failed imports do not leak partial atoms, and loader failures can surface ModuleImportCycle or ModuleParseFailed.")
+  (@params (
+    (@param "Destination space reference: &self or a fresh &name")
+    (@param "Module spec or path to import")))
+  (@return "Unit on success, or an Error value on failure"))
+
+(@doc MathDomainError
+  (@desc "Structured runtime error constructor for invalid real-domain math calls. The first argument is the 1-based argument index, and the second is a symbolic domain constraint tag.")
+  (@params (
+    (@param "1-based argument index that violated the domain")
+    (@param "Symbolic domain constraint tag, such as NonNegativeReal or PositiveRealNotOne")))
+  (@return "ErrorType payload describing the violated real-domain contract"))
+
+(@doc ModuleImportCycle
+  (@desc "Structured runtime error constructor for cyclic module imports.")
+  (@params (
+    (@param "Canonical path of the module that was already loading")))
+  (@return "ErrorType payload describing the detected import cycle"))
+
+(@doc ModuleParseFailed
+  (@desc "Structured runtime error constructor for malformed module files that fail CeTTa's file parser checks.")
+  (@params (
+    (@param "Canonical path of the module file that could not be parsed")))
+  (@return "ErrorType payload describing the module parse failure"))
+
+(@doc sqrt-math
+  (@desc "Square root over the reals. Negative input returns (MathDomainError 1 NonNegativeReal) instead of a silent NaN.")
+  (@params (
+    (@param "Input real number")))
+  (@return "Square root as a Number when the input is within the real domain"))
+
+(@doc log-math
+  (@desc "Logarithm over the reals. The base must be positive and not equal to 1, and the input must be positive; otherwise CeTTa returns a MathDomainError.")
+  (@params (
+    (@param "Logarithm base")
+    (@param "Input value")))
+  (@return "Logarithm result as a Number when both arguments are in the real domain"))
+
+(@doc asin-math
+  (@desc "Inverse sine over the reals. Inputs outside [-1, 1] return (MathDomainError 1 ClosedUnitInterval).")
+  (@params (
+    (@param "Input real number in the closed unit interval")))
+  (@return "Inverse sine as a Number when the input is within the real domain"))
+
+(@doc acos-math
+  (@desc "Inverse cosine over the reals. Inputs outside [-1, 1] return (MathDomainError 1 ClosedUnitInterval).")
+  (@params (
+    (@param "Input real number in the closed unit interval")))
+  (@return "Inverse cosine as a Number when the input is within the real domain"))
+
+(@doc pow-math
+  (@desc "Exponentiation over the reals. Negative bases require integral exponents, and zero cannot be raised to a negative power; invalid combinations return MathDomainError.")
+  (@params (
+    (@param "Base")
+    (@param "Exponent")))
+  (@return "Exponentiation result as a Number when the arguments are within the real domain"))
 
 ; ── Equations ─────────────────────────────────────────────────────────
 
