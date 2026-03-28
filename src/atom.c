@@ -45,6 +45,31 @@ void arena_set_hashcons(Arena *a, HashConsTable *hc) {
     a->hashcons = hc;
 }
 
+ArenaMark arena_mark(const Arena *a) {
+    ArenaMark mark = {0};
+    if (!a) {
+        return mark;
+    }
+    mark.head = a->head;
+    mark.used = a->head ? a->head->used : 0;
+    return mark;
+}
+
+void arena_reset(Arena *a, ArenaMark mark) {
+    if (!a) return;
+    while (a->head && a->head != mark.head) {
+        ArenaBlock *next = a->head->next;
+        free(a->head);
+        a->head = next;
+    }
+    if (!a->head) {
+        return;
+    }
+    if (a->head->used > mark.used) {
+        a->head->used = mark.used;
+    }
+}
+
 /* ── Hash-Consing ──────────────────────────────────────────────────────── */
 
 HashConsTable *g_hashcons = NULL;

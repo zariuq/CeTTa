@@ -28,3 +28,9 @@
 !(assertEqualToResult
   (match &conj-stats (runtime-counter imported-bridge-v2-fallback $n) $n)
   (0))
+!(assertEqualToResult
+  (match &conj-stats (runtime-counter imported-bridge-v3-hit $n) (> $n 0))
+  (True))
+!(assertEqualToResult
+  (match &conj-stats (runtime-counter imported-bridge-v3-fallback $n) $n)
+  (0))

@@ -2,6 +2,7 @@
 #include "space.h"
 
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
 static uint64_t g_runtime_counters[CETTA_RUNTIME_COUNTER_COUNT];
@@ -27,6 +28,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "subst-query-exact-shortcut",
     "imported-bridge-v2-hit",
     "imported-bridge-v2-fallback",
+    "imported-bridge-v3-hit",
+    "imported-bridge-v3-fallback",
     "space-push",
     "space-pop",
     "queue-compact",
@@ -38,6 +41,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "query-equation-subst-bucket-fallback",
     "bindings-apply",
     "bindings-free",
+    "bindings-free-nonempty",
+    "bindings-released-entry-capacity",
+    "bindings-released-constraint-capacity",
     "bindings-normalize",
 };
 
@@ -66,6 +72,15 @@ void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     if (!out) return;
     memcpy(out->counters, g_runtime_counters, sizeof(g_runtime_counters));
+}
+
+void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats) {
+    if (!out || !stats) return;
+    for (uint32_t i = 0; i < CETTA_RUNTIME_COUNTER_COUNT; i++) {
+        fprintf(out, "runtime-counter %s %lld\n",
+                cetta_runtime_counter_name((CettaRuntimeCounter)i),
+                (long long)clamp_counter(stats->counters[i]));
+    }
 }
 
 void cetta_runtime_stats_populate_space(Space *space, Arena *a,

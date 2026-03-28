@@ -102,6 +102,86 @@ Negative example:
 
 - a skipped file is not being used to hide a known failing golden comparison
 
+## Examples
+
+### Higher-order stdlib
+
+```metta
+!(map-atom (1 2 3 4) $v (eval (+ $v 1)))
+!(filter-atom (1 2 3 4) $v (eval (> $v 2)))
+```
+
+```
+$ ./cetta tests/test_map_filter_atom.metta
+[(2 3 4 5)]
+[(3 4)]
+```
+
+### Proof-carrying backward chaining
+
+Nil Geisweiller's typed backward chainer produces machine-checkable proof
+terms:
+
+```metta
+(: dt (-> (: $e (eqtl $snp $gene)) (target $snp $gene)))
+(: ct (-> (: $e1 (coreg $snp1 $snp2))
+          (: $e2 (target $snp2 $gene))
+          (target $snp1 $gene)))
+
+!(bc &bio (fromNumber 2) (: $proof (target rs10000544 $gene)))
+```
+
+```
+$ ./cetta --lang he tests/bench_backchain_heavy_nilbc.metta | tail -1
+[(: (r-mortal r01 r01c) (mortal r01)), (: (r-mortal r02 r02c) (mortal r02)), ...]
+```
+
+Each result is a proof term: `(: (r-mortal r01 r01c) (mortal r01))` reads
+"r01 is mortal, proved by rule r-mortal applied to evidence r01c."
+
+### PLN genomic inference (1.4M hypotheses)
+
+```metta
+; 9 typed PLN rules over 261K atoms from GTEx, Reactome, Hetionet
+!(let (: $proof (pathway-target rs10000544 $gene2 $pathway))
+      (bc &bio (fromNumber 3) (: $proof (pathway-target rs10000544 $gene2 $pathway)))
+   (pw-target rs10000544 $gene2 $pathway))
+```
+
+```
+$ ./cetta --lang he tests/bench_bio_bc_deep.metta | head -3
+=== Phase 1: Compounds binding rs10000544 targets (depth 2) ===
+...
+[(binding rs10000544 db00277 ensg00000138735), ...]
+```
+
+Full run: 1,411,430 hypotheses in 3m 22s across 17 query phases.
+
+### Structured spaces (queue, hash, stack)
+
+```metta
+!(bind! &q (new-space queue))
+!(space-push &q (task A))
+!(space-push &q (task B))
+!(space-pop &q)               ; → (task A)  (FIFO)
+
+!(bind! &seen (new-space hash))
+!(add-atom &seen (visited X))
+!(match &seen (visited X) found)  ; → found (O(1) lookup)
+```
+
+### 8-puzzle BFS (181K states)
+
+```
+$ ./cetta --profile he_extended tests/test_tilepuzzle.metta
+8-puzzle BFS: counting all reachable states from solved position...
+[()]
+[()]
+[181440]
+```
+
+Uses queue-space for BFS frontier and hash-space for visited-set dedup.
+
 ## Good First Things To Run
 
 Small regression-sized examples:

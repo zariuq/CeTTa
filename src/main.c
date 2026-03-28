@@ -7,6 +7,8 @@
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
+#include "mm2_lower.h"
+#include "stats.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +26,14 @@ static void handle_sigsegv(int sig) {
 }
 
 static bool g_count_only = false;
+static bool g_suppress_results = false;
+
+static bool result_set_has_error(ResultSet *rs) {
+    for (uint32_t i = 0; i < rs->len; i++) {
+        if (atom_is_error(rs->items[i])) return true;
+    }
+    return false;
+}
 
 static void write_results(FILE *out, ResultSet *rs) {
     if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
@@ -37,6 +47,10 @@ static void write_results(FILE *out, ResultSet *rs) {
         fprintf(out, "%u\n", rs->len);
         return;
     }
+    if (g_suppress_results) {
+        if (!result_set_has_error(rs)) return;
+        out = stderr;
+    }
     fprintf(out, "[");
     for (uint32_t i = 0; i < rs->len; i++) {
         if (i > 0) fprintf(out, ", ");
@@ -45,19 +59,14 @@ static void write_results(FILE *out, ResultSet *rs) {
     fprintf(out, "]\n");
 }
 
-static bool result_set_has_error(ResultSet *rs) {
-    for (uint32_t i = 0; i < rs->len; i++) {
-        if (atom_is_error(rs->items[i])) return true;
-    }
-    return false;
-}
-
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
+    fputs("       cetta --suppress-results <file.metta>  # execute without printing non-error results\n", out);
+    fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>\n", out);
     fputs("       cetta --list-profiles\n", out);
@@ -136,6 +145,8 @@ int main(int argc, char **argv) {
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
     bool count_only = false;
+    bool suppress_results = false;
+    bool emit_runtime_stats = false;
     int fuel_override = -1;
     SpaceMatchBackendKind match_backend_kind = SPACE_MATCH_BACKEND_NATIVE;
 
@@ -162,6 +173,14 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--count-only") == 0) {
             count_only = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--suppress-results") == 0) {
+            suppress_results = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
+            emit_runtime_stats = true;
             continue;
         }
         if (strcmp(argv[i], "--fuel") == 0) {
@@ -261,6 +280,11 @@ int main(int argc, char **argv) {
     }
 
     g_count_only = count_only;
+    g_suppress_results = suppress_results;
+    if (g_count_only && g_suppress_results) {
+        fprintf(stderr, "error: --count-only and --suppress-results cannot be used together\n");
+        return 2;
+    }
     if (fuel_override > 0) eval_set_default_fuel(fuel_override);
 
     Arena arena;       /* persistent: parsed atoms, space content, type decls */
@@ -296,6 +320,9 @@ int main(int argc, char **argv) {
         g_hashcons = NULL;
         hashcons_free(&hashcons_table);
         return 1;
+    }
+    if (strcmp(lang->canonical, "mm2") == 0) {
+        cetta_mm2_lower_atoms(&arena, atoms, n);
     }
 
     Space space;
@@ -496,6 +523,12 @@ int main(int argc, char **argv) {
         }
     }
     fclose(output_spool);
+
+    if (emit_runtime_stats) {
+        CettaRuntimeStats stats;
+        cetta_runtime_stats_snapshot(&stats);
+        cetta_runtime_stats_print(stderr, &stats);
+    }
 
     free(atoms);
 

@@ -5,6 +5,7 @@
 static const CettaLanguageSpec CETTA_LANGUAGES[] = {
     {"he", "mettahe", true, "Current direct MeTTa/HE evaluator"},
     {"mettahe", "mettahe", true, "Current direct MeTTa/HE evaluator"},
+    {"mm2", "mm2", true, "Direct MM2 surface lowering into inert IR over the shared C kernel"},
     {"petta", "petta", false, "Planned dialect adapter over the shared C kernel"},
     {"ambient", "ambient", false, "Planned port from mettail-rust inventory"},
     {"calculator", "calculator", false, "Planned port from mettail-rust inventory"},
