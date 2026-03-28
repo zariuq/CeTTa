@@ -20,6 +20,20 @@ bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
                                                uint32_t atom_idx,
                                                const uint8_t *text,
                                                size_t len);
+bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
+                                  uint64_t *out_size);
+bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
+                                  uint8_t **out_packet,
+                                  size_t *out_len,
+                                  uint32_t *out_rows);
+bool cetta_mork_bridge_space_dump_act_file(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len,
+                                           uint64_t *out_saved);
+bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len,
+                                           uint64_t *out_loaded);
 bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
                                            const uint8_t *pattern,
                                            size_t len,

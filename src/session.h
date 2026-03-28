@@ -69,7 +69,8 @@ typedef enum {
 
 typedef enum {
     CETTA_MODULE_FORMAT_METTA = 0,
-    CETTA_MODULE_FORMAT_FOREIGN = 1
+    CETTA_MODULE_FORMAT_FOREIGN = 1,
+    CETTA_MODULE_FORMAT_MORK_ACT = 2
 } CettaModuleFormatKind;
 
 typedef enum {
