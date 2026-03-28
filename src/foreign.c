@@ -447,7 +447,7 @@ static PyObject *bridge_run(PyObject *self, PyObject *args) {
     for (;;) {
         Atom *top = parse_sexpr(&parse_arena, text, &pos);
         if (!top) break;
-        if (atom_is_symbol(top, "!")) {
+        if (atom_is_symbol_id(top, g_builtin_syms.bang)) {
             continue;
         }
 
@@ -743,7 +743,8 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
     }
 
     if (atom->kind == ATOM_SYMBOL) {
-        return PyUnicode_FromString(atom->name);
+        const char *name = atom_name_cstr(atom);
+        return name ? PyUnicode_FromString(name) : NULL;
     }
     return python_wrap_atom(atom, a);
 }
@@ -763,7 +764,7 @@ static bool parse_optional_unwrap(Atom **args, uint32_t nargs,
 
 static const char *string_like_atom(Atom *atom) {
     if (!atom) return NULL;
-    if (atom->kind == ATOM_SYMBOL) return atom->name;
+    if (atom->kind == ATOM_SYMBOL) return atom_name_cstr(atom);
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
         return atom->ground.sval;
     }
@@ -1068,8 +1069,10 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
                                     uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
     if (!ensure_python_bridge(a, NULL)) return NULL;
+    const char *head_name = atom_name_cstr(head);
+    if (!head_name) return NULL;
 
-    if (strcmp(head->name, "py-atom") == 0) {
+    if (strcmp(head_name, "py-atom") == 0) {
         if (nargs < 1 || nargs > 3) {
             return atom_error(a, atom_expr(a, (Atom *[]){ head }, 1), atom_symbol(a, "IncorrectNumberOfArguments"));
         }
@@ -1091,7 +1094,7 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
         return result;
     }
 
-    if (strcmp(head->name, "py-dot") == 0) {
+    if (strcmp(head_name, "py-dot") == 0) {
         if (nargs < 2 || nargs > 4) {
             return atom_error(a, atom_expr(a, (Atom *[]){ head }, 1), atom_symbol(a, "IncorrectNumberOfArguments"));
         }
@@ -1127,7 +1130,7 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
         return result;
     }
 
-    if (strcmp(head->name, "py-call") == 0) {
+    if (strcmp(head_name, "py-call") == 0) {
         if (nargs != 1 || args[0]->kind != ATOM_EXPR || args[0]->expr.len < 1) {
             return atom_error(a, atom_expr(a, (Atom *[]){ head }, 1), atom_symbol(a, "IncorrectNumberOfArguments"));
         }

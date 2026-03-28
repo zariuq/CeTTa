@@ -8,7 +8,7 @@
 /* ── Equation Analysis ──────────────────────────────────────────────────── */
 
 typedef struct {
-    const char *head;
+    SymbolId head_id;
     Atom **lhs;
     Atom **rhs;
     uint32_t arity;
@@ -25,16 +25,20 @@ static void eq_group_set_init(EqGroupSet *gs) {
     gs->groups = NULL; gs->len = 0; gs->cap = 0;
 }
 
-static EqGroup *eq_group_find_or_create(EqGroupSet *gs, const char *head, uint32_t arity) {
+static const char *compile_symbol_text(SymbolId id) {
+    return symbol_bytes(g_symbols, id);
+}
+
+static EqGroup *eq_group_find_or_create(EqGroupSet *gs, SymbolId head_id, uint32_t arity) {
     for (uint32_t i = 0; i < gs->len; i++)
-        if (strcmp(gs->groups[i].head, head) == 0 && gs->groups[i].arity == arity)
+        if (gs->groups[i].head_id == head_id && gs->groups[i].arity == arity)
             return &gs->groups[i];
     if (gs->len >= gs->cap) {
         gs->cap = gs->cap ? gs->cap * 2 : 8;
         gs->groups = cetta_realloc(gs->groups, sizeof(EqGroup) * gs->cap);
     }
     EqGroup *g = &gs->groups[gs->len++];
-    g->head = head; g->lhs = NULL; g->rhs = NULL;
+    g->head_id = head_id; g->lhs = NULL; g->rhs = NULL;
     g->arity = arity; g->len = 0; g->cap = 0;
     g->direct_call_safe = false;
     return g;
@@ -49,9 +53,9 @@ static void eq_group_add(EqGroup *g, Atom *lhs, Atom *rhs) {
     g->lhs[g->len] = lhs; g->rhs[g->len] = rhs; g->len++;
 }
 
-static EqGroup *eq_group_lookup(EqGroupSet *gs, const char *head, uint32_t arity) {
+static EqGroup *eq_group_lookup(EqGroupSet *gs, SymbolId head_id, uint32_t arity) {
     for (uint32_t i = 0; i < gs->len; i++)
-        if (strcmp(gs->groups[i].head, head) == 0 && gs->groups[i].arity == arity)
+        if (gs->groups[i].head_id == head_id && gs->groups[i].arity == arity)
             return &gs->groups[i];
     return NULL;
 }
@@ -60,7 +64,7 @@ static bool compile_is_function_type(Atom *a) {
     /* Keep compile-time function recognition aligned with runtime: zero-arg
        function types use the HE form (-> (->)). */
     return a && a->kind == ATOM_EXPR && a->expr.len >= 2 &&
-           atom_is_symbol(a->expr.elems[0], "->");
+           atom_is_symbol_id(a->expr.elems[0], g_builtin_syms.arrow);
 }
 
 static bool atom_is_compile_stable_value(Atom *atom, EqGroupSet *groups) {
@@ -72,8 +76,8 @@ static bool atom_is_compile_stable_value(Atom *atom, EqGroupSet *groups) {
     case ATOM_EXPR:
         if (atom->expr.len == 0) return true;
         if (atom->expr.elems[0]->kind != ATOM_SYMBOL) return false;
-        if (is_grounded_op(atom->expr.elems[0]->name)) return false;
-        if (eq_group_lookup(groups, atom->expr.elems[0]->name, atom->expr.len - 1))
+        if (is_grounded_op(atom->expr.elems[0]->sym_id)) return false;
+        if (eq_group_lookup(groups, atom->expr.elems[0]->sym_id, atom->expr.len - 1))
             return false;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
             if (!atom_is_compile_stable_value(atom->expr.elems[i], groups))
@@ -86,7 +90,7 @@ static bool atom_is_compile_stable_value(Atom *atom, EqGroupSet *groups) {
 
 static bool group_has_known_strict_types(Space *s, Arena *a, EqGroup *g) {
     Atom **types = NULL;
-    uint32_t ntypes = get_atom_types(s, a, atom_symbol(a, g->head), &types);
+    uint32_t ntypes = get_atom_types(s, a, atom_symbol_id(a, g->head_id), &types);
     Atom *ft = NULL;
     for (uint32_t i = 0; i < ntypes; i++) {
         Atom *ty = types[i];
@@ -104,7 +108,8 @@ static bool group_has_known_strict_types(Space *s, Arena *a, EqGroup *g) {
     }
     for (uint32_t i = 0; i < g->arity; i++) {
         Atom *arg_ty = ft->expr.elems[i + 1];
-        if (atom_is_symbol(arg_ty, "Atom") || atom_is_symbol(arg_ty, "%Undefined%")) {
+        if (atom_is_symbol_id(arg_ty, g_builtin_syms.atom) ||
+            atom_is_symbol_id(arg_ty, g_builtin_syms.undefined_type)) {
             free(types);
             return false;
         }
@@ -118,16 +123,16 @@ static void analyze_equations(Space *s, Arena *a, EqGroupSet *out) {
     for (uint32_t i = 0; i < s->len; i++) {
         Atom *a = s->atoms[i];
         if (a->kind != ATOM_EXPR || a->expr.len != 3) continue;
-        if (!atom_is_symbol(a->expr.elems[0], "=")) continue;
+        if (!atom_is_symbol_id(a->expr.elems[0], g_builtin_syms.equals)) continue;
         Atom *lhs = a->expr.elems[1], *rhs = a->expr.elems[2];
-        const char *head = NULL; uint32_t arity = 0;
-        if (lhs->kind == ATOM_SYMBOL) { head = lhs->name; arity = 0; }
+        SymbolId head_id = SYMBOL_ID_NONE; uint32_t arity = 0;
+        if (lhs->kind == ATOM_SYMBOL) { head_id = lhs->sym_id; arity = 0; }
         else if (lhs->kind == ATOM_EXPR && lhs->expr.len >= 1 &&
                  lhs->expr.elems[0]->kind == ATOM_SYMBOL) {
-            head = lhs->expr.elems[0]->name; arity = lhs->expr.len - 1;
+            head_id = lhs->expr.elems[0]->sym_id; arity = lhs->expr.len - 1;
         }
-        if (!head) continue;
-        EqGroup *g = eq_group_find_or_create(out, head, arity);
+        if (head_id == SYMBOL_ID_NONE) continue;
+        EqGroup *g = eq_group_find_or_create(out, head_id, arity);
         eq_group_add(g, lhs, rhs);
     }
     for (uint32_t i = 0; i < out->len; i++) {
@@ -162,7 +167,7 @@ static void emit_compiled_symbol_name(FILE *out, const char *head, uint32_t arit
 
 #define MAX_CAPTURES 32
 typedef struct {
-    const char *var_name;
+    SymbolId spelling;
     char llvm_reg[32];
 } VarCapture;
 
@@ -173,17 +178,17 @@ typedef struct {
 
 static void capture_init(CaptureTable *ct) { ct->len = 0; }
 
-static void capture_add(CaptureTable *ct, const char *var, const char *reg) {
+static void capture_add(CaptureTable *ct, SymbolId spelling, const char *reg) {
     if (ct->len >= MAX_CAPTURES) return;
-    ct->caps[ct->len].var_name = var;
+    ct->caps[ct->len].spelling = spelling;
     strncpy(ct->caps[ct->len].llvm_reg, reg, 31);
     ct->caps[ct->len].llvm_reg[31] = '\0';
     ct->len++;
 }
 
-static const char *capture_lookup(CaptureTable *ct, const char *var) {
+static const char *capture_lookup(CaptureTable *ct, SymbolId spelling) {
     for (uint32_t i = 0; i < ct->len; i++)
-        if (strcmp(ct->caps[i].var_name, var) == 0)
+        if (ct->caps[i].spelling == spelling)
             return ct->caps[i].llvm_reg;
     return NULL;
 }
@@ -193,7 +198,7 @@ static const char *capture_lookup(CaptureTable *ct, const char *var) {
 static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
                          int fail_label, CaptureTable *captures) {
     if (pattern->kind == ATOM_VAR) {
-        const char *existing = capture_lookup(captures, pattern->name);
+        const char *existing = capture_lookup(captures, pattern->sym_id);
         if (existing) {
             int l = g_label++;
             fprintf(out, "  %%dupeq%d = call i1 @cetta_atom_eq(%%Atom* %s, %%Atom* %s)\n",
@@ -201,16 +206,17 @@ static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
             fprintf(out, "  br i1 %%dupeq%d, label %%dupok%d, label %%fail%d\n", l, l, fail_label);
             fprintf(out, "dupok%d:\n", l);
         } else {
-            capture_add(captures, pattern->name, atom_reg);
+            capture_add(captures, pattern->sym_id, atom_reg);
         }
         return;
     }
     if (pattern->kind == ATOM_SYMBOL) {
+        const char *name = atom_name_cstr(pattern);
         int l = g_label++;
         fprintf(out, "  %%chk%d = call i1 @cetta_atom_is_symbol(%%Atom* %s, i8* "
                 "getelementptr([%zu x i8], [%zu x i8]* @str_",
-                l, atom_reg, strlen(pattern->name)+1, strlen(pattern->name)+1);
-        emit_mangled(out, pattern->name);
+                l, atom_reg, strlen(name)+1, strlen(name)+1);
+        emit_mangled(out, name);
         fprintf(out, ", i32 0, i32 0))\n");
         fprintf(out, "  br i1 %%chk%d, label %%ok%d, label %%fail%d\n", l, l, fail_label);
         fprintf(out, "ok%d:\n", l);
@@ -294,7 +300,7 @@ static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_expr,
 
     /* Call the compiled function directly */
     fprintf(out, "  call void @");
-    emit_compiled_symbol_name(out, g->head, g->arity);
+    emit_compiled_symbol_name(out, compile_symbol_text(g->head_id), g->arity);
     fprintf(out, "(%%Space* %%space, %%Arena* %%arena");
     for (uint32_t i = 0; i < nargs; i++)
         fprintf(out, ", %%Atom* %s", arg_regs[i]);
@@ -316,24 +322,26 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
     static char reg[32];
 
     if (rhs->kind == ATOM_VAR) {
-        const char *cap = capture_lookup(captures, rhs->name);
+        const char *name = atom_name_cstr(rhs);
+        const char *cap = capture_lookup(captures, rhs->sym_id);
         if (cap) return cap;
         int t = g_tmp++;
         snprintf(reg, sizeof(reg), "%%var%d", t);
         fprintf(out, "  %s = call %%Atom* @cetta_atom_var(%%Arena* %%arena, i8* "
                 "getelementptr([%zu x i8], [%zu x i8]* @str_",
-                reg, strlen(rhs->name)+1, strlen(rhs->name)+1);
-        emit_mangled(out, rhs->name);
+                reg, strlen(name)+1, strlen(name)+1);
+        emit_mangled(out, name);
         fprintf(out, ", i32 0, i32 0))\n");
         return reg;
     }
     if (rhs->kind == ATOM_SYMBOL) {
+        const char *name = atom_name_cstr(rhs);
         int t = g_tmp++;
         snprintf(reg, sizeof(reg), "%%sym%d", t);
         fprintf(out, "  %s = call %%Atom* @cetta_atom_symbol(%%Arena* %%arena, i8* "
                 "getelementptr([%zu x i8], [%zu x i8]* @str_",
-                reg, strlen(rhs->name)+1, strlen(rhs->name)+1);
-        emit_mangled(out, rhs->name);
+                reg, strlen(name)+1, strlen(name)+1);
+        emit_mangled(out, name);
         fprintf(out, ", i32 0, i32 0))\n");
         return reg;
     }
@@ -378,7 +386,7 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
 
         /* Check if this is a call to a compiled head → direct call */
         if (rhs->expr.elems[0]->kind == ATOM_SYMBOL) {
-            EqGroup *target = eq_group_lookup(all_groups, rhs->expr.elems[0]->name,
+            EqGroup *target = eq_group_lookup(all_groups, rhs->expr.elems[0]->sym_id,
                                               rhs->expr.len - 1);
             if (target && target->direct_call_safe &&
                 atom_is_compile_stable_value(rhs, all_groups)) {
@@ -425,16 +433,18 @@ static void emit_str_const(FILE *out, const char *name) {
 
 static void collect_syms(Atom *a, const char ***syms, uint32_t *n, uint32_t *cap) {
     if (a->kind == ATOM_SYMBOL) {
+        const char *name = atom_name_cstr(a);
         for (uint32_t i = 0; i < *n; i++)
-            if (strcmp((*syms)[i], a->name) == 0) return;
+            if (strcmp((*syms)[i], name) == 0) return;
         if (*n >= *cap) { *cap = *cap ? *cap * 2 : 32; *syms = cetta_realloc((void*)*syms, sizeof(const char *) * *cap); }
-        (*syms)[(*n)++] = a->name;
+        (*syms)[(*n)++] = name;
     }
     if (a->kind == ATOM_VAR) {
+        const char *name = atom_name_cstr(a);
         for (uint32_t i = 0; i < *n; i++)
-            if (strcmp((*syms)[i], a->name) == 0) return;
+            if (strcmp((*syms)[i], name) == 0) return;
         if (*n >= *cap) { *cap = *cap ? *cap * 2 : 32; *syms = cetta_realloc((void*)*syms, sizeof(const char *) * *cap); }
-        (*syms)[(*n)++] = a->name;
+        (*syms)[(*n)++] = name;
     }
     if (a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING) {
         for (uint32_t i = 0; i < *n; i++)
@@ -458,7 +468,7 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     /* Collect all string constants */
     const char **syms = NULL; uint32_t nsyms = 0, csyms = 0;
     for (uint32_t gi = 0; gi < gs.len; gi++) {
-        collect_syms(atom_symbol(a, gs.groups[gi].head), &syms, &nsyms, &csyms);
+        collect_syms(atom_symbol_id(a, gs.groups[gi].head_id), &syms, &nsyms, &csyms);
         for (uint32_t ei = 0; ei < gs.groups[gi].len; ei++) {
             collect_syms(gs.groups[gi].lhs[ei], &syms, &nsyms, &csyms);
             collect_syms(gs.groups[gi].rhs[ei], &syms, &nsyms, &csyms);
@@ -510,10 +520,11 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     for (uint32_t gi = 0; gi < gs.len; gi++) {
         EqGroup *g = &gs.groups[gi];
         g_label = 0; g_tmp = 0;
+        const char *head_name = compile_symbol_text(g->head_id);
 
-        fprintf(out, "; === %s (arity %u, %u equations) ===\n", g->head, g->arity, g->len);
+        fprintf(out, "; === %s (arity %u, %u equations) ===\n", head_name, g->arity, g->len);
         fprintf(out, "define void @");
-        emit_compiled_symbol_name(out, g->head, g->arity);
+        emit_compiled_symbol_name(out, head_name, g->arity);
         fprintf(out, "(%%Space* %%space, %%Arena* %%arena");
         for (uint32_t ai = 0; ai < g->arity; ai++)
             fprintf(out, ", %%Atom* %%arg%u", ai);

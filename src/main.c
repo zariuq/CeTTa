@@ -71,16 +71,16 @@ static const char *find_profile_blocked_surface(const CettaProfile *profile, Ato
 
     Atom *head = atom->expr.elems[0];
     if (head->kind == ATOM_SYMBOL) {
-        if (strcmp(head->name, "quote") == 0) {
+        if (atom_is_symbol_id(head, g_builtin_syms.quote)) {
             return NULL;
         }
-        if (!cetta_profile_allows_surface(profile, head->name)) {
-            return head->name;
+        if (!cetta_profile_allows_surface(profile, atom_name_cstr(head))) {
+            return atom_name_cstr(head);
         }
-        if (strcmp(head->name, ":") == 0 && atom->expr.len >= 2 &&
+        if (atom_is_symbol_id(head, g_builtin_syms.colon) && atom->expr.len >= 2 &&
             atom->expr.elems[1]->kind == ATOM_SYMBOL &&
-            !cetta_profile_allows_surface(profile, atom->expr.elems[1]->name)) {
-            return atom->expr.elems[1]->name;
+            !cetta_profile_allows_surface(profile, atom_name_cstr(atom->expr.elems[1]))) {
+            return atom_name_cstr(atom->expr.elems[1]);
         }
     }
 
@@ -94,7 +94,7 @@ static const char *find_profile_blocked_surface(const CettaProfile *profile, Ato
 static bool compile_profile_guard_ok(const CettaProfile *profile, Atom **atoms, int n) {
     for (int i = 0; i < n; i++) {
         Atom *at = atoms[i];
-        if (at->kind == ATOM_SYMBOL && strcmp(at->name, "!") == 0) {
+        if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
             i++;
             continue;
         }
@@ -228,18 +228,19 @@ int main(int argc, char **argv) {
     if (compile_stdlib_mode) {
         Arena tmp_arena;
         arena_init(&tmp_arena);
-        InternTable tmp_intern;
-        intern_init(&tmp_intern);
+        SymbolTable tmp_symbols;
+        symbol_table_init(&tmp_symbols);
+        symbol_table_init_builtins(&tmp_symbols, &g_builtin_syms);
         VarInternTable tmp_var_intern;
         var_intern_init(&tmp_var_intern);
-        g_intern = &tmp_intern;
+        g_symbols = &tmp_symbols;
         g_var_intern = &tmp_var_intern;
         int rc = stdlib_compile(filename, &tmp_arena, stdout);
         arena_free(&tmp_arena);
-        g_intern = NULL;
+        g_symbols = NULL;
         g_var_intern = NULL;
         var_intern_free(&tmp_var_intern);
-        intern_free(&tmp_intern);
+        symbol_table_free(&tmp_symbols);
         return rc < 0 ? 1 : 0;
     }
 
@@ -267,10 +268,11 @@ int main(int argc, char **argv) {
     arena_init(&arena);
     arena_init(&eval_arena);
 
-    /* Symbol interning for O(1) symbol comparison */
-    InternTable intern_table;
-    intern_init(&intern_table);
-    g_intern = &intern_table;
+    /* Global symbol table / builtin ids */
+    SymbolTable symbol_table;
+    symbol_table_init(&symbol_table);
+    symbol_table_init_builtins(&symbol_table, &g_builtin_syms);
+    g_symbols = &symbol_table;
     VarInternTable var_intern_table;
     var_intern_init(&var_intern_table);
     g_var_intern = &var_intern_table;
@@ -279,6 +281,7 @@ int main(int argc, char **argv) {
     HashConsTable hashcons_table;
     hashcons_init(&hashcons_table);
     g_hashcons = &hashcons_table;
+    arena_set_hashcons(&arena, &hashcons_table);
 
     Atom **atoms = NULL;
     int n = parse_metta_file(filename, &arena, &atoms);
@@ -288,8 +291,8 @@ int main(int argc, char **argv) {
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
-        g_intern = NULL;
-        intern_free(&intern_table);
+        g_symbols = NULL;
+        symbol_table_free(&symbol_table);
         g_hashcons = NULL;
         hashcons_free(&hashcons_table);
         return 1;
@@ -305,8 +308,8 @@ int main(int argc, char **argv) {
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
-        g_intern = NULL;
-        intern_free(&intern_table);
+        g_symbols = NULL;
+        symbol_table_free(&symbol_table);
         g_hashcons = NULL;
         hashcons_free(&hashcons_table);
         return 2;
@@ -314,7 +317,7 @@ int main(int argc, char **argv) {
 
     Registry registry;
     registry_init(&registry);
-    registry_bind(&registry, "&self", atom_space(&arena, &space));
+    registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
 
     CettaLibraryContext libraries;
     cetta_library_context_init_with_profile(&libraries, profile);
@@ -365,15 +368,15 @@ int main(int argc, char **argv) {
             arena_free(&arena);
             g_var_intern = NULL;
             var_intern_free(&var_intern_table);
-            g_intern = NULL;
-            intern_free(&intern_table);
+            g_symbols = NULL;
+            symbol_table_free(&symbol_table);
             g_hashcons = NULL;
             hashcons_free(&hashcons_table);
             return 2;
         }
         for (int pi = 0; pi < n; pi++) {
             Atom *at = atoms[pi];
-            if (at->kind == ATOM_SYMBOL && strcmp(at->name, "!") == 0) {
+            if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
                 pi++;
                 continue;
             }
@@ -386,8 +389,8 @@ int main(int argc, char **argv) {
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
-        g_intern = NULL;
-        intern_free(&intern_table);
+        g_symbols = NULL;
+        symbol_table_free(&symbol_table);
         g_hashcons = NULL;
         hashcons_free(&hashcons_table);
         return 0;
@@ -405,8 +408,8 @@ int main(int argc, char **argv) {
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
-        g_intern = NULL;
-        intern_free(&intern_table);
+        g_symbols = NULL;
+        symbol_table_free(&symbol_table);
         g_hashcons = NULL;
         hashcons_free(&hashcons_table);
         return 1;
@@ -415,7 +418,7 @@ int main(int argc, char **argv) {
         Atom *at = atoms[i];
 
         /* ! prefix → evaluate and print */
-        if (at->kind == ATOM_SYMBOL && strcmp(at->name, "!") == 0 && i + 1 < n) {
+        if (atom_is_symbol_id(at, g_builtin_syms.bang) && i + 1 < n) {
             Atom *expr = atoms[i + 1];
             ResultSet rs;
             result_set_init(&rs);
@@ -431,8 +434,8 @@ int main(int argc, char **argv) {
                 arena_free(&arena);
                 g_var_intern = NULL;
                 var_intern_free(&var_intern_table);
-                g_intern = NULL;
-                intern_free(&intern_table);
+                g_symbols = NULL;
+                symbol_table_free(&symbol_table);
                 g_hashcons = NULL;
                 hashcons_free(&hashcons_table);
                 return 1;
@@ -464,8 +467,8 @@ int main(int argc, char **argv) {
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
-        g_intern = NULL;
-        intern_free(&intern_table);
+        g_symbols = NULL;
+        symbol_table_free(&symbol_table);
         g_hashcons = NULL;
         hashcons_free(&hashcons_table);
         return 1;
@@ -484,8 +487,8 @@ int main(int argc, char **argv) {
                 arena_free(&arena);
                 g_var_intern = NULL;
                 var_intern_free(&var_intern_table);
-                g_intern = NULL;
-                intern_free(&intern_table);
+                g_symbols = NULL;
+                symbol_table_free(&symbol_table);
                 g_hashcons = NULL;
                 hashcons_free(&hashcons_table);
                 return 1;
@@ -515,8 +518,8 @@ int main(int argc, char **argv) {
     arena_free(&arena);
     g_var_intern = NULL;
     var_intern_free(&var_intern_table);
-    g_intern = NULL;
-    intern_free(&intern_table);
+    g_symbols = NULL;
+    symbol_table_free(&symbol_table);
     g_hashcons = NULL;
     hashcons_free(&hashcons_table);
     return 0;

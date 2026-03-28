@@ -37,6 +37,17 @@
 (: collect (-> Atom Expression))
 (: once (-> Atom %Undefined%))
 (: search-policy (-> Atom Atom))
+(: new-space (-> SpaceType))
+(: new-space (-> Atom SpaceType))
+(: space-kind (-> SpaceType Atom))
+(: space-match-backend (-> SpaceType Atom))
+(: space-capabilities (-> SpaceType Expression))
+(: space-len (-> SpaceType Number))
+(: space-push (-> SpaceType Atom (->)))
+(: space-peek (-> SpaceType %Undefined%))
+(: space-pop (-> SpaceType %Undefined%))
+(: space-get (-> SpaceType Number %Undefined%))
+(: space-truncate (-> SpaceType Number (->)))
 (: is-function (-> Type Bool))
 (: type-cast (-> Atom Type SpaceType %Undefined%))
 (: match-types (-> Type Type Atom Atom %Undefined%))
@@ -148,6 +159,69 @@
     (@param "Live source space to snapshot")
     (@param "Body evaluated with the snapshot binding in scope")))
   (@return "Results produced by evaluating the body against the snapshot-bound space"))
+
+(@doc new-space
+  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The he_extended/he_prime form accepts semantic kinds such as stack, queue, or hash. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms.")
+  (@params (
+    (@param "Optional space kind such as stack, queue, or hash in extension profiles")))
+  (@return "Fresh space value"))
+
+(@doc space-kind
+  (@desc "Reports the semantic kind of a space. Current kinds are atom, stack, queue, and hash.")
+  (@params (
+    (@param "Space to inspect")))
+  (@return "Kind symbol such as atom or stack"))
+
+(@doc space-match-backend
+  (@desc "Returns the current CeTTa match backend attached to a space, such as native-subst-tree or pathmap-imported. This is backend introspection, not a promise that the full discipline x engine surface already exists.")
+  (@params (
+    (@param "Space to inspect")))
+  (@return "Backend symbol describing how the space currently matches"))
+
+(@doc space-capabilities
+  (@desc "Returns the semantic capabilities provided by the space discipline itself, such as ordered/hash/peek/nodup. This does not describe the lower-level matcher backend; use space-match-backend for that.")
+  (@params (
+    (@param "Space to inspect")))
+  (@return "Capability packet for the space discipline"))
+
+(@doc space-len
+  (@desc "Returns the current number of stored items in a space. Unlike count-atoms, this is an explicit structured-space surface.")
+  (@params (
+    (@param "Space to inspect")))
+  (@return "Current item count as a Number"))
+
+(@doc space-push
+  (@desc "Adds one atom to an ordered space. For stack-spaces this is LIFO push; for queue-spaces this is FIFO enqueue.")
+  (@params (
+    (@param "Target ordered space")
+    (@param "Atom to add")))
+  (@return "Unit on success"))
+
+(@doc space-peek
+  (@desc "Reads the current next element of an ordered space without mutating it. Stack-spaces peek at the top; queue-spaces peek at the front. Empty ordered spaces return a kind-specific runtime error.")
+  (@params (
+    (@param "Target ordered space")))
+  (@return "Current top/front element"))
+
+(@doc space-pop
+  (@desc "Removes and returns the current next element of an ordered space. Stack-spaces pop from the top; queue-spaces dequeue from the front. Empty ordered spaces return a kind-specific runtime error.")
+  (@params (
+    (@param "Target ordered space")))
+  (@return "Removed top/front element"))
+
+(@doc space-get
+  (@desc "Reads the element at a zero-based index from an ordered space's storage. Out-of-bounds indices return an IndexOutOfBounds runtime error.")
+  (@params (
+    (@param "Target ordered space")
+    (@param "Zero-based index")))
+  (@return "Stored element at that index"))
+
+(@doc space-truncate
+  (@desc "Drops all ordered-space elements at indices greater than or equal to the given zero-based length, preserving the prefix [0, len).")
+  (@params (
+    (@param "Target ordered space")
+    (@param "New retained length")))
+  (@return "Unit on success"))
 
 (@doc import!
   (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional: failed imports do not leak partial atoms, and loader failures can surface ModuleImportCycle or ModuleParseFailed.")

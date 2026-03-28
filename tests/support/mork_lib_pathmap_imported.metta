@@ -1,0 +1,11 @@
+!(import! &self mork)
+!(bind! &h (new-space hash))
+!(add-atom &h (edge a b))
+!(assertEqualToResult (mork-space-backend &h) (pathmap-imported))
+!(assertEqual (mork-backed-space? &h) True)
+!(assertEqualToResult (mork-space-spec &h)
+  ((mork-space
+      (discipline hash)
+      (match-backend pathmap-imported)
+      (capabilities (unordered hash exact match add remove len snapshot nodup)))))
+!(assertEqualToResult (match &h (edge $x $y) ($x $y)) ((a b)))

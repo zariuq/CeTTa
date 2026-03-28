@@ -1,0 +1,22 @@
+# Build outputs
+/cetta
+/cetta-stage0
+/src/*.d
+/src/*.stage0.d
+/native/*.d
+/native/*.stage0.d
+/native/metamath/*.d
+/native/metamath/*.stage0.d
+/src/stdlib_blob.h
+
+# Local runtime snapshots and test scratch space
+/runtime/*
+
+# Profiling and result artifacts
+/massif.out.*
+/profiling/
+/results/
+
+# Local checkpoints and backups
+/src/*.checkpoint_*
+/src/*.old_backup

@@ -8,7 +8,7 @@
    Otherwise returns NULL (not a grounded op). */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 
-/* Check if a symbol is a known grounded op head. */
-bool is_grounded_op(const char *name);
+/* Check if a symbol is a known grounded op head (by SymbolId). */
+bool is_grounded_op(SymbolId id);
 
 #endif /* CETTA_GROUNDED_H */

@@ -1,162 +1,189 @@
 # CeTTa
 
-A direct C runtime for [MeTTa](https://metta-lang.dev/), the reflective meta-language for AGI.
+CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). This
+snapshot is the current working runtime we can share honestly in git: it
+builds, the fast golden suite is green, the profile suite is green, full
+tilepuzzle now finishes, and the large genomic `bench_bio_1M.metta`
+workload runs end to end.
 
-CeTTa implements the Hyperon Experimental (HE) MeTTa evaluator in ~8,000 lines of C.
-It passes 244 oracle-verified tests, runs real genomic inference pipelines,
-and is backed by a sorry-free Lean proof of semantic correspondence.
+## Build
+
+CeTTa builds with:
+
+- `gcc`
+- `make`
+- Python 3 development headers (`python3-config --embed` must work)
+
+The normal build bootstraps the stdlib automatically in two stages:
+
+```bash
+make
+```
+
+That produces `./cetta`.
 
 ## Quick Start
 
-```bash
-# Build (requires GCC + Python 3 dev headers)
-make
+Run a small file:
 
-# Run a MeTTa file
+```bash
 ./cetta tests/test_map_filter_atom.metta
+```
 
-# Run the full test suite
+Run the fast verified suites:
+
+```bash
 make test
+make test-profiles
 ```
 
-## Examples
-
-### 1. Higher-Order Stdlib
-
-```metta
-!(map-atom (1 2 3 4) $v (eval (+ $v 1)))
-!(filter-atom (1 2 3 4) $v (eval (> $v 2)))
-```
-
-```
-$ ./cetta tests/test_map_filter_atom.metta
-[(2 3 4 5)]
-[(3 4)]
-```
-
-### 2. PLN Evidence Aggregation over Genomic Data
-
-Run typed backward chaining over real GTEx eQTL data with 143 atoms,
-3 PLN rules, and proof-score evidence weighting:
-
-```metta
-; 3 typed PLN rules: direct target, co-regulation transfer, co-expression transfer
-; Backward chainer discovers gene targets with proof terms and evidence scores
-!(let (: $proof (target $snp $gene))
-      (bc &bio (fromNumber $depth) (: $proof (target $snp $gene)))
-   (gene-hypothesis $snp $gene (proof-score $proof) $proof))
-```
-
-```
-$ ./cetta --lang he tests/bench_bio_bc_pln.metta | tail -3
-[(gene-hypothesis rs10000544 ensg00000138735 1.0 (dt eq1)),
- (gene-hypothesis rs10000544 ensg00000178636 0.99 (ct cr1 (dt eq30))), ...]
-```
-
-### 3. Proof-Carrying Backward Chaining
-
-Nil Geisweiller's typed backward chainer produces machine-checkable
-proof terms at every inference step:
-
-```metta
-; Typed inference rules
-(: dt (-> (: $e (eqtl $snp $gene)) (target $snp $gene)))
-(: ct (-> (: $e1 (coreg $snp1 $snp2))
-          (: $e2 (target $snp2 $gene))
-          (target $snp1 $gene)))
-
-; Query: find all targets of rs10000544 with proof terms
-!(bc &bio (fromNumber 2) (: $proof (target rs10000544 $gene)))
-; => (: (dt (eqtl-fact rs10000544 ensg00000138735)) (target rs10000544 ensg00000138735))
-```
-
-```
-$ ./cetta --lang he tests/bench_backchain_heavy_nilbc.metta | tail -1
-[(: (r-mortal r01 r01c) (mortal r01)), ..., (: (a-mortal a20 a20c) (mortal a20))]
-```
-
-## Performance
-
-CeTTa vs PeTTa (Prolog) and HE (Rust) on real genomic data:
-
-| Benchmark | KB atoms | CeTTa | PeTTa | HE | CeTTa speedup |
-|-----------|---------|-------|-------|-----|---------------|
-| Focused backward chaining | 143 | **66ms** | 216ms | 1,010ms | 3.3x / 15x |
-| PLN evidence aggregation | 143 | **61ms** | 177ms | --- | 2.9x |
-| Deep 9-rule BC (1.4M hypotheses) | 261K | **3m22s** | 5m24s | timeout | 1.6x |
-| Pattern miner (10K atoms) | 10K | **~23s** | 271s | crash | ~12x |
-
-All runtimes produce identical results on the shared MeTTa fragment.
-CeTTa loses 3x to PeTTa on synthetic Metamath proof search (Prolog's
-SLD resolution with first-argument indexing wins on deep branching).
-
-## Test Suite
-
-- **244** oracle-verified unit tests (compared against HE CLI v0.2.10)
-- **18** benchmark files on real genomic data
-- **36** profile tests covering module imports and extension surfaces
-- **0** failures
+Promote the current checked binary to the local stable runtime path:
 
 ```bash
-make test              # run all tests
-make test-profiles     # test he_compat / he_extended / he_prime profiles
+make promote-runtime
 ```
 
-## Architecture
+## What Works In This Snapshot
 
-```
-src/atom.c     Arena allocator, atom tagged union, hash-consing
-src/space.c    Space (atom store) with pluggable match backends
-src/match.c    Bidirectional unification, bindings with equalities
-src/eval.c     Core evaluator (HE's 6 mutual functions)
-src/grounded.c Grounded ops (+, -, *, /, math, string, comparison)
-src/parser.c   S-expression parser with variable scoping
-src/main.c     Entry point, CLI flags, output handling
-lib/stdlib.metta  HE-standard library (precompiled into binary)
-```
+- Core HE-style evaluation in C
+- Arena-allocated atoms with hash-consing support
+- Multiple space kinds and pluggable match backends
+- SymbolId-based core dispatch instead of pervasive string comparison
+- Runtime counters and profile-aware extension guards
+- Optional PathMap/MORK-backed `pathmap-imported` matcher lane
+- Local git-module and module-inventory surfaces
 
-**Key design choices:**
-- Arena allocation (not malloc-per-atom)
-- Tail-call optimization via `TAIL_REENTER` trampoline
-- Substitution tree with epoch-based standardization apart
-- Two-stage stdlib bootstrap (self-compiling)
-- Pluggable match backends (SubstTree, discrimination trie, PathMap slot)
+## Optional MORK / PathMap Bridge
 
-## Evaluation Profiles
+If the static bridge library exists at
+`../../hyperon/MORK/target/release/libcetta_space_bridge.a`, `make`
+links it automatically and exposes the imported PathMap matcher.
+
+Positive example:
 
 ```bash
-./cetta --profile he_compat tests/file.metta     # strict HE compatibility
-./cetta --profile he_extended tests/file.metta    # + CeTTa extensions (collect, select, with-space-snapshot)
-./cetta --profile he_prime tests/file.metta       # + dependent binder telescope (experimental)
+./cetta --profile he_extended --space-match-backend pathmap-imported \
+  tests/test_pathmap_imported_bridge_v2.metta
 ```
 
-**HE'** (he_prime) adds dependent type elaboration for arrow domains:
-`(: $e T)` in function type arguments is treated as a dependent binder,
-not a literal atom. This enables Curry-Howard backward chainers to work
-with type-checked rule applications. Formalized in Lean (230 lines, 0 sorries,
-kernel-checked positive and negative examples).
+Negative example:
 
-## Verified Translation
-
-CeTTa is backed by a **sorry-free Lean 4 proof** (5,209 lines, 106 theorems)
-establishing semantic correspondence between HE and PeTTa evaluation on
-the pure MeTTa fragment. The proof covers:
-
-- Pattern matching equivalence (`matchAtoms` / `matchPattern`)
-- Equation dispatch correspondence
-- `progn` to `let*` and `foldall` to `collapse + foldl-atom` lowering
-
-See the [MeTTaC paper](papers/MeTTaC.pdf) for details.
-
-## CLI Reference
-
+```bash
+./cetta --space-match-backend pathmap-imported tests/file.metta
 ```
+
+without the bridge library configured. In that case CeTTa will not have the
+imported matcher available.
+
+## Test Status
+
+At this snapshot, the checked suites are:
+
+- `make test` -> `285 passed, 0 failed, 16 skipped`
+- `make test-profiles` -> `62 passed, 0 failed`
+
+The `16 skipped` are not hidden failures. `make test` only treats
+`tests/test_*.metta`, `tests/spec_*.metta`, and `tests/he_*.metta` files with
+matching `.expected` goldens as strict pass/fail tests.
+
+Today the skips are:
+
+- `1` heavy benchmark-style file: `tests/test_tilepuzzle.metta`
+- `5` probe or integration files without committed `.expected` goldens
+- `10` translation or audit surface fixtures without committed `.expected`
+  goldens
+
+Positive example:
+
+- a skipped file is exploratory, integration-heavy, or benchmark-shaped and
+  has not been promoted into the fast golden suite yet
+
+Negative example:
+
+- a skipped file is not being used to hide a known failing golden comparison
+
+## Good First Things To Run
+
+Small regression-sized examples:
+
+```bash
+./cetta tests/test_map_filter_atom.metta
+./cetta tests/test_runtime_stats_surface.metta
+./cetta tests/test_queue_space.metta
+```
+
+Optional MORK-facing surface:
+
+```bash
+./cetta tests/test_mork_lib_surface.metta
+```
+
+Bounded tile probe:
+
+```bash
+./cetta --count-only --profile he_extended \
+  tests/bench_tilepuzzle_probe.metta
+```
+
+Full tile puzzle:
+
+```bash
+./cetta --profile he_extended tests/test_tilepuzzle.metta
+```
+
+Large genomic benchmark:
+
+```bash
+timeout 600 ./cetta tests/bench_bio_1M.metta
+```
+
+The large bio benchmark is included because it is now runnable in this tree.
+On our March 28, 2026 check, loading the 1.4M-atom dataset took about five
+seconds and the full workload finished in about 386 seconds. The remaining
+large-KB gap is inference, not loading.
+
+## Repository Map
+
+Core runtime:
+
+- `src/atom.c`, `src/atom.h`: atom representation, arena allocation, equality
+- `src/symbol.c`, `src/symbol.h`: SymbolId table and builtin ids
+- `src/match.c`, `src/match.h`: unification, bindings, substitution
+- `src/space.c`, `src/space.h`: spaces, query dispatch, space operations
+- `src/space_match_backend.c`, `src/space_match_backend.h`: backend selection
+- `src/subst_tree.c`, `src/subst_tree.h`: indexed equation and substitution tree
+- `src/eval.c`, `src/eval.h`: evaluator
+- `src/grounded.c`: grounded operators and runtime surfaces
+- `src/compile.c`: LLVM IR emission
+- `src/mork_space_bridge_runtime.c`, `src/mork_space_bridge_runtime.h`:
+  runtime-side bridge glue for the imported MORK lane
+
+Libraries:
+
+- `lib/stdlib.metta`: main bundled stdlib
+- `lib/mork.metta`: narrow MORK-facing helper surface
+- `lib/metamath.metta`: Metamath-facing helpers
+- `lib/fs.metta`, `lib/system.metta`, `lib/str.metta`, `lib/path.metta`:
+  extension libraries used by the current profile surfaces
+
+Useful workloads:
+
+- `tests/test_tilepuzzle.metta`: full tile BFS benchmark
+- `tests/bench_tilepuzzle_probe.metta`: bounded tile runtime probe
+- `tests/bench_bio_1M.metta`: 1.4M-atom genomic benchmark
+- `tests/profile_tilepuzzle_5k.metta`: smaller profiling variant
+- `tests/bench_conjunction12_he.metta`: conjunction stress benchmark
+- `tests/bench_matchjoin8_he.metta`: join stress benchmark
+
+## CLI
+
+```text
 ./cetta [options] <file.metta>
 
 Options:
-  --lang <name>                    Set language mode (default: he)
-  --profile <name>                 Set evaluation profile (he_compat|he_extended|he_prime)
-  --fuel <n>                       Set evaluation fuel budget (default: unlimited)
+  --lang <name>                    Set language mode
+  --profile <name>                 Set evaluation profile
+  --fuel <n>                       Set evaluation fuel budget
   --count-only                     Print result counts instead of atoms
   --space-match-backend <name>     Select pattern matching backend
   --compile <file>                 Emit LLVM IR to stdout
@@ -165,9 +192,10 @@ Options:
   --list-languages                 Show supported languages
 ```
 
-## Links
+## Notes
 
-- **Paper:** [MeTTaC: A Direct C Runtime for MeTTa with Verified Translation](papers/MeTTaC.pdf)
-- **Lean proofs:** `lean-projects/mettapedia/Mettapedia/Languages/MeTTa/`
-- **HE spec:** [metta.md](https://github.com/trueagi-io/hyperon-experimental/blob/main/docs/metta.md)
-- **Known discrepancies:** [DISCREPANCIES.md](tests/DISCREPANCIES.md)
+- This repository contains the working runtime snapshot, not a polished
+  release branch.
+- The fast suites are intentionally strict and cheap.
+- Benchmark and probe files that do not yet have `.expected` transcripts may
+  still be useful, but they are not counted as golden regressions yet.

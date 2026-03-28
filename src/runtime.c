@@ -6,7 +6,7 @@
    These have stable C-linkage names matching the LLVM IR declarations. */
 
 bool cetta_atom_is_symbol(Atom *a, const char *name) {
-    return a && a->kind == ATOM_SYMBOL && strcmp(a->name, name) == 0;
+    return atom_is_symbol(a, name);
 }
 
 bool cetta_atom_is_int(Atom *a, int64_t val) {

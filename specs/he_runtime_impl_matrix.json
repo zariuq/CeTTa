@@ -1,0 +1,753 @@
+{
+  "generated_on": "2026-03-27",
+  "scope": "HE Rust stdlib grounded/user-callable implementation matrix",
+  "sources": [
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/arithmetics.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/atom.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/core.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/debug.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/math.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/module.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/package.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/space.rs",
+    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/string.rs",
+    "/home/zar/claude/c-projects/cetta/src/eval.c",
+    "/home/zar/claude/c-projects/cetta/src/grounded.c",
+    "/home/zar/claude/c-projects/cetta/src/parser.c",
+    "/home/zar/claude/c-projects/cetta/src/compile.c",
+    "/home/zar/claude/c-projects/cetta/lib/stdlib.metta",
+    "/home/zar/claude/c-projects/cetta/specs/runtime_surface_audit.json"
+  ],
+  "summary": {
+    "total_heads": 69,
+    "covered": 14,
+    "implemented": 55,
+    "missing": 0,
+    "partial": 0
+  },
+  "entries": [
+    {
+      "head": "+",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "-",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "*",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "/",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "%",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c",
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "<",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": ">",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "<=",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": ">=",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "and",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "or",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "not",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c",
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "xor",
+      "he_module": "arithmetics.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "unique-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "union-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "intersection-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "max-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "min-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "size-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "index-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "subtraction-atom",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "get-type",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "get-metatype",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "HE-backed positive coverage plus a dedicated wrong-arity regression.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "get-type-space",
+      "he_module": "atom.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "pragma!",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "CeTTa covers the documented directives (`type-check auto`, `interpreter bare-minimal`, `max-stack-depth` with non-negative validation), wrong-arity and key-type errors, and HE's generic symbol-key setting surface outside bare-minimal. The implementation now routes these through a session-local evaluator-options seam rather than evaluator globals, which is a cleaner base for future dialect/DSL settings. Remaining divergence is intentionally documented rather than treated as compatibility debt: exact host-runtime-specific `StackOverflow` surfacing under low stack limits is an engineering policy question, not core language debt.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "nop",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "sealed",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "==",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "match",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Unknown-space fallback-to-&self bug fixed on 2026-03-25.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "if-equal",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "superpose",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Positive coverage plus a dedicated wrong-arity regression.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "capture",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "_minimal-foldl-atom",
+      "he_module": "core.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c",
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "trace!",
+      "he_module": "debug.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "print-alternatives!",
+      "he_module": "debug.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "=alpha",
+      "he_module": "debug.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "pow-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "sqrt-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "abs-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "log-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "trunc-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "ceil-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "floor-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "round-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "sin-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "asin-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "cos-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "acos-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "tan-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "atan-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "isnan-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "isinf-math",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c",
+        "stdlib.metta"
+      ]
+    },
+    {
+      "head": "PI",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "parser.c"
+      ]
+    },
+    {
+      "head": "EXP",
+      "he_module": "math.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "parser.c"
+      ]
+    },
+    {
+      "head": "import!",
+      "he_module": "module.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Positive path covered plus dedicated import-surface wrong-arity regressions.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "include",
+      "he_module": "module.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "mod-space!",
+      "he_module": "module.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "print-mods!",
+      "he_module": "module.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "bind!",
+      "he_module": "module.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Widely used positive coverage plus dedicated wrong-arity regressions.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "register-module!",
+      "he_module": "package.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Positive path covered plus dedicated import-surface wrong-arity regressions.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "git-module!",
+      "he_module": "package.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Provider-backed implementation on the typed git-remote seam now matches local HE on the positive local-file fixture, wrong-arity behavior, and TryFetchLatest-style cache refresh for repeated registration of the same file:// repo. The seam carries explicit locator-kind and revision-policy metadata for future remote/catalog providers. Remaining divergence is intentionally documented rather than treated as compatibility debt: CeTTa keeps cleaner CLI-shaped failure text and does not copy HE's broader catalog/environment coupling.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "new-space",
+      "he_module": "space.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Widely used positive coverage plus dedicated wrong-arity regressions.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "get-state",
+      "he_module": "space.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Positive coverage plus dedicated wrong-arity and first-argument BadArgType regressions.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "change-state!",
+      "he_module": "space.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Positive coverage plus dedicated wrong-arity and first-argument BadArgType regressions.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "get-atoms",
+      "he_module": "space.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Direct positive regression added on 2026-03-25.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "add-atom",
+      "he_module": "space.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Unknown-space HE compatibility was fixed on 2026-03-25.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "remove-atom",
+      "he_module": "space.rs",
+      "tier": "grounded",
+      "cetta_status": "covered",
+      "cetta_notes": "Unknown-space HE compatibility was fixed on 2026-03-25.",
+      "cetta_layers": [
+        "eval.c"
+      ]
+    },
+    {
+      "head": "println!",
+      "he_module": "string.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    },
+    {
+      "head": "format-args",
+      "he_module": "string.rs",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_notes": "Detected in CeTTa source; dedicated audit entry not yet added.",
+      "cetta_layers": [
+        "grounded.c"
+      ]
+    }
+  ]
+}

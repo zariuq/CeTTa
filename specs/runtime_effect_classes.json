@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "runtime": "cetta",
+  "dialect": "he",
+  "status": "prototype",
+  "effect_classes": [
+    {
+      "id": "pure_value",
+      "note": "Strict local computation with no observable runtime effects.",
+      "memo_policy": "stable_cache_safe",
+      "scheduler_policy": "reorder_safe"
+    },
+    {
+      "id": "pure_control",
+      "note": "Effect-free control or rewrite surface.",
+      "memo_policy": "stable_cache_safe",
+      "scheduler_policy": "reorder_safe"
+    },
+    {
+      "id": "pure_nondet",
+      "note": "Effect-free nondeterministic answer construction or collection.",
+      "memo_policy": "stable_cache_safe",
+      "scheduler_policy": "reorder_safe"
+    },
+    {
+      "id": "space_read",
+      "note": "Reads spaces or answer stores without mutating them.",
+      "memo_policy": "snapshot_cache_only",
+      "scheduler_policy": "preserve_order"
+    },
+    {
+      "id": "space_write",
+      "note": "Mutates runtime spaces or atom stores.",
+      "memo_policy": "avoid_runtime_cache",
+      "scheduler_policy": "preserve_order"
+    },
+    {
+      "id": "state_effect",
+      "note": "Reads or mutates runtime state cells.",
+      "memo_policy": "avoid_runtime_cache",
+      "scheduler_policy": "preserve_order"
+    },
+    {
+      "id": "sequencing_control",
+      "note": "Sequences subcomputations and can propagate their effects.",
+      "memo_policy": "avoid_runtime_cache",
+      "scheduler_policy": "preserve_order"
+    },
+    {
+      "id": "error_control",
+      "note": "Effect-free control over error values and test assertions.",
+      "memo_policy": "stable_cache_safe",
+      "scheduler_policy": "reorder_safe"
+    },
+    {
+      "id": "typing_query",
+      "note": "Reads type-level runtime information without mutating program state.",
+      "memo_policy": "stable_cache_safe",
+      "scheduler_policy": "reorder_safe"
+    },
+    {
+      "id": "metadata_query",
+      "note": "Documentation or metadata lookup surface.",
+      "memo_policy": "stable_cache_safe",
+      "scheduler_policy": "reorder_safe"
+    },
+    {
+      "id": "dynamic_eval",
+      "note": "Evaluates fresh MeTTa syntax at runtime.",
+      "memo_policy": "avoid_runtime_cache",
+      "scheduler_policy": "preserve_order"
+    },
+    {
+      "id": "import_effect",
+      "note": "Loads external code or modules into the runtime.",
+      "memo_policy": "avoid_runtime_cache",
+      "scheduler_policy": "external_boundary"
+    },
+    {
+      "id": "runtime_toggle",
+      "note": "Adjusts runtime-local evaluator configuration.",
+      "memo_policy": "avoid_runtime_cache",
+      "scheduler_policy": "preserve_order"
+    }
+  ],
+  "defaults_by_callable_kind": {
+    "native_strict": "pure_value",
+    "native_special": "pure_control",
+    "native_lazy": "pure_control",
+    "native_effect": "space_write",
+    "native_state": "state_effect",
+    "native_typing": "typing_query",
+    "native_metadata": "metadata_query",
+    "native_test": "error_control",
+    "dynamic_import": "import_effect",
+    "stdlib_equation": "pure_control"
+  },
+  "profile_guardrails": {
+    "default_profile_report_effects": [
+      "import_effect",
+      "state_effect",
+      "space_write",
+      "runtime_toggle"
+    ],
+    "compiler_lowering_requires": {
+      "memo_policy": "stable_cache_safe",
+      "scheduler_policy": "reorder_safe"
+    },
+    "note": "Prototype CeTTa lowering should stay on pure, reorder-safe callables unless a stronger semantic proof is added."
+  }
+}

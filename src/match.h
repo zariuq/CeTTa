@@ -7,7 +7,7 @@
 
 typedef struct {
     VarId var_id;
-    const char *name;
+    SymbolId spelling;
     Atom *val;
     bool legacy_name_fallback;
 } Binding;
@@ -24,6 +24,10 @@ typedef struct {
     BindingConstraint *constraints;
     uint32_t eq_len;
     uint32_t eq_cap;
+    VarId lookup_cache_ids[4];
+    uint32_t lookup_cache_indices[4];
+    uint8_t lookup_cache_count;
+    uint8_t lookup_cache_next;
 } Bindings;
 
 typedef struct {
@@ -39,10 +43,12 @@ void      bindings_move(Bindings *dst, Bindings *src);
 void      bindings_replace(Bindings *dst, Bindings *src);
 Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
 Atom     *bindings_lookup_var(Bindings *b, Atom *var);
-bool      bindings_add_id(Bindings *b, VarId var_id, const char *name, Atom *val);
+bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
+bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
+                               const Bindings *extra);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
@@ -50,6 +56,7 @@ bool      bindings_from_atom(Atom *atom, Bindings *out);
 void      binding_set_init(BindingSet *bs);
 void      binding_set_free(BindingSet *bs);
 bool      binding_set_push(BindingSet *bs, const Bindings *b);
+void      binding_set_push_move(BindingSet *bs, Bindings *b);
 
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 

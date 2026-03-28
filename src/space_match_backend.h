@@ -37,7 +37,7 @@ typedef struct {
     uint32_t span;
     VarId var_id;
     union {
-        const char *name;
+        SymbolId sym_id;
         uint32_t arity;
         int64_t ival;
     };
@@ -60,6 +60,8 @@ typedef struct {
     ImportedFlatBucket wildcard;
     bool built;
     bool dirty;
+    bool bridge_active;
+    void *bridge_space;
 } PathmapImportedState;
 
 typedef struct SpaceMatchBackendOps {

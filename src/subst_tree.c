@@ -33,9 +33,9 @@ void snode_free(SubstNode *n) {
 
 /* ── Branch helpers ────────────────────────────────────────────────────── */
 
-static SubstNode *snode_get_sym(SubstNode *n, const char *key) {
+static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
     for (uint32_t i = 0; i < n->nsym; i++)
-        if (n->sym[i].key == key || strcmp(n->sym[i].key, key) == 0)
+        if (n->sym[i].key == key)
             return n->sym[i].child;
     if (n->nsym >= n->csym) {
         n->csym = n->csym ? n->csym * 2 : 4;
@@ -48,7 +48,7 @@ static SubstNode *snode_get_sym(SubstNode *n, const char *key) {
     return child;
 }
 
-static SubstNode *snode_get_var(SubstNode *n, VarId var_id, const char *name) {
+static SubstNode *snode_get_var(SubstNode *n, VarId var_id, SymbolId spelling) {
     for (uint32_t i = 0; i < n->nvars; i++)
         if (n->vars[i].var_id == var_id) return n->vars[i].child;
     if (n->nvars >= n->cvars) {
@@ -57,7 +57,7 @@ static SubstNode *snode_get_var(SubstNode *n, VarId var_id, const char *name) {
     }
     SubstNode *child = snode_new();
     n->vars[n->nvars].var_id = var_id;
-    n->vars[n->nvars].name = name;
+    n->vars[n->nvars].spelling = spelling;
     n->vars[n->nvars].child = child;
     n->nvars++;
     return child;
@@ -105,15 +105,19 @@ static void snode_add_leaf(SubstNode *n, uint32_t idx, uint32_t epoch) {
 
 static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
     switch (a->kind) {
-    case ATOM_SYMBOL: return snode_get_sym(node, a->name);
-    case ATOM_VAR:    return snode_get_var(node, a->var_id, a->name);
+    case ATOM_SYMBOL: return snode_get_sym(node, a->sym_id);
+    case ATOM_VAR:    return snode_get_var(node, a->var_id, a->sym_id);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT) return snode_get_int(node, a->ground.ival);
-        if (a->ground.gkind == GV_STRING) return snode_get_sym(node, a->ground.sval);
+        if (a->ground.gkind == GV_STRING) {
+            SymbolId string_id = symbol_intern_cstr(g_symbols, a->ground.sval);
+            return snode_get_sym(node, string_id);
+        }
         return snode_get_var(node,
-                             g_var_intern ? var_intern(g_var_intern, "__grounded__")
+                             g_var_intern ? var_intern(g_var_intern,
+                                                       symbol_intern_cstr(g_symbols, "__grounded__"))
                                           : fresh_var_id(),
-                             "__grounded__");
+                             symbol_intern_cstr(g_symbols, "__grounded__"));
     case ATOM_EXPR: {
         SubstNode *cur = snode_get_expr(node, a->expr.len);
         for (uint32_t i = 0; i < a->expr.len; i++)
@@ -127,49 +131,55 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
 /* ── SubstTree (head-partitioned) ──────────────────────────────────────── */
 
 void stree_init(SubstTree *t) {
-    for (uint32_t i = 0; i < STREE_BUCKETS; i++) {
-        t->buckets[i].root = NULL;
-        t->buckets[i].count = 0;
-    }
-    t->wildcard.root = NULL;
-    t->wildcard.count = 0;
+    for (uint32_t i = 0; i < STREE_BUCKETS; i++)
+        stree_bucket_init(&t->buckets[i]);
+    stree_bucket_init(&t->wildcard);
 }
 
 void stree_free(SubstTree *t) {
-    for (uint32_t i = 0; i < STREE_BUCKETS; i++) {
-        snode_free(t->buckets[i].root);
-        t->buckets[i].root = NULL;
-        t->buckets[i].count = 0;
-    }
-    snode_free(t->wildcard.root);
-    t->wildcard.root = NULL;
-    t->wildcard.count = 0;
+    for (uint32_t i = 0; i < STREE_BUCKETS; i++)
+        stree_bucket_free(&t->buckets[i]);
+    stree_bucket_free(&t->wildcard);
 }
 
-uint32_t stree_head_hash(const char *name) {
-    uint32_t h = 5381;
-    for (const char *p = name; *p; p++)
-        h = ((h << 5) + h) ^ (uint32_t)*p;
-    return h % STREE_BUCKETS;
+uint32_t stree_head_hash(SymbolId id) {
+    uint32_t mixed = (uint32_t)((uint64_t)id * 2654435761u);
+    return mixed % STREE_BUCKETS;
 }
 
-static const char *atom_head_sym(Atom *a) {
-    if (a->kind == ATOM_SYMBOL) return a->name;
+static SymbolId atom_head_sym(Atom *a) {
+    if (a->kind == ATOM_SYMBOL) return a->sym_id;
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
         a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return a->expr.elems[0]->name;
-    return NULL;
+        return a->expr.elems[0]->sym_id;
+    return SYMBOL_ID_NONE;
 }
 
-void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx) {
+void stree_bucket_init(SubstBucket *bucket) {
+    bucket->root = NULL;
+    bucket->count = 0;
+}
+
+void stree_bucket_free(SubstBucket *bucket) {
+    snode_free(bucket->root);
+    bucket->root = NULL;
+    bucket->count = 0;
+}
+
+void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx) {
     uint32_t epoch = stree_next_epoch();
-    const char *head = atom_head_sym(atom);
-    SubstBucket *bucket = head ? &t->buckets[stree_head_hash(head)]
-                               : &t->wildcard;
     if (!bucket->root) bucket->root = snode_new();
     SubstNode *leaf = snode_insert_atom(bucket->root, atom);
     snode_add_leaf(leaf, atom_idx, epoch);
     bucket->count++;
+}
+
+void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx) {
+    SymbolId head = atom_head_sym(atom);
+    SubstBucket *bucket = head != SYMBOL_ID_NONE
+                        ? &t->buckets[stree_head_hash(head)]
+                        : &t->wildcard;
+    stree_bucket_insert(bucket, atom, atom_idx);
 }
 
 /* ── Result Set ────────────────────────────────────────────────────────── */
@@ -220,7 +230,7 @@ static void smset_push(SubstMatchSet *s, uint32_t atom_idx, uint32_t epoch, Bind
 
 typedef struct {
     enum { FT_SYM, FT_VAR, FT_EXPR, FT_INT, FT_GROUNDED_OTHER } kind;
-    union { const char *name; uint32_t arity; int64_t ival; };
+    union { SymbolId sym_id; uint32_t arity; int64_t ival; };
     VarId var_id;
     Atom *original;
 } FlatToken;
@@ -260,10 +270,10 @@ static uint32_t flatten_atom(Atom *a, FlatToken *buf, uint32_t pos) {
     if (pos >= MAX_FLAT) return pos;
     switch (a->kind) {
     case ATOM_SYMBOL:
-        buf[pos] = (FlatToken){.kind = FT_SYM, .name = a->name, .original = a};
+        buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = a->sym_id, .original = a};
         return pos + 1;
     case ATOM_VAR:
-        buf[pos] = (FlatToken){.kind = FT_VAR, .name = a->name,
+        buf[pos] = (FlatToken){.kind = FT_VAR, .sym_id = a->sym_id,
                                .var_id = a->var_id, .original = a};
         return pos + 1;
     case ATOM_GROUNDED:
@@ -272,7 +282,8 @@ static uint32_t flatten_atom(Atom *a, FlatToken *buf, uint32_t pos) {
             return pos + 1;
         }
         if (a->ground.gkind == GV_STRING) {
-            buf[pos] = (FlatToken){.kind = FT_SYM, .name = a->ground.sval, .original = a};
+            SymbolId string_id = symbol_intern_cstr(g_symbols, a->ground.sval);
+            buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = string_id, .original = a};
             return pos + 1;
         }
         buf[pos] = (FlatToken){.kind = FT_GROUNDED_OTHER, .original = a};
@@ -304,7 +315,7 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
     case FT_SYM:
         /* Exact symbol match */
         for (uint32_t i = 0; i < node->nsym; i++)
-            if (node->sym[i].key == tok->name || strcmp(node->sym[i].key, tok->name) == 0)
+            if (node->sym[i].key == tok->sym_id)
                 st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
                              b, a, atoms, out);
         /* Indexed variable matches query symbol */
@@ -312,7 +323,8 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
             Bindings b2;
             if (!bindings_clone(&b2, b))
                 continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].name, tok->original))
+            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
+                                tok->original))
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              &b2, a, atoms, out);
             bindings_free(&b2);
@@ -350,7 +362,8 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
             Bindings b2;
             if (!bindings_clone(&b2, b))
                 continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].name, tok->original))
+            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
+                                tok->original))
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              &b2, a, atoms, out);
             bindings_free(&b2);
@@ -368,7 +381,8 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
             Bindings b2;
             if (!bindings_clone(&b2, b))
                 continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].name, tok->original)) {
+            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
+                                tok->original)) {
                 /* Skip past all tokens of this expression */
                 uint32_t skip_end = idx + 1;
                 uint32_t depth = tok->arity;
@@ -390,7 +404,8 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
             Bindings b2;
             if (!bindings_clone(&b2, b))
                 continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].name, tok->original))
+            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
+                                tok->original))
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              &b2, a, atoms, out);
             bindings_free(&b2);

@@ -1,0 +1,8 @@
+!(bind! &s (new-space))
+!(add-atom &s (dup a))
+!(add-atom &s (dup a))
+!(assertEqualToResult (count-atoms &s) (2))
+!(assertEqualToResult (match &s (dup a) hit) (hit hit))
+!(remove-atom &s (dup a))
+!(assertEqualToResult (count-atoms &s) (1))
+!(assertEqualToResult (match &s (dup a) hit) (hit))

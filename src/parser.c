@@ -73,40 +73,40 @@ static bool parser_text_well_formed(const char *text) {
 }
 
 typedef struct {
-    const char **names;
+    SymbolId *spellings;
     VarId *ids;
     uint32_t len;
     uint32_t cap;
 } ParserVarScope;
 
 static void parser_var_scope_init(ParserVarScope *scope) {
-    scope->names = NULL;
+    scope->spellings = NULL;
     scope->ids = NULL;
     scope->len = 0;
     scope->cap = 0;
 }
 
 static void parser_var_scope_free(ParserVarScope *scope) {
-    free(scope->names);
+    free(scope->spellings);
     free(scope->ids);
-    scope->names = NULL;
+    scope->spellings = NULL;
     scope->ids = NULL;
     scope->len = 0;
     scope->cap = 0;
 }
 
-static VarId parser_var_scope_id(ParserVarScope *scope, const char *name) {
+static VarId parser_var_scope_id(ParserVarScope *scope, SymbolId spelling) {
     for (uint32_t i = 0; i < scope->len; i++) {
-        if (strcmp(scope->names[i], name) == 0)
+        if (scope->spellings[i] == spelling)
             return scope->ids[i];
     }
     if (scope->len >= scope->cap) {
         scope->cap = scope->cap ? scope->cap * 2 : 8;
-        scope->names = cetta_realloc(scope->names, sizeof(const char *) * scope->cap);
+        scope->spellings = cetta_realloc(scope->spellings, sizeof(SymbolId) * scope->cap);
         scope->ids = cetta_realloc(scope->ids, sizeof(VarId) * scope->cap);
     }
     VarId id = fresh_var_id();
-    scope->names[scope->len] = name;
+    scope->spellings[scope->len] = spelling;
     scope->ids[scope->len] = id;
     scope->len++;
     return id;
@@ -178,8 +178,9 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
 
     /* Variable: starts with $ */
     if (tok[0] == '$' && len > 1) {
-        VarId id = parser_var_scope_id(scope, tok + 1);
-        return atom_var_with_id(a, tok + 1, id);
+        SymbolId spelling = symbol_intern_cstr(g_symbols, tok + 1);
+        VarId id = parser_var_scope_id(scope, spelling);
+        return atom_var_with_spelling(a, spelling, id);
     }
 
     /* Boolean */
@@ -209,7 +210,7 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     }
 
     /* Symbol */
-    return atom_symbol(a, tok);
+    return atom_symbol_id(a, symbol_intern_cstr(g_symbols, tok));
 }
 
 Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {

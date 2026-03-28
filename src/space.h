@@ -9,7 +9,7 @@
 
 typedef struct DiscNode {
     /* Symbol branches: name → child */
-    struct { const char *key; struct DiscNode *child; } *sym;
+    struct { SymbolId key; struct DiscNode *child; } *sym;
     uint32_t nsym, csym;
     /* Variable branch: wildcard matches anything */
     struct DiscNode *var_child;
@@ -41,6 +41,8 @@ typedef struct {
     Atom **rhs;   /* equation RHS atoms */
     uint32_t len, cap;
     DiscNode *trie; /* discrimination trie over LHS patterns */
+    SubstBucket subst; /* epoch-tagged substitution tree over LHS patterns */
+    bool subst_safe; /* all LHS atoms are safe for the subst-tree fast path */
 } EqBucket;
 
 typedef struct {
@@ -60,15 +62,39 @@ typedef struct {
     TypeAnnBucket buckets[EQ_INDEX_BUCKETS];
 } TypeAnnIndex;
 
+#define EXACT_INDEX_BUCKETS 4096
+
+typedef struct {
+    uint32_t *indices;
+    uint32_t len, cap;
+} ExactAtomBucket;
+
+typedef struct {
+    ExactAtomBucket buckets[EXACT_INDEX_BUCKETS];
+} ExactAtomIndex;
+
+typedef enum {
+    SPACE_KIND_ATOM = 0,
+    SPACE_KIND_STACK = 1,
+    SPACE_KIND_QUEUE = 2,
+    SPACE_KIND_HASH = 3,
+} SpaceKind;
+
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
 #define MATCH_TRIE_THRESHOLD 16
 
 typedef struct Space {
     Atom **atoms;
+    uint32_t start;
     uint32_t len, cap;
+    SpaceKind kind;
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
+    ExactAtomIndex exact_idx; /* exact stable-atom membership index */
+    bool eq_idx_dirty;
+    bool ty_idx_dirty;
+    bool exact_idx_dirty;
     /* Matching backend is explicit so future PathMap/MORK import can slot in
        behind one seam instead of rewriting eval.c again. */
     SpaceMatchBackend match_backend;
@@ -77,8 +103,22 @@ typedef struct Space {
 void space_init(Space *s);
 void space_free(Space *s);
 void space_add(Space *s, Atom *atom);
+void space_linearize(Space *s);
 Space *space_heap_clone_shallow(Space *src);
 void space_replace_contents(Space *dst, Space *src);
+const char *space_kind_name(SpaceKind kind);
+bool space_kind_from_name(const char *name, SpaceKind *out);
+bool space_is_ordered(const Space *s);
+bool space_is_stack(const Space *s);
+bool space_is_queue(const Space *s);
+bool space_is_hash(const Space *s);
+Atom *space_get_at(const Space *s, uint32_t idx);
+Atom *space_peek(const Space *s);
+bool space_pop(Space *s, Atom **out);
+bool space_truncate(Space *s, uint32_t new_len);
+uint32_t space_length(const Space *s);
+bool space_contains_exact(Space *s, Atom *atom);
+uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
@@ -96,6 +136,7 @@ typedef struct {
 
 void query_results_init(QueryResults *qr);
 void query_results_push(QueryResults *qr, Atom *result, Bindings *b);
+void query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
 void query_results_free(QueryResults *qr);
 
 /* Find all (= lhs rhs) in space where lhs matches query (bidirectional).
@@ -107,7 +148,7 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 #define MAX_REGISTRY 64
 
 typedef struct {
-    const char *name;
+    SymbolId key;
     Atom *value;  /* Usually a grounded space atom, but can be anything */
 } RegistryEntry;
 
@@ -117,6 +158,8 @@ typedef struct {
 } Registry;
 
 void registry_init(Registry *r);
+void registry_bind_id(Registry *r, SymbolId key, Atom *value);
+Atom *registry_lookup_id(Registry *r, SymbolId key);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 

@@ -1,0 +1,1393 @@
+{
+  "generated_on": "2026-03-27",
+  "scope": "HE 3-layer runtime overview (kernel / grounded / stdlib docs) cross-referenced against CeTTa",
+  "sources": [
+    "/home/zar/claude/c-projects/cetta/specs/he_runtime_3layer_matrix.json",
+    "/home/zar/claude/c-projects/cetta/specs/he_runtime_impl_matrix.json",
+    "/home/zar/claude/c-projects/cetta/src/eval.c",
+    "/home/zar/claude/c-projects/cetta/src/grounded.c",
+    "/home/zar/claude/c-projects/cetta/src/parser.c",
+    "/home/zar/claude/c-projects/cetta/src/compile.c",
+    "/home/zar/claude/c-projects/cetta/lib/stdlib.metta"
+  ],
+  "summary": {
+    "kernel": {
+      "total": 25,
+      "implemented": 25,
+      "missing": 0,
+      "partial": 0
+    },
+    "grounded": {
+      "total": 69,
+      "implemented": 69,
+      "missing": 0,
+      "partial": 0
+    },
+    "stdlib": {
+      "total": 70,
+      "implemented": 70,
+      "missing": 0,
+      "partial": 0
+    }
+  },
+  "entries": [
+    {
+      "head": "eval",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded"
+      ]
+    },
+    {
+      "head": "evalc",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "metta",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded"
+      ]
+    },
+    {
+      "head": "chain",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded"
+      ]
+    },
+    {
+      "head": "case",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "switch",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "collapse",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "superpose",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "match",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "unify",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "function",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "return",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded"
+      ]
+    },
+    {
+      "head": "let",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "let*",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "new-space",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "bind!",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "add-atom",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "remove-atom",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "new-state",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "get-state",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "change-state!",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "import!",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "register-module!",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "with-space-snapshot",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "context-space",
+      "tier": "kernel",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "+",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "-",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "*",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "/",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "%",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded"
+      ]
+    },
+    {
+      "head": "<",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": ">",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "<=",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": ">=",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "and",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "or",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "not",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded"
+      ]
+    },
+    {
+      "head": "xor",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "unique-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "union-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "intersection-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "max-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "min-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "size-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "index-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "subtraction-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "get-type",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "get-metatype",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "get-type-space",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "pragma!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "nop",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "sealed",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "==",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "match",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "if-equal",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "superpose",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "capture",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "_minimal-foldl-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "trace!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "print-alternatives!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "=alpha",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "pow-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "sqrt-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "abs-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "log-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "trunc-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "ceil-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "floor-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "round-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "sin-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "asin-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "cos-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "acos-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "tan-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "atan-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "isnan-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "isinf-math",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "PI",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "token_parser"
+      ]
+    },
+    {
+      "head": "EXP",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "token_parser"
+      ]
+    },
+    {
+      "head": "import!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "include",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "mod-space!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "print-mods!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "bind!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "register-module!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "git-module!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "new-space",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "get-state",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "change-state!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "get-atoms",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "add-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "remove-atom",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "println!",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "format-args",
+      "tier": "grounded",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "=",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "ErrorType",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "SpaceType",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded"
+      ]
+    },
+    {
+      "head": "BadType",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "BadArgType",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "grounded"
+      ]
+    },
+    {
+      "head": "Error",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "cons-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "decons-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "collapse-bind",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "superpose-bind",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "id",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "noeval",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "atom-subst",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "if-decons-expr",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "if-error",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "return-on-error",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "switch-internal",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "is-function",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "type-cast",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "match-types",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "first-from-pair",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "match-type-or",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "filter-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "map-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "foldl-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "if",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "add-reduct",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "car-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "cdr-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "quote",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "unquote",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "empty",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "unique",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "union",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "intersection",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "subtraction",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "add-reducts",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "add-atoms",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "assertIncludes",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "@doc",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@desc",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@param",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@return",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@doc-formal",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@item",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@kind",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@type",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "@params",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "get-doc",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "get-doc-single-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "get-doc-function",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "undefined-doc-function-type",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "get-doc-params",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "get-doc-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "help!",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "help-space!",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "help-param!",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "for-each-in-atom",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "noreduce-eq",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "module-space-no-deps",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "stdlib"
+      ]
+    },
+    {
+      "head": "assertEqual",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "assertEqualMsg",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "assertAlphaEqual",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "assertAlphaEqualMsg",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "assertEqualToResult",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "assertEqualToResultMsg",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "assertAlphaEqualToResult",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval"
+      ]
+    },
+    {
+      "head": "assertAlphaEqualToResultMsg",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "kernel_eval",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "_collapse-add-next-atom-from-collapse-bind-result",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    },
+    {
+      "head": "sort-strings",
+      "tier": "stdlib",
+      "cetta_status": "implemented",
+      "cetta_layers": [
+        "grounded",
+        "stdlib"
+      ]
+    }
+  ]
+}
