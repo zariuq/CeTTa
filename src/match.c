@@ -106,9 +106,10 @@ static inline void bindings_lookup_cache_note(Bindings *b, VarId var_id,
 static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
     if (b->len < BINDINGS_LOOKUP_CACHE_MIN_LEN) {
-        for (uint32_t i = 0; i < b->len; i++) {
-            if (binding_var_eq(b->entries[i].var_id, var_id))
-                return (int32_t)i;
+        for (uint32_t i = b->len; i > 0; i--) {
+            uint32_t idx = i - 1;
+            if (binding_var_eq(b->entries[idx].var_id, var_id))
+                return (int32_t)idx;
         }
         return -1;
     }
@@ -119,10 +120,11 @@ static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
             binding_var_eq(b->entries[idx].var_id, var_id))
             return (int32_t)idx;
     }
-    for (uint32_t i = 0; i < b->len; i++) {
-        if (binding_var_eq(b->entries[i].var_id, var_id)) {
-            bindings_lookup_cache_note(b, var_id, i);
-            return (int32_t)i;
+    for (uint32_t i = b->len; i > 0; i--) {
+        uint32_t idx = i - 1;
+        if (binding_var_eq(b->entries[idx].var_id, var_id)) {
+            bindings_lookup_cache_note(b, var_id, idx);
+            return (int32_t)idx;
         }
     }
     return -1;
@@ -549,6 +551,17 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
     return true;
 }
 
+bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
+    if (!src || (src->len == 0 && src->eq_len == 0))
+        return true;
+
+    BindingsBuilder builder;
+    bindings_builder_init_owned(&builder, dst);
+    bool ok = bindings_builder_try_merge(&builder, src);
+    bindings_builder_take(&builder, dst);
+    return ok;
+}
+
 bool bindings_clone_merge(Bindings *dst, const Bindings *base,
                           const Bindings *extra) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
@@ -962,6 +975,10 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.lookup_cache_count = entry->lookup_cache_count;
         bb->current.lookup_cache_next = entry->lookup_cache_next;
     }
+}
+
+void bindings_builder_commit(BindingsBuilder *bb) {
+    bb->trail_len = 0;
 }
 
 static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,

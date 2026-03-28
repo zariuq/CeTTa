@@ -7,10 +7,30 @@
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
+#define DISC_HASH_THRESHOLD 16
+
+typedef struct {
+    SymbolId key;
+    struct DiscNode *child;
+} DiscSymBranch;
+
+typedef struct {
+    SymbolId key;
+    struct DiscNode *child;
+} DiscSymHashEntry;
+
+typedef struct {
+    DiscSymHashEntry *entries;
+    uint32_t mask;
+    uint32_t count;
+} DiscSymHashTable;
+
 typedef struct DiscNode {
     /* Symbol branches: name → child */
-    struct { SymbolId key; struct DiscNode *child; } *sym;
+    DiscSymBranch *sym;
     uint32_t nsym, csym;
+    DiscSymHashTable sym_ht;
+    bool sym_hashed;
     /* Variable branch: wildcard matches anything */
     struct DiscNode *var_child;
     /* Expression branches: arity → child */

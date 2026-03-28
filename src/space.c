@@ -14,8 +14,16 @@ DiscNode *disc_node_new(void) {
 
 void disc_node_free(DiscNode *n) {
     if (!n) return;
-    for (uint32_t i = 0; i < n->nsym; i++) disc_node_free(n->sym[i].child);
-    free(n->sym);
+    if (n->sym_hashed) {
+        uint32_t cap = n->sym_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++)
+            if (n->sym_ht.entries[i].key != SYMBOL_ID_NONE)
+                disc_node_free(n->sym_ht.entries[i].child);
+        free(n->sym_ht.entries);
+    } else {
+        for (uint32_t i = 0; i < n->nsym; i++) disc_node_free(n->sym[i].child);
+        free(n->sym);
+    }
     disc_node_free(n->var_child);
     for (uint32_t i = 0; i < n->nexpr; i++) disc_node_free(n->expr[i].child);
     free(n->expr);
@@ -33,7 +41,77 @@ static void disc_add_leaf(DiscNode *n, uint32_t idx) {
     n->leaves[n->nleaves++] = idx;
 }
 
+static inline uint32_t disc_sym_hash(SymbolId key) {
+    return (uint32_t)((uint64_t)key * 2654435761u);
+}
+
+static void disc_sym_ht_init(DiscSymHashTable *ht, uint32_t min_cap) {
+    uint32_t cap = 32;
+    while (cap < min_cap * 2)
+        cap *= 2;
+    ht->entries = cetta_malloc(sizeof(DiscSymHashEntry) * cap);
+    ht->mask = cap - 1;
+    ht->count = 0;
+    for (uint32_t i = 0; i < cap; i++)
+        ht->entries[i].key = SYMBOL_ID_NONE;
+}
+
+static DiscNode *disc_sym_ht_get(DiscSymHashTable *ht, SymbolId key) {
+    uint32_t idx = disc_sym_hash(key) & ht->mask;
+    for (;;) {
+        if (ht->entries[idx].key == key)
+            return ht->entries[idx].child;
+        if (ht->entries[idx].key == SYMBOL_ID_NONE)
+            return NULL;
+        idx = (idx + 1) & ht->mask;
+    }
+}
+
+static void disc_sym_ht_put(DiscSymHashTable *ht, SymbolId key, DiscNode *child) {
+    if (ht->count * 10 > (ht->mask + 1) * 7) {
+        uint32_t old_cap = ht->mask + 1;
+        DiscSymHashEntry *old = ht->entries;
+        uint32_t new_cap = old_cap * 2;
+        ht->entries = cetta_malloc(sizeof(DiscSymHashEntry) * new_cap);
+        ht->mask = new_cap - 1;
+        ht->count = 0;
+        for (uint32_t i = 0; i < new_cap; i++)
+            ht->entries[i].key = SYMBOL_ID_NONE;
+        for (uint32_t i = 0; i < old_cap; i++) {
+            if (old[i].key != SYMBOL_ID_NONE)
+                disc_sym_ht_put(ht, old[i].key, old[i].child);
+        }
+        free(old);
+    }
+    uint32_t idx = disc_sym_hash(key) & ht->mask;
+    while (ht->entries[idx].key != SYMBOL_ID_NONE)
+        idx = (idx + 1) & ht->mask;
+    ht->entries[idx].key = key;
+    ht->entries[idx].child = child;
+    ht->count++;
+}
+
+static void disc_sym_promote(DiscNode *n) {
+    DiscSymBranch *old_sym = n->sym;
+    uint32_t count = n->nsym;
+    disc_sym_ht_init(&n->sym_ht, count + 16);
+    for (uint32_t i = 0; i < count; i++)
+        disc_sym_ht_put(&n->sym_ht, old_sym[i].key, old_sym[i].child);
+    free(old_sym);
+    n->sym = NULL;
+    n->csym = 0;
+    n->sym_hashed = true;
+}
+
 static DiscNode *disc_get_sym(DiscNode *n, SymbolId key) {
+    if (n->sym_hashed) {
+        DiscNode *existing = disc_sym_ht_get(&n->sym_ht, key);
+        if (existing) return existing;
+        DiscNode *child = disc_node_new();
+        disc_sym_ht_put(&n->sym_ht, key, child);
+        n->nsym++;
+        return child;
+    }
     for (uint32_t i = 0; i < n->nsym; i++)
         if (n->sym[i].key == key) return n->sym[i].child;
     if (n->nsym >= n->csym) {
@@ -44,6 +122,8 @@ static DiscNode *disc_get_sym(DiscNode *n, SymbolId key) {
     n->sym[n->nsym].key = key;
     n->sym[n->nsym].child = child;
     n->nsym++;
+    if (n->nsym > DISC_HASH_THRESHOLD)
+        disc_sym_promote(n);
     return child;
 }
 
@@ -139,8 +219,15 @@ static void disc_skip_term(DiscNode *node, DiscNodeSet *next);
 static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
     if (!node) return;
     /* Symbol branches: one trie step → child is the continuation */
-    for (uint32_t i = 0; i < node->nsym; i++)
-        dns_push(next, node->sym[i].child);
+    if (node->sym_hashed) {
+        uint32_t cap = node->sym_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++)
+            if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
+                dns_push(next, node->sym_ht.entries[i].child);
+    } else {
+        for (uint32_t i = 0; i < node->nsym; i++)
+            dns_push(next, node->sym[i].child);
+    }
     /* Variable branches: one trie step */
     dns_push(next, node->var_child);
     /* Int branches: one trie step */
@@ -172,9 +259,14 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
     if (!node) return;
     switch (q->kind) {
     case ATOM_SYMBOL:
-        for (uint32_t i = 0; i < node->nsym; i++)
-            if (node->sym[i].key == q->sym_id)
-                dns_push(next, node->sym[i].child);
+        if (node->sym_hashed) {
+            DiscNode *child = disc_sym_ht_get(&node->sym_ht, q->sym_id);
+            dns_push(next, child);
+        } else {
+            for (uint32_t i = 0; i < node->nsym; i++)
+                if (node->sym[i].key == q->sym_id)
+                    dns_push(next, node->sym[i].child);
+        }
         /* A variable in the indexed LHS matches any query symbol */
         dns_push(next, node->var_child);
         break;

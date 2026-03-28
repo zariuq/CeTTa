@@ -8,6 +8,7 @@
 #include "compile.h"
 #include "cetta_stdlib.h"
 #include "mm2_lower.h"
+#include "mork_space_bridge_runtime.h"
 #include "stats.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,12 +28,111 @@ static void handle_sigsegv(int sig) {
 
 static bool g_count_only = false;
 static bool g_suppress_results = false;
+static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 
 static bool result_set_has_error(ResultSet *rs) {
     for (uint32_t i = 0; i < rs->len; i++) {
         if (atom_is_error(rs->items[i])) return true;
     }
     return false;
+}
+
+static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
+                                    bool count_only, bool suppress_results) {
+    CettaMorkProgramHandle *program = NULL;
+    CettaMorkContextHandle *context = NULL;
+    uint64_t ignored = 0;
+    uint64_t size = 0;
+    uint8_t *dump = NULL;
+    size_t dump_len = 0;
+    uint32_t dump_rows = 0;
+    int rc = 0;
+
+    if (!cetta_mork_bridge_is_available()) {
+        fprintf(stderr, "error: MM2 runtime requires MORK bridge support: %s\n",
+                cetta_mork_bridge_last_error());
+        return 2;
+    }
+
+    program = cetta_mork_bridge_program_new();
+    if (!program) {
+        fprintf(stderr, "error: could not allocate MM2 program: %s\n",
+                cetta_mork_bridge_last_error());
+        return 1;
+    }
+    context = cetta_mork_bridge_context_new();
+    if (!context) {
+        fprintf(stderr, "error: could not allocate MM2 context: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+
+    for (int i = 0; i < n; i++) {
+        char *surface = cetta_mm2_atom_to_surface_string(arena, atoms[i]);
+        bool ok = false;
+        if (cetta_mm2_atom_is_exec_rule(atoms[i])) {
+            ok = cetta_mork_bridge_program_add_sexpr(
+                program, (const uint8_t *)surface, strlen(surface), &ignored);
+        } else {
+            ok = cetta_mork_bridge_context_add_sexpr(
+                context, (const uint8_t *)surface, strlen(surface), &ignored);
+        }
+        if (!ok) {
+            fprintf(stderr, "error: MM2 runtime could not load %s atom: %s\n",
+                    cetta_mm2_atom_is_exec_rule(atoms[i]) ? "program" : "context",
+                    cetta_mork_bridge_last_error());
+            rc = 1;
+            goto done;
+        }
+    }
+
+    if (!cetta_mork_bridge_context_load_program(context, program, &ignored)) {
+        fprintf(stderr, "error: MM2 runtime could not load program into context: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+    if (!cetta_mork_bridge_context_run(context, CETTA_MM2_DEFAULT_RUN_STEPS, &ignored)) {
+        fprintf(stderr, "error: MM2 runtime execution failed: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+
+    if (count_only) {
+        if (!cetta_mork_bridge_context_size(context, &size)) {
+            fprintf(stderr, "error: MM2 runtime could not measure final context: %s\n",
+                    cetta_mork_bridge_last_error());
+            rc = 1;
+            goto done;
+        }
+        fprintf(stdout, "%llu\n", (unsigned long long)size);
+        goto done;
+    }
+
+    if (suppress_results) {
+        goto done;
+    }
+
+    if (!cetta_mork_bridge_context_dump(context, &dump, &dump_len, &dump_rows)) {
+        fprintf(stderr, "error: MM2 runtime could not dump final context: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+    if (dump_len > 0 && fwrite(dump, 1, dump_len, stdout) != dump_len) {
+        fprintf(stderr, "error: could not write MM2 runtime output\n");
+        rc = 1;
+        goto done;
+    }
+    (void)dump_rows;
+
+done:
+    cetta_mork_bridge_bytes_free(dump, dump_len);
+    cetta_mork_bridge_context_free(context);
+    cetta_mork_bridge_program_free(program);
+    return rc;
 }
 
 static void write_results(FILE *out, ResultSet *rs) {
@@ -323,6 +423,25 @@ int main(int argc, char **argv) {
     }
     if (strcmp(lang->canonical, "mm2") == 0) {
         cetta_mm2_lower_atoms(&arena, atoms, n);
+    }
+    if (strcmp(lang->canonical, "mm2") == 0 &&
+        !cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
+        int mm2_rc = run_mm2_program_via_mork(&arena, atoms, n, count_only, suppress_results);
+        if (emit_runtime_stats) {
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            cetta_runtime_stats_print(stderr, &stats);
+        }
+        free(atoms);
+        arena_free(&eval_arena);
+        arena_free(&arena);
+        g_var_intern = NULL;
+        var_intern_free(&var_intern_table);
+        g_symbols = NULL;
+        symbol_table_free(&symbol_table);
+        g_hashcons = NULL;
+        hashcons_free(&hashcons_table);
+        return mm2_rc;
     }
 
     Space space;

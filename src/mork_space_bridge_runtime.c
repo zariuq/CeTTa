@@ -78,6 +78,26 @@ extern CettaMorkBuffer mork_space_query_bindings_multi_ref_v3(CettaMorkSpaceHand
                                                               const uint8_t *pattern,
                                                               size_t len)
     __attribute__((weak));
+extern CettaMorkProgramHandle *mork_program_new(void);
+extern void mork_program_free(CettaMorkProgramHandle *program);
+extern CettaMorkStatus mork_program_clear(CettaMorkProgramHandle *program);
+extern CettaMorkStatus mork_program_add_sexpr(CettaMorkProgramHandle *program,
+                                              const uint8_t *text, size_t len);
+extern CettaMorkStatus mork_program_size(const CettaMorkProgramHandle *program);
+extern CettaMorkBuffer mork_program_dump(CettaMorkProgramHandle *program);
+extern CettaMorkContextHandle *mork_context_new(void);
+extern void mork_context_free(CettaMorkContextHandle *context);
+extern CettaMorkStatus mork_context_clear(CettaMorkContextHandle *context);
+extern CettaMorkStatus mork_context_load_program(CettaMorkContextHandle *context,
+                                                 const CettaMorkProgramHandle *program);
+extern CettaMorkStatus mork_context_add_sexpr(CettaMorkContextHandle *context,
+                                              const uint8_t *text, size_t len);
+extern CettaMorkStatus mork_context_remove_sexpr(CettaMorkContextHandle *context,
+                                                 const uint8_t *text, size_t len);
+extern CettaMorkStatus mork_context_size(const CettaMorkContextHandle *context);
+extern CettaMorkStatus mork_context_run(CettaMorkContextHandle *context,
+                                        uint64_t steps);
+extern CettaMorkBuffer mork_context_dump(CettaMorkContextHandle *context);
 extern void mork_bytes_free(uint8_t *data, size_t len);
 
 static void bridge_free_bytes(uint8_t *data, size_t len) {
@@ -292,6 +312,202 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
     return true;
 }
 
+CettaMorkProgramHandle *cetta_mork_bridge_program_new(void) {
+    CettaMorkProgramHandle *program = mork_program_new();
+    if (!program)
+        bridge_set_error("mork_program_new returned null");
+    return program;
+}
+
+void cetta_mork_bridge_program_free(CettaMorkProgramHandle *program) {
+    if (program)
+        mork_program_free(program);
+}
+
+bool cetta_mork_bridge_program_clear(CettaMorkProgramHandle *program) {
+    if (!program) {
+        bridge_set_error("cannot clear null MORK bridge program");
+        return false;
+    }
+    return bridge_status_ok("mork_program_clear failed: ", mork_program_clear(program));
+}
+
+bool cetta_mork_bridge_program_add_sexpr(CettaMorkProgramHandle *program,
+                                         const uint8_t *text, size_t len,
+                                         uint64_t *out_added) {
+    if (out_added) *out_added = 0;
+    if (!program) {
+        bridge_set_error("cannot add to null MORK bridge program");
+        return false;
+    }
+    CettaMorkStatus st = mork_program_add_sexpr(program, text, len);
+    if (!bridge_status_ok("mork_program_add_sexpr failed: ", st))
+        return false;
+    if (out_added) *out_added = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_program_size(const CettaMorkProgramHandle *program,
+                                    uint64_t *out_size) {
+    if (out_size) *out_size = 0;
+    if (!program) {
+        bridge_set_error("cannot size null MORK bridge program");
+        return false;
+    }
+    CettaMorkStatus st = mork_program_size(program);
+    if (!bridge_status_ok("mork_program_size failed: ", st))
+        return false;
+    if (out_size) *out_size = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_program_dump(CettaMorkProgramHandle *program,
+                                    uint8_t **out_packet, size_t *out_len,
+                                    uint32_t *out_rows) {
+    *out_packet = NULL;
+    *out_len = 0;
+    *out_rows = 0;
+    if (!program) {
+        bridge_set_error("cannot dump null MORK bridge program");
+        return false;
+    }
+    CettaMorkBuffer buf = mork_program_dump(program);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_program_dump failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_program_dump failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+    bridge_free_bytes(buf.message, buf.message_len);
+    *out_packet = buf.data;
+    *out_len = buf.len;
+    *out_rows = buf.count;
+    return true;
+}
+
+CettaMorkContextHandle *cetta_mork_bridge_context_new(void) {
+    CettaMorkContextHandle *context = mork_context_new();
+    if (!context)
+        bridge_set_error("mork_context_new returned null");
+    return context;
+}
+
+void cetta_mork_bridge_context_free(CettaMorkContextHandle *context) {
+    if (context)
+        mork_context_free(context);
+}
+
+bool cetta_mork_bridge_context_clear(CettaMorkContextHandle *context) {
+    if (!context) {
+        bridge_set_error("cannot clear null MORK bridge context");
+        return false;
+    }
+    return bridge_status_ok("mork_context_clear failed: ", mork_context_clear(context));
+}
+
+bool cetta_mork_bridge_context_load_program(CettaMorkContextHandle *context,
+                                            const CettaMorkProgramHandle *program,
+                                            uint64_t *out_added) {
+    if (out_added) *out_added = 0;
+    if (!context || !program) {
+        bridge_set_error("cannot load null MORK bridge program or context");
+        return false;
+    }
+    CettaMorkStatus st = mork_context_load_program(context, program);
+    if (!bridge_status_ok("mork_context_load_program failed: ", st))
+        return false;
+    if (out_added) *out_added = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_add_sexpr(CettaMorkContextHandle *context,
+                                         const uint8_t *text, size_t len,
+                                         uint64_t *out_added) {
+    if (out_added) *out_added = 0;
+    if (!context) {
+        bridge_set_error("cannot add to null MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = mork_context_add_sexpr(context, text, len);
+    if (!bridge_status_ok("mork_context_add_sexpr failed: ", st))
+        return false;
+    if (out_added) *out_added = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_remove_sexpr(CettaMorkContextHandle *context,
+                                            const uint8_t *text, size_t len,
+                                            uint64_t *out_removed) {
+    if (out_removed) *out_removed = 0;
+    if (!context) {
+        bridge_set_error("cannot remove from null MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = mork_context_remove_sexpr(context, text, len);
+    if (!bridge_status_ok("mork_context_remove_sexpr failed: ", st))
+        return false;
+    if (out_removed) *out_removed = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_size(const CettaMorkContextHandle *context,
+                                    uint64_t *out_size) {
+    if (out_size) *out_size = 0;
+    if (!context) {
+        bridge_set_error("cannot size null MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = mork_context_size(context);
+    if (!bridge_status_ok("mork_context_size failed: ", st))
+        return false;
+    if (out_size) *out_size = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_run(CettaMorkContextHandle *context,
+                                   uint64_t steps, uint64_t *out_performed) {
+    if (out_performed) *out_performed = 0;
+    if (!context) {
+        bridge_set_error("cannot run null MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = mork_context_run(context, steps);
+    if (!bridge_status_ok("mork_context_run failed: ", st))
+        return false;
+    if (out_performed) *out_performed = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_dump(CettaMorkContextHandle *context,
+                                    uint8_t **out_packet, size_t *out_len,
+                                    uint32_t *out_rows) {
+    *out_packet = NULL;
+    *out_len = 0;
+    *out_rows = 0;
+    if (!context) {
+        bridge_set_error("cannot dump null MORK bridge context");
+        return false;
+    }
+    CettaMorkBuffer buf = mork_context_dump(context);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_context_dump failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_context_dump failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+    bridge_free_bytes(buf.message, buf.message_len);
+    *out_packet = buf.data;
+    *out_len = buf.len;
+    *out_rows = buf.count;
+    return true;
+}
+
 void cetta_mork_bridge_bytes_free(uint8_t *data, size_t len) {
     bridge_free_bytes(data, len);
 }
@@ -320,10 +536,235 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkBuffer (*space_query_bindings_multi_ref_v3)(CettaMorkSpaceHandle *space,
                                                          const uint8_t *pattern,
                                                          size_t len);
+    CettaMorkProgramHandle *(*program_new)(void);
+    void (*program_free)(CettaMorkProgramHandle *program);
+    CettaMorkStatus (*program_clear)(CettaMorkProgramHandle *program);
+    CettaMorkStatus (*program_add_sexpr)(CettaMorkProgramHandle *program,
+                                         const uint8_t *text, size_t len);
+    CettaMorkStatus (*program_size)(const CettaMorkProgramHandle *program);
+    CettaMorkBuffer (*program_dump)(CettaMorkProgramHandle *program);
+    CettaMorkContextHandle *(*context_new)(void);
+    void (*context_free)(CettaMorkContextHandle *context);
+    CettaMorkStatus (*context_clear)(CettaMorkContextHandle *context);
+    CettaMorkStatus (*context_load_program)(CettaMorkContextHandle *context,
+                                            const CettaMorkProgramHandle *program);
+    CettaMorkStatus (*context_add_sexpr)(CettaMorkContextHandle *context,
+                                         const uint8_t *text, size_t len);
+    CettaMorkStatus (*context_remove_sexpr)(CettaMorkContextHandle *context,
+                                            const uint8_t *text, size_t len);
+    CettaMorkStatus (*context_size)(const CettaMorkContextHandle *context);
+    CettaMorkStatus (*context_run)(CettaMorkContextHandle *context, uint64_t steps);
+    CettaMorkBuffer (*context_dump)(CettaMorkContextHandle *context);
     void (*bytes_free)(uint8_t *data, size_t len);
 } CettaMorkBridgeApi;
 
 static CettaMorkBridgeApi g_mork_bridge_api = {0};
+static bool bridge_load_api(void);
+static void bridge_free_bytes(uint8_t *data, size_t len);
+
+CettaMorkProgramHandle *cetta_mork_bridge_program_new(void) {
+    if (!bridge_load_api())
+        return NULL;
+    CettaMorkProgramHandle *program = g_mork_bridge_api.program_new();
+    if (!program)
+        bridge_set_error("mork_program_new returned null");
+    return program;
+}
+
+void cetta_mork_bridge_program_free(CettaMorkProgramHandle *program) {
+    if (!program || !bridge_load_api())
+        return;
+    g_mork_bridge_api.program_free(program);
+}
+
+bool cetta_mork_bridge_program_clear(CettaMorkProgramHandle *program) {
+    if (!program || !bridge_load_api()) {
+        bridge_set_error("cannot clear null or unavailable MORK bridge program");
+        return false;
+    }
+    return bridge_status_ok("mork_program_clear failed: ",
+                            g_mork_bridge_api.program_clear(program));
+}
+
+bool cetta_mork_bridge_program_add_sexpr(CettaMorkProgramHandle *program,
+                                         const uint8_t *text, size_t len,
+                                         uint64_t *out_added) {
+    if (out_added) *out_added = 0;
+    if (!program || !bridge_load_api()) {
+        bridge_set_error("cannot add to null or unavailable MORK bridge program");
+        return false;
+    }
+    CettaMorkStatus st = g_mork_bridge_api.program_add_sexpr(program, text, len);
+    if (!bridge_status_ok("mork_program_add_sexpr failed: ", st))
+        return false;
+    if (out_added) *out_added = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_program_size(const CettaMorkProgramHandle *program,
+                                    uint64_t *out_size) {
+    if (out_size) *out_size = 0;
+    if (!program || !bridge_load_api()) {
+        bridge_set_error("cannot size null or unavailable MORK bridge program");
+        return false;
+    }
+    CettaMorkStatus st = g_mork_bridge_api.program_size(program);
+    if (!bridge_status_ok("mork_program_size failed: ", st))
+        return false;
+    if (out_size) *out_size = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_program_dump(CettaMorkProgramHandle *program,
+                                    uint8_t **out_packet, size_t *out_len,
+                                    uint32_t *out_rows) {
+    *out_packet = NULL;
+    *out_len = 0;
+    *out_rows = 0;
+    if (!program || !bridge_load_api()) {
+        bridge_set_error("cannot dump null or unavailable MORK bridge program");
+        return false;
+    }
+    CettaMorkBuffer buf = g_mork_bridge_api.program_dump(program);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_program_dump failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_program_dump failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+    bridge_free_bytes(buf.message, buf.message_len);
+    *out_packet = buf.data;
+    *out_len = buf.len;
+    *out_rows = buf.count;
+    return true;
+}
+
+CettaMorkContextHandle *cetta_mork_bridge_context_new(void) {
+    if (!bridge_load_api())
+        return NULL;
+    CettaMorkContextHandle *context = g_mork_bridge_api.context_new();
+    if (!context)
+        bridge_set_error("mork_context_new returned null");
+    return context;
+}
+
+void cetta_mork_bridge_context_free(CettaMorkContextHandle *context) {
+    if (!context || !bridge_load_api())
+        return;
+    g_mork_bridge_api.context_free(context);
+}
+
+bool cetta_mork_bridge_context_clear(CettaMorkContextHandle *context) {
+    if (!context || !bridge_load_api()) {
+        bridge_set_error("cannot clear null or unavailable MORK bridge context");
+        return false;
+    }
+    return bridge_status_ok("mork_context_clear failed: ",
+                            g_mork_bridge_api.context_clear(context));
+}
+
+bool cetta_mork_bridge_context_load_program(CettaMorkContextHandle *context,
+                                            const CettaMorkProgramHandle *program,
+                                            uint64_t *out_added) {
+    if (out_added) *out_added = 0;
+    if (!context || !program || !bridge_load_api()) {
+        bridge_set_error("cannot load null or unavailable MORK bridge program or context");
+        return false;
+    }
+    CettaMorkStatus st = g_mork_bridge_api.context_load_program(context, program);
+    if (!bridge_status_ok("mork_context_load_program failed: ", st))
+        return false;
+    if (out_added) *out_added = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_add_sexpr(CettaMorkContextHandle *context,
+                                         const uint8_t *text, size_t len,
+                                         uint64_t *out_added) {
+    if (out_added) *out_added = 0;
+    if (!context || !bridge_load_api()) {
+        bridge_set_error("cannot add to null or unavailable MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = g_mork_bridge_api.context_add_sexpr(context, text, len);
+    if (!bridge_status_ok("mork_context_add_sexpr failed: ", st))
+        return false;
+    if (out_added) *out_added = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_remove_sexpr(CettaMorkContextHandle *context,
+                                            const uint8_t *text, size_t len,
+                                            uint64_t *out_removed) {
+    if (out_removed) *out_removed = 0;
+    if (!context || !bridge_load_api()) {
+        bridge_set_error("cannot remove from null or unavailable MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = g_mork_bridge_api.context_remove_sexpr(context, text, len);
+    if (!bridge_status_ok("mork_context_remove_sexpr failed: ", st))
+        return false;
+    if (out_removed) *out_removed = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_size(const CettaMorkContextHandle *context,
+                                    uint64_t *out_size) {
+    if (out_size) *out_size = 0;
+    if (!context || !bridge_load_api()) {
+        bridge_set_error("cannot size null or unavailable MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = g_mork_bridge_api.context_size(context);
+    if (!bridge_status_ok("mork_context_size failed: ", st))
+        return false;
+    if (out_size) *out_size = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_run(CettaMorkContextHandle *context,
+                                   uint64_t steps, uint64_t *out_performed) {
+    if (out_performed) *out_performed = 0;
+    if (!context || !bridge_load_api()) {
+        bridge_set_error("cannot run null or unavailable MORK bridge context");
+        return false;
+    }
+    CettaMorkStatus st = g_mork_bridge_api.context_run(context, steps);
+    if (!bridge_status_ok("mork_context_run failed: ", st))
+        return false;
+    if (out_performed) *out_performed = st.value;
+    return true;
+}
+
+bool cetta_mork_bridge_context_dump(CettaMorkContextHandle *context,
+                                    uint8_t **out_packet, size_t *out_len,
+                                    uint32_t *out_rows) {
+    *out_packet = NULL;
+    *out_len = 0;
+    *out_rows = 0;
+    if (!context || !bridge_load_api()) {
+        bridge_set_error("cannot dump null or unavailable MORK bridge context");
+        return false;
+    }
+    CettaMorkBuffer buf = g_mork_bridge_api.context_dump(context);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_context_dump failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_context_dump failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+    bridge_free_bytes(buf.message, buf.message_len);
+    *out_packet = buf.data;
+    *out_len = buf.len;
+    *out_rows = buf.count;
+    return true;
+}
 
 static bool bridge_resolve_symbol(void **slot, const char *name) {
     dlerror();
@@ -379,6 +820,21 @@ static bool bridge_load_api(void) {
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_add_indexed_sexpr, "mork_space_add_indexed_sexpr") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_query_indices, "mork_space_query_indices") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_query_bindings, "mork_space_query_bindings") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_new, "mork_program_new") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_free, "mork_program_free") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_clear, "mork_program_clear") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_add_sexpr, "mork_program_add_sexpr") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_size, "mork_program_size") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_dump, "mork_program_dump") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_new, "mork_context_new") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_free, "mork_context_free") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_clear, "mork_context_clear") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_load_program, "mork_context_load_program") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_add_sexpr, "mork_context_add_sexpr") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_remove_sexpr, "mork_context_remove_sexpr") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_size, "mork_context_size") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_run, "mork_context_run") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.context_dump, "mork_context_dump") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.bytes_free, "mork_bytes_free")) {
         dlclose(g_mork_bridge_api.handle);
         g_mork_bridge_api.handle = NULL;
