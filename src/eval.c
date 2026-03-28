@@ -440,6 +440,44 @@ static bool bindings_merge_into(Bindings *dst, const Bindings *src) {
     return bindings_try_merge(dst, src);
 }
 
+typedef struct {
+    const Bindings *env;
+    Bindings owned;
+    uint32_t mark;
+    bool used_builder;
+} BindingsMergeAttempt;
+
+static __attribute__((unused)) bool
+bindings_builder_merge_or_clone(BindingsBuilder *builder,
+                                const Bindings *base,
+                                const Bindings *extra,
+                                BindingsMergeAttempt *attempt) {
+    attempt->env = NULL;
+    bindings_init(&attempt->owned);
+    attempt->mark = bindings_builder_save(builder);
+    attempt->used_builder = false;
+    if (bindings_builder_try_merge(builder, extra)) {
+        attempt->env = bindings_builder_bindings(builder);
+        attempt->used_builder = true;
+        return true;
+    }
+    bindings_builder_rollback(builder, attempt->mark);
+    if (!bindings_clone_merge(&attempt->owned, base, extra))
+        return false;
+    attempt->env = &attempt->owned;
+    return true;
+}
+
+static __attribute__((unused)) void
+bindings_merge_attempt_finish(BindingsBuilder *builder,
+                              BindingsMergeAttempt *attempt) {
+    if (attempt->used_builder) {
+        bindings_builder_rollback(builder, attempt->mark);
+    } else {
+        bindings_free(&attempt->owned);
+    }
+}
+
 static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                         Atom ***out_types);
 
@@ -681,6 +719,16 @@ static Atom *space_kind_atom(Arena *a, const Space *space) {
     return atom_symbol(a, space_kind_name(space ? space->kind : SPACE_KIND_ATOM));
 }
 
+static __attribute__((unused)) Atom *space_engine_atom(Arena *a,
+                                                       const Space *space) {
+    SpaceMatchBackendKind kind = space ? space->match_backend.kind
+                                       : SPACE_MATCH_BACKEND_NATIVE;
+    SymbolId sym_id = g_builtin_syms.native;
+    if (kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)
+        sym_id = g_builtin_syms.mork_text;
+    return atom_symbol_id(a, sym_id);
+}
+
 static Atom *space_match_backend_atom(Arena *a, const Space *space) {
     return atom_symbol(a, space_match_backend_name(space));
 }
@@ -910,13 +958,24 @@ static Atom *function_domain_type(Bindings *env, Arena *a, Atom *domain, Atom **
     return bindings_apply(env, a, body);
 }
 
-static bool bind_domain_binder(Bindings *env, Atom *domain, Atom *term) {
+static __attribute__((unused)) bool
+bind_domain_binder(Bindings *env, Atom *domain, Atom *term) {
     Atom *binder = NULL;
     Atom *body = domain;
     if (!split_dependent_domain(domain, &binder, &body) || !binder) {
         return true;
     }
     return bindings_add_var(env, binder, term);
+}
+
+static bool bind_domain_binder_builder(BindingsBuilder *bb, Atom *domain,
+                                       Atom *term) {
+    Atom *binder = NULL;
+    Atom *body = domain;
+    if (!split_dependent_domain(domain, &binder, &body) || !binder) {
+        return true;
+    }
+    return bindings_builder_add_var_fresh(bb, binder, term);
 }
 
 static Atom *normalize_type_expr_profiled(Arena *a, Atom *ty) {
@@ -947,6 +1006,8 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
     Atom **types = NULL;
     uint32_t count = 0;
     bool tried_func_type = false;
+    Arena scratch;
+    arena_init(&scratch);
 
     for (uint32_t oi = 0; oi < nop; oi++) {
         Atom *ft = op_types[oi];
@@ -958,7 +1019,8 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             continue;
         }
 
-        Atom *fresh_ft = rename_vars(a, ft, fresh_var_suffix());
+        ArenaMark scratch_mark = arena_mark(&scratch);
+        Atom *fresh_ft = rename_vars(&scratch, ft, fresh_var_suffix());
         Atom *fresh_ret = get_function_ret_type(fresh_ft);
         Bindings tb;
         bindings_init(&tb);
@@ -966,27 +1028,35 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
 
         for (uint32_t ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
             Atom *binder = NULL;
-            Atom *decl = function_domain_type(&tb, a, fresh_ft->expr.elems[ai + 1], &binder);
+            Atom *decl =
+                function_domain_type(&tb, &scratch, fresh_ft->expr.elems[ai + 1], &binder);
             Atom **atypes = NULL;
             uint32_t nat = get_atom_types_profiled(s, a, atom->expr.elems[ai + 1], &atypes);
             bool found = false;
+            BindingsBuilder trial_builder;
+            bindings_builder_init(&trial_builder, &tb);
 
             for (uint32_t ti = 0; ti < nat; ti++) {
-                Bindings trial;
-                if (!bindings_clone(&trial, &tb)) {
-                    continue;
-                }
-                if (match_types(decl, atypes[ti], &trial)) {
-                    Atom *arg_term = bindings_apply(&trial, a, atom->expr.elems[ai + 1]);
-                    if (bind_domain_binder(&trial, fresh_ft->expr.elems[ai + 1], arg_term)) {
-                        bindings_replace(&tb, &trial);
+                uint32_t mark = bindings_builder_save(&trial_builder);
+                if (match_types_builder(decl, atypes[ti], &trial_builder)) {
+                    Atom *arg_term = bindings_apply((Bindings *)bindings_builder_bindings(&trial_builder),
+                                                    &scratch, atom->expr.elems[ai + 1]);
+                    if (bind_domain_binder_builder(&trial_builder,
+                                                  fresh_ft->expr.elems[ai + 1],
+                                                  arg_term)) {
+                        Bindings next_tb;
+                        bindings_init(&next_tb);
+                        bindings_builder_take(&trial_builder, &next_tb);
+                        bindings_replace(&tb, &next_tb);
                         found = true;
-                        bindings_free(&trial);
+                        bindings_builder_free(&trial_builder);
                         break;
                     }
                 }
-                bindings_free(&trial);
+                bindings_builder_rollback(&trial_builder, mark);
             }
+            if (!found)
+                bindings_builder_free(&trial_builder);
             free(atypes);
             if (!found) {
                 all_ok = false;
@@ -995,14 +1065,16 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
 
         if (all_ok) {
             Atom *concrete_ret =
-                normalize_type_expr_profiled(a, bindings_apply(&tb, a, fresh_ret));
+                normalize_type_expr_profiled(&scratch, bindings_apply(&tb, &scratch, fresh_ret));
             types = types ? cetta_realloc(types, sizeof(Atom *) * (count + 1))
                           : cetta_malloc(sizeof(Atom *));
-            types[count++] = concrete_ret;
+            types[count++] = atom_deep_copy(a, concrete_ret);
         }
         bindings_free(&tb);
+        arena_reset(&scratch, scratch_mark);
     }
 
+    arena_free(&scratch);
     free(op_types);
     if (tried_func_type && count == 0) {
         *out_types = NULL;
@@ -1109,23 +1181,28 @@ static bool check_function_applicable(
                 free(atypes);
                 continue;
             }
+            BindingsBuilder candidate_builder;
+            bindings_builder_init(&candidate_builder, &results[r]);
             for (uint32_t t = 0; t < natypes; t++) {
-                Bindings mb;
-                if (!bindings_clone(&mb, &results[r]))
-                    continue;
-                if (match_types(expected, atypes[t], &mb)) {
-                    if (!bind_domain_binder(&mb, arg_types[i], arg)) {
-                        bindings_free(&mb);
+                uint32_t mark = bindings_builder_save(&candidate_builder);
+                if (match_types_builder(expected, atypes[t], &candidate_builder)) {
+                    if (!bind_domain_binder_builder(&candidate_builder, arg_types[i], arg)) {
+                        bindings_builder_rollback(&candidate_builder, mark);
                         continue;
                     }
-                    if (nnext < 64) {
-                        bindings_move(&next[nnext], &mb);
+                    if (nnext < 64 &&
+                        bindings_clone(&next[nnext],
+                                       bindings_builder_bindings(&candidate_builder))) {
                         nnext++;
                     }
+                    bindings_builder_rollback(&candidate_builder, mark);
                     found = true;
                 }
-                bindings_free(&mb);
+                else {
+                    bindings_builder_rollback(&candidate_builder, mark);
+                }
             }
+            bindings_builder_free(&candidate_builder);
             if (!found && natypes > 0) {
                 /* Report first mismatching type */
                 Atom *reason = atom_expr(a, (Atom*[]){
@@ -1157,14 +1234,15 @@ static bool check_function_applicable(
     /* Step 3: check return type */
     uint32_t ret_ok = 0;
     for (uint32_t r = 0; r < nresults; r++) {
-        Bindings mb;
-        if (!bindings_clone(&mb, &results[r]))
-            continue;
+        BindingsBuilder ret_builder;
+        bindings_builder_init_owned(&ret_builder, &results[r]);
         Atom *inst_ret =
-            eval_dependent_telescope_enabled() ? bindings_apply(&results[r], a, retType) : retType;
-        if (match_types(expectedType, inst_ret, &mb)) {
+            eval_dependent_telescope_enabled()
+                ? bindings_apply((Bindings *)bindings_builder_bindings(&ret_builder), a, retType)
+                : retType;
+        if (match_types_builder(expectedType, inst_ret, &ret_builder)) {
             if (ret_ok < 64) {
-                bindings_move(&success_bindings[ret_ok], &mb);
+                bindings_builder_take(&ret_builder, &success_bindings[ret_ok]);
                 ret_ok++;
             }
         } else {
@@ -1173,11 +1251,9 @@ static bool check_function_applicable(
             if (*n_errors < 64)
                 errors[(*n_errors)++] = atom_error(a, expr, reason);
         }
-        bindings_free(&mb);
+        bindings_builder_free(&ret_builder);
     }
 
-    for (uint32_t r = 0; r < nresults; r++)
-        bindings_free(&results[r]);
     *n_success = ret_ok;
     return ret_ok > 0;
 }
@@ -1336,13 +1412,33 @@ static void eval_with_prefix_bindings(Space *s, Arena *a, Atom *type, Atom *atom
     OutcomeSet inner;
     outcome_set_init(&inner);
     metta_eval_bind_typed(s, a, type, atom, fuel, &inner);
-    for (uint32_t i = 0; i < inner.len; i++) {
-        Bindings merged;
-        if (!bindings_clone_merge(&merged, prefix, &inner.items[i].env))
-            continue;
-        outcome_set_add_move(os, bindings_apply(&merged, a, inner.items[i].atom), &merged);
-        bindings_free(&merged);
+    if (!prefix || prefix->len == 0) {
+        for (uint32_t i = 0; i < inner.len; i++) {
+            Atom *applied =
+                (inner.items[i].env.len == 0)
+                    ? inner.items[i].atom
+                    : bindings_apply(&inner.items[i].env, a, inner.items[i].atom);
+            outcome_set_add_move(os, applied, &inner.items[i].env);
+        }
+        outcome_set_free(&inner);
+        return;
     }
+    BindingsBuilder merged_builder;
+    if (!bindings_builder_init(&merged_builder, prefix)) {
+        outcome_set_free(&inner);
+        return;
+    }
+    for (uint32_t i = 0; i < inner.len; i++) {
+        BindingsMergeAttempt attempt;
+        if (!bindings_builder_merge_or_clone(&merged_builder, prefix,
+                                             &inner.items[i].env, &attempt))
+            continue;
+        outcome_set_add(os,
+                        bindings_apply((Bindings *)attempt.env, a, inner.items[i].atom),
+                        attempt.env);
+        bindings_merge_attempt_finish(&merged_builder, &attempt);
+    }
+    bindings_builder_free(&merged_builder);
     outcome_set_free(&inner);
 }
 
@@ -1371,12 +1467,88 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
     bindings_free(&merged);
 }
 
+static void outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
+                                          Bindings *local_env,
+                                          const Bindings *outer_env,
+                                          bool preserve_bindings) {
+    Bindings empty;
+    bindings_init(&empty);
+    Bindings *inner = local_env ? local_env : &empty;
+
+    if (!preserve_bindings) {
+        outcome_set_add(os, atom, &empty);
+        return;
+    }
+    if (!outer_env || outer_env->len == 0) {
+        Atom *applied = (inner->len == 0) ? atom : bindings_apply(inner, a, atom);
+        if (local_env) {
+            outcome_set_add_move(os, applied, inner);
+        } else {
+            outcome_set_add(os, applied, &empty);
+        }
+        return;
+    }
+
+    Bindings merged;
+    if (!bindings_clone_merge(&merged, outer_env, inner))
+        return;
+    outcome_set_add_move(os, bindings_apply(&merged, a, atom), &merged);
+    bindings_free(&merged);
+}
+
 static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *src,
                                         const Bindings *outer_env,
                                         bool preserve_bindings) {
+    if (preserve_bindings && outer_env && outer_env->len > 0) {
+        BindingsBuilder merged_builder;
+        if (!bindings_builder_init(&merged_builder, outer_env))
+            return;
+        for (uint32_t i = 0; i < src->len; i++) {
+            BindingsMergeAttempt attempt;
+            if (!bindings_builder_merge_or_clone(&merged_builder, outer_env,
+                                                 &src->items[i].env, &attempt))
+                continue;
+            Atom *applied = (attempt.env->len == 0)
+                ? src->items[i].atom
+                : bindings_apply((Bindings *)attempt.env, a, src->items[i].atom);
+            outcome_set_add(dst, applied, attempt.env);
+            bindings_merge_attempt_finish(&merged_builder, &attempt);
+        }
+        bindings_builder_free(&merged_builder);
+        return;
+    }
     for (uint32_t i = 0; i < src->len; i++) {
         outcome_set_add_prefixed(a, dst, src->items[i].atom, &src->items[i].env,
                                  outer_env, preserve_bindings);
+    }
+}
+
+static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
+                                             OutcomeSet *src,
+                                             const Bindings *outer_env,
+                                             bool preserve_bindings) {
+    if (preserve_bindings && outer_env && outer_env->len > 0) {
+        BindingsBuilder merged_builder;
+        if (!bindings_builder_init(&merged_builder, outer_env))
+            return;
+        for (uint32_t i = 0; i < src->len; i++) {
+            BindingsMergeAttempt attempt;
+            if (!bindings_builder_merge_or_clone(&merged_builder, outer_env,
+                                                 &src->items[i].env, &attempt))
+                continue;
+            Atom *applied = (attempt.env->len == 0)
+                ? src->items[i].atom
+                : bindings_apply((Bindings *)attempt.env, a, src->items[i].atom);
+            outcome_set_add(dst, applied, attempt.env);
+            bindings_merge_attempt_finish(&merged_builder, &attempt);
+        }
+        bindings_builder_free(&merged_builder);
+        return;
+    }
+    for (uint32_t i = 0; i < src->len; i++) {
+        outcome_set_add_prefixed_move(a, dst, src->items[i].atom,
+                                      &src->items[i].env, outer_env,
+                                      preserve_bindings);
     }
 }
 
@@ -1419,7 +1591,7 @@ eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
     OutcomeSet inner;
     outcome_set_init(&inner);
     eval_for_caller(s, a, type, atom, fuel, prefix, preserve_bindings, &inner);
-    outcome_set_append_prefixed(a, os, &inner, outer_env, preserve_bindings);
+    outcome_set_append_prefixed_move(a, os, &inner, outer_env, preserve_bindings);
     outcome_set_free(&inner);
 }
 
@@ -1430,7 +1602,7 @@ eval_direct_for_current(Space *s, Arena *a, Atom *type, Atom *atom,
     OutcomeSet inner;
     outcome_set_init(&inner);
     eval_direct_outcomes(s, a, type, atom, fuel, &inner);
-    outcome_set_append_prefixed(a, os, &inner, outer_env, preserve_bindings);
+    outcome_set_append_prefixed_move(a, os, &inner, outer_env, preserve_bindings);
     outcome_set_free(&inner);
 }
 
@@ -1453,16 +1625,18 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
     if (atom_is_symbol_id(arg_type, g_builtin_syms.atom) || orig_arg->kind == ATOM_VAR) {
         prefix[idx] = bound_arg;
         if (eval_dependent_telescope_enabled()) {
-            Bindings merged;
-            if (!bindings_clone(&merged, env))
+            BindingsBuilder merged;
+            if (!bindings_builder_init(&merged, env))
                 return;
-            if (!bind_domain_binder(&merged, arg_types[idx], bound_arg)) {
-                bindings_free(&merged);
+            if (!bind_domain_binder_builder(&merged, arg_types[idx], bound_arg)) {
+                bindings_builder_free(&merged);
                 return;
             }
             interpret_function_args(s, a, op, orig_args, arg_types, nargs,
-                                    idx + 1, prefix, &merged, fuel, os);
-            bindings_free(&merged);
+                                    idx + 1, prefix,
+                                    (const Bindings *)bindings_builder_bindings(&merged),
+                                    fuel, os);
+            bindings_builder_free(&merged);
         } else {
             interpret_function_args(s, a, op, orig_args, arg_types, nargs,
                                     idx + 1, prefix, env, fuel, os);
@@ -1474,25 +1648,46 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
     outcome_set_init(&arg_os);
     metta_eval_bind_typed(s, a, arg_type, bound_arg, fuel, &arg_os);
 
+    BindingsBuilder merged_builder;
+    if (!bindings_builder_init(&merged_builder, env)) {
+        outcome_set_free(&arg_os);
+        return;
+    }
     for (uint32_t i = 0; i < arg_os.len; i++) {
-        Bindings merged;
-        if (!bindings_clone_merge(&merged, env, &arg_os.items[i].env))
+        BindingsMergeAttempt attempt;
+        if (!bindings_builder_merge_or_clone(&merged_builder, env,
+                                             &arg_os.items[i].env, &attempt))
             continue;
         if (atom_is_empty_or_error(arg_os.items[i].atom) &&
             !atom_eq(arg_os.items[i].atom, orig_arg)) {
-            outcome_set_add_move(os, arg_os.items[i].atom, &merged);
-            bindings_free(&merged);
+            outcome_set_add(os, arg_os.items[i].atom, attempt.env);
+            bindings_merge_attempt_finish(&merged_builder, &attempt);
             continue;
         }
         prefix[idx] = arg_os.items[i].atom;
-        if (!bind_domain_binder(&merged, arg_types[idx], arg_os.items[i].atom)) {
-            bindings_free(&merged);
-            continue;
+        if (attempt.used_builder) {
+            if (bind_domain_binder_builder(&merged_builder, arg_types[idx],
+                                           arg_os.items[i].atom)) {
+                interpret_function_args(s, a, op, orig_args, arg_types, nargs,
+                                        idx + 1, prefix,
+                                        (const Bindings *)bindings_builder_bindings(&merged_builder),
+                                        fuel, os);
+            }
+        } else {
+            BindingsBuilder attempt_builder;
+            bindings_builder_init_owned(&attempt_builder, &attempt.owned);
+            if (bind_domain_binder_builder(&attempt_builder, arg_types[idx],
+                                           arg_os.items[i].atom)) {
+                interpret_function_args(s, a, op, orig_args, arg_types, nargs,
+                                        idx + 1, prefix,
+                                        (const Bindings *)bindings_builder_bindings(&attempt_builder),
+                                        fuel, os);
+            }
+            bindings_builder_free(&attempt_builder);
         }
-        interpret_function_args(s, a, op, orig_args, arg_types, nargs,
-                                idx + 1, prefix, &merged, fuel, os);
-        bindings_free(&merged);
+        bindings_merge_attempt_finish(&merged_builder, &attempt);
     }
+    bindings_builder_free(&merged_builder);
     outcome_set_free(&arg_os);
 }
 
@@ -1591,13 +1786,10 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
     Atom *exp_type = etype ? etype : atom_undefined_type(a);
     for (uint32_t hi = 0; hi < heads.len; hi++) {
         Atom *head_atom = heads.items[hi].atom;
-        Bindings head_env;
-        if (!bindings_clone(&head_env, &heads.items[hi].env))
-            continue;
+        Bindings *head_env = &heads.items[hi].env;
 
         if (atom_is_empty_or_error(head_atom)) {
-            outcome_set_add_move(os, head_atom, &head_env);
-            bindings_free(&head_env);
+            outcome_set_add_move(os, head_atom, head_env);
             continue;
         }
 
@@ -1610,10 +1802,9 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
         if (!check_function_applicable(atom, head_type, exp_type, s, a, fuel,
                                        errors, &n_errors, succs, &n_succs)) {
             for (uint32_t ei = 0; ei < n_errors; ei++)
-                outcome_set_add(os, errors[ei], &head_env);
+                outcome_set_add(os, errors[ei], head_env);
             for (uint32_t si = 0; si < n_succs; si++)
                 bindings_free(&succs[si]);
-            bindings_free(&head_env);
             continue;
         }
         for (uint32_t si = 0; si < n_succs; si++)
@@ -1627,26 +1818,22 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
         outcome_set_init(&call_terms);
         Atom **prefix = arena_alloc(a, sizeof(Atom *) * expr_narg);
         interpret_function_args(s, a, head_atom, atom->expr.elems + 1, arg_types,
-                                expr_narg, 0, prefix, &head_env, fuel, &call_terms);
+                                expr_narg, 0, prefix, head_env, fuel, &call_terms);
 
         for (uint32_t ci = 0; ci < call_terms.len; ci++) {
             Atom *call_atom = call_terms.items[ci].atom;
-            Bindings combo_ctx;
-            if (!bindings_clone(&combo_ctx, &call_terms.items[ci].env))
-                continue;
+            Bindings *combo_ctx = &call_terms.items[ci].env;
             if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 1 &&
                 is_capture_closure(call_atom->expr.elems[0])) {
                 dispatch_capture_outcomes(s, a, call_atom->expr.elems[0],
                                           call_atom->expr.elems + 1,
                                           call_atom->expr.len - 1,
-                                          fuel, &combo_ctx, preserve_bindings, os);
+                                          fuel, combo_ctx, preserve_bindings, os);
             } else {
-                outcome_set_add(os, call_atom, &combo_ctx);
+                outcome_set_add_move(os, call_atom, combo_ctx);
             }
-            bindings_free(&combo_ctx);
         }
         outcome_set_free(&call_terms);
-        bindings_free(&head_env);
     }
 
     outcome_set_free(&heads);
@@ -1679,19 +1866,26 @@ static void interpret_tuple(Space *s, Arena *a,
     }
     Bindings empty;
     bindings_init(&empty);
+    BindingsBuilder merged_builder;
+    if (!bindings_builder_init(&merged_builder, ctx)) {
+        outcome_set_free(&sub);
+        return;
+    }
     for (uint32_t i = 0; i < sub.len; i++) {
         if (atom_is_empty(sub.items[i].atom) || atom_is_error(sub.items[i].atom)) {
             rb_set_add(rbs, sub.items[i].atom, &empty);
         } else {
             prefix[idx] = sub.items[i].atom;
-            Bindings merged;
-            if (!bindings_clone_merge(&merged, ctx, &sub.items[i].env))
+            BindingsMergeAttempt attempt;
+            if (!bindings_builder_merge_or_clone(&merged_builder, ctx,
+                                                 &sub.items[i].env, &attempt))
                 continue;
             interpret_tuple(s, a, orig_elems, len, idx + 1, prefix,
-                            &merged, fuel, rbs);
-            bindings_free(&merged);
+                            (Bindings *)attempt.env, fuel, rbs);
+            bindings_merge_attempt_finish(&merged_builder, &attempt);
         }
     }
+    bindings_builder_free(&merged_builder);
     outcome_set_free(&sub);
 }
 
@@ -1726,6 +1920,42 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         }
         binding_set_free(&matches);
         return true;
+    }
+
+    {
+        #define MAX_IMPORTED_SAME_SPACE_CHAIN 32
+        if (ms->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED) {
+            Atom *same_space_patterns[MAX_IMPORTED_SAME_SPACE_CHAIN];
+            uint32_t nsame = 1;
+            Atom *residual_body = template;
+
+            same_space_patterns[0] = pattern;
+            while (nsame < MAX_IMPORTED_SAME_SPACE_CHAIN &&
+                   residual_body->kind == ATOM_EXPR && residual_body->expr.len == 4 &&
+                   atom_is_symbol_id(residual_body->expr.elems[0], g_builtin_syms.match)) {
+                Atom *inner_ref = resolve_registry_refs(a, residual_body->expr.elems[1]);
+                Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
+                if (!inner_sp) inner_sp = s;
+                if (inner_sp != ms)
+                    break;
+                same_space_patterns[nsame++] =
+                    resolve_registry_refs(a, residual_body->expr.elems[2]);
+                residual_body = residual_body->expr.elems[3];
+            }
+
+            if (nsame >= 2) {
+                BindingSet matches;
+                space_query_conjunction(ms, a, same_space_patterns, nsame, NULL, &matches);
+                for (uint32_t bi = 0; bi < matches.len; bi++) {
+                    Atom *result = bindings_apply(&matches.items[bi], a, residual_body);
+                    eval_for_caller(s, a, NULL, result, fuel, &matches.items[bi],
+                                    preserve_bindings, os);
+                }
+                binding_set_free(&matches);
+                return true;
+            }
+        }
+        #undef MAX_IMPORTED_SAME_SPACE_CHAIN
     }
 
     {
@@ -1977,12 +2207,9 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
 
                 for (uint32_t hi = 0; hi < heads.len; hi++) {
                     Atom *head_atom = heads.items[hi].atom;
-                    Bindings head_env;
-                    if (!bindings_clone(&head_env, &heads.items[hi].env))
-                        continue;
+                    Bindings *head_env = &heads.items[hi].env;
                     if (atom_is_empty_or_error(head_atom) && !atom_eq(head_atom, op)) {
-                        outcome_set_add_move(&func_results, head_atom, &head_env);
-                        bindings_free(&head_env);
+                        outcome_set_add_move(&func_results, head_atom, head_env);
                         continue;
                     }
 
@@ -1991,17 +2218,15 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     outcome_set_init(&call_terms);
                     Atom **prefix = arena_alloc(a, sizeof(Atom *) * expr_narg);
                     interpret_function_args(s, a, head_atom, atom->expr.elems + 1, arg_types,
-                                            expr_narg, 0, prefix, &head_env, fuel, &call_terms);
+                                            expr_narg, 0, prefix, head_env, fuel, &call_terms);
 
                     for (uint32_t ci = 0; ci < call_terms.len; ci++) {
                         Atom *call_atom = call_terms.items[ci].atom;
-                        Bindings combo_ctx;
-                        if (!bindings_clone(&combo_ctx, &call_terms.items[ci].env))
-                            continue;
+                        Bindings *combo_ctx = &call_terms.items[ci].env;
                         Atom *inst_ret_type =
                             eval_dependent_telescope_enabled()
-                                ? bindings_apply(&combo_ctx, a, ret_type)
-                                : bindings_apply(&head_env, a, ret_type);
+                                ? bindings_apply(combo_ctx, a, ret_type)
+                                : bindings_apply(head_env, a, ret_type);
 
                         bool dispatched = false;
                         if (!dispatched &&
@@ -2010,7 +2235,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             if (dispatch_foreign_outcomes(
                                     s, a, h,
                                     call_atom->expr.elems + 1, 0,
-                                    inst_ret_type, fuel, &combo_ctx,
+                                    inst_ret_type, fuel, combo_ctx,
                                     only_function_types &&
                                         n_op_types == 1 && heads.len == 1 &&
                                         call_terms.len == 1,
@@ -2019,10 +2244,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && *tail_next) {
-                                    bindings_copy(tail_env, &combo_ctx);
-                                    bindings_free(&combo_ctx);
+                                    bindings_copy(tail_env, combo_ctx);
                                     outcome_set_free(&call_terms);
-                                    bindings_free(&head_env);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
                                     for (uint32_t sj = 0; sj < n_succs; sj++)
@@ -2039,13 +2262,13 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             if (is_capture_closure(h)) {
                                 dispatch_capture_outcomes(s, a, h,
                                     call_atom->expr.elems + 1, call_atom->expr.len - 1,
-                                    fuel, &combo_ctx, preserve_bindings,
+                                    fuel, combo_ctx, preserve_bindings,
                                     &func_results);
                                 dispatched = true;
                             } else if (dispatch_foreign_outcomes(
                                            s, a, h,
                                            call_atom->expr.elems + 1, call_atom->expr.len - 1,
-                                           inst_ret_type, fuel, &combo_ctx,
+                                           inst_ret_type, fuel, combo_ctx,
                                            only_function_types &&
                                                n_op_types == 1 && heads.len == 1 &&
                                                call_terms.len == 1,
@@ -2054,10 +2277,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && *tail_next) {
-                                    bindings_copy(tail_env, &combo_ctx);
-                                    bindings_free(&combo_ctx);
+                                    bindings_copy(tail_env, combo_ctx);
                                     outcome_set_free(&call_terms);
-                                    bindings_free(&head_env);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
                                     for (uint32_t sj = 0; sj < n_succs; sj++)
@@ -2074,14 +2295,12 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     if (only_function_types &&
                                         n_op_types == 1 && heads.len == 1 &&
                                         call_terms.len == 1) {
-                                        *tail_next = (combo_ctx.len == 0)
+                                        *tail_next = (combo_ctx->len == 0)
                                             ? gr
-                                            : bindings_apply(&combo_ctx, a, gr);
+                                            : bindings_apply(combo_ctx, a, gr);
                                         *tail_type = inst_ret_type;
-                                        bindings_copy(tail_env, &combo_ctx);
-                                        bindings_free(&combo_ctx);
+                                        bindings_copy(tail_env, combo_ctx);
                                         outcome_set_free(&call_terms);
-                                        bindings_free(&head_env);
                                         outcome_set_free(&heads);
                                         outcome_set_free(&func_results);
                                         for (uint32_t sj = 0; sj < n_succs; sj++)
@@ -2090,7 +2309,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                         return true;
                                     }
                                     eval_for_caller(s, a, inst_ret_type, gr, fuel,
-                                                    &combo_ctx, preserve_bindings,
+                                                    combo_ctx, preserve_bindings,
                                                     &func_results);
                                     dispatched = true;
                                 }
@@ -2101,28 +2320,34 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             query_results_init(&qr);
                             query_equations(s, call_atom, a, &qr);
                             if (qr.len > 0) {
+                                BindingsBuilder qr_builder;
+                                if (!bindings_builder_init(&qr_builder, combo_ctx)) {
+                                    query_results_free(&qr);
+                                    continue;
+                                }
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && qr.len == 1) {
-                                    Bindings merged;
-                                    if (!bindings_clone_merge(&merged, &combo_ctx,
-                                                              &qr.items[0].bindings)) {
+                                    BindingsMergeAttempt attempt;
+                                    if (!bindings_builder_merge_or_clone(&qr_builder, combo_ctx,
+                                                                         &qr.items[0].bindings,
+                                                                         &attempt)) {
+                                        bindings_builder_free(&qr_builder);
                                         query_results_free(&qr);
-                                        bindings_free(&combo_ctx);
                                         continue;
                                     }
                                     Atom *tail_hint = result_eval_type_hint(inst_ret_type,
                                                                             qr.items[0].result);
-                                    *tail_next = (merged.len == 0)
+                                    *tail_next = (attempt.env->len == 0)
                                         ? qr.items[0].result
-                                        : bindings_apply(&merged, a, qr.items[0].result);
+                                        : bindings_apply((Bindings *)attempt.env, a,
+                                                         qr.items[0].result);
                                     *tail_type = tail_hint;
-                                    bindings_copy(tail_env, &merged);
-                                    bindings_free(&merged);
+                                    bindings_copy(tail_env, attempt.env);
+                                    bindings_merge_attempt_finish(&qr_builder, &attempt);
+                                    bindings_builder_free(&qr_builder);
                                     query_results_free(&qr);
-                                    bindings_free(&combo_ctx);
                                     outcome_set_free(&call_terms);
-                                    bindings_free(&head_env);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
                                     for (uint32_t sj = 0; sj < n_succs; sj++)
@@ -2131,26 +2356,27 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     return true;
                                 }
                                 for (uint32_t qi = 0; qi < qr.len; qi++) {
-                                    Bindings merged;
-                                    if (!bindings_clone_merge(&merged, &combo_ctx,
-                                                              &qr.items[qi].bindings))
+                                    BindingsMergeAttempt attempt;
+                                    if (!bindings_builder_merge_or_clone(&qr_builder, combo_ctx,
+                                                                         &qr.items[qi].bindings,
+                                                                         &attempt))
                                         continue;
                                     eval_for_caller(s, a,
                                                     result_eval_type_hint(inst_ret_type, qr.items[qi].result),
-                                                    qr.items[qi].result, fuel, &merged,
+                                                    qr.items[qi].result, fuel,
+                                                    attempt.env,
                                                     preserve_bindings, &func_results);
-                                    bindings_free(&merged);
+                                    bindings_merge_attempt_finish(&qr_builder, &attempt);
                                 }
+                                bindings_builder_free(&qr_builder);
                                 dispatched = true;
                             }
                             query_results_free(&qr);
                         }
                         if (!dispatched)
-                            outcome_set_add_move(&func_results, call_atom, &combo_ctx);
-                        bindings_free(&combo_ctx);
+                            outcome_set_add_move(&func_results, call_atom, combo_ctx);
                     }
                     outcome_set_free(&call_terms);
-                    bindings_free(&head_env);
                 }
                 outcome_set_free(&heads);
             } else {
@@ -2200,15 +2426,10 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                         0, prefix, &empty_ctx, fuel, &tuples);
 
         if (tuples.len == 1) {
-            Bindings tuple_bindings;
-            if (!bindings_clone(&tuple_bindings, &tuples.items[0].env)) {
-                outcome_set_free(&tuples);
-                return true;
-            }
-            Atom *call_atom = bindings_apply(&tuple_bindings, a, tuples.items[0].atom);
+            Bindings *tuple_bindings = &tuples.items[0].env;
+            Atom *call_atom = bindings_apply(tuple_bindings, a, tuples.items[0].atom);
             if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
                 outcome_set_add(os, call_atom, &_empty);
-                bindings_free(&tuple_bindings);
                 outcome_set_free(&tuples);
                 return true;
             }
@@ -2216,12 +2437,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 Atom *h = call_atom->expr.elems[0];
                 if (dispatch_foreign_outcomes(s, a, h,
                         call_atom->expr.elems + 1, 0,
-                        NULL, fuel, &tuple_bindings, true,
+                        NULL, fuel, tuple_bindings, true,
                         preserve_bindings,
                         tail_next, tail_type, os)) {
                     if (*tail_next)
-                        bindings_copy(tail_env, &tuple_bindings);
-                    bindings_free(&tuple_bindings);
+                        bindings_copy(tail_env, tuple_bindings);
                     outcome_set_free(&tuples);
                     return true;
                 }
@@ -2231,19 +2451,17 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 if (is_capture_closure(h)) {
                     dispatch_capture_outcomes(s, a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1,
-                        fuel, &tuple_bindings, preserve_bindings, os);
-                    bindings_free(&tuple_bindings);
+                        fuel, tuple_bindings, preserve_bindings, os);
                     outcome_set_free(&tuples);
                     return true;
                 }
                 if (dispatch_foreign_outcomes(s, a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1,
-                        NULL, fuel, &tuple_bindings, true,
+                        NULL, fuel, tuple_bindings, true,
                         preserve_bindings,
                         tail_next, tail_type, os)) {
                     if (*tail_next)
-                        bindings_copy(tail_env, &tuple_bindings);
-                    bindings_free(&tuple_bindings);
+                        bindings_copy(tail_env, tuple_bindings);
                     outcome_set_free(&tuples);
                     return true;
                 }
@@ -2252,12 +2470,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     Atom *result = dispatch_native_op(s, a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1);
                     if (result) {
-                        *tail_next = (tuple_bindings.len == 0)
+                        *tail_next = (tuple_bindings->len == 0)
                             ? result
-                            : bindings_apply(&tuple_bindings, a, result);
+                            : bindings_apply(tuple_bindings, a, result);
                         *tail_type = etype;
-                        bindings_copy(tail_env, &tuple_bindings);
-                        bindings_free(&tuple_bindings);
+                        bindings_copy(tail_env, tuple_bindings);
                         outcome_set_free(&tuples);
                         return true;
                     }
@@ -2268,71 +2485,80 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             query_results_init(&qr);
             query_equations(s, call_atom, a, &qr);
             if (qr.len == 1) {
-                Bindings merged;
-                if (!bindings_clone_merge(&merged, &tuple_bindings,
-                                          &qr.items[0].bindings)) {
-                    bindings_free(&tuple_bindings);
+                BindingsBuilder qr_builder;
+                if (!bindings_builder_init(&qr_builder, tuple_bindings)) {
+                    query_results_free(&qr);
+                    outcome_set_free(&tuples);
+                    return true;
+                }
+                BindingsMergeAttempt attempt;
+                if (!bindings_builder_merge_or_clone(&qr_builder, tuple_bindings,
+                                                     &qr.items[0].bindings,
+                                                     &attempt)) {
+                    bindings_builder_free(&qr_builder);
                     query_results_free(&qr);
                     outcome_set_free(&tuples);
                     return true;
                 }
                 Atom *tail_hint = result_eval_type_hint(etype, qr.items[0].result);
-                *tail_next = (merged.len == 0)
+                *tail_next = (attempt.env->len == 0)
                     ? qr.items[0].result
-                    : bindings_apply(&merged, a, qr.items[0].result);
+                    : bindings_apply((Bindings *)attempt.env, a, qr.items[0].result);
                 *tail_type = tail_hint;
-                bindings_copy(tail_env, &merged);
-                bindings_free(&merged);
-                bindings_free(&tuple_bindings);
+                bindings_copy(tail_env, attempt.env);
+                bindings_merge_attempt_finish(&qr_builder, &attempt);
+                bindings_builder_free(&qr_builder);
                 query_results_free(&qr);
                 outcome_set_free(&tuples);
                 return true;
             }
             if (qr.len > 0) {
+                BindingsBuilder qr_builder;
+                if (!bindings_builder_init(&qr_builder, tuple_bindings)) {
+                    query_results_free(&qr);
+                    outcome_set_free(&tuples);
+                    return true;
+                }
                 for (uint32_t i = 0; i < qr.len; i++) {
-                    Bindings merged;
-                    if (!bindings_clone_merge(&merged, &tuple_bindings,
-                                              &qr.items[i].bindings))
+                    BindingsMergeAttempt attempt;
+                    if (!bindings_builder_merge_or_clone(&qr_builder, tuple_bindings,
+                                                         &qr.items[i].bindings,
+                                                         &attempt))
                         continue;
                     eval_for_caller(s, a,
                                     result_eval_type_hint(NULL, qr.items[i].result),
-                                    qr.items[i].result, fuel, &merged,
+                                    qr.items[i].result, fuel, attempt.env,
                                     preserve_bindings, os);
-                    bindings_free(&merged);
+                    bindings_merge_attempt_finish(&qr_builder, &attempt);
                 }
-                bindings_free(&tuple_bindings);
+                bindings_builder_free(&qr_builder);
                 query_results_free(&qr);
                 outcome_set_free(&tuples);
                 return true;
             }
             query_results_free(&qr);
-            outcome_set_add_move(os, call_atom, &tuple_bindings);
-            bindings_free(&tuple_bindings);
+            outcome_set_add_move(os, call_atom, tuple_bindings);
             outcome_set_free(&tuples);
             return true;
         }
 
         for (uint32_t ti = 0; ti < tuples.len; ti++) {
             Atom *call_atom = tuples.items[ti].atom;
-            Bindings tuple_bindings;
-            if (!bindings_clone(&tuple_bindings, &tuples.items[ti].env))
-                continue;
+            Bindings *tuple_bindings = &tuples.items[ti].env;
 
             if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
                 outcome_set_add(os, call_atom, &_empty);
-                bindings_free(&tuple_bindings);
                 continue;
             }
 
-            call_atom = bindings_apply(&tuple_bindings, a, call_atom);
+            call_atom = bindings_apply(tuple_bindings, a, call_atom);
 
             if (call_atom->kind == ATOM_EXPR && call_atom->expr.len == 1) {
                 Atom *h = call_atom->expr.elems[0];
                 if (dispatch_foreign_outcomes(s, a, h,
                         call_atom->expr.elems + 1, 0,
-                        NULL, fuel, &tuple_bindings, false, preserve_bindings,
+                        NULL, fuel, tuple_bindings, false, preserve_bindings,
                         tail_next, tail_type, os)) {
-                    bindings_free(&tuple_bindings);
                     continue;
                 }
             }
@@ -2341,15 +2567,13 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 if (is_capture_closure(h)) {
                     dispatch_capture_outcomes(s, a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1,
-                        fuel, &tuple_bindings, preserve_bindings, os);
-                    bindings_free(&tuple_bindings);
+                        fuel, tuple_bindings, preserve_bindings, os);
                     continue;
                 }
                 if (dispatch_foreign_outcomes(s, a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1,
-                        NULL, fuel, &tuple_bindings, false, preserve_bindings,
+                        NULL, fuel, tuple_bindings, false, preserve_bindings,
                         tail_next, tail_type, os)) {
-                    bindings_free(&tuple_bindings);
                     continue;
                 }
                 if (h->kind == ATOM_SYMBOL &&
@@ -2357,9 +2581,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     Atom *result = dispatch_native_op(s, a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1);
                     if (result) {
-                        eval_for_caller(s, a, NULL, result, fuel, &tuple_bindings,
+                        eval_for_caller(s, a, NULL, result, fuel, tuple_bindings,
                                         preserve_bindings, os);
-                        bindings_free(&tuple_bindings);
                         continue;
                     }
                 }
@@ -2369,25 +2592,30 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             query_results_init(&qr);
             query_equations(s, call_atom, a, &qr);
             if (qr.len > 0) {
+                BindingsBuilder qr_builder;
+                if (!bindings_builder_init(&qr_builder, tuple_bindings)) {
+                    query_results_free(&qr);
+                    continue;
+                }
                 for (uint32_t i = 0; i < qr.len; i++) {
-                    Bindings merged;
-                    if (!bindings_clone_merge(&merged, &tuple_bindings,
-                                              &qr.items[i].bindings))
+                    BindingsMergeAttempt attempt;
+                    if (!bindings_builder_merge_or_clone(&qr_builder, tuple_bindings,
+                                                         &qr.items[i].bindings,
+                                                         &attempt))
                         continue;
                     eval_for_caller(s, a,
                                     result_eval_type_hint(NULL, qr.items[i].result),
-                                    qr.items[i].result, fuel, &merged,
+                                    qr.items[i].result, fuel, attempt.env,
                                     preserve_bindings, os);
-                    bindings_free(&merged);
+                    bindings_merge_attempt_finish(&qr_builder, &attempt);
                 }
+                bindings_builder_free(&qr_builder);
                 query_results_free(&qr);
-                bindings_free(&tuple_bindings);
                 continue;
             }
             query_results_free(&qr);
 
-            outcome_set_add_move(os, call_atom, &tuple_bindings);
-            bindings_free(&tuple_bindings);
+            outcome_set_add_move(os, call_atom, tuple_bindings);
         }
         outcome_set_free(&tuples);
     }
@@ -2624,21 +2852,26 @@ tail_call: ;
             for (uint32_t i = 0; i < branches->expr.len; i++) {
                 Atom *branch = branches->expr.elems[i];
                 if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
-                    Bindings b;
-                    bindings_init(&b);
-                    if (simple_match(branch->expr.elems[0], sv, &b)) {
-                        Atom *next_atom = bindings_apply(&b, a, branch->expr.elems[1]);
+                    BindingsBuilder b;
+                    if (!bindings_builder_init(&b, NULL)) {
+                        free(scrut.items);
+                        return;
+                    }
+                    if (simple_match_builder(branch->expr.elems[0], sv, &b)) {
+                        const Bindings *bb = bindings_builder_bindings(&b);
+                        Atom *next_atom =
+                            bindings_apply((Bindings *)bb, a, branch->expr.elems[1]);
                         if (preserve_bindings &&
-                            !bindings_merge_into(&current_env, &b)) {
-                            bindings_free(&b);
+                            !bindings_merge_into(&current_env, bb)) {
+                            bindings_builder_free(&b);
                             free(scrut.items);
                             return;
                         }
-                        bindings_free(&b);
+                        bindings_builder_free(&b);
                         free(scrut.items);
                         TAIL_REENTER(next_atom);
                     }
-                    bindings_free(&b);
+                    bindings_builder_free(&b);
                 }
             }
             free(scrut.items);
@@ -2650,17 +2883,20 @@ tail_call: ;
                 for (uint32_t i = 0; i < branches->expr.len; i++) {
                     Atom *branch = branches->expr.elems[i];
                     if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
-                        Bindings b;
-                        bindings_init(&b);
-                        if (simple_match(branch->expr.elems[0], sv, &b)) {
-                            Atom *result = bindings_apply(&b, a, branch->expr.elems[1]);
-                            eval_for_current_caller(s, a, NULL, result, fuel, &b,
+                        BindingsBuilder b;
+                        if (!bindings_builder_init(&b, NULL))
+                            continue;
+                        if (simple_match_builder(branch->expr.elems[0], sv, &b)) {
+                            const Bindings *bb = bindings_builder_bindings(&b);
+                            Atom *result =
+                                bindings_apply((Bindings *)bb, a, branch->expr.elems[1]);
+                            eval_for_current_caller(s, a, NULL, result, fuel, bb,
                                                     &current_env,
                                                     preserve_bindings, os);
-                            bindings_free(&b);
+                            bindings_builder_free(&b);
                             break;
                         }
-                        bindings_free(&b);
+                        bindings_builder_free(&b);
                     }
                 }
             }
@@ -2684,20 +2920,23 @@ tail_call: ;
             for (uint32_t i = 0; i < branches->expr.len; i++) {
                 Atom *branch = branches->expr.elems[i];
                 if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
-                    Bindings b;
-                    bindings_init(&b);
-                    if (simple_match(branch->expr.elems[0], scrutinee, &b)) {
-                        Atom *next_atom = bindings_apply(&b, a, branch->expr.elems[1]);
+                    BindingsBuilder b;
+                    if (!bindings_builder_init(&b, NULL))
+                        return;
+                    if (simple_match_builder(branch->expr.elems[0], scrutinee, &b)) {
+                        const Bindings *bb = bindings_builder_bindings(&b);
+                        Atom *next_atom =
+                            bindings_apply((Bindings *)bb, a, branch->expr.elems[1]);
                         if (preserve_bindings &&
-                            !bindings_merge_into(&current_env, &b)) {
-                            bindings_free(&b);
+                            !bindings_merge_into(&current_env, bb)) {
+                            bindings_builder_free(&b);
                             return;
                         }
-                        bindings_free(&b);
+                        bindings_builder_free(&b);
                         TAIL_REENTER(next_atom);
                         return;
                     }
-                    bindings_free(&b);
+                    bindings_builder_free(&b);
                 }
             }
         }
@@ -2747,42 +2986,80 @@ tail_call: ;
         }
         if (vals.len == 1) {
             /* Single-result fast path with TCO */
-            Bindings b; bindings_init(&b);
             bool ok = false;
             if (pat->kind == ATOM_VAR) {
-                bindings_add_var(&b, pat, vals.items[0]);
-                ok = true;
-            } else {
-                ok = simple_match(pat, vals.items[0], &b);
-            }
-            free(vals.items);
-            if (ok) {
-                Atom *next_atom = bindings_apply(&b, a, body_let);
-                if (preserve_bindings &&
-                    !bindings_merge_into(&current_env, &b)) {
-                    bindings_free(&b);
+                BindingsBuilder b;
+                if (!bindings_builder_init(&b, NULL)) {
+                    free(vals.items);
                     return;
                 }
-                bindings_free(&b);
-                TAIL_REENTER(next_atom);
+                ok = bindings_builder_add_var_fresh(&b, pat, vals.items[0]);
+                free(vals.items);
+                if (ok) {
+                    const Bindings *bb = bindings_builder_bindings(&b);
+                    Atom *next_atom = bindings_apply((Bindings *)bb, a, body_let);
+                    if (preserve_bindings &&
+                        !bindings_merge_into(&current_env, bb)) {
+                        bindings_builder_free(&b);
+                        return;
+                    }
+                    bindings_builder_free(&b);
+                    TAIL_REENTER(next_atom);
+                }
+                bindings_builder_free(&b);
+                return;
+            } else {
+                BindingsBuilder b;
+                if (!bindings_builder_init(&b, NULL)) {
+                    free(vals.items);
+                    return;
+                }
+                ok = simple_match_builder(pat, vals.items[0], &b);
+                free(vals.items);
+                if (ok) {
+                    const Bindings *bb = bindings_builder_bindings(&b);
+                    Atom *next_atom =
+                        bindings_apply((Bindings *)bb, a, body_let);
+                    if (preserve_bindings &&
+                        !bindings_merge_into(&current_env, bb)) {
+                        bindings_builder_free(&b);
+                        return;
+                    }
+                    bindings_builder_free(&b);
+                    TAIL_REENTER(next_atom);
+                }
+                bindings_builder_free(&b);
+                return;
             }
-            bindings_free(&b);
-            return;
         }
         /* Multi-result: no TCO */
         for (uint32_t i = 0; i < vals.len; i++) {
-            Bindings b; bindings_init(&b);
             if (pat->kind == ATOM_VAR) {
-                bindings_add_var(&b, pat, vals.items[i]);
+                BindingsBuilder b;
+                if (!bindings_builder_init(&b, NULL))
+                    continue;
+                if (!bindings_builder_add_var_fresh(&b, pat, vals.items[i])) {
+                    bindings_builder_free(&b);
+                    continue;
+                }
+                const Bindings *bb = bindings_builder_bindings(&b);
                 eval_for_current_caller(s, a, NULL,
-                                        bindings_apply(&b, a, body_let), fuel, &b,
+                                        bindings_apply((Bindings *)bb, a, body_let), fuel, bb,
                                         &current_env, preserve_bindings, os);
-            } else if (simple_match(pat, vals.items[i], &b)) {
-                eval_for_current_caller(s, a, NULL,
-                                        bindings_apply(&b, a, body_let), fuel, &b,
-                                        &current_env, preserve_bindings, os);
+                bindings_builder_free(&b);
+            } else {
+                BindingsBuilder b;
+                if (!bindings_builder_init(&b, NULL))
+                    continue;
+                if (simple_match_builder(pat, vals.items[i], &b)) {
+                    const Bindings *bb = bindings_builder_bindings(&b);
+                    eval_for_current_caller(s, a, NULL,
+                                            bindings_apply((Bindings *)bb, a, body_let),
+                                            fuel, bb,
+                                            &current_env, preserve_bindings, os);
+                }
+                bindings_builder_free(&b);
             }
-            bindings_free(&b);
         }
         free(vals.items);
         return;
@@ -2810,24 +3087,33 @@ tail_call: ;
         if (inner.len == 1 && !atom_is_empty(inner.items[0])) {
             /* Single-result fast path with TCO */
             Atom *next_atom;
-            Bindings b;
             bool has_binding = false;
             if (var->kind == ATOM_VAR) {
-                bindings_init(&b);
-                has_binding = true;
-                bindings_add_var(&b, var, inner.items[0]);
-                next_atom = bindings_apply(&b, a, tmpl_chain);
+                BindingsBuilder b;
+                if (!bindings_builder_init(&b, NULL)) {
+                    free(inner.items);
+                    return;
+                }
+                has_binding = bindings_builder_add_var_fresh(&b, var, inner.items[0]);
+                if (!has_binding) {
+                    bindings_builder_free(&b);
+                    free(inner.items);
+                    return;
+                }
+                const Bindings *bb = bindings_builder_bindings(&b);
+                next_atom = bindings_apply((Bindings *)bb, a, tmpl_chain);
+                free(inner.items);
+                if (preserve_bindings &&
+                    !bindings_merge_into(&current_env, bb)) {
+                    bindings_builder_free(&b);
+                    return;
+                }
+                bindings_builder_free(&b);
+                TAIL_REENTER(next_atom);
             } else {
                 next_atom = tmpl_chain;
             }
             free(inner.items);
-            if (has_binding && preserve_bindings &&
-                !bindings_merge_into(&current_env, &b)) {
-                bindings_free(&b);
-                return;
-            }
-            if (has_binding)
-                bindings_free(&b);
             TAIL_REENTER(next_atom);
         }
         /* Multi-result: no TCO */
@@ -2835,12 +3121,18 @@ tail_call: ;
             Atom *r = inner.items[i];
             if (atom_is_empty(r)) continue;
             if (var->kind == ATOM_VAR) {
-                Bindings b; bindings_init(&b);
-                bindings_add_var(&b, var, r);
-                Atom *subst = bindings_apply(&b, a, tmpl_chain);
-                eval_for_current_caller(s, a, NULL, subst, fuel, &b,
+                BindingsBuilder b;
+                if (!bindings_builder_init(&b, NULL))
+                    continue;
+                if (!bindings_builder_add_var_fresh(&b, var, r)) {
+                    bindings_builder_free(&b);
+                    continue;
+                }
+                const Bindings *bb = bindings_builder_bindings(&b);
+                Atom *subst = bindings_apply((Bindings *)bb, a, tmpl_chain);
+                eval_for_current_caller(s, a, NULL, subst, fuel, bb,
                                         &current_env, preserve_bindings, os);
-                bindings_free(&b);
+                bindings_builder_free(&b);
             } else {
                 outcome_set_add(os, tmpl_chain, &_empty);
             }
@@ -3410,29 +3702,40 @@ tail_call: ;
         }
         Space *snapshot = space_snapshot_clone(target, a);
         Atom *snapshot_atom = atom_space(a, snapshot);
-        Bindings b;
-        bindings_init(&b);
         if (binder->kind == ATOM_VAR) {
-            bindings_add_var(&b, binder, snapshot_atom);
-            Atom *next_atom = bindings_apply(&b, a, body);
-            if (preserve_bindings &&
-                !bindings_merge_into(&current_env, &b)) {
-                bindings_free(&b);
+            BindingsBuilder b;
+            if (!bindings_builder_init(&b, NULL))
+                return;
+            if (!bindings_builder_add_var_fresh(&b, binder, snapshot_atom)) {
+                bindings_builder_free(&b);
                 return;
             }
-            bindings_free(&b);
-            TAIL_REENTER(next_atom);
-        } else if (simple_match(binder, snapshot_atom, &b)) {
-            Atom *next_atom = bindings_apply(&b, a, body);
+            const Bindings *bb = bindings_builder_bindings(&b);
+            Atom *next_atom = bindings_apply((Bindings *)bb, a, body);
             if (preserve_bindings &&
-                !bindings_merge_into(&current_env, &b)) {
-                bindings_free(&b);
+                !bindings_merge_into(&current_env, bb)) {
+                bindings_builder_free(&b);
                 return;
             }
-            bindings_free(&b);
+            bindings_builder_free(&b);
             TAIL_REENTER(next_atom);
+        } else {
+            BindingsBuilder b;
+            if (!bindings_builder_init(&b, NULL))
+                return;
+            if (simple_match_builder(binder, snapshot_atom, &b)) {
+                const Bindings *bb = bindings_builder_bindings(&b);
+                Atom *next_atom = bindings_apply((Bindings *)bb, a, body);
+                if (preserve_bindings &&
+                    !bindings_merge_into(&current_env, bb)) {
+                    bindings_builder_free(&b);
+                    return;
+                }
+                bindings_builder_free(&b);
+                TAIL_REENTER(next_atom);
+            }
+            bindings_builder_free(&b);
         }
-        bindings_free(&b);
         return;
     }
 
@@ -3459,6 +3762,28 @@ tail_call: ;
         return;
     }
 
+    if (head_id == g_builtin_syms.space_engine) {
+        if (active_profile() &&
+            !cetta_profile_allows_surface(active_profile(), "space-engine")) {
+            outcome_set_add(os, profile_surface_error(a, atom, "space-engine"), &_empty);
+            return;
+        }
+        if (nargs != 1 || !g_registry) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Space *target = resolve_single_space_arg(s, a, expr_arg(atom, 0), fuel);
+        if (!target) {
+            outcome_set_add(os, space_arg_error(a, atom,
+                "space-engine expects a space as its argument"), &_empty);
+            return;
+        }
+        outcome_set_add(os, space_engine_atom(a, target), &_empty);
+        return;
+    }
+
     if (head_id == g_builtin_syms.space_match_backend) {
         if (active_profile() &&
             !cetta_profile_allows_surface(active_profile(), "space-match-backend")) {
@@ -3478,6 +3803,45 @@ tail_call: ;
             return;
         }
         outcome_set_add(os, space_match_backend_atom(a, target), &_empty);
+        return;
+    }
+
+    if (head_id == g_builtin_syms.space_set_match_backend_bang) {
+        if (active_profile() &&
+            !cetta_profile_allows_surface(active_profile(), "space-set-match-backend!")) {
+            outcome_set_add(os,
+                profile_surface_error(a, atom, "space-set-match-backend!"), &_empty);
+            return;
+        }
+        if (nargs != 2 || !g_registry) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Space *target = resolve_single_space_arg(s, a, expr_arg(atom, 0), fuel);
+        if (!target) {
+            outcome_set_add(os, space_arg_error(a, atom,
+                "space-set-match-backend! expects a space as its first argument"), &_empty);
+            return;
+        }
+        ResultSet backend_rs;
+        result_set_init(&backend_rs);
+        metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &backend_rs);
+        Atom *backend_atom = (backend_rs.len > 0) ? backend_rs.items[0] : expr_arg(atom, 1);
+        const char *backend_name = string_like_atom(backend_atom);
+        SpaceMatchBackendKind kind = SPACE_MATCH_BACKEND_NATIVE;
+        if (!backend_name ||
+            !space_match_backend_kind_from_name(backend_name, &kind) ||
+            !space_match_backend_try_set(target, kind)) {
+            free(backend_rs.items);
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "UnknownSpaceMatchBackend")),
+                &_empty);
+            return;
+        }
+        free(backend_rs.items);
+        outcome_set_add(os, atom_unit(a), &_empty);
         return;
     }
 
@@ -4004,10 +4368,15 @@ tail_call: ;
             rb_set_init(&vals);
             Atom *bound_val_expr = bindings_apply(&refs.items[i].env, a, expr_arg(atom, 1));
             metta_eval_bind(s, a, bound_val_expr, fuel, &vals);
+            BindingsBuilder merged_builder;
+            if (!bindings_builder_init(&merged_builder, &refs.items[i].env)) {
+                outcome_set_free(&vals);
+                continue;
+            }
             for (uint32_t vi = 0; vi < vals.len; vi++) {
-                Bindings merged;
-                if (!bindings_clone_merge(&merged, &refs.items[i].env,
-                                          &vals.items[vi].env))
+                BindingsMergeAttempt attempt;
+                if (!bindings_builder_merge_or_clone(&merged_builder, &refs.items[i].env,
+                                                     &vals.items[vi].env, &attempt))
                     continue;
                 StateCell *cell = (StateCell *)state_ref->ground.ptr;
                 Atom *new_v = bindings_apply(&vals.items[vi].env, a, vals.items[vi].atom);
@@ -4027,7 +4396,7 @@ tail_call: ;
                 free(new_types);
                 if (type_ok) {
                     cell->value = g_persistent_arena ? atom_deep_copy(g_persistent_arena, new_v) : new_v;
-                    outcome_set_add(os, state_ref, &merged);
+                    outcome_set_add(os, state_ref, attempt.env);
                 } else {
                     Atom *error_state_arg = expr_arg(atom, 0);
                     const char *error_state_name = atom_name_cstr(error_state_arg);
@@ -4045,10 +4414,12 @@ tail_call: ;
                         atom_symbol(a, "BadArgType"), atom_int(a, 2),
                         cell->content_type, actual_t
                     }, 4);
-                    outcome_set_add(os, atom_error(a, atom_expr(a, full, 3), reason), &merged);
+                    outcome_set_add(os, atom_error(a, atom_expr(a, full, 3), reason),
+                                    attempt.env);
                 }
-                bindings_free(&merged);
+                bindings_merge_attempt_finish(&merged_builder, &attempt);
             }
+            bindings_builder_free(&merged_builder);
             outcome_set_free(&vals);
         }
         outcome_set_free(&refs);

@@ -35,6 +35,20 @@ typedef struct {
     uint32_t len, cap;
 } BindingSet;
 
+typedef struct {
+    uint32_t len;
+    uint32_t eq_len;
+    uint8_t lookup_cache_count;
+    uint8_t lookup_cache_next;
+} BindingsBuilderTrailEntry;
+
+typedef struct {
+    Bindings current;
+    BindingsBuilderTrailEntry *trail;
+    uint32_t trail_len;
+    uint32_t trail_cap;
+} BindingsBuilder;
+
 void      bindings_init(Bindings *b);
 void      bindings_free(Bindings *b);
 bool      bindings_clone(Bindings *dst, const Bindings *src);
@@ -57,6 +71,18 @@ void      binding_set_init(BindingSet *bs);
 void      binding_set_free(BindingSet *bs);
 bool      binding_set_push(BindingSet *bs, const Bindings *b);
 void      binding_set_push_move(BindingSet *bs, Bindings *b);
+bool      bindings_builder_init(BindingsBuilder *bb, const Bindings *base);
+void      bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned);
+void      bindings_builder_free(BindingsBuilder *bb);
+uint32_t  bindings_builder_save(const BindingsBuilder *bb);
+void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);
+bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
+                                        SymbolId spelling, Atom *val);
+bool      bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var,
+                                         Atom *val);
+bool      bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src);
+const Bindings *bindings_builder_bindings(const BindingsBuilder *bb);
+void      bindings_builder_take(BindingsBuilder *bb, Bindings *out);
 
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 
@@ -64,6 +90,7 @@ void      binding_set_push_move(BindingSet *bs, Bindings *b);
    On success, fills bindings and returns true.
    On failure, returns false (bindings undefined). */
 bool simple_match(Atom *pattern, Atom *target, Bindings *b);
+bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb);
 
 /* ── Variable renaming (standardization apart, à la Vampire) ───────────── */
 
@@ -85,6 +112,7 @@ Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);
    On success, fills bindings and returns true.
    On failure, returns false. */
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
+bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
 
 /* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
@@ -106,5 +134,6 @@ bool bindings_has_loop(Bindings *b);
 /* Match two types. %Undefined% and Atom are wildcards (always match).
    Otherwise delegates to match_atoms. Returns true if types match. */
 bool match_types(Atom *type1, Atom *type2, Bindings *b);
+bool match_types_builder(Atom *type1, Atom *type2, BindingsBuilder *bb);
 
 #endif /* CETTA_MATCH_H */

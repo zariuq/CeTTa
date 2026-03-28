@@ -17,7 +17,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS)
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_MATCH_BACKENDS = native-subst-tree native-candidate-exact pathmap-imported
@@ -166,11 +166,26 @@ test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-test: $(BIN) test-git-module test-symbolid-guard
+test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2-lowering-core test-mm2-mork-program-space
 	@pass=0; fail=0; skip=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
 		[ -f "$$f" ] || continue; \
+		if [ "$$f" = "tests/test_mm2_preview_surface.metta" ]; then \
+			echo "SKIP: $$f (preview lane is no longer part of the active MM2 plan)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ]; then \
+			echo "SKIP: $$f (pathmap-imported specific regression)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if [ "$$f" = "tests/test_imported_match_chain_conjunction_lowering.metta" ]; then \
+			echo "SKIP: $$f (pathmap-imported specific regression)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
 		exp="$${f%.metta}.expected"; \
 		if [ ! -f "$$exp" ]; then \
 			echo "SKIP: $$f (no .expected file)"; \
@@ -379,6 +394,37 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he_extended compile space-kind"; \
 			fail=$$((fail + 1)); \
 		fi; \
+		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_space_engine_extension.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/spec_profile_space_engine_extension.expected)" ]; then \
+			echo "PASS: he_extended space-engine extension"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended space-engine extension"; \
+			diff <(cat tests/spec_profile_space_engine_extension.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_space_engine_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface space-engine is unavailable in profile he_compat"; then \
+			echo "PASS: he_compat space-engine guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat space-engine guard"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_space_engine_extension.metta 2>&1 >/dev/null); \
+		status=$$?; \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'space-engine' is unavailable in profile 'he_compat'"; then \
+			echo "PASS: he_compat compile space-engine guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat compile space-engine guard"; \
+			printf '%s\n' "$$compile_output"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_space_engine_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he_extended compile space-engine"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended compile space-engine"; \
+			fail=$$((fail + 1)); \
+		fi; \
 		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_space_match_backend_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_space_match_backend_extension.expected)" ]; then \
 			echo "PASS: he_extended space-match-backend extension"; pass=$$((pass + 1)); \
@@ -408,6 +454,37 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			echo "PASS: he_extended compile space-match-backend"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he_extended compile space-match-backend"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/spec_profile_space_set_match_backend_extension.expected)" ]; then \
+			echo "PASS: he_extended space-set-match-backend! extension"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended space-set-match-backend! extension"; \
+			diff <(cat tests/spec_profile_space_set_match_backend_extension.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface space-set-match-backend! is unavailable in profile he_compat"; then \
+			echo "PASS: he_compat space-set-match-backend! guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat space-set-match-backend! guard"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_space_set_match_backend_extension.metta 2>&1 >/dev/null); \
+		status=$$?; \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'space-set-match-backend!' is unavailable in profile 'he_compat'"; then \
+			echo "PASS: he_compat compile space-set-match-backend! guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat compile space-set-match-backend! guard"; \
+			printf '%s\n' "$$compile_output"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he_extended compile space-set-match-backend!"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended compile space-set-match-backend!"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
@@ -583,6 +660,21 @@ test-backends: $(BIN)
 		pass=0; fail=0; skip=0; \
 		for f in tests/test_*.metta tests/he_*.metta; do \
 			[ -f "$$f" ] || continue; \
+			if [ "$$f" = "tests/test_mm2_preview_surface.metta" ]; then \
+				echo "SKIP: $$f (preview lane is no longer part of the active MM2 plan)"; \
+				skip=$$((skip + 1)); \
+				continue; \
+			fi; \
+			if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ]; then \
+				echo "SKIP: $$f (pathmap-imported specific regression)"; \
+				skip=$$((skip + 1)); \
+				continue; \
+			fi; \
+			if [ "$$f" = "tests/test_imported_match_chain_conjunction_lowering.metta" ]; then \
+				echo "SKIP: $$f (pathmap-imported specific regression)"; \
+				skip=$$((skip + 1)); \
+				continue; \
+			fi; \
 			exp="$${f%.metta}.expected"; \
 			if [ ! -f "$$exp" ]; then \
 				echo "SKIP: $$f (no .expected file)"; \
@@ -604,15 +696,57 @@ test-backends: $(BIN)
 		[ $$fail -eq 0 ] || exit 1; \
 	done
 	@$(MAKE) -s test-pathmap-imported-bridge-v2
+	@$(MAKE) -s test-pathmap-imported-conjunction-init
 	@$(MAKE) -s test-pathmap-imported-match-chain
+	@$(MAKE) -s test-pathmap-imported-match-chain-v3
 	@$(MAKE) -s test-mork-lib-pathmap-imported
+	@$(MAKE) -s test-mm2-mork-program-space
+
+test-mm2-lowering-core: $(BIN)
+	@result=$$(./$(BIN) --lang mm2 tests/mm2_lowering_core.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/mm2_lowering_core.expected)" ]; then \
+		echo "PASS: mm2 lowering core"; \
+	else \
+		echo "FAIL: mm2 lowering core"; \
+		diff <(cat tests/mm2_lowering_core.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-mm2-mork-program-space: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 MORK program-space lowering regression (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+	result=$$(./$(BIN) --space-match-backend pathmap-imported --lang mm2 tests/support/mm2_mork_program_space.metta 2>&1); \
+	if [ "$$result" = "$$expected" ]; then \
+		echo "PASS: mm2 MORK program-space lowering regression"; \
+	else \
+		echo "FAIL: mm2 MORK program-space lowering regression"; \
+		diff <(echo "$$expected") <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-pathmap-imported-conjunction-init: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: pathmap-imported conjunction init regression (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --profile he_extended --space-match-backend pathmap-imported --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_imported_conjunction_bridge_init_regression.expected)" ]; then \
+		echo "PASS: pathmap-imported conjunction init regression"; \
+	else \
+		echo "FAIL: pathmap-imported conjunction init regression"; \
+		diff <(cat tests/test_imported_conjunction_bridge_init_regression.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
 
 test-pathmap-imported-bridge-v2: $(BIN)
 	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
 		echo "SKIP: pathmap-imported bridge v2 regression (no MORK bridge library configured)"; \
 		exit 0; \
 	fi; \
-	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+		expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-match-backend pathmap-imported --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap-imported bridge v2 regression"; \
@@ -636,12 +770,26 @@ test-pathmap-imported-match-chain: $(BIN)
 		exit 1; \
 	fi
 
+test-pathmap-imported-match-chain-v3: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: pathmap-imported nested-match conjunction lowering regression (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --space-match-backend pathmap-imported --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_imported_match_chain_conjunction_lowering.expected)" ]; then \
+		echo "PASS: pathmap-imported nested-match conjunction lowering regression"; \
+	else \
+		echo "FAIL: pathmap-imported nested-match conjunction lowering regression"; \
+		diff <(cat tests/test_imported_match_chain_conjunction_lowering.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
 test-mork-lib-pathmap-imported: $(BIN)
 	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
 		echo "SKIP: mork lib pathmap-imported probe (no MORK bridge library configured)"; \
 		exit 0; \
 	fi; \
-	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-match-backend pathmap-imported --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mork lib pathmap-imported probe"; \
@@ -667,6 +815,26 @@ test-duplicate-multiplicity-backends: $(BIN)
 			exit 1; \
 		fi; \
 	done
+
+test-runtime-stats-cli: $(BIN)
+	@result=$$(./$(BIN) --emit-runtime-stats --suppress-results --lang he tests/support/runtime_stats_cli_probe.metta 2>&1 >/dev/null); \
+	if printf '%s\n' "$$result" | grep -Fq 'runtime-counter query-equations ' && \
+	   printf '%s\n' "$$result" | grep -Fq 'runtime-counter rename-vars ' && \
+	   ! printf '%s\n' "$$result" | grep -Fq '[ok]'; then \
+		echo "PASS: runtime stats cli flags"; \
+	else \
+		echo "FAIL: runtime stats cli flags"; \
+		printf '%s\n' "$$result"; \
+		exit 1; \
+	fi
+
+probe-imported-conjunction-lanes: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: imported conjunction lane probe (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	./$(BIN) --profile he_extended --space-match-backend pathmap-imported --lang he \
+		tests/support/imported_conjunction_lane_probe.metta
 
 # Slow: regenerate .expected files from HE CLI oracle.
 # Run ONE AT A TIME to avoid OOM. Requires conda hyperon env.
@@ -754,6 +922,35 @@ bench-join8-backends: $(BIN)
 		else \
 			echo "FAIL: expected 4096, got $$count for $$backend"; exit 1; \
 		fi; \
+	done
+
+bench-join12-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		count=$$(./$(BIN) --space-match-backend "$$backend" --count-only tests/bench_matchjoin12_he.metta 2>&1 | tail -1); \
+		echo "$$backend join12 total: $$count results"; \
+		if [ "$$count" = "20736" ]; then \
+			echo "PASS: $$backend join12 count matches"; \
+		else \
+			echo "FAIL: expected 20736, got $$count for $$backend"; exit 1; \
+		fi; \
+	done
+
+bench-conj12-runtime-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		./scripts/bench_space_match_runtime.sh tests/bench_conjunction12_he.metta "$$backend"; \
+		echo "---"; \
+	done
+
+bench-join8-runtime-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		./scripts/bench_space_match_runtime.sh tests/bench_matchjoin8_he.metta "$$backend"; \
+		echo "---"; \
+	done
+
+bench-join12-runtime-backends: $(BIN)
+	@for backend in $(SPACE_MATCH_BACKENDS); do \
+		./scripts/bench_space_match_runtime.sh tests/bench_matchjoin12_he.metta "$$backend"; \
+		echo "---"; \
 	done
 
 bench-d4: $(BIN)
@@ -860,4 +1057,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: all clean test test-backends test-pathmap-imported-bridge-v2 test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: all clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-pathmap-imported-bridge-v2 test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime

@@ -40,7 +40,9 @@
 (: new-space (-> SpaceType))
 (: new-space (-> Atom SpaceType))
 (: space-kind (-> SpaceType Atom))
+(: space-engine (-> SpaceType Atom))
 (: space-match-backend (-> SpaceType Atom))
+(: space-set-match-backend! (-> SpaceType Atom (->)))
 (: space-capabilities (-> SpaceType Expression))
 (: space-len (-> SpaceType Number))
 (: space-push (-> SpaceType Atom (->)))
@@ -172,11 +174,24 @@
     (@param "Space to inspect")))
   (@return "Kind symbol such as atom or stack"))
 
+(@doc space-engine
+  (@desc "Reports the configured engine family of a space. Today native-subst-tree and native-candidate-exact report native, while pathmap-imported reports mork. This is engine-family introspection, not a guarantee that every query avoided lower-level fallback.")
+  (@params (
+    (@param "Space to inspect")))
+  (@return "Engine-family symbol such as native or mork"))
+
 (@doc space-match-backend
   (@desc "Returns the current CeTTa match backend attached to a space, such as native-subst-tree or pathmap-imported. This is backend introspection, not a promise that the full discipline x engine surface already exists.")
   (@params (
     (@param "Space to inspect")))
   (@return "Backend symbol describing how the space currently matches"))
+
+(@doc space-set-match-backend!
+  (@desc "Mutates the exact CeTTa match backend attached to a space. This is a low-level extension seam intended for explicit engine/backend experiments and library code; use higher-level helpers such as lib/mork.metta when you want a cleaner MORK-facing surface.")
+  (@params (
+    (@param "Space to mutate")
+    (@param "Backend symbol such as native-subst-tree, native-candidate-exact, or pathmap-imported")))
+  (@return "Unit on success"))
 
 (@doc space-capabilities
   (@desc "Returns the semantic capabilities provided by the space discipline itself, such as ordered/hash/peek/nodup. This does not describe the lower-level matcher backend; use space-match-backend for that.")

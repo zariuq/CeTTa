@@ -1548,7 +1548,15 @@ static void imported_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) 
        candidate enumeration and local rematch. */
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_IMPORTED_BRIDGE_V2_FALLBACK);
     uint32_t *candidates = NULL;
-    uint32_t ncand = native_candidates(s, query, &candidates);
+    uint32_t ncand = 0;
+    if (st->bridge_active && imported_bridge_query_indices(s, query, &candidates, &ncand)) {
+        /* Keep fallback candidate enumeration anchored in the live imported
+           bridge state. Reusing the native trie on an imported space can miss
+           late-added atoms, because the imported backend does not maintain the
+           native incremental trie/index caches. */
+    } else {
+        ncand = native_candidates(s, query, &candidates);
+    }
     smset_init(out);
     for (uint32_t i = 0; i < ncand; i++) {
         Bindings empty;
@@ -1880,15 +1888,20 @@ cleanup:
 static void imported_query_conjunction(Space *s, Arena *a, Atom **patterns,
                                        uint32_t npatterns, const Bindings *seed,
                                        BindingSet *out) {
-    if (s->match_backend.imported.bridge_active) {
-        if (imported_bridge_query_conjunction_fast(s, a, patterns, npatterns, seed, out))
-            return;
-        space_query_conjunction_default(s, a, patterns, npatterns, seed, out);
-        return;
-    }
     if (npatterns == 0) {
         binding_set_init(out);
         if (seed) binding_set_push(out, seed);
+        return;
+    }
+
+    imported_ensure_built(s);
+    if (s->match_backend.imported.bridge_active) {
+        if (imported_bridge_query_conjunction_fast(s, a, patterns, npatterns, seed, out)) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_IMPORTED_BRIDGE_V3_HIT);
+            return;
+        }
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_IMPORTED_BRIDGE_V3_FALLBACK);
+        space_query_conjunction_default(s, a, patterns, npatterns, seed, out);
         return;
     }
 

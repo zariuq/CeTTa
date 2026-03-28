@@ -69,11 +69,18 @@ typedef struct {
     HashConsTable *hashcons;
 } Arena;
 
+typedef struct {
+    ArenaBlock *head;
+    size_t used;
+} ArenaMark;
+
 void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
 void  arena_free(Arena *a);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
+ArenaMark arena_mark(const Arena *a);
+void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
 

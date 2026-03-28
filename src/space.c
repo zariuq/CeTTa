@@ -992,6 +992,8 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
             uint32_t nop = get_annotated_types(s, a, op, &op_types);
+            Arena scratch;
+            arena_init(&scratch);
             /* Also try recursively inferred types for the operator */
             if (nop == 0 && op->kind == ATOM_EXPR) {
                 Atom **recur_types = NULL;
@@ -1018,46 +1020,57 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                     tried_func_type = true;
                     /* Check arity match */
                     if (ft->expr.len - 2 != atom->expr.len - 1) continue;
-                    /* Return type is the last element of (-> ... ret) */
-                    Atom *ret_type = ft->expr.elems[ft->expr.len - 1];
                     /* Freshen type vars and try to unify args to get concrete ret type */
+                    ArenaMark scratch_mark = arena_mark(&scratch);
                     uint32_t tsuf = fresh_var_suffix();
-                    Atom *fresh_ft = rename_vars(a, ft, tsuf);
+                    Atom *fresh_ft = rename_vars(&scratch, ft, tsuf);
                     Atom *fresh_ret = fresh_ft->expr.elems[fresh_ft->expr.len - 1];
                     Bindings tb;
                     bindings_init(&tb);
                     bool all_ok = true;
                     for (uint32_t ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
                         /* Apply accumulated bindings to resolve type vars from earlier args */
-                        Atom *arg_type_decl = bindings_apply(&tb, a, fresh_ft->expr.elems[ai + 1]);
+                        Atom *arg_type_decl =
+                            bindings_apply(&tb, &scratch, fresh_ft->expr.elems[ai + 1]);
                         Atom **atypes = NULL;
                         uint32_t nat = get_atom_types(s, a, atom->expr.elems[ai + 1], &atypes);
                         bool found = false;
+                        BindingsBuilder trial_builder;
+                        bindings_builder_init(&trial_builder, &tb);
                         for (uint32_t ti = 0; ti < nat; ti++) {
-                            if (match_types(arg_type_decl, atypes[ti], &tb)) {
+                            uint32_t mark = bindings_builder_save(&trial_builder);
+                            if (match_types_builder(arg_type_decl, atypes[ti], &trial_builder)) {
+                                Bindings next_tb;
+                                bindings_init(&next_tb);
+                                bindings_builder_take(&trial_builder, &next_tb);
+                                bindings_replace(&tb, &next_tb);
                                 found = true;
                                 break;
                             }
+                            bindings_builder_rollback(&trial_builder, mark);
                         }
+                        if (!found)
+                            bindings_builder_free(&trial_builder);
                         free(atypes);
                         if (!found) all_ok = false;
                     }
                     if (all_ok) {
                         /* Apply accumulated type bindings to return type,
                            then normalize arithmetic in type expressions */
-                        Atom *concrete_ret = normalize_type_expr(a,
-                            bindings_apply(&tb, a, fresh_ret));
+                        Atom *concrete_ret = normalize_type_expr(
+                            &scratch, bindings_apply(&tb, &scratch, fresh_ret));
                         if (count >= 1) {
                             types = cetta_realloc(types, sizeof(Atom *) * (count + 1));
                         } else {
                             types = cetta_malloc(sizeof(Atom *));
                         }
-                        types[count++] = concrete_ret;
+                        types[count++] = atom_deep_copy(a, concrete_ret);
                     }
                     bindings_free(&tb);
-                    (void)ret_type;
+                    arena_reset(&scratch, scratch_mark);
                 }
             }
+            arena_free(&scratch);
             free(op_types);
             /* If we tried function types but none matched → type error (empty) */
             if (tried_func_type && count == 0) {

@@ -55,6 +55,7 @@ typedef struct {
     X(search_policy, "search-policy") \
     X(order, "order") \
     X(native, "native") \
+    X(mork_text, "mork") \
     X(reverse, "reverse") \
     X(lex, "lex") \
     X(shortlex, "shortlex") \
@@ -98,7 +99,9 @@ typedef struct {
     X(runtime_stats_bang, "runtime-stats!") \
     X(with_space_snapshot, "with-space-snapshot") \
     X(space_kind, "space-kind") \
+    X(space_engine, "space-engine") \
     X(space_match_backend, "space-match-backend") \
+    X(space_set_match_backend_bang, "space-set-match-backend!") \
     X(space_capabilities, "space-capabilities") \
     X(space_len, "space-len") \
     X(space_push, "space-push") \

@@ -274,6 +274,15 @@ void bindings_init(Bindings *b) {
 
 void bindings_free(Bindings *b) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_FREE);
+    if (b->cap > 0 || b->eq_cap > 0)
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_FREE_NONEMPTY);
+    if (b->cap > 0)
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_BINDINGS_RELEASED_ENTRY_CAPACITY,
+                                b->cap);
+    if (b->eq_cap > 0)
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_BINDINGS_RELEASED_CONSTRAINT_CAPACITY,
+            b->eq_cap);
     bindings_entries_release(b->entries, b->cap);
     bindings_constraints_release(b->constraints, b->eq_cap);
     bindings_init(b);
@@ -869,6 +878,284 @@ void binding_set_push_move(BindingSet *bs, Bindings *b) {
     bs->len++;
 }
 
+/* ── BindingsBuilder (branch-local speculative bindings) ───────────────── */
+
+/*
+ * INVARIANT: the builder only owns speculative branch-local edits.
+ * No trail entry may reference atoms published into an OutcomeSet or any
+ * other cross-branch accumulator. Freezing happens only at the
+ * speculation -> publication boundary.
+ *
+ * This first tranche intentionally supports fresh binder growth rather than
+ * arbitrary in-place unification updates. Positive example: dependent
+ * telescope binders added while exploring one function-argument branch.
+ * Negative example: trailing through published result environments.
+ */
+
+static bool bindings_builder_trail_reserve(BindingsBuilder *bb, uint32_t needed) {
+    if (needed <= bb->trail_cap)
+        return true;
+    uint32_t next_cap = bb->trail_cap ? bb->trail_cap * 2 : 8;
+    while (next_cap < needed)
+        next_cap *= 2;
+    bb->trail = cetta_realloc(bb->trail,
+                              sizeof(BindingsBuilderTrailEntry) * next_cap);
+    bb->trail_cap = next_cap;
+    return true;
+}
+
+static bool bindings_builder_snapshot(BindingsBuilder *bb) {
+    if (!bindings_builder_trail_reserve(bb, bb->trail_len + 1))
+        return false;
+    bb->trail[bb->trail_len++] = (BindingsBuilderTrailEntry){
+        .len = bb->current.len,
+        .eq_len = bb->current.eq_len,
+        .lookup_cache_count = bb->current.lookup_cache_count,
+        .lookup_cache_next = bb->current.lookup_cache_next,
+    };
+    return true;
+}
+
+bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
+    bindings_init(&bb->current);
+    bb->trail = NULL;
+    bb->trail_len = 0;
+    bb->trail_cap = 0;
+    if (!base)
+        return true;
+    if (!bindings_clone(&bb->current, base)) {
+        free(bb->trail);
+        bb->trail = NULL;
+        bb->trail_len = 0;
+        bb->trail_cap = 0;
+        bindings_free(&bb->current);
+        return false;
+    }
+    return true;
+}
+
+void bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned) {
+    bb->current = *owned;
+    bb->trail = NULL;
+    bb->trail_len = 0;
+    bb->trail_cap = 0;
+    bindings_init(owned);
+}
+
+void bindings_builder_free(BindingsBuilder *bb) {
+    free(bb->trail);
+    bb->trail = NULL;
+    bb->trail_len = 0;
+    bb->trail_cap = 0;
+    bindings_free(&bb->current);
+}
+
+uint32_t bindings_builder_save(const BindingsBuilder *bb) {
+    return bb->trail_len;
+}
+
+void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
+    while (bb->trail_len > mark) {
+        BindingsBuilderTrailEntry *entry = &bb->trail[--bb->trail_len];
+        bb->current.len = entry->len;
+        bb->current.eq_len = entry->eq_len;
+        bb->current.lookup_cache_count = entry->lookup_cache_count;
+        bb->current.lookup_cache_next = entry->lookup_cache_next;
+    }
+}
+
+static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
+                                             SymbolId spelling, Atom *val,
+                                             bool legacy_name_fallback) {
+    if (!bb)
+        return false;
+    if (val->kind == ATOM_VAR && binding_var_eq(var_id, val->var_id))
+        return true;
+    if (val->kind == ATOM_VAR) {
+        Atom *other = bindings_lookup_id(&bb->current, val->var_id);
+        if (other && other->kind == ATOM_VAR && binding_var_eq(other->var_id, var_id))
+            return true;
+    }
+
+    int32_t existing_idx = bindings_lookup_index(&bb->current, var_id);
+    if (existing_idx >= 0) {
+        Atom *existing = bb->current.entries[existing_idx].val;
+        if (legacy_name_fallback &&
+            !bb->current.entries[existing_idx].legacy_name_fallback) {
+            return false;
+        }
+        if (existing == val || atom_eq(existing, val))
+            return true;
+        uint32_t mark = bindings_builder_save(bb);
+        if (match_atoms_builder(existing, val, bb))
+            return true;
+        bindings_builder_rollback(bb, mark);
+        return false;
+    }
+
+    if (!bindings_builder_snapshot(bb))
+        return false;
+
+    if (!bindings_reserve_entries(&bb->current, bb->current.len + 1)) {
+        bb->trail_len--;
+        return false;
+    }
+    bb->current.entries[bb->current.len].var_id = var_id;
+    bb->current.entries[bb->current.len].spelling = spelling;
+    bb->current.entries[bb->current.len].val = val;
+    bb->current.entries[bb->current.len].legacy_name_fallback = legacy_name_fallback;
+    if (bb->current.len + 1 >= BINDINGS_LOOKUP_CACHE_MIN_LEN)
+        bindings_lookup_cache_note(&bb->current, var_id, bb->current.len);
+    bb->current.len++;
+    return true;
+}
+
+bool bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
+                                   SymbolId spelling, Atom *val) {
+    return bindings_builder_add_id_internal(bb, var_id, spelling, val, false);
+}
+
+bool bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var, Atom *val) {
+    return bindings_builder_add_id_fresh(bb, var->var_id, var->sym_id, val);
+}
+
+static bool bindings_builder_store_constraint(BindingsBuilder *bb,
+                                              Atom *lhs, Atom *rhs) {
+    BindingConstraint next = {.lhs = lhs, .rhs = rhs};
+    for (uint32_t i = 0; i < bb->current.eq_len; i++) {
+        if (constraint_pair_eq(&bb->current.constraints[i], &next))
+            return true;
+    }
+    if (!bindings_builder_snapshot(bb))
+        return false;
+    if (!bindings_reserve_constraints(&bb->current, bb->current.eq_len + 1)) {
+        bb->trail_len--;
+        return false;
+    }
+    bb->current.constraints[bb->current.eq_len++] = next;
+    return true;
+}
+
+static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
+                                                     Atom *lhs, Atom *rhs,
+                                                     bool normalize_constraints);
+
+static bool bindings_builder_normalize_constraints(BindingsBuilder *bb) {
+    if (bb->current.eq_len == 0)
+        return true;
+    BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
+    BindingConstraint *pending = bb->current.eq_len <= BINDINGS_TEMP_STACK_CAP
+        ? pending_stack
+        : cetta_malloc(sizeof(BindingConstraint) * bb->current.eq_len);
+    uint32_t npending = bb->current.eq_len;
+    for (uint32_t i = 0; i < npending; i++)
+        pending[i] = bb->current.constraints[i];
+    bb->current.eq_len = 0;
+    for (uint32_t i = 0; i < npending; i++) {
+        if (!bindings_builder_add_constraint_internal(
+                bb, pending[i].lhs, pending[i].rhs, false)) {
+            if (pending != pending_stack)
+                free(pending);
+            return false;
+        }
+    }
+    if (pending != pending_stack)
+        free(pending);
+    return true;
+}
+
+static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
+                                                     Atom *lhs, Atom *rhs,
+                                                     bool normalize_constraints) {
+    Bindings *current = &bb->current;
+    lhs = bindings_resolve_atom(current, lhs, 0);
+    rhs = bindings_resolve_atom(current, rhs, 0);
+
+    if (atom_eq_under_bindings(current, lhs, rhs, 0))
+        return true;
+    if (lhs->kind == ATOM_VAR) {
+        if (!bindings_builder_add_id_internal(bb, lhs->var_id, lhs->sym_id,
+                                              rhs, false)) {
+            return false;
+        }
+    } else if (rhs->kind == ATOM_VAR) {
+        if (!bindings_builder_add_id_internal(bb, rhs->var_id, rhs->sym_id,
+                                              lhs, false)) {
+            return false;
+        }
+    } else if (!atom_contains_unbound_var(current, lhs, 0) &&
+               !atom_contains_unbound_var(current, rhs, 0)) {
+        return false;
+    } else if (!bindings_builder_store_constraint(bb, lhs, rhs)) {
+        return false;
+    }
+
+    if (normalize_constraints && !bindings_builder_normalize_constraints(bb))
+        return false;
+    return true;
+}
+
+bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
+    if (!bb || !src)
+        return true;
+    if (src->len == 0 && src->eq_len == 0)
+        return true;
+
+    uint32_t mark = bindings_builder_save(bb);
+    uint32_t pending_cap = bb->current.eq_len + src->eq_len + 1;
+    BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
+    BindingConstraint *pending = pending_cap <= BINDINGS_TEMP_STACK_CAP
+        ? pending_stack
+        : cetta_malloc(sizeof(BindingConstraint) * pending_cap);
+    uint32_t npending = 0;
+    for (uint32_t i = 0; i < bb->current.eq_len; i++)
+        pending[npending++] = bb->current.constraints[i];
+    for (uint32_t i = 0; i < src->eq_len; i++)
+        pending[npending++] = src->constraints[i];
+
+    bb->current.eq_len = 0;
+    for (uint32_t i = 0; i < src->len; i++) {
+        if (!bindings_builder_add_id_internal(bb, src->entries[i].var_id,
+                                              src->entries[i].spelling,
+                                              src->entries[i].val,
+                                              src->entries[i].legacy_name_fallback)) {
+            if (pending != pending_stack)
+                free(pending);
+            bindings_builder_rollback(bb, mark);
+            return false;
+        }
+    }
+    for (uint32_t i = 0; i < npending; i++) {
+        if (!bindings_builder_add_constraint_internal(
+                bb, pending[i].lhs, pending[i].rhs, false)) {
+            if (pending != pending_stack)
+                free(pending);
+            bindings_builder_rollback(bb, mark);
+            return false;
+        }
+    }
+    if (pending != pending_stack)
+        free(pending);
+    if (!bindings_builder_normalize_constraints(bb)) {
+        bindings_builder_rollback(bb, mark);
+        return false;
+    }
+    return true;
+}
+
+const Bindings *bindings_builder_bindings(const BindingsBuilder *bb) {
+    return &bb->current;
+}
+
+void bindings_builder_take(BindingsBuilder *bb, Bindings *out) {
+    bindings_move(out, &bb->current);
+    free(bb->trail);
+    bb->trail = NULL;
+    bb->trail_len = 0;
+    bb->trail_cap = 0;
+}
+
 /* ── Variable renaming (standardization apart) ─────────────────────────── */
 
 static uint32_t g_var_counter = 0;
@@ -1089,6 +1376,55 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
     return false;
 }
 
+static bool simple_match_builder_rec(Atom *pattern, Atom *target,
+                                     BindingsBuilder *bb) {
+    if (pattern->kind == ATOM_VAR)
+        return bindings_builder_add_var_fresh(bb, pattern, target);
+
+    if (pattern->kind != target->kind)
+        return false;
+
+    switch (pattern->kind) {
+    case ATOM_SYMBOL:
+        return pattern->sym_id == target->sym_id;
+
+    case ATOM_GROUNDED:
+        if (pattern->ground.gkind != target->ground.gkind)
+            return false;
+        switch (pattern->ground.gkind) {
+        case GV_INT:    return pattern->ground.ival == target->ground.ival;
+        case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
+        case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
+        case GV_STRING: return strcmp(pattern->ground.sval, target->ground.sval) == 0;
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return pattern->ground.ptr == target->ground.ptr;
+        }
+        return false;
+
+    case ATOM_EXPR:
+        if (pattern->expr.len != target->expr.len)
+            return false;
+        for (uint32_t i = 0; i < pattern->expr.len; i++) {
+            if (!simple_match_builder_rec(pattern->expr.elems[i],
+                                          target->expr.elems[i], bb)) {
+                return false;
+            }
+        }
+        return true;
+
+    case ATOM_VAR:
+        return false;
+    }
+    return false;
+}
+
+bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb) {
+    return simple_match_builder_rec(pattern, target, bb);
+}
+
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
 
 /* ── Loop-binding rejection (occurs check) ─────────────────────────────── */
@@ -1151,14 +1487,29 @@ bool match_types(Atom *type1, Atom *type2, Bindings *b) {
     return match_atoms(type1, type2, b);
 }
 
+bool match_types_builder(Atom *type1, Atom *type2, BindingsBuilder *bb) {
+    if (atom_is_symbol_id(type1, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(type1, g_builtin_syms.atom) ||
+        atom_is_symbol_id(type2, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(type2, g_builtin_syms.atom)) {
+        return true;
+    }
+    return match_atoms_builder(type1, type2, bb);
+}
+
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
 static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth);
+static bool match_atoms_builder_depth(Atom *left, Atom *right, BindingsBuilder *bb, int depth);
 static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena *a,
                                     uint32_t epoch, bool right_original, int depth);
 
 bool match_atoms(Atom *left, Atom *right, Bindings *b) {
     return match_atoms_depth(left, right, b, 64);
+}
+
+bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb) {
+    return match_atoms_builder_depth(left, right, bb, 64);
 }
 
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {
@@ -1293,6 +1644,45 @@ static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {
         return true;
     }
     /* Different kinds (non-variable) → no match */
+    return false;
+}
+
+static bool match_atoms_builder_depth(Atom *left, Atom *right, BindingsBuilder *bb, int depth) {
+    if (depth <= 0) return false;
+    Bindings *current = &bb->current;
+    if (left->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(current, left);
+        if (existing)
+            return match_atoms_builder_depth(existing, right, bb, depth - 1);
+        if (right->kind == ATOM_VAR) {
+            Atom *right_existing = bindings_lookup_var(current, right);
+            if (right_existing)
+                return match_atoms_builder_depth(left, right_existing, bb, depth - 1);
+            if (left->var_id == right->var_id) return true;
+        }
+        return bindings_builder_add_var_fresh(bb, left, right);
+    }
+    if (right->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(current, right);
+        if (existing)
+            return match_atoms_builder_depth(left, existing, bb, depth - 1);
+        return bindings_builder_add_var_fresh(bb, right, left);
+    }
+    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
+        return left->sym_id == right->sym_id;
+    }
+    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
+        return atom_eq(left, right);
+    }
+    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
+        if (left->expr.len != right->expr.len) return false;
+        for (uint32_t i = 0; i < left->expr.len; i++) {
+            if (!match_atoms_builder_depth(left->expr.elems[i], right->expr.elems[i],
+                                           bb, depth - 1))
+                return false;
+        }
+        return true;
+    }
     return false;
 }
 
