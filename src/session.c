@@ -52,6 +52,16 @@ static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
     {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-match-backend", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-capabilities", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-len", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-push", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-peek", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-pop", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-get", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"space-truncate", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
 };
 
 static const CettaModuleProviderDescriptor CETTA_MODULE_PROVIDER_DESCRIPTORS[] = {

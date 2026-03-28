@@ -1,0 +1,102 @@
+{
+  "title": "CeTTa <-> MORK PathMap Bridge ABI (VarId/Symbol-Aware)",
+  "status": "draft_for_lane_split",
+  "version": "v2-proposed",
+  "date": "2026-03-27",
+  "goal": "Eliminate local rematch for trusted bridge rows while preserving exact CeTTa match semantics.",
+  "design_principles": [
+    "Kernel comparisons are on ids, not strings.",
+    "Bindings are query-side semantic outputs, not candidate-side implementation leaks.",
+    "Packets must be self-describing and rejectable on contract mismatch.",
+    "Fast path is optional; correctness fallback is mandatory."
+  ],
+  "current_v1_issues": [
+    "Rows can contain candidate-side keys that CeTTa cannot map soundly in chained nested-match flows.",
+    "Value payloads are text S-expressions, requiring parse/rewrite and increasing ambiguity.",
+    "Bridge index packet can under-approximate on complex variable patterns."
+  ],
+  "v2_packet_contract": {
+    "header": {
+      "magic": "0x43544252",
+      "version": 2,
+      "flags": [
+        "query_side_bindings_only",
+        "varid_dictionary_present",
+        "symbol_dictionary_optional"
+      ]
+    },
+    "row_format": {
+      "row_ref_count_u32": "number of matched candidate atom indices",
+      "row_refs_be_u32[]": "candidate atom indices (for diagnostics/provenance only)",
+      "binding_count_u32": "number of query-side bindings",
+      "bindings[]": {
+        "query_var_slot_u16": "slot in query var dictionary",
+        "value_tag_u8": "encoded atom form",
+        "value_payload": "binary atom encoding (id-aware)"
+      }
+    },
+    "value_encoding": {
+      "tags": [
+        "symbol_id",
+        "var_ref",
+        "ground_int",
+        "ground_bool",
+        "expr"
+      ],
+      "var_ref_semantics": "references query var slots only; no candidate-side binders in output rows"
+    }
+  },
+  "validation_rules": [
+    "If any row contains an unknown query var slot, reject packet.",
+    "If any row contains candidate-side binding keys, reject packet.",
+    "If any row fails binary decode, reject packet.",
+    "On rejection, fallback to native candidate + local rematch."
+  ],
+  "positive_examples": [
+    {
+      "name": "single_query_var",
+      "query": "(edge $x b1)",
+      "row_bindings": [
+        {
+          "query_var_slot": 0,
+          "value": "symbol_id(a1)"
+        }
+      ]
+    },
+    {
+      "name": "two_query_vars",
+      "query": "(edge $x $y)",
+      "row_bindings": [
+        {
+          "query_var_slot": 0,
+          "value": "symbol_id(a3)"
+        },
+        {
+          "query_var_slot": 1,
+          "value": "symbol_id(b7)"
+        }
+      ]
+    }
+  ],
+  "negative_examples": [
+    {
+      "name": "candidate_side_key_leak",
+      "reason": "row tries to bind candidate var slot in output contract",
+      "expected_runtime_behavior": "reject_row_packet_and_fallback"
+    },
+    {
+      "name": "text_payload_without_dictionary",
+      "reason": "non-binary value payload in v2 packet",
+      "expected_runtime_behavior": "reject_row_packet_and_fallback"
+    }
+  ],
+  "lane_split_tasks": [
+    "MORK bridge lane: emit v2 packet with query-side-only binding rows and binary value encoding.",
+    "CeTTa lane: decode v2 packet to Bindings without parse/rewrite text path.",
+    "Conformance lane: lock nested-match and conjunction parity fixtures before re-enabling direct row fast path."
+  ],
+  "temporary_runtime_policy": {
+    "cetta_pathmap_imported_query": "native candidate + local rematch for semantic stability",
+    "cetta_pathmap_imported_conjunction": "default conjunction engine for semantic stability"
+  }
+}

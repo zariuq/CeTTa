@@ -1,0 +1,730 @@
+{
+  "schema_version": 2,
+  "runtime": "cetta",
+  "dialect": "he",
+  "status": "prototype",
+  "profiles": [
+    {
+      "id": "he_compat",
+      "note": "HE-compatible public/runtime surface."
+    },
+    {
+      "id": "he_extended",
+      "note": "HE-compatible surface plus explicitly labeled CeTTa extensions and clearer primary APIs."
+    }
+  ],
+  "surface_classifications": {
+    "keep_he_public_surface": "Confirmed HE public/runtime surface that CeTTa should preserve.",
+    "compat_alias": "Compatibility-only alias kept for HE-facing code while a cleaner CeTTa primary API exists.",
+    "clean_primary_extension": "CeTTa-preferred API that intentionally improves on HE's backend-facing naming or layering.",
+    "extension_only": "Useful CeTTa-only surface kept outside the HE-core compatibility claim."
+  },
+  "field_notes": {
+    "surface_layer": "Where the observable surface is implemented: evaluator, grounded_runtime, stdlib, or extension_runtime.",
+    "profile_visibility": "Profiles in which the surface should be reported as available.",
+    "spec_source": "Primary source of truth for the intended behavior.",
+    "oracle_status": "How firmly the current behavior is backed by HE docs/CLI/spec evidence.",
+    "compile_lowering_policy": "Current compiler-lowering guardrail for this surface."
+  },
+  "bundles": [
+    {
+      "id": "he",
+      "callables": [
+        {
+          "name": "+",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Arithmetic addition."
+        },
+        {
+          "name": "-",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Arithmetic subtraction."
+        },
+        {
+          "name": "*",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Arithmetic multiplication."
+        },
+        {
+          "name": "/",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Arithmetic division."
+        },
+        {
+          "name": "%",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Arithmetic remainder."
+        },
+        {
+          "name": "<",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Less-than comparison."
+        },
+        {
+          "name": ">",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Greater-than comparison."
+        },
+        {
+          "name": "<=",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Less-than-or-equal comparison."
+        },
+        {
+          "name": ">=",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Greater-than-or-equal comparison."
+        },
+        {
+          "name": "==",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Structural equality."
+        },
+        {
+          "name": "and",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Boolean conjunction."
+        },
+        {
+          "name": "or",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Boolean disjunction."
+        },
+        {
+          "name": "not",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Boolean negation."
+        },
+        {
+          "name": "size-atom",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Expression arity introspection."
+        },
+        {
+          "name": "index-atom",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": true,
+          "callable_kind": "native_strict",
+          "effect_class": "pure_value",
+          "note": "Expression element lookup."
+        },
+        {
+          "name": "superpose",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "pure_nondet",
+          "note": "Nondeterministic answer choice."
+        },
+        {
+          "name": "collapse",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "pure_nondet",
+          "note": "Collects a branch set into one expression."
+        },
+        {
+          "name": "match",
+          "min_arity": 3,
+          "max_arity": 3,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "space_read",
+          "note": "Space query with binder threading."
+        },
+        {
+          "name": "unify",
+          "min_arity": 4,
+          "max_arity": 4,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "pure_control",
+          "note": "Symmetric unification control form."
+        },
+        {
+          "name": "case",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_lazy",
+          "effect_class": "pure_control",
+          "note": "Case dispatch over evaluated scrutinee results."
+        },
+        {
+          "name": "switch",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_lazy",
+          "effect_class": "pure_control",
+          "note": "Ordered branch selection."
+        },
+        {
+          "name": "switch-minimal",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_lazy",
+          "effect_class": "pure_control",
+          "note": "Minimal switch variant."
+        },
+        {
+          "name": "let",
+          "min_arity": 3,
+          "max_arity": 3,
+          "compiletime_callable": false,
+          "callable_kind": "native_lazy",
+          "effect_class": "sequencing_control",
+          "note": "Single-binding substitution form."
+        },
+        {
+          "name": "let*",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_lazy",
+          "effect_class": "sequencing_control",
+          "note": "Sequential let form."
+        },
+        {
+          "name": "chain",
+          "min_arity": 3,
+          "max_arity": 3,
+          "compiletime_callable": false,
+          "callable_kind": "native_lazy",
+          "effect_class": "sequencing_control",
+          "note": "Binding-threaded sequencing."
+        },
+        {
+          "name": "function",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "sequencing_control",
+          "note": "Evaluates a body and extracts explicit returns."
+        },
+        {
+          "name": "return",
+          "min_arity": 0,
+          "max_arity": -1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "sequencing_control",
+          "note": "Non-local function return marker."
+        },
+        {
+          "name": "eval",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "dynamic_eval",
+          "note": "Minimal evaluation instruction."
+        },
+        {
+          "name": "evalc",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "dynamic_eval",
+          "note": "Evaluate in a selected context space."
+        },
+        {
+          "name": "metta",
+          "min_arity": 3,
+          "max_arity": 3,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "dynamic_eval",
+          "note": "Evaluate with explicit type and space."
+        },
+        {
+          "name": "quote",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "pure_control",
+          "surface_layer": "evaluator",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_stdlib_public_surface",
+          "oracle_status": "he_doc_and_cli_backed",
+          "compile_lowering_policy": "no_direct_lowering",
+          "note": "Preserves syntax without evaluating its argument. CeTTa keeps the public HE surface but implements it directly in the evaluator instead of copying HE's backend trick."
+        },
+        {
+          "name": "unquote",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "stdlib_equation",
+          "effect_class": "pure_control",
+          "surface_layer": "stdlib",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_stdlib_public_surface",
+          "oracle_status": "he_doc_and_cli_backed",
+          "compile_lowering_policy": "no_direct_lowering",
+          "note": "Public HE stdlib wrapper layered on quote."
+        },
+        {
+          "name": "new-space",
+          "min_arity": 0,
+          "max_arity": 0,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_write",
+          "note": "Allocates a fresh space."
+        },
+        {
+          "name": "with-space-snapshot",
+          "min_arity": 3,
+          "max_arity": 3,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_read",
+          "note": "Evaluates with a snapshot-bound space value."
+        },
+        {
+          "name": "bind!",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_write",
+          "note": "Stores a registry binding."
+        },
+        {
+          "name": "add-atom",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_write",
+          "note": "Adds an atom to a space."
+        },
+        {
+          "name": "add-atom-nodup",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_write",
+          "note": "Adds an atom to a space with dedup."
+        },
+        {
+          "name": "add-reduct",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_write",
+          "note": "Evaluates an atom and adds each reduced result to a space."
+        },
+        {
+          "name": "remove-atom",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_write",
+          "note": "Removes an atom from a space."
+        },
+        {
+          "name": "get-atoms",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_read",
+          "note": "Enumerates stored atoms."
+        },
+        {
+          "name": "_minimal-foldl-atom",
+          "min_arity": 6,
+          "max_arity": 6,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "dynamic_eval",
+          "surface_layer": "grounded_runtime",
+          "surface_classification": "compat_alias",
+          "alias_of": "foldl-atom-in-space",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_runtime_impl",
+          "oracle_status": "he_stdlib_and_cli_backed",
+          "compile_lowering_policy": "no_direct_lowering",
+          "note": "Compatibility alias for HE stdlib's backend-shaped explicit-space fold helper."
+        },
+        {
+          "name": "foldl-atom-in-space",
+          "min_arity": 6,
+          "max_arity": 6,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "dynamic_eval",
+          "surface_layer": "extension_runtime",
+          "surface_classification": "clean_primary_extension",
+          "profile_visibility": ["he_extended"],
+          "spec_source": "cetta_backend_choice_audit",
+          "oracle_status": "cetta_extension_equivalence_backed",
+          "compile_lowering_policy": "no_direct_lowering",
+          "note": "CeTTa's clearer explicit-space fold API over the same engine as _minimal-foldl-atom."
+        },
+        {
+          "name": "foldl-atom",
+          "min_arity": 5,
+          "max_arity": 5,
+          "compiletime_callable": false,
+          "callable_kind": "stdlib_equation",
+          "effect_class": "dynamic_eval",
+          "surface_layer": "stdlib",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_stdlib_public_surface",
+          "oracle_status": "he_doc_and_cli_backed",
+          "compile_lowering_policy": "no_direct_lowering",
+          "note": "Public HE stdlib fold surface implemented in CeTTa via foldl-atom-in-space."
+        },
+        {
+          "name": "count-atoms",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "space_read",
+          "surface_layer": "extension_runtime",
+          "surface_classification": "extension_only",
+          "profile_visibility": ["he_extended"],
+          "spec_source": "cetta_extension_surface",
+          "oracle_status": "not_in_he_stack",
+          "compile_lowering_policy": "extension_only_no_he_lowering",
+          "note": "CeTTa extension: counts stored atoms without materializing them. Useful for large-space benchmarks; not part of the HE-compatible core surface."
+        },
+        {
+          "name": "new-state",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_state",
+          "effect_class": "state_effect",
+          "note": "Allocates a fresh state cell."
+        },
+        {
+          "name": "get-state",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_state",
+          "effect_class": "state_effect",
+          "note": "Reads a state cell."
+        },
+        {
+          "name": "change-state!",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_state",
+          "effect_class": "state_effect",
+          "note": "Writes a state cell."
+        },
+        {
+          "name": "register-module!",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "dynamic_import",
+          "effect_class": "import_effect",
+          "surface_layer": "evaluator",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_runtime_impl",
+          "oracle_status": "he_cli_backed",
+          "compile_lowering_policy": "never_lower",
+          "note": "Registers an HE-style module root. CeTTa keeps the public surface but stores typed mounts instead of backend-parallel arrays."
+        },
+        {
+          "name": "git-module!",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "dynamic_import",
+          "effect_class": "import_effect",
+          "surface_layer": "evaluator",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_stdlib_public_surface",
+          "oracle_status": "he_doc_and_partial_cli_backed",
+          "compile_lowering_policy": "never_lower",
+          "note": "Provider-backed git remote registration. CeTTa preserves the HE public name while routing it through the typed git-remote provider seam, using the system git CLI to clone an explicit local cache entry and then soft-refresh it on later use, matching HE's TryFetchLatest-style cache behavior on the validated local file:// fixture. The backend exposes explicit locator-kind and revision-policy descriptors so future branch/tag/catalog providers can extend the seam cleanly. Remaining divergence is documented as a deliberate steelmanned design choice rather than compatibility debt: clone-failure diagnostics are CLI-shaped rather than libgit2-shaped, and CeTTa does not copy HE's broader catalog/environment coupling."
+        },
+        {
+          "name": "import!",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "dynamic_import",
+          "effect_class": "import_effect",
+          "surface_layer": "evaluator",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_runtime_impl",
+          "oracle_status": "he_cli_backed",
+          "compile_lowering_policy": "never_lower",
+          "note": "Imports a module into a target space. CeTTa resolves imports through a typed module-spec/import-plan transaction instead of a stringly backend split."
+        },
+        {
+          "name": "include",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "dynamic_import",
+          "effect_class": "import_effect",
+          "surface_layer": "evaluator",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_stdlib_public_surface",
+          "oracle_status": "he_cli_with_doc_mismatch_note",
+          "compile_lowering_policy": "never_lower",
+          "note": "Includes a module into &self through the same typed module-spec/import-plan path as import!. CeTTa follows the documented Unit-returning surface."
+        },
+        {
+          "name": "mod-space!",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "dynamic_import",
+          "effect_class": "import_effect",
+          "surface_layer": "evaluator",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_runtime_impl",
+          "oracle_status": "he_doc_and_cli_backed",
+          "compile_lowering_policy": "never_lower",
+          "note": "Loads or reuses a module through the typed module plan layer and returns its module space."
+        },
+        {
+          "name": "print-mods!",
+          "min_arity": 0,
+          "max_arity": 0,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "metadata_query",
+          "surface_layer": "evaluator",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_stdlib_public_surface",
+          "oracle_status": "he_doc_and_cli_backed",
+          "compile_lowering_policy": "never_lower",
+          "note": "Prints the currently loaded module inventory and returns Unit."
+        },
+        {
+          "name": "module-inventory!",
+          "min_arity": 0,
+          "max_arity": 0,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "metadata_query",
+          "surface_layer": "evaluator",
+          "surface_classification": "clean_primary_extension",
+          "profile_visibility": ["he_extended"],
+          "spec_source": "cetta_extension",
+          "oracle_status": "local_spec_backed",
+          "compile_lowering_policy": "never_lower",
+          "note": "Returns a queryable module inventory space backed by the typed mount/provider/load tables. This is the programmatic CeTTa extension corresponding to HE's debug-only print-mods!."
+        },
+        {
+          "name": "pragma!",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_effect",
+          "effect_class": "runtime_toggle",
+          "note": "Adjusts session-local evaluator settings. CeTTa covers the documented directives (`type-check auto`, `interpreter bare-minimal`, `max-stack-depth` with non-negative validation) plus HE's observed generic symbol-key setting surface, and now routes them through a typed evaluator-options seam suitable for future dialect/DSL settings. Remaining divergence is documented as a deliberate steelmanned design choice rather than compatibility debt: exact host-runtime StackOverflow surfacing under low limits is treated as an engineering policy question."
+        },
+        {
+          "name": "nop",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "sequencing_control",
+          "note": "Evaluates for side effects and returns unit."
+        },
+        {
+          "name": "capture",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "dynamic_eval",
+          "surface_layer": "grounded_runtime",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_runtime_impl",
+          "oracle_status": "he_cli_backed",
+          "compile_lowering_policy": "no_direct_lowering",
+          "note": "Context-sensitive captured callable value. CeTTa preserves the HE surface while using a first-class closure representation internally."
+        },
+        {
+          "name": "sealed",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_special",
+          "effect_class": "pure_control",
+          "surface_layer": "grounded_runtime",
+          "surface_classification": "keep_he_public_surface",
+          "profile_visibility": ["he_compat", "he_extended"],
+          "spec_source": "he_stdlib_public_surface",
+          "oracle_status": "he_doc_and_cli_backed",
+          "compile_lowering_policy": "no_direct_lowering",
+          "note": "Pure alpha-freshening helper used by HE stdlib metaprogramming."
+        },
+        {
+          "name": "get-type",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_typing",
+          "effect_class": "typing_query",
+          "note": "Queries runtime types."
+        },
+        {
+          "name": "get-doc",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_metadata",
+          "effect_class": "metadata_query",
+          "note": "Documentation lookup surface implemented through the stdlib metadata helpers; CeTTa intentionally keeps the working surface even though current HE still has oracle-side docs bugs."
+        },
+        {
+          "name": "assert",
+          "min_arity": 1,
+          "max_arity": 1,
+          "compiletime_callable": false,
+          "callable_kind": "native_test",
+          "effect_class": "error_control",
+          "note": "Truth assertion helper."
+        },
+        {
+          "name": "assertEqual",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_test",
+          "effect_class": "error_control",
+          "note": "Set-style equality assertion."
+        },
+        {
+          "name": "assertEqualToResult",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_test",
+          "effect_class": "error_control",
+          "note": "Result-order assertion."
+        },
+        {
+          "name": "assertEqualMsg",
+          "min_arity": 3,
+          "max_arity": 3,
+          "compiletime_callable": false,
+          "callable_kind": "native_test",
+          "effect_class": "error_control",
+          "note": "Equality assertion with custom message."
+        },
+        {
+          "name": "assertEqualToResultMsg",
+          "min_arity": 3,
+          "max_arity": 3,
+          "compiletime_callable": false,
+          "callable_kind": "native_test",
+          "effect_class": "error_control",
+          "note": "Ordered-result assertion with custom message."
+        },
+        {
+          "name": "assertAlphaEqualToResult",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_test",
+          "effect_class": "error_control",
+          "note": "Alpha-equivalence assertion helper."
+        },
+        {
+          "name": "assertIncludes",
+          "min_arity": 2,
+          "max_arity": 2,
+          "compiletime_callable": false,
+          "callable_kind": "native_test",
+          "effect_class": "error_control",
+          "note": "Subset-style assertion helper."
+        }
+      ]
+    }
+  ]
+}

@@ -29,7 +29,7 @@ static const char *module_filename_arg(Atom *arg) {
         return arg->ground.sval;
     }
     if (arg->kind == ATOM_SYMBOL) {
-        return arg->name;
+        return atom_name_cstr(arg);
     }
     return NULL;
 }
@@ -173,27 +173,30 @@ static Atom *metamath_close_file(CettaLibraryContext *ctx, Arena *a,
 Atom *cetta_metamath_native_dispatch(CettaLibraryContext *ctx, Space *space,
                                      Arena *a, Atom *head, Atom **args,
                                      uint32_t nargs) {
+    const char *head_name;
+
     (void)space;
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
-    if (strcmp(head->name, "__cetta_lib_metamath_read_tokens") == 0) {
+    head_name = atom_name_cstr(head);
+    if (strcmp(head_name, "__cetta_lib_metamath_read_tokens") == 0) {
         return metamath_read_tokens(ctx, a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_metamath_parse_file") == 0) {
+    if (strcmp(head_name, "__cetta_lib_metamath_parse_file") == 0) {
         return metamath_parse_file_mode(ctx, a, head, args, nargs, false);
     }
-    if (strcmp(head->name, "__cetta_lib_metamath_parse_file_pverify") == 0) {
+    if (strcmp(head_name, "__cetta_lib_metamath_parse_file_pverify") == 0) {
         return metamath_parse_file_mode(ctx, a, head, args, nargs, true);
     }
-    if (strcmp(head->name, "__cetta_lib_metamath_open_file") == 0) {
+    if (strcmp(head_name, "__cetta_lib_metamath_open_file") == 0) {
         return metamath_open_file_mode(ctx, a, head, args, nargs, false);
     }
-    if (strcmp(head->name, "__cetta_lib_metamath_open_file_pverify") == 0) {
+    if (strcmp(head_name, "__cetta_lib_metamath_open_file_pverify") == 0) {
         return metamath_open_file_mode(ctx, a, head, args, nargs, true);
     }
-    if (strcmp(head->name, "__cetta_lib_metamath_next_stmt") == 0) {
+    if (strcmp(head_name, "__cetta_lib_metamath_next_stmt") == 0) {
         return metamath_next_stmt(ctx, a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_metamath_close_file") == 0) {
+    if (strcmp(head_name, "__cetta_lib_metamath_close_file") == 0) {
         return metamath_close_file(ctx, a, head, args, nargs);
     }
     return NULL;

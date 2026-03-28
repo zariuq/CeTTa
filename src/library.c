@@ -1154,7 +1154,7 @@ static Atom *library_signature_error(Arena *a, Atom *head, Atom **args,
 
 static const char *library_text_arg(Atom *arg) {
     if (!arg) return NULL;
-    if (arg->kind == ATOM_SYMBOL) return arg->name;
+    if (arg->kind == ATOM_SYMBOL) return atom_name_cstr(arg);
     if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_STRING) {
         return arg->ground.sval;
     }
@@ -1345,28 +1345,29 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
                                            Arena *a, Atom *head,
                                            Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    if (strcmp(head->name, "__cetta_lib_system_args") == 0) {
+    SymbolId head_id = head->sym_id;
+    if (head_id == g_builtin_syms.lib_system_args) {
         return system_cli_args(ctx, a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_system_arg") == 0) {
+    if (head_id == g_builtin_syms.lib_system_arg) {
         return system_cli_arg(ctx, a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_system_arg_count") == 0) {
+    if (head_id == g_builtin_syms.lib_system_arg_count) {
         return system_cli_arg_count(ctx, a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_system_has_args") == 0) {
+    if (head_id == g_builtin_syms.lib_system_has_args) {
         return system_has_cli_args(ctx, a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_system_getenv_or_default") == 0) {
+    if (head_id == g_builtin_syms.lib_system_getenv_or_default) {
         return system_getenv_or_default(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_system_is_flag_arg") == 0) {
+    if (head_id == g_builtin_syms.lib_system_is_flag_arg) {
         return system_is_flag_arg(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_system_exit_with_code") == 0) {
+    if (head_id == g_builtin_syms.lib_system_exit_with_code) {
         return system_exit_with_code(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_system_cwd") == 0) {
+    if (head_id == g_builtin_syms.lib_system_cwd) {
         return system_cwd(a, head, args, nargs);
     }
     return NULL;
@@ -1484,19 +1485,20 @@ static Atom *fs_read_lines(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
                                        Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    if (strcmp(head->name, "__cetta_lib_fs_exists") == 0) {
+    SymbolId head_id = head->sym_id;
+    if (head_id == g_builtin_syms.lib_fs_exists) {
         return fs_exists(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_fs_read_text") == 0) {
+    if (head_id == g_builtin_syms.lib_fs_read_text) {
         return fs_read_text(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_fs_write_text") == 0) {
+    if (head_id == g_builtin_syms.lib_fs_write_text) {
         return fs_write_text(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_fs_append_text") == 0) {
+    if (head_id == g_builtin_syms.lib_fs_append_text) {
         return fs_append_text(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_fs_read_lines") == 0) {
+    if (head_id == g_builtin_syms.lib_fs_read_lines) {
         return fs_read_lines(a, head, args, nargs);
     }
     return NULL;
@@ -1713,34 +1715,35 @@ static Atom *str_trim(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
                                         Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    if (strcmp(head->name, "__cetta_lib_str_length") == 0) {
+    SymbolId head_id = head->sym_id;
+    if (head_id == g_builtin_syms.lib_str_length) {
         return str_length(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_concat") == 0) {
+    if (head_id == g_builtin_syms.lib_str_concat) {
         return str_concat(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_split") == 0) {
+    if (head_id == g_builtin_syms.lib_str_split) {
         return str_split(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_split_whitespace") == 0) {
+    if (head_id == g_builtin_syms.lib_str_split_whitespace) {
         return str_split_whitespace(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_join") == 0) {
+    if (head_id == g_builtin_syms.lib_str_join) {
         return str_join(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_slice") == 0) {
+    if (head_id == g_builtin_syms.lib_str_slice) {
         return str_slice(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_find") == 0) {
+    if (head_id == g_builtin_syms.lib_str_find) {
         return str_find(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_starts_with") == 0) {
+    if (head_id == g_builtin_syms.lib_str_starts_with) {
         return str_starts_with(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_ends_with") == 0) {
+    if (head_id == g_builtin_syms.lib_str_ends_with) {
         return str_ends_with(a, head, args, nargs);
     }
-    if (strcmp(head->name, "__cetta_lib_str_trim") == 0) {
+    if (head_id == g_builtin_syms.lib_str_trim) {
         return str_trim(a, head, args, nargs);
     }
     return NULL;
@@ -1808,8 +1811,9 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
 
     Atom *prev_self = NULL;
     if (registry) {
-        prev_self = registry_lookup(registry, "&self");
-        registry_bind(registry, "&self", atom_space(persistent_arena, work_space));
+        prev_self = registry_lookup_id(registry, g_builtin_syms.self);
+        registry_bind_id(registry, g_builtin_syms.self,
+                         atom_space(persistent_arena, work_space));
     }
 
     Atom **atoms = NULL;
@@ -1838,7 +1842,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         } else {
             for (int i = 0; i < n; i++) {
                 Atom *at = atoms[i];
-                if (at->kind == ATOM_SYMBOL && strcmp(at->name, "!") == 0 && i + 1 < n) {
+                if (atom_is_symbol_id(at, g_builtin_syms.bang) && i + 1 < n) {
                     ResultSet rs;
                     result_set_init(&rs);
                     eval_top_with_registry(work_space, eval_arena, persistent_arena, registry,
@@ -1863,7 +1867,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
 
     if (registry) {
         if (prev_self) {
-            registry_bind(registry, "&self", prev_self);
+            registry_bind_id(registry, g_builtin_syms.self, prev_self);
         }
     }
     cetta_library_pop_dir(ctx);

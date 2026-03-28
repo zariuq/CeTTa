@@ -20,3 +20,32 @@
 !(space-truncate &q 1)
 !(assertEqualToResult (space-len &q) (1))
 !(assertEqualToResult (space-peek &q) (gamma))
+
+(= (queue-push-range $q $i $limit)
+   (if (> $i $limit)
+       done
+       (let* ((() (space-push $q $i))
+              ($next (+ $i 1)))
+         (queue-push-range $q $next $limit))))
+
+(= (queue-pop-count $q $n)
+   (if (<= $n 0)
+       done
+       (let* (($dropped (space-pop $q))
+              ($rest (- $n 1)))
+         (queue-pop-count $q $rest))))
+
+!(bind! &q2 (new-space queue))
+!(assertEqual (queue-push-range &q2 1 70) done)
+!(assertEqual (queue-pop-count &q2 60) done)
+!(assertEqualToResult (space-peek &q2) (61))
+!(assertEqual (queue-push-range &q2 71 120) done)
+!(assertEqualToResult (space-len &q2) (60))
+!(assertEqualToResult (space-peek &q2) (61))
+!(assertEqualToResult (space-get &q2 0) (61))
+!(assertEqualToResult (space-get &q2 9) (70))
+!(assertEqualToResult (space-get &q2 10) (71))
+!(assertEqualToResult (space-get &q2 59) (120))
+!(assertEqualToResult (space-pop &q2) (61))
+!(assertEqualToResult (space-pop &q2) (62))
+!(assertEqualToResult (space-peek &q2) (63))

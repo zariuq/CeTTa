@@ -9,7 +9,8 @@ static bool native_handle_kind_matches(Atom *arg, const char *expected_kind) {
         return strcmp(arg->ground.sval, expected_kind) == 0;
     }
     if (arg->kind == ATOM_SYMBOL) {
-        return strcmp(arg->name, expected_kind) == 0;
+        const char *name = atom_name_cstr(arg);
+        return name && strcmp(name, expected_kind) == 0;
     }
     return false;
 }
@@ -24,7 +25,7 @@ Atom *cetta_native_handle_atom(Arena *a, const char *kind, uint64_t id) {
 
 bool cetta_native_handle_arg(Atom *arg, const char *expected_kind, uint64_t *id_out) {
     if (!arg || !id_out || arg->kind != ATOM_EXPR || arg->expr.len != 3) return false;
-    if (!atom_is_symbol(arg->expr.elems[0], "NativeHandle")) return false;
+    if (!atom_is_symbol_id(arg->expr.elems[0], g_builtin_syms.native_handle)) return false;
     if (!native_handle_kind_matches(arg->expr.elems[1], expected_kind)) return false;
     if (arg->expr.elems[2]->kind != ATOM_GROUNDED ||
         arg->expr.elems[2]->ground.gkind != GV_INT) {

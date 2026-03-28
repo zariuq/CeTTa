@@ -8,23 +8,136 @@
 
 #define BINDINGS_RECURSION_LIMIT 512
 #define BINDINGS_MIN_CAPACITY 8
+#define BINDINGS_SEEN_STACK_CAP 32
+#define BINDINGS_TEMP_STACK_CAP 32
+#define BINDINGS_POOL_CLASS_COUNT 4
+#define BINDINGS_LOOKUP_CACHE_SLOTS 4
+#define BINDINGS_LOOKUP_CACHE_MIN_LEN 8
+#define BINDINGS_MEMO_STACK_CAP 32
+
+typedef struct BindingPoolBlock {
+    struct BindingPoolBlock *next;
+} BindingPoolBlock;
+
+static const uint32_t BINDINGS_POOL_CAPS[BINDINGS_POOL_CLASS_COUNT] = {8, 16, 32, 64};
+static BindingPoolBlock *g_binding_entry_pools[BINDINGS_POOL_CLASS_COUNT];
+static BindingPoolBlock *g_binding_constraint_pools[BINDINGS_POOL_CLASS_COUNT];
 
 static inline bool binding_var_eq(VarId lhs, VarId rhs) {
     return lhs == rhs;
 }
 
-static Atom *bindings_lookup_name(Bindings *b, const char *name);
+static int bindings_pool_class(uint32_t cap) {
+    for (uint32_t i = 0; i < BINDINGS_POOL_CLASS_COUNT; i++) {
+        if (BINDINGS_POOL_CAPS[i] == cap)
+            return (int)i;
+    }
+    return -1;
+}
+
+static Binding *bindings_entries_alloc(uint32_t cap) {
+    int klass = bindings_pool_class(cap);
+    if (klass >= 0 && g_binding_entry_pools[klass]) {
+        BindingPoolBlock *block = g_binding_entry_pools[klass];
+        g_binding_entry_pools[klass] = block->next;
+        return (Binding *)block;
+    }
+    return cetta_malloc(sizeof(Binding) * cap);
+}
+
+static void bindings_entries_release(Binding *entries, uint32_t cap) {
+    if (!entries) return;
+    int klass = bindings_pool_class(cap);
+    if (klass < 0) {
+        free(entries);
+        return;
+    }
+    BindingPoolBlock *block = (BindingPoolBlock *)entries;
+    block->next = g_binding_entry_pools[klass];
+    g_binding_entry_pools[klass] = block;
+}
+
+static BindingConstraint *bindings_constraints_alloc(uint32_t cap) {
+    int klass = bindings_pool_class(cap);
+    if (klass >= 0 && g_binding_constraint_pools[klass]) {
+        BindingPoolBlock *block = g_binding_constraint_pools[klass];
+        g_binding_constraint_pools[klass] = block->next;
+        return (BindingConstraint *)block;
+    }
+    return cetta_malloc(sizeof(BindingConstraint) * cap);
+}
+
+static void bindings_constraints_release(BindingConstraint *constraints, uint32_t cap) {
+    if (!constraints) return;
+    int klass = bindings_pool_class(cap);
+    if (klass < 0) {
+        free(constraints);
+        return;
+    }
+    BindingPoolBlock *block = (BindingPoolBlock *)constraints;
+    block->next = g_binding_constraint_pools[klass];
+    g_binding_constraint_pools[klass] = block;
+}
+
+static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling);
+
+static inline void bindings_lookup_cache_reset(Bindings *b) {
+    b->lookup_cache_count = 0;
+    b->lookup_cache_next = 0;
+}
+
+static inline void bindings_lookup_cache_note(Bindings *b, VarId var_id,
+                                              uint32_t index) {
+    for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
+        if (binding_var_eq(b->lookup_cache_ids[i], var_id)) {
+            b->lookup_cache_indices[i] = index;
+            return;
+        }
+    }
+    uint32_t slot = b->lookup_cache_count < BINDINGS_LOOKUP_CACHE_SLOTS
+        ? b->lookup_cache_count++
+        : b->lookup_cache_next;
+    b->lookup_cache_ids[slot] = var_id;
+    b->lookup_cache_indices[slot] = index;
+    if (b->lookup_cache_count == BINDINGS_LOOKUP_CACHE_SLOTS)
+        b->lookup_cache_next = (uint8_t)((slot + 1) % BINDINGS_LOOKUP_CACHE_SLOTS);
+}
+
+static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
+    if (b->len < BINDINGS_LOOKUP_CACHE_MIN_LEN) {
+        for (uint32_t i = 0; i < b->len; i++) {
+            if (binding_var_eq(b->entries[i].var_id, var_id))
+                return (int32_t)i;
+        }
+        return -1;
+    }
+    for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
+        uint32_t idx = b->lookup_cache_indices[i];
+        if (idx < b->len &&
+            binding_var_eq(b->lookup_cache_ids[i], var_id) &&
+            binding_var_eq(b->entries[idx].var_id, var_id))
+            return (int32_t)idx;
+    }
+    for (uint32_t i = 0; i < b->len; i++) {
+        if (binding_var_eq(b->entries[i].var_id, var_id)) {
+            bindings_lookup_cache_note(b, var_id, i);
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
 
 static Atom *bindings_resolve_atom(Bindings *b, Atom *atom, uint32_t depth) {
     if (!atom || depth > BINDINGS_RECURSION_LIMIT) return atom;
     while (atom->kind == ATOM_VAR) {
         Atom *next = bindings_lookup_id(b, atom->var_id);
-        if (!next) next = bindings_lookup_name(b, atom->name);
+        if (!next) next = bindings_lookup_spelling(b, atom->sym_id);
         if (!next) return atom;
         if (next == atom) return atom;
         if (next->kind == ATOM_VAR &&
             (binding_var_eq(next->var_id, atom->var_id) ||
-             strcmp(next->name, atom->name) == 0))
+             next->sym_id == atom->sym_id))
             return atom;
         atom = next;
         if (++depth > BINDINGS_RECURSION_LIMIT) return atom;
@@ -57,7 +170,7 @@ static bool atom_eq_under_bindings(Bindings *b, Atom *lhs, Atom *rhs, uint32_t d
     case ATOM_VAR:
         return binding_var_eq(lhs->var_id, rhs->var_id);
     case ATOM_SYMBOL:
-        return lhs->name == rhs->name || strcmp(lhs->name, rhs->name) == 0;
+        return lhs->sym_id == rhs->sym_id;
     case ATOM_GROUNDED:
         return atom_eq(lhs, rhs);
     case ATOM_EXPR:
@@ -80,7 +193,11 @@ static bool bindings_reserve_entries(Bindings *b, uint32_t needed) {
     if (needed <= b->cap) return true;
     uint32_t next_cap = b->cap ? b->cap : BINDINGS_MIN_CAPACITY;
     while (next_cap < needed) next_cap *= 2;
-    b->entries = cetta_realloc(b->entries, sizeof(Binding) * next_cap);
+    Binding *next = bindings_entries_alloc(next_cap);
+    if (b->len > 0)
+        memcpy(next, b->entries, sizeof(Binding) * b->len);
+    bindings_entries_release(b->entries, b->cap);
+    b->entries = next;
     b->cap = next_cap;
     return true;
 }
@@ -89,7 +206,11 @@ static bool bindings_reserve_constraints(Bindings *b, uint32_t needed) {
     if (needed <= b->eq_cap) return true;
     uint32_t next_cap = b->eq_cap ? b->eq_cap : BINDINGS_MIN_CAPACITY;
     while (next_cap < needed) next_cap *= 2;
-    b->constraints = cetta_realloc(b->constraints, sizeof(BindingConstraint) * next_cap);
+    BindingConstraint *next = bindings_constraints_alloc(next_cap);
+    if (b->eq_len > 0)
+        memcpy(next, b->constraints, sizeof(BindingConstraint) * b->eq_len);
+    bindings_constraints_release(b->constraints, b->eq_cap);
+    b->constraints = next;
     b->eq_cap = next_cap;
     return true;
 }
@@ -106,10 +227,10 @@ static bool bindings_store_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
 }
 
 static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
-                                          const char *name, Atom *val,
+                                          SymbolId spelling, Atom *val,
                                           bool normalize_constraints,
                                           bool legacy_name_fallback);
-static bool bindings_add_internal(Bindings *b, VarId var_id, const char *name,
+static bool bindings_add_internal(Bindings *b, VarId var_id, SymbolId spelling,
                                   Atom *val, bool normalize_constraints,
                                   bool legacy_name_fallback);
 static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
@@ -120,7 +241,10 @@ static bool bindings_add_constraint_internal(Bindings *b, Atom *lhs, Atom *rhs,
 
 static bool bindings_normalize_constraints(Bindings *b) {
     if (b->eq_len == 0) return true;
-    BindingConstraint *pending = cetta_malloc(sizeof(BindingConstraint) * b->eq_len);
+    BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
+    BindingConstraint *pending = b->eq_len <= BINDINGS_TEMP_STACK_CAP
+        ? pending_stack
+        : cetta_malloc(sizeof(BindingConstraint) * b->eq_len);
     uint32_t npending = b->eq_len;
     for (uint32_t i = 0; i < npending; i++)
         pending[i] = b->constraints[i];
@@ -128,11 +252,13 @@ static bool bindings_normalize_constraints(Bindings *b) {
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_add_constraint_inplace_internal(
                 b, pending[i].lhs, pending[i].rhs, false)) {
-            free(pending);
+            if (pending != pending_stack)
+                free(pending);
             return false;
         }
     }
-    free(pending);
+    if (pending != pending_stack)
+        free(pending);
     return true;
 }
 
@@ -143,11 +269,13 @@ void bindings_init(Bindings *b) {
     b->constraints = NULL;
     b->eq_len = 0;
     b->eq_cap = 0;
+    bindings_lookup_cache_reset(b);
 }
 
 void bindings_free(Bindings *b) {
-    free(b->entries);
-    free(b->constraints);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_FREE);
+    bindings_entries_release(b->entries, b->cap);
+    bindings_constraints_release(b->constraints, b->eq_cap);
     bindings_init(b);
 }
 
@@ -167,6 +295,14 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
         memcpy(dst->constraints, src->constraints,
                sizeof(BindingConstraint) * src->eq_len);
         dst->eq_len = src->eq_len;
+    }
+    if (src->len >= BINDINGS_LOOKUP_CACHE_MIN_LEN) {
+        dst->lookup_cache_count = src->lookup_cache_count;
+        dst->lookup_cache_next = src->lookup_cache_next;
+        for (uint32_t i = 0; i < src->lookup_cache_count; i++) {
+            dst->lookup_cache_ids[i] = src->lookup_cache_ids[i];
+            dst->lookup_cache_indices[i] = src->lookup_cache_indices[i];
+        }
     }
     return true;
 }
@@ -191,23 +327,19 @@ void bindings_replace(Bindings *dst, Bindings *src) {
 }
 
 Atom *bindings_lookup_id(Bindings *b, VarId var_id) {
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
-    for (uint32_t i = 0; i < b->len; i++) {
-        if (binding_var_eq(b->entries[i].var_id, var_id))
-            return b->entries[i].val;
-    }
-    return NULL;
+    int32_t idx = bindings_lookup_index(b, var_id);
+    return idx >= 0 ? b->entries[idx].val : NULL;
 }
 
 Atom *bindings_lookup_var(Bindings *b, Atom *var) {
     return bindings_lookup_id(b, var->var_id);
 }
 
-static Atom *bindings_lookup_name(Bindings *b, const char *name) {
+static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling) {
     for (uint32_t i = 0; i < b->len; i++) {
         if (!b->entries[i].legacy_name_fallback)
             continue;
-        if (b->entries[i].name == name || strcmp(b->entries[i].name, name) == 0)
+        if (b->entries[i].spelling == spelling)
             return b->entries[i].val;
     }
     return NULL;
@@ -222,11 +354,11 @@ char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix) {
 }
 
 static Atom *epoch_var_atom(Arena *a, Atom *var, uint32_t epoch) {
-    return atom_var_with_id(a, var->name, var_epoch_id(var->var_id, epoch));
+    return atom_var_with_spelling(a, var->sym_id, var_epoch_id(var->var_id, epoch));
 }
 
 static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
-                                          const char *name, Atom *val,
+                                          SymbolId spelling, Atom *val,
                                           bool normalize_constraints,
                                           bool legacy_name_fallback) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_ADD);
@@ -240,15 +372,8 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
         }
     }
     /* Check for existing binding */
-    int32_t existing_idx = -1;
-    Atom *existing = NULL;
-    for (uint32_t i = 0; i < b->len; i++) {
-        if (binding_var_eq(b->entries[i].var_id, var_id)) {
-            existing = b->entries[i].val;
-            existing_idx = (int32_t)i;
-            break;
-        }
-    }
+    int32_t existing_idx = bindings_lookup_index(b, var_id);
+    Atom *existing = existing_idx >= 0 ? b->entries[existing_idx].val : NULL;
     if (existing) {
         /* Already bound — unify structurally instead of demanding
            literal equality, so repeated higher-order type constraints
@@ -278,22 +403,24 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
         return false;
     }
     b->entries[b->len].var_id = var_id;
-    b->entries[b->len].name = name;
+    b->entries[b->len].spelling = spelling;
     b->entries[b->len].val = val;
     b->entries[b->len].legacy_name_fallback = legacy_name_fallback;
+    if (b->len + 1 >= BINDINGS_LOOKUP_CACHE_MIN_LEN)
+        bindings_lookup_cache_note(b, var_id, b->len);
     b->len++;
     if (normalize_constraints && !bindings_normalize_constraints(b))
         return false;
     return true;
 }
 
-static bool bindings_add_internal(Bindings *b, VarId var_id, const char *name,
+static bool bindings_add_internal(Bindings *b, VarId var_id, SymbolId spelling,
                                   Atom *val, bool normalize_constraints,
                                   bool legacy_name_fallback) {
     Bindings next;
     if (!bindings_clone(&next, b))
         return false;
-    if (!bindings_add_inplace_internal(&next, var_id, name, val,
+    if (!bindings_add_inplace_internal(&next, var_id, spelling, val,
                                        normalize_constraints,
                                        legacy_name_fallback)) {
         bindings_free(&next);
@@ -303,12 +430,12 @@ static bool bindings_add_internal(Bindings *b, VarId var_id, const char *name,
     return true;
 }
 
-bool bindings_add_id(Bindings *b, VarId var_id, const char *name, Atom *val) {
-    return bindings_add_internal(b, var_id, name, val, true, false);
+bool bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val) {
+    return bindings_add_internal(b, var_id, spelling, val, true, false);
 }
 
 bool bindings_add_var(Bindings *b, Atom *var, Atom *val) {
-    return bindings_add_id(b, var->var_id, var->name, val);
+    return bindings_add_id(b, var->var_id, var->sym_id, val);
 }
 
 static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
@@ -323,12 +450,12 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
     }
     if (lhs->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, lhs->var_id, lhs->name, rhs, false, false)) {
+                b, lhs->var_id, lhs->sym_id, rhs, false, false)) {
             return false;
         }
     } else if (rhs->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, rhs->var_id, rhs->name, lhs, false, false)) {
+                b, rhs->var_id, rhs->sym_id, lhs, false, false)) {
             return false;
         }
     } else if (!atom_contains_unbound_var(b, lhs, 0) &&
@@ -362,43 +489,67 @@ bool bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
     return bindings_add_constraint_internal(b, lhs, rhs, true);
 }
 
-bool bindings_try_merge(Bindings *dst, const Bindings *src) {
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
-    Bindings merged;
-    if (!bindings_clone(&merged, dst)) return false;
-    BindingConstraint *pending = cetta_malloc(sizeof(BindingConstraint) *
-                                              (merged.eq_len + src->eq_len + 1));
+static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
+    uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
+    BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
+    BindingConstraint *pending = pending_cap <= BINDINGS_TEMP_STACK_CAP
+        ? pending_stack
+        : cetta_malloc(sizeof(BindingConstraint) * pending_cap);
     uint32_t npending = 0;
-    for (uint32_t i = 0; i < merged.eq_len; i++)
-        pending[npending++] = merged.constraints[i];
+    for (uint32_t i = 0; i < dst->eq_len; i++)
+        pending[npending++] = dst->constraints[i];
     for (uint32_t i = 0; i < src->eq_len; i++) {
         pending[npending++] = src->constraints[i];
     }
-    merged.eq_len = 0;
+    dst->eq_len = 0;
     for (uint32_t i = 0; i < src->len; i++) {
-        if (!bindings_add_inplace_internal(&merged, src->entries[i].var_id,
-                                           src->entries[i].name, src->entries[i].val,
+        if (!bindings_add_inplace_internal(dst, src->entries[i].var_id,
+                                           src->entries[i].spelling, src->entries[i].val,
                                            false,
                                            src->entries[i].legacy_name_fallback)) {
-            free(pending);
-            bindings_free(&merged);
+            if (pending != pending_stack)
+                free(pending);
             return false;
         }
     }
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_add_constraint_inplace_internal(
-                &merged, pending[i].lhs, pending[i].rhs, false)) {
-            free(pending);
-            bindings_free(&merged);
+                dst, pending[i].lhs, pending[i].rhs, false)) {
+            if (pending != pending_stack)
+                free(pending);
             return false;
         }
     }
-    free(pending);
-    if (!bindings_normalize_constraints(&merged)) {
+    if (pending != pending_stack)
+        free(pending);
+    if (!bindings_normalize_constraints(dst)) {
+        return false;
+    }
+    return true;
+}
+
+bool bindings_try_merge(Bindings *dst, const Bindings *src) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
+    Bindings merged;
+    if (!bindings_clone(&merged, dst)) return false;
+    if (!bindings_try_merge_inplace(&merged, src)) {
         bindings_free(&merged);
         return false;
     }
     bindings_replace(dst, &merged);
+    return true;
+}
+
+bool bindings_clone_merge(Bindings *dst, const Bindings *base,
+                          const Bindings *extra) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
+    bindings_init(dst);
+    if (!bindings_clone(dst, base))
+        return false;
+    if (!bindings_try_merge_inplace(dst, extra)) {
+        bindings_free(dst);
+        return false;
+    }
     return true;
 }
 
@@ -409,25 +560,116 @@ static bool bindings_seen_var(const VarId *seen, uint32_t len, VarId var_id) {
     return false;
 }
 
+typedef struct {
+    VarId *ids;
+    Atom **vals;
+    uint32_t len;
+    uint32_t cap;
+    bool heap;
+} BindingApplyMemo;
+
+static inline void bindings_apply_memo_init(BindingApplyMemo *memo, VarId *ids,
+                                            Atom **vals, uint32_t cap) {
+    memo->ids = ids;
+    memo->vals = vals;
+    memo->len = 0;
+    memo->cap = cap;
+    memo->heap = false;
+}
+
+static void bindings_apply_memo_release(BindingApplyMemo *memo) {
+    if (!memo->heap)
+        return;
+    free(memo->ids);
+    free(memo->vals);
+    memo->ids = NULL;
+    memo->vals = NULL;
+    memo->len = 0;
+    memo->cap = 0;
+    memo->heap = false;
+}
+
+static bool bindings_apply_memo_reserve(BindingApplyMemo *memo, uint32_t needed) {
+    if (needed <= memo->cap)
+        return true;
+    uint32_t new_cap = memo->cap ? memo->cap : 1;
+    while (new_cap < needed)
+        new_cap *= 2;
+    VarId *new_ids = cetta_malloc(sizeof(VarId) * new_cap);
+    Atom **new_vals = cetta_malloc(sizeof(Atom *) * new_cap);
+    if (memo->len > 0) {
+        memcpy(new_ids, memo->ids, sizeof(VarId) * memo->len);
+        memcpy(new_vals, memo->vals, sizeof(Atom *) * memo->len);
+    }
+    if (memo->heap) {
+        free(memo->ids);
+        free(memo->vals);
+    }
+    memo->ids = new_ids;
+    memo->vals = new_vals;
+    memo->cap = new_cap;
+    memo->heap = true;
+    return true;
+}
+
+static Atom *bindings_apply_memo_lookup(BindingApplyMemo *memo, VarId id) {
+    for (uint32_t i = memo->len; i > 0; i--) {
+        if (binding_var_eq(memo->ids[i - 1], id))
+            return memo->vals[i - 1];
+    }
+    return NULL;
+}
+
+static bool bindings_apply_memo_store(BindingApplyMemo *memo, VarId id, Atom *val) {
+    for (uint32_t i = 0; i < memo->len; i++) {
+        if (binding_var_eq(memo->ids[i], id)) {
+            memo->vals[i] = val;
+            return true;
+        }
+    }
+    if (!bindings_apply_memo_reserve(memo, memo->len + 1))
+        return false;
+    memo->ids[memo->len] = id;
+    memo->vals[memo->len] = val;
+    memo->len++;
+    return true;
+}
+
 static Atom *bindings_apply_seen(Bindings *b, Arena *a, Atom *atom,
-                                 VarId *seen, uint32_t seen_len) {
+                                 VarId *seen, uint32_t seen_len,
+                                 BindingApplyMemo *memo) {
     switch (atom->kind) {
     case ATOM_VAR: {
-        if (bindings_seen_var(seen, seen_len, atom->var_id)) return atom;
+        Atom *memoized = bindings_apply_memo_lookup(memo, atom->var_id);
+        if (memoized) return memoized;
+        if (bindings_seen_var(seen, seen_len, atom->var_id)) {
+            bindings_apply_memo_store(memo, atom->var_id, atom);
+            return atom;
+        }
         Atom *val = bindings_lookup_id(b, atom->var_id);
-        if (!val) val = bindings_lookup_name(b, atom->name);
-        if (!val) return atom;
+        if (!val) val = bindings_lookup_spelling(b, atom->sym_id);
+        if (!val) {
+            bindings_apply_memo_store(memo, atom->var_id, atom);
+            return atom;
+        }
         seen[seen_len] = atom->var_id;
-        return bindings_apply_seen(b, a, val, seen, seen_len + 1);
+        Atom *result = bindings_apply_seen(b, a, val, seen, seen_len + 1, memo);
+        bindings_apply_memo_store(memo, atom->var_id, result);
+        return result;
     }
     case ATOM_EXPR: {
-        Atom **new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-        bool changed = false;
+        Atom **new_elems = NULL;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
-            new_elems[i] = bindings_apply_seen(b, a, atom->expr.elems[i], seen, seen_len);
-            if (new_elems[i] != atom->expr.elems[i]) changed = true;
+            Atom *next = bindings_apply_seen(b, a, atom->expr.elems[i], seen, seen_len, memo);
+            if (!new_elems && next != atom->expr.elems[i]) {
+                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                for (uint32_t j = 0; j < i; j++)
+                    new_elems[j] = atom->expr.elems[j];
+            }
+            if (new_elems)
+                new_elems[i] = next;
         }
-        if (!changed) return atom;
+        if (!new_elems) return atom;
         return atom_expr(a, new_elems, atom->expr.len);
     }
     default:
@@ -436,38 +678,64 @@ static Atom *bindings_apply_seen(Bindings *b, Arena *a, Atom *atom,
 }
 
 Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY);
     uint32_t seen_cap = b->len ? b->len : 1;
-    VarId *seen = cetta_malloc(sizeof(VarId) * seen_cap);
-    Atom *result = bindings_apply_seen(b, a, atom, seen, 0);
-    free(seen);
+    VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
+    VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
+    Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
+    VarId *seen = seen_cap <= BINDINGS_SEEN_STACK_CAP
+        ? seen_stack
+        : cetta_malloc(sizeof(VarId) * seen_cap);
+    BindingApplyMemo memo;
+    bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
+                             BINDINGS_MEMO_STACK_CAP);
+    Atom *result = bindings_apply_seen(b, a, atom, seen, 0, &memo);
+    bindings_apply_memo_release(&memo);
+    if (seen != seen_stack)
+        free(seen);
     return result;
 }
 
 static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
                                        bool original_side,
-                                       VarId *seen, uint32_t seen_len) {
+                                       VarId *seen, uint32_t seen_len,
+                                       BindingApplyMemo *memo) {
     switch (atom->kind) {
     case ATOM_VAR: {
         VarId lookup_id = original_side ? var_epoch_id(atom->var_id, epoch) : atom->var_id;
+        Atom *memoized = bindings_apply_memo_lookup(memo, lookup_id);
+        if (memoized) return memoized;
         if (bindings_seen_var(seen, seen_len, lookup_id)) {
-            return original_side ? epoch_var_atom(a, atom, epoch) : atom;
+            Atom *result = original_side ? epoch_var_atom(a, atom, epoch) : atom;
+            bindings_apply_memo_store(memo, lookup_id, result);
+            return result;
         }
         Atom *val = bindings_lookup_id(b, lookup_id);
         if (!val) {
-            return original_side ? epoch_var_atom(a, atom, epoch) : atom;
+            Atom *result = original_side ? epoch_var_atom(a, atom, epoch) : atom;
+            bindings_apply_memo_store(memo, lookup_id, result);
+            return result;
         }
         seen[seen_len] = lookup_id;
-        return bindings_apply_seen_epoch(b, a, val, epoch, false, seen, seen_len + 1);
+        Atom *result = bindings_apply_seen_epoch(
+            b, a, val, epoch, false, seen, seen_len + 1, memo);
+        bindings_apply_memo_store(memo, lookup_id, result);
+        return result;
     }
     case ATOM_EXPR: {
-        Atom **new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-        bool changed = false;
+        Atom **new_elems = NULL;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
-            new_elems[i] = bindings_apply_seen_epoch(
-                b, a, atom->expr.elems[i], epoch, original_side, seen, seen_len);
-            if (new_elems[i] != atom->expr.elems[i]) changed = true;
+            Atom *next = bindings_apply_seen_epoch(
+                b, a, atom->expr.elems[i], epoch, original_side, seen, seen_len, memo);
+            if (!new_elems && next != atom->expr.elems[i]) {
+                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                for (uint32_t j = 0; j < i; j++)
+                    new_elems[j] = atom->expr.elems[j];
+            }
+            if (new_elems)
+                new_elems[i] = next;
         }
-        if (!changed) return atom;
+        if (!new_elems) return atom;
         return atom_expr(a, new_elems, atom->expr.len);
     }
     default:
@@ -477,9 +745,19 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
 
 Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
     uint32_t seen_cap = b->len ? b->len : 1;
-    VarId *seen = cetta_malloc(sizeof(VarId) * seen_cap);
-    Atom *result = bindings_apply_seen_epoch(b, a, atom, epoch, true, seen, 0);
-    free(seen);
+    VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
+    VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
+    Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
+    VarId *seen = seen_cap <= BINDINGS_SEEN_STACK_CAP
+        ? seen_stack
+        : cetta_malloc(sizeof(VarId) * seen_cap);
+    BindingApplyMemo memo;
+    bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
+                             BINDINGS_MEMO_STACK_CAP);
+    Atom *result = bindings_apply_seen_epoch(b, a, atom, epoch, true, seen, 0, &memo);
+    bindings_apply_memo_release(&memo);
+    if (seen != seen_stack)
+        free(seen);
     return result;
 }
 
@@ -489,7 +767,7 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
         assigns = arena_alloc(a, sizeof(Atom *) * b->len);
         for (uint32_t i = 0; i < b->len; i++) {
             assigns[i] = atom_expr2(a,
-                atom_symbol(a, b->entries[i].name),
+                atom_symbol_id(a, b->entries[i].spelling),
                 b->entries[i].val);
         }
     }
@@ -503,7 +781,7 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
         }
     }
     return atom_expr3(a,
-        atom_symbol(a, "Bindings"),
+        atom_symbol_id(a, g_builtin_syms.bindings),
         atom_expr(a, assigns, b->len),
         atom_expr(a, equalities, b->eq_len));
 }
@@ -511,7 +789,7 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
 bool bindings_from_atom(Atom *atom, Bindings *out) {
     bindings_init(out);
     if (atom->kind != ATOM_EXPR || atom->expr.len != 3 ||
-        !atom_is_symbol(atom->expr.elems[0], "Bindings")) {
+        !atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.bindings)) {
         return false;
     }
 
@@ -528,9 +806,9 @@ bool bindings_from_atom(Atom *atom, Bindings *out) {
             bindings_free(out);
             return false;
         }
-        VarId id = g_var_intern ? var_intern(g_var_intern, assign->expr.elems[0]->name)
+        VarId id = g_var_intern ? var_intern(g_var_intern, assign->expr.elems[0]->sym_id)
                                 : fresh_var_id();
-        if (!bindings_add_inplace_internal(out, id, assign->expr.elems[0]->name,
+        if (!bindings_add_inplace_internal(out, id, assign->expr.elems[0]->sym_id,
                                            assign->expr.elems[1], true, true)) {
             bindings_free(out);
             return false;
@@ -580,6 +858,15 @@ bool binding_set_push(BindingSet *bs, const Bindings *b) {
         return false;
     bs->len++;
     return true;
+}
+
+void binding_set_push_move(BindingSet *bs, Bindings *b) {
+    if (bs->len >= bs->cap) {
+        bs->cap = bs->cap ? bs->cap * 2 : 8;
+        bs->items = cetta_realloc(bs->items, sizeof(Bindings) * bs->cap);
+    }
+    bindings_move(&bs->items[bs->len], b);
+    bs->len++;
 }
 
 /* ── Variable renaming (standardization apart) ─────────────────────────── */
@@ -675,7 +962,7 @@ static Atom *rename_var_map_lookup(RenameVarMap *map, VarId id) {
 
 static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, Atom *var) {
     uint32_t suffix = fresh_var_suffix();
-    Atom *fresh = atom_var_with_id(a, var->name, var_epoch_id(var->var_id, suffix));
+    Atom *fresh = atom_var_with_spelling(a, var->sym_id, var_epoch_id(var->var_id, suffix));
     if (map->len >= map->cap) {
         map->cap = map->cap ? map->cap * 2 : 8;
         map->items = cetta_realloc(map->items, sizeof(RenameVarEntry) * map->cap);
@@ -699,14 +986,18 @@ static Atom *rename_vars_except_rec(Arena *a, Atom *atom,
         return rename_var_map_add_fresh(map, a, atom);
     }
     case ATOM_EXPR: {
-        Atom **new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-        bool changed = false;
+        Atom **new_elems = NULL;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
-            new_elems[i] = rename_vars_except_rec(a, atom->expr.elems[i], ignore, map);
-            if (new_elems[i] != atom->expr.elems[i])
-                changed = true;
+            Atom *next = rename_vars_except_rec(a, atom->expr.elems[i], ignore, map);
+            if (!new_elems && next != atom->expr.elems[i]) {
+                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                for (uint32_t j = 0; j < i; j++)
+                    new_elems[j] = atom->expr.elems[j];
+            }
+            if (new_elems)
+                new_elems[i] = next;
         }
-        if (!changed)
+        if (!new_elems)
             return atom;
         return atom_expr(a, new_elems, atom->expr.len);
     }
@@ -719,16 +1010,21 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RENAME_VARS);
     switch (atom->kind) {
     case ATOM_VAR: {
-        return atom_var_with_id(a, atom->name, var_epoch_id(atom->var_id, suffix));
+        return atom_var_with_spelling(a, atom->sym_id, var_epoch_id(atom->var_id, suffix));
     }
     case ATOM_EXPR: {
-        Atom **new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-        bool changed = false;
+        Atom **new_elems = NULL;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
-            new_elems[i] = rename_vars(a, atom->expr.elems[i], suffix);
-            if (new_elems[i] != atom->expr.elems[i]) changed = true;
+            Atom *next = rename_vars(a, atom->expr.elems[i], suffix);
+            if (!new_elems && next != atom->expr.elems[i]) {
+                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                for (uint32_t j = 0; j < i; j++)
+                    new_elems[j] = atom->expr.elems[j];
+            }
+            if (new_elems)
+                new_elems[i] = next;
         }
-        if (!changed) return atom;
+        if (!new_elems) return atom;
         return atom_expr(a, new_elems, atom->expr.len);
     }
     default:
@@ -761,7 +1057,7 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
 
     switch (pattern->kind) {
     case ATOM_SYMBOL:
-        return strcmp(pattern->name, target->name) == 0;
+        return pattern->sym_id == target->sym_id;
 
     case ATOM_GROUNDED:
         if (pattern->ground.gkind != target->ground.gkind) return false;
@@ -828,10 +1124,14 @@ bool bindings_has_loop(Bindings *b) {
             continue; /* $x = $x is not a loop */
         uint32_t visited_cap = (b->len + b->eq_len + 1);
         if (visited_cap == 0) visited_cap = 1;
-        VarId *visited = cetta_malloc(sizeof(VarId) * visited_cap);
+        VarId visited_stack[BINDINGS_SEEN_STACK_CAP];
+        VarId *visited = visited_cap <= BINDINGS_SEEN_STACK_CAP
+            ? visited_stack
+            : cetta_malloc(sizeof(VarId) * visited_cap);
         visited[0] = b->entries[i].var_id;
         bool has_loop = has_transitive_loop(b, b->entries[i].var_id, val, visited, 1);
-        free(visited);
+        if (visited != visited_stack)
+            free(visited);
         if (has_loop)
             return true;
     }
@@ -842,8 +1142,10 @@ bool bindings_has_loop(Bindings *b) {
 
 bool match_types(Atom *type1, Atom *type2, Bindings *b) {
     /* %Undefined% and Atom are wildcards — always match */
-    if (atom_is_symbol(type1, "%Undefined%") || atom_is_symbol(type1, "Atom") ||
-        atom_is_symbol(type2, "%Undefined%") || atom_is_symbol(type2, "Atom")) {
+    if (atom_is_symbol_id(type1, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(type1, g_builtin_syms.atom) ||
+        atom_is_symbol_id(type2, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(type2, g_builtin_syms.atom)) {
         return true;
     }
     return match_atoms(type1, type2, b);
@@ -931,7 +1233,7 @@ static bool atom_alpha_eq_rec(Atom *left, Atom *right, AlphaPairSet *pairs) {
 
     switch (left->kind) {
     case ATOM_SYMBOL:
-        return strcmp(left->name, right->name) == 0;
+        return left->sym_id == right->sym_id;
     case ATOM_GROUNDED:
         return atom_eq(left, right);
     case ATOM_EXPR:
@@ -975,7 +1277,7 @@ static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {
     }
     /* Symbol/Symbol → must be equal */
     if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-        return strcmp(left->name, right->name) == 0;
+        return left->sym_id == right->sym_id;
     }
     /* Grounded/Grounded → structural equality */
     if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
@@ -1018,10 +1320,10 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
         Atom *existing = bindings_lookup_id(b, right_id);
         if (existing)
             return match_atoms_epoch_depth(left, existing, b, a, epoch, false, depth - 1);
-        return bindings_add_id(b, right_id, right->name, left);
+        return bindings_add_id(b, right_id, right->sym_id, left);
     }
     if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-        return strcmp(left->name, right->name) == 0;
+        return left->sym_id == right->sym_id;
     }
     if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
         return atom_eq(left, right);
@@ -1046,9 +1348,12 @@ bool bindings_eq(Bindings *a, Bindings *b) {
         if (!other || !atom_eq(other, a->entries[i].val))
             return false;
     }
+    bool matched_stack[BINDINGS_TEMP_STACK_CAP];
     bool *matched = NULL;
     if (b->eq_len > 0) {
-        matched = cetta_malloc(sizeof(bool) * b->eq_len);
+        matched = b->eq_len <= BINDINGS_TEMP_STACK_CAP
+            ? matched_stack
+            : cetta_malloc(sizeof(bool) * b->eq_len);
         memset(matched, 0, sizeof(bool) * b->eq_len);
     }
     for (uint32_t i = 0; i < a->eq_len; i++) {
@@ -1062,10 +1367,12 @@ bool bindings_eq(Bindings *a, Bindings *b) {
             }
         }
         if (!found) {
-            free(matched);
+            if (matched && matched != matched_stack)
+                free(matched);
             return false;
         }
     }
-    free(matched);
+    if (matched && matched != matched_stack)
+        free(matched);
     return true;
 }

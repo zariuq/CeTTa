@@ -17,13 +17,13 @@
 /* ── SubstNode ─────────────────────────────────────────────────────────── */
 
 typedef struct SubstNode {
-    /* Symbol branches (interned const char * → child) */
-    struct { const char *key; struct SubstNode *child; } *sym;
+    /* Symbol branches (SymbolId -> child) */
+    struct { SymbolId key; struct SubstNode *child; } *sym;
     uint32_t nsym, csym;
 
     /* Variable branches — each indexed variable id gets its own
        branch so retrieval can produce bindings during the walk. */
-    struct { VarId var_id; const char *name; struct SubstNode *child; } *vars;
+    struct { VarId var_id; SymbolId spelling; struct SubstNode *child; } *vars;
     uint32_t nvars, cvars;
 
     /* Expression branches (arity → child) */
@@ -75,6 +75,9 @@ void       snode_free(SubstNode *n);
 void stree_init(SubstTree *t);
 void stree_free(SubstTree *t);
 void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx);
+void stree_bucket_init(SubstBucket *bucket);
+void stree_bucket_free(SubstBucket *bucket);
+void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx);
 
 /* Full unification retrieval: walk tree with query, produce bindings.
    Caller must free(out->items). */
@@ -82,8 +85,8 @@ void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx);
 void stree_query_bucket(SubstBucket *bucket, Arena *a, Atom *query,
                         Atom **space_atoms, SubstMatchSet *out);
 
-/* Head symbol hash for partitioning (same as EqIndex) */
-uint32_t stree_head_hash(const char *name);
+/* Head symbol hash for partitioning (same bucket count as EqIndex) */
+uint32_t stree_head_hash(SymbolId id);
 
 void smset_init(SubstMatchSet *s);
 void smset_free(SubstMatchSet *s);

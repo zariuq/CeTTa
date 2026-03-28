@@ -1,0 +1,383 @@
+{
+  "generated_on": "2026-03-25",
+  "scope": [
+    "HE MinimalMeTTa / RuntimeContract surfaces",
+    "selected HE 0.2.10 oracle probes",
+    "CeTTa builtin heads and dedicated tests"
+  ],
+  "entries": [
+    {
+      "head": "match",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "he_a1_symbols.metta",
+        "test_match.metta",
+        "test_match_advanced.metta"
+      ],
+      "negative_tests": [
+        "test_unknown_space_match.metta"
+      ],
+      "status": "covered",
+      "notes": "Unknown-space fallback-to-&self bug fixed on 2026-03-25."
+    },
+    {
+      "head": "unify",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_unify.metta",
+        "test_unify_advanced.metta",
+        "test_unify_deep.metta"
+      ],
+      "negative_tests": [
+        "test_unify_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Good positive coverage plus a dedicated wrong-arity regression."
+    },
+    {
+      "head": "chain",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_chain_advanced.metta",
+        "test_chain_nondet.metta",
+        "he_b0_chaining_prelim.metta"
+      ],
+      "negative_tests": [
+        "test_chain_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus a dedicated wrong-arity regression."
+    },
+    {
+      "head": "switch",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_case_switch.metta",
+        "test_case_advanced.metta"
+      ],
+      "negative_tests": [
+        "test_switch_arity.metta",
+        "test_switch_minimal_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus dedicated wrong-arity regressions for both switch heads."
+    },
+    {
+      "head": "case",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_case_switch.metta",
+        "test_case_advanced.metta"
+      ],
+      "negative_tests": [
+        "test_case_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus a dedicated wrong-arity regression."
+    },
+    {
+      "head": "collapse-bind",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_collapse_bind.metta",
+        "test_collapse_bind_ground_atom.metta"
+      ],
+      "negative_tests": [
+        "test_collapse_bind_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Spec-driven positive coverage now checks both the packed multi-result shape and a ground-atom case, plus a dedicated wrong-arity regression."
+    },
+    {
+      "head": "superpose-bind",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_superpose_bind_restore.metta",
+        "test_superpose_bind_constraints.metta"
+      ],
+      "negative_tests": [
+        "test_superpose_bind_empty.metta",
+        "test_superpose_bind_arity.metta",
+        "test_superpose_bind_bad_type.metta"
+      ],
+      "status": "covered",
+      "notes": "Spec-driven positive coverage now checks atom restoration, env threading, residual-equality round-trip, assignment-plus-constraint coexistence, and contradiction rejection. Local HE 0.2.10 still panics on the literal and round-trip restore probes, so the strongest positives remain doc/interpreter-contract-backed rather than CLI-oracle-backed, but CeTTa's Bindings runtime now supports the full documented payload shape."
+    },
+    {
+      "head": "assert",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_assert.metta",
+        "he_* suites"
+      ],
+      "negative_tests": [],
+      "status": "covered",
+      "notes": "Extensively exercised through HE oracle suites."
+    },
+    {
+      "head": "eval",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_eval.metta",
+        "test_eval_grounded.metta"
+      ],
+      "negative_tests": [
+        "test_eval_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus a dedicated wrong-arity regression."
+    },
+    {
+      "head": "cons-atom / decons-atom",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_cons_decons.metta"
+      ],
+      "negative_tests": [
+        "test_decons_atom_errors.metta",
+        "test_decons_atom_nonexpr_error.metta",
+        "test_decons_atom_wrong_arity_error.metta",
+        "test_decons_atom_extra_args_error.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive and negative coverage now matches the live HE CLI surface."
+    },
+    {
+      "head": "function / return",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_function_return.metta",
+        "test_no_return_error.metta",
+        "he_b4_nondeterm.metta"
+      ],
+      "negative_tests": [
+        "test_no_return_error.metta"
+      ],
+      "status": "covered",
+      "notes": "Return and NoReturn surfaces both exercised."
+    },
+    {
+      "head": "superpose",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_superpose_collapse.metta",
+        "test_nondeterminism.metta"
+      ],
+      "negative_tests": [
+        "test_superpose_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus a dedicated wrong-arity regression."
+    },
+    {
+      "head": "context-space",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_context_space.metta"
+      ],
+      "negative_tests": [
+        "test_context_space_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Runtime op was missing and was fixed on 2026-03-25; wrong-arity coverage was added in the audit pass."
+    },
+    {
+      "head": "call-native",
+      "implemented_in_cetta": true,
+      "positive_tests": [],
+      "negative_tests": [
+        "test_call_native_surface.metta"
+      ],
+      "status": "covered",
+      "notes": "CeTTa now explicitly fences direct user-level call-native with the same error surface observed in local HE. Positive native dispatch remains intentionally unsupported from user MeTTa because the docs mark it internal-only."
+    },
+    {
+      "head": "evalc",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_evalc.metta"
+      ],
+      "negative_tests": [
+        "test_evalc_unknown_space.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus HE-shaped unknown-space regression."
+    },
+    {
+      "head": "metta",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_metta_op.metta",
+        "test_bad_type_error.metta"
+      ],
+      "negative_tests": [
+        "test_bad_type_error.metta"
+      ],
+      "status": "covered",
+      "notes": "Both success and type-error behavior are exercised."
+    },
+    {
+      "head": "new-space / bind!",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_space_ops.metta",
+        "test_evalc.metta",
+        "test_state_ops.metta"
+      ],
+      "negative_tests": [
+        "test_new_space_arity.metta",
+        "test_bind_arity.metta",
+        "test_bind_partial_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Widely used positive coverage plus dedicated wrong-arity regressions."
+    },
+    {
+      "head": "add-atom / remove-atom",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_space_ops.metta",
+        "he_e1_kb_write.metta"
+      ],
+      "negative_tests": [
+        "test_unknown_space_add.metta",
+        "test_unknown_space_remove.metta"
+      ],
+      "status": "covered",
+      "notes": "Unknown-space HE compatibility was fixed on 2026-03-25."
+    },
+    {
+      "head": "get-atoms",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_get_atoms.metta"
+      ],
+      "negative_tests": [
+        "test_unknown_space_get.metta"
+      ],
+      "status": "covered",
+      "notes": "Direct positive regression added on 2026-03-25."
+    },
+    {
+      "head": "get-metatype",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_get_metatype.metta"
+      ],
+      "negative_tests": [
+        "test_get_metatype_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "HE-backed positive coverage plus a dedicated wrong-arity regression."
+    },
+    {
+      "head": "count-atoms",
+      "implemented_in_cetta": true,
+      "positive_tests": [],
+      "negative_tests": [
+        "test_unknown_space_count.metta"
+      ],
+      "status": "extension",
+      "notes": "CeTTa-only space-cardinality extension used by overlap benchmarks. It is not present in the local HE docs/stdlib/spec stack, so it should not be counted as part of the HE-compatible core surface."
+    },
+    {
+      "head": "register-module! / import!",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_import_modules.metta"
+      ],
+      "negative_tests": [
+        "test_register_module_arity.metta",
+        "test_register_module_extra_arity.metta",
+        "test_import_arity.metta",
+        "test_import_partial_arity.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive path covered plus dedicated import-surface wrong-arity regressions."
+    },
+    {
+      "head": "git-module!",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "make test-git-module (generated runtime/test-git-module-dynamic.metta)",
+        "runtime/he_git_module_probe.metta"
+      ],
+      "negative_tests": [
+        "test_git_module_arity.metta",
+        "test_git_module_missing.metta"
+      ],
+      "status": "covered",
+      "notes": "Provider-backed implementation on the typed git-remote seam now matches local HE on the positive local-file fixture, wrong-arity behavior, and TryFetchLatest-style cache refresh for repeated registration of the same file:// repo. The seam carries explicit locator-kind and revision-policy metadata for future remote/catalog providers. Remaining divergence is intentionally documented rather than treated as compatibility debt: CeTTa keeps cleaner CLI-shaped failure text and does not copy HE's broader catalog/environment coupling."
+    },
+    {
+      "head": "with-space-snapshot",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_with_space_snapshot.metta"
+      ],
+      "negative_tests": [
+        "test_with_space_snapshot_passthrough.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus explicit HE passthrough regressions for wrong arity and non-space inputs."
+    },
+    {
+      "head": "new-state / get-state / change-state!",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_state_ops.metta",
+        "he_e2_states.metta"
+      ],
+      "negative_tests": [
+        "test_state_type_error.metta",
+        "test_new_state_arity.metta",
+        "test_get_state_arity.metta",
+        "test_get_state_badargtype.metta",
+        "test_change_state_arity.metta",
+        "test_change_state_partial_arity.metta",
+        "test_change_state_first_arg_type_error.metta"
+      ],
+      "status": "covered",
+      "notes": "Positive coverage plus dedicated wrong-arity and first-argument BadArgType regressions."
+    },
+    {
+      "head": "pragma!",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "he_d5_auto_types.metta",
+        "test_pragma_modes.metta",
+        "test_pragma_max_stack_depth.metta"
+      ],
+      "negative_tests": [
+        "test_pragma_wrong_arity.metta",
+        "test_pragma_key_type_error.metta",
+        "test_pragma_max_stack_depth_error.metta"
+      ],
+      "status": "covered",
+      "notes": "CeTTa covers the documented directives (`type-check auto`, `interpreter bare-minimal`, `max-stack-depth` with non-negative validation), wrong-arity and key-type errors, and HE's generic symbol-key setting surface outside bare-minimal. The implementation now routes these through a session-local evaluator-options seam rather than evaluator globals, which is a cleaner base for future dialect/DSL settings. Remaining divergence is intentionally documented rather than treated as compatibility debt: exact host-runtime-specific `StackOverflow` surfacing under low stack limits is an engineering policy question, not core language debt."
+    },
+    {
+      "head": "foldl-atom",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "test_foldl_atom.metta",
+        "test_foldl_atom_chain_collapse.metta",
+        "spec_profile_foldl_public.metta"
+      ],
+      "negative_tests": [],
+      "status": "covered",
+      "notes": "CeTTa covers the public HE fold surface directly. Current HE oracle still mis-evaluates the specific `chain (collapse ...) -> foldl-atom` composition; see tests/DISCREPANCIES.md."
+    },
+    {
+      "head": "get-doc",
+      "implemented_in_cetta": true,
+      "positive_tests": [
+        "he_g1_docs.metta",
+        "test_zero_arity_function_overload.metta"
+      ],
+      "negative_tests": [],
+      "status": "covered",
+      "notes": "CeTTa covers the HE-facing docs/help lane. The zero-arg function-type repair keeps get-doc/help dispatch single and stable even where the current HE oracle still duplicates or misfires."
+    }
+  ]
+}

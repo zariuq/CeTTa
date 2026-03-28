@@ -7,9 +7,11 @@
 #include <stdio.h>
 
 #include "session.h"
+#include "symbol.h"
 
 typedef struct CettaForeignValue CettaForeignValue;
 typedef uint64_t VarId;
+typedef struct HashConsTable HashConsTable;
 
 #define VAR_ID_NONE ((VarId)0)
 
@@ -39,8 +41,8 @@ typedef struct Atom Atom;
 struct Atom {
     AtomKind kind;
     VarId var_id;            /* ATOM_VAR only */
+    SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
     union {
-        const char *name;   /* ATOM_SYMBOL or ATOM_VAR */
         struct {            /* ATOM_GROUNDED */
             GroundedKind gkind;
             union { int64_t ival; double fval; const char *sval; bool bval; void *ptr; };
@@ -64,12 +66,14 @@ typedef struct ArenaBlock {
 
 typedef struct {
     ArenaBlock *head;
+    HashConsTable *hashcons;
 } Arena;
 
 void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
 void  arena_free(Arena *a);
+void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
 
@@ -77,15 +81,15 @@ char *arena_strdup(Arena *a, const char *s);
 
 #define HASHCONS_TABLE_SIZE 65536
 
-typedef struct {
+struct HashConsTable {
     Atom **table;
     uint32_t size, used;
-} HashConsTable;
+};
 
 void hashcons_init(HashConsTable *hc);
 void hashcons_free(HashConsTable *hc);
 /* Return shared atom if identical one exists, otherwise insert and return */
-Atom *hashcons_get(HashConsTable *hc, Arena *a, Atom *atom);
+Atom *hashcons_get(HashConsTable *hc, Atom *atom);
 
 /* Global hash-cons table */
 extern HashConsTable *g_hashcons;
@@ -96,34 +100,17 @@ bool atom_eq_fast(Atom *a, Atom *b);
 /* Compute structural hash of an atom */
 uint32_t atom_hash(Atom *a);
 
-/* ── Symbol Interning (all equal symbols share one pointer) ────────────── */
-
-#define INTERN_TABLE_SIZE 4096
-
-typedef struct {
-    const char **names;
-    uint32_t size, used;
-} InternTable;
-
-void    intern_init(InternTable *t);
-void    intern_free(InternTable *t);
-/* Returns interned pointer — same string always returns same pointer */
-const char *intern(InternTable *t, const char *name);
-
-/* Global intern table (set up in main) */
-extern InternTable *g_intern;
-
 /* ── Variable identity intern/freshening ──────────────────────────────── */
 
 typedef struct {
-    const char **names;
+    SymbolId *spellings;
     VarId *ids;
     uint32_t size, used;
 } VarInternTable;
 
 void    var_intern_init(VarInternTable *t);
 void    var_intern_free(VarInternTable *t);
-VarId   var_intern(VarInternTable *t, const char *name);
+VarId   var_intern(VarInternTable *t, SymbolId spelling);
 VarId   fresh_var_id(void);
 VarId   var_epoch_id(VarId id, uint32_t epoch);
 uint32_t var_base_id(VarId id);
@@ -134,8 +121,10 @@ extern VarInternTable *g_var_intern;
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
 Atom *atom_symbol(Arena *a, const char *name);
+Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
+Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
 Atom *atom_int(Arena *a, int64_t val);
 Atom *atom_float(Arena *a, double val);
 Atom *atom_bool(Arena *a, bool val);
@@ -157,6 +146,8 @@ Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
 Atom *atom_expr(Arena *a, Atom **elems, uint32_t len);
+/* Explicit structural sharing constructor for long-lived arenas. */
+Atom *atom_expr_shared(Arena *a, Atom **elems, uint32_t len);
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2);
 Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);
 
@@ -188,6 +179,9 @@ bool atom_is_error(Atom *a);
 bool atom_is_empty_or_error(Atom *a);
 bool atom_is_var(Atom *a);
 bool atom_is_expr(Atom *a);
+bool atom_is_symbol_id(Atom *a, SymbolId id);
+const char *atom_name_cstr(Atom *a);
+SymbolId atom_head_symbol_id(Atom *a);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 

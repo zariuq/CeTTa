@@ -14,7 +14,7 @@ typedef struct {
 } StringBuf;
 
 typedef struct {
-    const char *name;
+    SymbolId spelling;
     Atom *mapped;
 } FoldVarMapEntry;
 
@@ -70,21 +70,21 @@ static void fold_var_map_free(FoldVarMap *map) {
     map->cap = 0;
 }
 
-static Atom *fold_var_map_lookup(FoldVarMap *map, const char *name) {
+static Atom *fold_var_map_lookup(FoldVarMap *map, SymbolId spelling) {
     for (uint32_t i = 0; i < map->len; i++) {
-        if (strcmp(map->items[i].name, name) == 0)
+        if (map->items[i].spelling == spelling)
             return map->items[i].mapped;
     }
     return NULL;
 }
 
-static Atom *fold_var_map_add_fresh(FoldVarMap *map, Arena *a, const char *name) {
-    Atom *fresh = atom_var(a, arena_tagged_var_name(a, name, fresh_var_suffix()));
+static Atom *fold_var_map_add_fresh(FoldVarMap *map, Arena *a, SymbolId spelling) {
+    Atom *fresh = atom_var_with_spelling(a, spelling, fresh_var_id());
     if (map->len >= map->cap) {
         map->cap = map->cap ? map->cap * 2 : 8;
         map->items = cetta_realloc(map->items, sizeof(FoldVarMapEntry) * map->cap);
     }
-    map->items[map->len].name = name;
+    map->items[map->len].spelling = spelling;
     map->items[map->len].mapped = fresh;
     map->len++;
     return fresh;
@@ -99,28 +99,28 @@ static Atom *grounded_call_expr(Arena *a, Atom *head, Atom **args, uint32_t narg
 }
 
 static Atom *foldl_bind_step_atom(Arena *a, Atom *atom,
-                                  const char *acc_name, Atom *acc_val,
-                                  const char *item_name, Atom *item_val,
+                                  SymbolId acc_spelling, Atom *acc_val,
+                                  SymbolId item_spelling, Atom *item_val,
                                   FoldVarMap *fresh_vars) {
     switch (atom->kind) {
     case ATOM_VAR:
-        if (strcmp(atom->name, acc_name) == 0)
+        if (atom->sym_id == acc_spelling)
             return acc_val;
-        if (strcmp(atom->name, item_name) == 0)
+        if (atom->sym_id == item_spelling)
             return item_val;
         {
-            Atom *mapped = fold_var_map_lookup(fresh_vars, atom->name);
+            Atom *mapped = fold_var_map_lookup(fresh_vars, atom->sym_id);
             if (mapped)
                 return mapped;
-            return fold_var_map_add_fresh(fresh_vars, a, atom->name);
+            return fold_var_map_add_fresh(fresh_vars, a, atom->sym_id);
         }
     case ATOM_EXPR: {
         Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
         bool changed = false;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
             elems[i] = foldl_bind_step_atom(a, atom->expr.elems[i],
-                                            acc_name, acc_val,
-                                            item_name, item_val,
+                                            acc_spelling, acc_val,
+                                            item_spelling, item_val,
                                             fresh_vars);
             if (elems[i] != atom->expr.elems[i])
                 changed = true;
@@ -184,53 +184,55 @@ static int find_unused_alpha_equal_atom(Atom **elems, bool *used, uint32_t len, 
     return -1;
 }
 
-bool is_grounded_op(const char *name) {
-    if (strncmp(name, "__cetta_lib_", 12) == 0) {
+bool is_grounded_op(SymbolId id) {
+    if (id == SYMBOL_ID_NONE) return false;
+    /* Check __cetta_lib_ prefix via string lookup */
+    const char *name = symbol_bytes(g_symbols, id);
+    if (name && strncmp(name, "__cetta_lib_", 12) == 0)
         return true;
-    }
-    return strcmp(name, "+") == 0 || strcmp(name, "-") == 0 ||
-           strcmp(name, "*") == 0 || strcmp(name, "/") == 0 ||
-           strcmp(name, "%") == 0 || strcmp(name, "<") == 0 ||
-           strcmp(name, ">") == 0 || strcmp(name, "<=") == 0 ||
-           strcmp(name, ">=") == 0 || strcmp(name, "==") == 0 ||
-           strcmp(name, "=alpha") == 0 ||
-           strcmp(name, "if-equal") == 0 ||
-           strcmp(name, "sealed") == 0 ||
-           strcmp(name, "_minimal-foldl-atom") == 0 ||
-           strcmp(name, "_collapse-add-next-atom-from-collapse-bind-result") == 0 ||
-           strcmp(name, "foldl-atom-in-space") == 0 ||
-           strcmp(name, "and") == 0 || strcmp(name, "or") == 0 ||
-           strcmp(name, "not") == 0 || strcmp(name, "xor") == 0 ||
-           strcmp(name, "println!") == 0 ||
-           strcmp(name, "trace!") == 0 ||
-           strcmp(name, "format-args") == 0 ||
-           strcmp(name, "py-atom") == 0 ||
-           strcmp(name, "py-dot") == 0 ||
-           strcmp(name, "py-call") == 0 ||
-           strcmp(name, "sort-strings") == 0 ||
-           strcmp(name, "print-alternatives!") == 0 ||
-           strcmp(name, "unique-atom") == 0 ||
-           strcmp(name, "intersection-atom") == 0 ||
-           strcmp(name, "subtraction-atom") == 0 ||
-           strcmp(name, "max-atom") == 0 ||
-           strcmp(name, "min-atom") == 0 ||
-           strcmp(name, "pow-math") == 0 ||
-           strcmp(name, "sqrt-math") == 0 ||
-           strcmp(name, "abs-math") == 0 ||
-           strcmp(name, "log-math") == 0 ||
-           strcmp(name, "trunc-math") == 0 ||
-           strcmp(name, "ceil-math") == 0 ||
-           strcmp(name, "floor-math") == 0 ||
-           strcmp(name, "round-math") == 0 ||
-           strcmp(name, "sin-math") == 0 ||
-           strcmp(name, "asin-math") == 0 ||
-           strcmp(name, "cos-math") == 0 ||
-           strcmp(name, "acos-math") == 0 ||
-           strcmp(name, "tan-math") == 0 ||
-           strcmp(name, "atan-math") == 0 ||
-           strcmp(name, "isnan-math") == 0 ||
-           strcmp(name, "isinf-math") == 0 ||
-           strcmp(name, "size-atom") == 0 || strcmp(name, "index-atom") == 0;
+    return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
+           id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
+           id == g_builtin_syms.op_mod || id == g_builtin_syms.op_lt ||
+           id == g_builtin_syms.op_gt || id == g_builtin_syms.op_le ||
+           id == g_builtin_syms.op_ge || id == g_builtin_syms.op_eq ||
+           id == g_builtin_syms.alpha_eq ||
+           id == g_builtin_syms.if_equal ||
+           id == g_builtin_syms.sealed_text ||
+           id == g_builtin_syms.minimal_foldl_atom ||
+           id == g_builtin_syms.collapse_add_next ||
+           id == g_builtin_syms.foldl_atom_in_space ||
+           id == g_builtin_syms.op_and || id == g_builtin_syms.op_or ||
+           id == g_builtin_syms.op_not || id == g_builtin_syms.op_xor ||
+           id == g_builtin_syms.println_bang ||
+           id == g_builtin_syms.trace_bang ||
+           id == g_builtin_syms.format_args ||
+           id == g_builtin_syms.py_atom ||
+           id == g_builtin_syms.py_dot ||
+           id == g_builtin_syms.py_call ||
+           id == g_builtin_syms.sort_strings ||
+           id == g_builtin_syms.print_alternatives_bang ||
+           id == g_builtin_syms.unique_atom ||
+           id == g_builtin_syms.intersection_atom ||
+           id == g_builtin_syms.subtraction_atom ||
+           id == g_builtin_syms.max_atom ||
+           id == g_builtin_syms.min_atom ||
+           id == g_builtin_syms.pow_math ||
+           id == g_builtin_syms.sqrt_math ||
+           id == g_builtin_syms.abs_math ||
+           id == g_builtin_syms.log_math ||
+           id == g_builtin_syms.trunc_math ||
+           id == g_builtin_syms.ceil_math ||
+           id == g_builtin_syms.floor_math ||
+           id == g_builtin_syms.round_math ||
+           id == g_builtin_syms.sin_math ||
+           id == g_builtin_syms.asin_math ||
+           id == g_builtin_syms.cos_math ||
+           id == g_builtin_syms.acos_math ||
+           id == g_builtin_syms.tan_math ||
+           id == g_builtin_syms.atan_math ||
+           id == g_builtin_syms.isnan_math ||
+           id == g_builtin_syms.isinf_math ||
+           id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom;
 }
 
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */
@@ -298,8 +300,8 @@ static bool numeric_arg_is_integral(const NumArg *arg) {
 /* ── Boolean arg extraction (True/False symbols) ──────────────────────── */
 
 static bool get_bool_arg(Atom *a, bool *out) {
-    if (atom_is_symbol(a, "True"))  { *out = true;  return true; }
-    if (atom_is_symbol(a, "False")) { *out = false; return true; }
+    if (atom_is_symbol_id(a, g_builtin_syms.true_text))  { *out = true;  return true; }
+    if (atom_is_symbol_id(a, g_builtin_syms.false_text)) { *out = false; return true; }
     if (a->kind == ATOM_GROUNDED && a->ground.gkind == GV_BOOL) {
         *out = a->ground.bval; return true;
     }
@@ -433,8 +435,8 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     FoldVarMap fresh_vars;
     fold_var_map_init(&fresh_vars);
     Atom *step_op = foldl_bind_step_atom(a, op_expr,
-                                         acc_var->name, init,
-                                         item_var->name, head_item,
+                                         acc_var->sym_id, init,
+                                         item_var->sym_id, head_item,
                                          &fresh_vars);
     fold_var_map_free(&fresh_vars);
 
@@ -470,9 +472,9 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
 
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    const char *op = head->name;
+    SymbolId head_id = head->sym_id;
 
-    if (strcmp(op, "println!") == 0) {
+    if (head_id == g_builtin_syms.println_bang) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
         if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING)
@@ -484,7 +486,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return atom_unit(a);
     }
 
-    if (strcmp(op, "trace!") == 0) {
+    if (head_id == g_builtin_syms.trace_bang) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         atom_print(args[0], stderr);
@@ -493,38 +495,38 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return args[1];
     }
 
-    if (strcmp(op, "format-args") == 0)
+    if (head_id == g_builtin_syms.format_args)
         return grounded_format_args(a, head, args, nargs);
 
-    if (strcmp(op, "sort-strings") == 0)
+    if (head_id == g_builtin_syms.sort_strings)
         return grounded_sort_strings(a, head, args, nargs);
 
-    if (strcmp(op, "_collapse-add-next-atom-from-collapse-bind-result") == 0)
+    if (head_id == g_builtin_syms.collapse_add_next)
         return grounded_collapse_add_next(a, head, args, nargs);
 
-    if (strcmp(op, "_minimal-foldl-atom") == 0 ||
-        strcmp(op, "foldl-atom-in-space") == 0)
+    if (head_id == g_builtin_syms.minimal_foldl_atom ||
+        head_id == g_builtin_syms.foldl_atom_in_space)
         return grounded_foldl_in_space(a, head, args, nargs);
 
-    if (strcmp(op, "=alpha") == 0) {
+    if (head_id == g_builtin_syms.alpha_eq) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         return atom_alpha_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
     }
 
-    if (strcmp(op, "if-equal") == 0) {
+    if (head_id == g_builtin_syms.if_equal) {
         if (nargs != 4)
             return grounded_incorrect_arity(a, head, args, nargs);
         return atom_alpha_eq(args[0], args[1]) ? args[2] : args[3];
     }
 
-    if (strcmp(op, "sealed") == 0) {
+    if (head_id == g_builtin_syms.sealed_text) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         return rename_vars_except(a, args[1], args[0]);
     }
 
-    if (strcmp(op, "print-alternatives!") == 0) {
+    if (head_id == g_builtin_syms.print_alternatives_bang) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         if (args[1]->kind != ATOM_EXPR)
@@ -539,7 +541,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return atom_unit(a);
     }
 
-    if (strcmp(op, "pow-math") == 0) {
+    if (head_id == g_builtin_syms.pow_math) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         NumArg base;
@@ -573,7 +575,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return atom_float(a, res);
     }
 
-    if (strcmp(op, "log-math") == 0) {
+    if (head_id == g_builtin_syms.log_math) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         NumArg base, input;
@@ -589,107 +591,107 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return atom_float(a, log(input.val) / log(base.val));
     }
 
-    if (strcmp(op, "sqrt-math") == 0 || strcmp(op, "abs-math") == 0 ||
-        strcmp(op, "trunc-math") == 0 || strcmp(op, "ceil-math") == 0 ||
-        strcmp(op, "floor-math") == 0 || strcmp(op, "round-math") == 0 ||
-        strcmp(op, "sin-math") == 0 || strcmp(op, "asin-math") == 0 ||
-        strcmp(op, "cos-math") == 0 || strcmp(op, "acos-math") == 0 ||
-        strcmp(op, "tan-math") == 0 || strcmp(op, "atan-math") == 0 ||
-        strcmp(op, "isnan-math") == 0 || strcmp(op, "isinf-math") == 0) {
+    if (head_id == g_builtin_syms.sqrt_math || head_id == g_builtin_syms.abs_math ||
+        head_id == g_builtin_syms.trunc_math || head_id == g_builtin_syms.ceil_math ||
+        head_id == g_builtin_syms.floor_math || head_id == g_builtin_syms.round_math ||
+        head_id == g_builtin_syms.sin_math || head_id == g_builtin_syms.asin_math ||
+        head_id == g_builtin_syms.cos_math || head_id == g_builtin_syms.acos_math ||
+        head_id == g_builtin_syms.tan_math || head_id == g_builtin_syms.atan_math ||
+        head_id == g_builtin_syms.isnan_math || head_id == g_builtin_syms.isinf_math) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
         NumArg input;
         if (!get_numeric_arg(args[0], &input)) {
             const char *msg = NULL;
-            if (strcmp(op, "sqrt-math") == 0)
+            if (head_id == g_builtin_syms.sqrt_math)
                 msg = "sqrt-math expects one argument: number";
-            else if (strcmp(op, "abs-math") == 0)
+            else if (head_id == g_builtin_syms.abs_math)
                 msg = "abs-math expects one argument: number";
-            else if (strcmp(op, "trunc-math") == 0)
+            else if (head_id == g_builtin_syms.trunc_math)
                 msg = "trunc-math expects one argument: input number";
-            else if (strcmp(op, "ceil-math") == 0)
+            else if (head_id == g_builtin_syms.ceil_math)
                 msg = "ceil-math expects one argument: input number";
-            else if (strcmp(op, "floor-math") == 0)
+            else if (head_id == g_builtin_syms.floor_math)
                 msg = "floor-math expects one argument: input number";
-            else if (strcmp(op, "round-math") == 0)
+            else if (head_id == g_builtin_syms.round_math)
                 msg = "round-math expects one argument: input number";
-            else if (strcmp(op, "sin-math") == 0)
+            else if (head_id == g_builtin_syms.sin_math)
                 msg = "sin-math expects one argument: input number";
-            else if (strcmp(op, "asin-math") == 0)
+            else if (head_id == g_builtin_syms.asin_math)
                 msg = "asin-math expects one argument: input number";
-            else if (strcmp(op, "cos-math") == 0)
+            else if (head_id == g_builtin_syms.cos_math)
                 msg = "cos-math expects one argument: input number";
-            else if (strcmp(op, "acos-math") == 0)
+            else if (head_id == g_builtin_syms.acos_math)
                 msg = "acos-math expects one argument: input number";
-            else if (strcmp(op, "tan-math") == 0)
+            else if (head_id == g_builtin_syms.tan_math)
                 msg = "tan-math expects one argument: input number";
-            else if (strcmp(op, "atan-math") == 0)
+            else if (head_id == g_builtin_syms.atan_math)
                 msg = "atan-math expects one argument: input number";
-            else if (strcmp(op, "isnan-math") == 0)
+            else if (head_id == g_builtin_syms.isnan_math)
                 msg = "isnan-math expects one argument: input number";
             else
                 msg = "isinf-math expects one argument: input number";
             return grounded_string_error(a, head, args, nargs, msg);
         }
 
-        if (strcmp(op, "sqrt-math") == 0) {
+        if (head_id == g_builtin_syms.sqrt_math) {
             if (input.val < 0.0)
                 return grounded_math_domain_error(a, head, args, nargs, 1,
                                                   "NonNegativeReal");
             return atom_float(a, sqrt(input.val));
         }
-        if (strcmp(op, "abs-math") == 0) {
+        if (head_id == g_builtin_syms.abs_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, llabs(args[0]->ground.ival));
             return atom_float(a, fabs(input.val));
         }
-        if (strcmp(op, "trunc-math") == 0) {
+        if (head_id == g_builtin_syms.trunc_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             return atom_float(a, trunc(input.val));
         }
-        if (strcmp(op, "ceil-math") == 0) {
+        if (head_id == g_builtin_syms.ceil_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             return atom_float(a, ceil(input.val));
         }
-        if (strcmp(op, "floor-math") == 0) {
+        if (head_id == g_builtin_syms.floor_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             return atom_float(a, floor(input.val));
         }
-        if (strcmp(op, "round-math") == 0) {
+        if (head_id == g_builtin_syms.round_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             return atom_float(a, round(input.val));
         }
-        if (strcmp(op, "sin-math") == 0)
+        if (head_id == g_builtin_syms.sin_math)
             return atom_float(a, sin(input.val));
-        if (strcmp(op, "asin-math") == 0) {
+        if (head_id == g_builtin_syms.asin_math) {
             if (input.val < -1.0 || input.val > 1.0)
                 return grounded_math_domain_error(a, head, args, nargs, 1,
                                                   "ClosedUnitInterval");
             return atom_float(a, asin(input.val));
         }
-        if (strcmp(op, "cos-math") == 0)
+        if (head_id == g_builtin_syms.cos_math)
             return atom_float(a, cos(input.val));
-        if (strcmp(op, "acos-math") == 0) {
+        if (head_id == g_builtin_syms.acos_math) {
             if (input.val < -1.0 || input.val > 1.0)
                 return grounded_math_domain_error(a, head, args, nargs, 1,
                                                   "ClosedUnitInterval");
             return atom_float(a, acos(input.val));
         }
-        if (strcmp(op, "tan-math") == 0)
+        if (head_id == g_builtin_syms.tan_math)
             return atom_float(a, tan(input.val));
-        if (strcmp(op, "atan-math") == 0)
+        if (head_id == g_builtin_syms.atan_math)
             return atom_float(a, atan(input.val));
-        if (strcmp(op, "isnan-math") == 0)
+        if (head_id == g_builtin_syms.isnan_math)
             return isnan(input.val) ? atom_true(a) : atom_false(a);
         return isinf(input.val) ? atom_true(a) : atom_false(a);
     }
 
-    if (strcmp(op, "max-atom") == 0 || strcmp(op, "min-atom") == 0) {
-        bool want_max = strcmp(op, "max-atom") == 0;
+    if (head_id == g_builtin_syms.max_atom || head_id == g_builtin_syms.min_atom) {
+        bool want_max = head_id == g_builtin_syms.max_atom;
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
         if (args[0]->kind != ATOM_EXPR)
@@ -712,7 +714,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     }
 
     /* ── Expression introspection ─────────────────────────────────────── */
-    if (strcmp(op, "size-atom") == 0 && nargs == 1) {
+    if (head_id == g_builtin_syms.size_atom && nargs == 1) {
         if (args[0]->kind == ATOM_EXPR)
             return atom_int(a, args[0]->expr.len);
         if (args[0]->kind == ATOM_GROUNDED)
@@ -721,7 +723,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return NULL;
     }
 
-    if (strcmp(op, "index-atom") == 0 && nargs == 2) {
+    if (head_id == g_builtin_syms.index_atom && nargs == 2) {
         if (args[0]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
@@ -741,7 +743,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return args[0]->expr.elems[idx];
     }
 
-    if (strcmp(op, "unique-atom") == 0 && nargs == 1) {
+    if (head_id == g_builtin_syms.unique_atom && nargs == 1) {
         if (args[0]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
@@ -765,7 +767,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return atom_expr(a, uniq, out_len);
     }
 
-    if (strcmp(op, "intersection-atom") == 0 && nargs == 2) {
+    if (head_id == g_builtin_syms.intersection_atom && nargs == 2) {
         if (args[0]->kind != ATOM_EXPR || args[1]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
@@ -791,7 +793,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return atom_expr(a, out, out_len);
     }
 
-    if (strcmp(op, "subtraction-atom") == 0 && nargs == 2) {
+    if (head_id == g_builtin_syms.subtraction_atom && nargs == 2) {
         if (args[0]->kind != ATOM_EXPR || args[1]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
@@ -819,12 +821,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     }
 
     /* ── Structural equality (any atom type) ───────────────────────────── */
-    if (strcmp(op, "==") == 0 && nargs == 2) {
+    if (head_id == g_builtin_syms.op_eq && nargs == 2) {
         return atom_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */
-    if (strcmp(op, "not") == 0) {
+    if (head_id == g_builtin_syms.op_not) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
         bool bv;
@@ -834,17 +836,17 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return grounded_bool_bad_arg(a, head, args, nargs, 1, args[0]);
         return NULL;
     }
-    if ((strcmp(op, "and") == 0 || strcmp(op, "or") == 0 || strcmp(op, "xor") == 0) && nargs != 2)
+    if ((head_id == g_builtin_syms.op_and || head_id == g_builtin_syms.op_or || head_id == g_builtin_syms.op_xor) && nargs != 2)
         return grounded_incorrect_arity(a, head, args, nargs);
     if (nargs == 2) {
         bool bx, by;
-        if (strcmp(op, "and") == 0 || strcmp(op, "or") == 0 || strcmp(op, "xor") == 0) {
+        if (head_id == g_builtin_syms.op_and || head_id == g_builtin_syms.op_or || head_id == g_builtin_syms.op_xor) {
             bool okx = get_bool_arg(args[0], &bx);
             bool oky = get_bool_arg(args[1], &by);
             if (okx && oky) {
-                if (strcmp(op, "and") == 0)
+                if (head_id == g_builtin_syms.op_and)
                     return (bx && by) ? atom_true(a) : atom_false(a);
-                if (strcmp(op, "or") == 0)
+                if (head_id == g_builtin_syms.op_or)
                     return (bx || by) ? atom_true(a) : atom_false(a);
                 return (bx != by) ? atom_true(a) : atom_false(a);
             }
@@ -860,11 +862,11 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 2) return NULL;
 
     /* Check if this is an arithmetic op that expects numeric args */
-    bool is_arith = (strcmp(op, "+") == 0 || strcmp(op, "-") == 0 ||
-                     strcmp(op, "*") == 0 || strcmp(op, "/") == 0 ||
-                     strcmp(op, "%") == 0 || strcmp(op, "<") == 0 ||
-                     strcmp(op, ">") == 0 || strcmp(op, "<=") == 0 ||
-                     strcmp(op, ">=") == 0);
+    bool is_arith = (head_id == g_builtin_syms.op_plus || head_id == g_builtin_syms.op_minus ||
+                     head_id == g_builtin_syms.op_mul || head_id == g_builtin_syms.op_div ||
+                     head_id == g_builtin_syms.op_mod || head_id == g_builtin_syms.op_lt ||
+                     head_id == g_builtin_syms.op_gt || head_id == g_builtin_syms.op_le ||
+                     head_id == g_builtin_syms.op_ge);
     NumArg na = {0, false}, nb = {0, false};
     bool na_ok = get_numeric_arg(args[0], &na);
     bool nb_ok = get_numeric_arg(args[1], &nb);
@@ -890,53 +892,53 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         int64_t ai = na.ival;
         int64_t bi = nb.ival;
 
-        if (strcmp(op, "+") == 0) {
+        if (head_id == g_builtin_syms.op_plus) {
             __int128 sum = (__int128)ai + (__int128)bi;
             if (sum >= INT64_MIN && sum <= INT64_MAX)
                 return atom_int(a, (int64_t)sum);
             return atom_float(a, (double)ai + (double)bi);
         }
-        if (strcmp(op, "-") == 0) {
+        if (head_id == g_builtin_syms.op_minus) {
             __int128 diff = (__int128)ai - (__int128)bi;
             if (diff >= INT64_MIN && diff <= INT64_MAX)
                 return atom_int(a, (int64_t)diff);
             return atom_float(a, (double)ai - (double)bi);
         }
-        if (strcmp(op, "*") == 0) {
+        if (head_id == g_builtin_syms.op_mul) {
             __int128 prod = (__int128)ai * (__int128)bi;
             if (prod >= INT64_MIN && prod <= INT64_MAX)
                 return atom_int(a, (int64_t)prod);
             return atom_float(a, (double)ai * (double)bi);
         }
-        if (strcmp(op, "/") == 0) {
+        if (head_id == g_builtin_syms.op_div) {
             if (bi == 0)
                 return grounded_division_by_zero(a, head, args, nargs);
             if (ai % bi == 0)
                 return atom_int(a, ai / bi);
             return atom_float(a, (double)ai / (double)bi);
         }
-        if (strcmp(op, "%") == 0) {
+        if (head_id == g_builtin_syms.op_mod) {
             if (bi == 0)
                 return grounded_division_by_zero(a, head, args, nargs);
             return atom_int(a, ai % bi);
         }
-        if (strcmp(op, "<") == 0)  return ai < bi  ? atom_true(a) : atom_false(a);
-        if (strcmp(op, ">") == 0)  return ai > bi  ? atom_true(a) : atom_false(a);
-        if (strcmp(op, "<=") == 0) return ai <= bi ? atom_true(a) : atom_false(a);
-        if (strcmp(op, ">=") == 0) return ai >= bi ? atom_true(a) : atom_false(a);
+        if (head_id == g_builtin_syms.op_lt)  return ai < bi  ? atom_true(a) : atom_false(a);
+        if (head_id == g_builtin_syms.op_gt)  return ai > bi  ? atom_true(a) : atom_false(a);
+        if (head_id == g_builtin_syms.op_le) return ai <= bi ? atom_true(a) : atom_false(a);
+        if (head_id == g_builtin_syms.op_ge) return ai >= bi ? atom_true(a) : atom_false(a);
     }
 
-    if (strcmp(op, "+") == 0) return make_numeric(a, na.val + nb.val, fl);
-    if (strcmp(op, "-") == 0) return make_numeric(a, na.val - nb.val, fl);
-    if (strcmp(op, "*") == 0) return make_numeric(a, na.val * nb.val, fl);
-    if (strcmp(op, "/") == 0) return nb.val != 0 ? make_numeric(a, na.val / nb.val, fl)
-                                                 : atom_float(a, na.val / nb.val);
-    if (strcmp(op, "%") == 0) return nb.val != 0 ? make_numeric(a, fmod(na.val, nb.val), fl)
-                                                 : grounded_division_by_zero(a, head, args, nargs);
-    if (strcmp(op, "<") == 0)  return na.val < nb.val  ? atom_true(a) : atom_false(a);
-    if (strcmp(op, ">") == 0)  return na.val > nb.val  ? atom_true(a) : atom_false(a);
-    if (strcmp(op, "<=") == 0) return na.val <= nb.val ? atom_true(a) : atom_false(a);
-    if (strcmp(op, ">=") == 0) return na.val >= nb.val ? atom_true(a) : atom_false(a);
+    if (head_id == g_builtin_syms.op_plus) return make_numeric(a, na.val + nb.val, fl);
+    if (head_id == g_builtin_syms.op_minus) return make_numeric(a, na.val - nb.val, fl);
+    if (head_id == g_builtin_syms.op_mul) return make_numeric(a, na.val * nb.val, fl);
+    if (head_id == g_builtin_syms.op_div) return nb.val != 0 ? make_numeric(a, na.val / nb.val, fl)
+                                                              : atom_float(a, na.val / nb.val);
+    if (head_id == g_builtin_syms.op_mod) return nb.val != 0 ? make_numeric(a, fmod(na.val, nb.val), fl)
+                                                              : grounded_division_by_zero(a, head, args, nargs);
+    if (head_id == g_builtin_syms.op_lt)  return na.val < nb.val  ? atom_true(a) : atom_false(a);
+    if (head_id == g_builtin_syms.op_gt)  return na.val > nb.val  ? atom_true(a) : atom_false(a);
+    if (head_id == g_builtin_syms.op_le) return na.val <= nb.val ? atom_true(a) : atom_false(a);
+    if (head_id == g_builtin_syms.op_ge) return na.val >= nb.val ? atom_true(a) : atom_false(a);
 
     return NULL;
 }

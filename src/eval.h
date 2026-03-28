@@ -23,6 +23,7 @@ typedef struct OutcomeSet {
 
 void outcome_set_init(OutcomeSet *os);
 void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
+void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
 
 /* ── ResultSet: public API for top-level results (atoms only) ──────────── */

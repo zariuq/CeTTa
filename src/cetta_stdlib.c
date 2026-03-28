@@ -76,7 +76,7 @@ static void collect_strings(Atom *atom, StringTable *st) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
     case ATOM_VAR:
-        strtab_add(st, atom->name);
+        strtab_add(st, atom_name_cstr(atom));
         break;
     case ATOM_GROUNDED:
         if (atom->ground.gkind == GV_STRING)
@@ -116,11 +116,11 @@ static void serialize_atom(Atom *atom, StringTable *st, ByteBuf *b) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
         buf_u8(b, BLOB_TAG_SYMBOL);
-        buf_u16(b, strtab_add(st, atom->name));
+        buf_u16(b, strtab_add(st, atom_name_cstr(atom)));
         break;
     case ATOM_VAR:
         buf_u8(b, BLOB_TAG_VAR);
-        buf_u16(b, strtab_add(st, atom->name));
+        buf_u16(b, strtab_add(st, atom_name_cstr(atom)));
         break;
     case ATOM_GROUNDED:
         switch (atom->ground.gkind) {

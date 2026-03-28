@@ -19,6 +19,22 @@
   (match &stats (runtime-counter rename-vars $n) (> $n 0))
   (True))
 
+!(reset-runtime-stats!)
+!(add-atom &self (= (dispatch-probe A) one))
+!(add-atom &self (= (dispatch-probe B) two))
+!(add-atom &self (= (dispatch-probe C) three))
+!(add-atom &self (= (dispatch-probe D) four))
+!(add-atom &self (= (dispatch-probe E) five))
+!(assertEqual (dispatch-probe A) one)
+!(bind! &dispatch-stats (runtime-stats!))
+!(assertEqualToResult
+  (match &dispatch-stats (runtime-counter query-equation-subst-candidates $n)
+    (> $n 0))
+  (True))
+!(assertEqualToResult
+  (match &dispatch-stats (runtime-counter query-equation-legacy-candidates $n) $n)
+  (0))
+
 !(add-atom &self (: typed Number))
 !(remove-atom &self (= (probe A) ok))
 !(remove-atom &self (: typed Number))
@@ -53,4 +69,17 @@
   (True))
 !(assertEqualToResult
   (match &hash-stats (runtime-counter subst-query-exact-shortcut $n) (> $n 0))
+  (True))
+
+!(reset-runtime-stats!)
+!(bind! &queue (new-space queue))
+!(space-push &queue alpha)
+!(space-push &queue beta)
+!(space-pop &queue)
+!(bind! &queue-stats (runtime-stats!))
+!(assertEqualToResult
+  (match &queue-stats (runtime-counter space-push $n) (> $n 0))
+  (True))
+!(assertEqualToResult
+  (match &queue-stats (runtime-counter space-pop $n) (> $n 0))
   (True))
