@@ -534,6 +534,13 @@ static Atom *imported_bridge_parse_token_bytes(Arena *a,
     memcpy(tok, bytes, len);
     tok[len] = '\0';
 
+    if (len >= 2 && tok[0] == '"' && tok[len - 1] == '"') {
+        size_t pos = 0;
+        Atom *parsed = parse_sexpr(a, tok, &pos);
+        if (parsed && pos == len)
+            return parsed;
+    }
+
     if (strcmp(tok, "True") == 0)  return atom_bool(a, true);
     if (strcmp(tok, "False") == 0) return atom_bool(a, false);
     if (strcmp(tok, "PI") == 0)    return atom_float(a, 3.14159265358979323846);
@@ -1546,7 +1553,9 @@ static void imported_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) 
     for (uint32_t i = 0; i < ncand; i++) {
         Bindings empty;
         bindings_init(&empty);
-        subst_matchset_push(out, candidates[i], 0, &empty, false);
+        /* Imported fallback still rematches the original candidate atom locally,
+           so each row must get a fresh epoch just like the native query path. */
+        subst_matchset_push(out, candidates[i], fresh_var_suffix(), &empty, false);
         bindings_free(&empty);
     }
     free(candidates);

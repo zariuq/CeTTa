@@ -162,7 +162,7 @@ Libraries:
 
 - `lib/stdlib.metta`: main bundled stdlib
 - `lib/mork.metta`: narrow MORK-facing helper surface
-- `lib/metamath.metta`: Metamath-facing helpers
+- `lib/metamath.metta`: generic textual Metamath-facing helpers
 - `lib/fs.metta`, `lib/system.metta`, `lib/str.metta`, `lib/path.metta`:
   extension libraries used by the current profile surfaces
 
