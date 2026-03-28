@@ -1,9 +1,8 @@
 !(import! &self system)
-!(import! &self metamath)
 !(import! &self cverify_textual_parse)
 
 (= (parse_mm_file $filename)
-   (case (mm-parse-file-pverify $filename)
+   (case (parse_mm_file_textual $filename)
      (((Error $source $message)
        (Error (parse_mm_file $filename) $message))
       ($result

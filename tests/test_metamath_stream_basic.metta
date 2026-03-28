@@ -1,22 +1,19 @@
 !(import! &self metamath)
 
-(= (consume-until-empty $handle)
-   (let $next (mm-next-stmt $handle)
-     (if (== $next Empty)
-         Empty
-         (consume-until-empty $handle))))
+!(assertEqual
+  (mm-read-tokens "tests/support/metamath/tiny_cverify.mm")
+  ("$c" "wff" "|-" "->" "(" ")" "$." "${" "$v" "ph" "ps" "$." "$d" "ph" "ps"
+   "$." "wph" "$f" "wff" "ph" "$." "wps" "$f" "wff" "ps" "$." "ax-1" "$a"
+   "|-" "(" "ph" "->" "(" "ps" "->" "ph" ")" ")" "$." "th1" "$p" "|-" "("
+   "ph" "->" "(" "ps" "->" "ph" ")" ")" "$=" "wph" "wps" "ax-1" "$." "$}"))
 
 !(assertEqual
-  (let $handle (mm-open-file-pverify "tests/support/metamath/tiny_cverify.mm")
-    (let $s1 (mm-next-stmt $handle)
-      (let $s2 (mm-next-stmt $handle)
-        (let $closed (mm-close-file $handle)
-          ($s1 $s2 $closed)))))
-  ((c ("wff" "|-" "mm.->" "(" ")"))
-   (open_frame)
-   ()))
+  (let $stmts (mm-parse-file-pverify "tests/support/metamath/tiny_cverify.mm")
+    (index-atom $stmts 1))
+  (open_frame))
 
 !(assertEqual
-  (let $handle (mm-open-file-pverify "tests/support/metamath/tiny_cverify.mm")
-    (consume-until-empty $handle))
-  Empty)
+  (let $stmts (mm-parse-file-pverify "tests/support/metamath/tiny_cverify.mm")
+    (index-atom $stmts 7))
+  (p "th1" "|-" ("(" "ph" "mm.->" "(" "ps" "mm.->" "ph" ")" ")")
+     ("wph" "wps" "ax-1")))

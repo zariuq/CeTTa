@@ -17,7 +17,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS)
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c native/metamath/parser.c native/metamath/module.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_MATCH_BACKENDS = native-subst-tree native-candidate-exact pathmap-imported
@@ -604,6 +604,7 @@ test-backends: $(BIN)
 		[ $$fail -eq 0 ] || exit 1; \
 	done
 	@$(MAKE) -s test-pathmap-imported-bridge-v2
+	@$(MAKE) -s test-pathmap-imported-match-chain
 	@$(MAKE) -s test-mork-lib-pathmap-imported
 
 test-pathmap-imported-bridge-v2: $(BIN)
@@ -618,6 +619,20 @@ test-pathmap-imported-bridge-v2: $(BIN)
 	else \
 		echo "FAIL: pathmap-imported bridge v2 regression"; \
 		diff <(echo "$$expected") <(echo "$$result") | head -20; \
+			exit 1; \
+		fi
+
+test-pathmap-imported-match-chain: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: pathmap-imported nested-match chain regression (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --space-match-backend pathmap-imported --lang he tests/test_match_chain_imported_regression.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_match_chain_imported_regression.expected)" ]; then \
+		echo "PASS: pathmap-imported nested-match chain regression"; \
+	else \
+		echo "FAIL: pathmap-imported nested-match chain regression"; \
+		diff <(cat tests/test_match_chain_imported_regression.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
 
@@ -845,4 +860,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: all clean test test-backends test-pathmap-imported-bridge-v2 test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: all clean test test-backends test-pathmap-imported-bridge-v2 test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime

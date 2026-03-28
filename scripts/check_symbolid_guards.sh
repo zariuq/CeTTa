@@ -16,7 +16,6 @@ no_name_files=(
   src/grounded.c
   src/native_handle.c
   src/cetta_stdlib.c
-  native/metamath/module.c
 )
 
 atom_match_files=(
