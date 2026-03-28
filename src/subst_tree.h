@@ -16,10 +16,37 @@
 
 /* ── SubstNode ─────────────────────────────────────────────────────────── */
 
+/* ── Adaptive symbol indexing for high-fanout trie nodes ──────────────── *
+ * Symbol children stay in a flat array while fan-out is small, then
+ * promote to an open-addressing table once the node becomes wide.
+ * Positive example: the eqtl-link node with tens of thousands of SNP
+ * children. Negative example: every small trie node paying hash-table
+ * overhead for four children. */
+
+#define SNODE_HASH_THRESHOLD 16
+
+typedef struct {
+    SymbolId key;
+    struct SubstNode *child;
+} SubstSymBranch;
+
+typedef struct {
+    SymbolId key;
+    struct SubstNode *child;
+} SymHashEntry;
+
+typedef struct {
+    SymHashEntry *entries;  /* power-of-2 sized, SYMBOL_ID_NONE = empty slot */
+    uint32_t mask;          /* table_size - 1 (for & masking) */
+    uint32_t count;         /* number of occupied slots */
+} SymHashTable;
+
 typedef struct SubstNode {
     /* Symbol branches (SymbolId -> child) */
-    struct { SymbolId key; struct SubstNode *child; } *sym;
+    SubstSymBranch *sym;
     uint32_t nsym, csym;
+    SymHashTable sym_ht;
+    bool sym_hashed;
 
     /* Variable branches — each indexed variable id gets its own
        branch so retrieval can produce bindings during the walk. */

@@ -13,6 +13,7 @@ typedef struct CettaLibraryContext CettaLibraryContext;
 
 typedef struct Outcome {
     Atom *atom;
+    Atom *materialized_atom;
     Bindings env;
 } Outcome;
 

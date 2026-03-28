@@ -6,6 +6,7 @@
 #include <string.h>
 
 static uint64_t g_runtime_counters[CETTA_RUNTIME_COUNTER_COUNT];
+static bool g_runtime_stats_enabled = false;
 
 static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT] = {
     "bindings-lookup",
@@ -63,7 +64,12 @@ void cetta_runtime_stats_reset(void) {
     memset(g_runtime_counters, 0, sizeof(g_runtime_counters));
 }
 
+void cetta_runtime_stats_enable(void) { g_runtime_stats_enabled = true; }
+void cetta_runtime_stats_disable(void) { g_runtime_stats_enabled = false; }
+
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
+    if (__builtin_expect(!g_runtime_stats_enabled, 1))
+        return;
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
     g_runtime_counters[counter] += delta;

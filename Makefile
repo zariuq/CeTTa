@@ -22,6 +22,7 @@ OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_MATCH_BACKENDS = native-subst-tree native-candidate-exact pathmap-imported
 D4_PROBE_TIMEOUT ?= 60
+BOOTSTRAP_TMPDIR = runtime/bootstrap
 GIT_TEST_FIXTURE_ROOT = $(CURDIR)/runtime/git_module_fixture
 GIT_TEST_CACHE_DIR = $(CURDIR)/runtime/test-git-module-cache
 GIT_TEST_URL = file://$(GIT_TEST_FIXTURE_ROOT)
@@ -54,15 +55,30 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d)
 %.stage0.o: %.c
 	$(CC) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 cetta-stage0: $(STAGE0_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 # Stage 1: compile stdlib using stage0
 $(STDLIB_BLOB): cetta-stage0 $(STDLIB_SRC)
-	./cetta-stage0 --compile-stdlib $(STDLIB_SRC) > $(STDLIB_BLOB)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@tmp_stage0=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.run.XXXXXX"); \
+	tmp_blob=$$(mktemp "$(BOOTSTRAP_TMPDIR)/stdlib_blob.XXXXXX"); \
+	trap 'rm -f "$$tmp_stage0" "$$tmp_blob"' EXIT INT TERM; \
+	cp ./cetta-stage0 "$$tmp_stage0"; \
+	chmod +x "$$tmp_stage0"; \
+	"$$tmp_stage0" --compile-stdlib $(STDLIB_SRC) > "$$tmp_blob"; \
+	mv "$$tmp_blob" $(STDLIB_BLOB)
 
 # Stage 2: full binary with precompiled stdlib
 $(BIN): $(OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 # stdlib.o depends on the generated blob header
 src/cetta_stdlib.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB)
@@ -166,13 +182,20 @@ test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2-lowering-core test-mm2-mork-program-space
+MORK_MM2_TEST3 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test3_var_binding.mm2)
+
+test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-exec-basic test-mm2-conformance-var-binding
 	@pass=0; fail=0; skip=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
 		[ -f "$$f" ] || continue; \
-		if [ "$$f" = "tests/test_mm2_preview_surface.metta" ]; then \
-			echo "SKIP: $$f (preview lane is no longer part of the active MM2 plan)"; \
+		if [ "$$f" = "tests/test_mm2_runtime_lib.metta" ]; then \
+			echo "SKIP: $$f (covered by dedicated MM2 runtime seam target)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if [ "$$f" = "tests/test_mm2_load_file_lib.metta" ]; then \
+			echo "SKIP: $$f (covered by dedicated MM2 file-load seam target)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
@@ -660,11 +683,16 @@ test-backends: $(BIN)
 		pass=0; fail=0; skip=0; \
 		for f in tests/test_*.metta tests/he_*.metta; do \
 			[ -f "$$f" ] || continue; \
-			if [ "$$f" = "tests/test_mm2_preview_surface.metta" ]; then \
-				echo "SKIP: $$f (preview lane is no longer part of the active MM2 plan)"; \
-				skip=$$((skip + 1)); \
-				continue; \
-			fi; \
+		if [ "$$f" = "tests/test_mm2_runtime_lib.metta" ]; then \
+			echo "SKIP: $$f (covered by dedicated MM2 runtime seam target)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if [ "$$f" = "tests/test_mm2_load_file_lib.metta" ]; then \
+			echo "SKIP: $$f (covered by dedicated MM2 file-load seam target)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
 			if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ]; then \
 				echo "SKIP: $$f (pathmap-imported specific regression)"; \
 				skip=$$((skip + 1)); \
@@ -724,6 +752,62 @@ test-mm2-mork-program-space: $(BIN)
 	else \
 		echo "FAIL: mm2 MORK program-space lowering regression"; \
 		diff <(echo "$$expected") <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-mm2-runtime-lib: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 runtime library seam (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --lang he tests/test_mm2_runtime_lib.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_mm2_runtime_lib.expected)" ]; then \
+		echo "PASS: mm2 runtime library seam"; \
+	else \
+		echo "FAIL: mm2 runtime library seam"; \
+		diff <(cat tests/test_mm2_runtime_lib.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-mm2-load-file-lib: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 runtime file-load seam (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --lang he tests/test_mm2_load_file_lib.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_mm2_load_file_lib.expected)" ]; then \
+		echo "PASS: mm2 runtime file-load seam"; \
+	else \
+		echo "FAIL: mm2 runtime file-load seam"; \
+		diff <(cat tests/test_mm2_load_file_lib.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-mm2-exec-basic: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 direct execution seam (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --lang mm2 tests/mm2_exec_basic.mm2 2>&1); \
+	if [ "$$result" = "$$(cat tests/mm2_exec_basic.expected)" ]; then \
+		echo "PASS: mm2 direct execution seam"; \
+	else \
+		echo "FAIL: mm2 direct execution seam"; \
+		diff <(cat tests/mm2_exec_basic.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-mm2-conformance-var-binding: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 var-binding conformance seam (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --lang mm2 "$(MORK_MM2_TEST3)" 2>&1); \
+	if [ "$$result" = "$$(cat tests/mm2_conformance_var_binding.expected)" ]; then \
+		echo "PASS: mm2 var-binding conformance seam"; \
+	else \
+		echo "FAIL: mm2 var-binding conformance seam"; \
+		diff <(cat tests/mm2_conformance_var_binding.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
 
@@ -1057,4 +1141,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: all clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-pathmap-imported-bridge-v2 test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: all clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-exec-basic test-mm2-conformance-var-binding test-pathmap-imported-bridge-v2 test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime

@@ -6,6 +6,8 @@
 #include <stdint.h>
 
 typedef struct CettaMorkSpaceHandle CettaMorkSpaceHandle;
+typedef struct CettaMorkProgramHandle CettaMorkProgramHandle;
+typedef struct CettaMorkContextHandle CettaMorkContextHandle;
 
 bool cetta_mork_bridge_is_available(void);
 const char *cetta_mork_bridge_last_error(void);
@@ -41,6 +43,39 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
                                                          uint8_t **out_packet,
                                                          size_t *out_len,
                                                          uint32_t *out_rows);
+
+CettaMorkProgramHandle *cetta_mork_bridge_program_new(void);
+void cetta_mork_bridge_program_free(CettaMorkProgramHandle *program);
+bool cetta_mork_bridge_program_clear(CettaMorkProgramHandle *program);
+bool cetta_mork_bridge_program_add_sexpr(CettaMorkProgramHandle *program,
+                                         const uint8_t *text, size_t len,
+                                         uint64_t *out_added);
+bool cetta_mork_bridge_program_size(const CettaMorkProgramHandle *program,
+                                    uint64_t *out_size);
+bool cetta_mork_bridge_program_dump(CettaMorkProgramHandle *program,
+                                    uint8_t **out_packet, size_t *out_len,
+                                    uint32_t *out_rows);
+
+CettaMorkContextHandle *cetta_mork_bridge_context_new(void);
+void cetta_mork_bridge_context_free(CettaMorkContextHandle *context);
+bool cetta_mork_bridge_context_clear(CettaMorkContextHandle *context);
+bool cetta_mork_bridge_context_load_program(CettaMorkContextHandle *context,
+                                            const CettaMorkProgramHandle *program,
+                                            uint64_t *out_added);
+bool cetta_mork_bridge_context_add_sexpr(CettaMorkContextHandle *context,
+                                         const uint8_t *text, size_t len,
+                                         uint64_t *out_added);
+bool cetta_mork_bridge_context_remove_sexpr(CettaMorkContextHandle *context,
+                                            const uint8_t *text, size_t len,
+                                            uint64_t *out_removed);
+bool cetta_mork_bridge_context_size(const CettaMorkContextHandle *context,
+                                    uint64_t *out_size);
+bool cetta_mork_bridge_context_run(CettaMorkContextHandle *context,
+                                   uint64_t steps, uint64_t *out_performed);
+bool cetta_mork_bridge_context_dump(CettaMorkContextHandle *context,
+                                    uint8_t **out_packet, size_t *out_len,
+                                    uint32_t *out_rows);
+
 void cetta_mork_bridge_bytes_free(uint8_t *data, size_t len);
 
 #endif /* CETTA_MORK_SPACE_BRIDGE_RUNTIME_H */

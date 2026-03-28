@@ -61,6 +61,7 @@ bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *va
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
+bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
@@ -76,6 +77,7 @@ void      bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned);
 void      bindings_builder_free(BindingsBuilder *bb);
 uint32_t  bindings_builder_save(const BindingsBuilder *bb);
 void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);
+void      bindings_builder_commit(BindingsBuilder *bb);
 bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
                                         SymbolId spelling, Atom *val);
 bool      bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var,

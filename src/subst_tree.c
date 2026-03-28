@@ -19,8 +19,16 @@ SubstNode *snode_new(void) {
 
 void snode_free(SubstNode *n) {
     if (!n) return;
-    for (uint32_t i = 0; i < n->nsym; i++) snode_free(n->sym[i].child);
-    free(n->sym);
+    if (n->sym_hashed) {
+        uint32_t cap = n->sym_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++)
+            if (n->sym_ht.entries[i].key != SYMBOL_ID_NONE)
+                snode_free(n->sym_ht.entries[i].child);
+        free(n->sym_ht.entries);
+    } else {
+        for (uint32_t i = 0; i < n->nsym; i++) snode_free(n->sym[i].child);
+        free(n->sym);
+    }
     for (uint32_t i = 0; i < n->nvars; i++) snode_free(n->vars[i].child);
     free(n->vars);
     for (uint32_t i = 0; i < n->nexpr; i++) snode_free(n->expr[i].child);
@@ -31,9 +39,82 @@ void snode_free(SubstNode *n) {
     free(n);
 }
 
+/* ── Symbol hash table helpers ─────────────────────────────────────────── */
+
+static inline uint32_t sym_hash(SymbolId key) {
+    return (uint32_t)((uint64_t)key * 2654435761u);
+}
+
+static void sym_ht_init(SymHashTable *ht, uint32_t min_cap) {
+    uint32_t cap = 32;
+    while (cap < min_cap * 2) cap *= 2;  /* load factor < 0.5 */
+    ht->entries = cetta_malloc(sizeof(SymHashEntry) * cap);
+    ht->mask = cap - 1;
+    ht->count = 0;
+    for (uint32_t i = 0; i < cap; i++)
+        ht->entries[i].key = SYMBOL_ID_NONE;
+}
+
+static SubstNode *sym_ht_get(SymHashTable *ht, SymbolId key) {
+    uint32_t idx = sym_hash(key) & ht->mask;
+    for (;;) {
+        if (ht->entries[idx].key == key)
+            return ht->entries[idx].child;
+        if (ht->entries[idx].key == SYMBOL_ID_NONE)
+            return NULL;
+        idx = (idx + 1) & ht->mask;
+    }
+}
+
+static void sym_ht_put(SymHashTable *ht, SymbolId key, SubstNode *child) {
+    /* Resize if load factor > 0.7 */
+    if (ht->count * 10 > (ht->mask + 1) * 7) {
+        uint32_t old_cap = ht->mask + 1;
+        SymHashEntry *old = ht->entries;
+        uint32_t new_cap = old_cap * 2;
+        ht->entries = cetta_malloc(sizeof(SymHashEntry) * new_cap);
+        ht->mask = new_cap - 1;
+        for (uint32_t i = 0; i < new_cap; i++)
+            ht->entries[i].key = SYMBOL_ID_NONE;
+        ht->count = 0;
+        for (uint32_t i = 0; i < old_cap; i++) {
+            if (old[i].key != SYMBOL_ID_NONE) {
+                sym_ht_put(ht, old[i].key, old[i].child);
+            }
+        }
+        free(old);
+    }
+    uint32_t idx = sym_hash(key) & ht->mask;
+    while (ht->entries[idx].key != SYMBOL_ID_NONE)
+        idx = (idx + 1) & ht->mask;
+    ht->entries[idx].key = key;
+    ht->entries[idx].child = child;
+    ht->count++;
+}
+
+static void snode_sym_promote(SubstNode *n) {
+    SubstSymBranch *old_sym = n->sym;
+    uint32_t count = n->nsym;
+    sym_ht_init(&n->sym_ht, count + 16);
+    for (uint32_t i = 0; i < count; i++)
+        sym_ht_put(&n->sym_ht, old_sym[i].key, old_sym[i].child);
+    free(old_sym);
+    n->sym = NULL;
+    n->csym = 0;
+    n->sym_hashed = true;
+}
+
 /* ── Branch helpers ────────────────────────────────────────────────────── */
 
 static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
+    if (n->sym_hashed) {
+        SubstNode *existing = sym_ht_get(&n->sym_ht, key);
+        if (existing) return existing;
+        SubstNode *child = snode_new();
+        sym_ht_put(&n->sym_ht, key, child);
+        n->nsym++;
+        return child;
+    }
     for (uint32_t i = 0; i < n->nsym; i++)
         if (n->sym[i].key == key)
             return n->sym[i].child;
@@ -45,6 +126,8 @@ static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
     n->sym[n->nsym].key = key;
     n->sym[n->nsym].child = child;
     n->nsym++;
+    if (n->nsym > SNODE_HASH_THRESHOLD)
+        snode_sym_promote(n);
     return child;
 }
 
@@ -313,11 +396,16 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
 
     switch (tok->kind) {
     case FT_SYM:
-        /* Exact symbol match */
-        for (uint32_t i = 0; i < node->nsym; i++)
-            if (node->sym[i].key == tok->sym_id)
-                st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
-                             b, a, atoms, out);
+        if (node->sym_hashed) {
+            SubstNode *match = sym_ht_get(&node->sym_ht, tok->sym_id);
+            if (match)
+                st_flat_walk(match, flat, nflat, idx+1, b, a, atoms, out);
+        } else {
+            for (uint32_t i = 0; i < node->nsym; i++)
+                if (node->sym[i].key == tok->sym_id)
+                    st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
+                                 b, a, atoms, out);
+        }
         /* Indexed variable matches query symbol */
         for (uint32_t i = 0; i < node->nvars; i++) {
             Bindings b2;
@@ -335,11 +423,17 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
         /* Query variable matches ANY indexed sub-term.
            Skip one sub-term in the trie, then resume flat walk at idx+1 */
         {
-            /* Skip one indexed sub-term, then resume flat walk at idx+1 */
-            /* For each branch: one trie step forward = skip one atomic token */
-            for (uint32_t i = 0; i < node->nsym; i++)
-                st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
-                             b, a, atoms, out);
+            if (node->sym_hashed) {
+                uint32_t cap = node->sym_ht.mask + 1;
+                for (uint32_t i = 0; i < cap; i++)
+                    if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
+                        st_flat_walk(node->sym_ht.entries[i].child, flat, nflat, idx+1,
+                                     b, a, atoms, out);
+            } else {
+                for (uint32_t i = 0; i < node->nsym; i++)
+                    st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
+                                 b, a, atoms, out);
+            }
             for (uint32_t i = 0; i < node->nvars; i++)
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              b, a, atoms, out);
@@ -424,9 +518,17 @@ static void st_flat_skip(SubstNode *node, uint32_t remaining,
         st_flat_walk(node, flat, nflat, resume_idx, b, a, atoms, out);
         return;
     }
-    for (uint32_t i = 0; i < node->nsym; i++)
-        st_flat_skip(node->sym[i].child, remaining - 1,
-                     flat, nflat, resume_idx, b, a, atoms, out);
+    if (node->sym_hashed) {
+        uint32_t cap = node->sym_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++)
+            if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
+                st_flat_skip(node->sym_ht.entries[i].child, remaining - 1,
+                             flat, nflat, resume_idx, b, a, atoms, out);
+    } else {
+        for (uint32_t i = 0; i < node->nsym; i++)
+            st_flat_skip(node->sym[i].child, remaining - 1,
+                         flat, nflat, resume_idx, b, a, atoms, out);
+    }
     for (uint32_t i = 0; i < node->nvars; i++)
         st_flat_skip(node->vars[i].child, remaining - 1,
                      flat, nflat, resume_idx, b, a, atoms, out);

@@ -54,6 +54,8 @@ typedef struct {
 
 const char *cetta_runtime_counter_name(CettaRuntimeCounter counter);
 void cetta_runtime_stats_reset(void);
+void cetta_runtime_stats_enable(void);
+void cetta_runtime_stats_disable(void);
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta);
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out);
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats);

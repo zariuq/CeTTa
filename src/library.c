@@ -2,8 +2,11 @@
 #include "library.h"
 
 #include "eval.h"
+#include "mm2_lower.h"
+#include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
 #include "parser.h"
+#include "text_source.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -32,6 +35,10 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"fs", CETTA_LIBRARY_FS},
     {"str", CETTA_LIBRARY_STR},
 };
+
+static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
+static const char *CETTA_MM2_CONTEXT_HANDLE_KIND = "mork-context";
+static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 
 typedef struct {
     char *buf;
@@ -1186,6 +1193,81 @@ static Atom *library_string_list(Arena *a, char **items, uint32_t nitems) {
     return atom_expr(a, atoms, nitems);
 }
 
+static Atom *library_atoms_from_text(Arena *a, const uint8_t *bytes, size_t len,
+                                     Atom *call) {
+    if (!bytes || len == 0) {
+        return atom_expr(a, NULL, 0);
+    }
+    char *text = cetta_malloc(len + 1);
+    memcpy(text, bytes, len);
+    text[len] = '\0';
+
+    Atom **atoms = NULL;
+    uint32_t natoms = 0;
+    uint32_t cap = 0;
+    size_t pos = 0;
+    while (text[pos]) {
+        Atom *atom = parse_sexpr(a, text, &pos);
+        if (!atom) break;
+        atom = atom_expr(a, (Atom *[]){
+            atom_symbol_id(a, g_builtin_syms.quote),
+            atom
+        }, 2);
+        if (natoms >= cap) {
+            cap = cap ? cap * 2 : 8;
+            atoms = cetta_realloc(atoms, sizeof(Atom *) * cap);
+        }
+        atoms[natoms++] = atom;
+    }
+    free(text);
+
+    if (natoms == 0) {
+        free(atoms);
+        return atom_expr(a, NULL, 0);
+    }
+    if (atoms == NULL) {
+        return atom_error(a, call, atom_string(a, "MM2 dump parse failed"));
+    }
+
+    Atom **out = arena_alloc(a, sizeof(Atom *) * natoms);
+    memcpy(out, atoms, sizeof(Atom *) * natoms);
+    free(atoms);
+    return atom_expr(a, out, natoms);
+}
+
+static char *library_mm2_surface_text(Arena *a, Atom *atom) {
+    if (atom && atom->kind == ATOM_EXPR && atom->expr.len == 2 &&
+        atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.quote)) {
+        atom = atom->expr.elems[1];
+    }
+    return cetta_mm2_atom_to_surface_string(a, atom);
+}
+
+static bool library_resolve_current_path(CettaLibraryContext *ctx, const char *path,
+                                         char *resolved, size_t resolved_sz) {
+    return cetta_text_path_resolve(cetta_library_current_dir(ctx), path,
+                                   resolved, resolved_sz);
+}
+
+static CettaMorkProgramHandle *library_mm2_program_handle(CettaLibraryContext *ctx,
+                                                          Atom *arg) {
+    uint64_t id = 0;
+    if (!ctx || !cetta_native_handle_arg(arg, CETTA_MM2_PROGRAM_HANDLE_KIND, &id))
+        return NULL;
+    return (CettaMorkProgramHandle *)cetta_native_handle_get(
+        ctx, CETTA_MM2_PROGRAM_HANDLE_KIND, id);
+}
+
+static CettaMorkContextHandle *library_mm2_context_handle(CettaLibraryContext *ctx,
+                                                          Atom *arg) {
+    uint64_t id = 0;
+    if (!ctx || !cetta_native_handle_arg(arg, CETTA_MM2_CONTEXT_HANDLE_KIND, &id))
+        return NULL;
+    return (CettaMorkContextHandle *)cetta_native_handle_get(
+        ctx, CETTA_MM2_CONTEXT_HANDLE_KIND, id);
+}
+
 static bool library_read_text_file(const char *path, CettaStringBuf *out,
                                    char *errbuf, size_t errbuf_sz) {
     FILE *fp = fopen(path, "rb");
@@ -1745,6 +1827,404 @@ static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
     }
     if (head_id == g_builtin_syms.lib_str_trim) {
         return str_trim(a, head, args, nargs);
+    }
+    return NULL;
+}
+
+static void library_mm2_program_free_resource(void *resource) {
+    cetta_mork_bridge_program_free((CettaMorkProgramHandle *)resource);
+}
+
+static void library_mm2_context_free_resource(void *resource) {
+    cetta_mork_bridge_context_free((CettaMorkContextHandle *)resource);
+}
+
+static Atom *library_mm2_bridge_error(Arena *a, Atom *head, Atom **args,
+                                      uint32_t nargs, const char *prefix) {
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s%s", prefix, cetta_mork_bridge_last_error());
+    return atom_error(a, library_call_expr(a, head, args, nargs), atom_string(a, buf));
+}
+
+static Atom *mm2_program_new_native(CettaLibraryContext *ctx, Arena *a,
+                                    Atom *head, Atom **args, uint32_t nargs) {
+    uint64_t id = 0;
+    CettaMorkProgramHandle *program;
+    if (!system_zero_arg_ok(args, nargs)) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected: (__cetta_lib_mm2_program_new)");
+    }
+    if (!cetta_mork_bridge_is_available()) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 MORK bridge unavailable: ");
+    }
+    program = cetta_mork_bridge_program_new();
+    if (!program) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 program allocation failed: ");
+    }
+    if (!cetta_native_handle_alloc(ctx, CETTA_MM2_PROGRAM_HANDLE_KIND, program,
+                                   library_mm2_program_free_resource, &id)) {
+        cetta_mork_bridge_program_free(program);
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "MM2 program handle allocation failed"));
+    }
+    return cetta_native_handle_atom(a, CETTA_MM2_PROGRAM_HANDLE_KIND, id);
+}
+
+static Atom *mm2_program_add_native(CettaLibraryContext *ctx, Arena *a,
+                                    Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkProgramHandle *program;
+    char *text;
+    if (nargs != 2) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected program handle and MM2 atom");
+    }
+    program = library_mm2_program_handle(ctx, args[0]);
+    if (!program) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-program handle as first argument");
+    }
+    text = library_mm2_surface_text(a, args[1]);
+    if (!cetta_mork_bridge_program_add_sexpr(program, (const uint8_t *)text,
+                                             strlen(text), NULL)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 program add failed: ");
+    }
+    return atom_unit(a);
+}
+
+static Atom *mm2_load_file_native(CettaLibraryContext *ctx, Arena *a,
+                                  Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkProgramHandle *program;
+    CettaMorkContextHandle *context;
+    const char *path;
+    char resolved[PATH_MAX];
+    Arena parse_arena;
+    Atom **atoms = NULL;
+    int n = 0;
+    Atom *error = NULL;
+
+    if (nargs != 3 || !(path = library_text_arg(args[2]))) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected program handle, context handle, and MM2 filename");
+    }
+    program = library_mm2_program_handle(ctx, args[0]);
+    context = library_mm2_context_handle(ctx, args[1]);
+    if (!program || !context) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-program handle and mork-context handle");
+    }
+    if (!library_resolve_current_path(ctx, path, resolved, sizeof(resolved))) {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "MM2 file path resolution failed"));
+    }
+
+    arena_init(&parse_arena);
+    n = parse_metta_file(resolved, &parse_arena, &atoms);
+    if (n < 0) {
+        error = atom_error(a, library_call_expr(a, head, args, nargs),
+                           atom_string(a, "MM2 file parse failed"));
+        goto done;
+    }
+
+    cetta_mm2_lower_atoms(&parse_arena, atoms, n);
+    if (cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
+        error = atom_error(a, library_call_expr(a, head, args, nargs),
+                           atom_string(a, "MM2 file loader does not accept top-level ! forms"));
+        goto done;
+    }
+
+    for (int i = 0; i < n; i++) {
+        char *surface = cetta_mm2_atom_to_surface_string(&parse_arena, atoms[i]);
+        bool ok;
+        if (cetta_mm2_atom_is_exec_rule(atoms[i])) {
+            ok = cetta_mork_bridge_program_add_sexpr(program,
+                                                     (const uint8_t *)surface,
+                                                     strlen(surface), NULL);
+        } else {
+            ok = cetta_mork_bridge_context_add_sexpr(context,
+                                                     (const uint8_t *)surface,
+                                                     strlen(surface), NULL);
+        }
+        if (!ok) {
+            error = library_mm2_bridge_error(
+                a, head, args, nargs,
+                cetta_mm2_atom_is_exec_rule(atoms[i]) ?
+                    "MM2 file load program add failed: " :
+                    "MM2 file load context add failed: ");
+            goto done;
+        }
+    }
+
+done:
+    free(atoms);
+    arena_free(&parse_arena);
+    if (error) return error;
+    return atom_unit(a);
+}
+
+static Atom *mm2_program_size_native(CettaLibraryContext *ctx, Arena *a,
+                                     Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkProgramHandle *program;
+    uint64_t size = 0;
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected program handle");
+    }
+    program = library_mm2_program_handle(ctx, args[0]);
+    if (!program) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-program handle");
+    }
+    if (!cetta_mork_bridge_program_size(program, &size)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 program size failed: ");
+    }
+    return atom_int(a, (int64_t)size);
+}
+
+static Atom *mm2_program_atoms_native(CettaLibraryContext *ctx, Arena *a,
+                                      Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkProgramHandle *program;
+    uint8_t *packet = NULL;
+    size_t len = 0;
+    uint32_t rows = 0;
+    Atom *result;
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected program handle");
+    }
+    program = library_mm2_program_handle(ctx, args[0]);
+    if (!program) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-program handle");
+    }
+    if (!cetta_mork_bridge_program_dump(program, &packet, &len, &rows)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 program dump failed: ");
+    }
+    result = library_atoms_from_text(a, packet, len, library_call_expr(a, head, args, nargs));
+    cetta_mork_bridge_bytes_free(packet, len);
+    (void)rows;
+    return result;
+}
+
+static Atom *mm2_context_new_native(CettaLibraryContext *ctx, Arena *a,
+                                    Atom *head, Atom **args, uint32_t nargs) {
+    uint64_t id = 0;
+    CettaMorkContextHandle *context;
+    if (!system_zero_arg_ok(args, nargs)) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected: (__cetta_lib_mm2_context_new)");
+    }
+    if (!cetta_mork_bridge_is_available()) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 MORK bridge unavailable: ");
+    }
+    context = cetta_mork_bridge_context_new();
+    if (!context) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 context allocation failed: ");
+    }
+    if (!cetta_native_handle_alloc(ctx, CETTA_MM2_CONTEXT_HANDLE_KIND, context,
+                                   library_mm2_context_free_resource, &id)) {
+        cetta_mork_bridge_context_free(context);
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "MM2 context handle allocation failed"));
+    }
+    return cetta_native_handle_atom(a, CETTA_MM2_CONTEXT_HANDLE_KIND, id);
+}
+
+static Atom *mm2_context_load_program_native(CettaLibraryContext *ctx, Arena *a,
+                                             Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkContextHandle *context;
+    CettaMorkProgramHandle *program;
+    if (nargs != 2) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected context handle and program handle");
+    }
+    context = library_mm2_context_handle(ctx, args[0]);
+    program = library_mm2_program_handle(ctx, args[1]);
+    if (!context || !program) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-context handle and mork-program handle");
+    }
+    if (!cetta_mork_bridge_context_load_program(context, program, NULL)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 context load-program failed: ");
+    }
+    return atom_unit(a);
+}
+
+static Atom *mm2_context_add_like_native(CettaLibraryContext *ctx, Arena *a,
+                                         Atom *head, Atom **args, uint32_t nargs,
+                                         bool remove_mode) {
+    CettaMorkContextHandle *context;
+    char *text;
+    bool ok;
+    if (nargs != 2) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected context handle and MM2 atom");
+    }
+    context = library_mm2_context_handle(ctx, args[0]);
+    if (!context) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-context handle as first argument");
+    }
+    text = library_mm2_surface_text(a, args[1]);
+    if (remove_mode) {
+        ok = cetta_mork_bridge_context_remove_sexpr(context, (const uint8_t *)text,
+                                                    strlen(text), NULL);
+    } else {
+        ok = cetta_mork_bridge_context_add_sexpr(context, (const uint8_t *)text,
+                                                 strlen(text), NULL);
+    }
+    if (!ok) {
+        return library_mm2_bridge_error(
+            a, head, args, nargs,
+            remove_mode ? "MM2 context remove failed: " : "MM2 context add failed: ");
+    }
+    return atom_unit(a);
+}
+
+static Atom *mm2_context_step_native(CettaLibraryContext *ctx, Arena *a,
+                                     Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkContextHandle *context;
+    uint64_t performed = 0;
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected context handle");
+    }
+    context = library_mm2_context_handle(ctx, args[0]);
+    if (!context) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-context handle");
+    }
+    if (!cetta_mork_bridge_context_run(context, 1, &performed)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 context step failed: ");
+    }
+    return atom_int(a, (int64_t)performed);
+}
+
+static Atom *mm2_context_run_native(CettaLibraryContext *ctx, Arena *a,
+                                    Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkContextHandle *context;
+    uint64_t steps = CETTA_MM2_DEFAULT_RUN_STEPS;
+    uint64_t performed = 0;
+    int parsed_steps = 0;
+    if (nargs != 1 && nargs != 2) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected context handle and optional non-negative steps");
+    }
+    context = library_mm2_context_handle(ctx, args[0]);
+    if (!context) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-context handle");
+    }
+    if (nargs == 2) {
+        if (!library_int_arg(args[1], &parsed_steps) || parsed_steps < 0) {
+            return library_signature_error(a, head, args, nargs,
+                                           "expected non-negative step count");
+        }
+        steps = (uint64_t)parsed_steps;
+    }
+    if (!cetta_mork_bridge_context_run(context, steps, &performed)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 context run failed: ");
+    }
+    return atom_int(a, (int64_t)performed);
+}
+
+static Atom *mm2_context_size_native(CettaLibraryContext *ctx, Arena *a,
+                                     Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkContextHandle *context;
+    uint64_t size = 0;
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected context handle");
+    }
+    context = library_mm2_context_handle(ctx, args[0]);
+    if (!context) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-context handle");
+    }
+    if (!cetta_mork_bridge_context_size(context, &size)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 context size failed: ");
+    }
+    return atom_int(a, (int64_t)size);
+}
+
+static Atom *mm2_context_atoms_native(CettaLibraryContext *ctx, Arena *a,
+                                      Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkContextHandle *context;
+    uint8_t *packet = NULL;
+    size_t len = 0;
+    uint32_t rows = 0;
+    Atom *result;
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected context handle");
+    }
+    context = library_mm2_context_handle(ctx, args[0]);
+    if (!context) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-context handle");
+    }
+    if (!cetta_mork_bridge_context_dump(context, &packet, &len, &rows)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 context dump failed: ");
+    }
+    result = library_atoms_from_text(a, packet, len, library_call_expr(a, head, args, nargs));
+    cetta_mork_bridge_bytes_free(packet, len);
+    (void)rows;
+    return result;
+}
+
+static Atom *cetta_library_dispatch_mm2(CettaLibraryContext *ctx, Arena *a,
+                                        Atom *head, Atom **args, uint32_t nargs) {
+    if (head->kind != ATOM_SYMBOL) return NULL;
+    SymbolId head_id = head->sym_id;
+    if (head_id == g_builtin_syms.lib_mm2_program_new) {
+        return mm2_program_new_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_program_add) {
+        return mm2_program_add_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_load_file) {
+        return mm2_load_file_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_program_size) {
+        return mm2_program_size_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_program_atoms) {
+        return mm2_program_atoms_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_new) {
+        return mm2_context_new_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_load_program) {
+        return mm2_context_load_program_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_add) {
+        return mm2_context_add_like_native(ctx, a, head, args, nargs, false);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_remove) {
+        return mm2_context_add_like_native(ctx, a, head, args, nargs, true);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_run) {
+        return mm2_context_run_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_step) {
+        return mm2_context_step_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_size) {
+        return mm2_context_size_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_atoms) {
+        return mm2_context_atoms_native(ctx, a, head, args, nargs);
     }
     return NULL;
 }
@@ -2325,6 +2805,10 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
                                     Arena *a,
                                     Atom *head, Atom **args, uint32_t nargs) {
     if (!ctx || !head || head->kind != ATOM_SYMBOL) return NULL;
+    {
+        Atom *result = cetta_library_dispatch_mm2(ctx, a, head, args, nargs);
+        if (result) return result;
+    }
     if (ctx->active_mask & CETTA_LIBRARY_SYSTEM) {
         Atom *result = cetta_library_dispatch_system(ctx, a, head, args, nargs);
         if (result) return result;
