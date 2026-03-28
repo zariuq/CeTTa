@@ -55,6 +55,53 @@ static uint32_t read_u32_be(const uint8_t *bytes) {
            (uint32_t)bytes[3];
 }
 
+static bool bridge_take_status_value(const char *ctx, CettaMorkStatus st,
+                                     uint64_t *out_value,
+                                     void (*free_bytes)(uint8_t *, size_t)) {
+    if (out_value)
+        *out_value = 0;
+    if (st.code == 0) {
+        if (out_value)
+            *out_value = st.value;
+        if (free_bytes)
+            free_bytes(st.message, st.message_len);
+        return true;
+    }
+    if (st.message && st.message_len > 0)
+        bridge_set_error_bytes(ctx, st.message, st.message_len);
+    else
+        bridge_set_error("%sstatus code %d", ctx, st.code);
+    if (free_bytes)
+        free_bytes(st.message, st.message_len);
+    return false;
+}
+
+static bool bridge_take_buffer(const char *ctx, CettaMorkBuffer buf,
+                               uint8_t **out_packet, size_t *out_len,
+                               uint32_t *out_rows,
+                               void (*free_bytes)(uint8_t *, size_t)) {
+    *out_packet = NULL;
+    *out_len = 0;
+    *out_rows = 0;
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes(ctx, buf.message, buf.message_len);
+        else
+            bridge_set_error("%scode %d", ctx, buf.code);
+        if (free_bytes) {
+            free_bytes(buf.message, buf.message_len);
+            free_bytes(buf.data, buf.len);
+        }
+        return false;
+    }
+    if (free_bytes)
+        free_bytes(buf.message, buf.message_len);
+    *out_packet = buf.data;
+    *out_len = buf.len;
+    *out_rows = buf.count;
+    return true;
+}
+
 #ifdef CETTA_MORK_BRIDGE_STATIC
 
 extern CettaMorkSpaceHandle *mork_space_new(void);
@@ -64,6 +111,14 @@ extern CettaMorkStatus mork_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
                                                     uint32_t atom_idx,
                                                     const uint8_t *text,
                                                     size_t len);
+extern CettaMorkStatus mork_space_size(const CettaMorkSpaceHandle *space);
+extern CettaMorkStatus mork_space_dump_act_file(CettaMorkSpaceHandle *space,
+                                                const uint8_t *path,
+                                                size_t len);
+extern CettaMorkStatus mork_space_load_act_file(CettaMorkSpaceHandle *space,
+                                                const uint8_t *path,
+                                                size_t len);
+extern CettaMorkBuffer mork_space_dump(CettaMorkSpaceHandle *space);
 extern CettaMorkBuffer mork_space_query_indices(CettaMorkSpaceHandle *space,
                                                 const uint8_t *pattern,
                                                 size_t len);
@@ -158,6 +213,60 @@ bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
     }
     return bridge_status_ok("mork_space_add_indexed_sexpr failed: ",
                             mork_space_add_indexed_sexpr(space, atom_idx, text, len));
+}
+
+bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
+                                  uint64_t *out_size) {
+    if (!space) {
+        bridge_set_error("cannot size null MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_size failed: ",
+                                    mork_space_size(space),
+                                    out_size,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
+                                  uint8_t **out_packet,
+                                  size_t *out_len,
+                                  uint32_t *out_rows) {
+    if (!space) {
+        bridge_set_error("cannot dump null MORK bridge space");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_dump failed: ",
+                              mork_space_dump(space),
+                              out_packet, out_len, out_rows,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump_act_file(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len,
+                                           uint64_t *out_saved) {
+    if (!space) {
+        bridge_set_error("cannot dump ACT from null MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_dump_act_file failed: ",
+                                    mork_space_dump_act_file(space, path, len),
+                                    out_saved,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len,
+                                           uint64_t *out_loaded) {
+    if (!space) {
+        bridge_set_error("cannot load ACT into null MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_load_act_file failed: ",
+                                    mork_space_load_act_file(space, path, len),
+                                    out_loaded,
+                                    bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
@@ -524,6 +633,14 @@ typedef struct CettaMorkBridgeApi {
                                                uint32_t atom_idx,
                                                const uint8_t *text,
                                                size_t len);
+    CettaMorkStatus (*space_size)(const CettaMorkSpaceHandle *space);
+    CettaMorkStatus (*space_dump_act_file)(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len);
+    CettaMorkStatus (*space_load_act_file)(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len);
+    CettaMorkBuffer (*space_dump)(CettaMorkSpaceHandle *space);
     CettaMorkBuffer (*space_query_indices)(CettaMorkSpaceHandle *space,
                                            const uint8_t *pattern,
                                            size_t len);
@@ -818,6 +935,10 @@ static bool bridge_load_api(void) {
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_free, "mork_space_free") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_clear, "mork_space_clear") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_add_indexed_sexpr, "mork_space_add_indexed_sexpr") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_size, "mork_space_size") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_dump_act_file, "mork_space_dump_act_file") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_load_act_file, "mork_space_load_act_file") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_dump, "mork_space_dump") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_query_indices, "mork_space_query_indices") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_query_bindings, "mork_space_query_bindings") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_new, "mork_program_new") ||
@@ -914,6 +1035,60 @@ bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
     return bridge_status_ok("mork_space_add_indexed_sexpr failed: ",
                             g_mork_bridge_api.space_add_indexed_sexpr(space, atom_idx,
                                                                       text, len));
+}
+
+bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
+                                  uint64_t *out_size) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot size null or unavailable MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_size failed: ",
+                                    g_mork_bridge_api.space_size(space),
+                                    out_size,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
+                                  uint8_t **out_packet,
+                                  size_t *out_len,
+                                  uint32_t *out_rows) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot dump null or unavailable MORK bridge space");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_dump failed: ",
+                              g_mork_bridge_api.space_dump(space),
+                              out_packet, out_len, out_rows,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump_act_file(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len,
+                                           uint64_t *out_saved) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot dump ACT from null or unavailable MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_dump_act_file failed: ",
+                                    g_mork_bridge_api.space_dump_act_file(space, path, len),
+                                    out_saved,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
+                                           const uint8_t *path,
+                                           size_t len,
+                                           uint64_t *out_loaded) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot load ACT into null or unavailable MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_load_act_file failed: ",
+                                    g_mork_bridge_api.space_load_act_file(space, path, len),
+                                    out_loaded,
+                                    bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,

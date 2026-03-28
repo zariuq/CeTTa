@@ -724,6 +724,7 @@ test-backends: $(BIN)
 		[ $$fail -eq 0 ] || exit 1; \
 	done
 	@$(MAKE) -s test-pathmap-imported-bridge-v2
+	@$(MAKE) -s test-pathmap-imported-long-string-regression
 	@$(MAKE) -s test-pathmap-imported-conjunction-init
 	@$(MAKE) -s test-pathmap-imported-match-chain
 	@$(MAKE) -s test-pathmap-imported-match-chain-v3
@@ -839,6 +840,21 @@ test-pathmap-imported-bridge-v2: $(BIN)
 		diff <(echo "$$expected") <(echo "$$result") | head -20; \
 			exit 1; \
 		fi
+
+test-pathmap-imported-long-string-regression: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: pathmap-imported long-string regression (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	expected=$$(printf '%s\n' '[()]' '[()]' '[()]'); \
+	result=$$(./$(BIN) --space-match-backend pathmap-imported --lang he tests/support/pathmap_imported_long_string_probe.metta 2>&1); \
+	if [ "$$result" = "$$expected" ]; then \
+		echo "PASS: pathmap-imported long-string regression"; \
+	else \
+		echo "FAIL: pathmap-imported long-string regression"; \
+		diff <(echo "$$expected") <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
 
 test-pathmap-imported-match-chain: $(BIN)
 	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
@@ -1141,4 +1157,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: all clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-exec-basic test-mm2-conformance-var-binding test-pathmap-imported-bridge-v2 test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: all clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-exec-basic test-mm2-conformance-var-binding test-pathmap-imported-bridge-v2 test-pathmap-imported-long-string-regression test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime

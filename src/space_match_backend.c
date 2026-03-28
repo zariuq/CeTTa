@@ -529,16 +529,34 @@ static bool imported_bridge_read_u16(const uint8_t *packet, size_t len, size_t *
 
 static Atom *imported_bridge_parse_token_bytes(Arena *a,
                                                const uint8_t *bytes,
-                                               uint32_t len) {
+                                               uint32_t len,
+                                               bool *ok) {
+    if (!ok || !*ok) {
+        if (ok)
+            *ok = false;
+        return NULL;
+    }
     char *tok = arena_alloc(a, (size_t)len + 1);
     memcpy(tok, bytes, len);
     tok[len] = '\0';
 
-    if (len >= 2 && tok[0] == '"' && tok[len - 1] == '"') {
+    /* Raw bridge expr bytes encode token lengths in 6 bits. Once a token hits
+       63 bytes, CeTTa cannot distinguish "exactly 63 bytes" from "truncated
+       longer token", so the imported fast path must refuse it and fall back. */
+    if (len == 63) {
+        *ok = false;
+        return NULL;
+    }
+
+    if (len > 0 && (tok[0] == '"' || tok[len - 1] == '"')) {
         size_t pos = 0;
         Atom *parsed = parse_sexpr(a, tok, &pos);
-        if (parsed && pos == len)
+        if (parsed && pos == len &&
+            parsed->kind == ATOM_GROUNDED &&
+            parsed->ground.gkind == GV_STRING)
             return parsed;
+        *ok = false;
+        return NULL;
     }
 
     if (strcmp(tok, "True") == 0)  return atom_bool(a, true);
@@ -589,7 +607,10 @@ static Atom *imported_bridge_parse_value_raw_query_only_v2_rec(
             *ok = false;
             return NULL;
         }
-        Atom *atom = imported_bridge_parse_token_bytes(a, expr + *off + 1u, sym_len);
+        Atom *atom = imported_bridge_parse_token_bytes(
+            a, expr + *off + 1u, sym_len, ok);
+        if (!*ok)
+            return NULL;
         *off += 1u + sym_len;
         return atom;
     }

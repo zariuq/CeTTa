@@ -3063,33 +3063,35 @@ tail_call: ;
         Atom *pat = expr_arg(atom, 0);
         Atom *val_expr = expr_arg(atom, 1);
         Atom *body_let = expr_arg(atom, 2);
-        ResultSet vals;
-        result_set_init(&vals);
-        metta_eval(s, a, NULL, val_expr, fuel, &vals);
+        OutcomeSet vals;
+        outcome_set_init(&vals);
+        metta_eval_bind(s, a, val_expr, fuel, &vals);
         bool all_errors = vals.len > 0;
         for (uint32_t i = 0; i < vals.len; i++) {
-            if (!atom_is_error(vals.items[i])) {
+            if (!atom_is_error(outcome_atom_materialize(a, &vals.items[i]))) {
                 all_errors = false;
                 break;
             }
         }
         if (all_errors) {
             for (uint32_t i = 0; i < vals.len; i++)
-                outcome_set_add(os, vals.items[i], &_empty);
-            free(vals.items);
+                outcome_set_add(os, outcome_atom_materialize(a, &vals.items[i]), &_empty);
+            outcome_set_free(&vals);
             return;
         }
         if (vals.len == 1) {
             /* Single-result fast path with TCO */
             bool ok = false;
+            Atom *val_atom = outcome_atom_materialize(a, &vals.items[0]);
+            const Bindings *val_env = &vals.items[0].env;
             if (pat->kind == ATOM_VAR) {
                 BindingsBuilder b;
-                if (!bindings_builder_init(&b, NULL)) {
-                    free(vals.items);
+                if (!bindings_builder_init(&b, val_env)) {
+                    outcome_set_free(&vals);
                     return;
                 }
-                ok = bindings_builder_add_var_fresh(&b, pat, vals.items[0]);
-                free(vals.items);
+                ok = bindings_builder_add_var_fresh(&b, pat, val_atom);
+                outcome_set_free(&vals);
                 if (ok) {
                     const Bindings *bb = bindings_builder_bindings(&b);
                     Atom *next_atom = bindings_apply((Bindings *)bb, a, body_let);
@@ -3105,12 +3107,12 @@ tail_call: ;
                 return;
             } else {
                 BindingsBuilder b;
-                if (!bindings_builder_init(&b, NULL)) {
-                    free(vals.items);
+                if (!bindings_builder_init(&b, val_env)) {
+                    outcome_set_free(&vals);
                     return;
                 }
-                ok = simple_match_builder(pat, vals.items[0], &b);
-                free(vals.items);
+                ok = simple_match_builder(pat, val_atom, &b);
+                outcome_set_free(&vals);
                 if (ok) {
                     const Bindings *bb = bindings_builder_bindings(&b);
                     Atom *next_atom =
@@ -3129,11 +3131,13 @@ tail_call: ;
         }
         /* Multi-result: no TCO */
         for (uint32_t i = 0; i < vals.len; i++) {
+            Atom *val_atom = outcome_atom_materialize(a, &vals.items[i]);
+            const Bindings *val_env = &vals.items[i].env;
             if (pat->kind == ATOM_VAR) {
                 BindingsBuilder b;
-                if (!bindings_builder_init(&b, NULL))
+                if (!bindings_builder_init(&b, val_env))
                     continue;
-                if (!bindings_builder_add_var_fresh(&b, pat, vals.items[i])) {
+                if (!bindings_builder_add_var_fresh(&b, pat, val_atom)) {
                     bindings_builder_free(&b);
                     continue;
                 }
@@ -3144,9 +3148,9 @@ tail_call: ;
                 bindings_builder_free(&b);
             } else {
                 BindingsBuilder b;
-                if (!bindings_builder_init(&b, NULL))
+                if (!bindings_builder_init(&b, val_env))
                     continue;
-                if (simple_match_builder(pat, vals.items[i], &b)) {
+                if (simple_match_builder(pat, val_atom, &b)) {
                     const Bindings *bb = bindings_builder_bindings(&b);
                     eval_for_current_caller(s, a, NULL,
                                             bindings_apply((Bindings *)bb, a, body_let),
@@ -3156,7 +3160,7 @@ tail_call: ;
                 bindings_builder_free(&b);
             }
         }
-        free(vals.items);
+        outcome_set_free(&vals);
         return;
     }
 
@@ -3171,33 +3175,36 @@ tail_call: ;
         Atom *to_eval = expr_arg(atom, 0);
         Atom *var = expr_arg(atom, 1);
         Atom *tmpl_chain = expr_arg(atom, 2);
-        ResultSet inner;
-        result_set_init(&inner);
-        metta_eval(s, a, NULL, to_eval, fuel, &inner);
+        OutcomeSet inner;
+        outcome_set_init(&inner);
+        metta_eval_bind(s, a, to_eval, fuel, &inner);
         if (inner.len == 0) {
             outcome_set_add(os, atom_empty(a), &_empty);
-            free(inner.items);
+            outcome_set_free(&inner);
             return;
         }
-        if (inner.len == 1 && !atom_is_empty(inner.items[0])) {
+        if (inner.len == 1 &&
+            !atom_is_empty(outcome_atom_materialize(a, &inner.items[0]))) {
             /* Single-result fast path with TCO */
             Atom *next_atom;
             bool has_binding = false;
             if (var->kind == ATOM_VAR) {
+                Atom *inner_atom = outcome_atom_materialize(a, &inner.items[0]);
+                const Bindings *inner_env = &inner.items[0].env;
                 BindingsBuilder b;
-                if (!bindings_builder_init(&b, NULL)) {
-                    free(inner.items);
+                if (!bindings_builder_init(&b, inner_env)) {
+                    outcome_set_free(&inner);
                     return;
                 }
-                has_binding = bindings_builder_add_var_fresh(&b, var, inner.items[0]);
+                has_binding = bindings_builder_add_var_fresh(&b, var, inner_atom);
                 if (!has_binding) {
                     bindings_builder_free(&b);
-                    free(inner.items);
+                    outcome_set_free(&inner);
                     return;
                 }
                 const Bindings *bb = bindings_builder_bindings(&b);
                 next_atom = bindings_apply((Bindings *)bb, a, tmpl_chain);
-                free(inner.items);
+                outcome_set_free(&inner);
                 if (preserve_bindings &&
                     !bindings_builder_merge_commit(&current_env_builder, bb)) {
                     bindings_builder_free(&b);
@@ -3208,16 +3215,17 @@ tail_call: ;
             } else {
                 next_atom = tmpl_chain;
             }
-            free(inner.items);
+            outcome_set_free(&inner);
             TAIL_REENTER(next_atom);
         }
         /* Multi-result: no TCO */
         for (uint32_t i = 0; i < inner.len; i++) {
-            Atom *r = inner.items[i];
+            Atom *r = outcome_atom_materialize(a, &inner.items[i]);
             if (atom_is_empty(r)) continue;
             if (var->kind == ATOM_VAR) {
+                const Bindings *inner_env = &inner.items[i].env;
                 BindingsBuilder b;
-                if (!bindings_builder_init(&b, NULL))
+                if (!bindings_builder_init(&b, inner_env))
                     continue;
                 if (!bindings_builder_add_var_fresh(&b, var, r)) {
                     bindings_builder_free(&b);
@@ -3234,7 +3242,7 @@ tail_call: ;
         }
         if (inner.len == 0)
             outcome_set_add(os, atom_empty(a), &_empty);
-        free(inner.items);
+        outcome_set_free(&inner);
         return;
     }
 

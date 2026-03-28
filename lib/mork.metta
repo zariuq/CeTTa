@@ -18,6 +18,8 @@
 (: mork-space-snapshot (-> SpaceType SpaceType))
 (: mork-space-from-atoms (-> Expression SpaceType))
 (: mork-space-from-atoms (-> Atom Expression SpaceType))
+(: mork-space-dump-act! (-> SpaceType Atom (->)))
+(: mork-space-import-act! (-> SpaceType Atom (->)))
 
 (@doc mork-space-new
   (@desc "Creates a fresh space and explicitly configures its match backend to CeTTa's imported PathMap/MORK lane. The zero-argument form creates an atom-disciplined space; the one-argument form accepts the same semantic disciplines as new-space, such as hash, queue, or stack.")
@@ -108,6 +110,20 @@
     (@param "Optional semantic discipline")
     (@param "Tuple of atoms to insert")))
   (@return "Fresh populated MORK-backed space"))
+
+(@doc mork-space-dump-act!
+  (@desc "Compiles the current contents of a space into a MORK .act artifact at the given path. This phase-1 compiled-space surface is intentionally strict: it requires an unordered space with no duplicate atoms, because the current ACT bridge artifact is set-like rather than queue-ordered or multiset-preserving.")
+  (@params (
+    (@param "Space to compile into a .act artifact")
+    (@param "Output ACT filename")))
+  (@return "Unit on success"))
+
+(@doc mork-space-import-act!
+  (@desc "Imports atoms from a compiled .act artifact directly into the target space through CeTTa's MORK bridge load path. This is additive import semantics, not hidden replacement; use a fresh target space when you want a clean compiled-space load.")
+  (@params (
+    (@param "Target space that will receive the imported atoms")
+    (@param "ACT filename to import")))
+  (@return "Unit on success"))
 
 (= (mork-space-new)
   (function
@@ -203,3 +219,13 @@
     (chain (mork-space-new $kind) $space
       (chain (add-atoms $space $atoms) $_
         (return $space)))))
+
+(= (mork-space-dump-act! $space $path)
+  (function
+    (case (__cetta_lib_mork_space_dump_act $space $path)
+      (($result (return $result))))))
+
+(= (mork-space-import-act! $space $path)
+  (function
+    (case (__cetta_lib_mork_space_import_act $space $path)
+      (($result (return $result))))))
