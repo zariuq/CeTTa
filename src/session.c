@@ -49,6 +49,7 @@ static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
     {"sealed", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
     {"collect", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
     {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},

@@ -931,6 +931,13 @@ static bool resolve_module_candidate_with_format(const char *candidate,
         return true;
     }
 
+    char foreign_reason[160] = {0};
+    if (cetta_foreign_resolve_candidate(candidate, out, out_sz,
+                                        format_out,
+                                        foreign_reason, sizeof(foreign_reason))) {
+        return true;
+    }
+
     char act_reason[160] = {0};
     if (resolve_module_candidate_act(candidate, out, out_sz,
                                      act_reason, sizeof(act_reason))) {
@@ -939,13 +946,6 @@ static bool resolve_module_candidate_with_format(const char *candidate,
             format_out->foreign_backend = CETTA_FOREIGN_BACKEND_NONE;
         }
         if (reason && reason_sz > 0) reason[0] = '\0';
-        return true;
-    }
-
-    char foreign_reason[160] = {0};
-    if (cetta_foreign_resolve_candidate(candidate, out, out_sz,
-                                        format_out,
-                                        foreign_reason, sizeof(foreign_reason))) {
         return true;
     }
 
@@ -1883,6 +1883,11 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
                                  Arena *persistent_arena,
                                  Atom **error_out);
 
+static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *path,
+                                          Space *target_space,
+                                          Arena *eval_arena,
+                                          Atom **error_out);
+
 static bool library_mork_build_space_bridge_snapshot(
     Space *space,
     CettaMorkSpaceHandle **out_bridge,
@@ -1894,6 +1899,11 @@ static bool library_mork_build_space_bridge_snapshot(
     *out_bridge = NULL;
     if (out_unique_count)
         *out_unique_count = 0;
+
+    if (!space_match_backend_materialize_attached(
+            space, eval_current_persistent_arena())) {
+        goto fail;
+    }
 
     if (!cetta_mork_bridge_is_available())
         goto fail;
@@ -1929,15 +1939,66 @@ fail:
     return false;
 }
 
+static Atom *mork_space_open_act_native(CettaLibraryContext *ctx, Arena *a,
+                                        Atom *head, Atom **args, uint32_t nargs) {
+    const char *path = NULL;
+    const char *kind_name = NULL;
+    char resolved[PATH_MAX];
+    SpaceKind kind = SPACE_KIND_HASH;
+    Arena *persistent_arena;
+    Space *space;
+    uint64_t loaded = 0;
+
+    if (nargs == 1) {
+        path = library_text_arg(args[0]);
+    } else if (nargs == 2) {
+        kind_name = library_text_arg(args[0]);
+        path = library_text_arg(args[1]);
+    } else {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected ACT filename or discipline plus ACT filename");
+    }
+    if (!path) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected ACT filename");
+    }
+    if (kind_name && !space_kind_from_name(kind_name, &kind)) {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "mork-space-open-act expects atom or hash discipline"));
+    }
+    if (kind == SPACE_KIND_STACK || kind == SPACE_KIND_QUEUE) {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "mork-space-open-act currently supports only unordered disciplines"));
+    }
+    if (!library_resolve_current_path(ctx, path, resolved, sizeof(resolved))) {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "MORK ACT open path resolution failed"));
+    }
+    persistent_arena = eval_current_persistent_arena();
+    if (!persistent_arena)
+        persistent_arena = a;
+    space = arena_alloc(persistent_arena, sizeof(Space));
+    space_init(space);
+    space->kind = kind;
+    if (!space_match_backend_try_set(space, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)) {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "failed to enable MORK imported backend"));
+    }
+    if (!space_match_backend_attach_act_file(space, resolved, &loaded)) {
+        return library_mork_bridge_error(a, head, args, nargs,
+                                         "MORK ACT open failed: ");
+    }
+    (void)loaded;
+    return atom_space(persistent_arena, space);
+}
+
 static Atom *mork_space_dump_act_native(CettaLibraryContext *ctx, Arena *a,
                                         Atom *head, Atom **args, uint32_t nargs) {
     Space *space;
     const char *path;
     char resolved[PATH_MAX];
     CettaMorkSpaceHandle *bridge = NULL;
-    uint64_t unique_count = 0;
     uint64_t saved = 0;
-    uint32_t atom_count = 0;
 
     if (nargs != 2 || !(path = library_text_arg(args[1]))) {
         return library_signature_error(a, head, args, nargs,
@@ -1956,20 +2017,9 @@ static Atom *mork_space_dump_act_native(CettaLibraryContext *ctx, Arena *a,
         return atom_error(a, library_call_expr(a, head, args, nargs),
                           atom_string(a, "MORK ACT dump path resolution failed"));
     }
-    if (!library_mork_build_space_bridge_snapshot(space, &bridge, &unique_count)) {
+    if (!library_mork_build_space_bridge_snapshot(space, &bridge, NULL)) {
         return library_mork_bridge_error(a, head, args, nargs,
                                          "MORK ACT dump snapshot failed: ");
-    }
-
-    atom_count = space_length(space);
-    if (unique_count != atom_count) {
-        cetta_mork_bridge_space_free(bridge);
-        char buf[256];
-        snprintf(buf, sizeof(buf),
-                 "MORK ACT dump currently requires a no-duplicate space (%u atoms, %llu unique)",
-                 atom_count, (unsigned long long)unique_count);
-        return atom_error(a, library_call_expr(a, head, args, nargs),
-                          atom_string(a, buf));
     }
 
     if (!cetta_mork_bridge_space_dump_act_file(
@@ -2020,6 +2070,9 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
     if (head_id == g_builtin_syms.lib_mork_space_dump_act) {
         return mork_space_dump_act_native(ctx, a, head, args, nargs);
     }
+    if (head_id == g_builtin_syms.lib_mork_space_open_act) {
+        return mork_space_open_act_native(ctx, a, head, args, nargs);
+    }
     if (head_id == g_builtin_syms.lib_mork_space_import_act) {
         return mork_space_import_act_native(ctx, a, head, args, nargs);
     }
@@ -2065,6 +2118,25 @@ static Atom *mm2_program_new_native(CettaLibraryContext *ctx, Arena *a,
                           atom_string(a, "MM2 program handle allocation failed"));
     }
     return cetta_native_handle_atom(a, CETTA_MM2_PROGRAM_HANDLE_KIND, id);
+}
+
+static Atom *mm2_program_clear_native(CettaLibraryContext *ctx, Arena *a,
+                                      Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkProgramHandle *program;
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected program handle");
+    }
+    program = library_mm2_program_handle(ctx, args[0]);
+    if (!program) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-program handle");
+    }
+    if (!cetta_mork_bridge_program_clear(program)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 program clear failed: ");
+    }
+    return atom_unit(a);
 }
 
 static Atom *mm2_program_add_native(CettaLibraryContext *ctx, Arena *a,
@@ -2231,6 +2303,25 @@ static Atom *mm2_context_new_native(CettaLibraryContext *ctx, Arena *a,
     return cetta_native_handle_atom(a, CETTA_MM2_CONTEXT_HANDLE_KIND, id);
 }
 
+static Atom *mm2_context_clear_native(CettaLibraryContext *ctx, Arena *a,
+                                      Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkContextHandle *context;
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected context handle");
+    }
+    context = library_mm2_context_handle(ctx, args[0]);
+    if (!context) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-context handle");
+    }
+    if (!cetta_mork_bridge_context_clear(context)) {
+        return library_mm2_bridge_error(a, head, args, nargs,
+                                        "MM2 context clear failed: ");
+    }
+    return atom_unit(a);
+}
+
 static Atom *mm2_context_load_program_native(CettaLibraryContext *ctx, Arena *a,
                                              Atom *head, Atom **args, uint32_t nargs) {
     CettaMorkContextHandle *context;
@@ -2385,6 +2476,9 @@ static Atom *cetta_library_dispatch_mm2(CettaLibraryContext *ctx, Arena *a,
     if (head_id == g_builtin_syms.lib_mm2_program_new) {
         return mm2_program_new_native(ctx, a, head, args, nargs);
     }
+    if (head_id == g_builtin_syms.lib_mm2_program_clear) {
+        return mm2_program_clear_native(ctx, a, head, args, nargs);
+    }
     if (head_id == g_builtin_syms.lib_mm2_program_add) {
         return mm2_program_add_native(ctx, a, head, args, nargs);
     }
@@ -2399,6 +2493,9 @@ static Atom *cetta_library_dispatch_mm2(CettaLibraryContext *ctx, Arena *a,
     }
     if (head_id == g_builtin_syms.lib_mm2_context_new) {
         return mm2_context_new_native(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_mm2_context_clear) {
+        return mm2_context_clear_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mm2_context_load_program) {
         return mm2_context_load_program_native(ctx, a, head, args, nargs);
@@ -2548,6 +2645,37 @@ cleanup:
     return ok;
 }
 
+static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *path,
+                                          Space *target_space,
+                                          Arena *eval_arena,
+                                          Atom **error_out) {
+    uint64_t loaded = 0;
+
+    (void)ctx;
+
+    if (space_is_ordered(target_space)) {
+        *error_out = module_reason(eval_arena, "ModuleCompiledOrderedSpaceUnsupported", path);
+        return false;
+    }
+    if (space_match_backend_logical_len(target_space) != 0) {
+        *error_out = module_reason(eval_arena, "ModuleCompiledAttachRequiresFreshSpace", path);
+        return false;
+    }
+    if (!space_match_backend_try_set(target_space, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)) {
+        *error_out = module_reason(eval_arena, "ModuleCompiledAttachBackendUnavailable", path);
+        return false;
+    }
+    if (!space_match_backend_attach_act_file(target_space, path, &loaded)) {
+        *error_out = module_reason_with_detail(
+            eval_arena, "ModuleCompiledAttachFailed", path,
+            atom_string(eval_arena, cetta_mork_bridge_last_error()));
+        return false;
+    }
+
+    (void)loaded;
+    return true;
+}
+
 static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                              Space *logical_space, Space *work_space,
                              Arena *eval_arena,
@@ -2692,6 +2820,18 @@ static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan 
     if (!remember_loaded_module(ctx, plan, NULL, eval_arena, error_out)) {
         return false;
     }
+    if (plan->format.kind == CETTA_MODULE_FORMAT_MORK_ACT &&
+        plan->target_is_fresh &&
+        !plan->transactional) {
+        if (!load_module_act_file_attached(ctx, plan->canonical_path,
+                                           plan->execution_target_space,
+                                           eval_arena, error_out)) {
+            rollback_imported_files(ctx, imported_len_before);
+            rollback_loaded_modules(ctx, loaded_len_before);
+            return false;
+        }
+        return true;
+    }
     if (plan->transactional &&
         plan->logical_target_space == plan->execution_target_space) {
         bool ok = load_module_file_transactional(ctx, plan->canonical_path,
@@ -2780,14 +2920,49 @@ static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
     space_init(entry->space);
     entry->loading = true;
 
-    bool ok = load_module_file(ctx, plan->canonical_path, entry->space, entry->space,
-                               eval_arena, persistent_arena, registry, fuel, error_out);
+    bool ok = false;
+    if (plan->format.kind == CETTA_MODULE_FORMAT_MORK_ACT) {
+        ok = load_module_act_file_attached(ctx, plan->canonical_path, entry->space,
+                                           eval_arena, error_out);
+    } else {
+        ok = load_module_file(ctx, plan->canonical_path, entry->space, entry->space,
+                              eval_arena, persistent_arena, registry, fuel, error_out);
+    }
     entry->loading = false;
     if (!ok) {
         rollback_loaded_modules(ctx, loaded_len_before);
         return NULL;
     }
     return entry;
+}
+
+static const char *loaded_module_storage_name(const CettaLoadedModule *module) {
+    if (!module) return "unknown";
+    if (module->format.kind == CETTA_MODULE_FORMAT_MORK_ACT &&
+        module->space &&
+        space_match_backend_is_attached_compiled(module->space)) {
+        return "attached-compiled";
+    }
+    return "materialized";
+}
+
+static Atom *loaded_module_space_engine_atom(Arena *a,
+                                             const CettaLoadedModule *module) {
+    if (!module || !module->space) {
+        return atom_symbol(a, "unknown");
+    }
+    if (module->space->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED) {
+        return atom_symbol_id(a, g_builtin_syms.mork_text);
+    }
+    return atom_symbol_id(a, g_builtin_syms.native);
+}
+
+static Atom *loaded_module_match_backend_atom(Arena *a,
+                                              const CettaLoadedModule *module) {
+    if (!module || !module->space) {
+        return atom_symbol(a, "unknown");
+    }
+    return atom_symbol(a, space_match_backend_name(module->space));
 }
 
 Atom *cetta_library_mod_space(CettaLibraryContext *ctx, const char *spec,
@@ -2905,6 +3080,12 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
             atom_symbol(dst, cetta_foreign_backend_name(module->format.foreign_backend))
         };
         space_add(inventory, atom_expr(dst, format_fact, 4));
+        Atom *storage_fact[3] = {
+            atom_symbol(dst, "loaded-module-storage"),
+            atom_string(dst, module->display_name),
+            atom_symbol(dst, loaded_module_storage_name(module))
+        };
+        space_add(inventory, atom_expr(dst, storage_fact, 3));
         if (module->space) {
             Atom *space_fact[4] = {
                 atom_symbol(dst, "loaded-module-space"),
@@ -2913,6 +3094,18 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
                 atom_symbol(dst, cetta_module_provider_name(module->provider_kind))
             };
             space_add(inventory, atom_expr(dst, space_fact, 4));
+            Atom *engine_fact[3] = {
+                atom_symbol(dst, "loaded-module-space-engine"),
+                atom_string(dst, module->display_name),
+                loaded_module_space_engine_atom(dst, module)
+            };
+            space_add(inventory, atom_expr(dst, engine_fact, 3));
+            Atom *backend_fact[3] = {
+                atom_symbol(dst, "loaded-module-match-backend"),
+                atom_string(dst, module->display_name),
+                loaded_module_match_backend_atom(dst, module)
+            };
+            space_add(inventory, atom_expr(dst, backend_fact, 3));
         }
     }
 

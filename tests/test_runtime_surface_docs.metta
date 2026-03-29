@@ -1,4 +1,5 @@
 !(get-doc with-space-snapshot)
+!(get-doc include)
 !(get-doc import!)
 !(get-doc MathDomainError)
 !(get-doc ModuleImportCycle)
@@ -7,5 +8,6 @@
 !(get-doc log-math)
 !(get-doc pow-math)
 !(help! with-space-snapshot)
+!(help! include)
 !(help! import!)
 !(help! MathDomainError)

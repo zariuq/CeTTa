@@ -32,6 +32,67 @@ static bool is_token_char(char c) {
     return c && !isspace((unsigned char)c) && c != '(' && c != ')' && c != ';' && c != '"';
 }
 
+static bool namespace_segment_start_char(char c) {
+    return isalpha((unsigned char)c) || c == '_';
+}
+
+static bool namespace_segment_char(char c) {
+    return isalnum((unsigned char)c) || c == '-' || c == '_' || c == '!' || c == '?';
+}
+
+static bool namespace_token_has_file_extension(const char *tok) {
+    const char *dot = strrchr(tok, '.');
+    if (!dot || dot == tok || dot[1] == '\0') return false;
+    const char *ext = dot + 1;
+    return strcmp(ext, "metta") == 0 ||
+           strcmp(ext, "mm2") == 0 ||
+           strcmp(ext, "act") == 0;
+}
+
+static bool namespace_token_looks_qualified(const char *tok, char separator) {
+    if (!tok || !*tok || tok[0] == separator || !strchr(tok, separator)) {
+        return false;
+    }
+
+    bool at_segment_start = true;
+    for (const char *p = tok; *p; p++) {
+        if (*p == separator) {
+            if (at_segment_start || p[1] == '\0' || p[1] == separator) {
+                return false;
+            }
+            at_segment_start = true;
+            continue;
+        }
+        if (at_segment_start) {
+            if (!namespace_segment_start_char(*p)) {
+                return false;
+            }
+            at_segment_start = false;
+            continue;
+        }
+        if (!namespace_segment_char(*p)) {
+            return false;
+        }
+    }
+    return !at_segment_start;
+}
+
+const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
+    if (!tok || !*tok || !strchr(tok, '.'))
+        return tok;
+    if (strchr(tok, '/') || tok[0] == '.' || namespace_token_has_file_extension(tok))
+        return tok;
+    if (!namespace_token_looks_qualified(tok, '.'))
+        return tok;
+
+    size_t len = strlen(tok);
+    char *canonical = arena_alloc(a, len + 1);
+    for (size_t i = 0; i < len; i++)
+        canonical[i] = (tok[i] == '.') ? ':' : tok[i];
+    canonical[len] = '\0';
+    return canonical;
+}
+
 static char decode_string_escape(char c) {
     switch (c) {
         case 'n': return '\n';
@@ -178,7 +239,8 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
 
     /* Variable: starts with $ */
     if (tok[0] == '$' && len > 1) {
-        SymbolId spelling = symbol_intern_cstr(g_symbols, tok + 1);
+        const char *spelling_text = parser_canonicalize_namespace_token(a, tok + 1);
+        SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
         VarId id = parser_var_scope_id(scope, spelling);
         return atom_var_with_spelling(a, spelling, id);
     }
@@ -210,7 +272,8 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     }
 
     /* Symbol */
-    return atom_symbol_id(a, symbol_intern_cstr(g_symbols, tok));
+    return atom_symbol_id(a, symbol_intern_cstr(g_symbols,
+                                                parser_canonicalize_namespace_token(a, tok)));
 }
 
 Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {

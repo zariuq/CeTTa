@@ -35,6 +35,7 @@
 (: import! (-> Atom Atom (->)))
 (: select (-> Atom %Undefined%))
 (: collect (-> Atom Expression))
+(: reduce (-> Atom Atom Variable Variable Atom %Undefined%))
 (: once (-> Atom %Undefined%))
 (: search-policy (-> Atom Atom))
 (: new-space (-> SpaceType))
@@ -142,6 +143,16 @@
     (@param "Stream expression to evaluate")))
   (@return "Collected expression of surviving results"))
 
+(@doc reduce
+  (@desc "HE-extended stream reduction. Evaluates a nondeterministic stream, skips Empty results, and folds the surviving items into one accumulator without first packaging them into an expression. The primary form is (reduce stream init $acc $item step). The policy form (reduce (search-policy lane) stream init $acc $item step) keeps the same lane and ordering controls as select/collect. Each reduction step must produce exactly one non-empty result.")
+  (@params (
+    (@param "Stream expression to evaluate")
+    (@param "Initial accumulator value")
+    (@param "Accumulator binder")
+    (@param "Current item binder")
+    (@param "Step expression that yields the next accumulator")))
+  (@return "Final accumulator value after folding the surviving stream results"))
+
 (@doc once
   (@desc "Compatibility alias for select. Prefer select in new code. The policy form (once (search-policy lane) stream) is supported for legacy call sites that still want explicit search-lane choice.")
   (@params (
@@ -238,8 +249,14 @@
     (@param "New retained length")))
   (@return "Unit on success"))
 
+(@doc include
+  (@desc "Loads a module into a space transactionally. The one-argument form (include spec) merges into &self. The two-argument form (include &dst spec) merges into an already-existing named space; on failure the target space is rolled back unchanged.")
+  (@params (
+    (@param "Module spec or path to include, or an explicit destination space reference followed by the module spec")))
+  (@return "Unit on success, or an Error value on failure"))
+
 (@doc import!
-  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional: failed imports do not leak partial atoms, and loader failures can surface ModuleImportCycle or ModuleParseFailed.")
+  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled spaces instead of reparsing. Loader failures can surface ModuleImportCycle or ModuleParseFailed.")
   (@params (
     (@param "Destination space reference: &self or a fresh &name")
     (@param "Module spec or path to import")))

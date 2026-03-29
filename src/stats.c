@@ -46,6 +46,10 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "bindings-released-entry-capacity",
     "bindings-released-constraint-capacity",
     "bindings-normalize",
+    "attached-act-open",
+    "attached-act-query",
+    "attached-act-materialize",
+    "attached-act-materialize-atoms",
 };
 
 static int64_t clamp_counter(uint64_t value) {
