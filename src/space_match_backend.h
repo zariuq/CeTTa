@@ -61,6 +61,8 @@ typedef struct {
     bool built;
     bool dirty;
     bool bridge_active;
+    bool attached_compiled;
+    uint32_t attached_count;
     void *bridge_space;
 } PathmapImportedState;
 
@@ -94,6 +96,10 @@ const char *space_match_backend_name(const Space *s);
 bool space_match_backend_supports_direct_bindings(const Space *s);
 const char *space_match_backend_kind_name(SpaceMatchBackendKind kind);
 bool space_match_backend_kind_from_name(const char *name, SpaceMatchBackendKind *out);
+bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *out_loaded);
+bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena);
+bool space_match_backend_is_attached_compiled(const Space *s);
+uint32_t space_match_backend_logical_len(const Space *s);
 void space_match_backend_print_inventory(FILE *out);
 
 #endif /* CETTA_SPACE_MATCH_BACKEND_H */

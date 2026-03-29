@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -30,11 +31,292 @@ static bool g_count_only = false;
 static bool g_suppress_results = false;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 
+typedef enum {
+    CETTA_DISPLAY_VARS_AUTO = 0,
+    CETTA_DISPLAY_VARS_PRETTY,
+    CETTA_DISPLAY_VARS_RAW
+} CettaDisplayVarsMode;
+
+typedef enum {
+    CETTA_DISPLAY_NAMESPACES_AUTO = 0,
+    CETTA_DISPLAY_NAMESPACES_PRETTY,
+    CETTA_DISPLAY_NAMESPACES_RAW
+} CettaDisplayNamespacesMode;
+
+typedef struct {
+    VarId var_id;
+    const char *base_name;
+    const char *display_name;
+} CettaDisplayVarEntry;
+
+typedef struct {
+    CettaDisplayVarEntry *entries;
+    uint32_t len;
+    uint32_t cap;
+} CettaDisplayVarMap;
+
+static CettaDisplayVarsMode g_display_vars_mode = CETTA_DISPLAY_VARS_AUTO;
+static CettaDisplayNamespacesMode g_display_namespaces_mode =
+    CETTA_DISPLAY_NAMESPACES_AUTO;
+
 static bool result_set_has_error(ResultSet *rs) {
     for (uint32_t i = 0; i < rs->len; i++) {
         if (atom_is_error(rs->items[i])) return true;
     }
     return false;
+}
+
+static void display_var_map_free(CettaDisplayVarMap *map) {
+    free(map->entries);
+    map->entries = NULL;
+    map->len = 0;
+    map->cap = 0;
+}
+
+static bool display_var_map_push(CettaDisplayVarMap *map, VarId var_id,
+                                 const char *base_name) {
+    for (uint32_t i = 0; i < map->len; i++) {
+        if (map->entries[i].var_id == var_id) {
+            return true;
+        }
+    }
+    if (map->len == map->cap) {
+        uint32_t next_cap = map->cap ? map->cap * 2u : 16u;
+        CettaDisplayVarEntry *next =
+            realloc(map->entries, sizeof(CettaDisplayVarEntry) * next_cap);
+        if (!next) {
+            return false;
+        }
+        map->entries = next;
+        map->cap = next_cap;
+    }
+    map->entries[map->len].var_id = var_id;
+    map->entries[map->len].base_name = base_name;
+    map->entries[map->len].display_name = NULL;
+    map->len++;
+    return true;
+}
+
+static bool display_var_collect_atom(CettaDisplayVarMap *map, Atom *atom) {
+    if (!atom) return true;
+    switch (atom->kind) {
+    case ATOM_SYMBOL:
+        return true;
+    case ATOM_VAR:
+        return display_var_map_push(map, atom->var_id, atom_name_cstr(atom));
+    case ATOM_GROUNDED:
+        if (atom->ground.gkind == GV_STATE) {
+            StateCell *cell = (StateCell *)atom->ground.ptr;
+            if (!cell) return true;
+            if (!display_var_collect_atom(map, cell->value)) return false;
+            return display_var_collect_atom(map, cell->content_type);
+        }
+        return true;
+    case ATOM_EXPR:
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (!display_var_collect_atom(map, atom->expr.elems[i])) return false;
+        }
+        return true;
+    }
+    return true;
+}
+
+static bool namespace_display_segment_start_char(char c) {
+    return isalpha((unsigned char)c) || c == '_';
+}
+
+static bool namespace_display_segment_char(char c) {
+    return isalnum((unsigned char)c) || c == '-' || c == '_' || c == '!' || c == '?';
+}
+
+static bool namespace_display_looks_qualified(const char *name) {
+    if (!name || !*name || !strchr(name, ':') || name[0] == ':') {
+        return false;
+    }
+
+    bool at_segment_start = true;
+    for (const char *p = name; *p; p++) {
+        if (*p == ':') {
+            if (at_segment_start || p[1] == '\0' || p[1] == ':') {
+                return false;
+            }
+            at_segment_start = true;
+            continue;
+        }
+        if (at_segment_start) {
+            if (!namespace_display_segment_start_char(*p)) {
+                return false;
+            }
+            at_segment_start = false;
+            continue;
+        }
+        if (!namespace_display_segment_char(*p)) {
+            return false;
+        }
+    }
+    return !at_segment_start;
+}
+
+static const char *display_namespace_name(Arena *arena, const char *name,
+                                          bool pretty_namespaces) {
+    if (!pretty_namespaces || !name || !*name || !strchr(name, ':')) {
+        return name;
+    }
+    if (!namespace_display_looks_qualified(name)) {
+        return name;
+    }
+
+    size_t len = strlen(name);
+    char *pretty = arena_alloc(arena, len + 1);
+    if (!pretty) return name;
+    for (size_t i = 0; i < len; i++) {
+        pretty[i] = (name[i] == ':') ? '.' : name[i];
+    }
+    pretty[len] = '\0';
+    return pretty;
+}
+
+static bool display_var_finalize(CettaDisplayVarMap *map, Arena *arena,
+                                 bool pretty_namespaces) {
+    for (uint32_t i = 0; i < map->len; i++) {
+        const char *base = map->entries[i].base_name;
+        const char *display_base =
+            display_namespace_name(arena, base, pretty_namespaces);
+        uint32_t group_size = 0;
+        uint32_t rank = 0;
+        for (uint32_t j = 0; j < map->len; j++) {
+            if (strcmp(map->entries[j].base_name, base) != 0) continue;
+            group_size++;
+            if (map->entries[j].var_id < map->entries[i].var_id) {
+                rank++;
+            }
+        }
+        if (group_size <= 1 || rank == 0) {
+            map->entries[i].display_name = display_base;
+            continue;
+        }
+        char buf[256];
+        snprintf(buf, sizeof(buf), "%s_%u", display_base, rank);
+        map->entries[i].display_name = arena_strdup(arena, buf);
+        if (!map->entries[i].display_name) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static const char *display_var_lookup(const CettaDisplayVarMap *map, VarId var_id) {
+    for (uint32_t i = 0; i < map->len; i++) {
+        if (map->entries[i].var_id == var_id) {
+            return map->entries[i].display_name ?
+                map->entries[i].display_name : map->entries[i].base_name;
+        }
+    }
+    return NULL;
+}
+
+static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *map,
+                               bool pretty_namespaces) {
+    if (!src) return NULL;
+    switch (src->kind) {
+    case ATOM_SYMBOL: {
+        const char *name =
+            display_namespace_name(dst, atom_name_cstr(src), pretty_namespaces);
+        return atom_symbol(dst, name);
+    }
+    case ATOM_VAR: {
+        const char *name = display_var_lookup(map, src->var_id);
+        if (!name) name = atom_name_cstr(src);
+        name = display_namespace_name(dst, name, pretty_namespaces);
+        return atom_var(dst, name);
+    }
+    case ATOM_GROUNDED:
+        switch (src->ground.gkind) {
+        case GV_INT:
+            return atom_int(dst, src->ground.ival);
+        case GV_FLOAT:
+            return atom_float(dst, src->ground.fval);
+        case GV_BOOL:
+            return atom_bool(dst, src->ground.bval);
+        case GV_STRING:
+            return atom_string(dst, src->ground.sval);
+        case GV_SPACE:
+            return atom_space(dst, src->ground.ptr);
+        case GV_CAPTURE:
+            return atom_capture(dst, (CaptureClosure *)src->ground.ptr);
+        case GV_FOREIGN:
+            return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+        case GV_STATE: {
+            StateCell *src_cell = (StateCell *)src->ground.ptr;
+            StateCell *dst_cell = arena_alloc(dst, sizeof(StateCell));
+            dst_cell->value = src_cell ?
+                display_atom_copy(dst, src_cell->value, map, pretty_namespaces) : NULL;
+            dst_cell->content_type =
+                src_cell ? display_atom_copy(dst, src_cell->content_type, map,
+                                             pretty_namespaces) : NULL;
+            return atom_state(dst, dst_cell);
+        }
+        }
+        break;
+    case ATOM_EXPR: {
+        Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
+        for (uint32_t i = 0; i < src->expr.len; i++) {
+            elems[i] = display_atom_copy(dst, src->expr.elems[i], map,
+                                         pretty_namespaces);
+        }
+        return atom_expr(dst, elems, src->expr.len);
+    }
+    }
+    return atom_symbol(dst, "?");
+}
+
+static bool display_vars_pretty_enabled_for(FILE *logical_dest) {
+    if (g_display_vars_mode == CETTA_DISPLAY_VARS_PRETTY) return true;
+    if (g_display_vars_mode == CETTA_DISPLAY_VARS_RAW) return false;
+    int fd = fileno(logical_dest);
+    return fd >= 0 && isatty(fd);
+}
+
+static bool display_namespaces_pretty_enabled_for(FILE *logical_dest) {
+    if (g_display_namespaces_mode == CETTA_DISPLAY_NAMESPACES_PRETTY) return true;
+    if (g_display_namespaces_mode == CETTA_DISPLAY_NAMESPACES_RAW) return false;
+    int fd = fileno(logical_dest);
+    return fd >= 0 && isatty(fd);
+}
+
+static bool write_pretty_results(FILE *out, ResultSet *rs, bool pretty_vars,
+                                 bool pretty_namespaces) {
+    Arena pretty_arena;
+    CettaDisplayVarMap map = {0};
+    arena_init(&pretty_arena);
+
+    if (pretty_vars) {
+        for (uint32_t i = 0; i < rs->len; i++) {
+            if (!display_var_collect_atom(&map, rs->items[i])) {
+                display_var_map_free(&map);
+                arena_free(&pretty_arena);
+                return false;
+            }
+        }
+        if (!display_var_finalize(&map, &pretty_arena, pretty_namespaces)) {
+            display_var_map_free(&map);
+            arena_free(&pretty_arena);
+            return false;
+        }
+    }
+
+    fprintf(out, "[");
+    for (uint32_t i = 0; i < rs->len; i++) {
+        Atom *pretty = display_atom_copy(&pretty_arena, rs->items[i], &map,
+                                         pretty_namespaces);
+        if (i > 0) fprintf(out, ", ");
+        atom_print(pretty, out);
+    }
+    fprintf(out, "]\n");
+
+    display_var_map_free(&map);
+    arena_free(&pretty_arena);
+    return true;
 }
 
 static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
@@ -136,6 +418,7 @@ done:
 }
 
 static void write_results(FILE *out, ResultSet *rs) {
+    FILE *logical_dest = stdout;
     if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
     if (g_count_only) {
         if (rs->len == 1 &&
@@ -150,6 +433,14 @@ static void write_results(FILE *out, ResultSet *rs) {
     if (g_suppress_results) {
         if (!result_set_has_error(rs)) return;
         out = stderr;
+        logical_dest = stderr;
+    }
+    bool pretty_vars = display_vars_pretty_enabled_for(logical_dest);
+    bool pretty_namespaces = display_namespaces_pretty_enabled_for(logical_dest);
+    if (pretty_vars || pretty_namespaces) {
+        if (write_pretty_results(out, rs, pretty_vars, pretty_namespaces)) {
+            return;
+        }
     }
     fprintf(out, "[");
     for (uint32_t i = 0; i < rs->len; i++) {
@@ -167,6 +458,10 @@ static void print_usage(FILE *out) {
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
     fputs("       cetta --suppress-results <file.metta>  # execute without printing non-error results\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
+    fputs("       cetta --pretty-vars <file.metta>       # pretty-print result vars for humans\n", out);
+    fputs("       cetta --raw-vars <file.metta>          # print raw internal var epochs\n", out);
+    fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mm2./mork. namespace sugar\n", out);
+    fputs("       cetta --raw-namespaces <file.metta>    # print canonical mm2:/mork: names\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>\n", out);
     fputs("       cetta --list-profiles\n", out);
@@ -281,6 +576,22 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
             emit_runtime_stats = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--pretty-vars") == 0) {
+            g_display_vars_mode = CETTA_DISPLAY_VARS_PRETTY;
+            continue;
+        }
+        if (strcmp(argv[i], "--raw-vars") == 0) {
+            g_display_vars_mode = CETTA_DISPLAY_VARS_RAW;
+            continue;
+        }
+        if (strcmp(argv[i], "--pretty-namespaces") == 0) {
+            g_display_namespaces_mode = CETTA_DISPLAY_NAMESPACES_PRETTY;
+            continue;
+        }
+        if (strcmp(argv[i], "--raw-namespaces") == 0) {
+            g_display_namespaces_mode = CETTA_DISPLAY_NAMESPACES_RAW;
             continue;
         }
         if (strcmp(argv[i], "--fuel") == 0) {
@@ -423,6 +734,10 @@ int main(int argc, char **argv) {
     }
     if (strcmp(lang->canonical, "mm2") == 0) {
         cetta_mm2_lower_atoms(&arena, atoms, n);
+    }
+    if (emit_runtime_stats) {
+        cetta_runtime_stats_reset();
+        cetta_runtime_stats_enable();
     }
     if (strcmp(lang->canonical, "mm2") == 0 &&
         !cetta_mm2_atoms_have_top_level_eval(atoms, n)) {

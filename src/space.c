@@ -1,5 +1,6 @@
 #include "space.h"
 #include "grounded.h"
+#include "search_machine.h"
 #include "stats.h"
 #include <stdlib.h>
 #include <string.h>
@@ -946,7 +947,7 @@ bool space_truncate(Space *s, uint32_t new_len) {
 }
 
 uint32_t space_length(const Space *s) {
-    return s ? s->len : 0;
+    return space_match_backend_logical_len(s);
 }
 
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
@@ -1127,22 +1128,30 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom **atypes = NULL;
                         uint32_t nat = get_atom_types(s, a, atom->expr.elems[ai + 1], &atypes);
                         bool found = false;
-                        BindingsBuilder trial_builder;
-                        bindings_builder_init(&trial_builder, &tb);
+                        SearchMachine trial_machine;
+                        if (!search_machine_init(&trial_machine, &tb, &scratch)) {
+                            free(atypes);
+                            bindings_free(&tb);
+                            free(types);
+                            free(op_types);
+                            arena_free(&scratch);
+                            *out_types = NULL;
+                            return 0;
+                        }
                         for (uint32_t ti = 0; ti < nat; ti++) {
-                            uint32_t mark = bindings_builder_save(&trial_builder);
-                            if (match_types_builder(arg_type_decl, atypes[ti], &trial_builder)) {
+                            SearchMachineMark mark = search_machine_save(&trial_machine);
+                            if (match_types_builder(arg_type_decl, atypes[ti],
+                                                    search_machine_builder(&trial_machine))) {
                                 Bindings next_tb;
                                 bindings_init(&next_tb);
-                                bindings_builder_take(&trial_builder, &next_tb);
+                                search_machine_take(&trial_machine, &next_tb);
                                 bindings_replace(&tb, &next_tb);
                                 found = true;
                                 break;
                             }
-                            bindings_builder_rollback(&trial_builder, mark);
+                            search_machine_rollback(&trial_machine, mark);
                         }
-                        if (!found)
-                            bindings_builder_free(&trial_builder);
+                        search_machine_free(&trial_machine);
                         free(atypes);
                         if (!found) all_ok = false;
                     }

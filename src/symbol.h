@@ -79,6 +79,7 @@ typedef struct {
     X(let, "let") \
     X(chain, "chain") \
     X(collect, "collect") \
+    X(reduce, "reduce") \
     X(select, "select") \
     X(once, "once") \
     X(assert_text, "assert") \
@@ -225,14 +226,17 @@ typedef struct {
     X(lib_str_starts_with, "__cetta_lib_str_starts_with") \
     X(lib_str_ends_with, "__cetta_lib_str_ends_with") \
     X(lib_str_trim, "__cetta_lib_str_trim") \
+    X(lib_mork_space_open_act, "__cetta_lib_mork_space_open_act") \
     X(lib_mork_space_dump_act, "__cetta_lib_mork_space_dump_act") \
     X(lib_mork_space_import_act, "__cetta_lib_mork_space_import_act") \
     X(lib_mm2_program_new, "__cetta_lib_mm2_program_new") \
+    X(lib_mm2_program_clear, "__cetta_lib_mm2_program_clear") \
     X(lib_mm2_program_add, "__cetta_lib_mm2_program_add") \
     X(lib_mm2_load_file, "__cetta_lib_mm2_load_file") \
     X(lib_mm2_program_size, "__cetta_lib_mm2_program_size") \
     X(lib_mm2_program_atoms, "__cetta_lib_mm2_program_atoms") \
     X(lib_mm2_context_new, "__cetta_lib_mm2_context_new") \
+    X(lib_mm2_context_clear, "__cetta_lib_mm2_context_clear") \
     X(lib_mm2_context_load_program, "__cetta_lib_mm2_context_load_program") \
     X(lib_mm2_context_add, "__cetta_lib_mm2_context_add") \
     X(lib_mm2_context_remove, "__cetta_lib_mm2_context_remove") \

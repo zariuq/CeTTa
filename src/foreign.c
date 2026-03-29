@@ -773,6 +773,41 @@ static const char *string_like_atom(Atom *atom) {
     return NULL;
 }
 
+static bool python_path_segment_start_char(char c) {
+    return isalpha((unsigned char)c) || c == '_';
+}
+
+static bool python_path_segment_char(char c) {
+    return isalnum((unsigned char)c) || c == '-' || c == '_' || c == '!' || c == '?';
+}
+
+static bool python_path_is_canonical_namespace(const char *path) {
+    if (!path || !*path || !strchr(path, ':') || path[0] == ':') {
+        return false;
+    }
+    bool at_segment_start = true;
+    for (const char *p = path; *p; p++) {
+        if (*p == ':') {
+            if (at_segment_start || p[1] == '\0' || p[1] == ':') {
+                return false;
+            }
+            at_segment_start = true;
+            continue;
+        }
+        if (at_segment_start) {
+            if (!python_path_segment_start_char(*p)) {
+                return false;
+            }
+            at_segment_start = false;
+            continue;
+        }
+        if (!python_path_segment_char(*p)) {
+            return false;
+        }
+    }
+    return !at_segment_start;
+}
+
 static PyObject *python_resolve_path(Atom *path_atom, PyObject *base,
                                      Arena *a, Atom **error_out) {
     const char *path = string_like_atom(path_atom);
@@ -780,9 +815,23 @@ static PyObject *python_resolve_path(Atom *path_atom, PyObject *base,
         if (error_out) *error_out = foreign_error_atom(a, "python path must be a symbol or string");
         return NULL;
     }
+    const char *resolved_path = path;
+    if (path_atom->kind == ATOM_SYMBOL && python_path_is_canonical_namespace(path)) {
+        size_t len = strlen(path);
+        char *buf = arena_alloc(a, len + 1);
+        if (!buf) {
+            if (error_out) *error_out = foreign_error_atom(a, "python path allocation failed");
+            return NULL;
+        }
+        for (size_t i = 0; i < len; i++) {
+            buf[i] = (path[i] == ':') ? '.' : path[i];
+        }
+        buf[len] = '\0';
+        resolved_path = buf;
+    }
     PyObject *result = base
-        ? PyObject_CallFunction(g_bridge_resolve, "sO", path, base)
-        : PyObject_CallFunction(g_bridge_resolve, "s", path);
+        ? PyObject_CallFunction(g_bridge_resolve, "sO", resolved_path, base)
+        : PyObject_CallFunction(g_bridge_resolve, "s", resolved_path);
     if (!result && error_out) {
         *error_out = python_error_atom(a, "python path resolution failed");
     }

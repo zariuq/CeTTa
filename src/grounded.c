@@ -98,10 +98,10 @@ static Atom *grounded_call_expr(Arena *a, Atom *head, Atom **args, uint32_t narg
     return atom_expr(a, elems, nargs + 1);
 }
 
-static Atom *foldl_bind_step_atom(Arena *a, Atom *atom,
-                                  SymbolId acc_spelling, Atom *acc_val,
-                                  SymbolId item_spelling, Atom *item_val,
-                                  FoldVarMap *fresh_vars) {
+static Atom *foldl_bind_step_atom_impl(Arena *a, Atom *atom,
+                                       SymbolId acc_spelling, Atom *acc_val,
+                                       SymbolId item_spelling, Atom *item_val,
+                                       FoldVarMap *fresh_vars) {
     switch (atom->kind) {
     case ATOM_VAR:
         if (atom->sym_id == acc_spelling)
@@ -118,10 +118,10 @@ static Atom *foldl_bind_step_atom(Arena *a, Atom *atom,
         Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
         bool changed = false;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
-            elems[i] = foldl_bind_step_atom(a, atom->expr.elems[i],
-                                            acc_spelling, acc_val,
-                                            item_spelling, item_val,
-                                            fresh_vars);
+            elems[i] = foldl_bind_step_atom_impl(a, atom->expr.elems[i],
+                                                 acc_spelling, acc_val,
+                                                 item_spelling, item_val,
+                                                 fresh_vars);
             if (elems[i] != atom->expr.elems[i])
                 changed = true;
         }
@@ -132,6 +132,19 @@ static Atom *foldl_bind_step_atom(Arena *a, Atom *atom,
     default:
         return atom;
     }
+}
+
+Atom *cetta_fold_bind_step_atom(Arena *a, Atom *atom,
+                                SymbolId acc_spelling, Atom *acc_val,
+                                SymbolId item_spelling, Atom *item_val) {
+    FoldVarMap fresh_vars;
+    fold_var_map_init(&fresh_vars);
+    Atom *bound = foldl_bind_step_atom_impl(a, atom,
+                                            acc_spelling, acc_val,
+                                            item_spelling, item_val,
+                                            &fresh_vars);
+    fold_var_map_free(&fresh_vars);
+    return bound;
 }
 
 static Atom *grounded_bad_arg_type(Arena *a, Atom *head, Atom **args, uint32_t nargs,
@@ -432,13 +445,9 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     Atom *head_item = list->expr.elems[0];
     Atom *tail = atom_expr(a, list->expr.elems + 1, list->expr.len - 1);
 
-    FoldVarMap fresh_vars;
-    fold_var_map_init(&fresh_vars);
-    Atom *step_op = foldl_bind_step_atom(a, op_expr,
-                                         acc_var->sym_id, init,
-                                         item_var->sym_id, head_item,
-                                         &fresh_vars);
-    fold_var_map_free(&fresh_vars);
+    Atom *step_op = cetta_fold_bind_step_atom(a, op_expr,
+                                              acc_var->sym_id, init,
+                                              item_var->sym_id, head_item);
 
     char tmp_name[256];
     snprintf(tmp_name, sizeof(tmp_name), "$__foldl_step#%u", fresh_var_suffix());

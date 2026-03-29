@@ -17,7 +17,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11 -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS)
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/search_machine.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign.c src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_MATCH_BACKENDS = native-subst-tree native-candidate-exact pathmap-imported
@@ -183,8 +183,21 @@ test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	[ $$fail -eq 0 ]
 
 MORK_MM2_TEST3 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test3_var_binding.mm2)
+MORK_MM2_TEST4 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test4_conjunctive.mm2)
+MORK_MM2_TEST5 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test5_equal_pair.mm2)
+MORK_MM2_TEST6 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test6_no_match.mm2)
+MORK_MM2_TEST7 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test7_nested.mm2)
+MORK_MM2_TEST8 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test8_multi_step.mm2)
+MORK_MM2_TEST9 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test9_priority_ordering.mm2)
+MORK_MM2_TEST10 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test10_conjunctive_wq.mm2)
+MORK_MM2_SINK_ADD_CONSTANT := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_add_constant.mm2)
+MORK_MM2_SINK_ADD_SIMPLE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_add_simple.mm2)
+MORK_MM2_SINK_REMOVE_SIMPLE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_remove_simple.mm2)
+MORK_MM2_SINK_BULK_REMOVE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_bulk_remove.mm2)
+MORK_MM2_SINK_COUNT_SIMPLE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_count_simple.mm2)
+MORK_MM2_SINK_HEAD_LIMIT := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_head_limit.mm2)
 
-test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-exec-basic test-mm2-conformance-var-binding
+test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-sink-count-lib test-mm2-exec-basic test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite
 	@pass=0; fail=0; skip=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -196,6 +209,16 @@ test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2
 		fi; \
 		if [ "$$f" = "tests/test_mm2_load_file_lib.metta" ]; then \
 			echo "SKIP: $$f (covered by dedicated MM2 file-load seam target)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if [ "$$f" = "tests/test_mm2_sink_count_lib.metta" ]; then \
+			echo "SKIP: $$f (covered by dedicated MM2 sink file-load seam target)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if [ "$$f" = "tests/test_pretty_vars_surface.metta" ]; then \
+			echo "SKIP: $$f (covered by dedicated pretty-vars flag target)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
@@ -320,6 +343,22 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			echo "PASS: he_compat select guard"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he_compat select guard"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/spec_profile_reduce_extension.expected)" ]; then \
+			echo "PASS: he_extended reduce extension"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended reduce extension"; \
+			diff <(cat tests/spec_profile_reduce_extension.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface reduce is unavailable in profile he_compat"; then \
+			echo "PASS: he_compat reduce guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat reduce guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -555,6 +594,21 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he_extended compile select"; \
 			fail=$$((fail + 1)); \
 		fi; \
+		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_reduce_extension.metta 2>&1 >/dev/null); \
+		status=$$?; \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'reduce' is unavailable in profile 'he_compat'"; then \
+			echo "PASS: he_compat compile reduce guard"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_compat compile reduce guard"; \
+			printf '%s\n' "$$compile_output"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he_extended compile reduce"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he_extended compile reduce"; \
+			fail=$$((fail + 1)); \
+		fi; \
 		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_runtime_stats_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'runtime-stats!' is unavailable in profile 'he_compat'"; then \
@@ -693,6 +747,11 @@ test-backends: $(BIN)
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
+		if [ "$$f" = "tests/test_pretty_vars_surface.metta" ]; then \
+			echo "SKIP: $$f (covered by dedicated pretty-vars flag target)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
 			if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ]; then \
 				echo "SKIP: $$f (pathmap-imported specific regression)"; \
 				skip=$$((skip + 1)); \
@@ -784,6 +843,20 @@ test-mm2-load-file-lib: $(BIN)
 		exit 1; \
 	fi
 
+test-mm2-sink-count-lib: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 sink library seam (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --lang he tests/test_mm2_sink_count_lib.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_mm2_sink_count_lib.expected)" ]; then \
+		echo "PASS: mm2 sink library seam"; \
+	else \
+		echo "FAIL: mm2 sink library seam"; \
+		diff <(cat tests/test_mm2_sink_count_lib.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
 test-mm2-exec-basic: $(BIN)
 	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
 		echo "SKIP: mm2 direct execution seam (no MORK bridge library configured)"; \
@@ -811,6 +884,61 @@ test-mm2-conformance-var-binding: $(BIN)
 		diff <(cat tests/mm2_conformance_var_binding.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
+
+test-mm2-conformance-lean-suite: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 lean conformance suite (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	pass=0; fail=0; \
+	for case in \
+		"$(MORK_MM2_TEST4):tests/mm2_conformance_test4.expected" \
+		"$(MORK_MM2_TEST5):tests/mm2_conformance_test5.expected" \
+		"$(MORK_MM2_TEST6):tests/mm2_conformance_test6.expected" \
+		"$(MORK_MM2_TEST7):tests/mm2_conformance_test7.expected" \
+		"$(MORK_MM2_TEST8):tests/mm2_conformance_test8.expected" \
+		"$(MORK_MM2_TEST9):tests/mm2_conformance_test9.expected" \
+		"$(MORK_MM2_TEST10):tests/mm2_conformance_test10.expected"; do \
+		file=$${case%%:*}; expected=$${case#*:}; \
+		result=$$(./$(BIN) --lang mm2 "$$file" 2>&1); \
+		if [ "$$result" = "$$(cat "$$expected")" ]; then \
+			echo "PASS: mm2 lean conformance $$(basename "$$file")"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: mm2 lean conformance $$(basename "$$file")"; \
+			diff <(cat "$$expected") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-mm2-sink-suite: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mm2 sink suite (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	pass=0; fail=0; \
+	for case in \
+		"$(MORK_MM2_SINK_ADD_CONSTANT):tests/mm2_sink_add_constant.expected" \
+		"$(MORK_MM2_SINK_ADD_SIMPLE):tests/mm2_sink_add_simple.expected" \
+		"$(MORK_MM2_SINK_REMOVE_SIMPLE):tests/mm2_sink_remove_simple.expected" \
+		"$(MORK_MM2_SINK_BULK_REMOVE):tests/mm2_sink_bulk_remove.expected" \
+		"$(MORK_MM2_SINK_COUNT_SIMPLE):tests/mm2_sink_count_simple.expected" \
+		"$(MORK_MM2_SINK_HEAD_LIMIT):tests/mm2_sink_head_limit.expected"; do \
+		file=$${case%%:*}; expected=$${case#*:}; \
+		result=$$(./$(BIN) --lang mm2 "$$file" 2>&1); \
+		if [ "$$result" = "$$(cat "$$expected")" ]; then \
+			echo "PASS: mm2 sink suite $$(basename "$$file")"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: mm2 sink suite $$(basename "$$file")"; \
+			diff <(cat "$$expected") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 test-pathmap-imported-conjunction-init: $(BIN)
 	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
@@ -898,6 +1026,123 @@ test-mork-lib-pathmap-imported: $(BIN)
 		diff <(echo "$$expected") <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
+
+test-mork-open-act: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: mork open-act probe (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --lang he tests/test_mork_open_act_surface.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_mork_open_act_surface.expected)" ]; then \
+		echo "PASS: mork open-act probe"; \
+	else \
+		echo "FAIL: mork open-act probe"; \
+		diff <(cat tests/test_mork_open_act_surface.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-pretty-vars-flags: $(BIN)
+	@raw_result=$$(./$(BIN) --raw-vars --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	default_result=$$(./$(BIN) --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	pretty_result=$$(./$(BIN) --pretty-vars --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	if printf '%s\n' "$$raw_result" | grep -Fq '#'; then \
+		:; \
+	else \
+		echo "FAIL: raw-vars did not preserve raw suffixes"; \
+		printf '%s\n' "$$raw_result"; \
+		exit 1; \
+	fi; \
+	if [ "$$default_result" = "$$raw_result" ]; then \
+		:; \
+	else \
+		echo "FAIL: default non-tty output changed"; \
+		diff <(echo "$$raw_result") <(echo "$$default_result") | head -20; \
+		exit 1; \
+	fi; \
+	if [ "$$pretty_result" = "$$(cat tests/test_pretty_vars_surface.pretty.expected)" ]; then \
+		echo "PASS: pretty-vars flags"; \
+	else \
+		echo "FAIL: pretty-vars output mismatch"; \
+		diff <(cat tests/test_pretty_vars_surface.pretty.expected) <(echo "$$pretty_result") | head -20; \
+		exit 1; \
+	fi
+
+test-pretty-namespaces-flags: $(BIN)
+	@raw_result=$$(./$(BIN) --raw-namespaces --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	default_result=$$(./$(BIN) --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	pretty_result=$$(./$(BIN) --pretty-namespaces --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	if printf '%s\n' "$$raw_result" | grep -Fq 'mm2:program-new' && \
+	   printf '%s\n' "$$raw_result" | grep -Fq 'mork:space-open-act'; then \
+		:; \
+	else \
+		echo "FAIL: raw-namespaces did not preserve canonical separators"; \
+		printf '%s\n' "$$raw_result"; \
+		exit 1; \
+	fi; \
+	if [ "$$default_result" = "$$raw_result" ]; then \
+		:; \
+	else \
+		echo "FAIL: default non-tty namespace output changed"; \
+		diff <(echo "$$raw_result") <(echo "$$default_result") | head -20; \
+		exit 1; \
+	fi; \
+	if [ "$$pretty_result" = "$$(cat tests/test_pretty_namespaces_surface.pretty.expected)" ]; then \
+		echo "PASS: pretty-namespaces flags"; \
+	else \
+		echo "FAIL: pretty-namespaces output mismatch"; \
+		diff <(cat tests/test_pretty_namespaces_surface.pretty.expected) <(echo "$$pretty_result") | head -20; \
+		exit 1; \
+	fi
+
+prepare-bio-eqtl-act: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: bio eqtl ACT prepare (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --suppress-results --lang he tests/support/prepare_eqtl_for_mining_act.metta); \
+	if [ -z "$$result" ]; then \
+		echo "PASS: prepared runtime/bench_eqtl_for_mining.act"; \
+	else \
+		echo "FAIL: bio eqtl ACT prepare"; \
+		printf '%s\n' "$$result"; \
+		exit 1; \
+	fi
+
+bench-bio-eqtl-act-modes: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: bio eqtl ACT benchmark (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	./scripts/bench_mork_act_eqtl.sh all
+
+prepare-bio-1m-act: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: bio 1m ACT prepare (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	result=$$(./$(BIN) --suppress-results --lang he tests/support/prepare_bio_1m_act.metta); \
+	if [ -z "$$result" ]; then \
+		echo "PASS: prepared runtime/bench_bio_1m.act"; \
+	else \
+		echo "FAIL: bio 1m ACT prepare"; \
+		printf '%s\n' "$$result"; \
+		exit 1; \
+	fi
+
+bench-bio-1m-act-attach: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: bio 1m ACT attached benchmark (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	./scripts/bench_mork_act_bio_1m_attach.sh
+
+bench-bio-1m-act-modes: $(BIN)
+	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
+		echo "SKIP: bio 1m ACT benchmark (no MORK bridge library configured)"; \
+		exit 0; \
+	fi; \
+	echo "NOTE: attached ACT is the verified 1.4M path under the 6GB CeTTa limit; combined source/materialize comparison remains experimental"; \
+	./scripts/bench_mork_act_bio_1m_attach.sh
 
 test-duplicate-multiplicity-backends: $(BIN)
 	@if [ ! -f "$(MORK_BRIDGE_STATICLIB)" ] && [ -z "$$CETTA_MORK_SPACE_BRIDGE_LIB" ]; then \
@@ -1157,4 +1402,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: all clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-exec-basic test-mm2-conformance-var-binding test-pathmap-imported-bridge-v2 test-pathmap-imported-long-string-regression test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: all clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-mm2-runtime-lib test-mm2-load-file-lib test-mm2-sink-count-lib test-mm2-exec-basic test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-imported-bridge-v2 test-pathmap-imported-long-string-regression test-pathmap-imported-match-chain test-mork-lib-pathmap-imported test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime

@@ -1,3 +1,7 @@
+; 2-arg min/max (CeTTa compatibility — PeTTa has these as Prolog builtins)
+(= (min $a $b) (if (<= $a $b) $a $b))
+(= (max $a $b) (if (>= $a $b) $a $b))
+
 (= (clamp $v $min $max)
    (min $max (max $v $min)))
 

@@ -701,7 +701,9 @@ static Atom *bindings_apply_seen(Bindings *b, Arena *a, Atom *atom,
 
 Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY);
-    uint32_t seen_cap = b->len ? b->len : 1;
+    if (b->len == 0)
+        return atom;
+    uint32_t seen_cap = b->len;
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
     VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
     Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
