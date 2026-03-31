@@ -1,0 +1,8 @@
+[()]
+[(seed-target-count 9)]
+[(contextual-target-count 9)]
+[(disease-proof-count 85)]
+[(supported-drug-proof-count 34)]
+[(supported-drug-hyp-count 8)]
+[((scored-supported-drug rs10000544 ensg00000138735 doid_10763 db01119 tissue-moderate (stv 0.5002330578285713 0.9333333333333332) 0.4724841873066665) (scored-supported-drug rs10000544 ensg00000138735 doid_3393 db00975 tissue-moderate (stv 0.5002330578285713 0.9333333333333332) 0.4724841873066665))]
+[(threshold-count 2)]

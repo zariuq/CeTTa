@@ -57,6 +57,13 @@ static void sb_free(StringBuf *sb) {
     sb->cap = 0;
 }
 
+static uint32_t next_pow2_u32(uint32_t n) {
+    uint32_t cap = 1;
+    while (cap < n && cap < (UINT32_MAX >> 1))
+        cap <<= 1;
+    return cap;
+}
+
 static void fold_var_map_init(FoldVarMap *map) {
     map->items = NULL;
     map->len = 0;
@@ -245,6 +252,7 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.atan_math ||
            id == g_builtin_syms.isnan_math ||
            id == g_builtin_syms.isinf_math ||
+           id == g_builtin_syms.size ||
            id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom;
 }
 
@@ -723,12 +731,20 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     }
 
     /* ── Expression introspection ─────────────────────────────────────── */
-    if (head_id == g_builtin_syms.size_atom && nargs == 1) {
+    if ((head_id == g_builtin_syms.size || head_id == g_builtin_syms.size_atom) && nargs == 1) {
         if (args[0]->kind == ATOM_EXPR)
             return atom_int(a, args[0]->expr.len);
-        if (args[0]->kind == ATOM_GROUNDED)
-            return grounded_bad_arg_type(a, head, args, nargs, 1,
-                                         atom_expression_type(a), args[0]);
+        if (head_id == g_builtin_syms.size &&
+            args[0]->kind == ATOM_GROUNDED &&
+            args[0]->ground.gkind == GV_SPACE) {
+            return atom_int(a, (int64_t)space_length((Space *)args[0]->ground.ptr));
+        }
+        if (args[0]->kind == ATOM_GROUNDED) {
+            Atom *expected = (head_id == g_builtin_syms.size_atom)
+                ? atom_expression_type(a)
+                : atom_symbol(a, "ExpressionOrSpace");
+            return grounded_bad_arg_type(a, head, args, nargs, 1, expected, args[0]);
+        }
         return NULL;
     }
 
@@ -760,10 +776,37 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return NULL;
         }
         Atom **uniq = arena_alloc(a, sizeof(Atom *) * args[0]->expr.len);
+        uint32_t table_cap = next_pow2_u32(args[0]->expr.len > 0
+            ? args[0]->expr.len * 2
+            : 1);
+        uint32_t *ground_slots = arena_alloc(a, sizeof(uint32_t) * table_cap);
+        for (uint32_t i = 0; i < table_cap; i++)
+            ground_slots[i] = UINT32_MAX;
         uint32_t out_len = 0;
         for (uint32_t i = 0; i < args[0]->expr.len; i++) {
             Atom *candidate = args[0]->expr.elems[i];
             bool seen = false;
+            bool candidate_has_vars = atom_has_vars(candidate);
+            if (!candidate_has_vars) {
+                uint32_t mask = table_cap - 1;
+                uint32_t slot = atom_hash(candidate) & mask;
+                while (true) {
+                    uint32_t existing = ground_slots[slot];
+                    if (existing == UINT32_MAX)
+                        break;
+                    if (atom_eq(uniq[existing], candidate)) {
+                        seen = true;
+                        break;
+                    }
+                    slot = (slot + 1) & mask;
+                }
+                if (!seen) {
+                    uniq[out_len] = candidate;
+                    ground_slots[slot] = out_len;
+                    out_len++;
+                }
+                continue;
+            }
             for (uint32_t j = 0; j < out_len; j++) {
                 if (atom_alpha_eq(uniq[j], candidate)) {
                     seen = true;

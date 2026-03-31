@@ -8,13 +8,18 @@
    Atoms are allocated in the provided arena. */
 int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms);
 
+/* Parse MeTTa source text into a list of top-level atoms.
+   Returns number of atoms parsed, or -1 on error.
+   Atoms are allocated in the provided arena. */
+int parse_metta_text(const char *text, Arena *a, Atom ***out_atoms);
+
 /* Parse a single S-expression from a string.
    Advances *pos past the parsed expression.
    Returns NULL on end-of-input or error. */
 Atom *parse_sexpr(Arena *a, const char *text, size_t *pos);
 
 /* Canonicalize reader sugar for qualified namespaces.
-   This rewrites dotted qualified names such as mm2.foo, mork.bar, and
+   This rewrites dotted qualified names such as mork.foo, runtime.bar, and
    import_pkg.moduleA into their canonical colon form before interning.
    Numeric literals, filesystem paths, and known source-file tokens such as
    foo.metta or bench.act must be left unchanged. The returned pointer is

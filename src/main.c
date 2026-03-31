@@ -28,7 +28,7 @@ static void handle_sigsegv(int sig) {
 }
 
 static bool g_count_only = false;
-static bool g_suppress_results = false;
+static bool g_quiet_results = false;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 
 typedef enum {
@@ -64,6 +64,59 @@ static bool result_set_has_error(ResultSet *rs) {
         if (atom_is_error(rs->items[i])) return true;
     }
     return false;
+}
+
+static bool result_set_all_empty(ResultSet *rs) {
+    if (rs->len == 0) return false;
+    for (uint32_t i = 0; i < rs->len; i++) {
+        Atom *item = rs->items[i];
+        if (!atom_is_empty(item) &&
+            !(item->kind == ATOM_EXPR && item->expr.len == 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool path_has_suffix(const char *path, const char *suffix) {
+    size_t path_len;
+    size_t suffix_len;
+    if (!path || !suffix) return false;
+    path_len = strlen(path);
+    suffix_len = strlen(suffix);
+    if (suffix_len > path_len) return false;
+    return strcmp(path + (path_len - suffix_len), suffix) == 0;
+}
+
+static uint8_t *read_file_bytes(const char *path, size_t *len_out) {
+    FILE *fp = NULL;
+    long size = 0;
+    size_t read_len = 0;
+    uint8_t *buf = NULL;
+
+    if (len_out) *len_out = 0;
+    fp = fopen(path, "rb");
+    if (!fp) return NULL;
+    if (fseek(fp, 0, SEEK_END) != 0) goto fail;
+    size = ftell(fp);
+    if (size < 0) goto fail;
+    if (fseek(fp, 0, SEEK_SET) != 0) goto fail;
+    buf = malloc((size_t)size + 1u);
+    if (!buf) goto fail;
+    read_len = fread(buf, 1, (size_t)size, fp);
+    if (read_len != (size_t)size) goto fail;
+    buf[read_len] = '\0';
+    if (fclose(fp) != 0) {
+        fp = NULL;
+        goto fail;
+    }
+    if (len_out) *len_out = read_len;
+    return buf;
+
+fail:
+    if (fp) fclose(fp);
+    free(buf);
+    return NULL;
 }
 
 static void display_var_map_free(CettaDisplayVarMap *map) {
@@ -320,9 +373,8 @@ static bool write_pretty_results(FILE *out, ResultSet *rs, bool pretty_vars,
 }
 
 static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
-                                    bool count_only, bool suppress_results) {
-    CettaMorkProgramHandle *program = NULL;
-    CettaMorkContextHandle *context = NULL;
+                                    bool count_only, uint64_t step_limit) {
+    CettaMorkSpaceHandle *space = NULL;
     uint64_t ignored = 0;
     uint64_t size = 0;
     uint8_t *dump = NULL;
@@ -336,46 +388,26 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
         return 2;
     }
 
-    program = cetta_mork_bridge_program_new();
-    if (!program) {
-        fprintf(stderr, "error: could not allocate MM2 program: %s\n",
+    space = cetta_mork_bridge_space_new();
+    if (!space) {
+        fprintf(stderr, "error: could not allocate MM2 space: %s\n",
                 cetta_mork_bridge_last_error());
         return 1;
-    }
-    context = cetta_mork_bridge_context_new();
-    if (!context) {
-        fprintf(stderr, "error: could not allocate MM2 context: %s\n",
-                cetta_mork_bridge_last_error());
-        rc = 1;
-        goto done;
     }
 
     for (int i = 0; i < n; i++) {
         char *surface = cetta_mm2_atom_to_surface_string(arena, atoms[i]);
-        bool ok = false;
-        if (cetta_mm2_atom_is_exec_rule(atoms[i])) {
-            ok = cetta_mork_bridge_program_add_sexpr(
-                program, (const uint8_t *)surface, strlen(surface), &ignored);
-        } else {
-            ok = cetta_mork_bridge_context_add_sexpr(
-                context, (const uint8_t *)surface, strlen(surface), &ignored);
-        }
+        bool ok = cetta_mork_bridge_space_add_sexpr(
+            space, (const uint8_t *)surface, strlen(surface), &ignored);
         if (!ok) {
-            fprintf(stderr, "error: MM2 runtime could not load %s atom: %s\n",
-                    cetta_mm2_atom_is_exec_rule(atoms[i]) ? "program" : "context",
+            fprintf(stderr, "error: MM2 runtime could not load atom into live space: %s\n",
                     cetta_mork_bridge_last_error());
             rc = 1;
             goto done;
         }
     }
 
-    if (!cetta_mork_bridge_context_load_program(context, program, &ignored)) {
-        fprintf(stderr, "error: MM2 runtime could not load program into context: %s\n",
-                cetta_mork_bridge_last_error());
-        rc = 1;
-        goto done;
-    }
-    if (!cetta_mork_bridge_context_run(context, CETTA_MM2_DEFAULT_RUN_STEPS, &ignored)) {
+    if (!cetta_mork_bridge_space_step(space, step_limit, &ignored)) {
         fprintf(stderr, "error: MM2 runtime execution failed: %s\n",
                 cetta_mork_bridge_last_error());
         rc = 1;
@@ -383,8 +415,8 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
     }
 
     if (count_only) {
-        if (!cetta_mork_bridge_context_size(context, &size)) {
-            fprintf(stderr, "error: MM2 runtime could not measure final context: %s\n",
+        if (!cetta_mork_bridge_space_size(space, &size)) {
+            fprintf(stderr, "error: MM2 runtime could not measure final space: %s\n",
                     cetta_mork_bridge_last_error());
             rc = 1;
             goto done;
@@ -393,12 +425,8 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
         goto done;
     }
 
-    if (suppress_results) {
-        goto done;
-    }
-
-    if (!cetta_mork_bridge_context_dump(context, &dump, &dump_len, &dump_rows)) {
-        fprintf(stderr, "error: MM2 runtime could not dump final context: %s\n",
+    if (!cetta_mork_bridge_space_dump(space, &dump, &dump_len, &dump_rows)) {
+        fprintf(stderr, "error: MM2 runtime could not dump final space: %s\n",
                 cetta_mork_bridge_last_error());
         rc = 1;
         goto done;
@@ -412,8 +440,84 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
 
 done:
     cetta_mork_bridge_bytes_free(dump, dump_len);
-    cetta_mork_bridge_context_free(context);
-    cetta_mork_bridge_program_free(program);
+    cetta_mork_bridge_space_free(space);
+    return rc;
+}
+
+static int run_mm2_file_via_mork(const char *filepath, bool count_only,
+                                 uint64_t step_limit) {
+    CettaMorkSpaceHandle *space = NULL;
+    uint8_t *text = NULL;
+    size_t text_len = 0;
+    uint64_t ignored = 0;
+    uint64_t size = 0;
+    uint8_t *dump = NULL;
+    size_t dump_len = 0;
+    uint32_t dump_rows = 0;
+    int rc = 0;
+
+    if (!cetta_mork_bridge_is_available()) {
+        fprintf(stderr, "error: MM2 runtime requires MORK bridge support: %s\n",
+                cetta_mork_bridge_last_error());
+        return 2;
+    }
+
+    text = read_file_bytes(filepath, &text_len);
+    if (!text) {
+        fprintf(stderr, "error: could not read %s\n", filepath);
+        return 1;
+    }
+
+    space = cetta_mork_bridge_space_new();
+    if (!space) {
+        fprintf(stderr, "error: could not allocate MM2 space: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+
+    if (!cetta_mork_bridge_space_add_sexpr(space, text, text_len, &ignored)) {
+        fprintf(stderr, "error: MM2 runtime could not load raw file into live space: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+
+    if (!cetta_mork_bridge_space_step(space, step_limit, &ignored)) {
+        fprintf(stderr, "error: MM2 runtime execution failed: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+
+    if (count_only) {
+        if (!cetta_mork_bridge_space_size(space, &size)) {
+            fprintf(stderr, "error: MM2 runtime could not measure final space: %s\n",
+                    cetta_mork_bridge_last_error());
+            rc = 1;
+            goto done;
+        }
+        fprintf(stdout, "%llu\n", (unsigned long long)size);
+        goto done;
+    }
+
+    if (!cetta_mork_bridge_space_dump(space, &dump, &dump_len, &dump_rows)) {
+        fprintf(stderr, "error: MM2 runtime could not dump final space: %s\n",
+                cetta_mork_bridge_last_error());
+        rc = 1;
+        goto done;
+    }
+    if (dump_len > 0 && fwrite(dump, 1, dump_len, stdout) != dump_len) {
+        fprintf(stderr, "error: could not write MM2 runtime output\n");
+        rc = 1;
+        goto done;
+    }
+    (void)dump_rows;
+
+done:
+    cetta_mork_bridge_bytes_free(dump, dump_len);
+    cetta_mork_bridge_space_free(space);
+    free(text);
     return rc;
 }
 
@@ -430,10 +534,8 @@ static void write_results(FILE *out, ResultSet *rs) {
         fprintf(out, "%u\n", rs->len);
         return;
     }
-    if (g_suppress_results) {
-        if (!result_set_has_error(rs)) return;
-        out = stderr;
-        logical_dest = stderr;
+    if (g_quiet_results && !result_set_has_error(rs) && result_set_all_empty(rs)) {
+        return;
     }
     bool pretty_vars = display_vars_pretty_enabled_for(logical_dest);
     bool pretty_namespaces = display_namespaces_pretty_enabled_for(logical_dest);
@@ -452,17 +554,19 @@ static void write_results(FILE *out, ResultSet *rs) {
 
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
+    fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
-    fputs("       cetta --suppress-results <file.metta>  # execute without printing non-error results\n", out);
+    fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --pretty-vars <file.metta>       # pretty-print result vars for humans\n", out);
     fputs("       cetta --raw-vars <file.metta>          # print raw internal var epochs\n", out);
-    fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mm2./mork. namespace sugar\n", out);
-    fputs("       cetta --raw-namespaces <file.metta>    # print canonical mm2:/mork: names\n", out);
+    fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mork./runtime. namespace sugar\n", out);
+    fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
+    fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>\n", out);
     fputs("       cetta --list-profiles\n", out);
     fputs("       cetta --list-space-match-backends\n", out);
@@ -536,13 +640,18 @@ int main(int argc, char **argv) {
     const char *lang_name = "he";
     const CettaProfile *profile = cetta_profile_he_extended();
     const char *filename = NULL;
+    const char *inline_text = NULL;
+    char *inline_buf = NULL;
+    size_t inline_len = 0;
+    size_t inline_cap = 0;
+    const char *script_path = NULL;
     int script_arg_start = -1;
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
     bool count_only = false;
-    bool suppress_results = false;
     bool emit_runtime_stats = false;
     int fuel_override = -1;
+    uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceMatchBackendKind match_backend_kind = SPACE_MATCH_BACKEND_NATIVE;
 
     for (int i = 1; i < argc; i++) {
@@ -570,8 +679,8 @@ int main(int argc, char **argv) {
             count_only = true;
             continue;
         }
-        if (strcmp(argv[i], "--suppress-results") == 0) {
-            suppress_results = true;
+        if (strcmp(argv[i], "--quiet") == 0) {
+            g_quiet_results = true;
             continue;
         }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
@@ -609,6 +718,21 @@ int main(int argc, char **argv) {
             fuel_override = (int)parsed;
             continue;
         }
+        if (strcmp(argv[i], "--steps") == 0) {
+            char *endp = NULL;
+            unsigned long long parsed;
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            parsed = strtoull(argv[++i], &endp, 10);
+            if (!endp || *endp != '\0') {
+                fprintf(stderr, "error: invalid MM2 step count '%s'\n", argv[i]);
+                return 2;
+            }
+            mm2_step_limit = (uint64_t)parsed;
+            continue;
+        }
         if (strcmp(argv[i], "--space-match-backend") == 0) {
             if (i + 1 >= argc) {
                 print_usage(stderr);
@@ -642,15 +766,39 @@ int main(int argc, char **argv) {
             }
             continue;
         }
+        if (strcmp(argv[i], "-e") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            const char *arg = argv[++i];
+            size_t arg_len = strlen(arg);
+            size_t needed = inline_len + (inline_len > 0 ? 1 : 0) + arg_len + 1;
+            if (needed > inline_cap) {
+                inline_cap = needed > inline_cap * 2 ? needed : inline_cap * 2;
+                inline_buf = realloc(inline_buf, inline_cap);
+            }
+            if (inline_len > 0) inline_buf[inline_len++] = ' ';
+            memcpy(inline_buf + inline_len, arg, arg_len);
+            inline_len += arg_len;
+            inline_buf[inline_len] = '\0';
+            script_path = "<expr>";
+            script_arg_start = i + 1;
+            continue;
+        }
         if (!filename) {
             filename = argv[i];
+            script_path = filename;
             script_arg_start = i + 1;
             break;
         }
     }
 
-    if (!filename) {
+    if (inline_buf)
+        inline_text = inline_buf;
+    if (!filename && !inline_text) {
         print_usage(stderr);
+        free(inline_buf);
         return 1;
     }
 
@@ -689,13 +837,20 @@ int main(int argc, char **argv) {
         fprintf(stderr, "note: %s\n", lang->note);
         return 2;
     }
-
-    g_count_only = count_only;
-    g_suppress_results = suppress_results;
-    if (g_count_only && g_suppress_results) {
-        fprintf(stderr, "error: --count-only and --suppress-results cannot be used together\n");
+    if (strcmp(lang->canonical, "mm2") != 0 &&
+        mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
+        fprintf(stderr, "error: --steps is currently only supported with --lang mm2\n");
         return 2;
     }
+
+    if (!compile_mode && strcmp(lang->canonical, "mm2") == 0 &&
+        filename && !inline_text && path_has_suffix(filename, ".mm2")) {
+        int mm2_rc = run_mm2_file_via_mork(filename, count_only, mm2_step_limit);
+        free(inline_buf);
+        return mm2_rc;
+    }
+
+    g_count_only = count_only;
     if (fuel_override > 0) eval_set_default_fuel(fuel_override);
 
     Arena arena;       /* persistent: parsed atoms, space content, type decls */
@@ -719,9 +874,15 @@ int main(int argc, char **argv) {
     arena_set_hashcons(&arena, &hashcons_table);
 
     Atom **atoms = NULL;
-    int n = parse_metta_file(filename, &arena, &atoms);
+    int n = inline_text
+        ? parse_metta_text(inline_text, &arena, &atoms)
+        : parse_metta_file(filename, &arena, &atoms);
     if (n < 0) {
-        fprintf(stderr, "error: could not read %s\n", filename);
+        if (inline_text) {
+            fprintf(stderr, "error: could not parse inline MeTTa text\n");
+        } else {
+            fprintf(stderr, "error: could not read %s\n", filename);
+        }
         arena_free(&eval_arena);
         arena_free(&arena);
         g_var_intern = NULL;
@@ -741,7 +902,8 @@ int main(int argc, char **argv) {
     }
     if (strcmp(lang->canonical, "mm2") == 0 &&
         !cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
-        int mm2_rc = run_mm2_program_via_mork(&arena, atoms, n, count_only, suppress_results);
+        int mm2_rc = run_mm2_program_via_mork(&arena, atoms, n, count_only,
+                                              mm2_step_limit);
         if (emit_runtime_stats) {
             CettaRuntimeStats stats;
             cetta_runtime_stats_snapshot(&stats);
@@ -783,7 +945,7 @@ int main(int argc, char **argv) {
     CettaLibraryContext libraries;
     cetta_library_context_init_with_profile(&libraries, profile);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
-    cetta_library_context_set_script_path(&libraries, filename);
+    cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
     eval_set_library_context(&libraries);
 
@@ -981,6 +1143,7 @@ int main(int argc, char **argv) {
 
     cetta_library_context_free(&libraries);
     space_free(&space);
+    free(inline_buf);
     arena_free(&eval_arena);
     arena_free(&arena);
     g_var_intern = NULL;

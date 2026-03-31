@@ -832,6 +832,144 @@ void query_results_free(QueryResults *qr) {
     qr->cap = 0;
 }
 
+typedef struct {
+    VarId var_id;
+    SymbolId spelling;
+} QueryVisibleVar;
+
+#define QUERY_VISIBLE_INLINE_CAP 8
+
+typedef struct {
+    QueryVisibleVar inline_items[QUERY_VISIBLE_INLINE_CAP];
+    QueryVisibleVar *items;
+    uint32_t len;
+    uint32_t cap;
+} QueryVisibleVarSet;
+
+static void query_visible_var_set_init(QueryVisibleVarSet *set) {
+    set->items = set->inline_items;
+    set->len = 0;
+    set->cap = QUERY_VISIBLE_INLINE_CAP;
+}
+
+static void query_visible_var_set_free(QueryVisibleVarSet *set) {
+    if (set->items != set->inline_items)
+        free(set->items);
+    set->items = set->inline_items;
+    set->len = 0;
+    set->cap = QUERY_VISIBLE_INLINE_CAP;
+}
+
+static bool query_visible_var_set_reserve(QueryVisibleVarSet *set,
+                                          uint32_t needed) {
+    if (needed <= set->cap)
+        return true;
+    uint32_t next_cap = set->cap ? set->cap : QUERY_VISIBLE_INLINE_CAP;
+    while (next_cap < needed)
+        next_cap *= 2;
+    QueryVisibleVar *next = set->items == set->inline_items
+        ? cetta_malloc(sizeof(QueryVisibleVar) * next_cap)
+        : cetta_realloc(set->items, sizeof(QueryVisibleVar) * next_cap);
+    if (set->items == set->inline_items && set->len > 0)
+        memcpy(next, set->items, sizeof(QueryVisibleVar) * set->len);
+    set->items = next;
+    set->cap = next_cap;
+    return true;
+}
+
+static bool query_visible_var_set_add(QueryVisibleVarSet *set, VarId var_id,
+                                      SymbolId spelling) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].var_id == var_id)
+            return true;
+    }
+    if (!query_visible_var_set_reserve(set, set->len + 1))
+        return false;
+    set->items[set->len].var_id = var_id;
+    set->items[set->len].spelling = spelling;
+    set->len++;
+    return true;
+}
+
+static bool query_visible_var_set_contains(const QueryVisibleVarSet *set,
+                                           VarId var_id) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].var_id == var_id)
+            return true;
+    }
+    return false;
+}
+
+static bool collect_query_visible_vars_rec(Atom *atom, QueryVisibleVarSet *set) {
+    if (!atom || !atom_has_vars(atom))
+        return true;
+    if (atom->kind == ATOM_VAR)
+        return query_visible_var_set_add(set, atom->var_id, atom->sym_id);
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (uint32_t i = 0; i < atom->expr.len; i++) {
+        if (!collect_query_visible_vars_rec(atom->expr.elems[i], set))
+            return false;
+    }
+    return true;
+}
+
+static bool atom_refs_only_query_visible_vars(Atom *atom,
+                                              const QueryVisibleVarSet *visible) {
+    if (!atom || !atom_has_vars(atom))
+        return true;
+    if (atom->kind == ATOM_VAR)
+        return query_visible_var_set_contains(visible, atom->var_id);
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (uint32_t i = 0; i < atom->expr.len; i++) {
+        if (!atom_refs_only_query_visible_vars(atom->expr.elems[i], visible))
+            return false;
+    }
+    return true;
+}
+
+static bool project_query_visible_bindings(Arena *a,
+                                           const QueryVisibleVarSet *visible,
+                                           const Bindings *full,
+                                           Bindings *projected) {
+    bindings_init(projected);
+
+    if (visible->len == 0) {
+        return true;
+    }
+
+    for (uint32_t i = 0; i < visible->len; i++) {
+        Atom *var = atom_var_with_spelling(a, visible->items[i].spelling,
+                                           visible->items[i].var_id);
+        Atom *resolved = bindings_apply((Bindings *)full, a, var);
+        if (resolved->kind == ATOM_VAR &&
+            resolved->var_id == visible->items[i].var_id &&
+            resolved->sym_id == visible->items[i].spelling) {
+            continue;
+        }
+        if (!bindings_add_id(projected, visible->items[i].var_id,
+                             visible->items[i].spelling, resolved)) {
+            bindings_free(projected);
+            return false;
+        }
+    }
+
+    for (uint32_t i = 0; i < full->eq_len; i++) {
+        Atom *lhs = bindings_apply((Bindings *)full, a, full->constraints[i].lhs);
+        Atom *rhs = bindings_apply((Bindings *)full, a, full->constraints[i].rhs);
+        if (!atom_refs_only_query_visible_vars(lhs, visible) ||
+            !atom_refs_only_query_visible_vars(rhs, visible)) {
+            continue;
+        }
+        if (!bindings_add_constraint(projected, lhs, rhs)) {
+            bindings_free(projected);
+            return false;
+        }
+    }
+    return true;
+}
+
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
 /* is_equation_atom defined above in Space section */
@@ -1019,7 +1157,22 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
     case GV_FLOAT:  return atom_symbol(a, "Number");
     case GV_BOOL:   return atom_symbol(a, "Bool");
     case GV_STRING: return atom_symbol(a, "String");
-    case GV_SPACE:  return atom_symbol(a, "SpaceType");
+    case GV_SPACE: {
+        const Space *space = (const Space *)atom->ground.ptr;
+        const char *space_type = "atom";
+        if (space) {
+            if (space_is_stack(space)) {
+                space_type = "stack";
+            } else if (space_is_queue(space)) {
+                space_type = "queue";
+            } else if (space->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED) {
+                space_type = "mork";
+            } else if (space_is_hash(space)) {
+                space_type = "hash";
+            }
+        }
+        return atom_expr2(a, atom_symbol(a, "Space"), atom_symbol(a, space_type));
+    }
     case GV_FOREIGN:
         return atom_symbol(a, "Foreign");
     case GV_CAPTURE:
@@ -1194,7 +1347,8 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
-static void query_bucket_legacy(EqBucket *bucket, Atom *query, Arena *a,
+static void query_bucket_legacy(EqBucket *bucket, Atom *query,
+                                const QueryVisibleVarSet *visible, Arena *a,
                                 QueryResults *out) {
     if (bucket->trie && bucket->len > 4) {
         uint32_t *candidates = NULL;
@@ -1214,7 +1368,11 @@ static void query_bucket_legacy(EqBucket *bucket, Atom *query, Arena *a,
             bindings_init(&b);
             if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
                 Atom *result = bindings_apply(&b, a, rrhs);
-                query_results_push_move(out, result, &b);
+                Bindings projected;
+                if (project_query_visible_bindings(a, visible, &b, &projected)) {
+                    query_results_push_move(out, result, &projected);
+                }
+                bindings_free(&projected);
             }
             bindings_free(&b);
         }
@@ -1234,7 +1392,11 @@ static void query_bucket_legacy(EqBucket *bucket, Atom *query, Arena *a,
         bindings_init(&b);
         if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
             Atom *result = bindings_apply(&b, a, rrhs);
-            query_results_push_move(out, result, &b);
+            Bindings projected;
+            if (project_query_visible_bindings(a, visible, &b, &projected)) {
+                query_results_push_move(out, result, &projected);
+            }
+            bindings_free(&projected);
         }
         bindings_free(&b);
     }
@@ -1243,12 +1405,14 @@ static void query_bucket_legacy(EqBucket *bucket, Atom *query, Arena *a,
 /* Try matching equations from a bucket against a query.
    Large buckets reuse the substitution-tree epoch path to avoid per-candidate
    rename_vars on both sides of each equation. */
-static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *out) {
+static void query_bucket(EqBucket *bucket, Atom *query,
+                         const QueryVisibleVarSet *visible, Arena *a,
+                         QueryResults *out) {
     if (!bucket || bucket->len == 0)
         return;
     if (bucket->subst.count <= 4 || !bucket->subst.root ||
         !bucket->subst_safe || !atom_is_eq_subst_safe(query)) {
-        query_bucket_legacy(bucket, query, a, out);
+        query_bucket_legacy(bucket, query, visible, a, out);
         return;
     }
 
@@ -1272,10 +1436,14 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
             !bindings_has_loop(&merged)) {
             Atom *result = bindings_apply_epoch(&merged, a, bucket->rhs[sm->atom_idx],
                                                 sm->epoch);
-            query_results_push_move(out, result, &merged);
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
-            emitted = true;
+            Bindings projected;
+            if (project_query_visible_bindings(a, visible, &merged, &projected)) {
+                query_results_push_move(out, result, &projected);
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
+                emitted = true;
+            }
+            bindings_free(&projected);
         }
         bindings_free(&merged);
         if (!emitted) {
@@ -1288,7 +1456,11 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
             bindings_init(&exact);
             if (match_atoms(rlhs, query, &exact) && !bindings_has_loop(&exact)) {
                 Atom *result = bindings_apply(&exact, a, rrhs);
-                query_results_push_move(out, result, &exact);
+                Bindings projected;
+                if (project_query_visible_bindings(a, visible, &exact, &projected)) {
+                    query_results_push_move(out, result, &projected);
+                }
+                bindings_free(&projected);
             }
             bindings_free(&exact);
         }
@@ -1297,24 +1469,31 @@ static void query_bucket(EqBucket *bucket, Atom *query, Arena *a, QueryResults *
     if (out->len == out_before) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_BUCKET_FALLBACK);
-        query_bucket_legacy(bucket, query, a, out);
+        query_bucket_legacy(bucket, query, visible, a, out);
     }
 }
 
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
     ensure_eq_index(s);
+    QueryVisibleVarSet visible;
+    query_visible_var_set_init(&visible);
+    if (!collect_query_visible_vars_rec(query, &visible)) {
+        query_visible_var_set_free(&visible);
+        return;
+    }
     /* Use head-symbol index for O(1) lookup instead of O(N) scan.
        This is the key optimization from Vampire's LiteralIndex. */
     SymbolId head = eq_head_symbol(query);
     if (head != SYMBOL_ID_NONE) {
         /* Query has a known head symbol — look up matching bucket */
-        query_bucket(&s->eq_idx.buckets[symbol_hash(head)], query, a, out);
+        query_bucket(&s->eq_idx.buckets[symbol_hash(head)], query, &visible, a, out);
     }
     /* Non-symbol-headed queries may still match wildcard equations whose LHS
        head is itself a variable or complex term, but they must not unlock
        every named equation bucket by unifying the head variable with an
        unrelated function symbol. HE treats ($f x) as data unless a wildcard
        equation explicitly matches it. */
-    query_bucket(&s->eq_idx.wildcard, query, a, out);
+    query_bucket(&s->eq_idx.wildcard, query, &visible, a, out);
+    query_visible_var_set_free(&visible);
 }

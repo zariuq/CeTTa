@@ -35,22 +35,22 @@
 (: import! (-> Atom Atom (->)))
 (: select (-> Atom %Undefined%))
 (: collect (-> Atom Expression))
+(: fold (-> Atom Atom Variable Variable Atom %Undefined%))
+(: fold-by-key (-> Atom Atom Variable Variable Atom Atom %Undefined%))
 (: reduce (-> Atom Atom Variable Variable Atom %Undefined%))
 (: once (-> Atom %Undefined%))
 (: search-policy (-> Atom Atom))
 (: new-space (-> SpaceType))
 (: new-space (-> Atom SpaceType))
-(: space-kind (-> SpaceType Atom))
-(: space-engine (-> SpaceType Atom))
-(: space-match-backend (-> SpaceType Atom))
 (: space-set-match-backend! (-> SpaceType Atom (->)))
-(: space-capabilities (-> SpaceType Expression))
 (: space-len (-> SpaceType Number))
 (: space-push (-> SpaceType Atom (->)))
 (: space-peek (-> SpaceType %Undefined%))
 (: space-pop (-> SpaceType %Undefined%))
 (: space-get (-> SpaceType Number %Undefined%))
 (: space-truncate (-> SpaceType Number (->)))
+(: step! (-> SpaceType Number))
+(: step! (-> SpaceType Number Number))
 (: is-function (-> Type Bool))
 (: type-cast (-> Atom Type SpaceType %Undefined%))
 (: match-types (-> Type Type Atom Atom %Undefined%))
@@ -115,6 +115,7 @@
 (: atan-math (-> Number Number))
 (: isnan-math (-> Number Bool))
 (: isinf-math (-> Number Bool))
+(: size (-> %Undefined% Number))
 (: size-atom (-> Expression Number))
 (: index-atom (-> Expression Number Atom))
 
@@ -132,38 +133,59 @@
   (@return "List with new atom as a head"))
 
 (@doc select
-  (@desc "HE-extended committed choice over a nondeterministic stream. The primary form (select stream) returns the first non-empty result. The extended forms (select k stream), (select (search-policy lane) stream), and (select k (search-policy lane) stream) expose bounded selection and explicit search-lane choice.")
+  (@desc "HE-extended committed choice over nondeterministic results. The primary form (select results) returns the first non-empty result encountered under the active traversal policy. The extended forms (select k results), (select (search-policy lane) results), and (select k (search-policy lane) results) expose bounded selection and explicit search-lane choice.")
   (@params (
-    (@param "Stream expression to evaluate")))
+    (@param "Result expression to evaluate")))
   (@return "Selected result, or a bounded packet in the two-argument extended form"))
 
 (@doc collect
-  (@desc "HE-extended stream collector paired with select. Evaluates a nondeterministic stream and packages all non-empty results into one expression. The policy form (collect (search-policy lane) stream) makes the search lane explicit.")
+  (@desc "Compatibility collector over nondeterministic results. Evaluates the result fan-out, packages all non-empty results into one expression, and preserves the current traversal order. Prefer collapse in new code when you do not need explicit search-policy or result-order control. The policy form (collect (search-policy lane) results) keeps the lane/order choice explicit.")
   (@params (
-    (@param "Stream expression to evaluate")))
-  (@return "Collected expression of surviving results"))
+    (@param "Result expression to evaluate")))
+  (@return "Collected expression of surviving results in current traversal order"))
 
-(@doc reduce
-  (@desc "HE-extended stream reduction. Evaluates a nondeterministic stream, skips Empty results, and folds the surviving items into one accumulator without first packaging them into an expression. The primary form is (reduce stream init $acc $item step). The policy form (reduce (search-policy lane) stream init $acc $item step) keeps the same lane and ordering controls as select/collect. Each reduction step must produce exactly one non-empty result.")
+(@doc fold
+  (@desc "HE-extended fold over nondeterministic results. Evaluates a result fan-out, skips Empty results, and folds the surviving items into one accumulator without first packaging them into an expression. The primary form is (fold results init $acc $item step). The policy form (fold (search-policy lane) results init $acc $item step) keeps the same lane and ordering controls as select and collect. Each fold step must produce exactly one non-empty result. If the step is order-sensitive, the final value follows engine/policy traversal order rather than a semantic ordering guarantee.")
   (@params (
-    (@param "Stream expression to evaluate")
+    (@param "Result expression to evaluate")
     (@param "Initial accumulator value")
     (@param "Accumulator binder")
     (@param "Current item binder")
     (@param "Step expression that yields the next accumulator")))
-  (@return "Final accumulator value after folding the surviving stream results"))
+  (@return "Final accumulator value after folding the surviving results"))
+
+(@doc fold-by-key
+  (@desc "HE-extended grouped fold over nondeterministic results. Evaluates a result fan-out, skips Empty results, computes one grouping key per surviving item, and folds each group into its own accumulator without first packaging the full result set by key in user code. The primary form is (fold-by-key results init $acc $item key step). The policy form (fold-by-key (search-policy lane) results init $acc $item key step) keeps the same lane and ordering controls as select, collect, and fold. The key expression must produce exactly one non-empty key per item. The step expression must produce exactly one non-empty next accumulator. Results are emitted as two-element expressions (key accumulator) in first-encounter order under the active traversal policy.")
+  (@params (
+    (@param "Result expression to evaluate")
+    (@param "Initial accumulator value for each key")
+    (@param "Accumulator binder")
+    (@param "Current item binder")
+    (@param "Key expression that yields the grouping key for the current item")
+    (@param "Step expression that yields the next accumulator for the current item's key")))
+  (@return "Grouped fold results as two-element expressions of key and final accumulator"))
+
+(@doc reduce
+  (@desc "Compatibility alias for fold. Prefer (fold results init $acc $item step) in new code. The policy form (reduce (search-policy lane) results init $acc $item step) remains supported for legacy call sites.")
+  (@params (
+    (@param "Result expression to evaluate")
+    (@param "Initial accumulator value")
+    (@param "Accumulator binder")
+    (@param "Current item binder")
+    (@param "Step expression that yields the next accumulator")))
+  (@return "Final accumulator value after folding the surviving results"))
 
 (@doc once
-  (@desc "Compatibility alias for select. Prefer select in new code. The policy form (once (search-policy lane) stream) is supported for legacy call sites that still want explicit search-lane choice.")
+  (@desc "Compatibility alias for select. Prefer select in new code. The policy form (once (search-policy lane) results) is supported for legacy call sites that still want explicit search-lane choice.")
   (@params (
-    (@param "Stream expression to evaluate")))
-  (@return "First non-empty result from the stream"))
+    (@param "Result expression to evaluate")))
+  (@return "First non-empty result encountered under the active traversal policy"))
 
 (@doc search-policy
   (@desc "Search-policy literal constructor for explicit controlled-search calls. The current native CeTTa lane is recursive-dependent-proof, and it supports result-order control through (search-policy recursive-dependent-proof), (search-policy recursive-dependent-proof (order reverse)), (search-policy recursive-dependent-proof (order lex)), and (search-policy recursive-dependent-proof (order shortlex)). The lex mode orders results by canonical rendered-atom bytes. The shortlex mode orders results by canonical rendered-atom length first, then bytewise lexical order. ATP and solver lanes are named here for future explicit oracle work, but are not executed by the native evaluator yet.")
   (@params (
     (@param "Search lane name such as recursive-dependent-proof")))
-  (@return "Opaque policy atom consumed by select, collect, or once"))
+  (@return "Opaque policy atom consumed by select, fold, fold-by-key, collect, or once"))
 
 (@doc with-space-snapshot
   (@desc "CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.")
@@ -174,28 +196,10 @@
   (@return "Results produced by evaluating the body against the snapshot-bound space"))
 
 (@doc new-space
-  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The he_extended/he_prime form accepts semantic kinds such as stack, queue, or hash. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms.")
+  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The he_extended/he_prime form accepts semantic kinds such as stack, queue, or hash, and also the engine shortcut mork for an ordinary atom-disciplined space whose matcher is explicitly configured to the imported PathMap/MORK lane. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms.")
   (@params (
-    (@param "Optional space kind such as stack, queue, or hash in extension profiles")))
+    (@param "Optional space selector such as stack, queue, hash, or mork in extension profiles")))
   (@return "Fresh space value"))
-
-(@doc space-kind
-  (@desc "Reports the semantic kind of a space. Current kinds are atom, stack, queue, and hash.")
-  (@params (
-    (@param "Space to inspect")))
-  (@return "Kind symbol such as atom or stack"))
-
-(@doc space-engine
-  (@desc "Reports the configured engine family of a space. Today native-subst-tree and native-candidate-exact report native, while pathmap-imported reports mork. This is engine-family introspection, not a guarantee that every query avoided lower-level fallback.")
-  (@params (
-    (@param "Space to inspect")))
-  (@return "Engine-family symbol such as native or mork"))
-
-(@doc space-match-backend
-  (@desc "Returns the current CeTTa match backend attached to a space, such as native-subst-tree or pathmap-imported. This is backend introspection, not a promise that the full discipline x engine surface already exists.")
-  (@params (
-    (@param "Space to inspect")))
-  (@return "Backend symbol describing how the space currently matches"))
 
 (@doc space-set-match-backend!
   (@desc "Mutates the exact CeTTa match backend attached to a space. This is a low-level extension seam intended for explicit engine/backend experiments and library code; use higher-level helpers such as lib/mork.metta when you want a cleaner MORK-facing surface.")
@@ -204,17 +208,17 @@
     (@param "Backend symbol such as native-subst-tree, native-candidate-exact, or pathmap-imported")))
   (@return "Unit on success"))
 
-(@doc space-capabilities
-  (@desc "Returns the semantic capabilities provided by the space discipline itself, such as ordered/hash/peek/nodup. This does not describe the lower-level matcher backend; use space-match-backend for that.")
-  (@params (
-    (@param "Space to inspect")))
-  (@return "Capability packet for the space discipline"))
-
 (@doc space-len
   (@desc "Returns the current number of stored items in a space. Unlike count-atoms, this is an explicit structured-space surface.")
   (@params (
     (@param "Space to inspect")))
   (@return "Current item count as a Number"))
+
+(@doc size
+  (@desc "Returns the size of a concrete expression or space. On expressions it matches size-atom; on spaces it returns the current number of stored items. This is CeTTa's clean extension spelling; size-atom remains the HE-compatible expression alias, while space-len and count-atoms remain transitional space aliases.")
+  (@params (
+    (@param "Expression or space to inspect")))
+  (@return "Element count for expressions, or stored item count for spaces"))
 
 (@doc space-push
   (@desc "Adds one atom to an ordered space. For stack-spaces this is LIFO push; for queue-spaces this is FIFO enqueue.")
@@ -249,14 +253,21 @@
     (@param "New retained length")))
   (@return "Unit on success"))
 
+(@doc step!
+  (@desc "Advances a space that has explicit step semantics and returns the number of steps actually performed. The one-argument form performs one step. The two-argument form performs up to the given non-negative step count. Today this is supported for unordered MORK-backed spaces such as (new-space mork). Ordered spaces and ordinary native atom/hash spaces report NoStepSemantics. Attached compiled ACT spaces materialize into live storage before stepping.")
+  (@params (
+    (@param "Target step-capable space")
+    (@param "Optional non-negative step count")))
+  (@return "Number of steps actually performed"))
+
 (@doc include
-  (@desc "Loads a module into a space transactionally. The one-argument form (include spec) merges into &self. The two-argument form (include &dst spec) merges into an already-existing named space; on failure the target space is rolled back unchanged.")
+  (@desc "Loads a module into a space transactionally. The one-argument form (include spec) merges into &self. The two-argument form (include &dst spec) merges into an already-existing named space; on failure the target space is rolled back unchanged. Relative specs may resolve to .metta, .act, or raw .mm2 files. Including a .mm2 file loads its facts and execs through the raw MORK bridge path into the destination space; unordered destinations are promoted to the live MORK stepping lane as needed.")
   (@params (
     (@param "Module spec or path to include, or an explicit destination space reference followed by the module spec")))
   (@return "Unit on success, or an Error value on failure"))
 
 (@doc import!
-  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled spaces instead of reparsing. Loader failures can surface ModuleImportCycle or ModuleParseFailed.")
+  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled spaces instead of reparsing, and fresh raw .mm2 imports materialize as live MORK-backed spaces ready for step!. Loader failures can surface ModuleImportCycle or ModuleParseFailed.")
   (@params (
     (@param "Destination space reference: &self or a fresh &name")
     (@param "Module spec or path to import")))

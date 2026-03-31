@@ -1,7 +1,5 @@
 !(bind! &stk (new-space stack))
-!(assertEqualToResult (space-kind &stk) (stack))
-!(assertEqualToResult (space-capabilities &stk)
-  ((ordered stack lifo match push peek pop get truncate len snapshot)))
+!(assertEqualToResult (get-type &stk) ((Space stack)))
 !(assertEqualToResult (space-len &stk) (0))
 !(space-push &stk alpha)
 !(space-push &stk beta)

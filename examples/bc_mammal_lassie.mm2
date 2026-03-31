@@ -1,0 +1,60 @@
+; Backward Chaining: Mammal(Lassie) — consume-and-track approach
+; ================================================================
+; Goals are consumed when expanded into subgoals.
+; A (pending premise conclusion) atom tracks what to complete later.
+; When a leaf goal matches a fact, it's (solved ...).
+; Forward completion chains solved premises through pending links.
+
+; === Knowledge base ===
+(kb fact (Collie Lassie))
+(kb rule (-> (Collie $x) (Dog $x)))
+(kb rule (-> (Dog $x) (Mammal $x)))
+
+; === Query ===
+(goal (Mammal Lassie))
+
+; === Phase 0: Backward expansion ===
+; goal(C) + rule(P→C) → goal(P) + pending(P, C)
+; Consumes the goal to prevent re-firing.
+; Multiple copies for multi-step chains.
+(exec (0 expand-0)
+  (, (goal $c) (kb rule (-> $p $c)))
+  (O (+ (goal $p)) (+ (pending $p $c)) (- (goal $c))))
+
+(exec (0 expand-1)
+  (, (goal $c) (kb rule (-> $p $c)))
+  (O (+ (goal $p)) (+ (pending $p $c)) (- (goal $c))))
+
+(exec (0 expand-2)
+  (, (goal $c) (kb rule (-> $p $c)))
+  (O (+ (goal $p)) (+ (pending $p $c)) (- (goal $c))))
+
+(exec (0 expand-3)
+  (, (goal $c) (kb rule (-> $p $c)))
+  (O (+ (goal $p)) (+ (pending $p $c)) (- (goal $c))))
+
+; === Phase 1: Leaf resolution ===
+; goal(F) + kb(fact F) → solved(F)
+(exec (1 leaf-0)
+  (, (goal $f) (kb fact $f))
+  (O (+ (solved $f)) (- (goal $f))))
+
+(exec (1 leaf-1)
+  (, (goal $f) (kb fact $f))
+  (O (+ (solved $f)) (- (goal $f))))
+
+; === Phase 2: Forward completion ===
+; solved(P) + pending(P, C) → solved(C)
+(exec (2 complete-0)
+  (, (solved $p) (pending $p $c))
+  (O (+ (solved $c)) (- (pending $p $c))))
+
+(exec (2 complete-1)
+  (, (solved $p) (pending $p $c))
+  (O (+ (solved $c)) (- (pending $p $c))))
+
+(exec (2 complete-2)
+  (, (solved $p) (pending $p $c))
+  (O (+ (solved $c)) (- (pending $p $c))))
+
+; Expected: (solved (Mammal Lassie))

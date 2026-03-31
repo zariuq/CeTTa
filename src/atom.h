@@ -35,13 +35,18 @@ typedef enum {
     GV_FOREIGN
 } GroundedKind;
 
+#define ATOM_FLAG_HAS_VARS 0x01u
+#define ATOM_FLAG_HASH_VALID 0x02u
+
 /* ── Atom ───────────────────────────────────────────────────────────────── */
 
 typedef struct Atom Atom;
 struct Atom {
     AtomKind kind;
+    uint32_t flags;
     VarId var_id;            /* ATOM_VAR only */
     SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
+    uint32_t hash_cache;     /* lazily memoized structural hash */
     union {
         struct {            /* ATOM_GROUNDED */
             GroundedKind gkind;
@@ -205,5 +210,9 @@ Atom *atom_deep_copy(Arena *dst, Atom *src);
 /* Deep-copy with structural sharing for immutable atoms.
    Safe only for arenas whose contents outlive the global hash-cons table. */
 Atom *atom_deep_copy_shared(Arena *dst, Atom *src);
+
+static inline bool atom_has_vars(const Atom *atom) {
+    return atom && (atom->flags & ATOM_FLAG_HAS_VARS) != 0;
+}
 
 #endif /* CETTA_ATOM_H */

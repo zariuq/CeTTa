@@ -1,0 +1,134 @@
+; Roman's 4-Node PLN Deduction Network
+; =====================================
+; From pln_roman.metta:
+;   A→B (0.25, 0.9), A→C (0.25, 0.9), B→D (0.5, 0.9), C→D (0.5, 0.9)
+;   STVs: A(0.5,0.9), B(0.25,0.9), C(0.25,0.9), D(0.5,0.9)
+;
+; Query: (Inheritance A D)
+; Two derivation paths: A→B→D and A→C→D
+;
+; PLN deduction: s_AC = s_AB*s_BC + (1-s_AB)(s_C - s_B*s_BC)/(1-s_B)
+; For A→B→D: s = 0.25*0.5 + 0.75*(0.5-0.25*0.5)/0.75 = 0.125+0.375 = 0.5
+; For A→C→D: s = 0.25*0.5 + 0.75*(0.5-0.25*0.5)/0.75 = 0.125+0.375 = 0.5
+;
+; (Both paths give the same strength in this symmetric example)
+
+; === Knowledge base ===
+(kb fact (Inheritance A B) (stv 0.25 0.9))
+(kb fact (Inheritance A C) (stv 0.25 0.9))
+(kb rule (Inheritance B D) (stv 0.5 0.9))
+(kb rule (Inheritance C D) (stv 0.5 0.9))
+(kb background A (stv 0.5 0.9))
+(kb background B (stv 0.25 0.9))
+(kb background C (stv 0.25 0.9))
+(kb background D (stv 0.5 0.9))
+
+; === Query ===
+(goal (Inheritance A D))
+
+; === Phase 0: Backward expansion ===
+; Two paths: goal(A→D) can match rule(B→D) or rule(C→D)
+; Priority 0: try to complete if already solved
+; Priority 1: expand into subgoals
+
+(exec (0 complete-0)
+  (, (goal (Inheritance $a $c))
+     (solved (Inheritance $a $b) (stv $s1 $c1))
+     (kb rule (Inheritance $b $c) (stv $s2 $c2)))
+  (O (+ (ready-deduction $a $b $c))
+     (- (goal (Inheritance $a $c)))))
+
+(exec (1 expand-0)
+  (, (goal (Inheritance $a $c))
+     (kb rule (Inheritance $b $c) (stv $s $c_val)))
+  (O (+ (goal (Inheritance $a $b)))
+     (+ (pending-deduction $a $b $c))
+     (- (goal (Inheritance $a $c)))))
+
+(exec (1 expand-1)
+  (, (goal (Inheritance $a $c))
+     (kb rule (Inheritance $b $c) (stv $s $c_val)))
+  (O (+ (goal (Inheritance $a $b)))
+     (+ (pending-deduction $a $b $c))
+     (- (goal (Inheritance $a $c)))))
+
+; === Phase 2: Leaf resolution ===
+(exec (2 leaf-0)
+  (, (goal (Inheritance $a $b))
+     (kb fact (Inheritance $a $b) (stv $s $c)))
+  (O (+ (solved (Inheritance $a $b) (stv $s $c)))
+     (- (goal (Inheritance $a $b)))))
+
+(exec (2 leaf-1)
+  (, (goal (Inheritance $a $b))
+     (kb fact (Inheritance $a $b) (stv $s $c)))
+  (O (+ (solved (Inheritance $a $b) (stv $s $c)))
+     (- (goal (Inheritance $a $b)))))
+
+; === Phase 3: PLN deduction (via pending links) ===
+(exec (3 deduct-0)
+  (, (solved (Inheritance $a $b) (stv $s_ab $c_ab))
+     (kb rule (Inheritance $b $c) (stv $s_bc $c_bc))
+     (kb background $b (stv $s_b $cb))
+     (kb background $c (stv $s_c $cc))
+     (pending-deduction $a $b $c))
+  (O (pure (derived-strength $a $c (via $b) $s_str) $s_str
+       (f64_to_string (sum_f64
+         (product_f64 (f64_from_string $s_ab) (f64_from_string $s_bc))
+         (div_f64
+           (product_f64
+             (sub_f64 (f64_from_string 1.0) (f64_from_string $s_ab))
+             (sub_f64 (f64_from_string $s_c)
+                      (product_f64 (f64_from_string $s_b) (f64_from_string $s_bc))))
+           (sub_f64 (f64_from_string 1.0) (f64_from_string $s_b))))))
+     (pure (derived-confidence $a $c (via $b) $c_str) $c_str
+       (f64_to_string (product_f64
+         (product_f64 (f64_from_string $c_ab) (f64_from_string $c_bc))
+         (div_f64
+           (sum_f64 (f64_from_string $s_ab) (f64_from_string $s_bc))
+           (sum_f64 (f64_from_string 1.0)
+                    (sum_f64 (f64_from_string $s_ab) (f64_from_string $s_bc)))))))
+     (- (pending-deduction $a $b $c))))
+
+(exec (3 deduct-1)
+  (, (solved (Inheritance $a $b) (stv $s_ab $c_ab))
+     (kb rule (Inheritance $b $c) (stv $s_bc $c_bc))
+     (kb background $b (stv $s_b $cb))
+     (kb background $c (stv $s_c $cc))
+     (pending-deduction $a $b $c))
+  (O (pure (derived-strength $a $c (via $b) $s_str) $s_str
+       (f64_to_string (sum_f64
+         (product_f64 (f64_from_string $s_ab) (f64_from_string $s_bc))
+         (div_f64
+           (product_f64
+             (sub_f64 (f64_from_string 1.0) (f64_from_string $s_ab))
+             (sub_f64 (f64_from_string $s_c)
+                      (product_f64 (f64_from_string $s_b) (f64_from_string $s_bc))))
+           (sub_f64 (f64_from_string 1.0) (f64_from_string $s_b))))))
+     (pure (derived-confidence $a $c (via $b) $c_str) $c_str
+       (f64_to_string (product_f64
+         (product_f64 (f64_from_string $c_ab) (f64_from_string $c_bc))
+         (div_f64
+           (sum_f64 (f64_from_string $s_ab) (f64_from_string $s_bc))
+           (sum_f64 (f64_from_string 1.0)
+                    (sum_f64 (f64_from_string $s_ab) (f64_from_string $s_bc)))))))
+     (- (pending-deduction $a $b $c))))
+
+; === Phase 4: Assemble ===
+(exec (4 assemble-0)
+  (, (derived-strength $a $c (via $b) $s)
+     (derived-confidence $a $c (via $b) $c_val))
+  (O (+ (solved (Inheritance $a $c) (stv $s $c_val) (via $b)))
+     (- (derived-strength $a $c (via $b) $s))
+     (- (derived-confidence $a $c (via $b) $c_val))))
+
+(exec (4 assemble-1)
+  (, (derived-strength $a $c (via $b) $s)
+     (derived-confidence $a $c (via $b) $c_val))
+  (O (+ (solved (Inheritance $a $c) (stv $s $c_val) (via $b)))
+     (- (derived-strength $a $c (via $b) $s))
+     (- (derived-confidence $a $c (via $b) $c_val))))
+
+; Expected: two derivation paths
+; (solved (Inheritance A D) (stv 0.5 ...) (via B))
+; (solved (Inheritance A D) (stv 0.5 ...) (via C))

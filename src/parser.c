@@ -1,4 +1,5 @@
 #include "parser.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -286,26 +287,12 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
 
 /* ── Parse entire file ──────────────────────────────────────────────────── */
 
-int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
-    FILE *f = fopen(filename, "r");
-    if (!f) return -1;
-
-    /* Read entire file */
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *text = cetta_malloc((size_t)fsize + 1);
-    size_t nread = fread(text, 1, (size_t)fsize, f);
-    text[nread] = '\0';
-    fclose(f);
-
+static int parse_metta_buffer(const char *text, Arena *a, Atom ***out_atoms) {
     if (!parser_text_well_formed(text)) {
-        free(text);
         *out_atoms = NULL;
         return -1;
     }
 
-    /* Parse top-level atoms */
     Atom **atoms = NULL;
     int count = 0;
     int cap = 0;
@@ -320,7 +307,77 @@ int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
         atoms[count++] = at;
     }
 
-    free(text);
     *out_atoms = atoms;
+    return count;
+}
+
+static bool read_all_text(FILE *f, char **text_out, size_t *nread_out) {
+    if (!f || !text_out || !nread_out) return false;
+
+    if (fseek(f, 0, SEEK_END) == 0) {
+        long fsize = ftell(f);
+        if (fsize >= 0 && fseek(f, 0, SEEK_SET) == 0) {
+            char *text = cetta_malloc((size_t)fsize + 1);
+            size_t nread = fread(text, 1, (size_t)fsize, f);
+            text[nread] = '\0';
+            *text_out = text;
+            *nread_out = nread;
+            return true;
+        }
+        clearerr(f);
+    } else {
+        clearerr(f);
+    }
+
+    size_t cap = 4096;
+    size_t nread = 0;
+    char *text = cetta_malloc(cap + 1);
+    for (;;) {
+        size_t remaining = cap - nread;
+        size_t nr = fread(text + nread, 1, remaining, f);
+        nread += nr;
+        if (nr < remaining) {
+            if (ferror(f)) {
+                free(text);
+                return false;
+            }
+            if (feof(f)) {
+                break;
+            }
+        }
+        if (nread == cap) {
+            cap *= 2;
+            text = cetta_realloc(text, cap + 1);
+        }
+    }
+    text[nread] = '\0';
+    *text_out = text;
+    *nread_out = nread;
+    return true;
+}
+
+int parse_metta_text(const char *text, Arena *a, Atom ***out_atoms) {
+    if (!text) {
+        *out_atoms = NULL;
+        return -1;
+    }
+    return parse_metta_buffer(text, a, out_atoms);
+}
+
+int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
+    FILE *f = fopen(filename, "r");
+    if (!f) return -1;
+
+    char *text = NULL;
+    size_t nread = 0;
+    if (!read_all_text(f, &text, &nread)) {
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+
+    int count = parse_metta_buffer(text, a, out_atoms);
+    (void)nread;
+    free(text);
     return count;
 }

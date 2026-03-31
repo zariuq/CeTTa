@@ -390,7 +390,8 @@ static bool module_name_is_legal(const char *name) {
 static bool module_spec_looks_like_relative_path(const char *spec) {
     return spec && (*spec == '.' || strchr(spec, '/') != NULL ||
                     path_has_suffix(spec, ".metta") ||
-                    path_has_suffix(spec, ".act"));
+                    path_has_suffix(spec, ".act") ||
+                    path_has_suffix(spec, ".mm2"));
 }
 
 static bool path_has_suffix(const char *path, const char *suffix) {
@@ -906,9 +907,27 @@ static bool resolve_module_candidate_act(const char *candidate,
     char path[PATH_MAX];
 
     if (reason && reason_sz > 0) reason[0] = '\0';
-    snprintf(path, sizeof(path), "%s", candidate);
-    if (!path_has_suffix(path, ".act") && access(path, R_OK) != 0) {
+    if (path_has_suffix(candidate, ".act")) {
+        snprintf(path, sizeof(path), "%s", candidate);
+    } else {
         int n = snprintf(path, sizeof(path), "%s.act", candidate);
+        if (!(n > 0 && (size_t)n < sizeof(path))) return false;
+    }
+    if (access(path, R_OK) != 0) return false;
+    if (!realpath(path, out)) return false;
+    return strlen(out) < out_sz;
+}
+
+static bool resolve_module_candidate_mm2(const char *candidate,
+                                         char *out, size_t out_sz,
+                                         char *reason, size_t reason_sz) {
+    char path[PATH_MAX];
+
+    if (reason && reason_sz > 0) reason[0] = '\0';
+    if (path_has_suffix(candidate, ".mm2")) {
+        snprintf(path, sizeof(path), "%s", candidate);
+    } else {
+        int n = snprintf(path, sizeof(path), "%s.mm2", candidate);
         if (!(n > 0 && (size_t)n < sizeof(path))) return false;
     }
     if (access(path, R_OK) != 0) return false;
@@ -949,10 +968,22 @@ static bool resolve_module_candidate_with_format(const char *candidate,
         return true;
     }
 
+    char mm2_reason[160] = {0};
+    if (resolve_module_candidate_mm2(candidate, out, out_sz,
+                                     mm2_reason, sizeof(mm2_reason))) {
+        if (format_out) {
+            format_out->kind = CETTA_MODULE_FORMAT_MM2;
+            format_out->foreign_backend = CETTA_FOREIGN_BACKEND_NONE;
+        }
+        if (reason && reason_sz > 0) reason[0] = '\0';
+        return true;
+    }
+
     if (reason && reason_sz > 0) {
         const char *chosen = metta_reason[0] ? metta_reason :
                              (act_reason[0] ? act_reason :
-                              (foreign_reason[0] ? foreign_reason : ""));
+                              (mm2_reason[0] ? mm2_reason :
+                               (foreign_reason[0] ? foreign_reason : "")));
         snprintf(reason, reason_sz, "%s", chosen);
     }
     return false;
@@ -2676,6 +2707,47 @@ static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *
     return true;
 }
 
+static bool load_module_mm2_file(CettaLibraryContext *ctx, const char *path,
+                                 Space *work_space,
+                                 Arena *eval_arena,
+                                 Arena *persistent_arena,
+                                 Atom **error_out) {
+    CettaStringBuf text = {0};
+    char errbuf[256] = {0};
+    uint64_t added = 0;
+    Arena *dst = persistent_arena ? persistent_arena : eval_arena;
+
+    (void)ctx;
+
+    if (space_is_ordered(work_space)) {
+        *error_out = module_reason(eval_arena, "ModuleMm2OrderedSpaceUnsupported", path);
+        return false;
+    }
+    if (work_space->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED &&
+        !space_match_backend_try_set(work_space, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)) {
+        *error_out = module_reason(eval_arena, "ModuleMm2BackendUnavailable", path);
+        return false;
+    }
+    if (!library_read_text_file(path, &text, errbuf, sizeof(errbuf))) {
+        *error_out = module_reason_with_detail(
+            eval_arena, "ModuleMm2ReadFailed", path,
+            atom_string(eval_arena, errbuf[0] ? errbuf : "cannot read file"));
+        return false;
+    }
+    if (!space_match_backend_load_sexpr_chunk(work_space, dst,
+                                              (const uint8_t *)text.buf, text.len,
+                                              &added)) {
+        cetta_sb_free(&text);
+        *error_out = module_reason_with_detail(
+            eval_arena, "ModuleMm2LoadFailed", path,
+            atom_string(eval_arena, cetta_mork_bridge_last_error()));
+        return false;
+    }
+    cetta_sb_free(&text);
+    (void)added;
+    return true;
+}
+
 static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                              Space *logical_space, Space *work_space,
                              Arena *eval_arena,
@@ -2731,6 +2803,9 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         }
     } else if (format.kind == CETTA_MODULE_FORMAT_MORK_ACT) {
         ok = load_module_act_file(ctx, path, work_space, eval_arena,
+                                  persistent_arena, error_out);
+    } else if (format.kind == CETTA_MODULE_FORMAT_MM2) {
+        ok = load_module_mm2_file(ctx, path, work_space, eval_arena,
                                   persistent_arena, error_out);
     } else {
         int n = parse_metta_file(path, persistent_arena, &atoms);
@@ -2946,25 +3021,6 @@ static const char *loaded_module_storage_name(const CettaLoadedModule *module) {
     return "materialized";
 }
 
-static Atom *loaded_module_space_engine_atom(Arena *a,
-                                             const CettaLoadedModule *module) {
-    if (!module || !module->space) {
-        return atom_symbol(a, "unknown");
-    }
-    if (module->space->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED) {
-        return atom_symbol_id(a, g_builtin_syms.mork_text);
-    }
-    return atom_symbol_id(a, g_builtin_syms.native);
-}
-
-static Atom *loaded_module_match_backend_atom(Arena *a,
-                                              const CettaLoadedModule *module) {
-    if (!module || !module->space) {
-        return atom_symbol(a, "unknown");
-    }
-    return atom_symbol(a, space_match_backend_name(module->space));
-}
-
 Atom *cetta_library_mod_space(CettaLibraryContext *ctx, const char *spec,
                               Arena *eval_arena, Arena *persistent_arena,
                               Registry *registry, int fuel, Atom **error_out) {
@@ -3094,18 +3150,6 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
                 atom_symbol(dst, cetta_module_provider_name(module->provider_kind))
             };
             space_add(inventory, atom_expr(dst, space_fact, 4));
-            Atom *engine_fact[3] = {
-                atom_symbol(dst, "loaded-module-space-engine"),
-                atom_string(dst, module->display_name),
-                loaded_module_space_engine_atom(dst, module)
-            };
-            space_add(inventory, atom_expr(dst, engine_fact, 3));
-            Atom *backend_fact[3] = {
-                atom_symbol(dst, "loaded-module-match-backend"),
-                atom_string(dst, module->display_name),
-                loaded_module_match_backend_atom(dst, module)
-            };
-            space_add(inventory, atom_expr(dst, backend_fact, 3));
         }
     }
 

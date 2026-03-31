@@ -1,68 +1,34 @@
 !(import! &self mork)
-!(bind! &h (new-space hash))
-!(bind! &mh (mork:space-new hash))
+!(bind! &h (new-space mork))
 !(assertEqualToResult
-  (let (mork-space (discipline $kind) (engine $engine) (match-backend $backend) (capabilities $caps))
-    (mork:space-spec &h)
-    $kind)
-  (hash))
+  (get-type &h)
+  ((Space mork)))
 !(assertEqualToResult
-  (let (mork-space (discipline hash) (engine $engine) (match-backend $backend) (capabilities $caps))
-    (mork.space-spec &h)
-    $caps)
-  ((unordered hash exact match add remove len snapshot nodup)))
-!(assertEqualToResult
-  (let (mork-space (discipline hash) (engine $engine) (match-backend $backend) (capabilities $caps))
-    (mork:space-spec &h)
-    (== $engine (mork.space-engine &h)))
-  (True))
-!(assertEqualToResult
-  (let (mork-space (discipline hash) (engine $engine) (match-backend $backend) (capabilities $caps))
-    (mork:space-spec &h)
-    (== $backend (mork.space-backend &h)))
-  (True))
-!(assertEqualToResult
-  (== (mork:backed-space? &h) (== (mork:space-engine &h) mork))
-  (True))
-!(assertEqualToResult
-  (mork.backed-space? &mh)
-  (True))
-!(assertEqualToResult
-  (mork:space-engine &mh)
-  (mork))
-!(assertEqualToResult
-  (mork.space-backend &mh)
-  (pathmap-imported))
-!(assertEqualToResult
-  (mork:space-spec &mh)
-  ((mork-space
-      (discipline hash)
-      (engine mork)
-      (match-backend pathmap-imported)
-      (capabilities (unordered hash exact match add remove len snapshot nodup)))))
-!(assertEqualToResult
-  (mork.space-count &mh)
+  (size &h)
   (0))
-!(mork:space-add! &mh (edge a b))
-!(mork.space-add! &mh (edge b c))
+!(add-atom &h (edge a b))
+!(add-atom &h (edge b c))
 !(assertEqualToResult
-  (mork:space-count &mh)
+  (size &h)
   (2))
-!(assertEqualToResult
-  (mork.space-query &mh (edge $x $y) ($x $y))
-  ((a b) (b c)))
 !(assertEqual
-  (mork:space-atoms &mh)
+  (match &h (edge $x $y) ($x $y))
+  (superpose ((a b) (b c))))
+!(assertEqual
+  (collapse (get-atoms &h))
   ((edge a b) (edge b c)))
-!(bind! &snap (mork.space-snapshot &mh))
-!(mork:space-add! &mh (edge c d))
-!(assertEqualToResult
-  (mork:space-query &snap (edge $x $y) ($x $y))
-  ((a b) (b c)))
-!(assertEqualToResult
-  (mork.space-query &mh (edge $x $y) ($x $y))
-  ((a b) (b c) (c d)))
-!(bind! &built (mork:space-from-atoms hash ((edge x y) (edge y z))))
-!(assertEqualToResult
-  (mork:space-query &built (edge $x $y) ($x $y))
-  ((x y) (y z)))
+!(bind! &snap (new-space mork))
+!(bind! &atoms (collapse (get-atoms &h)))
+!(add-atoms &snap &atoms)
+!(add-atom &h (edge c d))
+!(assertEqual
+  (collapse (get-atoms &snap))
+  ((edge a b) (edge b c)))
+!(assertEqual
+  (match &h (edge $x $y) ($x $y))
+  (superpose ((a b) (b c) (c d))))
+!(bind! &built (new-space mork))
+!(add-atoms &built ((edge x y) (edge y z)))
+!(assertEqual
+  (match &built (edge $x $y) ($x $y))
+  (superpose ((x y) (y z))))

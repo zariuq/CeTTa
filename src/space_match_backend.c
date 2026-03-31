@@ -1073,6 +1073,161 @@ static void imported_rebuild(Space *s) {
         imported_rebuild_flat(s);
 }
 
+bool space_match_backend_step(Space *s, Arena *persistent_arena,
+                              uint64_t steps, uint64_t *out_performed) {
+    PathmapImportedState *st;
+    Space *fresh = NULL;
+    uint8_t *packet = NULL;
+    size_t packet_len = 0;
+    uint32_t packet_rows = 0;
+    uint64_t performed = 0;
+    bool ok = false;
+
+    if (out_performed)
+        *out_performed = 0;
+    if (!s || s->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)
+        return false;
+    if (space_is_ordered(s))
+        return false;
+    if (steps == 0) {
+        if (out_performed)
+            *out_performed = 0;
+        return true;
+    }
+    if (!space_match_backend_materialize_attached(s, persistent_arena))
+        return false;
+
+    st = &s->match_backend.imported;
+    if (!st->bridge_active && !imported_rebuild_bridge(s))
+        return false;
+    if (!st->bridge_active || !st->bridge_space)
+        return false;
+    if (!cetta_mork_bridge_space_step((CettaMorkSpaceHandle *)st->bridge_space,
+                                      steps, &performed)) {
+        st->bridge_active = false;
+        st->built = false;
+        st->dirty = true;
+        return false;
+    }
+    if (out_performed)
+        *out_performed = performed;
+    if (performed == 0)
+        return true;
+    if (!cetta_mork_bridge_space_dump((CettaMorkSpaceHandle *)st->bridge_space,
+                                      &packet, &packet_len, &packet_rows)) {
+        st->bridge_active = false;
+        st->built = false;
+        st->dirty = true;
+        return false;
+    }
+
+    fresh = cetta_malloc(sizeof(Space));
+    space_init(fresh);
+    fresh->kind = s->kind;
+    if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
+        goto done;
+    }
+    ok = imported_parse_dump_text_into_space(fresh, persistent_arena, packet, packet_len);
+    if (!ok)
+        goto done;
+
+    space_replace_contents(s, fresh);
+    ok = true;
+
+done:
+    if (packet)
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+    if (fresh) {
+        if (ok) {
+            free(fresh);
+        } else {
+            space_free(fresh);
+            free(fresh);
+        }
+    }
+    (void)packet_rows;
+    return ok;
+}
+
+bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
+                                          const uint8_t *text, size_t len,
+                                          uint64_t *out_added) {
+    PathmapImportedState *st;
+    Space *fresh = NULL;
+    uint8_t *packet = NULL;
+    size_t packet_len = 0;
+    uint32_t packet_rows = 0;
+    uint64_t added = 0;
+    bool ok = false;
+
+    if (out_added)
+        *out_added = 0;
+    if (!s || s->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)
+        return false;
+    if (space_is_ordered(s))
+        return false;
+    if (!text && len != 0)
+        return false;
+    if (len == 0) {
+        if (out_added)
+            *out_added = 0;
+        return true;
+    }
+    if (!space_match_backend_materialize_attached(s, persistent_arena))
+        return false;
+
+    st = &s->match_backend.imported;
+    if (!st->bridge_active && !imported_rebuild_bridge(s))
+        return false;
+    if (!st->bridge_active || !st->bridge_space)
+        return false;
+    if (!cetta_mork_bridge_space_add_sexpr((CettaMorkSpaceHandle *)st->bridge_space,
+                                           text, len, &added)) {
+        st->bridge_active = false;
+        st->built = false;
+        st->dirty = true;
+        return false;
+    }
+    if (out_added)
+        *out_added = added;
+    if (added == 0)
+        return true;
+    if (!cetta_mork_bridge_space_dump((CettaMorkSpaceHandle *)st->bridge_space,
+                                      &packet, &packet_len, &packet_rows)) {
+        st->bridge_active = false;
+        st->built = false;
+        st->dirty = true;
+        return false;
+    }
+
+    fresh = cetta_malloc(sizeof(Space));
+    space_init(fresh);
+    fresh->kind = s->kind;
+    if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
+        goto done;
+    }
+    ok = imported_parse_dump_text_into_space(fresh, persistent_arena, packet, packet_len);
+    if (!ok)
+        goto done;
+
+    space_replace_contents(s, fresh);
+    ok = true;
+
+done:
+    if (packet)
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+    if (fresh) {
+        if (ok) {
+            free(fresh);
+        } else {
+            space_free(fresh);
+            free(fresh);
+        }
+    }
+    (void)packet_rows;
+    return ok;
+}
+
 static void imported_ensure_built(Space *s) {
     PathmapImportedState *st = &s->match_backend.imported;
     if (!st->built || st->dirty)
@@ -1892,7 +2047,7 @@ static void space_query_conjunction_default(Space *s, Arena *a,
             space_subst_query(s, a, grounded, &smr);
             for (uint32_t mi = 0; mi < smr.len; mi++) {
                 Bindings merged;
-                if (space_subst_match_with_seed(s, grounded, &smr.items[mi],
+                if (space_subst_match_with_seed(s, patterns[pi], &smr.items[mi],
                                                 &cur.items[bi], a, &merged)) {
                     binding_set_push_move(&next, &merged);
                     bindings_free(&merged);
@@ -2160,7 +2315,7 @@ static void imported_query_conjunction(Space *s, Arena *a, Atom **patterns,
             space_subst_query(s, a, grounded, &smr);
             for (uint32_t mi = 0; mi < smr.len; mi++) {
                 Bindings merged;
-                if (space_subst_match_with_seed(s, grounded, &smr.items[mi],
+                if (space_subst_match_with_seed(s, order[pi].pattern, &smr.items[mi],
                                                 &cur.items[bi], a, &merged)) {
                     binding_set_push_move(&next, &merged);
                     bindings_free(&merged);
@@ -2344,42 +2499,43 @@ void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
 
 bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
                                  const Bindings *seed, Arena *a, Bindings *out) {
-    Bindings merged;
-    if (!bindings_clone_merge(&merged, seed, &sm->bindings)) {
+    if (!space || !sm)
         return false;
-    }
-    if (sm->exact) {
-        if (bindings_has_loop(&merged)) {
-            bindings_free(&merged);
-            return false;
-        }
-        bindings_move(out, &merged);
-        return true;
-    }
-    if (sm->atom_idx >= space->len) {
-        bindings_free(&merged);
-        return false;
-    }
-    Atom *matched_atom = space_get_at(space, sm->atom_idx);
-    if (match_atoms_epoch(pattern, matched_atom, &merged, a, sm->epoch) &&
-        !bindings_has_loop(&merged)) {
-        bindings_move(out, &merged);
-        return true;
-    }
-    bindings_free(&merged);
 
-    {
-        uint32_t suffix = fresh_var_suffix();
-        Atom *renamed = rename_vars(a, matched_atom, suffix);
-        Bindings exact;
-        if (!bindings_clone(&exact, seed))
+    if (sm->exact) {
+        bool ok = seed ? bindings_clone_merge(out, seed, &sm->bindings)
+                       : bindings_clone(out, &sm->bindings);
+        if (!ok)
             return false;
-        if (match_atoms(pattern, renamed, &exact) && !bindings_has_loop(&exact)) {
-            bindings_move(out, &exact);
-            return true;
+        if (bindings_has_loop(out)) {
+            bindings_free(out);
+            return false;
         }
-        bindings_free(&exact);
+        return true;
     }
+
+    if (space_match_backend_is_attached_compiled(space)) {
+        Arena *persistent = eval_current_persistent_arena();
+        if (!space_match_backend_materialize_attached(space, persistent ? persistent : a))
+            return false;
+    }
+
+    if (sm->atom_idx >= space->len)
+        return false;
+
+    Atom *matched_atom = space_get_at(space, sm->atom_idx);
+    if (!matched_atom)
+        return false;
+    uint32_t suffix = fresh_var_suffix();
+    Atom *renamed = rename_vars(a, matched_atom, suffix);
+    Bindings exact;
+    if (!bindings_clone(&exact, seed))
+        return false;
+    if (match_atoms(renamed, pattern, &exact) && !bindings_has_loop(&exact)) {
+        bindings_move(out, &exact);
+        return true;
+    }
+    bindings_free(&exact);
     return false;
 }
 

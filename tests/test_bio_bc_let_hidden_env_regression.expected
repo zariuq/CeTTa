@@ -1,0 +1,2 @@
+[()]
+[(bio-bc-let-ok r7-pathway-transfer (same-pathway ensg00000145384 ensg00000090316 r_hsa_1430728) (: (r6-same-pathway (pathway-fact ensg00000145384 r_hsa_1430728) (pathway-fact ensg00000090316 r_hsa_1430728)) (same-pathway ensg00000145384 ensg00000090316 r_hsa_1430728)))]

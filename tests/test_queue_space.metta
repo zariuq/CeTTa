@@ -1,7 +1,5 @@
 !(bind! &q (new-space queue))
-!(assertEqualToResult (space-kind &q) (queue))
-!(assertEqualToResult (space-capabilities &q)
-  ((ordered queue fifo match push peek pop get truncate len snapshot)))
+!(assertEqualToResult (get-type &q) ((Space queue)))
 !(assertEqualToResult (space-len &q) (0))
 !(space-push &q alpha)
 !(space-push &q beta)

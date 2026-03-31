@@ -79,6 +79,8 @@ typedef struct {
     X(let, "let") \
     X(chain, "chain") \
     X(collect, "collect") \
+    X(fold, "fold") \
+    X(fold_by_key, "fold-by-key") \
     X(reduce, "reduce") \
     X(select, "select") \
     X(once, "once") \
@@ -99,17 +101,14 @@ typedef struct {
     X(reset_runtime_stats_bang, "reset-runtime-stats!") \
     X(runtime_stats_bang, "runtime-stats!") \
     X(with_space_snapshot, "with-space-snapshot") \
-    X(space_kind, "space-kind") \
-    X(space_engine, "space-engine") \
-    X(space_match_backend, "space-match-backend") \
     X(space_set_match_backend_bang, "space-set-match-backend!") \
-    X(space_capabilities, "space-capabilities") \
     X(space_len, "space-len") \
     X(space_push, "space-push") \
     X(space_peek, "space-peek") \
     X(space_pop, "space-pop") \
     X(space_get, "space-get") \
     X(space_truncate, "space-truncate") \
+    X(step_bang, "step!") \
     X(bind_bang, "bind!") \
     X(add_reduct, "add-reduct") \
     X(add_atom, "add-atom") \
@@ -167,6 +166,7 @@ typedef struct {
     X(format_args, "format-args") \
     X(print_alternatives_bang, "print-alternatives!") \
     /* ── Grounded collection/list operations ── */ \
+    X(size, "size") \
     X(size_atom, "size-atom") \
     X(index_atom, "index-atom") \
     X(map_atom, "map-atom") \

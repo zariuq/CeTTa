@@ -1,7 +1,5 @@
 !(bind! &h (new-space hash))
-!(assertEqualToResult (space-kind &h) (hash))
-!(assertEqualToResult (space-capabilities &h)
-  ((unordered hash exact match add remove len snapshot nodup)))
+!(assertEqualToResult (get-type &h) ((Space hash)))
 !(assertEqualToResult (space-len &h) (0))
 !(add-atom &h (seen alpha))
 !(add-atom &h (seen beta))

@@ -74,7 +74,7 @@ void arena_reset(Arena *a, ArenaMark mark) {
 
 HashConsTable *g_hashcons = NULL;
 
-uint32_t atom_hash(Atom *a) {
+static uint32_t atom_hash_compute(Atom *a) {
     if (!a) return 0;
     uint32_t h = 5381;
     h = ((h << 5) + h) ^ (uint32_t)a->kind;
@@ -114,6 +114,17 @@ uint32_t atom_hash(Atom *a) {
             h = ((h << 5) + h) ^ atom_hash(a->expr.elems[i]);
         break;
     }
+    return h;
+}
+
+uint32_t atom_hash(Atom *a) {
+    if (!a)
+        return 0;
+    if ((a->flags & ATOM_FLAG_HASH_VALID) != 0)
+        return a->hash_cache;
+    uint32_t h = atom_hash_compute(a);
+    a->hash_cache = h;
+    a->flags |= ATOM_FLAG_HASH_VALID;
     return h;
 }
 
@@ -419,8 +430,10 @@ static Atom *atom_maybe_hashcons(Arena *a, const Atom *temp) {
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     Atom temp = {0};
     temp.kind = ATOM_SYMBOL;
+    temp.flags = 0;
     temp.var_id = VAR_ID_NONE;
     temp.sym_id = sym_id;
+    temp.hash_cache = 0;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
@@ -435,8 +448,10 @@ Atom *atom_symbol(Arena *a, const char *name) {
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_VAR;
+    at->flags = ATOM_FLAG_HAS_VARS;
     at->var_id = id ? id : fresh_var_id();
     at->sym_id = spelling;
+    at->hash_cache = 0;
     return at;
 }
 
@@ -454,7 +469,9 @@ Atom *atom_var(Arena *a, const char *name) {
 Atom *atom_int(Arena *a, int64_t val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
+    temp.flags = 0;
     temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
     temp.ground.gkind = GV_INT;
     temp.ground.ival = val;
     Atom *shared = atom_maybe_hashcons(a, &temp);
@@ -467,8 +484,10 @@ Atom *atom_int(Arena *a, int64_t val) {
 Atom *atom_space(Arena *a, void *space_ptr) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->flags = 0;
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
     at->ground.gkind = GV_SPACE;
     at->ground.ptr = space_ptr;
     return at;
@@ -477,8 +496,10 @@ Atom *atom_space(Arena *a, void *space_ptr) {
 Atom *atom_state(Arena *a, StateCell *cell) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->flags = 0;
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
     at->ground.gkind = GV_STATE;
     at->ground.ptr = cell;
     return at;
@@ -487,8 +508,10 @@ Atom *atom_state(Arena *a, StateCell *cell) {
 Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->flags = 0;
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
     at->ground.gkind = GV_CAPTURE;
     at->ground.ptr = closure;
     return at;
@@ -497,8 +520,10 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure) {
 Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
+    at->flags = 0;
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
     at->ground.gkind = GV_FOREIGN;
     at->ground.ptr = value;
     return at;
@@ -507,7 +532,9 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
 Atom *atom_float(Arena *a, double val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
+    temp.flags = 0;
     temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
     temp.ground.gkind = GV_FLOAT;
     temp.ground.fval = val;
     Atom *shared = atom_maybe_hashcons(a, &temp);
@@ -520,7 +547,9 @@ Atom *atom_float(Arena *a, double val) {
 Atom *atom_bool(Arena *a, bool val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
+    temp.flags = 0;
     temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
     temp.ground.gkind = GV_BOOL;
     temp.ground.bval = val;
     Atom *shared = atom_maybe_hashcons(a, &temp);
@@ -533,15 +562,19 @@ Atom *atom_bool(Arena *a, bool val) {
 Atom *atom_string(Arena *a, const char *val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
+    temp.flags = 0;
     temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
     temp.ground.gkind = GV_STRING;
     temp.ground.sval = val;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = temp.kind;
+    at->flags = temp.flags;
     at->var_id = temp.var_id;
     at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
     at->ground.gkind = temp.ground.gkind;
     at->ground.sval = arena_strdup(a, val);
     return at;
@@ -550,15 +583,25 @@ Atom *atom_string(Arena *a, const char *val) {
 Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
     Atom temp = {0};
     temp.kind = ATOM_EXPR;
+    temp.flags = 0;
     temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        if (atom_has_vars(elems[i])) {
+            temp.flags |= ATOM_FLAG_HAS_VARS;
+            break;
+        }
+    }
     temp.expr.len = len;
     temp.expr.elems = elems;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = temp.kind;
+    at->flags = temp.flags;
     at->var_id = temp.var_id;
     at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
     at->expr.len = len;
     at->expr.elems = arena_alloc(a, sizeof(Atom *) * len);
     if (elems) memcpy(at->expr.elems, elems, sizeof(Atom *) * len);
@@ -568,7 +611,15 @@ Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
 Atom *atom_expr_shared(Arena *a, Atom **elems, uint32_t len) {
     Atom temp = {0};
     temp.kind = ATOM_EXPR;
+    temp.flags = 0;
     temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        if (atom_has_vars(elems[i])) {
+            temp.flags |= ATOM_FLAG_HAS_VARS;
+            break;
+        }
+    }
     temp.expr.len = len;
     temp.expr.elems = elems;
     if (g_hashcons && atom_can_hashcons(&temp))

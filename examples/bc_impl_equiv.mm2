@@ -1,0 +1,72 @@
+; Backward Chaining: impl_equiv (A ↔ B)
+; ========================================
+; From Adam's new MORK presentation.
+; KB has (A→B), (A→C), (B→A). Goal: (<-> A B).
+;
+; impl_equiv: (A→B) + (B→A) ⊢ (A↔B)
+; impl_trans: (A→B) + (B→C) ⊢ (A→C)
+;
+; Backward chaining on goal(<-> A B):
+;   Need (-> A B) and (-> B A).
+;   (-> A B) exists in KB. ✓
+;   (-> B A) exists in KB. ✓
+;   → derive (<-> A B)
+;
+; Also test: goal(-> C B) via transitivity
+;   Need intermediate: (-> C $x) + (-> $x B)
+;   KB has (-> A B), (-> B A), (-> A C)
+;   So: (-> C ?) — no direct rule. But via inversion...
+;   Actually, no rule C→? in KB. Backward chaining stops.
+
+; === Knowledge base ===
+(kb i (-> A B))
+(kb i (-> A C))
+(kb i (-> B A))
+
+; === Queries ===
+(goal (<-> A B))
+
+; === impl_equiv backward chaining ===
+; Completion: goal(<-> a b) + (-> a b) + (-> b a) → solved
+(exec (0 equiv-complete-0)
+  (, (goal (<-> $a $b)) (kb $x (-> $a $b)) (kb $y (-> $b $a)))
+  (O (+ (kb synth (<-> $a $b))) (- (goal (<-> $a $b)))))
+
+(exec (0 equiv-complete-1)
+  (, (goal (<-> $a $b)) (kb $x (-> $a $b)) (kb $y (-> $b $a)))
+  (O (+ (kb synth (<-> $a $b))) (- (goal (<-> $a $b)))))
+
+; Subgoal: goal(<-> a b) + one direction → goal for other
+(exec (1 equiv-sub-fwd-0)
+  (, (goal (<-> $a $b)) (kb $y (-> $b $a)))
+  (O (+ (goal (-> $a $b))) (- (goal (<-> $a $b))) (+ (pending-equiv-fwd $a $b))))
+
+(exec (1 equiv-sub-bwd-0)
+  (, (goal (<-> $a $b)) (kb $x (-> $a $b)))
+  (O (+ (goal (-> $b $a))) (- (goal (<-> $a $b))) (+ (pending-equiv-bwd $a $b))))
+
+; === impl_trans backward chaining ===
+; Completion: goal(-> a c) + (-> a b) + (-> b c) → solved
+(exec (0 trans-complete-0)
+  (, (goal (-> $a $c)) (kb $x (-> $a $b)) (kb $y (-> $b $c)))
+  (O (+ (kb synth (-> $a $c))) (- (goal (-> $a $c)))))
+
+(exec (0 trans-complete-1)
+  (, (goal (-> $a $c)) (kb $x (-> $a $b)) (kb $y (-> $b $c)))
+  (O (+ (kb synth (-> $a $c))) (- (goal (-> $a $c)))))
+
+; Subgoal: goal(-> a c) + (-> a b) → goal(-> b c)
+(exec (1 trans-sub-0)
+  (, (goal (-> $a $c)) (kb $x (-> $a $b)))
+  (O (+ (goal (-> $b $c))) (- (goal (-> $a $c))) (+ (pending-trans $a $b $c))))
+
+(exec (1 trans-sub-1)
+  (, (goal (-> $a $c)) (kb $x (-> $a $b)))
+  (O (+ (goal (-> $b $c))) (- (goal (-> $a $c))) (+ (pending-trans $a $b $c))))
+
+; === Leaf: goal matches existing kb fact ===
+(exec (1 leaf-0) (, (goal $f) (kb $x $f)) (O (+ (kb resolved $f)) (- (goal $f))))
+(exec (1 leaf-1) (, (goal $f) (kb $x $f)) (O (+ (kb resolved $f)) (- (goal $f))))
+(exec (1 leaf-2) (, (goal $f) (kb $x $f)) (O (+ (kb resolved $f)) (- (goal $f))))
+
+; Expected: (kb synth (<-> A B))

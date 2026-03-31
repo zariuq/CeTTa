@@ -1,0 +1,93 @@
+; Backward Chaining: Socrates Syllogism with PLN Truth Values
+; ============================================================
+; KB:
+;   (Inheritance Socrates Man)     STV (0.95, 0.9)
+;   (Inheritance Man Mortal)       STV (0.99, 0.95)
+;   Background: s_Man = 0.01, s_Mortal = 0.1
+;
+; Query: (Inheritance Socrates Mortal) — unknown
+;
+; PLN Deduction strength formula:
+;   s_AC = s_AB * s_BC + (1-s_AB)(s_C - s_B*s_BC)/(1-s_B)
+;
+; PLN Deduction confidence formula (simplified):
+;   c_AC = c_AB * c_BC * (s_AB + s_BC) / (1 + s_AB + s_BC)
+
+; === Knowledge base with truth values ===
+; Format: (kb $src (Inheritance $A $B) (stv $s $c))
+(kb fact (Inheritance Socrates Man) (stv 0.95 0.9))
+(kb rule (Inheritance Man Mortal) (stv 0.99 0.95))
+(kb background Man (stv 0.01 0.5))
+(kb background Mortal (stv 0.1 0.5))
+
+; === Query ===
+(goal (Inheritance Socrates Mortal))
+
+; === Phase 0: Backward expansion ===
+; Goal(A→C) + rule(B→C) → subgoal(A→B) + pending
+; For deduction: need Inheritance(A,B) + Inheritance(B,C) to derive Inheritance(A,C)
+(exec (0 bc-deduction)
+  (, (goal (Inheritance $a $c))
+     (kb rule (Inheritance $b $c) (stv $s_bc $c_bc)))
+  (O (+ (goal (Inheritance $a $b)))
+     (+ (pending-deduction $a $b $c))
+     (- (goal (Inheritance $a $c)))))
+
+; === Phase 1: Leaf resolution ===
+(exec (1 leaf)
+  (, (goal (Inheritance $a $b))
+     (kb fact (Inheritance $a $b) (stv $s $c)))
+  (O (+ (solved (Inheritance $a $b) (stv $s $c)))
+     (- (goal (Inheritance $a $b)))))
+
+; === Phase 2: Forward completion with PLN deduction formula ===
+; solved(A→B) + kb(B→C) + pending(A,B,C) + background(B) + background(C)
+; → compute PLN deduction strength and confidence
+;
+; s_AC = s_AB * s_BC + (1-s_AB)(s_C - s_B*s_BC)/(1-s_B)
+; c_AC = c_AB * c_BC * (s_AB + s_BC) / (1 + s_AB + s_BC)
+;
+; Using pure sinks for float computation.
+
+(exec (2 pln-deduction-strength)
+  (, (solved (Inheritance $a $b) (stv $s_ab $c_ab))
+     (kb rule (Inheritance $b $c) (stv $s_bc $c_bc))
+     (kb background $b (stv $s_b $cb))
+     (kb background $c (stv $s_c $cc))
+     (pending-deduction $a $b $c))
+  (O (pure (derived-strength $a $c $s_str) $s_str
+       (f64_to_string (sum_f64
+         (product_f64 (f64_from_string $s_ab) (f64_from_string $s_bc))
+         (div_f64
+           (product_f64
+             (sub_f64 (f64_from_string 1.0) (f64_from_string $s_ab))
+             (sub_f64 (f64_from_string $s_c)
+                      (product_f64 (f64_from_string $s_b) (f64_from_string $s_bc))))
+           (sub_f64 (f64_from_string 1.0) (f64_from_string $s_b))))))
+     (pure (derived-confidence $a $c $c_str) $c_str
+       (f64_to_string (product_f64
+         (product_f64 (f64_from_string $c_ab) (f64_from_string $c_bc))
+         (div_f64
+           (sum_f64 (f64_from_string $s_ab) (f64_from_string $s_bc))
+           (sum_f64 (f64_from_string 1.0)
+                    (sum_f64 (f64_from_string $s_ab) (f64_from_string $s_bc)))))))
+     (- (pending-deduction $a $b $c))))
+
+; === Phase 3: Assemble final result ===
+(exec (3 assemble)
+  (, (derived-strength $a $c $s)
+     (derived-confidence $a $c $c_val))
+  (O (+ (solved (Inheritance $a $c) (stv $s $c_val)))
+     (- (derived-strength $a $c $s))
+     (- (derived-confidence $a $c $c_val))))
+
+; Expected:
+; s_AC = 0.95*0.99 + (1-0.95)(0.1 - 0.01*0.99)/(1-0.01)
+;      = 0.9405 + 0.05 * (0.1 - 0.0099) / 0.99
+;      = 0.9405 + 0.05 * 0.0901 / 0.99
+;      = 0.9405 + 0.004550...
+;      ≈ 0.9451
+;
+; c_AC = 0.9 * 0.95 * (0.95 + 0.99) / (1 + 0.95 + 0.99)
+;      = 0.855 * 1.94 / 2.94
+;      ≈ 0.564
