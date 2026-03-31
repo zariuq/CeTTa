@@ -983,6 +983,10 @@ void bindings_builder_commit(BindingsBuilder *bb) {
     bb->trail_len = 0;
 }
 
+static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
+                                                     Atom *lhs, Atom *rhs,
+                                                     bool normalize_constraints);
+
 static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
                                              SymbolId spelling, Atom *val,
                                              bool legacy_name_fallback) {
@@ -1495,12 +1499,27 @@ bool bindings_has_loop(Bindings *b) {
 
 /* ── Type matching ─────────────────────────────────────────────────────── */
 
+static bool is_named_symbol(Atom *atom, const char *name) {
+    return atom_is_symbol(atom, name);
+}
+
+static bool is_space_value_type(Atom *atom) {
+    return atom &&
+           atom->kind == ATOM_EXPR &&
+           atom->expr.len == 2 &&
+           is_named_symbol(atom->expr.elems[0], "Space");
+}
+
 bool match_types(Atom *type1, Atom *type2, Bindings *b) {
     /* %Undefined% and Atom are wildcards — always match */
     if (atom_is_symbol_id(type1, g_builtin_syms.undefined_type) ||
         atom_is_symbol_id(type1, g_builtin_syms.atom) ||
         atom_is_symbol_id(type2, g_builtin_syms.undefined_type) ||
         atom_is_symbol_id(type2, g_builtin_syms.atom)) {
+        return true;
+    }
+    if ((is_named_symbol(type1, "SpaceType") && is_space_value_type(type2)) ||
+        (is_named_symbol(type2, "SpaceType") && is_space_value_type(type1))) {
         return true;
     }
     return match_atoms(type1, type2, b);
@@ -1511,6 +1530,10 @@ bool match_types_builder(Atom *type1, Atom *type2, BindingsBuilder *bb) {
         atom_is_symbol_id(type1, g_builtin_syms.atom) ||
         atom_is_symbol_id(type2, g_builtin_syms.undefined_type) ||
         atom_is_symbol_id(type2, g_builtin_syms.atom)) {
+        return true;
+    }
+    if ((is_named_symbol(type1, "SpaceType") && is_space_value_type(type2)) ||
+        (is_named_symbol(type2, "SpaceType") && is_space_value_type(type1))) {
         return true;
     }
     return match_atoms_builder(type1, type2, bb);
@@ -1711,12 +1734,14 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
     if (left->kind == ATOM_VAR) {
         Atom *existing = bindings_lookup_var(b, left);
         if (existing)
-            return match_atoms_epoch_depth(existing, right, b, a, epoch, right_original, depth - 1);
+            return match_atoms_epoch_depth(existing, right, b, a, epoch,
+                                           right_original, depth - 1);
         if (right->kind == ATOM_VAR) {
             VarId right_id = right_original ? var_epoch_id(right->var_id, epoch) : right->var_id;
             Atom *right_existing = bindings_lookup_id(b, right_id);
             if (right_existing)
-                return match_atoms_epoch_depth(left, right_existing, b, a, epoch, false, depth - 1);
+                return match_atoms_epoch_depth(left, right_existing, b, a, epoch,
+                                               false, depth - 1);
             if (left->var_id == right_id) return true;
             return bindings_add_var(b, left,
                                     right_original ? epoch_var_atom(a, right, epoch) : right);
@@ -1728,7 +1753,8 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
         VarId right_id = right_original ? var_epoch_id(right->var_id, epoch) : right->var_id;
         Atom *existing = bindings_lookup_id(b, right_id);
         if (existing)
-            return match_atoms_epoch_depth(left, existing, b, a, epoch, false, depth - 1);
+            return match_atoms_epoch_depth(left, existing, b, a, epoch,
+                                           false, depth - 1);
         return bindings_add_id(b, right_id, right->sym_id, left);
     }
     if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {

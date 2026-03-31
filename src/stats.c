@@ -50,6 +50,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "attached-act-query",
     "attached-act-materialize",
     "attached-act-materialize-atoms",
+    "body-visible-cache-lookup",
+    "body-visible-cache-hit",
+    "body-visible-cache-store",
 };
 
 static int64_t clamp_counter(uint64_t value) {

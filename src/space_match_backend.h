@@ -98,6 +98,11 @@ const char *space_match_backend_kind_name(SpaceMatchBackendKind kind);
 bool space_match_backend_kind_from_name(const char *name, SpaceMatchBackendKind *out);
 bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *out_loaded);
 bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena);
+bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
+                                          const uint8_t *text, size_t len,
+                                          uint64_t *out_added);
+bool space_match_backend_step(Space *s, Arena *persistent_arena,
+                              uint64_t steps, uint64_t *out_performed);
 bool space_match_backend_is_attached_compiled(const Space *s);
 uint32_t space_match_backend_logical_len(const Space *s);
 void space_match_backend_print_inventory(FILE *out);

@@ -290,6 +290,8 @@ const char *cetta_module_format_name(CettaModuleFormatKind kind) {
         return "foreign";
     case CETTA_MODULE_FORMAT_MORK_ACT:
         return "mork-act";
+    case CETTA_MODULE_FORMAT_MM2:
+        return "mm2";
     }
     return "unknown";
 }

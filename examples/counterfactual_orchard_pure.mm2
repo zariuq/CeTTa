@@ -1,0 +1,210 @@
+; Counterfactual Orchard — Pure MM2 (one world, tagged atoms)
+; ============================================================
+; Same demo as showcase_counterfactual_orchard.metta but entirely in MM2.
+; Three "worlds" via tagged atoms, priority phases for sequencing,
+; harvest via self-regenerating drivers, hybrid synthesis at the end.
+;
+; Proves the MeTTa version's "meta-orchestration" reduces to
+; priority-phased exec rules in a single trie.
+
+; ============================================================
+; Substrate (same for all three worlds)
+; ============================================================
+(solar-essence ember)
+(solar-essence dew)
+(solar-essence seed)
+(solar-essence echo)
+
+(lunar-essence ember)
+(lunar-essence dew)
+(lunar-essence seed)
+(lunar-essence echo)
+
+(choral-essence ember)
+(choral-essence dew)
+(choral-essence seed)
+(choral-essence echo)
+
+; ============================================================
+; Solar lawbook (priority 0–2)
+; ember + dew → mist → sun-bloom → dawn-bell
+; ============================================================
+
+(exec (0 solar-condense-mist)
+  (, (solar-essence ember)
+     (solar-essence dew))
+  (O (+ (solar-essence mist))
+     (- (solar-essence ember))
+     (- (solar-essence dew))))
+
+(exec (1 solar-raise-bloom)
+  (, (solar-essence mist)
+     (solar-essence seed))
+  (O (+ (solar-artifact sun-bloom))
+     (+ (solar-quality radiance))
+     (+ (solar-quality vitality))
+     (- (solar-essence mist))
+     (- (solar-essence seed))))
+
+(exec (2 solar-ring-dawn)
+  (, (solar-artifact sun-bloom)
+     (solar-essence echo))
+  (O (+ (solar-artifact dawn-bell))
+     (+ (solar-quality coherence))
+     (- (solar-artifact sun-bloom))
+     (- (solar-essence echo))))
+
+; ============================================================
+; Lunar lawbook (priority 3–5)
+; dew + echo → dream-mist → moon-veil → eclipse-fruit
+; ============================================================
+
+(exec (3 lunar-distill-dream)
+  (, (lunar-essence dew)
+     (lunar-essence echo))
+  (O (+ (lunar-essence dream-mist))
+     (- (lunar-essence dew))
+     (- (lunar-essence echo))))
+
+(exec (4 lunar-weave-veil)
+  (, (lunar-essence dream-mist)
+     (lunar-essence seed))
+  (O (+ (lunar-artifact moon-veil))
+     (+ (lunar-quality mystery))
+     (+ (lunar-quality memory))
+     (- (lunar-essence dream-mist))
+     (- (lunar-essence seed))))
+
+(exec (5 lunar-darken-fruit)
+  (, (lunar-artifact moon-veil)
+     (lunar-essence ember))
+  (O (+ (lunar-artifact eclipse-fruit))
+     (+ (lunar-quality depth))
+     (- (lunar-artifact moon-veil))
+     (- (lunar-essence ember))))
+
+; ============================================================
+; Choral lawbook (priority 6–8)
+; seed + echo → chorus → choir-knot → living-garland
+; ============================================================
+
+(exec (6 choral-awaken-chorus)
+  (, (choral-essence seed)
+     (choral-essence echo))
+  (O (+ (choral-essence chorus))
+     (- (choral-essence seed))
+     (- (choral-essence echo))))
+
+(exec (7 choral-knot-voices)
+  (, (choral-essence chorus)
+     (choral-essence dew))
+  (O (+ (choral-artifact choir-knot))
+     (+ (choral-quality reciprocity))
+     (+ (choral-quality plurality))
+     (- (choral-essence chorus))
+     (- (choral-essence dew))))
+
+(exec (8 choral-grow-garland)
+  (, (choral-artifact choir-knot)
+     (choral-essence ember))
+  (O (+ (choral-artifact living-garland))
+     (+ (choral-quality emergence))
+     (+ (choral-quality tenderness))
+     (- (choral-artifact choir-knot))
+     (- (choral-essence ember))))
+
+; ============================================================
+; Harvest phase (priority 10)
+; Self-regenerating drivers copy tagged results to hybrid namespace.
+; Source atoms consumed to prevent infinite re-firing.
+; ============================================================
+
+(exec (10 harvest-solar-art)
+  (, (exec (10 harvest-solar-art) $ps $cs)
+     (solar-artifact $x))
+  (O (+ (exec (10 harvest-solar-art) $ps $cs))
+     (+ (hybrid-artifact $x))
+     (- (solar-artifact $x))))
+
+(exec (10 harvest-solar-qual)
+  (, (exec (10 harvest-solar-qual) $ps $cs)
+     (solar-quality $x))
+  (O (+ (exec (10 harvest-solar-qual) $ps $cs))
+     (+ (hybrid-quality $x))
+     (- (solar-quality $x))))
+
+(exec (10 harvest-lunar-art)
+  (, (exec (10 harvest-lunar-art) $ps $cs)
+     (lunar-artifact $x))
+  (O (+ (exec (10 harvest-lunar-art) $ps $cs))
+     (+ (hybrid-artifact $x))
+     (- (lunar-artifact $x))))
+
+(exec (10 harvest-lunar-qual)
+  (, (exec (10 harvest-lunar-qual) $ps $cs)
+     (lunar-quality $x))
+  (O (+ (exec (10 harvest-lunar-qual) $ps $cs))
+     (+ (hybrid-quality $x))
+     (- (lunar-quality $x))))
+
+(exec (10 harvest-choral-art)
+  (, (exec (10 harvest-choral-art) $ps $cs)
+     (choral-artifact $x))
+  (O (+ (exec (10 harvest-choral-art) $ps $cs))
+     (+ (hybrid-artifact $x))
+     (- (choral-artifact $x))))
+
+(exec (10 harvest-choral-qual)
+  (, (exec (10 harvest-choral-qual) $ps $cs)
+     (choral-quality $x))
+  (O (+ (exec (10 harvest-choral-qual) $ps $cs))
+     (+ (hybrid-quality $x))
+     (- (choral-quality $x))))
+
+; ============================================================
+; Hybrid synthesis (priority 20–22)
+; Phase gates enforce rule ordering within the hybrid.
+; ============================================================
+
+(hybrid-phase one)
+
+(exec (20 braid-contrast)
+  (, (hybrid-phase one)
+     (hybrid-artifact dawn-bell)
+     (hybrid-artifact eclipse-fruit)
+     (hybrid-quality coherence)
+     (hybrid-quality depth))
+  (O (+ (hybrid-artifact twilight-lotus))
+     (+ (hybrid-quality contrast))
+     (+ (hybrid-phase two))
+     (- (hybrid-phase one))))
+
+(exec (21 weave-paradise)
+  (, (hybrid-phase two)
+     (hybrid-artifact twilight-lotus)
+     (hybrid-artifact living-garland)
+     (hybrid-quality reciprocity))
+  (O (+ (hybrid-artifact paradise-weave))
+     (+ (hybrid-quality harmony))
+     (+ (hybrid-phase three))
+     (- (hybrid-phase two))))
+
+(exec (22 raise-cathedral)
+  (, (hybrid-phase three)
+     (hybrid-artifact paradise-weave)
+     (hybrid-quality radiance)
+     (hybrid-quality mystery)
+     (hybrid-quality emergence))
+  (O (+ (hybrid-artifact living-cathedral))
+     (+ (hybrid-quality integration))
+     (+ (hybrid-quality aliveness))
+     (- (hybrid-phase three))))
+
+; Expected final state includes:
+; (hybrid-artifact living-cathedral) — the cross-world artifact
+; (hybrid-artifact dawn-bell)
+; (hybrid-artifact eclipse-fruit)
+; (hybrid-artifact living-garland)
+; (hybrid-artifact twilight-lotus)
+; (hybrid-artifact paradise-weave)
+; (hybrid-quality ...) — all 14 qualities

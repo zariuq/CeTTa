@@ -9,6 +9,17 @@ typedef struct CettaMorkSpaceHandle CettaMorkSpaceHandle;
 typedef struct CettaMorkProgramHandle CettaMorkProgramHandle;
 typedef struct CettaMorkContextHandle CettaMorkContextHandle;
 
+/*
+Current MM2 bridge mirror:
+
+- space handles cover storage/query on one live MORK space
+- program/context handles mirror the present host-side MM2 bridge seam
+
+Raw MM2 itself is still one live space with facts and execs together. The
+program/context split here is therefore an implementation boundary, not MM2's
+intended long-term public model.
+*/
+
 bool cetta_mork_bridge_is_available(void);
 const char *cetta_mork_bridge_last_error(void);
 
@@ -16,12 +27,19 @@ CettaMorkSpaceHandle *cetta_mork_bridge_space_new(void);
 void cetta_mork_bridge_space_free(CettaMorkSpaceHandle *space);
 
 bool cetta_mork_bridge_space_clear(CettaMorkSpaceHandle *space);
+bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
+                                       const uint8_t *text,
+                                       size_t len,
+                                       uint64_t *out_added);
 bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
                                                uint32_t atom_idx,
                                                const uint8_t *text,
                                                size_t len);
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                   uint64_t *out_size);
+bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
+                                  uint64_t steps,
+                                  uint64_t *out_performed);
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,
