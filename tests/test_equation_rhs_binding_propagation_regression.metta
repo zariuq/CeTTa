@@ -28,5 +28,9 @@
 (= (ift T $then) $then)
 
 !(assertEqualToResult
+  (ift (chain (deduce (q $x)) $r $r) $x)
+  (a))
+
+!(assertEqualToResult
   (ift (deduce (And (p $x) (q $x))) $x)
   (a))
