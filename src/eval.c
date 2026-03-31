@@ -1877,7 +1877,8 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
             continue;
         Atom *val = full->entries[i].val;
         Atom *projected = atom_contains_vars(val)
-            ? bindings_apply((Bindings *)full, a, val)
+            ? bindings_apply_without_self((Bindings *)full, a,
+                                          full->entries[i].var_id, val)
             : val;
         if (!bindings_add_id(out, full->entries[i].var_id,
                              full->entries[i].spelling, projected)) {
@@ -4944,6 +4945,12 @@ tail_call: ;
                         return;
                     }
                     Atom *next_atom = bindings_apply(&visible, a, body_let);
+                    if (preserve_bindings &&
+                        !bindings_builder_merge_commit(&current_env_builder, bb)) {
+                        bindings_free(&visible);
+                        bindings_builder_free(&b);
+                        return;
+                    }
                     bindings_free(&visible);
                     bindings_builder_free(&b);
                     TAIL_REENTER(next_atom);
@@ -4968,6 +4975,12 @@ tail_call: ;
                         return;
                     }
                     Atom *next_atom = bindings_apply(&visible, a, body_let);
+                    if (preserve_bindings &&
+                        !bindings_builder_merge_commit(&current_env_builder, bb)) {
+                        bindings_free(&visible);
+                        bindings_builder_free(&b);
+                        return;
+                    }
                     bindings_free(&visible);
                     bindings_builder_free(&b);
                     TAIL_REENTER(next_atom);
@@ -4994,9 +5007,19 @@ tail_call: ;
                     bindings_builder_free(&b);
                     continue;
                 }
+                Bindings branch_outer_owned;
+                const Bindings *branch_outer = CURRENT_ENV;
+                if (preserve_bindings &&
+                    !branch_outer_env_begin(&branch_outer_owned, &branch_outer,
+                                            CURRENT_ENV, bb)) {
+                    bindings_free(&visible);
+                    bindings_builder_free(&b);
+                    continue;
+                }
                 eval_for_current_caller(s, a, NULL,
                                         bindings_apply(&visible, a, body_let), fuel, &_empty,
-                                        CURRENT_ENV, preserve_bindings, os);
+                                        branch_outer, preserve_bindings, os);
+                branch_outer_env_finish(&branch_outer_owned, branch_outer);
                 bindings_free(&visible);
                 bindings_builder_free(&b);
             } else {
@@ -5010,10 +5033,20 @@ tail_call: ;
                         bindings_builder_free(&b);
                         continue;
                     }
+                    Bindings branch_outer_owned;
+                    const Bindings *branch_outer = CURRENT_ENV;
+                    if (preserve_bindings &&
+                        !branch_outer_env_begin(&branch_outer_owned, &branch_outer,
+                                                CURRENT_ENV, bb)) {
+                        bindings_free(&visible);
+                        bindings_builder_free(&b);
+                        continue;
+                    }
                     eval_for_current_caller(s, a, NULL,
                                             bindings_apply(&visible, a, body_let),
                                             fuel, &_empty,
-                                            CURRENT_ENV, preserve_bindings, os);
+                                            branch_outer, preserve_bindings, os);
+                    branch_outer_env_finish(&branch_outer_owned, branch_outer);
                     bindings_free(&visible);
                 }
                 bindings_builder_free(&b);
@@ -5074,6 +5107,13 @@ tail_call: ;
                     return;
                 }
                 next_atom = bindings_apply(&visible, a, tmpl_chain);
+                if (preserve_bindings &&
+                    !bindings_builder_merge_commit(&current_env_builder, bb)) {
+                    bindings_free(&visible);
+                    bindings_builder_free(&b);
+                    outcome_set_free(&inner);
+                    return;
+                }
                 outcome_set_free(&inner);
                 bindings_free(&visible);
                 bindings_builder_free(&b);

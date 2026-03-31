@@ -929,6 +929,63 @@ static bool atom_refs_only_query_visible_vars(Atom *atom,
     return true;
 }
 
+static Atom *bindings_apply_without_self_id(Bindings *full, Arena *a,
+                                            VarId skip_id, Atom *value) {
+    if (!value || !atom_has_vars(value) || !full || full->len == 0)
+        return value;
+    Bindings reduced;
+    if (!bindings_clone(&reduced, full))
+        return bindings_apply(full, a, value);
+    bool removed = false;
+    for (uint32_t i = 0; i < reduced.len; i++) {
+        if (reduced.entries[i].var_id != skip_id)
+            continue;
+        for (uint32_t j = i + 1; j < reduced.len; j++)
+            reduced.entries[j - 1] = reduced.entries[j];
+        reduced.len--;
+        reduced.lookup_cache_count = 0;
+        reduced.lookup_cache_next = 0;
+        removed = true;
+        break;
+    }
+    Atom *resolved = removed ? bindings_apply(&reduced, a, value)
+                             : bindings_apply(full, a, value);
+    bindings_free(&reduced);
+    return resolved;
+}
+
+static Atom *bindings_resolve_query_visible_var(Arena *a, const Bindings *full,
+                                                const QueryVisibleVar *wanted) {
+    Atom *exact = bindings_lookup_id((Bindings *)full, wanted->var_id);
+    if (exact) {
+        if (!atom_has_vars(exact))
+            return exact;
+        return bindings_apply_without_self_id((Bindings *)full, a,
+                                              wanted->var_id, exact);
+    }
+
+    Atom *slot_var = atom_var_with_spelling(a, wanted->spelling, wanted->var_id);
+    Atom *resolved = bindings_apply((Bindings *)full, a, slot_var);
+    if (resolved != slot_var)
+        return resolved;
+
+    uint32_t wanted_base = var_base_id(wanted->var_id);
+    if (wanted_base == 0)
+        return slot_var;
+    for (uint32_t i = full->len; i > 0; i--) {
+        const Binding *entry = &full->entries[i - 1];
+        if (var_base_id(entry->var_id) != wanted_base)
+            continue;
+        if (entry->spelling != wanted->spelling)
+            continue;
+        if (!atom_has_vars(entry->val))
+            return entry->val;
+        return bindings_apply_without_self_id((Bindings *)full, a,
+                                              entry->var_id, entry->val);
+    }
+    return slot_var;
+}
+
 static bool project_query_visible_bindings(Arena *a,
                                            const QueryVisibleVarSet *visible,
                                            const Bindings *full,
@@ -940,9 +997,8 @@ static bool project_query_visible_bindings(Arena *a,
     }
 
     for (uint32_t i = 0; i < visible->len; i++) {
-        Atom *var = atom_var_with_spelling(a, visible->items[i].spelling,
-                                           visible->items[i].var_id);
-        Atom *resolved = bindings_apply((Bindings *)full, a, var);
+        Atom *resolved =
+            bindings_resolve_query_visible_var(a, full, &visible->items[i]);
         if (resolved->kind == ATOM_VAR &&
             resolved->var_id == visible->items[i].var_id &&
             resolved->sym_id == visible->items[i].spelling) {
