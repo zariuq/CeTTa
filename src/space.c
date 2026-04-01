@@ -661,19 +661,25 @@ static void ensure_exact_index(Space *s) {
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
-void space_init(Space *s) {
+void space_init_with_universe(Space *s, const TermUniverse *universe) {
     s->atoms = NULL;
     s->start = 0;
     s->len = 0;
     s->cap = 0;
     s->kind = SPACE_KIND_ATOM;
+    s->universe = universe;
     eq_index_init(&s->eq_idx);
     ty_ann_index_init(&s->ty_idx);
     exact_index_init(&s->exact_idx);
     s->eq_idx_dirty = false;
     s->ty_idx_dirty = false;
     s->exact_idx_dirty = false;
+    s->revision = 0;
     space_match_backend_init(s);
+}
+
+void space_init(Space *s) {
+    space_init_with_universe(s, NULL);
 }
 
 void space_free(Space *s) {
@@ -682,10 +688,16 @@ void space_free(Space *s) {
     s->start = 0;
     s->len = 0;
     s->cap = 0;
+    s->universe = NULL;
+    s->revision = 0;
     eq_index_free(&s->eq_idx);
     ty_ann_index_free(&s->ty_idx);
     exact_index_free(&s->exact_idx);
     space_match_backend_free(s);
+}
+
+Atom *space_store_atom(const Space *s, Arena *fallback, Atom *atom) {
+    return term_universe_store_atom(s ? s->universe : NULL, fallback, atom);
 }
 
 static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
@@ -736,6 +748,13 @@ static void exact_index_rebuild(Space *s) {
     s->exact_idx_dirty = false;
 }
 
+static void space_bump_revision(Space *s) {
+    if (!s)
+        return;
+    s->revision++;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+}
+
 void space_add(Space *s, Atom *atom) {
     uint32_t idx = s->len;
     if (space_is_queue(s)) {
@@ -746,6 +765,7 @@ void space_add(Space *s, Atom *atom) {
         s->atoms[s->len] = atom;
     }
     s->len++;
+    space_bump_revision(s);
     if (space_is_queue(s) && s->start != 0) {
         space_mark_indexes_dirty(s);
         space_match_backend_note_remove(s);
@@ -768,7 +788,7 @@ void space_add(Space *s, Atom *atom) {
 
 Space *space_heap_clone_shallow(Space *src) {
     Space *clone = cetta_malloc(sizeof(Space));
-    space_init(clone);
+    space_init_with_universe(clone, src ? src->universe : NULL);
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
     for (uint32_t i = 0; i < src->len; i++) {
@@ -778,13 +798,19 @@ Space *space_heap_clone_shallow(Space *src) {
 }
 
 void space_replace_contents(Space *dst, Space *src) {
+    uint64_t old_revision = dst ? dst->revision : 0;
+    uint64_t src_revision = src ? src->revision : 0;
     space_free(dst);
     *dst = *src;
+    dst->revision = (old_revision > src_revision ? old_revision : src_revision) + 1;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
     src->atoms = NULL;
     src->start = 0;
     src->len = 0;
     src->cap = 0;
     src->kind = SPACE_KIND_ATOM;
+    src->universe = NULL;
+    src->revision = 0;
     eq_index_init(&src->eq_idx);
     ty_ann_index_init(&src->ty_idx);
     exact_index_init(&src->exact_idx);
@@ -821,6 +847,19 @@ void query_results_push_move(QueryResults *qr, Atom *result, Bindings *b) {
     qr->items[qr->len].result = result;
     bindings_move(&qr->items[qr->len].bindings, b);
     qr->len++;
+}
+
+uint32_t query_results_visit(const QueryResults *qr, QueryResultVisitor visitor,
+                             void *ctx) {
+    uint32_t visited = 0;
+    if (!qr || !visitor)
+        return 0;
+    for (uint32_t i = 0; i < qr->len; i++) {
+        visited++;
+        if (!visitor(qr->items[i].result, &qr->items[i].bindings, ctx))
+            break;
+    }
+    return visited;
 }
 
 void query_results_free(QueryResults *qr) {
@@ -1080,6 +1119,8 @@ Space *resolve_space(Registry *r, Atom *ref) {
 }
 
 bool space_remove(Space *s, Atom *atom) {
+    if (!s)
+        return false;
     if (space_is_queue(s))
         space_linearize(s);
     for (uint32_t i = 0; i < s->len; i++) {
@@ -1093,6 +1134,7 @@ bool space_remove(Space *s, Atom *atom) {
             }
             space_mark_indexes_dirty(s);
             space_match_backend_note_remove(s);
+            space_bump_revision(s);
             return true;
         }
     }
@@ -1126,6 +1168,7 @@ bool space_pop(Space *s, Atom **out) {
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
+    space_bump_revision(s);
     return true;
 }
 
@@ -1137,6 +1180,7 @@ bool space_truncate(Space *s, uint32_t new_len) {
         s->start = 0;
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
+    space_bump_revision(s);
     return true;
 }
 
@@ -1337,8 +1381,8 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom **atypes = NULL;
                         uint32_t nat = get_atom_types(s, a, atom->expr.elems[ai + 1], &atypes);
                         bool found = false;
-                        SearchMachine trial_machine;
-                        if (!search_machine_init(&trial_machine, &tb, &scratch)) {
+                        SearchContext trial_context;
+                        if (!search_context_init(&trial_context, &tb, &scratch)) {
                             free(atypes);
                             bindings_free(&tb);
                             free(types);
@@ -1348,19 +1392,19 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                             return 0;
                         }
                         for (uint32_t ti = 0; ti < nat; ti++) {
-                            SearchMachineMark mark = search_machine_save(&trial_machine);
+                            ChoicePoint point = search_context_save(&trial_context);
                             if (match_types_builder(arg_type_decl, atypes[ti],
-                                                    search_machine_builder(&trial_machine))) {
+                                                    search_context_builder(&trial_context))) {
                                 Bindings next_tb;
                                 bindings_init(&next_tb);
-                                search_machine_take(&trial_machine, &next_tb);
+                                search_context_take(&trial_context, &next_tb);
                                 bindings_replace(&tb, &next_tb);
                                 found = true;
                                 break;
                             }
-                            search_machine_rollback(&trial_machine, mark);
+                            search_context_rollback(&trial_context, point);
                         }
-                        search_machine_free(&trial_machine);
+                        search_context_free(&trial_context);
                         free(atypes);
                         if (!found) all_ok = false;
                     }

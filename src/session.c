@@ -324,6 +324,17 @@ int cetta_evaluator_options_effective_fuel_limit(const CettaEvaluatorOptions *op
     return options->fuel_limit;
 }
 
+const CettaEvalOptionEntry *cetta_evaluator_options_find(const CettaEvaluatorOptions *options,
+                                                         const char *key) {
+    if (!options || !key)
+        return NULL;
+    for (uint32_t i = 0; i < options->entry_len; i++) {
+        if (strcmp(options->entries[i].key, key) == 0)
+            return &options->entries[i];
+    }
+    return NULL;
+}
+
 bool cetta_eval_session_set_type_check_auto(CettaEvalSession *session, bool enabled) {
     if (!session) return false;
     session->options.type_check_auto = enabled;

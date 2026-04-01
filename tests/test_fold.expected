@@ -1,0 +1,4 @@
+[6]
+[(a b c)]
+[5]
+[(Error (fold (superpose (1)) 0 $acc $item (superpose ($acc $item))) ReduceStepMultipleResults)]

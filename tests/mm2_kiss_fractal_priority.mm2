@@ -1,0 +1,17 @@
+(trigger)
+
+(exec (0 (0 (0 0)))
+  (, (trigger))
+  (O (+ (fired (0 (0 (0 0)))))))
+
+(exec (0 (0 (1 0)))
+  (, (trigger))
+  (O (+ (fired (0 (0 (1 0)))))))
+
+(exec (0 (1 0))
+  (, (trigger))
+  (O (+ (fired (0 (1 0))))))
+
+(exec (1 0)
+  (, (trigger))
+  (O (+ (fired (1 0)))))

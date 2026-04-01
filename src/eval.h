@@ -3,7 +3,6 @@
 
 #include "atom.h"
 #include "space.h"
-
 typedef struct CettaLibraryContext CettaLibraryContext;
 
 /* ── Outcome: the unified result type for all evaluator functions ───────── */
