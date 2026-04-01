@@ -1,0 +1,15 @@
+!(let* (
+    (() (pragma! search-table-mode variant))
+    (() (add-atom &self (= (cache-probe reuse) one)))
+    (() (assertEqualToResult (cache-probe reuse) (one)))
+    (() (reset-runtime-stats!))
+    (() (add-atom &self (= (cache-probe reuse) two)))
+    (() (assertEqual (collapse (cache-probe reuse)) (one two)))
+    (() (remove-atom &self (= (cache-probe reuse) one)))
+    (() (assertEqualToResult (cache-probe reuse) (two)))
+    ($stats (runtime-stats!))
+    (() (assertEqualToResult
+          (match $stats (runtime-counter table-reuse $n) (> $n 0))
+          (True)))
+  )
+  ())

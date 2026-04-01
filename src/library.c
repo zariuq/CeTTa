@@ -109,6 +109,7 @@ void cetta_library_context_init(CettaLibraryContext *ctx) {
 void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
                                              const CettaProfile *profile) {
     cetta_eval_session_init(&ctx->session, profile);
+    ctx->term_universe.persistent_arena = NULL;
     ctx->active_mask = 0;
     ctx->root_dir[0] = '\0';
     ctx->script_dir[0] = '\0';
@@ -206,6 +207,17 @@ static const char *cetta_library_current_dir(CettaLibraryContext *ctx) {
         return ctx->script_dir;
     }
     return ".";
+}
+
+static const TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
+                                                        Arena *persistent_arena) {
+    if (!ctx || !persistent_arena)
+        return NULL;
+    if (!ctx->term_universe.persistent_arena)
+        ctx->term_universe.persistent_arena = persistent_arena;
+    if (ctx->term_universe.persistent_arena != persistent_arena)
+        return NULL;
+    return &ctx->term_universe;
 }
 
 static Space *logical_import_space(CettaLibraryContext *ctx, Space *space) {
@@ -1956,7 +1968,7 @@ static bool library_mork_build_space_bridge_snapshot(
         }
     }
 
-    if (!cetta_mork_bridge_space_size(bridge, out_unique_count)) {
+    if (!cetta_mork_bridge_space_unique_size(bridge, out_unique_count)) {
         cetta_mork_bridge_space_free(bridge);
         goto fail;
     }
@@ -2009,7 +2021,7 @@ static Atom *mork_space_open_act_native(CettaLibraryContext *ctx, Arena *a,
     if (!persistent_arena)
         persistent_arena = a;
     space = arena_alloc(persistent_arena, sizeof(Space));
-    space_init(space);
+    space_init_with_universe(space, cetta_library_space_universe(ctx, persistent_arena));
     space->kind = kind;
     if (!space_match_backend_try_set(space, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)) {
         return atom_error(a, library_call_expr(a, head, args, nargs),
@@ -2992,7 +3004,8 @@ static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
         *error_out = atom_symbol(eval_arena, "module space allocation failed");
         return NULL;
     }
-    space_init(entry->space);
+    space_init_with_universe(entry->space,
+                             cetta_library_space_universe(ctx, persistent_arena));
     entry->loading = true;
 
     bool ok = false;
@@ -3050,7 +3063,7 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
 
     Arena *dst = persistent_arena ? persistent_arena : eval_arena;
     Space *inventory = arena_alloc(dst, sizeof(Space));
-    space_init(inventory);
+    space_init_with_universe(inventory, cetta_library_space_universe(ctx, dst));
 
     const char *profile_name = (ctx->session.profile && ctx->session.profile->name) ?
         ctx->session.profile->name : "unknown";

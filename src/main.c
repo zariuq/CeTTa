@@ -556,6 +556,8 @@ static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
+    fputs("       note: --lang selects the driver/front-end; --profile selects the visible surface policy\n", out);
+    fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
@@ -571,6 +573,10 @@ static void print_usage(FILE *out) {
     fputs("       cetta --list-profiles\n", out);
     fputs("       cetta --list-space-match-backends\n", out);
     fputs("       cetta --list-languages\n", out);
+}
+
+static void print_version(FILE *out) {
+    fprintf(out, "cetta %s (%s)\n", CETTA_VERSION_STRING, CETTA_BUILD_MODE_STRING);
 }
 
 static const char *find_profile_blocked_surface(const CettaProfile *profile, Atom *atom) {
@@ -655,6 +661,10 @@ int main(int argc, char **argv) {
     SpaceMatchBackendKind match_backend_kind = SPACE_MATCH_BACKEND_NATIVE;
 
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
+            print_version(stdout);
+            return 0;
+        }
         if (strcmp(argv[i], "--list-languages") == 0) {
             cetta_language_print_inventory(stdout);
             return 0;
@@ -921,12 +931,21 @@ int main(int argc, char **argv) {
         return mm2_rc;
     }
 
+    CettaLibraryContext libraries;
+    cetta_library_context_init_with_profile(&libraries, profile);
+    libraries.term_universe.persistent_arena = &arena;
+    cetta_library_context_set_exec_path(&libraries, argv[0]);
+    cetta_library_context_set_script_path(&libraries, script_path);
+    cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
+    eval_set_library_context(&libraries);
+
     Space space;
-    space_init(&space);
+    space_init_with_universe(&space, &libraries.term_universe);
     if (!space_match_backend_try_set(&space, match_backend_kind)) {
         fprintf(stderr, "error: space match backend '%s' is recognized but not implemented yet\n",
                 space_match_backend_kind_name(match_backend_kind));
         free(atoms);
+        cetta_library_context_free(&libraries);
         arena_free(&eval_arena);
         arena_free(&arena);
         g_var_intern = NULL;
@@ -941,13 +960,6 @@ int main(int argc, char **argv) {
     Registry registry;
     registry_init(&registry);
     registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
-
-    CettaLibraryContext libraries;
-    cetta_library_context_init_with_profile(&libraries, profile);
-    cetta_library_context_set_exec_path(&libraries, argv[0]);
-    cetta_library_context_set_script_path(&libraries, script_path);
-    cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
-    eval_set_library_context(&libraries);
 
     /* Load precompiled stdlib equations into the space */
     stdlib_load(&space, &arena);

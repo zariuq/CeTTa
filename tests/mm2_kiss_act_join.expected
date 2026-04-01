@@ -1,0 +1,6 @@
+(likes Bob banana)
+(likes Alice apple)
+(likes Carol grape)
+(preference Bob likes banana which-is yellow)
+(preference Alice likes apple which-is red)
+(preference Carol likes grape which-is purple)

@@ -920,7 +920,7 @@ static bool module_add_export_constant(CettaForeignRuntime *rt, Space *target_sp
                               atom_symbol(persistent_arena, "="),
                               lhs,
                               rs.items[0]);
-        space_add(target_space, eq);
+        space_add(target_space, space_store_atom(target_space, persistent_arena, eq));
     }
     result_set_free(&rs);
     return ok;
@@ -944,7 +944,7 @@ static bool module_add_export_callable(CettaForeignRuntime *rt, Space *target_sp
                           atom_symbol(persistent_arena, "="),
                           lhs,
                           rhs);
-    space_add(target_space, eq);
+    space_add(target_space, space_store_atom(target_space, persistent_arena, eq));
     return true;
 }
 

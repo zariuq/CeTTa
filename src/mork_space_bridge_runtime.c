@@ -114,6 +114,7 @@ extern CettaMorkStatus mork_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
                                                     uint32_t atom_idx,
                                                     const uint8_t *text,
                                                     size_t len);
+extern CettaMorkStatus mork_space_logical_size(const CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_size(const CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_step(CettaMorkSpaceHandle *space,
                                        uint64_t steps);
@@ -263,6 +264,23 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
+bool cetta_mork_bridge_space_unique_size(const CettaMorkSpaceHandle *space,
+                                         uint64_t *out_unique_size) {
+    return cetta_mork_bridge_space_size(space, out_unique_size);
+}
+
+bool cetta_mork_bridge_space_logical_size(const CettaMorkSpaceHandle *space,
+                                          uint64_t *out_logical_size) {
+    if (!space) {
+        bridge_set_error("cannot size null MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_logical_size failed: ",
+                                    mork_space_logical_size(space),
+                                    out_logical_size,
+                                    bridge_free_bytes);
+}
+
 bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
                                   uint64_t steps,
                                   uint64_t *out_performed) {
@@ -360,6 +378,15 @@ bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
     *out_indices = indices;
     *out_count = buf.count;
     return true;
+}
+
+bool cetta_mork_bridge_space_query_candidates(CettaMorkSpaceHandle *space,
+                                              const uint8_t *pattern,
+                                              size_t len,
+                                              uint32_t **out_indices,
+                                              uint32_t *out_count) {
+    return cetta_mork_bridge_space_query_indices(space, pattern, len,
+                                                 out_indices, out_count);
 }
 
 bool cetta_mork_bridge_space_query_bindings(CettaMorkSpaceHandle *space,
@@ -485,6 +512,7 @@ typedef struct CettaMorkBridgeApi {
                                                uint32_t atom_idx,
                                                const uint8_t *text,
                                                size_t len);
+    CettaMorkStatus (*space_logical_size)(const CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_size)(const CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_step)(CettaMorkSpaceHandle *space, uint64_t steps);
     CettaMorkStatus (*space_dump_act_file)(CettaMorkSpaceHandle *space,
@@ -629,6 +657,9 @@ static bool bridge_load_api(void) {
         return false;
     }
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_logical_size,
+        "mork_space_logical_size");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_query_bindings_query_only_v2,
         "mork_space_query_bindings_query_only_v2");
     bridge_resolve_symbol_optional(
@@ -727,6 +758,27 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
     return bridge_take_status_value("mork_space_size failed: ",
                                     g_mork_bridge_api.space_size(space),
                                     out_size,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_unique_size(const CettaMorkSpaceHandle *space,
+                                         uint64_t *out_unique_size) {
+    return cetta_mork_bridge_space_size(space, out_unique_size);
+}
+
+bool cetta_mork_bridge_space_logical_size(const CettaMorkSpaceHandle *space,
+                                          uint64_t *out_logical_size) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot size null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_logical_size) {
+        bridge_set_error("mork_space_logical_size is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_logical_size failed: ",
+                                    g_mork_bridge_api.space_logical_size(space),
+                                    out_logical_size,
                                     bridge_free_bytes);
 }
 

@@ -1,0 +1,11 @@
+!(assertEqual (size ()) 0)
+!(assertEqual (size (a)) 1)
+!(assertEqual (size (a b c)) 3)
+
+!(bind! &s (new-space hash))
+!(assertEqualToResult (size &s) (0))
+!(add-atom &s alpha)
+!(add-atom &s beta)
+!(assertEqualToResult (size &s) (2))
+!(assertEqual (size &s) (space-len &s))
+!(assertEqual (size &s) (count-atoms &s))

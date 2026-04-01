@@ -1,0 +1,9 @@
+(task milk)
+(trigger)
+
+(exec (0 complete)
+  (, (trigger)
+     (task $name))
+  (O (+ (done $name))
+     (- (task $name))
+     (- (trigger))))

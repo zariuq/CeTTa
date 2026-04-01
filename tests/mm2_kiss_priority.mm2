@@ -1,0 +1,11 @@
+(ready)
+
+(exec (1 second)
+  (, (ready))
+  (O (+ (ran second))
+     (- (ready))))
+
+(exec (0 first)
+  (, (ready))
+  (O (+ (ran first))
+     (- (ready))))

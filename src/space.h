@@ -4,6 +4,7 @@
 #include "atom.h"
 #include "match.h"
 #include "subst_tree.h"
+#include "term_universe.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -109,19 +110,23 @@ typedef struct Space {
     uint32_t start;
     uint32_t len, cap;
     SpaceKind kind;
+    const TermUniverse *universe;
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
     ExactAtomIndex exact_idx; /* exact stable-atom membership index */
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
+    uint64_t revision;
     /* Matching backend is explicit so future PathMap/MORK import can slot in
        behind one seam instead of rewriting eval.c again. */
     SpaceMatchBackend match_backend;
 } Space;
 
+void space_init_with_universe(Space *s, const TermUniverse *universe);
 void space_init(Space *s);
 void space_free(Space *s);
+Atom *space_store_atom(const Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_linearize(Space *s);
 Space *space_heap_clone_shallow(Space *src);
@@ -137,6 +142,9 @@ Atom *space_peek(const Space *s);
 bool space_pop(Space *s, Atom **out);
 bool space_truncate(Space *s, uint32_t new_len);
 uint32_t space_length(const Space *s);
+static inline uint64_t space_revision(const Space *s) {
+    return s ? s->revision : 0;
+}
 bool space_contains_exact(Space *s, Atom *atom);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 
@@ -154,9 +162,14 @@ typedef struct {
     uint32_t len, cap;
 } QueryResults;
 
+typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
+                                   void *ctx);
+
 void query_results_init(QueryResults *qr);
 void query_results_push(QueryResults *qr, Atom *result, Bindings *b);
 void query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
+uint32_t query_results_visit(const QueryResults *qr, QueryResultVisitor visitor,
+                             void *ctx);
 void query_results_free(QueryResults *qr);
 
 /* Find all (= lhs rhs) in space where lhs matches query (bidirectional).

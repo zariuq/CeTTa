@@ -1,0 +1,10 @@
+Function reduce: (-> Atom Atom Variable Variable Atom %Undefined%) Compatibility alias for fold. Prefer (fold results init $acc $item step) in new code. The policy form (reduce (search-policy lane) results init $acc $item step) remains supported for legacy call sites.
+Parameters:
+  Atom Result expression to evaluate
+  Atom Initial accumulator value
+  Variable Accumulator binder
+  Variable Current item binder
+  Atom Step expression that yields the next accumulator
+Return: (type %Undefined%) Final accumulator value after folding the surviving results
+[(@doc-formal (@item reduce) (@kind function) (@type (-> Atom Atom Variable Variable Atom %Undefined%)) (@desc "Compatibility alias for fold. Prefer (fold results init $acc $item step) in new code. The policy form (reduce (search-policy lane) results init $acc $item step) remains supported for legacy call sites.") (@params ((@param (@type Atom) (@desc "Result expression to evaluate")) (@param (@type Atom) (@desc "Initial accumulator value")) (@param (@type Variable) (@desc "Accumulator binder")) (@param (@type Variable) (@desc "Current item binder")) (@param (@type Atom) (@desc "Step expression that yields the next accumulator")))) (@return (@type %Undefined%) (@desc "Final accumulator value after folding the surviving results")))]
+[()]

@@ -983,6 +983,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.op_plus) return make_numeric(a, na.val + nb.val, fl);
     if (head_id == g_builtin_syms.op_minus) return make_numeric(a, na.val - nb.val, fl);
     if (head_id == g_builtin_syms.op_mul) return make_numeric(a, na.val * nb.val, fl);
+    /* Keep IEEE float division semantics so `isnan-math` / `isinf-math`
+       remain usable on direct arithmetic results. */
     if (head_id == g_builtin_syms.op_div) return nb.val != 0 ? make_numeric(a, na.val / nb.val, fl)
                                                               : atom_float(a, na.val / nb.val);
     if (head_id == g_builtin_syms.op_mod) return nb.val != 0 ? make_numeric(a, fmod(na.val, nb.val), fl)

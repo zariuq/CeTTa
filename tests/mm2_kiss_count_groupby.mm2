@@ -1,0 +1,10 @@
+(color apple red)
+(color strawberry red)
+(color cherry red)
+(color banana yellow)
+(color lemon yellow)
+(color grape purple)
+
+(exec (test-groupby)
+      (, (color $fruit $c))
+      (O (count (count-by-color $c $k) $k $fruit)))

@@ -28,6 +28,10 @@ static int cmp_uint32(const void *a, const void *b) {
 }
 
 static bool imported_ensure_bridge_space(PathmapImportedState *st);
+static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
+                                         SubstMatchSet *out);
+static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
+                                            SubstMatchSet *out);
 
 static uint32_t sort_unique_uint32(uint32_t *items, uint32_t len) {
     if (!items || len <= 1)
@@ -58,6 +62,23 @@ static __attribute__((unused)) bool imported_atom_has_vars(const Atom *atom) {
     case ATOM_EXPR:
         for (uint32_t i = 0; i < atom->expr.len; i++) {
             if (imported_atom_has_vars(atom->expr.elems[i]))
+                return true;
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+static bool imported_atom_has_epoch_vars(const Atom *atom) {
+    if (!atom)
+        return false;
+    switch (atom->kind) {
+    case ATOM_VAR:
+        return var_epoch_suffix(atom->var_id) != 0;
+    case ATOM_EXPR:
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (imported_atom_has_epoch_vars(atom->expr.elems[i]))
                 return true;
         }
         return false;
@@ -1122,7 +1143,7 @@ bool space_match_backend_step(Space *s, Arena *persistent_arena,
     }
 
     fresh = cetta_malloc(sizeof(Space));
-    space_init(fresh);
+    space_init_with_universe(fresh, s ? s->universe : NULL);
     fresh->kind = s->kind;
     if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
         goto done;
@@ -1201,7 +1222,7 @@ bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
     }
 
     fresh = cetta_malloc(sizeof(Space));
-    space_init(fresh);
+    space_init_with_universe(fresh, s ? s->universe : NULL);
     fresh->kind = s->kind;
     if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
         goto done;
@@ -1433,6 +1454,7 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
                                     Arena *a, SubstMatchSet *out) {
     for (uint32_t i = 0; i < bucket->len; i++) {
         const ImportedFlatEntry *entry = &bucket->entries[i];
+        uint32_t match_epoch = fresh_var_suffix();
         if (entry->len == 0 || qlen == 0) continue;
         uint32_t qnext = 0, cnext = 0;
         ImportedCorefState refs = {0};
@@ -1443,9 +1465,9 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
             qnext == qlen && cnext == entry->len) {
             Bindings b;
             if (imported_materialize_bindings(&refs, qtokens, entry->tokens,
-                                              entry->epoch, a, &b) &&
+                                              match_epoch, a, &b) &&
                 !bindings_has_loop(&b)) {
-                subst_matchset_push(out, entry->atom_idx, entry->epoch, &b, true);
+                subst_matchset_push(out, entry->atom_idx, match_epoch, &b, true);
                 bindings_free(&b);
                 continue;
             }
@@ -1458,10 +1480,10 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
             qnext = 0;
             cnext = 0;
             if (imported_match_subtree_legacy(qtokens, 0, entry->tokens, 0, &b, a,
-                                              entry->epoch, &qnext, &cnext, 64) &&
+                                              match_epoch, &qnext, &cnext, 64) &&
                 qnext == qlen && cnext == entry->len &&
                 !bindings_has_loop(&b)) {
-                subst_matchset_push(out, entry->atom_idx, entry->epoch, &b, true);
+                subst_matchset_push(out, entry->atom_idx, match_epoch, &b, true);
             }
             bindings_free(&b);
         }
@@ -1653,9 +1675,10 @@ cleanup:
     return success;
 }
 
-static bool imported_bridge_query_bindings_query_only_v2(Space *s, Arena *a,
-                                                         Atom *query,
-                                                         SubstMatchSet *out) {
+static __attribute__((unused)) bool
+imported_bridge_query_bindings_query_only_v2(Space *s, Arena *a,
+                                             Atom *query,
+                                             SubstMatchSet *out) {
     PathmapImportedState *st = &s->match_backend.imported;
     uint32_t logical_len = imported_logical_len(s);
     Arena scratch;
@@ -1882,19 +1905,23 @@ static void imported_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) 
         smset_init(out);
         return;
     }
+    if (imported_atom_has_epoch_vars(query)) {
+        /* Equation evaluation freshens local vars before re-entering the body.
+           Imported flat matching is too brittle on these recursive epoch-tagged
+           queries. Use the imported bridge only as a candidate selector, then
+           let CeTTa's native matcher do the actual unification. */
+        imported_epoch_query_candidates(s, a, query, out);
+        return;
+    }
     if (!st->bridge_active) {
         imported_query_flat(s, a, query, out);
         return;
     }
-    if (imported_bridge_query_bindings_query_only_v2(s, a, query, out)) {
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_IMPORTED_BRIDGE_V2_HIT);
-        if (st->attached_compiled)
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATTACHED_ACT_QUERY);
-        return;
-    }
-    /* Query-only v2 is a strict unary fast path. If the bridge packet is
-       unavailable or semantically unsupported, fall back to CeTTa-native
-       candidate enumeration and local rematch. */
+    /* Query-only v2 remains in the tree as an experiment, but it is currently
+       disabled because bridge-side binding packets were semantically brittle on
+       real recursive workloads. The active imported strategy is: use the bridge
+       for candidate selection only, then rematch locally with native CeTTa
+       semantics. */
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_IMPORTED_BRIDGE_V2_FALLBACK);
     if (st->attached_compiled) {
         if (!space_match_backend_materialize_attached(
@@ -1986,6 +2013,40 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
             subst_matchset_push(out, idx, epoch, &b, false);
         }
         bindings_free(&b);
+    }
+    free(candidates);
+}
+
+static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
+                                            SubstMatchSet *out) {
+    PathmapImportedState *st = &s->match_backend.imported;
+    if (st->attached_compiled) {
+        Arena *persist = eval_current_persistent_arena();
+        if (!space_match_backend_materialize_attached(s, persist ? persist : a)) {
+            smset_init(out);
+            return;
+        }
+        imported_ensure_built(s);
+    }
+
+    uint32_t *candidates = NULL;
+    uint32_t ncand = 0;
+    if (!(st->bridge_active &&
+          imported_bridge_query_indices(s, query, &candidates, &ncand))) {
+        native_candidate_exact_query(s, a, query, out);
+        free(candidates);
+        return;
+    }
+
+    smset_init(out);
+    for (uint32_t i = 0; i < ncand; i++) {
+        Bindings empty;
+        bindings_init(&empty);
+        /* Candidate-index mode intentionally carries no bridge-produced
+           bindings. The imported bridge narrows the candidate rows; the caller
+           performs the exact native rematch against each candidate atom. */
+        subst_matchset_push(out, candidates[i], fresh_var_suffix(), &empty, false);
+        bindings_free(&empty);
     }
     free(candidates);
 }

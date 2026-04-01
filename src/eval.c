@@ -6,6 +6,8 @@
 #include "library.h"
 #include "mork_space_bridge_runtime.h"
 #include "stats.h"
+#include "table_store.h"
+#include "term_universe.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,8 +15,12 @@
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static Registry *g_registry = NULL;
-/* Persistent arena for atoms that outlive a single evaluation (space, states) */
-static Arena *g_persistent_arena = NULL;
+/* Current evaluation root space and persistent fallback. */
+static Space *g_eval_root_space = NULL;
+static TermUniverse g_eval_fallback_universe = {0};
+/* Query cache for the current logical evaluation episode. */
+static TableStore g_episode_table;
+static bool g_episode_table_ready = false;
 /* Active importable library set */
 static CettaLibraryContext *g_library_context = NULL;
 static CettaEvalSession g_fallback_eval_session;
@@ -63,6 +69,46 @@ static bool eval_bare_minimal_enabled(void) {
 
 static int current_eval_fuel_limit(void) {
     return cetta_evaluator_options_effective_fuel_limit(active_eval_options_const());
+}
+
+static const CettaEvalOptionEntry *active_eval_option(const char *key) {
+    return cetta_evaluator_options_find(active_eval_options_const(), key);
+}
+
+static CettaTableMode active_search_table_mode(void) {
+    const CettaEvalOptionEntry *table_mode = active_eval_option("search-table-mode");
+    if (table_mode && table_mode->kind == CETTA_EVAL_OPTION_VALUE_SYMBOL) {
+        if (strcmp(table_mode->repr, "variant") == 0) {
+            return CETTA_TABLE_MODE_VARIANT;
+        }
+    }
+    return CETTA_TABLE_MODE_NONE;
+}
+
+static TableStore *eval_active_episode_table(void) {
+    CettaTableMode mode = active_search_table_mode();
+    if (mode == CETTA_TABLE_MODE_NONE) {
+        if (g_episode_table_ready) {
+            table_store_free(&g_episode_table);
+            g_episode_table_ready = false;
+        }
+        return NULL;
+    }
+    if (!g_episode_table_ready) {
+        table_store_init(&g_episode_table, mode);
+        g_episode_table_ready = true;
+    } else if (g_episode_table.mode != mode) {
+        table_store_free(&g_episode_table);
+        table_store_init(&g_episode_table, mode);
+    }
+    return &g_episode_table;
+}
+
+static void eval_release_episode_table(void) {
+    if (!g_episode_table_ready)
+        return;
+    table_store_free(&g_episode_table);
+    g_episode_table_ready = false;
 }
 
 /* ── Result Set ─────────────────────────────────────────────────────────── */
@@ -117,108 +163,41 @@ static Atom *registry_lookup_atom(Atom *atom) {
     return registry_lookup_id(g_registry, atom->sym_id);
 }
 
-typedef struct {
-    VarId old_id;
-    Atom *canonical;
-} PersistentVarCanonEntry;
-
-typedef struct {
-    PersistentVarCanonEntry *items;
-    uint32_t len;
-    uint32_t cap;
-} PersistentVarCanonMap;
-
-static void persistent_var_canon_map_init(PersistentVarCanonMap *map) {
-    map->items = NULL;
-    map->len = 0;
-    map->cap = 0;
-}
-
-static void persistent_var_canon_map_free(PersistentVarCanonMap *map) {
-    free(map->items);
-    map->items = NULL;
-    map->len = 0;
-    map->cap = 0;
-}
-
-static Atom *persistent_var_canon_map_lookup(PersistentVarCanonMap *map, VarId old_id) {
-    for (uint32_t i = 0; i < map->len; i++) {
-        if (map->items[i].old_id == old_id)
-            return map->items[i].canonical;
-    }
+static const TermUniverse *eval_current_term_universe(void) {
+    if (g_eval_root_space && g_eval_root_space->universe)
+        return g_eval_root_space->universe;
+    if (g_library_context && g_library_context->term_universe.persistent_arena)
+        return &g_library_context->term_universe;
+    if (g_eval_fallback_universe.persistent_arena)
+        return &g_eval_fallback_universe;
     return NULL;
 }
 
-static Atom *persistent_var_canon_map_add(PersistentVarCanonMap *map, Arena *dst,
-                                          Atom *var) {
-    uint32_t ordinal = map->len + 1;
-    VarId canonical_id = ((VarId)ordinal << 32) | (VarId)ordinal;
-    Atom *fresh = atom_var_with_spelling(dst, var->sym_id, canonical_id);
-    if (map->len >= map->cap) {
-        map->cap = map->cap ? map->cap * 2 : 8;
-        map->items = cetta_realloc(map->items,
-                                   sizeof(PersistentVarCanonEntry) * map->cap);
-    }
-    map->items[map->len].old_id = var->var_id;
-    map->items[map->len].canonical = fresh;
-    map->len++;
-    return fresh;
+static Arena *eval_persistent_arena(void) {
+    const TermUniverse *universe = eval_current_term_universe();
+    return universe ? universe->persistent_arena : NULL;
 }
 
-static bool atom_contains_epoch_var(Atom *atom) {
-    if (!atom)
-        return false;
-    switch (atom->kind) {
-    case ATOM_VAR:
-        return var_epoch_suffix(atom->var_id) != 0;
-    case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
-            if (atom_contains_epoch_var(atom->expr.elems[i]))
-                return true;
-        }
-        return false;
-    default:
-        return false;
-    }
+static Arena *eval_storage_arena(Arena *fallback) {
+    Arena *persistent = eval_persistent_arena();
+    return persistent ? persistent : fallback;
 }
 
-static Atom *persistent_canonical_var_copy_rec(Arena *dst, Atom *src,
-                                               PersistentVarCanonMap *map) {
-    switch (src->kind) {
-    case ATOM_VAR: {
-        Atom *existing = persistent_var_canon_map_lookup(map, src->var_id);
-        if (existing)
-            return existing;
-        return persistent_var_canon_map_add(map, dst, src);
-    }
-    case ATOM_EXPR: {
-        Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
-        for (uint32_t i = 0; i < src->expr.len; i++) {
-            elems[i] = persistent_canonical_var_copy_rec(dst, src->expr.elems[i], map);
-        }
-        return atom_expr(dst, elems, src->expr.len);
-    }
-    default:
-        return atom_deep_copy_shared(dst, src);
-    }
+static bool eval_storage_is_persistent(const Arena *arena) {
+    Arena *persistent = eval_persistent_arena();
+    return persistent && persistent == arena;
 }
 
-static Atom *persistent_store_atom_copy(Arena *dst, Atom *src) {
-    if (dst != g_persistent_arena)
+static Atom *eval_store_atom(Arena *dst, Atom *src) {
+    if (!eval_storage_is_persistent(dst))
         return atom_deep_copy(dst, src);
-    if (!atom_contains_epoch_var(src))
-        return atom_deep_copy_shared(dst, src);
+    return term_universe_store_atom(eval_current_term_universe(), dst, src);
+}
 
-    PersistentVarCanonMap map;
-    persistent_var_canon_map_init(&map);
-    /*
-     * Persisted atoms must not retain match-epoch-only variable ids.
-     * Canonicalize any epoch-tagged vars so later space rematch can safely
-     * re-epoch by base id without collapsing previously distinct vars.
-     */
-    Atom *stored = persistent_canonical_var_copy_rec(dst, src, &map);
-    persistent_var_canon_map_free(&map);
-    return stored;
+static Atom *space_compare_atom(const Space *space, Arena *dst, Atom *src) {
+    if (space && space->universe && space->universe->persistent_arena)
+        return term_universe_canonicalize_atom(dst, src);
+    return atom_deep_copy(dst, src);
 }
 
 /* ── Outcome set (unified result type: atom + bindings) ─────────────────── */
@@ -691,7 +670,7 @@ static bool is_capture_closure(Atom *atom) {
 static Atom *materialize_runtime_token(Space *s, Arena *a, Atom *atom) {
     if (!atom_is_symbol_id(atom, g_builtin_syms.capture))
         return atom;
-    Arena *dst = g_persistent_arena ? g_persistent_arena : a;
+    Arena *dst = eval_storage_arena(a);
     CaptureClosure *closure = arena_alloc(dst, sizeof(CaptureClosure));
     closure->space_ptr = s;
     closure->options = *active_eval_options_const();
@@ -1935,6 +1914,119 @@ bindings_merge_attempt_finish(BindingsBuilder *builder,
     }
 }
 
+static void query_equations_cache_store(TableStore *table, Space *s,
+                                        uint64_t revision, Atom *query,
+                                        const QueryResults *results) {
+    if (!table)
+        return;
+    TableQueryHandle handle = {0};
+    if (!table_store_begin_query(table, s, revision, query, &handle))
+        return;
+    for (uint32_t i = 0; i < results->len; i++) {
+        if (!table_store_add_answer(&handle, results->items[i].result,
+                                    &results->items[i].bindings)) {
+            table_store_abort_query(&handle);
+            return;
+        }
+    }
+    if (!table_store_commit_query(&handle))
+        table_store_abort_query(&handle);
+}
+
+static void query_equations_cached(Space *s, Atom *query, Arena *a,
+                                   QueryResults *out) {
+    TableStore *table = eval_active_episode_table();
+    if (!table) {
+        query_equations(s, query, a, out);
+        return;
+    }
+    uint64_t revision = space_revision(s);
+    if (table_store_lookup(table, s, revision, query, a, out))
+        return;
+    query_equations(s, query, a, out);
+    query_equations_cache_store(table, s, revision, query, out);
+}
+
+static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
+                            const Bindings *prefix, bool preserve_bindings,
+                            OutcomeSet *os);
+
+static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
+                                             QueryResultVisitor visitor,
+                                             void *ctx) {
+    TableStore *table = eval_active_episode_table();
+    uint64_t revision = space_revision(s);
+    uint32_t visited = 0;
+    if (table && table_store_lookup_visit(table, s, revision, query, a,
+                                          visitor, ctx, &visited))
+        return visited;
+    QueryResults results;
+    query_results_init(&results);
+    query_equations(s, query, a, &results);
+    visited = query_results_visit(&results, visitor, ctx);
+    query_equations_cache_store(table, s, revision, query, &results);
+    query_results_free(&results);
+    return visited;
+}
+
+typedef struct {
+    Space *space;
+    Arena *arena;
+    Atom *declared_type;
+    int fuel;
+    const Bindings *base_env;
+    bool preserve_bindings;
+    SearchContext *context;
+    OutcomeSet *outcomes;
+} QueryEvalVisitorCtx;
+
+static bool query_visit_eval_for_caller(Atom *result, const Bindings *bindings,
+                                        void *ctx) {
+    QueryEvalVisitorCtx *query_eval = ctx;
+    BindingsMergeAttempt attempt;
+    if (!bindings_builder_merge_or_clone(search_context_builder(query_eval->context),
+                                         query_eval->base_env,
+                                         bindings,
+                                         &attempt)) {
+        return true;
+    }
+    eval_for_caller(query_eval->space,
+                    query_eval->arena,
+                    result_eval_type_hint(query_eval->declared_type, result),
+                    result,
+                    query_eval->fuel,
+                    attempt.env,
+                    query_eval->preserve_bindings,
+                    query_eval->outcomes);
+    bindings_merge_attempt_finish(search_context_builder(query_eval->context),
+                                  &attempt);
+    return true;
+}
+
+static bool query_result_apply_single_tail(SearchContext *context,
+                                           const Bindings *base_env,
+                                           Arena *a,
+                                           Atom *declared_type,
+                                           const QueryResult *result,
+                                           Atom **tail_next,
+                                           Atom **tail_type,
+                                           Bindings *tail_env) {
+    BindingsMergeAttempt attempt;
+    if (!bindings_builder_merge_or_clone(search_context_builder(context),
+                                         base_env,
+                                         &result->bindings,
+                                         &attempt)) {
+        return false;
+    }
+    *tail_next = (attempt.env->len == 0)
+        ? result->result
+        : bindings_apply((Bindings *)attempt.env, a, result->result);
+    *tail_type = result_eval_type_hint(declared_type, result->result);
+    bindings_copy(tail_env, attempt.env);
+    bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+    return true;
+}
+
 static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                         Atom ***out_types);
 
@@ -2390,16 +2482,18 @@ static Space *space_persistent_clone(Space *src, Arena *dst) {
     if (!space_match_backend_materialize_attached(src, dst))
         return NULL;
     Space *clone = arena_alloc(dst, sizeof(Space));
-    space_init(clone);
+    space_init_with_universe(clone, src ? src->universe : NULL);
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
     for (uint32_t i = 0; i < space_length(src); i++) {
-        space_add(clone, persistent_store_atom_copy(dst, space_get_at(src, i)));
+        Atom *stored = space_store_atom(clone, dst, space_get_at(src, i));
+        space_add(clone, stored);
     }
     return clone;
 }
 
 void eval_release_temporary_spaces(void) {
+    eval_release_episode_table();
     for (uint32_t i = 0; i < g_temp_spaces.len; i++) {
         space_free(g_temp_spaces.items[i]);
         free(g_temp_spaces.items[i]);
@@ -2415,7 +2509,7 @@ Registry *eval_current_registry(void) {
 }
 
 Arena *eval_current_persistent_arena(void) {
-    return g_persistent_arena;
+    return eval_persistent_arena();
 }
 
 static const char *string_like_atom(Atom *atom) {
@@ -2460,7 +2554,7 @@ static ImportDestination resolve_import_destination(Arena *a, Atom *target, Atom
     }
 
     Space *ns = cetta_malloc(sizeof(Space));
-    space_init(ns);
+    space_init_with_universe(ns, eval_current_term_universe());
     dest.space = ns;
     dest.bind_key = target->sym_id;
     dest.is_fresh = true;
@@ -2544,28 +2638,44 @@ static void result_set_resolve_registry_refs(Arena *a, ResultSet *rs) {
     }
 }
 
-/* Lightweight snapshot: shares atom pointers (no deep copy).
-   The snapshot's atoms[] is a frozen copy of the source's pointer array.
-   Safe because: atoms in the source live in the persistent arena and are
-   never mutated or freed during evaluation.  The snapshot only needs its
-   own atoms[] array (malloc'd) and indexes; space_free handles that. */
+/* Snapshot clone: shares atom pointers but freezes the source's logical view.
+   Safe because atoms live in persistent storage and are immutable; the
+   snapshot owns only its atoms[] array and per-space indexes/backend state. */
+static void space_snapshot_copy_logical_view(Space *dst, const Space *src) {
+    uint32_t n;
+
+    if (!dst || !src)
+        return;
+    n = space_length(src);
+    dst->revision = space_revision(src);
+    if (n == 0)
+        return;
+
+    dst->atoms = cetta_malloc(sizeof(Atom *) * n);
+    dst->cap = n;
+    dst->len = n;
+    dst->start = 0;
+    for (uint32_t i = 0; i < n; i++)
+        dst->atoms[i] = space_get_at(src, i);
+
+    /* The clone starts with no rebuilt indexes; they must be derived from the
+       frozen logical view on first use. */
+    dst->eq_idx_dirty = true;
+    dst->ty_idx_dirty = true;
+    dst->exact_idx_dirty = true;
+}
+
 static Space *space_snapshot_clone(Space *src, Arena *a) {
-    (void)a;
     if (!space_match_backend_materialize_attached(
-            src, g_persistent_arena ? g_persistent_arena : a))
+            src, eval_storage_arena(a)))
         return NULL;
     Space *clone = cetta_malloc(sizeof(Space));
-    space_init(clone);
+    space_init_with_universe(clone, src ? src->universe : NULL);
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
-    uint32_t n = space_length(src);
-    if (n > 0) {
-        clone->cap = n;
-        clone->atoms = cetta_malloc(sizeof(Atom *) * clone->cap);
-        memcpy(clone->atoms, src->atoms, sizeof(Atom *) * n);
-        clone->len = n;
-    }
-    /* Backend indexes are rebuilt lazily on first match against the snapshot. */
+    space_snapshot_copy_logical_view(clone, src);
+    /* Backend indexes are rebuilt lazily on first match against the snapshot;
+       the clone only freezes the logical atom sequence. */
     temp_space_register(clone);
     return clone;
 }
@@ -2708,8 +2818,8 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             Atom **atypes = NULL;
             uint32_t nat = get_atom_types_profiled(s, a, atom->expr.elems[ai + 1], &atypes);
             bool found = false;
-            SearchMachine trial_machine;
-            if (!search_machine_init(&trial_machine, &tb, &scratch)) {
+            SearchContext trial_context;
+            if (!search_context_init(&trial_context, &tb, &scratch)) {
                 free(atypes);
                 bindings_free(&tb);
                 free(types);
@@ -2720,26 +2830,26 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             }
 
             for (uint32_t ti = 0; ti < nat; ti++) {
-                SearchMachineMark mark = search_machine_save(&trial_machine);
+                ChoicePoint point = search_context_save(&trial_context);
                 if (match_types_builder(decl, atypes[ti],
-                                        search_machine_builder(&trial_machine))) {
-                    Atom *arg_term = bindings_apply((Bindings *)search_machine_bindings(&trial_machine),
-                                                    search_machine_scratch(&trial_machine),
+                                        search_context_builder(&trial_context))) {
+                    Atom *arg_term = bindings_apply((Bindings *)search_context_bindings(&trial_context),
+                                                    search_context_scratch(&trial_context),
                                                     atom->expr.elems[ai + 1]);
-                    if (bind_domain_binder_builder(search_machine_builder(&trial_machine),
+                    if (bind_domain_binder_builder(search_context_builder(&trial_context),
                                                   fresh_ft->expr.elems[ai + 1],
                                                   arg_term)) {
                         Bindings next_tb;
                         bindings_init(&next_tb);
-                        search_machine_take(&trial_machine, &next_tb);
+                        search_context_take(&trial_context, &next_tb);
                         bindings_replace(&tb, &next_tb);
                         found = true;
                         break;
                     }
                 }
-                search_machine_rollback(&trial_machine, mark);
+                search_context_rollback(&trial_context, point);
             }
-            search_machine_free(&trial_machine);
+            search_context_free(&trial_context);
             free(atypes);
             if (!found) {
                 all_ok = false;
@@ -2864,8 +2974,8 @@ static bool check_function_applicable(
                 free(atypes);
                 continue;
             }
-            SearchMachine candidate_machine;
-            if (!search_machine_init(&candidate_machine, &results[r], NULL)) {
+            SearchContext candidate_context;
+            if (!search_context_init(&candidate_context, &results[r], NULL)) {
                 free(atypes);
                 for (uint32_t rr = 0; rr < 64; rr++) {
                     bindings_free(&results[rr]);
@@ -2874,27 +2984,27 @@ static bool check_function_applicable(
                 return false;
             }
             for (uint32_t t = 0; t < natypes; t++) {
-                SearchMachineMark mark = search_machine_save(&candidate_machine);
+                ChoicePoint point = search_context_save(&candidate_context);
                 if (match_types_builder(expected, atypes[t],
-                                        search_machine_builder(&candidate_machine))) {
-                    if (!bind_domain_binder_builder(search_machine_builder(&candidate_machine),
+                                        search_context_builder(&candidate_context))) {
+                    if (!bind_domain_binder_builder(search_context_builder(&candidate_context),
                                                     arg_types[i], arg)) {
-                        search_machine_rollback(&candidate_machine, mark);
+                        search_context_rollback(&candidate_context, point);
                         continue;
                     }
                     if (nnext < 64 &&
                         bindings_clone(&next[nnext],
-                                       search_machine_bindings(&candidate_machine))) {
+                                       search_context_bindings(&candidate_context))) {
                         nnext++;
                     }
-                    search_machine_rollback(&candidate_machine, mark);
+                    search_context_rollback(&candidate_context, point);
                     found = true;
                 }
                 else {
-                    search_machine_rollback(&candidate_machine, mark);
+                    search_context_rollback(&candidate_context, point);
                 }
             }
-            search_machine_free(&candidate_machine);
+            search_context_free(&candidate_context);
             if (!found && natypes > 0) {
                 /* Report first mismatching type */
                 Atom *reason = atom_expr(a, (Atom*[]){
@@ -2926,16 +3036,16 @@ static bool check_function_applicable(
     /* Step 3: check return type */
     uint32_t ret_ok = 0;
     for (uint32_t r = 0; r < nresults; r++) {
-        SearchMachine ret_machine;
-        search_machine_init_owned(&ret_machine, &results[r], NULL);
+        SearchContext ret_context;
+        search_context_init_owned(&ret_context, &results[r], NULL);
         Atom *inst_ret =
             eval_dependent_telescope_enabled()
-                ? bindings_apply((Bindings *)search_machine_bindings(&ret_machine), a, retType)
+                ? bindings_apply((Bindings *)search_context_bindings(&ret_context), a, retType)
                 : retType;
         if (match_types_builder(expectedType, inst_ret,
-                                search_machine_builder(&ret_machine))) {
+                                search_context_builder(&ret_context))) {
             if (ret_ok < 64) {
-                search_machine_take(&ret_machine, &success_bindings[ret_ok]);
+                search_context_take(&ret_context, &success_bindings[ret_ok]);
                 ret_ok++;
             }
         } else {
@@ -2944,7 +3054,7 @@ static bool check_function_applicable(
             if (*n_errors < 64)
                 errors[(*n_errors)++] = atom_error(a, expr, reason);
         }
-        search_machine_free(&ret_machine);
+        search_context_free(&ret_context);
     }
 
     *n_success = ret_ok;
@@ -4254,36 +4364,30 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             }
                         }
                         if (!dispatched) {
+                            SearchContext qr_context;
+                            if (!search_context_init(&qr_context, combo_ctx, NULL)) {
+                                continue;
+                            }
                             QueryResults qr;
                             query_results_init(&qr);
-                            query_equations(s, call_atom, a, &qr);
+                            query_equations_cached(s, call_atom, a, &qr);
                             if (qr.len > 0) {
-                                BindingsBuilder qr_builder;
-                                if (!bindings_builder_init(&qr_builder, combo_ctx)) {
-                                    query_results_free(&qr);
-                                    continue;
-                                }
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && qr.len == 1) {
-                                    BindingsMergeAttempt attempt;
-                                    if (!bindings_builder_merge_or_clone(&qr_builder, combo_ctx,
-                                                                         &qr.items[0].bindings,
-                                                                         &attempt)) {
-                                        bindings_builder_free(&qr_builder);
+                                    if (!query_result_apply_single_tail(&qr_context,
+                                                                        combo_ctx,
+                                                                        a,
+                                                                        inst_ret_type,
+                                                                        &qr.items[0],
+                                                                        tail_next,
+                                                                        tail_type,
+                                                                        tail_env)) {
+                                        search_context_free(&qr_context);
                                         query_results_free(&qr);
                                         continue;
                                     }
-                                    Atom *tail_hint = result_eval_type_hint(inst_ret_type,
-                                                                            qr.items[0].result);
-                                    *tail_next = (attempt.env->len == 0)
-                                        ? qr.items[0].result
-                                        : bindings_apply((Bindings *)attempt.env, a,
-                                                         qr.items[0].result);
-                                    *tail_type = tail_hint;
-                                    bindings_copy(tail_env, attempt.env);
-                                    bindings_merge_attempt_finish(&qr_builder, &attempt);
-                                    bindings_builder_free(&qr_builder);
+                                    search_context_free(&qr_context);
                                     query_results_free(&qr);
                                     outcome_set_free(&call_terms);
                                     outcome_set_free(&heads);
@@ -4293,21 +4397,22 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     free(op_types);
                                     return true;
                                 }
-                                for (uint32_t qi = 0; qi < qr.len; qi++) {
-                                    BindingsMergeAttempt attempt;
-                                    if (!bindings_builder_merge_or_clone(&qr_builder, combo_ctx,
-                                                                         &qr.items[qi].bindings,
-                                                                         &attempt))
-                                        continue;
-                                    eval_for_caller(s, a,
-                                                    result_eval_type_hint(inst_ret_type, qr.items[qi].result),
-                                                    qr.items[qi].result, fuel,
-                                                    attempt.env,
-                                                    preserve_bindings, &func_results);
-                                    bindings_merge_attempt_finish(&qr_builder, &attempt);
-                                }
-                                bindings_builder_free(&qr_builder);
+                                QueryEvalVisitorCtx query_eval = {
+                                    .space = s,
+                                    .arena = a,
+                                    .declared_type = inst_ret_type,
+                                    .fuel = fuel,
+                                    .base_env = combo_ctx,
+                                    .preserve_bindings = preserve_bindings,
+                                    .context = &qr_context,
+                                    .outcomes = &func_results,
+                                };
+                                query_results_visit(&qr, query_visit_eval_for_caller,
+                                                    &query_eval);
+                                search_context_free(&qr_context);
                                 dispatched = true;
+                            } else {
+                                search_context_free(&qr_context);
                             }
                             query_results_free(&qr);
                         }
@@ -4419,61 +4524,51 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 }
             }
 
+            SearchContext qr_context;
+            if (!search_context_init(&qr_context, tuple_bindings, NULL)) {
+                outcome_set_free(&tuples);
+                return true;
+            }
             QueryResults qr;
             query_results_init(&qr);
-            query_equations(s, call_atom, a, &qr);
+            query_equations_cached(s, call_atom, a, &qr);
             if (qr.len == 1) {
-                BindingsBuilder qr_builder;
-                if (!bindings_builder_init(&qr_builder, tuple_bindings)) {
+                if (!query_result_apply_single_tail(&qr_context,
+                                                    tuple_bindings,
+                                                    a,
+                                                    etype,
+                                                    &qr.items[0],
+                                                    tail_next,
+                                                    tail_type,
+                                                    tail_env)) {
+                    search_context_free(&qr_context);
                     query_results_free(&qr);
                     outcome_set_free(&tuples);
                     return true;
                 }
-                BindingsMergeAttempt attempt;
-                if (!bindings_builder_merge_or_clone(&qr_builder, tuple_bindings,
-                                                     &qr.items[0].bindings,
-                                                     &attempt)) {
-                    bindings_builder_free(&qr_builder);
-                    query_results_free(&qr);
-                    outcome_set_free(&tuples);
-                    return true;
-                }
-                Atom *tail_hint = result_eval_type_hint(etype, qr.items[0].result);
-                *tail_next = (attempt.env->len == 0)
-                    ? qr.items[0].result
-                    : bindings_apply((Bindings *)attempt.env, a, qr.items[0].result);
-                *tail_type = tail_hint;
-                bindings_copy(tail_env, attempt.env);
-                bindings_merge_attempt_finish(&qr_builder, &attempt);
-                bindings_builder_free(&qr_builder);
+                search_context_free(&qr_context);
                 query_results_free(&qr);
                 outcome_set_free(&tuples);
                 return true;
             }
             if (qr.len > 0) {
-                BindingsBuilder qr_builder;
-                if (!bindings_builder_init(&qr_builder, tuple_bindings)) {
-                    query_results_free(&qr);
-                    outcome_set_free(&tuples);
-                    return true;
-                }
-                for (uint32_t i = 0; i < qr.len; i++) {
-                    BindingsMergeAttempt attempt;
-                    if (!bindings_builder_merge_or_clone(&qr_builder, tuple_bindings,
-                                                         &qr.items[i].bindings,
-                                                         &attempt))
-                        continue;
-                    eval_for_caller(s, a,
-                                    result_eval_type_hint(NULL, qr.items[i].result),
-                                    qr.items[i].result, fuel, attempt.env,
-                                    preserve_bindings, os);
-                    bindings_merge_attempt_finish(&qr_builder, &attempt);
-                }
-                bindings_builder_free(&qr_builder);
+                QueryEvalVisitorCtx query_eval = {
+                    .space = s,
+                    .arena = a,
+                    .declared_type = NULL,
+                    .fuel = fuel,
+                    .base_env = tuple_bindings,
+                    .preserve_bindings = preserve_bindings,
+                    .context = &qr_context,
+                    .outcomes = os,
+                };
+                query_results_visit(&qr, query_visit_eval_for_caller, &query_eval);
+                search_context_free(&qr_context);
                 query_results_free(&qr);
                 outcome_set_free(&tuples);
                 return true;
             }
+            search_context_free(&qr_context);
             query_results_free(&qr);
             outcome_set_add_existing_move(os, &tuples.items[0]);
             outcome_set_free(&tuples);
@@ -4524,32 +4619,27 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 }
             }
 
-            QueryResults qr;
-            query_results_init(&qr);
-            query_equations(s, call_atom, a, &qr);
-            if (qr.len > 0) {
-                BindingsBuilder qr_builder;
-                if (!bindings_builder_init(&qr_builder, tuple_bindings)) {
-                    query_results_free(&qr);
-                    continue;
-                }
-                for (uint32_t i = 0; i < qr.len; i++) {
-                    BindingsMergeAttempt attempt;
-                    if (!bindings_builder_merge_or_clone(&qr_builder, tuple_bindings,
-                                                         &qr.items[i].bindings,
-                                                         &attempt))
-                        continue;
-                    eval_for_caller(s, a,
-                                    result_eval_type_hint(NULL, qr.items[i].result),
-                                    qr.items[i].result, fuel, attempt.env,
-                                    preserve_bindings, os);
-                    bindings_merge_attempt_finish(&qr_builder, &attempt);
-                }
-                bindings_builder_free(&qr_builder);
-                query_results_free(&qr);
+            SearchContext qr_context;
+            if (!search_context_init(&qr_context, tuple_bindings, NULL)) {
                 continue;
             }
-            query_results_free(&qr);
+            QueryEvalVisitorCtx query_eval = {
+                .space = s,
+                .arena = a,
+                .declared_type = NULL,
+                .fuel = fuel,
+                .base_env = tuple_bindings,
+                .preserve_bindings = preserve_bindings,
+                .context = &qr_context,
+                .outcomes = os,
+            };
+            if (query_equations_cached_visit(s, call_atom, a,
+                                             query_visit_eval_for_caller,
+                                             &query_eval) > 0) {
+                search_context_free(&qr_context);
+                continue;
+            }
+            search_context_free(&qr_context);
 
             outcome_set_add_existing_move(os, &tuples.items[ti]);
         }
@@ -5640,9 +5730,9 @@ tail_call: ;
                 return;
             }
         }
-        Arena *pa = g_persistent_arena ? g_persistent_arena : a;
+        Arena *pa = eval_storage_arena(a);
         Space *ns = arena_alloc(pa, sizeof(Space));
-        space_init(ns);
+        space_init_with_universe(ns, eval_current_term_universe());
         ns->kind = kind;
         if (!space_match_backend_try_set(ns, backend_kind)) {
             outcome_set_add(os,
@@ -5737,10 +5827,10 @@ tail_call: ;
         }
         if (!error && dest.space &&
             cetta_library_import_module(g_library_context, spec, dest.space, dest.is_fresh,
-                                        a, g_persistent_arena ? g_persistent_arena : a,
+                                        a, eval_storage_arena(a),
                                         g_registry, fuel, &error)) {
             if (dest.is_fresh) {
-                Arena *pa = g_persistent_arena ? g_persistent_arena : a;
+                Arena *pa = eval_storage_arena(a);
                 registry_bind_id(g_registry, dest.bind_key, atom_space(pa, dest.space));
             }
             outcome_set_add(os, atom_unit(a), &_empty);
@@ -5777,7 +5867,7 @@ tail_call: ;
         }
         if (!error &&
             cetta_library_include_module(g_library_context, spec, target_space, a,
-                                        g_persistent_arena ? g_persistent_arena : a,
+                                        eval_storage_arena(a),
                                         g_registry, fuel, &error)) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
@@ -5802,7 +5892,7 @@ tail_call: ;
         Atom *space_atom = NULL;
         if (!error) {
             space_atom = cetta_library_mod_space(g_library_context, spec, a,
-                                                g_persistent_arena ? g_persistent_arena : a,
+                                                eval_storage_arena(a),
                                                 g_registry, fuel, &error);
         }
         if (space_atom) {
@@ -5845,7 +5935,7 @@ tail_call: ;
         }
         Atom *error = NULL;
         Atom *inventory = cetta_library_module_inventory_space(
-            g_library_context, a, g_persistent_arena ? g_persistent_arena : a, &error);
+            g_library_context, a, eval_storage_arena(a), &error);
         if (inventory) {
             outcome_set_add(os, inventory, &_empty);
         } else {
@@ -6054,7 +6144,7 @@ tail_call: ;
             return;
         }
         uint64_t performed = 0;
-        Arena *dst = g_persistent_arena ? g_persistent_arena : a;
+        Arena *dst = eval_storage_arena(a);
         if (!space_match_backend_step(target, dst, limit, &performed)) {
             const char *detail = cetta_mork_bridge_last_error();
             if (detail && *detail) {
@@ -6094,8 +6184,8 @@ tail_call: ;
                 &_empty);
             return;
         }
-        Arena *dst = g_persistent_arena ? g_persistent_arena : a;
-        Atom *stored = persistent_store_atom_copy(dst, expr_arg(atom, 1));
+        Arena *dst = eval_storage_arena(a);
+        Atom *stored = space_store_atom(target, dst, expr_arg(atom, 1));
         space_add(target, stored);
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_PUSH);
         outcome_set_add(os, atom_unit(a), &_empty);
@@ -6256,9 +6346,9 @@ tail_call: ;
         Atom *val = (val_rs.len > 0) ? val_rs.items[0] : val_expr;
         if (name->kind == ATOM_SYMBOL) {
             /* Deep-copy to persistent arena so value survives eval_arena reset */
-            Arena *dst = g_persistent_arena ? g_persistent_arena : a;
+            Arena *dst = eval_storage_arena(a);
             Atom *stored = NULL;
-            if (dst == g_persistent_arena &&
+            if (eval_storage_is_persistent(dst) &&
                 val->kind == ATOM_GROUNDED &&
                 val->ground.gkind == GV_SPACE &&
                 temp_space_is_registered((Space *)val->ground.ptr)) {
@@ -6273,7 +6363,7 @@ tail_call: ;
                 }
                 stored = atom_space(dst, clone);
             } else {
-                stored = persistent_store_atom_copy(dst, val);
+                stored = eval_store_atom(dst, val);
             }
             registry_bind_id(g_registry, name->sym_id, stored);
         }
@@ -6293,11 +6383,11 @@ tail_call: ;
         metta_eval_bind(s, a, expr_arg(atom, 1), fuel, &vals);
 
         if (ntargets > 0) {
-            Arena *dst = g_persistent_arena ? g_persistent_arena : a;
+            Arena *dst = eval_storage_arena(a);
             for (uint32_t ti = 0; ti < ntargets; ti++) {
                 for (uint32_t vi = 0; vi < vals.len; vi++) {
                     Atom *stored_val = outcome_atom_materialize(a, &vals.items[vi]);
-                    Atom *stored = persistent_store_atom_copy(dst, stored_val);
+                    Atom *stored = space_store_atom(targets[ti], dst, stored_val);
                     space_add(targets[ti], stored);
                     outcome_set_add(os, atom_unit(a), &vals.items[vi].env);
                 }
@@ -6320,15 +6410,15 @@ tail_call: ;
             return;
         }
         if (!space_match_backend_materialize_attached(
-                target, g_persistent_arena ? g_persistent_arena : a)) {
+                target, eval_storage_arena(a))) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
                 &_empty);
             return;
         }
         /* Deep-copy to persistent arena so atom survives eval_arena reset */
-        Arena *dst = g_persistent_arena ? g_persistent_arena : a;
-        Atom *stored = persistent_store_atom_copy(dst, atom_to_add);
+        Arena *dst = eval_storage_arena(a);
+        Atom *stored = space_store_atom(target, dst, atom_to_add);
         space_add(target, stored);
         outcome_set_add(os, atom_unit(a), &_empty);
         return;
@@ -6345,20 +6435,21 @@ tail_call: ;
             return;
         }
         if (!space_match_backend_materialize_attached(
-                target, g_persistent_arena ? g_persistent_arena : a)) {
+                target, eval_storage_arena(a))) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
                 &_empty);
             return;
         }
-        bool found = space_is_hash(target) ? space_contains_exact(target, atom_to_add) : false;
+        Atom *compare_atom = space_compare_atom(target, a, atom_to_add);
+        bool found = space_is_hash(target) ? space_contains_exact(target, compare_atom) : false;
         if (!found) {
             for (uint32_t i = 0; i < space_length(target) && !found; i++)
-                if (atom_eq(space_get_at(target, i), atom_to_add)) found = true;
+                if (atom_eq(space_get_at(target, i), compare_atom)) found = true;
         }
         if (!found) {
-            Arena *dst = g_persistent_arena ? g_persistent_arena : a;
-            Atom *stored = persistent_store_atom_copy(dst, atom_to_add);
+            Arena *dst = eval_storage_arena(a);
+            Atom *stored = space_store_atom(target, dst, atom_to_add);
             space_add(target, stored);
         }
         outcome_set_add(os, atom_unit(a), &_empty);
@@ -6376,13 +6467,14 @@ tail_call: ;
             return;
         }
         if (!space_match_backend_materialize_attached(
-                target, g_persistent_arena ? g_persistent_arena : a)) {
+                target, eval_storage_arena(a))) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
                 &_empty);
             return;
         }
-        space_remove(target, atom_to_rm);
+        Atom *compare_atom = space_compare_atom(target, a, atom_to_rm);
+        space_remove(target, compare_atom);
         outcome_set_add(os, atom_unit(a), &_empty);
         return;
     }
@@ -6397,7 +6489,7 @@ tail_call: ;
             return;
         }
         if (!space_match_backend_materialize_attached(
-                target, g_persistent_arena ? g_persistent_arena : a)) {
+                target, eval_storage_arena(a))) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
                 &_empty);
@@ -6516,13 +6608,13 @@ tail_call: ;
         }
         Atom *initial = expr_arg(atom, 0);
         /* Allocate state in persistent arena (survives eval_arena reset) */
-        Arena *pa = g_persistent_arena ? g_persistent_arena : a;
+        Arena *pa = eval_storage_arena(a);
         StateCell *cell = arena_alloc(pa, sizeof(StateCell));
-        cell->value = atom_deep_copy(pa, initial);
+        cell->value = eval_store_atom(pa, initial);
         /* Infer content type from initial value */
         Atom **itypes;
         uint32_t nit = get_atom_types(s, a, initial, &itypes);
-        cell->content_type = (nit > 0) ? atom_deep_copy(pa, itypes[0]) : atom_undefined_type(pa);
+        cell->content_type = (nit > 0) ? eval_store_atom(pa, itypes[0]) : atom_undefined_type(pa);
         free(itypes);
         outcome_set_add(os, atom_state(pa, cell), &_empty);
         return;
@@ -6603,7 +6695,9 @@ tail_call: ;
                 }
                 free(new_types);
                 if (type_ok) {
-                    cell->value = g_persistent_arena ? atom_deep_copy(g_persistent_arena, new_v) : new_v;
+                    cell->value = eval_persistent_arena()
+                        ? eval_store_atom(eval_persistent_arena(), new_v)
+                        : new_v;
                     outcome_set_add(os, state_ref, attempt.env);
                 } else {
                     Atom *error_state_arg = expr_arg(atom, 0);
@@ -7198,12 +7292,16 @@ tail_call: ;
 /* ── Top-level evaluation ───────────────────────────────────────────────── */
 
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
+    g_registry = NULL;
+    g_eval_root_space = s;
+    g_eval_fallback_universe.persistent_arena = NULL;
     metta_eval(s, a, NULL, expr, current_eval_fuel_limit(), rs);
 }
 
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs) {
     g_registry = r;
-    g_persistent_arena = persistent;
+    g_eval_root_space = s;
+    g_eval_fallback_universe.persistent_arena = persistent;
     metta_eval(s, a, NULL, expr, current_eval_fuel_limit(), rs);
 }
 

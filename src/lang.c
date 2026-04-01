@@ -3,8 +3,8 @@
 #include <string.h>
 
 static const CettaLanguageSpec CETTA_LANGUAGES[] = {
-    {"he", "mettahe", true, "Current direct MeTTa/HE evaluator"},
-    {"mettahe", "mettahe", true, "Current direct MeTTa/HE evaluator"},
+    {"he", "he", true, "Current direct MeTTa/HE evaluator"},
+    {"mettahe", "he", true, "Current direct MeTTa/HE evaluator"},
     {"mm2", "mm2", true, "Direct MM2 lowering plus MORK-backed execution for pure program files"},
     {"petta", "petta", false, "Planned dialect adapter over the shared C kernel"},
     {"ambient", "ambient", false, "Planned port from mettail-rust inventory"},
@@ -43,7 +43,7 @@ void cetta_language_print_inventory(FILE *out) {
     size_t count = sizeof(CETTA_LANGUAGES) / sizeof(CETTA_LANGUAGES[0]);
     const char *last_canonical = NULL;
 
-    fputs("cetta language inventory:\n", out);
+    fputs("cetta language inventory (--lang driver/front-end):\n", out);
     for (size_t i = 0; i < count; i++) {
         const CettaLanguageSpec *spec = &CETTA_LANGUAGES[i];
         if (last_canonical && strcmp(last_canonical, spec->canonical) == 0) {
