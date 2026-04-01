@@ -1,10 +1,15 @@
 # CeTTa
 
-CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). This
-snapshot is the current working runtime we can share honestly in git: it
-builds, the fast golden suite is green, the profile suite is green, full
-tilepuzzle now finishes, and the large genomic `bench_bio_1M.metta`
-workload runs end to end.
+CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). This branch
+is the current term-sharing snapshot we can share honestly with Hyperon
+developers: it builds, the core golden suite is green, the profile/runtime
+surface is real, and the branch is still under active development.
+
+The intended default lane is now:
+
+- `--lang he` for the current HE-style evaluator/driver
+- `--profile he_extended` as the default working surface
+- `make` as the Python-enabled build that is closest to everyday Hyperon usage
 
 ## Build
 
@@ -14,13 +19,26 @@ CeTTa builds with:
 - `make`
 - Python 3 development headers (`python3-config --embed` must work)
 
-The normal build bootstraps the stdlib automatically in two stages:
+The normal build bootstraps the stdlib automatically in two stages and now
+defaults to the Python-enabled binary:
 
 ```bash
 make
 ```
 
 That produces `./cetta`.
+
+If you want the smaller no-Python binary explicitly:
+
+```bash
+make BUILD=core
+```
+
+If you also want the local static MORK bridge:
+
+```bash
+make BUILD=full
+```
 
 ## Quick Start
 
@@ -30,10 +48,15 @@ Run a small file:
 ./cetta tests/test_map_filter_atom.metta
 ```
 
-Run the fast verified suites:
+Run the main checked suite:
 
 ```bash
 make test
+```
+
+Run the profile surface suite:
+
+```bash
 make test-profiles
 ```
 
@@ -49,58 +72,45 @@ make promote-runtime
 - Arena-allocated atoms with hash-consing support
 - Multiple space kinds and pluggable match backends
 - SymbolId-based core dispatch instead of pervasive string comparison
-- Runtime counters and profile-aware extension guards
+- Runtime counters plus `--profile`-aware surface guards
+- Explicit `TermUniverse` / persistent term-store seam
+- Variant tabling infrastructure with shared canonicalization substrate
 - Optional PathMap/MORK-backed `pathmap-imported` matcher lane
 - Local git-module and module-inventory surfaces
+- Python foreign-module support in the default build
 
 ## Optional MORK / PathMap Bridge
 
 If the static bridge library exists at
-`../../hyperon/MORK/target/release/libcetta_space_bridge.a`, `make`
-links it automatically and exposes the imported PathMap matcher.
-
-Positive example:
+`../../hyperon/MORK/target/release/libcetta_space_bridge.a`, `make BUILD=full`
+links it statically. Non-MORK builds can still load a bridge dynamically at
+runtime.
 
 ```bash
 ./cetta --profile he_extended --space-match-backend pathmap-imported \
   tests/test_pathmap_imported_bridge_v2.metta
 ```
 
-Negative example:
-
-```bash
-./cetta --space-match-backend pathmap-imported tests/file.metta
-```
-
-without the bridge library configured. In that case CeTTa will not have the
-imported matcher available.
-
 ## Test Status
 
-At this snapshot, the checked suites are:
+At the current snapshot:
 
-- `make test` -> `285 passed, 0 failed, 16 skipped`
-- `make test-profiles` -> `62 passed, 0 failed`
+- `make test` -> `332 passed, 0 failed, 47 skipped`
+- `make test-profiles` -> `74 passed, 0 failed`
 
-The `16 skipped` are not hidden failures. `make test` only treats
-`tests/test_*.metta`, `tests/spec_*.metta`, and `tests/he_*.metta` files with
-matching `.expected` goldens as strict pass/fail tests.
+Those `47 skipped` are not hidden failures. They currently break down into:
 
-Today the skips are:
+- `1` dedicated pretty-vars surface test
+- `2` pathmap-imported regression lanes
+- `17` tests covered by dedicated MM2/MORK suites
+- `27` files that are still probe- or translation-shaped and do not yet have
+  `.expected` goldens in the fast suite
 
-- `1` heavy benchmark-style file: `tests/test_tilepuzzle.metta`
-- `5` probe or integration files without committed `.expected` goldens
-- `10` translation or audit surface fixtures without committed `.expected`
-  goldens
+If you deliberately build the smaller no-Python lane with `BUILD=core`, the
+same suite currently reports `328 passed, 0 failed, 51 skipped`.
 
-Positive example:
-
-- a skipped file is exploratory, integration-heavy, or benchmark-shaped and
-  has not been promoted into the fast golden suite yet
-
-Negative example:
-
-- a skipped file is not being used to hide a known failing golden comparison
+So the raw harness number is conservative. The branch is in active development,
+but the checked surfaces are genuinely green.
 
 ## Examples
 
@@ -123,12 +133,11 @@ Nil Geisweiller's typed backward chainer produces machine-checkable proof
 terms:
 
 ```metta
-(: dt (-> (: $e (eqtl $snp $gene)) (target $snp $gene)))
-(: ct (-> (: $e1 (coreg $snp1 $snp2))
-          (: $e2 (target $snp2 $gene))
-          (target $snp1 $gene)))
+(: r-mortal (-> (: $r (researcher $x))
+                (: $c (curious $x))
+                (mortal $x)))
 
-!(bc &bio (fromNumber 2) (: $proof (target rs10000544 $gene)))
+!(bc &kb (fromNumber 1) (: $prf (mortal $x)))
 ```
 
 ```
@@ -155,7 +164,8 @@ $ ./cetta --lang he tests/bench_bio_bc_deep.metta | head -3
 [(binding rs10000544 db00277 ensg00000138735), ...]
 ```
 
-Full run: 1,411,430 hypotheses in 3m 22s across 17 query phases.
+On our development machine, the full run produces approximately 1,411,430
+hypotheses in 3m 22s across 17 query phases.
 
 ### Structured spaces (queue, hash, stack)
 
@@ -188,21 +198,20 @@ Small regression-sized examples:
 
 ```bash
 ./cetta tests/test_map_filter_atom.metta
+./cetta tests/bench_backchain_heavy_nilbc.metta | tail -1
 ./cetta tests/test_runtime_stats_surface.metta
-./cetta tests/test_queue_space.metta
+```
+
+Python-facing surface in the default build:
+
+```bash
+./cetta tests/test_py_ops_surface.metta
 ```
 
 Optional MORK-facing surface:
 
 ```bash
 ./cetta tests/test_mork_lib_surface.metta
-```
-
-Bounded tile probe:
-
-```bash
-./cetta --count-only --profile he_extended \
-  tests/bench_tilepuzzle_probe.metta
 ```
 
 Full tile puzzle:
@@ -217,10 +226,9 @@ Large genomic benchmark:
 timeout 600 ./cetta tests/bench_bio_1M.metta
 ```
 
-The large bio benchmark is included because it is now runnable in this tree.
-On our March 28, 2026 check, loading the 1.4M-atom dataset took about five
-seconds and the full workload finished in about 386 seconds. The remaining
-large-KB gap is inference, not loading.
+The large bio benchmark is included because it is runnable in this tree, but
+this branch should still be understood as an actively developed runtime rather
+than a frozen benchmark release.
 
 ## Repository Map
 
@@ -232,6 +240,9 @@ Core runtime:
 - `src/space.c`, `src/space.h`: spaces, query dispatch, space operations
 - `src/space_match_backend.c`, `src/space_match_backend.h`: backend selection
 - `src/subst_tree.c`, `src/subst_tree.h`: indexed equation and substitution tree
+- `src/term_universe.c`, `src/term_universe.h`: persistent term-universe seam
+- `src/term_canon.c`, `src/term_canon.h`: shared variable canonicalization/remap substrate
+- `src/table_store.c`, `src/table_store.h`: variant tabling and staged answer store
 - `src/eval.c`, `src/eval.h`: evaluator
 - `src/grounded.c`: grounded operators and runtime surfaces
 - `src/compile.c`: LLVM IR emission

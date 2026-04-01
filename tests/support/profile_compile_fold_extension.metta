@@ -1,0 +1,6 @@
+(= (uses-fold)
+   (fold (superpose (1 2))
+         0
+         $acc
+         $item
+         (eval (+ $acc $item))))

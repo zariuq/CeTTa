@@ -1,0 +1,10 @@
+Function fold: (-> Atom Atom Variable Variable Atom %Undefined%) HE-extended fold over nondeterministic results. Evaluates a result fan-out, skips Empty results, and folds the surviving items into one accumulator without first packaging them into an expression. The primary form is (fold results init $acc $item step). The policy form (fold (search-policy lane) results init $acc $item step) keeps the same lane and ordering controls as select and collect. Each fold step must produce exactly one non-empty result. If the step is order-sensitive, the final value follows engine/policy traversal order rather than a semantic ordering guarantee.
+Parameters:
+  Atom Result expression to evaluate
+  Atom Initial accumulator value
+  Variable Accumulator binder
+  Variable Current item binder
+  Atom Step expression that yields the next accumulator
+Return: (type %Undefined%) Final accumulator value after folding the surviving results
+[(@doc-formal (@item fold) (@kind function) (@type (-> Atom Atom Variable Variable Atom %Undefined%)) (@desc "HE-extended fold over nondeterministic results. Evaluates a result fan-out, skips Empty results, and folds the surviving items into one accumulator without first packaging them into an expression. The primary form is (fold results init $acc $item step). The policy form (fold (search-policy lane) results init $acc $item step) keeps the same lane and ordering controls as select and collect. Each fold step must produce exactly one non-empty result. If the step is order-sensitive, the final value follows engine/policy traversal order rather than a semantic ordering guarantee.") (@params ((@param (@type Atom) (@desc "Result expression to evaluate")) (@param (@type Atom) (@desc "Initial accumulator value")) (@param (@type Variable) (@desc "Accumulator binder")) (@param (@type Variable) (@desc "Current item binder")) (@param (@type Atom) (@desc "Step expression that yields the next accumulator")))) (@return (@type %Undefined%) (@desc "Final accumulator value after folding the surviving results")))]
+[()]

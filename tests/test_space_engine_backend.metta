@@ -1,0 +1,11 @@
+!(bind! &h (new-space hash))
+!(space-set-match-backend! &h pathmap-imported)
+!(assertEqualToResult (get-type &h) ((Space mork)))
+!(add-atom &h (edge a b))
+!(assertEqualToResult (match &h (edge $x $y) ($x $y)) ((a b)))
+!(space-set-match-backend! &h native-candidate-exact)
+!(assertEqualToResult (get-type &h) ((Space hash)))
+!(assertEqualToResult (size &h) (1))
+!(assertEqualToResult
+  (space-set-match-backend! &h nope-backend)
+  ((Error (space-set-match-backend! &h nope-backend) UnknownSpaceMatchBackend)))

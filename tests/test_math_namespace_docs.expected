@@ -1,0 +1,6 @@
+[()]
+[()]
+[()]
+[(@doc-formal (@item math:exp) (@kind function) (@type (-> Number Number)) (@desc "Exponential function in the math: namespace, implemented as EXP raised to the given power.") (@params ((@param (@type Number) (@desc "Exponent")))) (@return (@type Number) (@desc "e raised to the given power")))]
+[(@doc-formal (@item math:min) (@kind function) (@type (-> Number Number Number)) (@desc "Binary numeric minimum in the math: namespace. This is a library-level helper rather than a new core builtin.") (@params ((@param (@type Number) (@desc "First number")) (@param (@type Number) (@desc "Second number")))) (@return (@type Number) (@desc "Smaller of the two numbers")))]
+[(@doc-formal (@item math:clamp) (@kind function) (@type (-> Number Number Number Number)) (@desc "Currying-friendly clamp helper with the bounds first and the input value last.") (@params ((@param (@type Number) (@desc "Lower bound")) (@param (@type Number) (@desc "Upper bound")) (@param (@type Number) (@desc "Input value")))) (@return (@type Number) (@desc "Input clamped into the inclusive [min, max] interval")))]

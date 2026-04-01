@@ -1,0 +1,1 @@
+(= (uses-size) (size &self))

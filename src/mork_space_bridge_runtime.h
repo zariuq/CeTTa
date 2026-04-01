@@ -18,6 +18,27 @@ Current MM2 bridge mirror:
 Raw MM2 itself is still one live space with facts and execs together. The
 program/context split here is therefore an implementation boundary, not MM2's
 intended long-term public model.
+
+Primary CeTTa bridge surface:
+
+- cetta_mork_bridge_space_add_indexed_sexpr() mirrors CeTTa row ids into MORK
+- cetta_mork_bridge_space_logical_size() reports duplicate-aware logical atom
+  count when row metadata is available
+- cetta_mork_bridge_space_unique_size() reports unique structural support
+- cetta_mork_bridge_space_query_candidates() returns mirrored candidate rows
+
+Compatibility names remain for older callers:
+
+- cetta_mork_bridge_space_size() == cetta_mork_bridge_space_unique_size()
+- cetta_mork_bridge_space_query_indices() == cetta_mork_bridge_space_query_candidates()
+
+Current limitation:
+
+- raw add/remove without mirrored row metadata still collapse duplicates to
+  structural support for counting purposes
+
+The packet-binding exports below are compatibility/experimental surfaces. The
+preferred query path for CeTTa is candidate rows plus native matching.
 */
 
 bool cetta_mork_bridge_is_available(void);
@@ -35,6 +56,10 @@ bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
                                                uint32_t atom_idx,
                                                const uint8_t *text,
                                                size_t len);
+bool cetta_mork_bridge_space_logical_size(const CettaMorkSpaceHandle *space,
+                                          uint64_t *out_logical_size);
+bool cetta_mork_bridge_space_unique_size(const CettaMorkSpaceHandle *space,
+                                         uint64_t *out_unique_size);
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                   uint64_t *out_size);
 bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
@@ -52,6 +77,11 @@ bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
                                            const uint8_t *path,
                                            size_t len,
                                            uint64_t *out_loaded);
+bool cetta_mork_bridge_space_query_candidates(CettaMorkSpaceHandle *space,
+                                              const uint8_t *pattern,
+                                              size_t len,
+                                              uint32_t **out_indices,
+                                              uint32_t *out_count);
 bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
                                            const uint8_t *pattern,
                                            size_t len,

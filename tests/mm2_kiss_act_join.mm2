@@ -1,0 +1,8 @@
+(likes Alice apple)
+(likes Bob banana)
+(likes Carol grape)
+
+(exec (0 join-colors)
+  (I (BTM (likes $person $fruit))
+     (ACT cetta_mm2_fruit_colors (color $fruit $c)))
+  (O (+ (preference $person likes $fruit which-is $c))))

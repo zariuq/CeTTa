@@ -4,8 +4,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <limits.h>
-#include <linux/limits.h>
 #include <stdio.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 #define CETTA_MAX_MODULE_NAMESPACE 128
 #define CETTA_MAX_REMOTE_REVISION 128
@@ -213,6 +216,8 @@ void cetta_module_resolver_init_for_profile(CettaModuleResolver *resolver,
 void cetta_evaluator_options_init(CettaEvaluatorOptions *options);
 bool cetta_evaluator_options_is_bare_minimal(const CettaEvaluatorOptions *options);
 int cetta_evaluator_options_effective_fuel_limit(const CettaEvaluatorOptions *options);
+const CettaEvalOptionEntry *cetta_evaluator_options_find(const CettaEvaluatorOptions *options,
+                                                         const char *key);
 bool cetta_eval_session_set_type_check_auto(CettaEvalSession *session, bool enabled);
 bool cetta_eval_session_set_interpreter_mode(CettaEvalSession *session,
                                              CettaInterpreterMode mode);

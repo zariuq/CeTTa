@@ -53,6 +53,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "body-visible-cache-lookup",
     "body-visible-cache-hit",
     "body-visible-cache-store",
+    "table-hit",
+    "table-miss",
+    "table-stale-miss",
+    "table-reuse",
+    "table-answer-staged",
+    "space-revision-bump",
 };
 
 static int64_t clamp_counter(uint64_t value) {

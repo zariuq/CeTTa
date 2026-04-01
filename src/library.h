@@ -28,6 +28,7 @@ typedef struct {
 
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
+    TermUniverse term_universe;
     uint32_t active_mask;
     char root_dir[4096];
     char script_dir[PATH_MAX];
