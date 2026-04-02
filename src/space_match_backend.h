@@ -85,6 +85,21 @@ typedef struct {
     PathmapImportedState imported;
 } SpaceMatchBackend;
 
+/*
+ * Optional compiled-space capability.
+ *
+ * Positive example:
+ *   - A backend can expose durable attach/materialize/step support without
+ *     teaching eval.c or library.c its enum identity.
+ *
+ * Negative example:
+ *   - Every core call site hard-codes `SPACE_MATCH_BACKEND_PATHMAP_IMPORTED`
+ *     as if one backend name were the long-term contract.
+ */
+bool space_match_backend_kind_supports_compiled_space(SpaceMatchBackendKind kind);
+bool space_match_backend_supports_compiled_space(const Space *s);
+bool space_match_backend_try_enable_compiled_space(Space *s);
+
 void space_match_backend_init(Space *s);
 void space_match_backend_free(Space *s);
 bool space_match_backend_try_set(Space *s, SpaceMatchBackendKind kind);

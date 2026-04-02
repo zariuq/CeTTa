@@ -69,9 +69,16 @@ typedef struct ArenaBlock {
     char data[ARENA_BLOCK_SIZE];
 } ArenaBlock;
 
+typedef enum {
+    ARENA_HASHCONS_NONE = 0,
+    ARENA_HASHCONS_BORROWED,
+    ARENA_HASHCONS_OWNED_LOCAL
+} ArenaHashConsMode;
+
 typedef struct {
     ArenaBlock *head;
     HashConsTable *hashcons;
+    ArenaHashConsMode hashcons_mode;
 } Arena;
 
 typedef struct {
@@ -83,7 +90,12 @@ void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
 void  arena_free(Arena *a);
-void  arena_set_hashcons(Arena *a, HashConsTable *hc);
+void  arena_init_with_owned_hashcons(Arena *a, HashConsTable *hc);
+void  arena_free_with_owned_hashcons(Arena *a, HashConsTable *hc);
+void  arena_reset_with_owned_hashcons(Arena *a, HashConsTable *hc);
+void  arena_clear_hashcons(Arena *a);
+void  arena_set_hashcons_borrowed(Arena *a, HashConsTable *hc);
+void  arena_set_hashcons_owned_local(Arena *a, HashConsTable *hc);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
@@ -99,7 +111,9 @@ struct HashConsTable {
 };
 
 void hashcons_init(HashConsTable *hc);
+void hashcons_init_sized(HashConsTable *hc, uint32_t initial_size);
 void hashcons_free(HashConsTable *hc);
+void hashcons_clear(HashConsTable *hc);
 /* Return shared atom if identical one exists, otherwise insert and return */
 Atom *hashcons_get(HashConsTable *hc, Atom *atom);
 

@@ -2023,7 +2023,7 @@ static Atom *mork_space_open_act_native(CettaLibraryContext *ctx, Arena *a,
     space = arena_alloc(persistent_arena, sizeof(Space));
     space_init_with_universe(space, cetta_library_space_universe(ctx, persistent_arena));
     space->kind = kind;
-    if (!space_match_backend_try_set(space, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)) {
+    if (!space_match_backend_try_enable_compiled_space(space)) {
         return atom_error(a, library_call_expr(a, head, args, nargs),
                           atom_string(a, "failed to enable MORK imported backend"));
     }
@@ -2704,7 +2704,7 @@ static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *
         *error_out = module_reason(eval_arena, "ModuleCompiledAttachRequiresFreshSpace", path);
         return false;
     }
-    if (!space_match_backend_try_set(target_space, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)) {
+    if (!space_match_backend_try_enable_compiled_space(target_space)) {
         *error_out = module_reason(eval_arena, "ModuleCompiledAttachBackendUnavailable", path);
         return false;
     }
@@ -2735,8 +2735,7 @@ static bool load_module_mm2_file(CettaLibraryContext *ctx, const char *path,
         *error_out = module_reason(eval_arena, "ModuleMm2OrderedSpaceUnsupported", path);
         return false;
     }
-    if (work_space->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED &&
-        !space_match_backend_try_set(work_space, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)) {
+    if (!space_match_backend_try_enable_compiled_space(work_space)) {
         *error_out = module_reason(eval_arena, "ModuleMm2BackendUnavailable", path);
         return false;
     }

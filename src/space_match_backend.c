@@ -1,5 +1,6 @@
 #include "space.h"
 #include "eval.h"
+#include "search_machine.h"
 #include "mork_space_bridge_runtime.h"
 #include "parser.h"
 #include "stats.h"
@@ -105,6 +106,20 @@ static void subst_matchset_push(SubstMatchSet *out, uint32_t atom_idx,
     out->items[out->len].epoch = epoch;
     if (!bindings_clone(&out->items[out->len].bindings, bindings))
         return;
+    out->items[out->len].exact = exact;
+    out->len++;
+}
+
+static void subst_matchset_push_move(SubstMatchSet *out, uint32_t atom_idx,
+                                     uint32_t epoch, Bindings *bindings,
+                                     bool exact) {
+    if (out->len >= out->cap) {
+        out->cap = out->cap ? out->cap * 2 : 8;
+        out->items = cetta_realloc(out->items, sizeof(SubstMatch) * out->cap);
+    }
+    out->items[out->len].atom_idx = atom_idx;
+    out->items[out->len].epoch = epoch;
+    bindings_move(&out->items[out->len].bindings, bindings);
     out->items[out->len].exact = exact;
     out->len++;
 }
@@ -240,9 +255,11 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
             uint32_t epoch = fresh_var_suffix();
             Bindings b;
             bindings_init(&b);
-            if (match_atoms_epoch(query, s->atoms[i], &b, a, epoch) &&
-                !bindings_has_loop(&b)) {
-                subst_matchset_push(out, i, epoch, &b, false);
+            bool needs_loop_check = true;
+            if (match_pattern_candidate_epoch(query, s->atoms[i], &b, a, epoch,
+                                              &needs_loop_check) &&
+                (!needs_loop_check || !bindings_has_loop(&b))) {
+                subst_matchset_push_move(out, i, epoch, &b, false);
             }
             bindings_free(&b);
         }
@@ -1467,8 +1484,7 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
             if (imported_materialize_bindings(&refs, qtokens, entry->tokens,
                                               match_epoch, a, &b) &&
                 !bindings_has_loop(&b)) {
-                subst_matchset_push(out, entry->atom_idx, match_epoch, &b, true);
-                bindings_free(&b);
+                subst_matchset_push_move(out, entry->atom_idx, match_epoch, &b, true);
                 continue;
             }
             bindings_free(&b);
@@ -1483,7 +1499,7 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
                                               match_epoch, &qnext, &cnext, 64) &&
                 qnext == qlen && cnext == entry->len &&
                 !bindings_has_loop(&b)) {
-                subst_matchset_push(out, entry->atom_idx, match_epoch, &b, true);
+                subst_matchset_push_move(out, entry->atom_idx, match_epoch, &b, true);
             }
             bindings_free(&b);
         }
@@ -1656,8 +1672,7 @@ imported_bridge_query_bindings(Space *s, Arena *a, Atom *query,
             }
 
             if (success && !bindings_has_loop(&row_bindings))
-                subst_matchset_push(out, atom_idx, epoch, &row_bindings, true);
-            bindings_free(&row_bindings);
+                subst_matchset_push_move(out, atom_idx, epoch, &row_bindings, true);
             imported_bridge_varmap_free(&candidate_vars);
         }
         free(entries);
@@ -1809,8 +1824,7 @@ imported_bridge_query_bindings_query_only_v2(Space *s, Arena *a,
             }
 
             if (success && !bindings_has_loop(&row_bindings))
-                subst_matchset_push(out, atom_idx, 0, &row_bindings, true);
-            bindings_free(&row_bindings);
+                subst_matchset_push_move(out, atom_idx, 0, &row_bindings, true);
         }
         free(entries);
     }
@@ -2008,9 +2022,11 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         uint32_t epoch = fresh_var_suffix();
         Bindings b;
         bindings_init(&b);
-        if (match_atoms_epoch(query, s->atoms[idx], &b, a, epoch) &&
-            !bindings_has_loop(&b)) {
-            subst_matchset_push(out, idx, epoch, &b, false);
+        bool needs_loop_check = true;
+        if (match_pattern_candidate_epoch(query, s->atoms[idx], &b, a, epoch,
+                                          &needs_loop_check) &&
+            (!needs_loop_check || !bindings_has_loop(&b))) {
+            subst_matchset_push_move(out, idx, epoch, &b, false);
         }
         bindings_free(&b);
     }
@@ -2055,7 +2071,18 @@ typedef struct {
     Atom *pattern;
     uint32_t idx;
     uint32_t estimate;
-} ImportedConjStep;
+} ConjStep;
+
+static uint32_t native_pattern_estimate(Space *s, Atom *pattern) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    if (s->len <= MATCH_TRIE_THRESHOLD)
+        return s->len;
+    native_ensure_stree(s);
+    SymbolId head = atom_head_sym(pattern);
+    if (head != SYMBOL_ID_NONE)
+        return st->stree->buckets[stree_head_hash(head)].count + st->stree->wildcard.count;
+    return s->len;
+}
 
 static uint32_t imported_pattern_estimate(Space *s, Atom *pattern) {
     PathmapImportedState *st = &s->match_backend.imported;
@@ -2071,12 +2098,73 @@ static uint32_t imported_pattern_estimate(Space *s, Atom *pattern) {
     return total;
 }
 
-static int imported_cmp_conj_step(const void *lhs, const void *rhs) {
-    const ImportedConjStep *a = lhs;
-    const ImportedConjStep *b = rhs;
+static uint32_t space_pattern_estimate(Space *s, Atom *pattern) {
+    switch (s->match_backend.kind) {
+    case SPACE_MATCH_BACKEND_PATHMAP_IMPORTED:
+        return imported_pattern_estimate(s, pattern);
+    case SPACE_MATCH_BACKEND_NATIVE:
+    case SPACE_MATCH_BACKEND_NATIVE_CANDIDATE_EXACT:
+        return native_pattern_estimate(s, pattern);
+    default:
+        return s->len;
+    }
+}
+
+static void conjunction_order_init(Space *s, Atom **patterns,
+                                   uint32_t npatterns, ConjStep *order) {
+    for (uint32_t i = 0; i < npatterns; i++) {
+        order[i].pattern = patterns[i];
+        order[i].idx = i;
+        order[i].estimate = space_pattern_estimate(s, patterns[i]);
+    }
+}
+
+static int cmp_conj_step(const void *lhs, const void *rhs) {
+    const ConjStep *a = lhs;
+    const ConjStep *b = rhs;
     if (a->estimate != b->estimate)
         return (a->estimate > b->estimate) - (a->estimate < b->estimate);
     return (a->idx > b->idx) - (a->idx < b->idx);
+}
+
+bool space_subst_match_with_seed_builder(Space *space, Atom *pattern,
+                                         const SubstMatch *sm,
+                                         BindingsBuilder *builder, Arena *a) {
+    if (!space || !sm || !builder)
+        return false;
+
+    if (sm->exact) {
+        if (!bindings_builder_try_merge(builder, &sm->bindings))
+            return false;
+        const Bindings *merged = bindings_builder_bindings(builder);
+        if (!bindings_is_ground_simple(merged) &&
+            bindings_has_loop((Bindings *)merged))
+            return false;
+        return true;
+    }
+
+    if (space_match_backend_is_attached_compiled(space)) {
+        Arena *persistent = eval_current_persistent_arena();
+        if (!space_match_backend_materialize_attached(space, persistent ? persistent : a))
+            return false;
+    }
+
+    if (sm->atom_idx >= space->len)
+        return false;
+
+    Atom *matched_atom = space_get_at(space, sm->atom_idx);
+    if (!matched_atom)
+        return false;
+
+    Atom *renamed = rename_vars(a, matched_atom, fresh_var_suffix());
+    bool needs_loop_check = true;
+    if (!match_pattern_candidate_builder(pattern, renamed, builder,
+                                         &needs_loop_check))
+        return false;
+    if (needs_loop_check &&
+        bindings_has_loop((Bindings *)bindings_builder_bindings(builder)))
+        return false;
+    return true;
 }
 
 static void space_query_conjunction_default(Space *s, Arena *a,
@@ -2087,6 +2175,13 @@ static void space_query_conjunction_default(Space *s, Arena *a,
         if (seed) binding_set_push(out, seed);
         return;
     }
+
+    ConjStep order_stack[32];
+    ConjStep *order = npatterns <= 32
+        ? order_stack
+        : cetta_malloc(sizeof(ConjStep) * npatterns);
+    conjunction_order_init(s, patterns, npatterns, order);
+    qsort(order, npatterns, sizeof(ConjStep), cmp_conj_step);
 
     BindingSet cur;
     binding_set_init(&cur);
@@ -2101,26 +2196,44 @@ static void space_query_conjunction_default(Space *s, Arena *a,
     for (uint32_t pi = 0; pi < npatterns; pi++) {
         BindingSet next;
         binding_set_init(&next);
+        SearchContext candidate_context;
+        bool have_candidate_context = false;
         for (uint32_t bi = 0; bi < cur.len; bi++) {
-            Atom *grounded = bindings_apply(&cur.items[bi], a, patterns[pi]);
+            bool ready = !have_candidate_context
+                ? search_context_init(&candidate_context, &cur.items[bi], NULL)
+                : search_context_reset(&candidate_context, &cur.items[bi]);
+            have_candidate_context = have_candidate_context || ready;
+            if (!ready)
+                continue;
+            Atom *grounded = bindings_apply(&cur.items[bi], a, order[pi].pattern);
             SubstMatchSet smr;
             smset_init(&smr);
             space_subst_query(s, a, grounded, &smr);
             for (uint32_t mi = 0; mi < smr.len; mi++) {
-                Bindings merged;
-                if (space_subst_match_with_seed(s, patterns[pi], &smr.items[mi],
-                                                &cur.items[bi], a, &merged)) {
-                    binding_set_push_move(&next, &merged);
-                    bindings_free(&merged);
+                ChoicePoint point = search_context_save(&candidate_context);
+                if (space_subst_match_with_seed_builder(
+                        s, order[pi].pattern, &smr.items[mi],
+                        search_context_builder(&candidate_context), a)) {
+                    Bindings published;
+                    bindings_init(&published);
+                    search_context_take(&candidate_context, &published);
+                    binding_set_push_move(&next, &published);
+                    search_context_reset(&candidate_context, &cur.items[bi]);
+                    continue;
                 }
+                search_context_rollback(&candidate_context, point);
             }
             smset_free(&smr);
         }
+        if (have_candidate_context)
+            search_context_free(&candidate_context);
         binding_set_free(&cur);
         cur = next;
         if (cur.len == 0) break;
     }
 
+    if (order != order_stack)
+        free(order);
     *out = cur;
 }
 
@@ -2138,13 +2251,13 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
     if (npatterns > 32)
         return false;
 
-    ImportedConjStep order[32];
+    ConjStep order[32];
     for (uint32_t i = 0; i < npatterns; i++) {
         order[i].pattern = patterns[i];
         order[i].idx = i;
         order[i].estimate = imported_pattern_estimate(s, patterns[i]);
     }
-    qsort(order, npatterns, sizeof(ImportedConjStep), imported_cmp_conj_step);
+    qsort(order, npatterns, sizeof(ConjStep), cmp_conj_step);
 
     Arena scratch;
     arena_init(&scratch);
@@ -2344,17 +2457,13 @@ static void imported_query_conjunction(Space *s, Arena *a, Atom **patterns,
         return;
     }
 
-    ImportedConjStep order[32];
+    ConjStep order[32];
     if (npatterns > 32) {
         space_query_conjunction_default(s, a, patterns, npatterns, seed, out);
         return;
     }
-    for (uint32_t i = 0; i < npatterns; i++) {
-        order[i].pattern = patterns[i];
-        order[i].idx = i;
-        order[i].estimate = imported_pattern_estimate(s, patterns[i]);
-    }
-    qsort(order, npatterns, sizeof(ImportedConjStep), imported_cmp_conj_step);
+    conjunction_order_init(s, patterns, npatterns, order);
+    qsort(order, npatterns, sizeof(ConjStep), cmp_conj_step);
 
     BindingSet cur;
     binding_set_init(&cur);
@@ -2369,21 +2478,37 @@ static void imported_query_conjunction(Space *s, Arena *a, Atom **patterns,
     for (uint32_t pi = 0; pi < npatterns; pi++) {
         BindingSet next;
         binding_set_init(&next);
+        SearchContext candidate_context;
+        bool have_candidate_context = false;
         for (uint32_t bi = 0; bi < cur.len; bi++) {
+            bool ready = !have_candidate_context
+                ? search_context_init(&candidate_context, &cur.items[bi], NULL)
+                : search_context_reset(&candidate_context, &cur.items[bi]);
+            have_candidate_context = have_candidate_context || ready;
+            if (!ready)
+                continue;
             Atom *grounded = bindings_apply(&cur.items[bi], a, order[pi].pattern);
             SubstMatchSet smr;
             smset_init(&smr);
             space_subst_query(s, a, grounded, &smr);
             for (uint32_t mi = 0; mi < smr.len; mi++) {
-                Bindings merged;
-                if (space_subst_match_with_seed(s, order[pi].pattern, &smr.items[mi],
-                                                &cur.items[bi], a, &merged)) {
-                    binding_set_push_move(&next, &merged);
-                    bindings_free(&merged);
+                ChoicePoint point = search_context_save(&candidate_context);
+                if (space_subst_match_with_seed_builder(
+                        s, order[pi].pattern, &smr.items[mi],
+                        search_context_builder(&candidate_context), a)) {
+                    Bindings published;
+                    bindings_init(&published);
+                    search_context_take(&candidate_context, &published);
+                    binding_set_push_move(&next, &published);
+                    search_context_reset(&candidate_context, &cur.items[bi]);
+                    continue;
                 }
+                search_context_rollback(&candidate_context, point);
             }
             smset_free(&smr);
         }
+        if (have_candidate_context)
+            search_context_free(&candidate_context);
         binding_set_free(&cur);
         cur = next;
         if (cur.len == 0) break;
@@ -2423,6 +2548,22 @@ static const SpaceMatchBackendOps IMPORTED_BACKEND_OPS = {
     .query = imported_query,
     .query_conjunction = imported_query_conjunction,
 };
+
+bool space_match_backend_kind_supports_compiled_space(SpaceMatchBackendKind kind) {
+    return kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED;
+}
+
+bool space_match_backend_supports_compiled_space(const Space *s) {
+    return s && space_match_backend_kind_supports_compiled_space(s->match_backend.kind);
+}
+
+bool space_match_backend_try_enable_compiled_space(Space *s) {
+    if (!s)
+        return false;
+    if (space_match_backend_supports_compiled_space(s))
+        return true;
+    return space_match_backend_try_set(s, SPACE_MATCH_BACKEND_PATHMAP_IMPORTED);
+}
 
 void space_match_backend_init(Space *s) {
     s->match_backend.kind = SPACE_MATCH_BACKEND_NATIVE;
@@ -2560,44 +2701,14 @@ void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
 
 bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
                                  const Bindings *seed, Arena *a, Bindings *out) {
-    if (!space || !sm)
+    BindingsBuilder builder;
+    if (!bindings_builder_init(&builder, seed))
         return false;
-
-    if (sm->exact) {
-        bool ok = seed ? bindings_clone_merge(out, seed, &sm->bindings)
-                       : bindings_clone(out, &sm->bindings);
-        if (!ok)
-            return false;
-        if (bindings_has_loop(out)) {
-            bindings_free(out);
-            return false;
-        }
-        return true;
-    }
-
-    if (space_match_backend_is_attached_compiled(space)) {
-        Arena *persistent = eval_current_persistent_arena();
-        if (!space_match_backend_materialize_attached(space, persistent ? persistent : a))
-            return false;
-    }
-
-    if (sm->atom_idx >= space->len)
-        return false;
-
-    Atom *matched_atom = space_get_at(space, sm->atom_idx);
-    if (!matched_atom)
-        return false;
-    uint32_t suffix = fresh_var_suffix();
-    Atom *renamed = rename_vars(a, matched_atom, suffix);
-    Bindings exact;
-    if (!bindings_clone(&exact, seed))
-        return false;
-    if (match_atoms(renamed, pattern, &exact) && !bindings_has_loop(&exact)) {
-        bindings_move(out, &exact);
-        return true;
-    }
-    bindings_free(&exact);
-    return false;
+    bool ok = space_subst_match_with_seed_builder(space, pattern, sm, &builder, a);
+    if (ok)
+        bindings_builder_take(&builder, out);
+    bindings_builder_free(&builder);
+    return ok;
 }
 
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, uint32_t npatterns,

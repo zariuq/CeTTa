@@ -2,13 +2,13 @@
 ; Deep Multi-Relational Backward Chaining over Genomic Knowledge Graph
 ; ============================================================================
 ;
-; Chain: SNP → Gene → Pathway → Gene' → Pathway' (depth 5+)
+; Chain: SNP -> Gene -> Pathway -> Gene' -> Pathway' (depth 5+)
 ;
 ; Data sources:
-;   - 100K GTEx eQTL links (SNP → Gene)
+;   - 100K GTEx eQTL links (SNP -> Gene)
 ;   - 20 mined co-regulation/co-expression patterns
-;   - 193 Reactome pathway memberships (Gene → Pathway, human)
-;   - 750 reverse pathway edges (Pathway → Gene, top 15 shared pathways)
+;   - 193 Reactome pathway memberships (Gene -> Pathway, human)
+;   - 750 reverse pathway edges (Pathway -> Gene, top 15 shared pathways)
 ;
 ; Note: PLN rule declarations use (rule-sig name type) instead of (: name type).
 ; Both HE and CeTTa treat (: $e T) in -> arg slots as a literal expected type,
@@ -65,13 +65,13 @@
    (match $kb (compound-binds $compound $gene)
      (: (binds-fact $compound $gene) (binds $compound $gene))))
 
-; Unary rule — matches rule-sig instead of (: ...) for rules
+; Unary rule - matches rule-sig instead of (: ...) for rules
 (= (bc $kb (S $d) (: ($r $p1) $thm))
    (let* (((rule-sig $r (-> (: $p1 $t1) $thm)) (bc $kb $d (rule-sig $r (-> (: $p1 $t1) $thm))))
           ((: $p1 $t1) (bc $kb $d (: $p1 $t1))))
      (: ($r $p1) $thm)))
 
-; Binary rule — matches rule-sig instead of (: ...) for rules
+; Binary rule - matches rule-sig instead of (: ...) for rules
 (= (bc $kb (S $d) (: ($r $p1 $p2) $thm))
    (let* (((rule-sig $r (-> (: $p1 $t1) (: $p2 $t2) $thm)) (bc $kb $d (rule-sig $r (-> (: $p1 $t1) (: $p2 $t2) $thm))))
           ((: $p1 $t1) (bc $kb $d (: $p1 $t1)))
@@ -87,10 +87,10 @@
 !(import! &self bio_hetionet_kb)
 
 ; ============================================================================
-; PLN rules — 9 relation types, using (rule-sig ...) to avoid type-checker
+; PLN rules - 9 relation types, using (rule-sig ...) to avoid type-checker
 ; ============================================================================
 
-; Rule 1: Direct eQTL → target
+; Rule 1: Direct eQTL -> target
 (rule-sig dt (-> (: $e (eqtl $snp $gene)) (target $snp $gene)))
 
 ; Rule 2: Co-regulation transfer
@@ -147,7 +147,7 @@
 (= (proof-score (bg $sub $e2)) (proof-score $sub))
 
 ; ============================================================================
-; Queries — full SNP → Gene → Disease → Drug chain
+; Queries - full SNP -> Gene -> Disease -> Drug chain
 ; ============================================================================
 
 ; Phase 1: Direct compound binding (depth 2)

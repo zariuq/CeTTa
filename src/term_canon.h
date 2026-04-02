@@ -39,6 +39,11 @@ Atom *cetta_var_map_get_or_add(CettaVarMap *map, Arena *dst, Atom *src_var,
                                CettaVarMapCreateFn create_var, void *ctx);
 
 typedef Atom *(*CettaAtomRewriteVarFn)(Arena *dst, Atom *src_var, void *ctx);
+/*
+ * Rebuilt expressions follow the destination arena's own hash-cons policy via
+ * the normal constructors. `share_immutable` additionally allows callers with
+ * long-lived/global storage policy to share immutable leaves more aggressively.
+ */
 Atom *cetta_atom_rewrite_vars(Arena *dst, Atom *src,
                               CettaAtomRewriteVarFn rewrite_var, void *ctx,
                               bool share_immutable);

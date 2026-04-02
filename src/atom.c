@@ -28,6 +28,7 @@ void *cetta_realloc(void *ptr, size_t size) {
 void arena_init(Arena *a) {
     a->head = NULL;
     a->hashcons = NULL;
+    a->hashcons_mode = ARENA_HASHCONS_NONE;
 }
 
 void arena_free(Arena *a) {
@@ -38,11 +39,49 @@ void arena_free(Arena *a) {
         b = next;
     }
     a->head = NULL;
+    a->hashcons = NULL;
+    a->hashcons_mode = ARENA_HASHCONS_NONE;
 }
 
-void arena_set_hashcons(Arena *a, HashConsTable *hc) {
+void arena_init_with_owned_hashcons(Arena *a, HashConsTable *hc) {
+    arena_init(a);
+    hashcons_init(hc);
+    arena_set_hashcons_owned_local(a, hc);
+}
+
+void arena_free_with_owned_hashcons(Arena *a, HashConsTable *hc) {
+    hashcons_free(hc);
+    arena_free(a);
+}
+
+void arena_reset_with_owned_hashcons(Arena *a, HashConsTable *hc) {
+    arena_free_with_owned_hashcons(a, hc);
+    arena_init_with_owned_hashcons(a, hc);
+}
+
+void arena_clear_hashcons(Arena *a) {
+    if (!a) return;
+    a->hashcons = NULL;
+    a->hashcons_mode = ARENA_HASHCONS_NONE;
+}
+
+void arena_set_hashcons_borrowed(Arena *a, HashConsTable *hc) {
     if (!a) return;
     a->hashcons = hc;
+    a->hashcons_mode = hc ? ARENA_HASHCONS_BORROWED : ARENA_HASHCONS_NONE;
+}
+
+void arena_set_hashcons_owned_local(Arena *a, HashConsTable *hc) {
+    if (!a) return;
+    a->hashcons = hc;
+    a->hashcons_mode = hc ? ARENA_HASHCONS_OWNED_LOCAL : ARENA_HASHCONS_NONE;
+}
+
+static void arena_reset_owned_hashcons(Arena *a) {
+    if (!a || !a->hashcons)
+        return;
+    hashcons_free(a->hashcons);
+    hashcons_init(a->hashcons);
 }
 
 ArenaMark arena_mark(const Arena *a) {
@@ -56,18 +95,25 @@ ArenaMark arena_mark(const Arena *a) {
 }
 
 void arena_reset(Arena *a, ArenaMark mark) {
+    bool rewound = false;
     if (!a) return;
     while (a->head && a->head != mark.head) {
         ArenaBlock *next = a->head->next;
         free(a->head);
         a->head = next;
+        rewound = true;
     }
     if (!a->head) {
+        if (rewound && a->hashcons_mode == ARENA_HASHCONS_OWNED_LOCAL)
+            arena_reset_owned_hashcons(a);
         return;
     }
     if (a->head->used > mark.used) {
         a->head->used = mark.used;
+        rewound = true;
     }
+    if (rewound && a->hashcons_mode == ARENA_HASHCONS_OWNED_LOCAL)
+        arena_reset_owned_hashcons(a);
 }
 
 /* ── Hash-Consing ──────────────────────────────────────────────────────── */
@@ -134,11 +180,24 @@ bool atom_eq_fast(Atom *a, Atom *b) {
     return atom_eq(a, b);
 }
 
-void hashcons_init(HashConsTable *hc) {
-    hc->size = HASHCONS_TABLE_SIZE;
+static uint32_t hashcons_normalize_size(uint32_t size) {
+    uint32_t normalized = 16;
+    if (size == 0)
+        size = HASHCONS_TABLE_SIZE;
+    while (normalized < size && normalized < (1u << 30))
+        normalized <<= 1;
+    return normalized;
+}
+
+void hashcons_init_sized(HashConsTable *hc, uint32_t initial_size) {
+    hc->size = hashcons_normalize_size(initial_size);
     hc->used = 0;
     hc->table = cetta_malloc(sizeof(Atom *) * hc->size);
     memset(hc->table, 0, sizeof(Atom *) * hc->size);
+}
+
+void hashcons_init(HashConsTable *hc) {
+    hashcons_init_sized(hc, HASHCONS_TABLE_SIZE);
 }
 
 void hashcons_free(HashConsTable *hc) {
@@ -155,6 +214,13 @@ void hashcons_free(HashConsTable *hc) {
     free(hc->table);
     hc->table = NULL;
     hc->size = hc->used = 0;
+}
+
+void hashcons_clear(HashConsTable *hc) {
+    if (!hc || !hc->table)
+        return;
+    memset(hc->table, 0, sizeof(Atom *) * hc->size);
+    hc->used = 0;
 }
 
 static bool atom_is_hash_stable(const Atom *atom) {

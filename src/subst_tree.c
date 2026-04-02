@@ -278,15 +278,15 @@ void smset_free(SubstMatchSet *s) {
     s->cap = 0;
 }
 
-static void smset_push(SubstMatchSet *s, uint32_t atom_idx, uint32_t epoch, Bindings *b) {
+static void smset_push_move(SubstMatchSet *s, uint32_t atom_idx, uint32_t epoch,
+                            Bindings *b) {
     if (s->len >= s->cap) {
         s->cap = s->cap ? s->cap * 2 : 8;
         s->items = cetta_realloc(s->items, sizeof(SubstMatch) * s->cap);
     }
     s->items[s->len].atom_idx = atom_idx;
     s->items[s->len].epoch = epoch;
-    if (!bindings_clone(&s->items[s->len].bindings, b))
-        return;
+    bindings_move(&s->items[s->len].bindings, b);
     s->items[s->len].exact = false;
     s->len++;
 }
@@ -341,7 +341,7 @@ static void st_collect(SubstNode *node, Bindings *b, Arena *a,
             tagged.entries[bi].var_id = var_epoch_id(tagged.entries[bi].var_id, epoch);
         }
         if (!bindings_has_loop(&tagged))
-            smset_push(out, node->leaves[li].idx, epoch, &tagged);
+            smset_push_move(out, node->leaves[li].idx, epoch, &tagged);
         bindings_free(&tagged);
     }
 }

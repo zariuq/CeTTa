@@ -40,6 +40,16 @@ void search_context_free(SearchContext *ctx) {
     }
 }
 
+bool search_context_reset(SearchContext *ctx, const Bindings *base) {
+    if (!ctx)
+        return false;
+    if (ctx->owns_scratch_arena) {
+        ArenaMark zero = {0};
+        arena_reset(ctx->scratch_arena, zero);
+    }
+    return bindings_builder_reset(&ctx->bindings, base);
+}
+
 ChoicePoint search_context_save(const SearchContext *ctx) {
     ChoicePoint point = {
         .bindings_mark = bindings_builder_save(&ctx->bindings),
