@@ -2,6 +2,14 @@
 ; Deep Multi-Relational Backward Chaining over Genomic Knowledge Graph
 ; ============================================================================
 ;
+; Variant-tabled sibling of bench_bio_bc_deep.metta.
+;
+; Positive example:
+; compare the same workload body with explicit variant search tabling.
+;
+; Negative example:
+; wrap the benchmark in import-only scaffolding and silently stop executing it.
+;
 ; Chain: SNP -> Gene -> Pathway -> Gene' -> Pathway' (depth 5+)
 ;
 ; Data sources:
@@ -17,6 +25,8 @@
 ;
 ; Expected output: 1,411,430 hypotheses across 17 phases.
 ; ============================================================================
+
+!(pragma! search-table-mode variant)
 
 ; ---- Nat -------------------------------------------------------------------
 (: Nat Type)

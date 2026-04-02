@@ -1745,26 +1745,7 @@ bindings_apply_without_self(Bindings *full, Arena *a,
                             VarId skip_id, Atom *value) {
     if (!value || !atom_contains_vars(value) || !full || full->len == 0)
         return value;
-    Bindings reduced;
-    if (!bindings_clone(&reduced, full))
-        return value;
-    bool removed = false;
-    for (uint32_t i = 0; i < reduced.len; i++) {
-        if (reduced.entries[i].var_id != skip_id)
-            continue;
-        for (uint32_t j = i + 1; j < reduced.len; j++)
-            reduced.entries[j - 1] = reduced.entries[j];
-        reduced.len--;
-        reduced.lookup_cache_count = 0;
-        reduced.lookup_cache_next = 0;
-        removed = true;
-        break;
-    }
-    Atom *resolved = removed
-        ? bindings_apply(&reduced, a, value)
-        : bindings_apply(full, a, value);
-    bindings_free(&reduced);
-    return resolved;
+    return bindings_apply_without_id(full, a, skip_id, value);
 }
 
 static __attribute__((unused)) Atom *
@@ -1843,6 +1824,8 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
         return false;
     if (nbody == 0)
         return true;
+    BindingsBuilder builder;
+    bindings_builder_init_owned(&builder, out);
     for (uint32_t i = 0; i < full->len; i++) {
         bool used = false;
         for (uint32_t j = 0; j < nbody; j++) {
@@ -1859,12 +1842,15 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
             ? bindings_apply_without_self((Bindings *)full, a,
                                           full->entries[i].var_id, val)
             : val;
-        if (!bindings_add_id(out, full->entries[i].var_id,
-                             full->entries[i].spelling, projected)) {
+        if (!bindings_builder_add_id(&builder, full->entries[i].var_id,
+                                     full->entries[i].spelling, projected,
+                                     full->entries[i].legacy_name_fallback)) {
+            bindings_builder_take(&builder, out);
             bindings_free(out);
             return false;
         }
     }
+    bindings_builder_take(&builder, out);
     return true;
 }
 
@@ -1883,6 +1869,14 @@ typedef struct {
     bool used_builder;
 } BindingsMergeAttempt;
 
+static bool bindings_clone_merge_fast(Bindings *dst,
+                                      const Bindings *base,
+                                      const Bindings *extra) {
+    if (bindings_clone_merge_ground_simple(dst, base, extra))
+        return true;
+    return bindings_clone_merge(dst, base, extra);
+}
+
 static __attribute__((unused)) bool
 bindings_builder_merge_or_clone(BindingsBuilder *builder,
                                 const Bindings *base,
@@ -1898,7 +1892,7 @@ bindings_builder_merge_or_clone(BindingsBuilder *builder,
         return true;
     }
     bindings_builder_rollback(builder, attempt->mark);
-    if (!bindings_clone_merge(&attempt->owned, base, extra))
+    if (!bindings_clone_merge_fast(&attempt->owned, base, extra))
         return false;
     attempt->env = &attempt->owned;
     return true;
@@ -1912,6 +1906,20 @@ bindings_merge_attempt_finish(BindingsBuilder *builder,
     } else {
         bindings_free(&attempt->owned);
     }
+}
+
+static __attribute__((unused)) void
+bindings_merge_attempt_take(BindingsBuilder *builder,
+                            BindingsMergeAttempt *attempt,
+                            Bindings *out) {
+    if (attempt->used_builder) {
+        bindings_builder_take(builder, out);
+        attempt->used_builder = false;
+        attempt->env = out;
+        return;
+    }
+    bindings_replace(out, &attempt->owned);
+    attempt->env = out;
 }
 
 static void query_equations_cache_store(TableStore *table, Space *s,
@@ -1933,40 +1941,56 @@ static void query_equations_cache_store(TableStore *table, Space *s,
         table_store_abort_query(&handle);
 }
 
-static void query_equations_cached(Space *s, Atom *query, Arena *a,
-                                   QueryResults *out) {
-    TableStore *table = eval_active_episode_table();
-    if (!table) {
-        query_equations(s, query, a, out);
-        return;
-    }
-    uint64_t revision = space_revision(s);
-    if (table_store_lookup(table, s, revision, query, a, out))
-        return;
-    query_equations(s, query, a, out);
-    query_equations_cache_store(table, s, revision, query, out);
-}
-
 static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
                             const Bindings *prefix, bool preserve_bindings,
                             OutcomeSet *os);
+
+typedef struct {
+    QueryResultVisitor visitor;
+    void *visitor_ctx;
+    QueryResults *results;
+    uint32_t visited;
+    bool keep_visiting;
+} QueryCacheVisitCtx;
+
+static bool query_cache_visit_stage_and_forward(Atom *result,
+                                                const Bindings *bindings,
+                                                void *ctx) {
+    QueryCacheVisitCtx *cache_visit = ctx;
+    query_results_push(cache_visit->results, result, (Bindings *)bindings);
+    if (!cache_visit->keep_visiting)
+        return true;
+    cache_visit->visited++;
+    if (!cache_visit->visitor(result, bindings, cache_visit->visitor_ctx))
+        cache_visit->keep_visiting = false;
+    return true;
+}
 
 static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
                                              QueryResultVisitor visitor,
                                              void *ctx) {
     TableStore *table = eval_active_episode_table();
+    if (!table)
+        return query_equations_visit(s, query, a, visitor, ctx);
     uint64_t revision = space_revision(s);
     uint32_t visited = 0;
-    if (table && table_store_lookup_visit(table, s, revision, query, a,
-                                          visitor, ctx, &visited))
+    if (table_store_lookup_visit(table, s, revision, query, a,
+                                 visitor, ctx, &visited))
         return visited;
     QueryResults results;
     query_results_init(&results);
-    query_equations(s, query, a, &results);
-    visited = query_results_visit(&results, visitor, ctx);
+    QueryCacheVisitCtx cache_visit = {
+        .visitor = visitor,
+        .visitor_ctx = ctx,
+        .results = &results,
+        .visited = 0,
+        .keep_visiting = true,
+    };
+    query_equations_visit(s, query, a, query_cache_visit_stage_and_forward,
+                          &cache_visit);
     query_equations_cache_store(table, s, revision, query, &results);
     query_results_free(&results);
-    return visited;
+    return cache_visit.visited;
 }
 
 typedef struct {
@@ -2022,9 +2046,113 @@ static bool query_result_apply_single_tail(SearchContext *context,
         ? result->result
         : bindings_apply((Bindings *)attempt.env, a, result->result);
     *tail_type = result_eval_type_hint(declared_type, result->result);
-    bindings_copy(tail_env, attempt.env);
+    bindings_merge_attempt_take(search_context_builder(context), &attempt, tail_env);
     bindings_merge_attempt_finish(search_context_builder(context), &attempt);
     return true;
+}
+
+typedef struct {
+    QueryEvalVisitorCtx eval;
+    SearchContext *context;
+    const Bindings *base_env;
+    Arena *arena;
+    Atom *declared_type;
+    Atom **tail_next;
+    Atom **tail_type;
+    Bindings *tail_env;
+    QueryResult first;
+    bool saw_any;
+    bool saw_many;
+} QuerySingleTailDispatchCtx;
+
+static void query_single_tail_dispatch_ctx_init(QuerySingleTailDispatchCtx *ctx,
+                                                Space *space,
+                                                Arena *arena,
+                                                Atom *declared_type,
+                                                int fuel,
+                                                const Bindings *base_env,
+                                                bool preserve_bindings,
+                                                SearchContext *context,
+                                                OutcomeSet *outcomes,
+                                                Atom **tail_next,
+                                                Atom **tail_type,
+                                                Bindings *tail_env) {
+    bindings_init(&ctx->first.bindings);
+    ctx->first.result = NULL;
+    ctx->saw_any = false;
+    ctx->saw_many = false;
+    ctx->context = context;
+    ctx->base_env = base_env;
+    ctx->arena = arena;
+    ctx->declared_type = declared_type;
+    ctx->tail_next = tail_next;
+    ctx->tail_type = tail_type;
+    ctx->tail_env = tail_env;
+    ctx->eval = (QueryEvalVisitorCtx) {
+        .space = space,
+        .arena = arena,
+        .declared_type = declared_type,
+        .fuel = fuel,
+        .base_env = base_env,
+        .preserve_bindings = preserve_bindings,
+        .context = context,
+        .outcomes = outcomes,
+    };
+}
+
+static void query_single_tail_dispatch_ctx_finish(QuerySingleTailDispatchCtx *ctx) {
+    if (ctx->saw_any && !ctx->saw_many)
+        bindings_free(&ctx->first.bindings);
+}
+
+static bool query_visit_single_tail_or_eval(Atom *result, const Bindings *bindings,
+                                            void *ctx) {
+    QuerySingleTailDispatchCtx *dispatch = ctx;
+    if (!dispatch->saw_any) {
+        dispatch->saw_any = true;
+        dispatch->first.result = result;
+        bindings_clone(&dispatch->first.bindings, bindings);
+        return true;
+    }
+    if (!dispatch->saw_many) {
+        dispatch->saw_many = true;
+        query_visit_eval_for_caller(dispatch->first.result,
+                                    &dispatch->first.bindings,
+                                    &dispatch->eval);
+        bindings_free(&dispatch->first.bindings);
+    }
+    return query_visit_eval_for_caller(result, bindings, &dispatch->eval);
+}
+
+static bool query_equations_single_tail_or_visit(Space *s,
+                                                 Atom *call_atom,
+                                                 Arena *a,
+                                                 Atom *declared_type,
+                                                 int fuel,
+                                                 const Bindings *base_env,
+                                                 bool preserve_bindings,
+                                                 SearchContext *context,
+                                                 OutcomeSet *outcomes,
+                                                 Atom **tail_next,
+                                                 Atom **tail_type,
+                                                 Bindings *tail_env) {
+    QuerySingleTailDispatchCtx dispatch;
+    query_single_tail_dispatch_ctx_init(&dispatch, s, a, declared_type, fuel,
+                                        base_env, preserve_bindings, context,
+                                        outcomes, tail_next, tail_type, tail_env);
+    query_equations_cached_visit(s, call_atom, a, query_visit_single_tail_or_eval,
+                                 &dispatch);
+    if (!dispatch.saw_any)
+        return false;
+    if (dispatch.saw_many)
+        return true;
+    bool applied = query_result_apply_single_tail(context, base_env, a,
+                                                  declared_type,
+                                                  &dispatch.first,
+                                                  tail_next, tail_type,
+                                                  tail_env);
+    query_single_tail_dispatch_ctx_finish(&dispatch);
+    return applied;
 }
 
 static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
@@ -2296,7 +2424,7 @@ static bool reduce_stream_results(Space *s, Arena *a, Arena *work_a, Atom *call,
     };
     arena_init(&reduce.stream_scratch);
     if (a->hashcons)
-        arena_set_hashcons(&reduce.stream_scratch, a->hashcons);
+        arena_set_hashcons_borrowed(&reduce.stream_scratch, a->hashcons);
 
     metta_eval_bind_visit(s, work_a, stream_expr, fuel, order, reduce_stream_visit, &reduce);
 
@@ -2397,7 +2525,7 @@ fold_by_key_stream_results(Space *s, Arena *a, Arena *work_a,
     };
     arena_init(&ctx.stream_scratch);
     if (a->hashcons)
-        arena_set_hashcons(&ctx.stream_scratch, a->hashcons);
+        arena_set_hashcons_borrowed(&ctx.stream_scratch, a->hashcons);
 
     metta_eval_bind_visit(s, work_a, stream_expr, fuel, order,
                           fold_by_key_stream_visit, &ctx);
@@ -2810,6 +2938,8 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
         Bindings tb;
         bindings_init(&tb);
         bool all_ok = true;
+        SearchContext trial_context;
+        bool have_trial_context = false;
 
         for (uint32_t ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
             Atom *binder = NULL;
@@ -2818,9 +2948,14 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             Atom **atypes = NULL;
             uint32_t nat = get_atom_types_profiled(s, a, atom->expr.elems[ai + 1], &atypes);
             bool found = false;
-            SearchContext trial_context;
-            if (!search_context_init(&trial_context, &tb, &scratch)) {
+            bool ready = !have_trial_context
+                ? search_context_init(&trial_context, &tb, &scratch)
+                : search_context_reset(&trial_context, &tb);
+            have_trial_context = have_trial_context || ready;
+            if (!ready) {
                 free(atypes);
+                if (have_trial_context)
+                    search_context_free(&trial_context);
                 bindings_free(&tb);
                 free(types);
                 arena_free(&scratch);
@@ -2849,12 +2984,13 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
                 }
                 search_context_rollback(&trial_context, point);
             }
-            search_context_free(&trial_context);
             free(atypes);
             if (!found) {
                 all_ok = false;
             }
         }
+        if (have_trial_context)
+            search_context_free(&trial_context);
 
         if (all_ok) {
             Atom *concrete_ret =
@@ -2952,6 +3088,8 @@ static bool check_function_applicable(
         Bindings next[64];
         for (uint32_t ni = 0; ni < 64; ni++) bindings_init(&next[ni]);
         uint32_t nnext = 0;
+        SearchContext candidate_context;
+        bool have_candidate_context = false;
 
         for (uint32_t r = 0; r < nresults; r++) {
             bool found = false;
@@ -2974,9 +3112,14 @@ static bool check_function_applicable(
                 free(atypes);
                 continue;
             }
-            SearchContext candidate_context;
-            if (!search_context_init(&candidate_context, &results[r], NULL)) {
+            bool ready = !have_candidate_context
+                ? search_context_init(&candidate_context, &results[r], NULL)
+                : search_context_reset(&candidate_context, &results[r]);
+            have_candidate_context = have_candidate_context || ready;
+            if (!ready) {
                 free(atypes);
+                if (have_candidate_context)
+                    search_context_free(&candidate_context);
                 for (uint32_t rr = 0; rr < 64; rr++) {
                     bindings_free(&results[rr]);
                     bindings_free(&next[rr]);
@@ -3004,7 +3147,6 @@ static bool check_function_applicable(
                     search_context_rollback(&candidate_context, point);
                 }
             }
-            search_context_free(&candidate_context);
             if (!found && natypes > 0) {
                 /* Report first mismatching type */
                 Atom *reason = atom_expr(a, (Atom*[]){
@@ -3018,6 +3160,8 @@ static bool check_function_applicable(
             }
             free(atypes);
         }
+        if (have_candidate_context)
+            search_context_free(&candidate_context);
         for (uint32_t r = 0; r < nresults; r++)
             bindings_free(&results[r]);
         for (uint32_t ni = 0; ni < nnext; ni++)
@@ -3347,6 +3491,8 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     bindings_init(projected);
     if (!full || visible->len == 0)
         return true;
+    BindingsBuilder builder;
+    bindings_builder_init_owned(&builder, projected);
 
     for (uint32_t i = 0; i < visible->len; i++) {
         Atom *var = atom_var_with_spelling(a, visible->items[i].spelling,
@@ -3357,8 +3503,10 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
             resolved->sym_id == visible->items[i].spelling) {
             continue;
         }
-        if (!bindings_add_id(projected, visible->items[i].var_id,
-                             visible->items[i].spelling, resolved)) {
+        if (!bindings_builder_add_id(&builder, visible->items[i].var_id,
+                                     visible->items[i].spelling, resolved,
+                                     false)) {
+            bindings_builder_take(&builder, projected);
             bindings_free(projected);
             return false;
         }
@@ -3371,11 +3519,13 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
             !atom_refs_only_match_visible_vars(rhs, visible)) {
             continue;
         }
-        if (!bindings_add_constraint(projected, lhs, rhs)) {
+        if (!bindings_builder_add_constraint(&builder, lhs, rhs)) {
+            bindings_builder_take(&builder, projected);
             bindings_free(projected);
             return false;
         }
     }
+    bindings_builder_take(&builder, projected);
     return true;
 }
 
@@ -3392,7 +3542,7 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
         if ((outer_env && outer_env->len > 0) || inner->len > 0) {
             if (outer_env && outer_env->len > 0 && inner->len > 0) {
                 Bindings merged;
-                if (!bindings_clone_merge(&merged, outer_env, inner))
+                if (!bindings_clone_merge_fast(&merged, outer_env, inner))
                     return;
                 applied = bindings_apply(&merged, a, atom);
                 bindings_free(&merged);
@@ -3412,7 +3562,7 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
     }
 
     Bindings merged;
-    if (!bindings_clone_merge(&merged, outer_env, inner))
+    if (!bindings_clone_merge_fast(&merged, outer_env, inner))
         return;
     outcome_set_add_move(os, atom, &merged);
     bindings_free(&merged);
@@ -3431,7 +3581,7 @@ static void outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
         if ((outer_env && outer_env->len > 0) || inner->len > 0) {
             if (outer_env && outer_env->len > 0 && inner->len > 0) {
                 Bindings merged;
-                if (!bindings_clone_merge(&merged, outer_env, inner))
+                if (!bindings_clone_merge_fast(&merged, outer_env, inner))
                     return;
                 applied = bindings_apply(&merged, a, atom);
                 bindings_free(&merged);
@@ -3455,7 +3605,7 @@ static void outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
     }
 
     Bindings merged;
-    if (!bindings_clone_merge(&merged, outer_env, inner))
+    if (!bindings_clone_merge_fast(&merged, outer_env, inner))
         return;
     outcome_set_add_move(os, atom, &merged);
     bindings_free(&merged);
@@ -3575,7 +3725,7 @@ static bool branch_outer_env_begin(Bindings *owned,
         *effective_outer = branch_env;
         return true;
     }
-    if (!bindings_clone_merge(owned, outer_env, branch_env)) {
+    if (!bindings_clone_merge_fast(owned, outer_env, branch_env)) {
         *effective_outer = NULL;
         return false;
     }
@@ -4122,24 +4272,41 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             MatchStep *step = &steps[si];
             Bindings *next_binds = NULL;
             uint32_t nnext = 0, cnext = 0;
+            SearchContext candidate_context;
+            bool have_candidate_context = false;
             for (uint32_t bi = 0; bi < ncur; bi++) {
+                bool ready = !have_candidate_context
+                    ? search_context_init(&candidate_context, &cur_binds[bi], NULL)
+                    : search_context_reset(&candidate_context, &cur_binds[bi]);
+                have_candidate_context = have_candidate_context || ready;
+                if (!ready)
+                    continue;
                 Atom *grounded = bindings_apply(&cur_binds[bi], a, step->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
                 space_subst_query(step->space, a, grounded, &smr);
                 for (uint32_t ci = 0; ci < smr.len; ci++) {
-                    Bindings mb;
-                    if (space_subst_match_with_seed(step->space, grounded, &smr.items[ci],
-                                                    &cur_binds[bi], a, &mb)) {
+                    ChoicePoint point = search_context_save(&candidate_context);
+                    if (space_subst_match_with_seed_builder(
+                            step->space, grounded, &smr.items[ci],
+                            search_context_builder(&candidate_context), a)) {
                         if (nnext >= cnext) {
                             cnext = cnext ? cnext * 2 : 8;
                             next_binds = cetta_realloc(next_binds, sizeof(Bindings) * cnext);
                         }
-                        bindings_move(&next_binds[nnext++], &mb);
+                        Bindings published;
+                        bindings_init(&published);
+                        search_context_take(&candidate_context, &published);
+                        bindings_move(&next_binds[nnext++], &published);
+                        search_context_reset(&candidate_context, &cur_binds[bi]);
+                        continue;
                     }
+                    search_context_rollback(&candidate_context, point);
                 }
                 smset_free(&smr);
             }
+            if (have_candidate_context)
+                search_context_free(&candidate_context);
             bindings_array_free(cur_binds, ncur);
             cur_binds = next_binds;
             ncur = nnext;
@@ -4149,18 +4316,30 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         if (nsteps > 1 && ncur > 0) {
             MatchStep *last = &steps[nsteps - 1];
             static uint64_t g_chain_progress = 0;
+            SearchContext candidate_context;
+            bool have_candidate_context = false;
             for (uint32_t bi = 0; bi < ncur; bi++) {
+                bool ready = !have_candidate_context
+                    ? search_context_init(&candidate_context, &cur_binds[bi], NULL)
+                    : search_context_reset(&candidate_context, &cur_binds[bi]);
+                have_candidate_context = have_candidate_context || ready;
+                if (!ready)
+                    continue;
                 Atom *grounded = bindings_apply(&cur_binds[bi], a, last->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
                 space_subst_query(last->space, a, grounded, &smr);
                 for (uint32_t ci = 0; ci < smr.len; ci++) {
-                    Bindings mb;
-                    if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
-                                                    &cur_binds[bi], a, &mb)) {
+                    ChoicePoint point = search_context_save(&candidate_context);
+                    if (space_subst_match_with_seed_builder(
+                            last->space, grounded, &smr.items[ci],
+                            search_context_builder(&candidate_context), a)) {
                         Bindings projected;
-                        if (!project_match_visible_bindings(a, &visible, &mb, &projected)) {
-                            bindings_free(&mb);
+                        if (!project_match_visible_bindings(
+                                a, &visible,
+                                search_context_bindings(&candidate_context),
+                                &projected)) {
+                            search_context_rollback(&candidate_context, point);
                             continue;
                         }
                         Atom *result = bindings_apply(&projected, a, body);
@@ -4168,7 +4347,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                         eval_for_caller(s, a, NULL, result, fuel, forward_env,
                                         preserve_bindings, os);
                         bindings_free(&projected);
-                        bindings_free(&mb);
                         g_chain_progress++;
                         if ((g_chain_progress % 100000) == 0) {
                             fprintf(stderr, "[chain] %luk results  (step %u/%u, bi=%u/%u)\n",
@@ -4176,9 +4354,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                 nsteps, nsteps, bi, ncur);
                         }
                     }
+                    search_context_rollback(&candidate_context, point);
                 }
                 smset_free(&smr);
             }
+            if (have_candidate_context)
+                search_context_free(&candidate_context);
         } else {
             for (uint32_t bi = 0; bi < ncur; bi++) {
                 Bindings projected;
@@ -4267,6 +4448,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     Atom **prefix = arena_alloc(a, sizeof(Atom *) * expr_narg);
                     interpret_function_args(s, a, head_atom, atom->expr.elems + 1, arg_types,
                                             expr_narg, 0, prefix, head_env, fuel, &call_terms);
+                    SearchContext qr_context;
+                    bool have_qr_context = false;
 
                     for (uint32_t ci = 0; ci < call_terms.len; ci++) {
                         Atom *call_atom = outcome_atom_materialize(a, &call_terms.items[ci]);
@@ -4292,7 +4475,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && *tail_next) {
-                                    bindings_copy(tail_env, combo_ctx);
+                                    bindings_replace(tail_env, combo_ctx);
                                     outcome_set_free(&call_terms);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
@@ -4325,7 +4508,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && *tail_next) {
-                                    bindings_copy(tail_env, combo_ctx);
+                                    bindings_replace(tail_env, combo_ctx);
                                     outcome_set_free(&call_terms);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
@@ -4347,7 +4530,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                             ? gr
                                             : bindings_apply(combo_ctx, a, gr);
                                         *tail_type = inst_ret_type;
-                                        bindings_copy(tail_env, combo_ctx);
+                                        bindings_replace(tail_env, combo_ctx);
                                         outcome_set_free(&call_terms);
                                         outcome_set_free(&heads);
                                         outcome_set_free(&func_results);
@@ -4364,39 +4547,37 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             }
                         }
                         if (!dispatched) {
-                            SearchContext qr_context;
-                            if (!search_context_init(&qr_context, combo_ctx, NULL)) {
+                            bool ready = !have_qr_context
+                                ? search_context_init(&qr_context, combo_ctx, NULL)
+                                : search_context_reset(&qr_context, combo_ctx);
+                            have_qr_context = have_qr_context || ready;
+                            if (!ready) {
                                 continue;
                             }
-                            QueryResults qr;
-                            query_results_init(&qr);
-                            query_equations_cached(s, call_atom, a, &qr);
-                            if (qr.len > 0) {
-                                if (only_function_types &&
-                                    n_op_types == 1 && heads.len == 1 &&
-                                    call_terms.len == 1 && qr.len == 1) {
-                                    if (!query_result_apply_single_tail(&qr_context,
-                                                                        combo_ctx,
-                                                                        a,
-                                                                        inst_ret_type,
-                                                                        &qr.items[0],
-                                                                        tail_next,
-                                                                        tail_type,
-                                                                        tail_env)) {
-                                        search_context_free(&qr_context);
-                                        query_results_free(&qr);
-                                        continue;
+                            bool single_tail_query =
+                                only_function_types &&
+                                n_op_types == 1 && heads.len == 1 &&
+                                call_terms.len == 1;
+                            if (single_tail_query) {
+                                if (query_equations_single_tail_or_visit(
+                                        s, call_atom, a, inst_ret_type, fuel,
+                                        combo_ctx, preserve_bindings,
+                                        &qr_context, &func_results,
+                                        tail_next, tail_type, tail_env)) {
+                                    if (*tail_next) {
+                                        if (have_qr_context)
+                                            search_context_free(&qr_context);
+                                        outcome_set_free(&call_terms);
+                                        outcome_set_free(&heads);
+                                        outcome_set_free(&func_results);
+                                        for (uint32_t sj = 0; sj < n_succs; sj++)
+                                            bindings_free(&succs[sj]);
+                                        free(op_types);
+                                        return true;
                                     }
-                                    search_context_free(&qr_context);
-                                    query_results_free(&qr);
-                                    outcome_set_free(&call_terms);
-                                    outcome_set_free(&heads);
-                                    outcome_set_free(&func_results);
-                                    for (uint32_t sj = 0; sj < n_succs; sj++)
-                                        bindings_free(&succs[sj]);
-                                    free(op_types);
-                                    return true;
+                                    dispatched = true;
                                 }
+                            } else {
                                 QueryEvalVisitorCtx query_eval = {
                                     .space = s,
                                     .arena = a,
@@ -4407,18 +4588,18 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     .context = &qr_context,
                                     .outcomes = &func_results,
                                 };
-                                query_results_visit(&qr, query_visit_eval_for_caller,
-                                                    &query_eval);
-                                search_context_free(&qr_context);
-                                dispatched = true;
-                            } else {
-                                search_context_free(&qr_context);
+                                if (query_equations_cached_visit(s, call_atom, a,
+                                                                 query_visit_eval_for_caller,
+                                                                 &query_eval) > 0) {
+                                    dispatched = true;
+                                }
                             }
-                            query_results_free(&qr);
                         }
                         if (!dispatched)
                             outcome_set_add_existing_move(&func_results, &call_terms.items[ci]);
                     }
+                    if (have_qr_context)
+                        search_context_free(&qr_context);
                     outcome_set_free(&call_terms);
                 }
                 outcome_set_free(&heads);
@@ -4484,7 +4665,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                         preserve_bindings,
                         tail_next, tail_type, os)) {
                     if (*tail_next)
-                        bindings_copy(tail_env, tuple_bindings);
+                        bindings_replace(tail_env, tuple_bindings);
                     outcome_set_free(&tuples);
                     return true;
                 }
@@ -4504,7 +4685,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                         preserve_bindings,
                         tail_next, tail_type, os)) {
                     if (*tail_next)
-                        bindings_copy(tail_env, tuple_bindings);
+                        bindings_replace(tail_env, tuple_bindings);
                     outcome_set_free(&tuples);
                     return true;
                 }
@@ -4517,7 +4698,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             ? result
                             : bindings_apply(tuple_bindings, a, result);
                         *tail_type = etype;
-                        bindings_copy(tail_env, tuple_bindings);
+                        bindings_replace(tail_env, tuple_bindings);
                         outcome_set_free(&tuples);
                         return true;
                     }
@@ -4529,52 +4710,24 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 outcome_set_free(&tuples);
                 return true;
             }
-            QueryResults qr;
-            query_results_init(&qr);
-            query_equations_cached(s, call_atom, a, &qr);
-            if (qr.len == 1) {
-                if (!query_result_apply_single_tail(&qr_context,
-                                                    tuple_bindings,
-                                                    a,
-                                                    etype,
-                                                    &qr.items[0],
-                                                    tail_next,
-                                                    tail_type,
-                                                    tail_env)) {
-                    search_context_free(&qr_context);
-                    query_results_free(&qr);
-                    outcome_set_free(&tuples);
-                    return true;
-                }
+            if (query_equations_single_tail_or_visit(s, call_atom, a, etype,
+                                                     fuel, tuple_bindings,
+                                                     preserve_bindings,
+                                                     &qr_context, os,
+                                                     tail_next, tail_type,
+                                                     tail_env)) {
                 search_context_free(&qr_context);
-                query_results_free(&qr);
-                outcome_set_free(&tuples);
-                return true;
-            }
-            if (qr.len > 0) {
-                QueryEvalVisitorCtx query_eval = {
-                    .space = s,
-                    .arena = a,
-                    .declared_type = NULL,
-                    .fuel = fuel,
-                    .base_env = tuple_bindings,
-                    .preserve_bindings = preserve_bindings,
-                    .context = &qr_context,
-                    .outcomes = os,
-                };
-                query_results_visit(&qr, query_visit_eval_for_caller, &query_eval);
-                search_context_free(&qr_context);
-                query_results_free(&qr);
                 outcome_set_free(&tuples);
                 return true;
             }
             search_context_free(&qr_context);
-            query_results_free(&qr);
             outcome_set_add_existing_move(os, &tuples.items[0]);
             outcome_set_free(&tuples);
             return true;
         }
 
+        SearchContext qr_context;
+        bool have_qr_context = false;
         for (uint32_t ti = 0; ti < tuples.len; ti++) {
             Atom *call_atom = outcome_atom_materialize(a, &tuples.items[ti]);
             Bindings *tuple_bindings = &tuples.items[ti].env;
@@ -4619,8 +4772,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 }
             }
 
-            SearchContext qr_context;
-            if (!search_context_init(&qr_context, tuple_bindings, NULL)) {
+            bool ready = !have_qr_context
+                ? search_context_init(&qr_context, tuple_bindings, NULL)
+                : search_context_reset(&qr_context, tuple_bindings);
+            have_qr_context = have_qr_context || ready;
+            if (!ready) {
                 continue;
             }
             QueryEvalVisitorCtx query_eval = {
@@ -4636,13 +4792,13 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             if (query_equations_cached_visit(s, call_atom, a,
                                              query_visit_eval_for_caller,
                                              &query_eval) > 0) {
-                search_context_free(&qr_context);
                 continue;
             }
-            search_context_free(&qr_context);
 
             outcome_set_add_existing_move(os, &tuples.items[ti]);
         }
+        if (have_qr_context)
+            search_context_free(&qr_context);
         outcome_set_free(&tuples);
     }
 
@@ -5409,7 +5565,7 @@ tail_call: ;
             Arena stream_scratch;
             arena_init(&stream_scratch);
             if (a->hashcons)
-                arena_set_hashcons(&stream_scratch, a->hashcons);
+                arena_set_hashcons_borrowed(&stream_scratch, a->hashcons);
             reduce_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
                                   init, acc_var->sym_id, item_var->sym_id,
                                   step_expr, fuel, os);
@@ -5487,7 +5643,7 @@ tail_call: ;
             Arena stream_scratch;
             arena_init(&stream_scratch);
             if (a->hashcons)
-                arena_set_hashcons(&stream_scratch, a->hashcons);
+                arena_set_hashcons_borrowed(&stream_scratch, a->hashcons);
             fold_by_key_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
                                        init, acc_var->sym_id, item_var->sym_id,
                                        key_expr, step_expr, fuel, os);
@@ -6136,7 +6292,7 @@ tail_call: ;
             limit = (uint64_t)step_atom->ground.ival;
             free(step_rs.items);
         }
-        if (target->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED ||
+        if (!space_match_backend_supports_compiled_space(target) ||
             space_is_ordered(target)) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "NoStepSemantics")),

@@ -17,6 +17,8 @@ typedef struct {
     Atom *rhs;
 } BindingConstraint;
 
+typedef struct BindingLookupSlot BindingLookupSlot;
+
 typedef struct {
     Binding *entries;
     uint32_t len;
@@ -24,6 +26,9 @@ typedef struct {
     BindingConstraint *constraints;
     uint32_t eq_len;
     uint32_t eq_cap;
+    BindingLookupSlot *lookup_index_slots;
+    uint32_t lookup_index_cap;
+    bool ground_only_values;
     VarId lookup_cache_ids[4];
     uint32_t lookup_cache_indices[4];
     uint8_t lookup_cache_count;
@@ -38,6 +43,7 @@ typedef struct {
 typedef struct {
     uint32_t len;
     uint32_t eq_len;
+    bool ground_only_values;
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
 } BindingsBuilderTrailEntry;
@@ -64,7 +70,12 @@ bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
+bool      bindings_is_ground_simple(const Bindings *b);
+bool      bindings_clone_merge_ground_simple(Bindings *dst, const Bindings *base,
+                                             const Bindings *extra);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
+Atom     *bindings_apply_without_id(Bindings *b, Arena *a, VarId skip_id,
+                                    Atom *atom);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);
@@ -75,6 +86,7 @@ void      binding_set_push_move(BindingSet *bs, Bindings *b);
 bool      bindings_builder_init(BindingsBuilder *bb, const Bindings *base);
 void      bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned);
 void      bindings_builder_free(BindingsBuilder *bb);
+bool      bindings_builder_reset(BindingsBuilder *bb, const Bindings *base);
 uint32_t  bindings_builder_save(const BindingsBuilder *bb);
 void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);
 void      bindings_builder_commit(BindingsBuilder *bb);
@@ -82,6 +94,11 @@ bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
                                         SymbolId spelling, Atom *val);
 bool      bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var,
                                          Atom *val);
+bool      bindings_builder_add_id(BindingsBuilder *bb, VarId var_id,
+                                  SymbolId spelling, Atom *val,
+                                  bool legacy_name_fallback);
+bool      bindings_builder_add_constraint(BindingsBuilder *bb, Atom *lhs,
+                                          Atom *rhs);
 bool      bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src);
 const Bindings *bindings_builder_bindings(const BindingsBuilder *bb);
 void      bindings_builder_take(BindingsBuilder *bb, Bindings *out);
@@ -93,6 +110,14 @@ void      bindings_builder_take(BindingsBuilder *bb, Bindings *out);
    On failure, returns false (bindings undefined). */
 bool simple_match(Atom *pattern, Atom *target, Bindings *b);
 bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb);
+bool match_pattern_candidate(Atom *pattern, Atom *candidate, Bindings *b,
+                             bool *needs_loop_check);
+bool match_pattern_candidate_builder(Atom *pattern, Atom *candidate,
+                                     BindingsBuilder *bb,
+                                     bool *needs_loop_check);
+bool match_pattern_candidate_epoch(Atom *pattern, Atom *candidate, Bindings *b,
+                                   Arena *a, uint32_t epoch,
+                                   bool *needs_loop_check);
 
 /* ── Variable renaming (standardization apart, à la Vampire) ───────────── */
 

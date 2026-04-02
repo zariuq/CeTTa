@@ -25,7 +25,13 @@ typedef struct {
 
 typedef struct {
     TableStore *store;
-    TableStoreEntry staged;
+    Arena stage_arena;
+    HashConsTable stage_hashcons;
+    Space *stage_space;
+    uint64_t stage_revision;
+    Atom *stage_goal_key;
+    uint32_t stage_goal_hash;
+    QueryResults stage_results;
     CettaVarMap query_map;
     uint32_t target_index;
     bool target_reusable;
@@ -112,12 +118,47 @@ static Atom *table_store_materialize_atom(Arena *dst, Atom *src,
                                    &ctx, false);
 }
 
+static bool table_store_copy_bindings(Arena *dst, const Bindings *src,
+                                      Bindings *out) {
+    bindings_init(out);
+    if (!src)
+        return true;
+    BindingsBuilder builder;
+    bindings_builder_init_owned(&builder, out);
+    for (uint32_t i = 0; i < src->len; i++) {
+        Atom *copied_val = atom_deep_copy(dst, src->entries[i].val);
+        if (!copied_val ||
+            !bindings_builder_add_id(&builder, src->entries[i].var_id,
+                                     src->entries[i].spelling, copied_val,
+                                     src->entries[i].legacy_name_fallback)) {
+            bindings_builder_take(&builder, out);
+            bindings_free(out);
+            return false;
+        }
+    }
+    for (uint32_t i = 0; i < src->eq_len; i++) {
+        Atom *lhs = atom_deep_copy(dst, src->constraints[i].lhs);
+        Atom *rhs = atom_deep_copy(dst, src->constraints[i].rhs);
+        if (!lhs || !rhs || !bindings_builder_add_constraint(&builder, lhs, rhs)) {
+            bindings_builder_take(&builder, out);
+            bindings_free(out);
+            return false;
+        }
+    }
+    bindings_builder_take(&builder, out);
+    out->lookup_cache_count = 0;
+    out->lookup_cache_next = 0;
+    return true;
+}
+
 static bool table_store_canonicalize_bindings(Arena *dst, const Bindings *src,
                                               CettaVarMap *map,
                                               Bindings *out) {
     bindings_init(out);
     if (!src)
         return true;
+    BindingsBuilder builder;
+    bindings_builder_init_owned(&builder, out);
     for (uint32_t i = 0; i < src->len; i++) {
         Atom binding_var = {
             .kind = ATOM_VAR,
@@ -131,24 +172,26 @@ static bool table_store_canonicalize_bindings(Arena *dst, const Bindings *src,
         Atom *canonical_val =
             table_store_canonicalize_atom(dst, src->entries[i].val, map, NULL);
         if (!canonical_var || !canonical_val ||
-            !bindings_add_id(out, canonical_var->var_id, canonical_var->sym_id,
-                             canonical_val)) {
+            !bindings_builder_add_id(&builder, canonical_var->var_id,
+                                     canonical_var->sym_id, canonical_val,
+                                     src->entries[i].legacy_name_fallback)) {
+            bindings_builder_take(&builder, out);
             bindings_free(out);
             return false;
         }
-        out->entries[out->len - 1].legacy_name_fallback =
-            src->entries[i].legacy_name_fallback;
     }
     for (uint32_t i = 0; i < src->eq_len; i++) {
         Atom *lhs = table_store_canonicalize_atom(dst, src->constraints[i].lhs,
                                                   map, NULL);
         Atom *rhs = table_store_canonicalize_atom(dst, src->constraints[i].rhs,
                                                   map, NULL);
-        if (!lhs || !rhs || !bindings_add_constraint(out, lhs, rhs)) {
+        if (!lhs || !rhs || !bindings_builder_add_constraint(&builder, lhs, rhs)) {
+            bindings_builder_take(&builder, out);
             bindings_free(out);
             return false;
         }
     }
+    bindings_builder_take(&builder, out);
     out->lookup_cache_count = 0;
     out->lookup_cache_next = 0;
     return true;
@@ -161,6 +204,8 @@ static bool table_store_materialize_bindings(Arena *dst, const Bindings *src,
     bindings_init(out);
     if (!src)
         return true;
+    BindingsBuilder builder;
+    bindings_builder_init_owned(&builder, out);
     for (uint32_t i = 0; i < src->len; i++) {
         Atom binding_var = {
             .kind = ATOM_VAR,
@@ -179,24 +224,26 @@ static bool table_store_materialize_bindings(Arena *dst, const Bindings *src,
                                                               goal_instantiation,
                                                               local_map);
         if (!goal_var || !materialized_val ||
-            !bindings_add_id(out, goal_var->var_id, goal_var->sym_id,
-                             materialized_val)) {
+            !bindings_builder_add_id(&builder, goal_var->var_id,
+                                     goal_var->sym_id, materialized_val,
+                                     src->entries[i].legacy_name_fallback)) {
+            bindings_builder_take(&builder, out);
             bindings_free(out);
             return false;
         }
-        out->entries[out->len - 1].legacy_name_fallback =
-            src->entries[i].legacy_name_fallback;
     }
     for (uint32_t i = 0; i < src->eq_len; i++) {
         Atom *lhs = table_store_materialize_atom(dst, src->constraints[i].lhs,
                                                  goal_instantiation, local_map);
         Atom *rhs = table_store_materialize_atom(dst, src->constraints[i].rhs,
                                                  goal_instantiation, local_map);
-        if (!lhs || !rhs || !bindings_add_constraint(out, lhs, rhs)) {
+        if (!lhs || !rhs || !bindings_builder_add_constraint(&builder, lhs, rhs)) {
+            bindings_builder_take(&builder, out);
             bindings_free(out);
             return false;
         }
     }
+    bindings_builder_take(&builder, out);
     out->lookup_cache_count = 0;
     out->lookup_cache_next = 0;
     return true;
@@ -220,13 +267,63 @@ static void table_store_entry_free(TableStoreEntry *entry) {
     entry->goal_hash = 0;
 }
 
-static void table_query_state_free(TableQueryState *state, bool free_staged) {
+static void table_query_state_init(TableQueryState *state, TableStore *store) {
+    state->store = store;
+    arena_init_with_owned_hashcons(&state->stage_arena, &state->stage_hashcons);
+    state->stage_space = NULL;
+    state->stage_revision = 0;
+    state->stage_goal_key = NULL;
+    state->stage_goal_hash = 0;
+    query_results_init(&state->stage_results);
+    cetta_var_map_init(&state->query_map);
+    state->target_index = 0;
+    state->target_reusable = false;
+    state->target_stale = false;
+}
+
+static void table_query_state_release_staging(TableQueryState *state) {
+    query_results_free(&state->stage_results);
+    arena_free_with_owned_hashcons(&state->stage_arena, &state->stage_hashcons);
+    state->stage_space = NULL;
+    state->stage_revision = 0;
+    state->stage_goal_key = NULL;
+    state->stage_goal_hash = 0;
+}
+
+static void table_query_state_free(TableQueryState *state) {
     if (!state)
         return;
-    if (free_staged)
-        table_store_entry_free(&state->staged);
+    table_query_state_release_staging(state);
     cetta_var_map_free(&state->query_map);
     free(state);
+}
+
+static bool table_store_entry_commit_from_staged(TableStoreEntry *target,
+                                                 const TableQueryState *state) {
+    table_store_entry_init(target);
+    target->space = state->stage_space;
+    target->revision = state->stage_revision;
+    target->goal_hash = state->stage_goal_hash;
+    target->goal_key = atom_deep_copy(&target->arena, state->stage_goal_key);
+    if (!target->goal_key)
+        goto fail;
+    for (uint32_t i = 0; i < state->stage_results.len; i++) {
+        Atom *result = atom_deep_copy(&target->arena,
+                                      state->stage_results.items[i].result);
+        Bindings copied;
+        if (!result ||
+            !table_store_copy_bindings(&target->arena,
+                                       &state->stage_results.items[i].bindings,
+                                       &copied)) {
+            goto fail;
+        }
+        query_results_push_move(&target->results, result, &copied);
+    }
+    return true;
+
+fail:
+    table_store_entry_free(target);
+    return false;
 }
 
 static TableStoreMatch table_store_find_match(TableStore *store,
@@ -321,9 +418,7 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
     }
 
     TableQueryState *state = cetta_malloc(sizeof(TableQueryState));
-    state->store = store;
-    table_store_entry_init(&state->staged);
-    cetta_var_map_init(&state->query_map);
+    table_query_state_init(state, store);
     if (match.exact) {
         state->target_index = match.exact_index;
         state->target_reusable = true;
@@ -338,17 +433,17 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
         state->target_stale = false;
     }
 
-    state->staged.space = space;
-    state->staged.revision = revision;
-    state->staged.goal_key = table_store_canonicalize_atom(&state->staged.arena,
-                                                           query,
-                                                           &state->query_map,
-                                                           NULL);
-    if (!state->staged.goal_key) {
-        table_query_state_free(state, true);
+    state->stage_space = space;
+    state->stage_revision = revision;
+    state->stage_goal_key = table_store_canonicalize_atom(&state->stage_arena,
+                                                          query,
+                                                          &state->query_map,
+                                                          NULL);
+    if (!state->stage_goal_key) {
+        table_query_state_free(state);
         return false;
     }
-    state->staged.goal_hash = atom_hash(state->staged.goal_key);
+    state->stage_goal_hash = atom_hash(state->stage_goal_key);
     handle->impl = state;
     return true;
 }
@@ -373,12 +468,12 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
         source_bindings = &empty_bindings;
     }
 
-    Atom *canonical_result = table_store_canonicalize_atom(&state->staged.arena,
+    Atom *canonical_result = table_store_canonicalize_atom(&state->stage_arena,
                                                            result,
                                                            &answer_map, NULL);
     Bindings canonical_bindings;
     if (!canonical_result ||
-        !table_store_canonicalize_bindings(&state->staged.arena,
+        !table_store_canonicalize_bindings(&state->stage_arena,
                                            source_bindings,
                                            &answer_map,
                                            &canonical_bindings)) {
@@ -386,7 +481,7 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
         return false;
     }
 
-    query_results_push_move(&state->staged.results, canonical_result,
+    query_results_push_move(&state->stage_results, canonical_result,
                             &canonical_bindings);
     cetta_var_map_free(&answer_map);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_ANSWER_STAGED);
@@ -399,17 +494,23 @@ bool table_store_commit_query(TableQueryHandle *handle) {
 
     TableQueryState *state = handle->impl;
     TableStoreEntry *target = &state->store->entries[state->target_index];
+    bool appended = false;
     if (state->target_reusable) {
         table_store_entry_free(target);
         if (state->target_stale)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_REUSE);
     } else {
         state->store->len++;
+        appended = true;
     }
-
-    *target = state->staged;
-    cetta_var_map_free(&state->query_map);
-    free(state);
+    if (!table_store_entry_commit_from_staged(target, state)) {
+        if (appended)
+            state->store->len--;
+        table_query_state_free(state);
+        handle->impl = NULL;
+        return false;
+    }
+    table_query_state_free(state);
     handle->impl = NULL;
     return true;
 }
@@ -419,7 +520,7 @@ void table_store_abort_query(TableQueryHandle *handle) {
         return;
     TableQueryState *state = handle->impl;
     handle->impl = NULL;
-    table_query_state_free(state, true);
+    table_query_state_free(state);
 }
 
 typedef struct {

@@ -59,6 +59,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "table-reuse",
     "table-answer-staged",
     "space-revision-bump",
+    "match-class-ground-ground",
+    "match-class-open-ground",
+    "match-class-full-general",
 };
 
 static int64_t clamp_counter(uint64_t value) {

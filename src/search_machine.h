@@ -34,6 +34,7 @@ bool search_context_init(SearchContext *ctx, const Bindings *base,
 void search_context_init_owned(SearchContext *ctx, Bindings *owned,
                                Arena *scratch_arena);
 void search_context_free(SearchContext *ctx);
+bool search_context_reset(SearchContext *ctx, const Bindings *base);
 ChoicePoint search_context_save(const SearchContext *ctx);
 void search_context_rollback(SearchContext *ctx, ChoicePoint point);
 Arena *search_context_scratch(SearchContext *ctx);

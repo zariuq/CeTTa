@@ -865,8 +865,9 @@ int main(int argc, char **argv) {
 
     Arena arena;       /* persistent: parsed atoms, space content, type decls */
     Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
+    HashConsTable eval_hashcons;
     arena_init(&arena);
-    arena_init(&eval_arena);
+    arena_init_with_owned_hashcons(&eval_arena, &eval_hashcons);
 
     /* Global symbol table / builtin ids */
     SymbolTable symbol_table;
@@ -881,7 +882,7 @@ int main(int argc, char **argv) {
     HashConsTable hashcons_table;
     hashcons_init(&hashcons_table);
     g_hashcons = &hashcons_table;
-    arena_set_hashcons(&arena, &hashcons_table);
+    arena_set_hashcons_borrowed(&arena, &hashcons_table);
 
     Atom **atoms = NULL;
     int n = inline_text
@@ -893,7 +894,7 @@ int main(int argc, char **argv) {
         } else {
             fprintf(stderr, "error: could not read %s\n", filename);
         }
-        arena_free(&eval_arena);
+        arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
@@ -920,7 +921,7 @@ int main(int argc, char **argv) {
             cetta_runtime_stats_print(stderr, &stats);
         }
         free(atoms);
-        arena_free(&eval_arena);
+        arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
@@ -946,7 +947,7 @@ int main(int argc, char **argv) {
                 space_match_backend_kind_name(match_backend_kind));
         free(atoms);
         cetta_library_context_free(&libraries);
-        arena_free(&eval_arena);
+        arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
@@ -999,7 +1000,7 @@ int main(int argc, char **argv) {
             free(atoms);
             cetta_library_context_free(&libraries);
             space_free(&space);
-            arena_free(&eval_arena);
+            arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
             arena_free(&arena);
             g_var_intern = NULL;
             var_intern_free(&var_intern_table);
@@ -1020,7 +1021,7 @@ int main(int argc, char **argv) {
         compile_space_to_llvm(&space, &arena, stdout);
         free(atoms);
         space_free(&space);
-        arena_free(&eval_arena);
+        arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
@@ -1039,7 +1040,7 @@ int main(int argc, char **argv) {
         free(atoms);
         cetta_library_context_free(&libraries);
         space_free(&space);
-        arena_free(&eval_arena);
+        arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
@@ -1065,7 +1066,7 @@ int main(int argc, char **argv) {
                 fclose(output_spool);
                 free(atoms);
                 space_free(&space);
-                arena_free(&eval_arena);
+                arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
                 arena_free(&arena);
                 g_var_intern = NULL;
                 var_intern_free(&var_intern_table);
@@ -1080,8 +1081,7 @@ int main(int argc, char **argv) {
             eval_release_temporary_spaces();
             /* Reset ephemeral arena — frees all intermediate eval atoms.
                This makes CeTTa safe for unlimited chaining iterations. */
-            arena_free(&eval_arena);
-            arena_init(&eval_arena);
+            arena_reset_with_owned_hashcons(&eval_arena, &eval_hashcons);
             if (stop_after_error) break;
             i += 2;
             continue;
@@ -1098,7 +1098,7 @@ int main(int argc, char **argv) {
         free(atoms);
         cetta_library_context_free(&libraries);
         space_free(&space);
-        arena_free(&eval_arena);
+        arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
         arena_free(&arena);
         g_var_intern = NULL;
         var_intern_free(&var_intern_table);
@@ -1118,7 +1118,7 @@ int main(int argc, char **argv) {
                 free(atoms);
                 cetta_library_context_free(&libraries);
                 space_free(&space);
-                arena_free(&eval_arena);
+                arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
                 arena_free(&arena);
                 g_var_intern = NULL;
                 var_intern_free(&var_intern_table);
@@ -1156,7 +1156,7 @@ int main(int argc, char **argv) {
     cetta_library_context_free(&libraries);
     space_free(&space);
     free(inline_buf);
-    arena_free(&eval_arena);
+    arena_free_with_owned_hashcons(&eval_arena, &eval_hashcons);
     arena_free(&arena);
     g_var_intern = NULL;
     var_intern_free(&var_intern_table);
