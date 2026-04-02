@@ -329,7 +329,88 @@ void outcome_set_free(OutcomeSet *os) {
     os->len = os->cap = 0;
 }
 
+static bool head_uses_special_eval_path(SymbolId head_id) {
+    return
+        head_id == g_builtin_syms.superpose ||
+        head_id == g_builtin_syms.collapse ||
+        head_id == g_builtin_syms.cons_atom ||
+        head_id == g_builtin_syms.union_atom ||
+        head_id == g_builtin_syms.decons_atom ||
+        head_id == g_builtin_syms.car_atom ||
+        head_id == g_builtin_syms.cdr_atom ||
+        head_id == g_builtin_syms.unify ||
+        head_id == g_builtin_syms.case_text ||
+        head_id == g_builtin_syms.switch_text ||
+        head_id == g_builtin_syms.switch_minimal ||
+        head_id == g_builtin_syms.let_star ||
+        head_id == g_builtin_syms.let ||
+        head_id == g_builtin_syms.chain ||
+        head_id == g_builtin_syms.search_policy ||
+        head_id == g_builtin_syms.collect ||
+        head_id == g_builtin_syms.fold ||
+        head_id == g_builtin_syms.fold_by_key ||
+        head_id == g_builtin_syms.reduce ||
+        head_id == g_builtin_syms.select ||
+        head_id == g_builtin_syms.once ||
+        head_id == g_builtin_syms.function ||
+        head_id == g_builtin_syms.assert_text ||
+        head_id == g_builtin_syms.return_text ||
+        head_id == g_builtin_syms.quote ||
+        head_id == g_builtin_syms.eval ||
+        head_id == g_builtin_syms.foldl_atom_in_space ||
+        head_id == g_builtin_syms.new_space ||
+        head_id == g_builtin_syms.context_space ||
+        head_id == g_builtin_syms.call_native ||
+        head_id == g_builtin_syms.git_module_bang ||
+        head_id == g_builtin_syms.register_module_bang ||
+        head_id == g_builtin_syms.import_bang ||
+        head_id == g_builtin_syms.include ||
+        head_id == g_builtin_syms.mod_space_bang ||
+        head_id == g_builtin_syms.print_mods_bang ||
+        head_id == g_builtin_syms.module_inventory_bang ||
+        head_id == g_builtin_syms.reset_runtime_stats_bang ||
+        head_id == g_builtin_syms.runtime_stats_bang ||
+        head_id == g_builtin_syms.with_space_snapshot ||
+        head_id == g_builtin_syms.space_set_match_backend_bang ||
+        head_id == g_builtin_syms.space_len ||
+        head_id == g_builtin_syms.step_bang ||
+        head_id == g_builtin_syms.space_push ||
+        head_id == g_builtin_syms.space_peek ||
+        head_id == g_builtin_syms.space_pop ||
+        head_id == g_builtin_syms.space_get ||
+        head_id == g_builtin_syms.space_truncate ||
+        head_id == g_builtin_syms.bind_bang ||
+        head_id == g_builtin_syms.add_reduct ||
+        head_id == g_builtin_syms.add_atom ||
+        head_id == g_builtin_syms.add_atom_nodup ||
+        head_id == g_builtin_syms.remove_atom ||
+        head_id == g_builtin_syms.get_atoms ||
+        head_id == g_builtin_syms.count_atoms ||
+        head_id == g_builtin_syms.collapse_bind ||
+        head_id == g_builtin_syms.superpose_bind ||
+        head_id == g_builtin_syms.metta ||
+        head_id == g_builtin_syms.evalc ||
+        head_id == g_builtin_syms.new_state ||
+        head_id == g_builtin_syms.get_state ||
+        head_id == g_builtin_syms.change_state_bang ||
+        head_id == g_builtin_syms.pragma_bang ||
+        head_id == g_builtin_syms.nop ||
+        head_id == g_builtin_syms.get_metatype ||
+        head_id == g_builtin_syms.get_type ||
+        head_id == g_builtin_syms.get_type_space ||
+        head_id == g_builtin_syms.assertEqual ||
+        head_id == g_builtin_syms.assertEqualToResult ||
+        head_id == g_builtin_syms.assertEqualMsg ||
+        head_id == g_builtin_syms.assertEqualToResultMsg ||
+        head_id == g_builtin_syms.assertAlphaEqual ||
+        head_id == g_builtin_syms.assertAlphaEqualMsg ||
+        head_id == g_builtin_syms.assertAlphaEqualToResult ||
+        head_id == g_builtin_syms.assertAlphaEqualToResultMsg ||
+        head_id == g_builtin_syms.assertIncludes;
+}
+
 static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static Atom *call_signature_error(Arena *a, Atom *call, const char *expected);
 
 static const CettaProfile *active_profile(void) {
     return g_library_context ? g_library_context->session.profile : NULL;
@@ -1944,6 +2025,20 @@ static void query_equations_cache_store(TableStore *table, Space *s,
 static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
                             const Bindings *prefix, bool preserve_bindings,
                             OutcomeSet *os);
+static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
+                                     const Bindings *env,
+                                     const Bindings *prefix_env,
+                                     bool preserve_bindings);
+static bool eval_for_caller_visit(Space *s, Arena *a, Atom *type, Atom *atom,
+                                  int fuel, const Bindings *prefix,
+                                  bool preserve_bindings,
+                                  bool (*visitor)(Arena *a, Atom *atom,
+                                                  const Bindings *env, void *ctx),
+                                  void *ctx);
+static bool handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
+                            bool preserve_bindings, Atom **tail_next,
+                            Atom **tail_type, Bindings *tail_env,
+                            OutcomeSet *os);
 
 typedef struct {
     QueryResultVisitor visitor;
@@ -2004,6 +2099,31 @@ typedef struct {
     OutcomeSet *outcomes;
 } QueryEvalVisitorCtx;
 
+typedef struct {
+    OutcomeSet *outcomes;
+} EvalOutcomeSetVisitorCtx;
+
+static bool eval_visit_append_outcome(Arena *a, Atom *atom, const Bindings *env, void *ctx) {
+    (void)a;
+    EvalOutcomeSetVisitorCtx *append = ctx;
+    outcome_set_add(append->outcomes, atom, env);
+    return true;
+}
+
+typedef struct {
+    OutcomeSet *outcomes;
+    const Bindings *outer_env;
+    bool preserve_bindings;
+} EvalPrefixedOutcomeSetVisitorCtx;
+
+static bool eval_visit_append_outcome_prefixed(Arena *a, Atom *atom,
+                                               const Bindings *env, void *ctx) {
+    EvalPrefixedOutcomeSetVisitorCtx *append = ctx;
+    outcome_set_add_prefixed(a, append->outcomes, atom, env,
+                             append->outer_env, append->preserve_bindings);
+    return true;
+}
+
 static bool query_visit_eval_for_caller(Atom *result, const Bindings *bindings,
                                         void *ctx) {
     QueryEvalVisitorCtx *query_eval = ctx;
@@ -2014,17 +2134,20 @@ static bool query_visit_eval_for_caller(Atom *result, const Bindings *bindings,
                                          &attempt)) {
         return true;
     }
-    eval_for_caller(query_eval->space,
-                    query_eval->arena,
-                    result_eval_type_hint(query_eval->declared_type, result),
-                    result,
-                    query_eval->fuel,
-                    attempt.env,
-                    query_eval->preserve_bindings,
-                    query_eval->outcomes);
+    EvalOutcomeSetVisitorCtx append = { .outcomes = query_eval->outcomes };
+    bool keep =
+        eval_for_caller_visit(query_eval->space,
+                              query_eval->arena,
+                              result_eval_type_hint(query_eval->declared_type, result),
+                              result,
+                              query_eval->fuel,
+                              attempt.env,
+                              query_eval->preserve_bindings,
+                              eval_visit_append_outcome,
+                              &append);
     bindings_merge_attempt_finish(search_context_builder(query_eval->context),
                                   &attempt);
-    return true;
+    return keep;
 }
 
 static bool query_result_apply_single_tail(SearchContext *context,
@@ -2160,6 +2283,10 @@ static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
 
 /* Forward-declared below with the rest of the evaluator entry points. */
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os);
+static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
+                       bool preserve_bindings, OutcomeSet *os);
+static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
+                         int fuel, ResultSet *rs);
 
 typedef bool (*OrderedOutcomeVisitor)(Arena *a, Atom *atom,
                                       const Bindings *env, void *ctx);
@@ -2223,16 +2350,428 @@ static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
     return visited;
 }
 
+static bool metta_eval_bind_native_visit_raw(Space *s, Arena *a, Atom *atom, int fuel,
+                                             OrderedOutcomeVisitor visitor, void *ctx);
+
+typedef struct {
+    OrderedOutcomeVisitor visitor;
+    void *ctx;
+    uint32_t visited;
+} NativeBindVisitCtx;
+
+static bool native_bind_visit_forward_non_empty(Arena *a, Atom *atom,
+                                                const Bindings *env, void *ctx) {
+    NativeBindVisitCtx *visit = ctx;
+    if (atom_is_empty(atom))
+        return true;
+    visit->visited++;
+    return visit->visitor(a, atom, env, visit->ctx);
+}
+
+typedef struct {
+    OrderedOutcomeVisitor visitor;
+    void *ctx;
+    const Bindings *outer_env;
+    BindingsBuilder merged_builder;
+} PrefixedBindVisitCtx;
+
+static bool prefixed_bind_visit(Arena *a, Atom *atom, const Bindings *env, void *ctx) {
+    PrefixedBindVisitCtx *prefixed = ctx;
+    if (!prefixed->outer_env || prefixed->outer_env->len == 0)
+        return prefixed->visitor(a, atom, env, prefixed->ctx);
+    BindingsMergeAttempt attempt;
+    if (!bindings_builder_merge_or_clone(&prefixed->merged_builder,
+                                         prefixed->outer_env,
+                                         env,
+                                         &attempt))
+        return true;
+    bool keep = prefixed->visitor(a, atom, attempt.env, prefixed->ctx);
+    bindings_merge_attempt_finish(&prefixed->merged_builder, &attempt);
+    return keep;
+}
+
+static bool metta_eval_bind_native_visit_prefixed(Space *s, Arena *a, Atom *atom,
+                                                  int fuel, const Bindings *outer_env,
+                                                  OrderedOutcomeVisitor visitor,
+                                                  void *ctx) {
+    if (!outer_env || outer_env->len == 0)
+        return metta_eval_bind_native_visit_raw(s, a, atom, fuel, visitor, ctx);
+    PrefixedBindVisitCtx prefixed = {
+        .visitor = visitor,
+        .ctx = ctx,
+        .outer_env = outer_env,
+    };
+    if (!bindings_builder_init(&prefixed.merged_builder, outer_env))
+        return true;
+    bool keep = metta_eval_bind_native_visit_raw(s, a, atom, fuel,
+                                                 prefixed_bind_visit, &prefixed);
+    bindings_builder_free(&prefixed.merged_builder);
+    return keep;
+}
+
+typedef struct {
+    Space *space;
+    Arena *arena;
+    Atom *pattern;
+    Atom *body;
+    int fuel;
+    OrderedOutcomeVisitor visitor;
+    void *ctx;
+    OutcomeSet pending_errors;
+    bool saw_non_error;
+} LetBindVisitCtx;
+
+static bool let_bind_visit_emit_bound(LetBindVisitCtx *let_ctx, Atom *value,
+                                      const Bindings *value_env) {
+    BindingsBuilder builder;
+    if (!bindings_builder_init(&builder, value_env))
+        return true;
+    bool matched = false;
+    if (let_ctx->pattern->kind == ATOM_VAR) {
+        matched = bindings_builder_add_var_fresh(&builder, let_ctx->pattern, value);
+    } else {
+        matched = simple_match_builder(let_ctx->pattern, value, &builder);
+    }
+    if (!matched) {
+        bindings_builder_free(&builder);
+        return true;
+    }
+
+    const Bindings *branch_env = bindings_builder_bindings(&builder);
+    Bindings visible;
+    if (!bindings_project_body_visible_env(let_ctx->arena, let_ctx->body,
+                                           branch_env, &visible)) {
+        bindings_builder_free(&builder);
+        return true;
+    }
+    Atom *next_atom = bindings_apply(&visible, let_ctx->arena, let_ctx->body);
+    bool keep = metta_eval_bind_native_visit_prefixed(let_ctx->space, let_ctx->arena,
+                                                      next_atom, let_ctx->fuel,
+                                                      branch_env,
+                                                      let_ctx->visitor, let_ctx->ctx);
+    bindings_free(&visible);
+    bindings_builder_free(&builder);
+    return keep;
+}
+
+static bool let_bind_visit_flush_pending_as_values(LetBindVisitCtx *let_ctx) {
+    for (uint32_t i = 0; i < let_ctx->pending_errors.len; i++) {
+        Atom *error_atom =
+            outcome_atom_materialize(let_ctx->arena, &let_ctx->pending_errors.items[i]);
+        if (!let_bind_visit_emit_bound(let_ctx, error_atom,
+                                       &let_ctx->pending_errors.items[i].env))
+            return false;
+    }
+    outcome_set_free(&let_ctx->pending_errors);
+    outcome_set_init(&let_ctx->pending_errors);
+    return true;
+}
+
+static bool let_bind_visit_value(Arena *a, Atom *atom, const Bindings *env, void *ctx) {
+    (void)a;
+    LetBindVisitCtx *let_ctx = ctx;
+    if (atom_is_error(atom) && !let_ctx->saw_non_error) {
+        outcome_set_add(&let_ctx->pending_errors, atom, env);
+        return true;
+    }
+    if (!let_ctx->saw_non_error) {
+        let_ctx->saw_non_error = true;
+        if (!let_bind_visit_flush_pending_as_values(let_ctx))
+            return false;
+    }
+    return let_bind_visit_emit_bound(let_ctx, atom, env);
+}
+
+static bool metta_eval_bind_native_visit_let(Space *s, Arena *a, Atom *pat,
+                                             Atom *val_expr, Atom *body, int fuel,
+                                             OrderedOutcomeVisitor visitor, void *ctx) {
+    LetBindVisitCtx let_ctx = {
+        .space = s,
+        .arena = a,
+        .pattern = pat,
+        .body = body,
+        .fuel = fuel,
+        .visitor = visitor,
+        .ctx = ctx,
+        .pending_errors = {0},
+        .saw_non_error = false,
+    };
+    outcome_set_init(&let_ctx.pending_errors);
+    bool keep = metta_eval_bind_native_visit_raw(s, a, val_expr, fuel,
+                                                 let_bind_visit_value, &let_ctx);
+    if (keep && !let_ctx.saw_non_error) {
+        for (uint32_t i = 0; i < let_ctx.pending_errors.len; i++) {
+            Atom *error_atom =
+                outcome_atom_materialize(a, &let_ctx.pending_errors.items[i]);
+            if (!visitor(a, error_atom, &let_ctx.pending_errors.items[i].env, ctx)) {
+                keep = false;
+                break;
+            }
+        }
+    }
+    outcome_set_free(&let_ctx.pending_errors);
+    return keep;
+}
+
+typedef struct {
+    Space *space;
+    Arena *arena;
+    Atom *var;
+    Atom *body;
+    int fuel;
+    OrderedOutcomeVisitor visitor;
+    void *ctx;
+    bool saw_any;
+} ChainBindVisitCtx;
+
+static bool chain_bind_visit_value(Arena *a, Atom *atom, const Bindings *env, void *ctx) {
+    (void)a;
+    ChainBindVisitCtx *chain_ctx = ctx;
+    chain_ctx->saw_any = true;
+    if (atom_is_empty(atom))
+        return true;
+
+    BindingsBuilder builder;
+    if (!bindings_builder_init(&builder, env))
+        return true;
+    if (!bindings_builder_add_var_fresh(&builder, chain_ctx->var, atom)) {
+        bindings_builder_free(&builder);
+        return true;
+    }
+    const Bindings *branch_env = bindings_builder_bindings(&builder);
+    Bindings visible;
+    if (!bindings_project_body_visible_env(chain_ctx->arena, chain_ctx->body,
+                                           branch_env, &visible)) {
+        bindings_builder_free(&builder);
+        return true;
+    }
+    Atom *next_atom = bindings_apply(&visible, chain_ctx->arena, chain_ctx->body);
+    bool keep = metta_eval_bind_native_visit_prefixed(chain_ctx->space, chain_ctx->arena,
+                                                      next_atom, chain_ctx->fuel,
+                                                      branch_env,
+                                                      chain_ctx->visitor, chain_ctx->ctx);
+    bindings_free(&visible);
+    bindings_builder_free(&builder);
+    return keep;
+}
+
+static bool metta_eval_bind_native_visit_chain(Space *s, Arena *a, Atom *to_eval,
+                                               Atom *var, Atom *body, int fuel,
+                                               OrderedOutcomeVisitor visitor, void *ctx) {
+    ChainBindVisitCtx chain_ctx = {
+        .space = s,
+        .arena = a,
+        .var = var,
+        .body = body,
+        .fuel = fuel,
+        .visitor = visitor,
+        .ctx = ctx,
+        .saw_any = false,
+    };
+    bool keep = metta_eval_bind_native_visit_raw(s, a, to_eval, fuel,
+                                                 chain_bind_visit_value, &chain_ctx);
+    if (keep && !chain_ctx.saw_any) {
+        Bindings empty;
+        bindings_init(&empty);
+        return visitor(a, atom_empty(a), &empty, ctx);
+    }
+    return keep;
+}
+
+static bool metta_eval_bind_native_visit_raw(Space *s, Arena *a, Atom *atom, int fuel,
+                                             OrderedOutcomeVisitor visitor, void *ctx) {
+    Bindings empty;
+    bindings_init(&empty);
+
+    Atom *bound = registry_lookup_atom(atom);
+    if (bound)
+        return visitor(a, bound, &empty, ctx);
+
+    atom = materialize_runtime_token(s, a, atom);
+
+    if (fuel == 0 || atom->kind == ATOM_SYMBOL || atom->kind == ATOM_GROUNDED ||
+        atom->kind == ATOM_VAR ||
+        (atom->kind == ATOM_EXPR && atom->expr.len == 0)) {
+        return visitor(a, atom, &empty, ctx);
+    }
+
+    if (atom->kind == ATOM_EXPR && atom->expr.len > 0) {
+        const SymbolId head_id = atom_head_symbol_id(atom);
+        const uint32_t nargs = expr_nargs(atom);
+        if (head_id == g_builtin_syms.let_star && nargs == 2) {
+            Atom *blist = expr_arg(atom, 0);
+            Atom *body = expr_arg(atom, 1);
+            if (blist->kind != ATOM_EXPR || blist->expr.len == 0)
+                return metta_eval_bind_native_visit_raw(s, a, body, fuel, visitor, ctx);
+            Atom *first = blist->expr.elems[0];
+            Atom *rest = atom_expr(a, blist->expr.elems + 1, blist->expr.len - 1);
+            if (first->kind == ATOM_EXPR && first->expr.len == 2) {
+                Atom *inner = atom_expr3(a, atom_symbol_id(a, g_builtin_syms.let_star),
+                                         rest, body);
+                Atom *elems[4] = {
+                    atom_symbol_id(a, g_builtin_syms.let),
+                    first->expr.elems[0],
+                    first->expr.elems[1],
+                    inner
+                };
+                return metta_eval_bind_native_visit_raw(s, a,
+                                                        atom_expr(a, elems, 4),
+                                                        fuel, visitor, ctx);
+            }
+        } else if (head_id == g_builtin_syms.let && nargs == 3) {
+            return metta_eval_bind_native_visit_let(s, a,
+                                                    expr_arg(atom, 0),
+                                                    expr_arg(atom, 1),
+                                                    expr_arg(atom, 2),
+                                                    fuel, visitor, ctx);
+        } else if (head_id == g_builtin_syms.chain && nargs == 3) {
+            Atom *var = expr_arg(atom, 1);
+            if (var->kind != ATOM_VAR)
+                return visitor(a,
+                               call_signature_error(a, atom,
+                                   "(chain <nested> (: <var> Variable) <templ>)"),
+                               &empty, ctx);
+            return metta_eval_bind_native_visit_chain(s, a,
+                                                      expr_arg(atom, 0),
+                                                      var,
+                                                      expr_arg(atom, 2),
+                                                      fuel, visitor, ctx);
+        } else if (head_id != 0 && !head_uses_special_eval_path(head_id)) {
+            int call_fuel = fuel > 0 ? fuel - 1 : fuel;
+            Atom *tail_next = NULL;
+            Atom *tail_type = NULL;
+            __attribute__((cleanup(bindings_free))) Bindings tail_env;
+            OutcomeSet dispatch_results;
+            outcome_set_init(&dispatch_results);
+            if (handle_dispatch(s, a, atom, NULL, call_fuel, true,
+                                &tail_next, &tail_type, &tail_env,
+                                &dispatch_results)) {
+                (void)tail_type;
+                if (tail_next) {
+                    outcome_set_free(&dispatch_results);
+                    return tail_env.len == 0
+                        ? metta_eval_bind_native_visit_raw(s, a, tail_next,
+                                                           call_fuel, visitor, ctx)
+                        : metta_eval_bind_native_visit_prefixed(s, a, tail_next,
+                                                                call_fuel, &tail_env,
+                                                                visitor, ctx);
+                }
+                outcome_set_filter_errors_if_success(a, &dispatch_results);
+                bool keep = true;
+                for (uint32_t i = 0; i < dispatch_results.len; i++) {
+                    Atom *result =
+                        outcome_atom_materialize(a, &dispatch_results.items[i]);
+                    if (!visitor(a, result, &dispatch_results.items[i].env, ctx)) {
+                        keep = false;
+                        break;
+                    }
+                }
+                outcome_set_free(&dispatch_results);
+                return keep;
+            }
+            outcome_set_free(&dispatch_results);
+        }
+    }
+
+    OutcomeSet inner;
+    outcome_set_init(&inner);
+    metta_eval_bind(s, a, atom, fuel, &inner);
+    bool keep = true;
+    for (uint32_t i = 0; i < inner.len; i++) {
+        Atom *result = outcome_atom_materialize(a, &inner.items[i]);
+        if (!visitor(a, result, &inner.items[i].env, ctx)) {
+            keep = false;
+            break;
+        }
+    }
+    outcome_set_free(&inner);
+    return keep;
+}
+
 static uint32_t metta_eval_bind_visit(Space *s, Arena *a, Atom *atom, int fuel,
                                       CettaSearchPolicyOrder order,
                                       OrderedOutcomeVisitor visitor,
                                       void *ctx) {
+    if (order == CETTA_SEARCH_POLICY_ORDER_NATIVE) {
+        NativeBindVisitCtx native = {
+            .visitor = visitor,
+            .ctx = ctx,
+            .visited = 0,
+        };
+        metta_eval_bind_native_visit_raw(s, a, atom, fuel,
+                                         native_bind_visit_forward_non_empty,
+                                         &native);
+        return native.visited;
+    }
     OutcomeSet inner;
     outcome_set_init(&inner);
     metta_eval_bind(s, a, atom, fuel, &inner);
     uint32_t visited = outcome_set_visit_ordered(a, &inner, order, visitor, ctx);
     outcome_set_free(&inner);
     return visited;
+}
+
+static bool metta_eval_bind_typed_visit(Space *s, Arena *a, Atom *type, Atom *atom,
+                                        int fuel, OrderedOutcomeVisitor visitor,
+                                        void *ctx) {
+    Bindings empty;
+    bindings_init(&empty);
+
+    if (!type)
+        return metta_eval_bind_native_visit_raw(s, a, atom, fuel, visitor, ctx);
+
+    if (fuel == 0)
+        return true;
+
+    Atom *etype = type ? type : atom_undefined_type(a);
+
+    Atom *bound = registry_lookup_atom(atom);
+    if (bound)
+        return visitor(a, bound, &empty, ctx);
+    atom = materialize_runtime_token(s, a, atom);
+
+    if (atom_is_empty(atom) || atom_is_error(atom))
+        return visitor(a, atom, &empty, ctx);
+
+    Atom *meta = get_meta_type(a, atom);
+    if (atom_is_symbol_id(etype, g_builtin_syms.atom) || atom_eq(etype, meta) ||
+        atom_is_symbol_id(meta, g_builtin_syms.variable)) {
+        return visitor(a, atom, &empty, ctx);
+    }
+
+    if (atom->kind == ATOM_SYMBOL || atom->kind == ATOM_GROUNDED ||
+        (atom->kind == ATOM_EXPR && atom->expr.len == 0)) {
+        ResultSet rs;
+        result_set_init(&rs);
+        type_cast_fn(s, a, atom, etype, fuel, &rs);
+        bool keep = true;
+        for (uint32_t i = 0; i < rs.len; i++) {
+            if (!visitor(a, rs.items[i], &empty, ctx)) {
+                keep = false;
+                break;
+            }
+        }
+        result_set_free(&rs);
+        return keep;
+    }
+
+    if (atom->kind == ATOM_VAR)
+        return visitor(a, atom, &empty, ctx);
+
+    OutcomeSet inner;
+    outcome_set_init(&inner);
+    metta_call(s, a, atom, etype, fuel > 0 ? fuel - 1 : fuel, true, &inner);
+    outcome_set_filter_errors_if_success(a, &inner);
+    bool keep = true;
+    for (uint32_t i = 0; i < inner.len; i++) {
+        Atom *result = outcome_atom_materialize(a, &inner.items[i]);
+        if (!visitor(a, result, &inner.items[i].env, ctx)) {
+            keep = false;
+            break;
+        }
+    }
+    outcome_set_free(&inner);
+    return keep;
 }
 
 typedef struct {
@@ -3568,49 +4107,6 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
     bindings_free(&merged);
 }
 
-static void outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
-                                          Bindings *local_env,
-                                          const Bindings *outer_env,
-                                          bool preserve_bindings) {
-    Bindings empty;
-    bindings_init(&empty);
-    Bindings *inner = local_env ? local_env : &empty;
-
-    if (!preserve_bindings) {
-        Atom *applied = atom;
-        if ((outer_env && outer_env->len > 0) || inner->len > 0) {
-            if (outer_env && outer_env->len > 0 && inner->len > 0) {
-                Bindings merged;
-                if (!bindings_clone_merge_fast(&merged, outer_env, inner))
-                    return;
-                applied = bindings_apply(&merged, a, atom);
-                bindings_free(&merged);
-            } else {
-                Bindings *single = (Bindings *)((outer_env && outer_env->len > 0)
-                    ? outer_env
-                    : inner);
-                applied = bindings_apply(single, a, atom);
-            }
-        }
-        outcome_set_add(os, applied, &empty);
-        return;
-    }
-    if (!outer_env || outer_env->len == 0) {
-        if (local_env) {
-            outcome_set_add_move(os, atom, inner);
-        } else {
-            outcome_set_add(os, atom, &empty);
-        }
-        return;
-    }
-
-    Bindings merged;
-    if (!bindings_clone_merge_fast(&merged, outer_env, inner))
-        return;
-    outcome_set_add_move(os, atom, &merged);
-    bindings_free(&merged);
-}
-
 static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *src,
                                         const Bindings *outer_env,
                                         bool preserve_bindings) {
@@ -3639,36 +4135,6 @@ static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *s
     }
 }
 
-static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
-                                             OutcomeSet *src,
-                                             const Bindings *outer_env,
-                                             bool preserve_bindings) {
-    if (preserve_bindings && outer_env && outer_env->len > 0) {
-        BindingsBuilder merged_builder;
-        if (!bindings_builder_init(&merged_builder, outer_env))
-            return;
-        for (uint32_t i = 0; i < src->len; i++) {
-            BindingsMergeAttempt attempt;
-            if (!bindings_builder_merge_or_clone(&merged_builder, outer_env,
-                                                 &src->items[i].env, &attempt))
-                continue;
-            outcome_set_add(dst, src->items[i].atom, attempt.env);
-            bindings_merge_attempt_finish(&merged_builder, &attempt);
-        }
-        bindings_builder_free(&merged_builder);
-        return;
-    }
-    for (uint32_t i = 0; i < src->len; i++) {
-        if (preserve_bindings && (!outer_env || outer_env->len == 0)) {
-            outcome_set_add_existing_move(dst, &src->items[i]);
-            continue;
-        }
-        outcome_set_add_prefixed_move(a, dst, src->items[i].atom,
-                                      &src->items[i].env, outer_env,
-                                      preserve_bindings);
-    }
-}
-
 /* When the caller only cares about atoms, apply pending bindings before
    evaluation and continue through metta_eval so recursive branches can keep
    using the atom-only tail-call path. */
@@ -3693,11 +4159,84 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     result_set_free(&rs);
 }
 
+typedef struct {
+    OrderedOutcomeVisitor visitor;
+    void *ctx;
+} EvalFlatVisitorCtx;
+
+static bool eval_visit_flatten_env(Arena *a, Atom *atom, const Bindings *env, void *ctx) {
+    (void)env;
+    EvalFlatVisitorCtx *flat = ctx;
+    Bindings empty;
+    bindings_init(&empty);
+    return flat->visitor(a, atom, &empty, flat->ctx);
+}
+
+static bool eval_for_caller_visit(Space *s, Arena *a, Atom *type, Atom *atom,
+                                  int fuel, const Bindings *prefix,
+                                  bool preserve_bindings,
+                                  OrderedOutcomeVisitor visitor, void *ctx) {
+    if (type == NULL) {
+        if (preserve_bindings) {
+            return metta_eval_bind_native_visit_prefixed(s, a, atom, fuel,
+                                                         prefix, visitor, ctx);
+        }
+        Atom *applied = (!prefix || prefix->len == 0)
+            ? atom
+            : bindings_apply((Bindings *)prefix, a, atom);
+        EvalFlatVisitorCtx flat = {
+            .visitor = visitor,
+            .ctx = ctx,
+        };
+        return metta_eval_bind_native_visit_raw(s, a, applied, fuel,
+                                                eval_visit_flatten_env, &flat);
+    }
+
+    if (preserve_bindings) {
+        if (!prefix || prefix->len == 0)
+            return metta_eval_bind_typed_visit(s, a, type, atom, fuel, visitor, ctx);
+        PrefixedBindVisitCtx prefixed = {
+            .visitor = visitor,
+            .ctx = ctx,
+            .outer_env = prefix,
+        };
+        if (!bindings_builder_init(&prefixed.merged_builder, prefix))
+            return true;
+        bool keep = metta_eval_bind_typed_visit(s, a, type, atom, fuel,
+                                                prefixed_bind_visit, &prefixed);
+        bindings_builder_free(&prefixed.merged_builder);
+        return keep;
+    }
+
+    Atom *applied = (!prefix || prefix->len == 0)
+        ? atom
+        : bindings_apply((Bindings *)prefix, a, atom);
+    EvalFlatVisitorCtx flat = {
+        .visitor = visitor,
+        .ctx = ctx,
+    };
+    return metta_eval_bind_typed_visit(s, a, type, applied, fuel,
+                                       eval_visit_flatten_env, &flat);
+}
+
+static bool eval_for_caller_append_outcomes(Space *s, Arena *a, Atom *type,
+                                            Atom *atom, int fuel,
+                                            const Bindings *prefix,
+                                            bool preserve_bindings,
+                                            OutcomeSet *os) {
+    EvalOutcomeSetVisitorCtx append = {
+        .outcomes = os,
+    };
+    return eval_for_caller_visit(s, a, type, atom, fuel, prefix,
+                                 preserve_bindings,
+                                 eval_visit_append_outcome, &append);
+}
+
 static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
                                  OutcomeSet *os) {
     Bindings empty;
     bindings_init(&empty);
-    eval_for_caller(s, a, type, atom, fuel, &empty, false, os);
+    (void)eval_for_caller_append_outcomes(s, a, type, atom, fuel, &empty, false, os);
 }
 
 static __attribute__((unused)) void
@@ -3705,11 +4244,14 @@ eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
                         int fuel, const Bindings *prefix,
                         const Bindings *outer_env,
                         bool preserve_bindings, OutcomeSet *os) {
-    OutcomeSet inner;
-    outcome_set_init(&inner);
-    eval_for_caller(s, a, type, atom, fuel, prefix, preserve_bindings, &inner);
-    outcome_set_append_prefixed_move(a, os, &inner, outer_env, preserve_bindings);
-    outcome_set_free(&inner);
+    EvalPrefixedOutcomeSetVisitorCtx append = {
+        .outcomes = os,
+        .outer_env = outer_env,
+        .preserve_bindings = preserve_bindings,
+    };
+    (void)eval_for_caller_visit(s, a, type, atom, fuel, prefix,
+                                preserve_bindings,
+                                eval_visit_append_outcome_prefixed, &append);
 }
 
 static bool branch_outer_env_begin(Bindings *owned,
@@ -3743,11 +4285,15 @@ static __attribute__((unused)) void
 eval_direct_for_current(Space *s, Arena *a, Atom *type, Atom *atom,
                         int fuel, const Bindings *outer_env,
                         bool preserve_bindings, OutcomeSet *os) {
-    OutcomeSet inner;
-    outcome_set_init(&inner);
-    eval_direct_outcomes(s, a, type, atom, fuel, &inner);
-    outcome_set_append_prefixed_move(a, os, &inner, outer_env, preserve_bindings);
-    outcome_set_free(&inner);
+    EvalPrefixedOutcomeSetVisitorCtx append = {
+        .outcomes = os,
+        .outer_env = outer_env,
+        .preserve_bindings = preserve_bindings,
+    };
+    Bindings empty;
+    bindings_init(&empty);
+    (void)eval_for_caller_visit(s, a, type, atom, fuel, &empty, false,
+                                eval_visit_append_outcome_prefixed, &append);
 }
 
 static void interpret_function_args(Space *s, Arena *a, Atom *op,
@@ -3853,8 +4399,9 @@ static void dispatch_capture_outcomes(Space *s, Arena *a, Atom *head, Atom **arg
     CaptureClosure *closure = (CaptureClosure *)head->ground.ptr;
     CettaEvaluatorOptions saved_options = *active_eval_options_const();
     *active_eval_options() = closure->options;
-    eval_for_caller((Space *)closure->space_ptr, a, NULL, args[0], fuel, prefix,
-                    preserve_bindings, os);
+    (void)eval_for_caller_append_outcomes((Space *)closure->space_ptr, a, NULL,
+                                          args[0], fuel, prefix,
+                                          preserve_bindings, os);
     *active_eval_options() = saved_options;
 }
 
@@ -3878,8 +4425,8 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                                  args, nargs, &rs, &error);
     if (!ok) {
         if (error) {
-            eval_for_caller(s, a, result_type, error, fuel, prefix,
-                            preserve_bindings, os);
+            (void)eval_for_caller_append_outcomes(s, a, result_type, error, fuel,
+                                                  prefix, preserve_bindings, os);
         }
         result_set_free(&rs);
         return true;
@@ -3894,9 +4441,12 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
         return true;
     }
 
-    for (uint32_t i = 0; i < rs.len; i++)
-        eval_for_caller(s, a, result_type, rs.items[i], fuel, prefix,
-                        preserve_bindings, os);
+    for (uint32_t i = 0; i < rs.len; i++) {
+        if (!eval_for_caller_append_outcomes(s, a, result_type, rs.items[i], fuel,
+                                             prefix, preserve_bindings, os)) {
+            break;
+        }
+    }
     result_set_free(&rs);
     return true;
 }
@@ -4539,9 +5089,14 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                         free(op_types);
                                         return true;
                                     }
-                                    eval_for_caller(s, a, inst_ret_type, gr, fuel,
-                                                    combo_ctx, preserve_bindings,
-                                                    &func_results);
+                                    EvalOutcomeSetVisitorCtx append = {
+                                        .outcomes = &func_results,
+                                    };
+                                    (void)eval_for_caller_visit(s, a, inst_ret_type, gr,
+                                                                fuel, combo_ctx,
+                                                                preserve_bindings,
+                                                                eval_visit_append_outcome,
+                                                                &append);
                                     dispatched = true;
                                 }
                             }
@@ -4595,8 +5150,9 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 }
                             }
                         }
-                        if (!dispatched)
+                        if (!dispatched) {
                             outcome_set_add_existing_move(&func_results, &call_terms.items[ci]);
+                        }
                     }
                     if (have_qr_context)
                         search_context_free(&qr_context);
@@ -4765,8 +5321,14 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     Atom *result = dispatch_native_op(s, a, h,
                         call_atom->expr.elems + 1, call_atom->expr.len - 1);
                     if (result) {
-                        eval_for_caller(s, a, NULL, result, fuel, tuple_bindings,
-                                        preserve_bindings, os);
+                        EvalOutcomeSetVisitorCtx append = {
+                            .outcomes = os,
+                        };
+                        (void)eval_for_caller_visit(s, a, NULL, result, fuel,
+                                                    tuple_bindings,
+                                                    preserve_bindings,
+                                                    eval_visit_append_outcome,
+                                                    &append);
                         continue;
                     }
                 }
