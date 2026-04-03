@@ -12,7 +12,7 @@ if [[ ${#SIZES[@]} -eq 0 ]]; then
 fi
 
 KERNELS=(build-sum reverse-sum append-sum map-sum)
-MODES=(expr cons)
+MODES=(list clist)
 
 expected_value() {
     local kernel=$1

@@ -2,7 +2,7 @@
 
 This prototype benchmark lane is inspired by several established benchmark families,
 but is intentionally adapted into small CeTTa-native kernels so we can compare
-expression-backed sequences against explicit cons-lists under one runtime.
+fast lists against explicit clists under one runtime.
 
 Source families:
 - Are We Fast Yet?: https://github.com/smarr/are-we-fast-yet
