@@ -1,56 +1,56 @@
 ; Prototype list-benchmark helpers for CeTTa.
 ; These are intentionally small and direct so we can compare the hot list lanes:
-; - expression-backed sequences
-; - explicit cons-lists
+; - fast lists
+; - explicit clists
 
 !(import! &self list_proto)
 
-(= (bench:expr-range-desc $n)
+(= (bench:list-range-desc $n)
    (if (<= $n 0)
        ()
-       (let $tail (eval (bench:expr-range-desc (- $n 1)))
-         (expr-cons (- $n 1) $tail))))
+       (let $tail (eval (bench:list-range-desc (- $n 1)))
+         (list:cons (- $n 1) $tail))))
 
-(= (bench:cons-range-desc $n)
+(= (bench:clist-range-desc $n)
    (if (<= $n 0)
-       (conslist:nil)
-       (let $tail (eval (bench:cons-range-desc (- $n 1)))
-         (conslist:cons (- $n 1) $tail))))
+       (clist:nil)
+       (let $tail (eval (bench:clist-range-desc (- $n 1)))
+         (clist:cons (- $n 1) $tail))))
 
-(= (bench:expr-sum $xs)
-   (expr-foldl $xs 0 $acc $item (eval (+ $acc $item))))
+(= (bench:list-sum $xs)
+   (list:foldl $xs 0 $acc $item (eval (+ $acc $item))))
 
-(= (bench:cons-sum $xs)
-   (conslist:foldl $xs 0 $acc $item (eval (+ $acc $item))))
+(= (bench:clist-sum $xs)
+   (clist:foldl $xs 0 $acc $item (eval (+ $acc $item))))
 
-(= (bench:expr-build-sum $n)
-   (bench:expr-sum (bench:expr-range-desc $n)))
+(= (bench:list-build-sum $n)
+   (bench:list-sum (bench:list-range-desc $n)))
 
-(= (bench:cons-build-sum $n)
-   (bench:cons-sum (bench:cons-range-desc $n)))
+(= (bench:clist-build-sum $n)
+   (bench:clist-sum (bench:clist-range-desc $n)))
 
-(= (bench:expr-reverse-sum $n)
-   (bench:expr-sum
-     (expr-reverse (bench:expr-range-desc $n))))
+(= (bench:list-reverse-sum $n)
+   (bench:list-sum
+     (list:reverse (bench:list-range-desc $n))))
 
-(= (bench:cons-reverse-sum $n)
-   (bench:cons-sum
-     (conslist:reverse (bench:cons-range-desc $n))))
+(= (bench:clist-reverse-sum $n)
+   (bench:clist-sum
+     (clist:reverse (bench:clist-range-desc $n))))
 
-(= (bench:expr-append-sum $n)
-   (let* (($xs (bench:expr-range-desc $n))
-          ($ys (bench:expr-range-desc $n)))
-     (bench:expr-sum (expr-append $xs $ys))))
+(= (bench:list-append-sum $n)
+   (let* (($xs (bench:list-range-desc $n))
+          ($ys (bench:list-range-desc $n)))
+     (bench:list-sum (list:append $xs $ys))))
 
-(= (bench:cons-append-sum $n)
-   (let* (($xs (bench:cons-range-desc $n))
-          ($ys (bench:cons-range-desc $n)))
-     (bench:cons-sum (conslist:append $xs $ys))))
+(= (bench:clist-append-sum $n)
+   (let* (($xs (bench:clist-range-desc $n))
+          ($ys (bench:clist-range-desc $n)))
+     (bench:clist-sum (clist:append $xs $ys))))
 
-(= (bench:expr-map-sum $n)
-   (bench:expr-sum
-     (expr-map (bench:expr-range-desc $n) $x (+ $x 1))))
+(= (bench:list-map-sum $n)
+   (bench:list-sum
+     (list:map (bench:list-range-desc $n) $x (+ $x 1))))
 
-(= (bench:cons-map-sum $n)
-   (bench:cons-sum
-     (conslist:map (bench:cons-range-desc $n) $x (+ $x 1))))
+(= (bench:clist-map-sum $n)
+   (bench:clist-sum
+     (clist:map (bench:clist-range-desc $n) $x (+ $x 1))))
