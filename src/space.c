@@ -1250,6 +1250,28 @@ static Atom *normalize_type_expr(Arena *a, Atom *ty) {
 
 /* ── Type Lookup ─────────────────────────────────────────────────────────── */
 
+static const char *native_handle_kind_name(Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3) return NULL;
+    if (!atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.native_handle)) return NULL;
+    Atom *kind = atom->expr.elems[1];
+    if (kind->kind == ATOM_GROUNDED && kind->ground.gkind == GV_STRING) {
+        return kind->ground.sval;
+    }
+    if (kind->kind == ATOM_SYMBOL) {
+        return atom_name_cstr(kind);
+    }
+    return NULL;
+}
+
+static Atom *get_native_handle_type(Arena *a, Atom *atom) {
+    const char *kind = native_handle_kind_name(atom);
+    if (!kind) return atom_undefined_type(a);
+    if (strcmp(kind, "mork-space") == 0) {
+        return atom_symbol(a, "MorkSpace");
+    }
+    return atom_undefined_type(a);
+}
+
 Atom *get_grounded_type(Arena *a, Atom *atom) {
     if (atom->kind != ATOM_GROUNDED) return atom_undefined_type(a);
     switch (atom->ground.gkind) {
@@ -1265,7 +1287,9 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                 space_type = "stack";
             } else if (space_is_queue(space)) {
                 space_type = "queue";
-            } else if (space->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED) {
+            } else if (space->match_backend.kind == SPACE_ENGINE_PATHMAP) {
+                space_type = "pathmap";
+            } else if (space->match_backend.kind == SPACE_ENGINE_MORK) {
                 space_type = "mork";
             } else if (space_is_hash(space)) {
                 space_type = "hash";
@@ -1314,6 +1338,14 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types) {
     uint32_t count = 0;
     Atom **types = NULL;
+    Atom *native_handle_type = get_native_handle_type(a, atom);
+
+    if (!atom_is_symbol_id(native_handle_type, g_builtin_syms.undefined_type)) {
+        types = cetta_malloc(sizeof(Atom *));
+        types[0] = native_handle_type;
+        *out_types = types;
+        return 1;
+    }
 
     switch (atom->kind) {
     case ATOM_VAR:

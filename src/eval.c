@@ -33,6 +33,8 @@ typedef struct {
 
 static TempSpaceSet g_temp_spaces = {0};
 
+static Atom *resolve_registry_refs(Arena *a, Atom *atom);
+
 static void ensure_fallback_eval_session(void) {
     if (g_fallback_eval_session_ready) return;
     cetta_eval_session_init_he_extended(&g_fallback_eval_session);
@@ -71,8 +73,90 @@ static int current_eval_fuel_limit(void) {
     return cetta_evaluator_options_effective_fuel_limit(active_eval_options_const());
 }
 
+int eval_current_effective_fuel_limit(void) {
+    return current_eval_fuel_limit();
+}
+
 static const CettaEvalOptionEntry *active_eval_option(const char *key) {
     return cetta_evaluator_options_find(active_eval_options_const(), key);
+}
+
+static bool mork_space_sugar_option_allows(const CettaEvalOptionEntry *option) {
+    if (!option) return false;
+    if (option->kind == CETTA_EVAL_OPTION_VALUE_INT) {
+        return option->int_value != 0;
+    }
+    return strcmp(option->repr, "allow") == 0 ||
+           strcmp(option->repr, "on") == 0 ||
+           strcmp(option->repr, "true") == 0;
+}
+
+static bool generic_mork_space_sugar_allowed(void) {
+    return mork_space_sugar_option_allows(active_eval_option("mork-space-sugar"));
+}
+
+static bool atom_is_mork_space_handle_value(Atom *atom) {
+    uint64_t id = 0;
+    return cetta_native_handle_arg(atom, "mork-space", &id);
+}
+
+static bool space_requires_explicit_mork_namespace(const Space *space) {
+    return space &&
+           space->match_backend.kind == SPACE_ENGINE_MORK &&
+           !generic_mork_space_sugar_allowed();
+}
+
+static Atom *mork_space_surface_error(Arena *a, Atom *call,
+                                      const char *surface,
+                                      const char *explicit_surface) {
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "Space mork requires explicit %s; generic %s is disabled unless you enable (pragma! mork-space-sugar allow)",
+             explicit_surface, surface);
+    return atom_error(a, call, atom_string(a, buf));
+}
+
+static Atom *mork_handle_surface_error(Arena *a, Atom *call,
+                                       const char *surface,
+                                       const char *explicit_surface) {
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "MorkSpace requires explicit %s; %s does not operate on MorkSpace",
+             explicit_surface, surface);
+    return atom_error(a, call, atom_string(a, buf));
+}
+
+static Atom *guard_mork_space_surface(Arena *a, Atom *call, Space *space,
+                                      const char *surface,
+                                      const char *explicit_surface) {
+    if (!space_requires_explicit_mork_namespace(space)) {
+        return NULL;
+    }
+    return mork_space_surface_error(a, call, surface, explicit_surface);
+}
+
+static Atom *guard_mork_handle_surface(Space *s, Arena *a, Atom *call,
+                                       Atom *space_expr, int fuel,
+                                       const char *surface,
+                                       const char *explicit_surface) {
+    if (!g_registry) return NULL;
+
+    Atom *direct = resolve_registry_refs(a, space_expr);
+    if (atom_is_mork_space_handle_value(direct)) {
+        return mork_handle_surface_error(a, call, surface, explicit_surface);
+    }
+
+    ResultSet rs;
+    result_set_init(&rs);
+    metta_eval(s, a, NULL, space_expr, fuel, &rs);
+    for (uint32_t i = 0; i < rs.len; i++) {
+        if (atom_is_mork_space_handle_value(rs.items[i])) {
+            free(rs.items);
+            return mork_handle_surface_error(a, call, surface, explicit_surface);
+        }
+    }
+    free(rs.items);
+    return NULL;
 }
 
 static CettaTableMode active_search_table_mode(void) {
@@ -646,6 +730,19 @@ static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uin
     if (head && head_name && active_profile() &&
         !cetta_profile_allows_surface(active_profile(), head_name)) {
         return profile_surface_error(a, make_call_expr(a, head, args, nargs), head_name);
+    }
+    if (head && atom_is_symbol_id(head, g_builtin_syms.size) &&
+        nargs == 1) {
+        Atom *call = make_call_expr(a, head, args, nargs);
+        Atom *handle_error = guard_mork_handle_surface(
+            s, a, call, args[0], eval_get_default_fuel(), "size", "mork:size");
+        if (handle_error) return handle_error;
+        if (args[0]->kind == ATOM_GROUNDED &&
+            args[0]->ground.gkind == GV_SPACE) {
+            Atom *error = guard_mork_space_surface(
+                a, call, (Space *)args[0]->ground.ptr, "size", "mork:size");
+            if (error) return error;
+        }
     }
     Atom *result = grounded_dispatch(a, head, args, nargs);
     if (result) return result;
@@ -2566,6 +2663,11 @@ static Space *resolve_include_destination(Arena *a, Atom *target, Atom **error_o
         *error_out = atom_symbol(a, "include destination must be &self or an existing &name");
         return NULL;
     }
+    Atom *resolved = registry_lookup_id(g_registry, target->sym_id);
+    if (atom_is_mork_space_handle_value(resolved)) {
+        *error_out = atom_string(a, "include does not operate on MorkSpace; use mork:include!");
+        return NULL;
+    }
     Space *space = resolve_space(g_registry, target);
     if (!space) {
         *error_out = atom_symbol(a, "include destination must be &self or an existing &name");
@@ -3895,6 +3997,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
     Atom *space_ref = expr_arg(atom, 0);
     Atom *pattern = resolve_registry_refs(a, expr_arg(atom, 1));
     Atom *template = resolve_registry_refs(a, expr_arg(atom, 2));
+    Atom *mork_handle_error = guard_mork_handle_surface(
+        s, a, atom, space_ref, fuel, "match", "mork:match");
+    if (mork_handle_error) {
+        outcome_set_add(os, mork_handle_error, &_empty);
+        return true;
+    }
     Space *ms = resolve_single_space_arg(s, a, space_ref, fuel);
     if (g_registry && !ms) {
         outcome_set_add(os, space_arg_error(a, atom,
@@ -3902,6 +4010,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         return true;
     }
     if (!ms) ms = s;
+    Atom *mork_error = guard_mork_space_surface(
+        a, atom, ms, "match", "mork:match");
+    if (mork_error) {
+        outcome_set_add(os, mork_error, &_empty);
+        return true;
+    }
 
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
@@ -3934,7 +4048,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
 
     {
         #define MAX_IMPORTED_SAME_SPACE_CHAIN 32
-        if (ms->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED) {
+        if (space_engine_uses_pathmap(ms->match_backend.kind)) {
             Atom *same_space_patterns[MAX_IMPORTED_SAME_SPACE_CHAIN];
             uint32_t nsame = 1;
             Atom *residual_body = template;
@@ -3987,8 +4101,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         #define MAX_VARS_PER_PAT 32
         typedef struct { Space *space; Atom *pattern; } MatchStep;
 
-        bool allow_chain_flatten =
-            ms->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED;
+        bool allow_chain_flatten = !space_engine_uses_pathmap(ms->match_backend.kind);
         if (allow_chain_flatten) {
             Atom *scan = template;
             while (scan->kind == ATOM_EXPR && scan->expr.len == 4 &&
@@ -3996,8 +4109,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 Atom *inner_ref = resolve_registry_refs(a, scan->expr.elems[1]);
                 Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
                 if (!inner_sp) inner_sp = s;
-                if (inner_sp &&
-                    inner_sp->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED) {
+                if (inner_sp && space_engine_uses_pathmap(inner_sp->match_backend.kind)) {
                     /* Imported path still has a nested-match chain regression on the
                        optimized flattening lane. Fall back to ordinary recursive
                        match evaluation so semantics stay correct while we refine
@@ -5713,7 +5825,10 @@ tail_call: ;
             return;
         }
         SpaceKind kind = SPACE_KIND_ATOM;
-        SpaceMatchBackendKind backend_kind = s->match_backend.kind;
+        SpaceEngine backend_kind = s->match_backend.kind;
+        if (backend_kind == SPACE_ENGINE_MORK) {
+            backend_kind = SPACE_ENGINE_PATHMAP;
+        }
         if (nargs == 1) {
             if (active_profile() &&
                 !cetta_profile_allows_surface(active_profile(), "new-space-kind")) {
@@ -5721,8 +5836,16 @@ tail_call: ;
                 return;
             }
             const char *kind_name = string_like_atom(expr_arg(atom, 0));
-            if (kind_name && strcmp(kind_name, "mork") == 0) {
-                backend_kind = SPACE_MATCH_BACKEND_PATHMAP_IMPORTED;
+            if (kind_name && strcmp(kind_name, "pathmap") == 0) {
+                backend_kind = SPACE_ENGINE_PATHMAP;
+            } else if (kind_name && strcmp(kind_name, "mork") == 0) {
+                outcome_set_add(os,
+                    atom_error(a, atom,
+                               atom_string(a, "generic (new-space mork) is disabled; use (mork:new-space)")),
+                    &_empty);
+                return;
+            } else if (kind_name && strcmp(kind_name, "native") == 0) {
+                backend_kind = SPACE_ENGINE_NATIVE;
             } else if (!space_kind_from_name(kind_name, &kind)) {
                 outcome_set_add(os,
                     atom_error(a, atom, atom_symbol(a, "UnknownSpaceKind")),
@@ -5736,7 +5859,7 @@ tail_call: ;
         ns->kind = kind;
         if (!space_match_backend_try_set(ns, backend_kind)) {
             outcome_set_add(os,
-                atom_error(a, atom, atom_symbol(a, "UnknownSpaceMatchBackend")),
+                atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
                 &_empty);
             return;
         }
@@ -6038,11 +6161,16 @@ tail_call: ;
     }
 
     /* ── structured space introspection / ordered-space ops ───────────── */
-    if (head_id == g_builtin_syms.space_set_match_backend_bang) {
+    if (head_id == g_builtin_syms.space_set_backend_bang ||
+        head_id == g_builtin_syms.space_set_match_backend_bang) {
+        const char *surface_name =
+            (head_id == g_builtin_syms.space_set_backend_bang)
+                ? "space-set-backend!"
+                : "space-set-match-backend!";
         if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "space-set-match-backend!")) {
+            !cetta_profile_allows_surface(active_profile(), surface_name)) {
             outcome_set_add(os,
-                profile_surface_error(a, atom, "space-set-match-backend!"), &_empty);
+                profile_surface_error(a, atom, surface_name), &_empty);
             return;
         }
         if (nargs != 2 || !g_registry) {
@@ -6054,7 +6182,10 @@ tail_call: ;
         Space *target = resolve_single_space_arg(s, a, expr_arg(atom, 0), fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
-                "space-set-match-backend! expects a space as its first argument"), &_empty);
+                head_id == g_builtin_syms.space_set_backend_bang
+                    ? "space-set-backend! expects a space as its first argument"
+                    : "space-set-match-backend! expects a space as its first argument"),
+                &_empty);
             return;
         }
         ResultSet backend_rs;
@@ -6062,13 +6193,24 @@ tail_call: ;
         metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &backend_rs);
         Atom *backend_atom = (backend_rs.len > 0) ? backend_rs.items[0] : expr_arg(atom, 1);
         const char *backend_name = string_like_atom(backend_atom);
-        SpaceMatchBackendKind kind = SPACE_MATCH_BACKEND_NATIVE;
+        SpaceEngine kind = SPACE_ENGINE_NATIVE;
+        if (backend_name && strcmp(backend_name, "mork") == 0) {
+            free(backend_rs.items);
+            outcome_set_add(os,
+                atom_error(a, atom,
+                           atom_string(a,
+                                       head_id == g_builtin_syms.space_set_backend_bang
+                                           ? "generic space-set-backend! no longer accepts mork; use (mork:new-space)"
+                                           : "generic space-set-match-backend! no longer accepts mork; use (mork:new-space)")),
+                &_empty);
+            return;
+        }
         if (!backend_name ||
             !space_match_backend_kind_from_name(backend_name, &kind) ||
             !space_match_backend_try_set(target, kind)) {
             free(backend_rs.items);
             outcome_set_add(os,
-                atom_error(a, atom, atom_symbol(a, "UnknownSpaceMatchBackend")),
+                atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
                 &_empty);
             return;
         }
@@ -6090,9 +6232,21 @@ tail_call: ;
             return;
         }
         Space *target = resolve_single_space_arg(s, a, expr_arg(atom, 0), fuel);
+        Atom *mork_handle_error = guard_mork_handle_surface(
+            s, a, atom, expr_arg(atom, 0), fuel, "space-len", "mork:size");
+        if (mork_handle_error) {
+            outcome_set_add(os, mork_handle_error, &_empty);
+            return;
+        }
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
                 "space-len expects a space as its argument"), &_empty);
+            return;
+        }
+        Atom *mork_error = guard_mork_space_surface(
+            a, atom, target, "space-len", "mork:size");
+        if (mork_error) {
+            outcome_set_add(os, mork_error, &_empty);
             return;
         }
         outcome_set_add(os, atom_int(a, (int64_t)space_length(target)), &_empty);
@@ -6111,10 +6265,22 @@ tail_call: ;
                 &_empty);
             return;
         }
+        Atom *mork_handle_error = guard_mork_handle_surface(
+            s, a, atom, expr_arg(atom, 0), fuel, "step!", "mork:step!");
+        if (mork_handle_error) {
+            outcome_set_add(os, mork_handle_error, &_empty);
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, expr_arg(atom, 0), fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
                 "step! expects a space as its first argument"), &_empty);
+            return;
+        }
+        Atom *mork_error = guard_mork_space_surface(
+            a, atom, target, "step!", "mork:step!");
+        if (mork_error) {
+            outcome_set_add(os, mork_error, &_empty);
             return;
         }
         uint64_t limit = 1;
@@ -6136,7 +6302,7 @@ tail_call: ;
             limit = (uint64_t)step_atom->ground.ival;
             free(step_rs.items);
         }
-        if (target->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED ||
+        if (!space_engine_supports_exec(target->match_backend.kind) ||
             space_is_ordered(target)) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "NoStepSemantics")),
@@ -6403,10 +6569,22 @@ tail_call: ;
     if (head_id == g_builtin_syms.add_atom && nargs == 2 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
         Atom *atom_to_add = expr_arg(atom, 1);
+        Atom *mork_handle_error = guard_mork_handle_surface(
+            s, a, atom, space_ref, fuel, "add-atom", "mork:add-atom");
+        if (mork_handle_error) {
+            outcome_set_add(os, mork_handle_error, &_empty);
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
                 "add-atom expects a space as the first argument"), &_empty);
+            return;
+        }
+        Atom *mork_error = guard_mork_space_surface(
+            a, atom, target, "add-atom", "mork:add-atom");
+        if (mork_error) {
+            outcome_set_add(os, mork_error, &_empty);
             return;
         }
         if (!space_match_backend_materialize_attached(
@@ -6428,10 +6606,22 @@ tail_call: ;
     if (head_id == g_builtin_syms.add_atom_nodup && nargs == 2 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
         Atom *atom_to_add = expr_arg(atom, 1);
+        Atom *mork_handle_error = guard_mork_handle_surface(
+            s, a, atom, space_ref, fuel, "add-atom-nodup", "mork:add-atom-nodup");
+        if (mork_handle_error) {
+            outcome_set_add(os, mork_handle_error, &_empty);
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
                 "add-atom expects a space as the first argument"), &_empty);
+            return;
+        }
+        Atom *mork_error = guard_mork_space_surface(
+            a, atom, target, "add-atom-nodup", "mork:add-atom-nodup");
+        if (mork_error) {
+            outcome_set_add(os, mork_error, &_empty);
             return;
         }
         if (!space_match_backend_materialize_attached(
@@ -6460,10 +6650,22 @@ tail_call: ;
     if (head_id == g_builtin_syms.remove_atom && nargs == 2 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
         Atom *atom_to_rm = expr_arg(atom, 1);
+        Atom *mork_handle_error = guard_mork_handle_surface(
+            s, a, atom, space_ref, fuel, "remove-atom", "mork:remove-atom");
+        if (mork_handle_error) {
+            outcome_set_add(os, mork_handle_error, &_empty);
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
                 "remove-atom expects a space as the first argument"), &_empty);
+            return;
+        }
+        Atom *mork_error = guard_mork_space_surface(
+            a, atom, target, "remove-atom", "mork:remove-atom");
+        if (mork_error) {
+            outcome_set_add(os, mork_error, &_empty);
             return;
         }
         if (!space_match_backend_materialize_attached(
@@ -6482,10 +6684,22 @@ tail_call: ;
     /* ── get-atoms ─────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.get_atoms && nargs == 1 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
+        Atom *mork_handle_error = guard_mork_handle_surface(
+            s, a, atom, space_ref, fuel, "get-atoms", "mork:get-atoms");
+        if (mork_handle_error) {
+            outcome_set_add(os, mork_handle_error, &_empty);
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
                 "get-atoms expects a space as its argument"), &_empty);
+            return;
+        }
+        Atom *mork_error = guard_mork_space_surface(
+            a, atom, target, "get-atoms", "mork:get-atoms");
+        if (mork_error) {
+            outcome_set_add(os, mork_error, &_empty);
             return;
         }
         if (!space_match_backend_materialize_attached(
@@ -6507,9 +6721,21 @@ tail_call: ;
             return;
         }
         Atom *space_ref = expr_arg(atom, 0);
+        Atom *mork_handle_error = guard_mork_handle_surface(
+            s, a, atom, space_ref, fuel, "count-atoms", "mork:count-atoms");
+        if (mork_handle_error) {
+            outcome_set_add(os, mork_handle_error, &_empty);
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
             outcome_set_add(os, atom, &_empty);
+            return;
+        }
+        Atom *mork_error = guard_mork_space_surface(
+            a, atom, target, "count-atoms", "mork:count-atoms");
+        if (mork_error) {
+            outcome_set_add(os, mork_error, &_empty);
             return;
         }
         outcome_set_add(os, atom_int(a, (int64_t)space_length(target)), &_empty);

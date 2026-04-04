@@ -118,8 +118,8 @@ typedef struct Space {
     bool ty_idx_dirty;
     bool exact_idx_dirty;
     uint64_t revision;
-    /* Matching backend is explicit so future PathMap/MORK import can slot in
-       behind one seam instead of rewriting eval.c again. */
+    /* Space engine state is explicit so native, PathMap, and MORK lanes can
+       share one runtime seam without confusing storage with execution. */
     SpaceMatchBackend match_backend;
 } Space;
 

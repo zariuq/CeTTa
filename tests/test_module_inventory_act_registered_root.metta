@@ -1,10 +1,9 @@
 !(import! &self mork)
 
-!(bind! &src (new-space hash))
-!(space-set-match-backend! &src pathmap-imported)
-!(add-atom &src (edge a b))
-!(add-atom &src (edge a b))
-!(add-atom &src (edge b c))
+!(bind! &src (mork:new-space hash))
+!(mork:add-atom &src (edge a b))
+!(mork:add-atom &src (edge a b))
+!(mork:add-atom &src (edge b c))
 !(assertEqual
   (mork:dump! &src "../runtime/test_module_inventory_act_registered_root.act")
   ())
@@ -13,13 +12,13 @@
 !(import! &compiled runtime:test_module_inventory_act_registered_root)
 !(assertEqualToResult
   (get-type &compiled)
-  ((Space mork)))
+  ((Space pathmap)))
 !(bind! &mod (mod-space! runtime:test_module_inventory_act_registered_root))
 !(bind! &mods (module-inventory!))
 
 !(assertEqualToResult
   (get-type &mod)
-  ((Space mork)))
+  ((Space pathmap)))
 !(assertEqualToResult
   (size &mod)
   (3))

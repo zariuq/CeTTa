@@ -5,7 +5,7 @@ ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 CETTA_BIN="$ROOT/cetta"
 PETTA_DIR="/home/zar/claude/hyperon/PeTTa"
 PETTA_RUN="$PETTA_DIR/run.sh"
-BACKENDS=(native-subst-tree native-candidate-exact pathmap-imported)
+BACKENDS=(native native-candidate-exact pathmap)
 
 run_cetta() {
     local backend=$1
@@ -13,7 +13,7 @@ run_cetta() {
     local expected=$3
     local out status count timing
     out=$(/usr/bin/time -f 'elapsed=%E rss=%MKB' bash -lc \
-        "ulimit -v 6291456; '$CETTA_BIN' --space-match-backend '$backend' --count-only '$file'" \
+        "ulimit -v 6291456; '$CETTA_BIN' --space-engine '$backend' --count-only '$file'" \
         2>&1) || status=$?
     status=${status:-0}
     count=$(printf '%s\n' "$out" | grep -E '^[0-9]+$' | tail -1 || true)
