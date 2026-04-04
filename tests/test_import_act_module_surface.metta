@@ -14,10 +14,10 @@
   ((Space pathmap)))
 !(assertEqualToResult
   (size &compiled)
-  (3))
+  (2))
 !(assertEqualToResult
   (match &compiled (edge a b) hit)
-  (hit hit))
+  (hit))
 
 (base)
 !(import! &self "../runtime/test_import_act_module_surface.act")
@@ -26,7 +26,7 @@
   (hit))
 !(assertEqualToResult
   (match &self (edge a b) hit)
-  (hit hit))
+  (hit))
 
 !(bind! &mod (mod-space! "../runtime/test_import_act_module_surface.act"))
 !(assertEqualToResult
@@ -34,7 +34,7 @@
   ((Space pathmap)))
 !(assertEqualToResult
   (size &mod)
-  (3))
+  (2))
 !(assertEqualToResult
   (match &mod (edge b c) hit)
   (hit))

@@ -234,7 +234,6 @@ typedef struct {
     X(lib_mork_space_import_act, "__cetta_lib_mork_space_import_act") \
     X(lib_mork_space_step, "__cetta_lib_mork_space_step") \
     X(lib_mork_space_add_atom, "__cetta_lib_mork_space_add_atom") \
-    X(lib_mork_space_add_atom_nodup, "__cetta_lib_mork_space_add_atom_nodup") \
     X(lib_mork_space_remove_atom, "__cetta_lib_mork_space_remove_atom") \
     X(lib_mork_space_atoms, "__cetta_lib_mork_space_atoms") \
     X(lib_mork_space_size, "__cetta_lib_mork_space_size") \

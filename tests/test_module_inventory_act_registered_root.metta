@@ -21,7 +21,7 @@
   ((Space pathmap)))
 !(assertEqualToResult
   (size &mod)
-  (3))
+  (2))
 !(assertEqualToResult
   (match &mods
     (loaded-module-format "runtime:test_module_inventory_act_registered_root" mork-act none)

@@ -14,21 +14,21 @@
   (MorkSpace))
 !(assertEqualToResult
   (mork:size &compiled)
-  (3))
+  (2))
 !(assertEqualToResult
   (mork:match &compiled (edge a b) hit)
-  (hit hit))
+  (hit))
 !(assertEqualToResult
   (mork:match &compiled (edge b c) hit)
   (hit))
 !(mork:add-atom &compiled (edge c d))
 !(assertEqualToResult
   (mork:size &compiled)
-  (4))
+  (3))
 !(assertEqualToResult
   (mork:match &compiled (edge c d) hit)
   (hit))
 !(assertEqual
   (collapse (mork:get-atoms &compiled))
-  ((edge a b) (edge a b) (edge b c) (edge c d)))
+  ((edge a b) (edge b c) (edge c d)))
 ; Note: collapse returns a single list, so assertEqual compares one value — safe.

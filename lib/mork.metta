@@ -10,7 +10,6 @@
 (: mork:new-space (-> MorkSpace))
 (: mork:new-space (-> Atom MorkSpace))
 (: mork:add-atom (-> MorkSpace Atom (->)))
-(: mork:add-atom-nodup (-> MorkSpace Atom (->)))
 (: mork:add-atoms (-> MorkSpace Expression (->)))
 (: mork:remove-atom (-> MorkSpace Atom (->)))
 (: mork:get-atoms (-> MorkSpace Atom))
@@ -131,7 +130,7 @@
   (@return "Unit on success"))
 
 (@doc mork:dump!
-  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current contents of an unordered MorkSpace into a PathMap .act artifact at the given path. Ordinary MeTTa copy semantics are preserved by default through compiled companion metadata when duplicates are present, while ordered queue/stack semantics remain out of scope for this phase-1 ACT surface.")
+  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current deduplicated contents of an unordered MorkSpace into a PathMap .act artifact at the given path. Ordered queue/stack semantics remain out of scope for this phase-1 ACT surface.")
   (@params (
     (@param "MorkSpace to compile into a .act artifact")
     (@param "Output ACT filename")))
@@ -250,11 +249,6 @@
     (case (__cetta_lib_mork_space_add_atom $space (quote $atom))
       (($result (return $result))))))
 
-(= (mork:add-atom-nodup $space $atom)
-  (function
-    (case (__cetta_lib_mork_space_add_atom_nodup $space (quote $atom))
-      (($result (return $result))))))
-
 (= (mork:add-atoms $space $tuple)
   (foldl-atom $tuple () $a $b (mork:add-atom $space $b)))
 
@@ -265,9 +259,11 @@
 
 (= (mork:get-atoms $space)
   (function
-    (chain (__cetta_lib_mork_space_atoms $space) $results
-      (chain (eval (superpose $results)) $result
-        (return $result)))))
+    (chain (__cetta_lib_mork_space_atoms $space) $quoted-results
+      (let (quote $results) $quoted-results
+        (chain (eval (superpose $results)) $row
+          (let (quote $result) $row
+            (return $result)))))))
 
 (= (mork:size $space)
   (function
@@ -281,9 +277,11 @@
 
 (= (mork:match $space $pattern $template)
   (function
-    (chain (__cetta_lib_mork_space_match $space $pattern $template) $results
-      (chain (eval (superpose $results)) $result
-        (return $result)))))
+    (chain (__cetta_lib_mork_space_match $space $pattern $template) $quoted-results
+      (let (quote $results) $quoted-results
+        (chain (eval (superpose $results)) $row
+          (let (quote $result) $row
+            (return $result)))))))
 
 (= (mork:step! $space)
   (mork:step! $space 1))

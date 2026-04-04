@@ -18,8 +18,8 @@
 !(mork:add-atom &ws (edge a b))
 !(mork:add-atom &ws (edge b c))
 
-!(println! (rule-locs
-             (collapse (mork:match &ws (exec $loc $pattern $template) $loc))))
+!(println! (workspace-atoms
+             (collapse (mork:get-atoms &ws))))
 !(println! (before-step-edges
              (collapse (mork:match &ws (edge $x $y) ($x $y)))))
 !(println! (steps-fired

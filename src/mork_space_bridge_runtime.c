@@ -126,6 +126,9 @@ extern CettaMorkStatus mork_space_clear(CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_add_sexpr(CettaMorkSpaceHandle *space,
                                             const uint8_t *text,
                                             size_t len);
+extern CettaMorkStatus mork_space_remove_sexpr(CettaMorkSpaceHandle *space,
+                                               const uint8_t *text,
+                                               size_t len);
 extern CettaMorkStatus mork_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
                                                     uint32_t atom_idx,
                                                     const uint8_t *text,
@@ -373,6 +376,33 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
     return bridge_take_status_value("mork_space_add_sexpr failed: ",
                                     mork_space_add_sexpr(space, text, len),
                                     out_added,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_remove_text(CettaMorkSpaceHandle *space,
+                                         const char *text,
+                                         uint64_t *out_removed) {
+    if (!text) {
+        bridge_set_error("cannot remove null text from MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_remove_sexpr(space,
+                                                (const uint8_t *)text,
+                                                strlen(text),
+                                                out_removed);
+}
+
+bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
+                                          const uint8_t *text,
+                                          size_t len,
+                                          uint64_t *out_removed) {
+    if (!space) {
+        bridge_set_error("cannot remove from null MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_remove_sexpr failed: ",
+                                    mork_space_remove_sexpr(space, text, len),
+                                    out_removed,
                                     bridge_free_bytes);
 }
 
@@ -1471,6 +1501,9 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_add_sexpr)(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len);
+    CettaMorkStatus (*space_remove_sexpr)(CettaMorkSpaceHandle *space,
+                                          const uint8_t *text,
+                                          size_t len);
     CettaMorkStatus (*space_add_indexed_sexpr)(CettaMorkSpaceHandle *space,
                                                uint32_t atom_idx,
                                                const uint8_t *text,
@@ -1727,6 +1760,7 @@ static bool bridge_load_api(void) {
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_free, "mork_space_free") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_clear, "mork_space_clear") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_add_sexpr, "mork_space_add_sexpr") ||
+        !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_remove_sexpr, "mork_space_remove_sexpr") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_add_indexed_sexpr, "mork_space_add_indexed_sexpr") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_size, "mork_space_size") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_step, "mork_space_step") ||
@@ -2013,6 +2047,33 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
     return bridge_take_status_value("mork_space_add_sexpr failed: ",
                                     g_mork_bridge_api.space_add_sexpr(space, text, len),
                                     out_added,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_remove_text(CettaMorkSpaceHandle *space,
+                                         const char *text,
+                                         uint64_t *out_removed) {
+    if (!text) {
+        bridge_set_error("cannot remove null text from MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_remove_sexpr(space,
+                                                (const uint8_t *)text,
+                                                strlen(text),
+                                                out_removed);
+}
+
+bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
+                                          const uint8_t *text,
+                                          size_t len,
+                                          uint64_t *out_removed) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot remove from null or unavailable MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_remove_sexpr failed: ",
+                                    g_mork_bridge_api.space_remove_sexpr(space, text, len),
+                                    out_removed,
                                     bridge_free_bytes);
 }
 

@@ -914,7 +914,7 @@ test-mm2-lowering-core: $(BIN)
 test-mm2-mork-program-space: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 MORK program-space lowering regression,$@)
 	@ \
-	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --space-engine mork --lang mm2 tests/support/mm2_mork_program_space.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mm2 MORK program-space lowering regression"; \

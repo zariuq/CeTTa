@@ -6607,7 +6607,7 @@ tail_call: ;
         Atom *space_ref = expr_arg(atom, 0);
         Atom *atom_to_add = expr_arg(atom, 1);
         Atom *mork_handle_error = guard_mork_handle_surface(
-            s, a, atom, space_ref, fuel, "add-atom-nodup", "mork:add-atom-nodup");
+            s, a, atom, space_ref, fuel, "add-atom-nodup", "mork:add-atom");
         if (mork_handle_error) {
             outcome_set_add(os, mork_handle_error, &_empty);
             return;
@@ -6619,7 +6619,7 @@ tail_call: ;
             return;
         }
         Atom *mork_error = guard_mork_space_surface(
-            a, atom, target, "add-atom-nodup", "mork:add-atom-nodup");
+            a, atom, target, "add-atom-nodup", "mork:add-atom");
         if (mork_error) {
             outcome_set_add(os, mork_error, &_empty);
             return;
