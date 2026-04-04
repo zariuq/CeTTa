@@ -7,6 +7,7 @@
   (mork:size &h)
   (0))
 !(mork:add-atom &h (edge a b))
+!(mork:add-atom &h (edge a b))
 !(mork:add-atom &h (edge b c))
 !(assertEqualToResult
   (mork:size &h)

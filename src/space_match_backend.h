@@ -111,12 +111,27 @@ bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena)
 bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
                                           const uint8_t *text, size_t len,
                                           uint64_t *out_added);
+bool space_match_backend_remove_sexpr_chunk(Space *s, Arena *persistent_arena,
+                                            const uint8_t *text, size_t len,
+                                            uint64_t *out_removed);
 bool space_match_backend_step(Space *s, Arena *persistent_arena,
                               uint64_t steps, uint64_t *out_performed);
 bool space_match_backend_is_attached_compiled(const Space *s);
 bool space_match_backend_bridge_space(Space *s,
                                       CettaMorkSpaceHandle **out_bridge);
 uint32_t space_match_backend_logical_len(const Space *s);
+bool space_match_backend_mork_query_bindings_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom *query,
+    BindingSet *out);
+bool space_match_backend_mork_query_conjunction_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom **patterns,
+    uint32_t npatterns,
+    const Bindings *seed,
+    BindingSet *out);
 void space_match_backend_print_inventory(FILE *out);
 
 #endif /* CETTA_SPACE_MATCH_BACKEND_H */

@@ -98,12 +98,6 @@ Bulk add:
 !(mork:add-atoms &ws ((edge a b) (edge b c)))
 ```
 
-No-duplicate add:
-
-```metta
-!(mork:add-atom-nodup &ws (edge a b))
-```
-
 Remove:
 
 ```metta

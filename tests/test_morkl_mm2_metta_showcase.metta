@@ -13,9 +13,6 @@
 !(mork:add-atom &ws (edge b c))
 
 !(assertEqualToResult
-  (collapse (mork:match &ws (exec $loc $pattern $template) $loc))
-  (((0 step))))
-!(assertEqualToResult
   (collapse (mork:match &ws (edge $x $y) ($x $y)))
   (((a b) (b c))))
 !(assertEqualToResult

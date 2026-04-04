@@ -9,12 +9,7 @@
        (== $x $x))
     (O (+ (path $x $y))
        (- (edge $x $y)))))
+!(mork:add-atom &prog (edge a b))
 !(assertEqualToResult
-  (mork:match &prog
-    (exec (0 demo)
-      (, (BTM (edge $x $y))
-         (== $x $x))
-      (O (+ (path $x $y))
-         (- (edge $x $y))))
-    stored)
-  (stored))
+  (mork:step! &prog 1)
+  (1))

@@ -74,6 +74,13 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len,
                                        uint64_t *out_added);
+bool cetta_mork_bridge_space_remove_text(CettaMorkSpaceHandle *space,
+                                         const char *text,
+                                         uint64_t *out_removed);
+bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
+                                          const uint8_t *text,
+                                          size_t len,
+                                          uint64_t *out_removed);
 bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
                                               uint32_t atom_idx,
                                               const char *text);
