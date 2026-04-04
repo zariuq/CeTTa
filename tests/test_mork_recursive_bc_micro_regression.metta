@@ -1,11 +1,11 @@
-; Regression: localize the `new-space mork` recursive BC mismatch.
+; Regression: localize the PathMap-backed recursive BC mismatch.
 ;
 ; A materialized depth-1 theorem space should compose the depth-2 witness on
 ; both native and MORK spaces. Replacing those same materialized theorems with
 ; the semantically equivalent `bc depth 1` helper should also compose the same
 ; witness. If that second form fails only on MORK, the first bad seam is
 ; "equation-produced intermediate theorem fed through the outer let*/match
-; chain", not the flat imported matcher itself.
+; chain", not the flat PathMap matcher itself.
 
 !(import! &self mork)
 
@@ -69,10 +69,10 @@
 !(add-atom &ab-native (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-native (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
 
-!(bind! &rb-mork (new-space mork))
+!(bind! &rb-mork (new-space pathmap))
 !(add-atom &rb-mork (: ax-mp (-> (→ $𝜑 $𝜓) $𝜑 $𝜓)))
 
-!(bind! &ab-mork (new-space mork))
+!(bind! &ab-mork (new-space pathmap))
 !(add-atom &ab-mork (: ax-1 (→ $𝜑 (→ $𝜓 $𝜑))))
 !(add-atom &ab-mork (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-mork (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
@@ -86,7 +86,7 @@
   (: (ax-mp ax-2 ax-1)
      (→ (→ $c $b) (→ $c $c))))
 
-!(bind! &d1-mork (new-space mork))
+!(bind! &d1-mork (new-space pathmap))
 !(add-atom &d1-mork
   (: (ax-mp ax-2 ax-2)
      (→ (→ (→ $p (→ $q $r)) (→ $p $q))

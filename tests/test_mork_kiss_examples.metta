@@ -1,14 +1,14 @@
 !(import! &self mork)
 
-; Canonical live-space usage: ordinary space API over a MORK-backed space.
-!(bind! &live (new-space mork))
-!(add-atom &live (edge a b))
-!(add-atom &live (edge b c))
+; Canonical live-space usage: explicit MorkSpace API.
+!(bind! &live (mork:new-space))
+!(mork:add-atom &live (edge a b))
+!(mork:add-atom &live (edge b c))
 !(assertEqual
-  (match &live (edge $x $y) ($x $y))
+  (mork:match &live (edge $x $y) ($x $y))
   (superpose ((a b) (b c))))
 !(assertEqualToResult
-  (size &live)
+  (mork:size &live)
   (2))
 
 ; Canonical MORK-specific surface: ACT attach / dump / load.
@@ -17,16 +17,16 @@
   ())
 !(bind! &compiled (mork:open-act "../runtime/test_mork_kiss_examples.act"))
 !(assertEqual
-  (match &compiled (edge $x $y) ($x $y))
+  (mork:match &compiled (edge $x $y) ($x $y))
   (superpose ((a b) (b c))))
 
-!(bind! &dst (new-space mork))
+!(bind! &dst (mork:new-space))
 !(assertEqual
   (mork:load-act! &dst "../runtime/test_mork_kiss_examples.act")
   ())
 !(assertEqual
-  (match &dst (edge $x $y) ($x $y))
+  (mork:match &dst (edge $x $y) ($x $y))
   (superpose ((a b) (b c))))
 !(assertEqualToResult
-  (size &dst)
+  (mork:size &dst)
   (2))

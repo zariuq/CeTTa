@@ -1,20 +1,22 @@
-!(bind! &ws (new-space mork))
-!(add-atom &ws
+!(import! &self mork)
+
+!(bind! &ws (mork:new-space))
+!(mork:add-atom &ws
   (exec (0 step)
     (, (edge $x $y)
        (edge $y $z))
     (O (+ (path $x $z)))))
-!(add-atom &ws (edge a b))
-!(add-atom &ws (edge b c))
+!(mork:add-atom &ws (edge a b))
+!(mork:add-atom &ws (edge b c))
 
 !(assertEqualToResult
-  (step! &ws)
+  (mork:step! &ws)
   (1))
 !(assertEqual
-  (collapse (get-atoms &ws))
+  (collapse (mork:get-atoms &ws))
   ((edge a b)
    (edge b c)
    (path a c)))
 !(assertEqualToResult
-  (step! &ws)
+  (mork:step! &ws)
   (0))

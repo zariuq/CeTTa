@@ -101,6 +101,7 @@ typedef struct {
     X(reset_runtime_stats_bang, "reset-runtime-stats!") \
     X(runtime_stats_bang, "runtime-stats!") \
     X(with_space_snapshot, "with-space-snapshot") \
+    X(space_set_backend_bang, "space-set-backend!") \
     X(space_set_match_backend_bang, "space-set-match-backend!") \
     X(space_len, "space-len") \
     X(space_push, "space-push") \
@@ -226,9 +227,73 @@ typedef struct {
     X(lib_str_starts_with, "__cetta_lib_str_starts_with") \
     X(lib_str_ends_with, "__cetta_lib_str_ends_with") \
     X(lib_str_trim, "__cetta_lib_str_trim") \
+    X(lib_mork_space_new, "__cetta_lib_mork_space_new") \
+    X(lib_mork_space_include, "__cetta_lib_mork_space_include") \
     X(lib_mork_space_open_act, "__cetta_lib_mork_space_open_act") \
     X(lib_mork_space_dump_act, "__cetta_lib_mork_space_dump_act") \
     X(lib_mork_space_import_act, "__cetta_lib_mork_space_import_act") \
+    X(lib_mork_space_step, "__cetta_lib_mork_space_step") \
+    X(lib_mork_space_add_atom, "__cetta_lib_mork_space_add_atom") \
+    X(lib_mork_space_add_atom_nodup, "__cetta_lib_mork_space_add_atom_nodup") \
+    X(lib_mork_space_remove_atom, "__cetta_lib_mork_space_remove_atom") \
+    X(lib_mork_space_atoms, "__cetta_lib_mork_space_atoms") \
+    X(lib_mork_space_size, "__cetta_lib_mork_space_size") \
+    X(lib_mork_space_count_atoms, "__cetta_lib_mork_space_count_atoms") \
+    X(lib_mork_space_match, "__cetta_lib_mork_space_match") \
+    X(lib_mork_join, "__cetta_lib_mork_join") \
+    X(lib_mork_meet, "__cetta_lib_mork_meet") \
+    X(lib_mork_subtract, "__cetta_lib_mork_subtract") \
+    X(lib_mork_restrict, "__cetta_lib_mork_restrict") \
+    X(lib_mork_zipper_new, "__cetta_lib_mork_zipper_new") \
+    X(lib_mork_zipper_close, "__cetta_lib_mork_zipper_close") \
+    X(lib_mork_zipper_path_exists, "__cetta_lib_mork_zipper_path_exists") \
+    X(lib_mork_zipper_is_val, "__cetta_lib_mork_zipper_is_val") \
+    X(lib_mork_zipper_child_count, "__cetta_lib_mork_zipper_child_count") \
+    X(lib_mork_path_of_atom, "__cetta_lib_mork_path_of_atom") \
+    X(lib_mork_zipper_path_bytes, "__cetta_lib_mork_zipper_path_bytes") \
+    X(lib_mork_zipper_child_bytes, "__cetta_lib_mork_zipper_child_bytes") \
+    X(lib_mork_zipper_val_count, "__cetta_lib_mork_zipper_val_count") \
+    X(lib_mork_zipper_depth, "__cetta_lib_mork_zipper_depth") \
+    X(lib_mork_zipper_reset, "__cetta_lib_mork_zipper_reset") \
+    X(lib_mork_zipper_ascend, "__cetta_lib_mork_zipper_ascend") \
+    X(lib_mork_zipper_descend_byte, "__cetta_lib_mork_zipper_descend_byte") \
+    X(lib_mork_zipper_descend_index, "__cetta_lib_mork_zipper_descend_index") \
+    X(lib_mork_zipper_descend_first, "__cetta_lib_mork_zipper_descend_first") \
+    X(lib_mork_zipper_descend_until, "__cetta_lib_mork_zipper_descend_until") \
+    X(lib_mork_zipper_fork, "__cetta_lib_mork_zipper_fork") \
+    X(lib_mork_zipper_subspace, "__cetta_lib_mork_zipper_subspace") \
+    X(lib_mork_product_zipper_new, "__cetta_lib_mork_product_zipper_new") \
+    X(lib_mork_product_zipper_close, "__cetta_lib_mork_product_zipper_close") \
+    X(lib_mork_product_zipper_path_exists, "__cetta_lib_mork_product_zipper_path_exists") \
+    X(lib_mork_product_zipper_is_val, "__cetta_lib_mork_product_zipper_is_val") \
+    X(lib_mork_product_zipper_child_count, "__cetta_lib_mork_product_zipper_child_count") \
+    X(lib_mork_product_zipper_path_bytes, "__cetta_lib_mork_product_zipper_path_bytes") \
+    X(lib_mork_product_zipper_child_bytes, "__cetta_lib_mork_product_zipper_child_bytes") \
+    X(lib_mork_product_zipper_val_count, "__cetta_lib_mork_product_zipper_val_count") \
+    X(lib_mork_product_zipper_depth, "__cetta_lib_mork_product_zipper_depth") \
+    X(lib_mork_product_zipper_factor_count, "__cetta_lib_mork_product_zipper_factor_count") \
+    X(lib_mork_product_zipper_focus_factor, "__cetta_lib_mork_product_zipper_focus_factor") \
+    X(lib_mork_product_zipper_path_indices, "__cetta_lib_mork_product_zipper_path_indices") \
+    X(lib_mork_product_zipper_reset, "__cetta_lib_mork_product_zipper_reset") \
+    X(lib_mork_product_zipper_ascend, "__cetta_lib_mork_product_zipper_ascend") \
+    X(lib_mork_product_zipper_descend_byte, "__cetta_lib_mork_product_zipper_descend_byte") \
+    X(lib_mork_product_zipper_descend_index, "__cetta_lib_mork_product_zipper_descend_index") \
+    X(lib_mork_product_zipper_descend_first, "__cetta_lib_mork_product_zipper_descend_first") \
+    X(lib_mork_product_zipper_descend_until, "__cetta_lib_mork_product_zipper_descend_until") \
+    X(lib_mork_overlay_zipper_new, "__cetta_lib_mork_overlay_zipper_new") \
+    X(lib_mork_overlay_zipper_close, "__cetta_lib_mork_overlay_zipper_close") \
+    X(lib_mork_overlay_zipper_path_exists, "__cetta_lib_mork_overlay_zipper_path_exists") \
+    X(lib_mork_overlay_zipper_is_val, "__cetta_lib_mork_overlay_zipper_is_val") \
+    X(lib_mork_overlay_zipper_child_count, "__cetta_lib_mork_overlay_zipper_child_count") \
+    X(lib_mork_overlay_zipper_path_bytes, "__cetta_lib_mork_overlay_zipper_path_bytes") \
+    X(lib_mork_overlay_zipper_child_bytes, "__cetta_lib_mork_overlay_zipper_child_bytes") \
+    X(lib_mork_overlay_zipper_depth, "__cetta_lib_mork_overlay_zipper_depth") \
+    X(lib_mork_overlay_zipper_reset, "__cetta_lib_mork_overlay_zipper_reset") \
+    X(lib_mork_overlay_zipper_ascend, "__cetta_lib_mork_overlay_zipper_ascend") \
+    X(lib_mork_overlay_zipper_descend_byte, "__cetta_lib_mork_overlay_zipper_descend_byte") \
+    X(lib_mork_overlay_zipper_descend_index, "__cetta_lib_mork_overlay_zipper_descend_index") \
+    X(lib_mork_overlay_zipper_descend_first, "__cetta_lib_mork_overlay_zipper_descend_first") \
+    X(lib_mork_overlay_zipper_descend_until, "__cetta_lib_mork_overlay_zipper_descend_until") \
     X(lib_mm2_program_new, "__cetta_lib_mm2_program_new") \
     X(lib_mm2_program_clear, "__cetta_lib_mm2_program_clear") \
     X(lib_mm2_program_add, "__cetta_lib_mm2_program_add") \

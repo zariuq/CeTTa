@@ -1,4 +1,4 @@
-; Regression: forward-chaining depth-3 witness over `new-space mork`.
+; Regression: forward-chaining depth-3 witness over the PathMap-backed lane.
 ;
 ; The witness
 ;   (ax-mp (ax-mp ax-2 ax-2)
@@ -38,10 +38,10 @@
 !(add-atom &ab-native (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-native (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
 
-!(bind! &rb-mork (new-space mork))
+!(bind! &rb-mork (new-space pathmap))
 !(add-atom &rb-mork (: ax-mp (-> (→ $𝜑 $𝜓) $𝜑 $𝜓)))
 
-!(bind! &ab-mork (new-space mork))
+!(bind! &ab-mork (new-space pathmap))
 !(add-atom &ab-mork (: ax-1 (→ $𝜑 (→ $𝜓 $𝜑))))
 !(add-atom &ab-mork (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-mork (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
@@ -51,7 +51,7 @@
 !(fs-add-to-ss-nodup &rb-native &ss2-native)
 !(fs-add-to-ss-nodup &rb-native &ss2-native)
 
-!(bind! &ss2-mork (new-space mork))
+!(bind! &ss2-mork (new-space pathmap))
 !(seed-space-nodup &ab-mork &ss2-mork)
 !(fs-add-to-ss-nodup &rb-mork &ss2-mork)
 !(fs-add-to-ss-nodup &rb-mork &ss2-mork)

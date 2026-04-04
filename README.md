@@ -70,12 +70,13 @@ make promote-runtime
 
 - Core HE-style evaluation in C
 - Arena-allocated atoms with hash-consing support
-- Multiple space kinds and pluggable match backends
+- Multiple space kinds and pluggable space engines
 - SymbolId-based core dispatch instead of pervasive string comparison
 - Runtime counters plus `--profile`-aware surface guards
 - Explicit `TermUniverse` / persistent term-store seam
 - Variant tabling infrastructure with shared canonicalization substrate
-- Optional PathMap/MORK-backed `pathmap-imported` matcher lane
+- Optional `pathmap` engine for ordinary MeTTa over PathMap
+- Explicit `mork:` helper surface for the MORK/MM2 execution lane
 - Local git-module and module-inventory surfaces
 - Python foreign-module support in the default build
 
@@ -87,7 +88,7 @@ links it statically. Non-MORK builds can still load a bridge dynamically at
 runtime.
 
 ```bash
-./cetta --profile he_extended --space-match-backend pathmap-imported \
+./cetta --profile he_extended --space-engine pathmap \
   tests/test_pathmap_imported_bridge_v2.metta
 ```
 
@@ -101,7 +102,7 @@ At the current snapshot:
 Those `47 skipped` are not hidden failures. They currently break down into:
 
 - `1` dedicated pretty-vars surface test
-- `2` pathmap-imported regression lanes
+- `2` pathmap-engine regression lanes
 - `17` tests covered by dedicated MM2/MORK suites
 - `27` files that are still probe- or translation-shaped and do not yet have
   `.expected` goldens in the fast suite
@@ -238,7 +239,7 @@ Core runtime:
 - `src/symbol.c`, `src/symbol.h`: SymbolId table and builtin ids
 - `src/match.c`, `src/match.h`: unification, bindings, substitution
 - `src/space.c`, `src/space.h`: spaces, query dispatch, space operations
-- `src/space_match_backend.c`, `src/space_match_backend.h`: backend selection
+- `src/space_match_backend.c`, `src/space_match_backend.h`: space-engine selection
 - `src/subst_tree.c`, `src/subst_tree.h`: indexed equation and substitution tree
 - `src/term_universe.c`, `src/term_universe.h`: persistent term-universe seam
 - `src/term_canon.c`, `src/term_canon.h`: shared variable canonicalization/remap substrate
@@ -247,7 +248,7 @@ Core runtime:
 - `src/grounded.c`: grounded operators and runtime surfaces
 - `src/compile.c`: LLVM IR emission
 - `src/mork_space_bridge_runtime.c`, `src/mork_space_bridge_runtime.h`:
-  runtime-side bridge glue for the imported MORK lane
+  runtime-side bridge glue for the PathMap / MORK bridge lane
 
 Libraries:
 
@@ -276,10 +277,10 @@ Options:
   --profile <name>                 Set evaluation profile
   --fuel <n>                       Set evaluation fuel budget
   --count-only                     Print result counts instead of atoms
-  --space-match-backend <name>     Select pattern matching backend
+  --space-engine <name>            Select space engine
   --compile <file>                 Emit LLVM IR to stdout
   --list-profiles                  Show available profiles
-  --list-space-match-backends      Show available backends
+  --list-space-engines             Show available space engines
   --list-languages                 Show supported languages
 ```
 

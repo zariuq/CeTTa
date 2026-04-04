@@ -9,12 +9,22 @@
 
 typedef struct Space Space;
 typedef struct DiscNode DiscNode;
+typedef struct CettaMorkSpaceHandle CettaMorkSpaceHandle;
 
 typedef enum {
-    SPACE_MATCH_BACKEND_NATIVE = 0,
-    SPACE_MATCH_BACKEND_NATIVE_CANDIDATE_EXACT = 1,
-    SPACE_MATCH_BACKEND_PATHMAP_IMPORTED = 2,
-} SpaceMatchBackendKind;
+    SPACE_ENGINE_NATIVE = 0,
+    SPACE_ENGINE_NATIVE_CANDIDATE_EXACT = 1,
+    SPACE_ENGINE_PATHMAP = 2,
+    SPACE_ENGINE_MORK = 3,
+} SpaceEngine;
+
+static inline bool space_engine_uses_pathmap(SpaceEngine engine) {
+    return engine == SPACE_ENGINE_PATHMAP || engine == SPACE_ENGINE_MORK;
+}
+
+static inline bool space_engine_supports_exec(SpaceEngine engine) {
+    return engine == SPACE_ENGINE_MORK;
+}
 
 typedef struct {
     DiscNode *match_trie;
@@ -79,7 +89,7 @@ typedef struct SpaceMatchBackendOps {
 } SpaceMatchBackendOps;
 
 typedef struct {
-    SpaceMatchBackendKind kind;
+    SpaceEngine kind;
     const SpaceMatchBackendOps *ops;
     SpaceMatchNativeState native;
     PathmapImportedState imported;
@@ -87,15 +97,15 @@ typedef struct {
 
 void space_match_backend_init(Space *s);
 void space_match_backend_free(Space *s);
-bool space_match_backend_try_set(Space *s, SpaceMatchBackendKind kind);
+bool space_match_backend_try_set(Space *s, SpaceEngine kind);
 void space_match_backend_note_add(Space *s, Atom *atom, uint32_t atom_idx);
 void space_match_backend_note_remove(Space *s);
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out);
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 const char *space_match_backend_name(const Space *s);
 bool space_match_backend_supports_direct_bindings(const Space *s);
-const char *space_match_backend_kind_name(SpaceMatchBackendKind kind);
-bool space_match_backend_kind_from_name(const char *name, SpaceMatchBackendKind *out);
+const char *space_match_backend_kind_name(SpaceEngine kind);
+bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out);
 bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *out_loaded);
 bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena);
 bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
@@ -104,6 +114,8 @@ bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
 bool space_match_backend_step(Space *s, Arena *persistent_arena,
                               uint64_t steps, uint64_t *out_performed);
 bool space_match_backend_is_attached_compiled(const Space *s);
+bool space_match_backend_bridge_space(Space *s,
+                                      CettaMorkSpaceHandle **out_bridge);
 uint32_t space_match_backend_logical_len(const Space *s);
 void space_match_backend_print_inventory(FILE *out);
 

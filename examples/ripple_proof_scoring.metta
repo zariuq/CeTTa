@@ -19,16 +19,18 @@
 ;
 ; Two independent gene paths to the same disease+drug hypothesis.
 
-!(bind! &ws (new-space mork))
+!(import! &self mork)
+
+!(bind! &ws (mork:new-space))
 
 ; Raw facts
-!(add-atom &ws (eqtl-link rs42 BRCA1))
-!(add-atom &ws (eqtl-link rs42 CDH1))
-!(add-atom &ws (tissue-class BRCA1 epithelial))
-!(add-atom &ws (tissue-class CDH1 stromal))
-!(add-atom &ws (disease-gene breast-cancer BRCA1))
-!(add-atom &ws (disease-gene breast-cancer CDH1))
-!(add-atom &ws (compound-treats tamoxifen breast-cancer))
+!(mork:add-atom &ws (eqtl-link rs42 BRCA1))
+!(mork:add-atom &ws (eqtl-link rs42 CDH1))
+!(mork:add-atom &ws (tissue-class BRCA1 epithelial))
+!(mork:add-atom &ws (tissue-class CDH1 stromal))
+!(mork:add-atom &ws (disease-gene breast-cancer BRCA1))
+!(mork:add-atom &ws (disease-gene breast-cancer CDH1))
+!(mork:add-atom &ws (compound-treats tamoxifen breast-cancer))
 
 ; ═══════════════════════════════════════════════════════════════════
 ; MM2 RULES — forward chaining proof construction
@@ -38,36 +40,36 @@
 ; the conclusion was derived, not just THAT it was derived.
 
 ; Priority 1: leaf bridges (raw fact → typed proposition)
-!(add-atom &ws (exec (1 r1-eqtl)
+!(mork:add-atom &ws (exec (1 r1-eqtl)
   (, (eqtl-link $snp $gene))
   (O (+ (proven (eqtl-fact $snp $gene) (eqtl $snp $gene))))))
 
-!(add-atom &ws (exec (1 r2-tissue)
+!(mork:add-atom &ws (exec (1 r2-tissue)
   (, (tissue-class $gene $tissue))
   (O (+ (proven (tissue-fact $gene $tissue) (has-tissue $gene $tissue))))))
 
-!(add-atom &ws (exec (1 r3-disease)
+!(mork:add-atom &ws (exec (1 r3-disease)
   (, (disease-gene $disease $gene))
   (O (+ (proven (disease-fact $gene $disease) (has-disease $gene $disease))))))
 
-!(add-atom &ws (exec (1 r4-treats)
+!(mork:add-atom &ws (exec (1 r4-treats)
   (, (compound-treats $drug $disease))
   (O (+ (proven (treats-fact $drug $disease) (treats $drug $disease))))))
 
 ; Priority 2: contextualize (snp+gene+tissue)
-!(add-atom &ws (exec (2 r5-context)
+!(mork:add-atom &ws (exec (2 r5-context)
   (, (proven $e1 (eqtl $snp $gene))
      (proven $e2 (has-tissue $gene $tissue)))
   (O (+ (proven (r5 $e1 $e2) (contextual-target $snp $gene $tissue))))))
 
 ; Priority 3: disease hypothesis (context+disease)
-!(add-atom &ws (exec (3 r6-disease-hyp)
+!(mork:add-atom &ws (exec (3 r6-disease-hyp)
   (, (proven $e1 (contextual-target $snp $gene $tissue))
      (proven $e2 (has-disease $gene $disease)))
   (O (+ (proven (r6 $e1 $e2) (disease-hyp $snp $gene $disease $tissue))))))
 
 ; Priority 4: drug hypothesis (disease+treatment)
-!(add-atom &ws (exec (4 r7-drug-hyp)
+!(mork:add-atom &ws (exec (4 r7-drug-hyp)
   (, (proven $e1 (disease-hyp $snp $gene $disease $tissue))
      (proven $e2 (treats $drug $disease)))
   (O (+ (proven (r7 $e1 $e2) (drug-hyp $snp $gene $disease $drug $tissue))))))
@@ -77,21 +79,21 @@
 ; ═══════════════════════════════════════════════════════════════════
 
 !(println! "=== MM2 proof discovery ===")
-!(let $n (step! &ws 1000)
+!(let $n (mork:step! &ws 1000)
    (println! ($n rules fired)))
 
 ; What did MM2 find?
 !(println! "")
 !(println! "--- Drug hypotheses discovered ---")
 !(println! (collapse
-  (match &ws (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
+  (mork:match &ws (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
     (hypothesis $snp $gene $disease $drug $tissue))))
 
 ; Show the proof trees — these are structured terms
 !(println! "")
 !(println! "--- Proof trees (what MeTTa will score) ---")
 !(let (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
-     (match &ws (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
+     (mork:match &ws (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
        (proven $proof (drug-hyp $snp $gene $disease $drug $tissue)))
   (println! (proof-for ($gene $disease $drug) is $proof)))
 
@@ -132,7 +134,7 @@
 !(println! "=== MeTTa proof scoring (recursive — impossible in MM2) ===")
 
 !(let (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
-     (match &ws (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
+     (mork:match &ws (proven $proof (drug-hyp $snp $gene $disease $drug $tissue))
        (proven $proof (drug-hyp $snp $gene $disease $drug $tissue)))
   (let $stv (proof-stv $proof)
     (let $score (posterior-mean $stv)
@@ -146,11 +148,11 @@
 
 !(println! "")
 !(println! "=== Independent gene paths to same drug target ===")
-; Collect all scored drug hypotheses, then show both paths converge
-!(let $hyps (collapse
-  (match &ws (proven $pa (drug-hyp $sa $ga $da $dra $ta))
-    (hyp $ga $ta (posterior-mean (proof-stv $pa)))))
-  (println! $hyps))
+; Collect the convergent gene/drug paths without re-running the recursive score
+; computation inside one large collapsed query.
+!(println! (collapse
+  (mork:match &ws (proven $pa (drug-hyp $sa $ga $da $dra $ta))
+    (hyp $ga $ta))))
 ; Both genes point to the same disease+drug — independently corroborated!
 ; BRCA1 (epithelial) scores higher than CDH1 (stromal) due to stronger eQTL.
 

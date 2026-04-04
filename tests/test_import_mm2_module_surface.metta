@@ -1,16 +1,16 @@
 !(import! &ws mm2_exec_basic.mm2)
 !(assertEqualToResult
   (get-type &ws)
-  ((Space mork)))
+  ((Space atom)))
 !(assertEqualToResult
   (size &ws)
   (3))
 !(assertEqualToResult
   (step! &ws 10)
-  (1))
-!(assertEqual
-  (match &ws (path $x $y) ($x $y))
-  (superpose ((a c))))
+  ((Error (step! &ws 10) NoStepSemantics)))
+!(assertEqualToResult
+  (match &ws (mm2_exec $priority $src $sink) stored)
+  (stored))
 !(bind! &mods (module-inventory!))
 !(assertEqualToResult
   (match &mods

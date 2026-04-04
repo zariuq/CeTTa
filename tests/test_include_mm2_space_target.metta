@@ -1,20 +1,40 @@
-!(bind! &ws (new-space))
+!(import! &self mork)
+
+!(bind! &plain (new-space pathmap))
 !(assertEqualToResult
-  (get-type &ws)
-  ((Space atom)))
-!(include &ws mm2_exec_basic.mm2)
+  (get-type &plain)
+  ((Space pathmap)))
+!(include &plain mm2_exec_basic.mm2)
 !(assertEqualToResult
-  (get-type &ws)
-  ((Space mork)))
+  (get-type &plain)
+  ((Space pathmap)))
 !(assertEqualToResult
-  (size &ws)
+  (size &plain)
   (3))
 !(assertEqualToResult
-  (step! &ws 5)
+  (step! &plain 5)
+  ((Error (step! &plain 5) NoStepSemantics)))
+!(assertEqualToResult
+  (match &plain (mm2_exec $p $src $snk) exec-present)
+  (exec-present))
+
+!(bind! &ws (mork:new-space))
+!(assertEqualToResult
+  (get-type &ws)
+  (MorkSpace))
+!(mork:include! &ws mm2_exec_basic.mm2)
+!(assertEqualToResult
+  (get-type &ws)
+  (MorkSpace))
+!(assertEqualToResult
+  (mork:size &ws)
+  (3))
+!(assertEqualToResult
+  (mork:step! &ws 5)
   (1))
 !(assertEqualToResult
-  (size &ws)
+  (mork:size &ws)
   (3))
 !(assertEqual
-  (match &ws (path $x $y) ($x $y))
+  (mork:match &ws (path $x $y) ($x $y))
   (superpose ((a c))))
