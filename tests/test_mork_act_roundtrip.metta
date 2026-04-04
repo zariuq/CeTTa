@@ -15,10 +15,10 @@
   ())
 !(assertEqualToResult
   (mork:size &dst)
-  (3))
+  (2))
 !(assertEqualToResult
   (mork:match &dst (edge a b) hit)
-  (hit hit))
+  (hit))
 !(assertEqualToResult
   (mork:match &dst (edge b c) hit)
   (hit))
@@ -28,10 +28,10 @@
   ())
 !(assertEqualToResult
   (size &plain)
-  (3))
+  (2))
 !(assertEqualToResult
   (match &plain (edge a b) hit)
-  (hit hit))
+  (hit))
 !(assertEqualToResult
   (match &plain (edge b c) hit)
   (hit))

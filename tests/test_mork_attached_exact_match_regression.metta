@@ -11,10 +11,10 @@
 !(bind! &compiled (mork:open-act "../runtime/test_mork_attached_exact_match_regression.act"))
 !(assertEqualToResult
   (mork:size &compiled)
-  (3))
+  (2))
 !(assertEqualToResult
   (mork:match &compiled (edge a b) hit)
-  (hit hit))
+  (hit))
 !(assertEqualToResult
   (mork:match &compiled (edge $x $y) ($x $y))
-  ((a b) (a b) (b c)))
+  ((a b) (b c)))
