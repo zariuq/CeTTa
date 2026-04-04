@@ -397,8 +397,7 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
 
     for (int i = 0; i < n; i++) {
         char *surface = cetta_mm2_atom_to_surface_string(arena, atoms[i]);
-        bool ok = cetta_mork_bridge_space_add_sexpr(
-            space, (const uint8_t *)surface, strlen(surface), &ignored);
+        bool ok = cetta_mork_bridge_space_add_text(space, surface, &ignored);
         if (!ok) {
             fprintf(stderr, "error: MM2 runtime could not load atom into live space: %s\n",
                     cetta_mork_bridge_last_error());
@@ -569,9 +568,9 @@ static void print_usage(FILE *out) {
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
-    fputs("       cetta --space-match-backend <name> <file.metta>\n", out);
+    fputs("       cetta --space-engine <name> <file.metta>\n", out);
     fputs("       cetta --list-profiles\n", out);
-    fputs("       cetta --list-space-match-backends\n", out);
+    fputs("       cetta --list-space-engines\n", out);
     fputs("       cetta --list-languages\n", out);
 }
 
@@ -658,7 +657,7 @@ int main(int argc, char **argv) {
     bool emit_runtime_stats = false;
     int fuel_override = -1;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
-    SpaceMatchBackendKind match_backend_kind = SPACE_MATCH_BACKEND_NATIVE;
+    SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
@@ -669,7 +668,8 @@ int main(int argc, char **argv) {
             cetta_language_print_inventory(stdout);
             return 0;
         }
-        if (strcmp(argv[i], "--list-space-match-backends") == 0) {
+        if (strcmp(argv[i], "--list-space-engines") == 0 ||
+            strcmp(argv[i], "--list-space-match-backends") == 0) {
             space_match_backend_print_inventory(stdout);
             return 0;
         }
@@ -743,13 +743,14 @@ int main(int argc, char **argv) {
             mm2_step_limit = (uint64_t)parsed;
             continue;
         }
-        if (strcmp(argv[i], "--space-match-backend") == 0) {
+        if (strcmp(argv[i], "--space-engine") == 0 ||
+            strcmp(argv[i], "--space-match-backend") == 0) {
             if (i + 1 >= argc) {
                 print_usage(stderr);
                 return 1;
             }
-            if (!space_match_backend_kind_from_name(argv[++i], &match_backend_kind)) {
-                fprintf(stderr, "error: unknown space match backend '%s'\n", argv[i]);
+            if (!space_match_backend_kind_from_name(argv[++i], &space_engine)) {
+                fprintf(stderr, "error: unknown space engine '%s'\n", argv[i]);
                 space_match_backend_print_inventory(stderr);
                 return 2;
             }
@@ -941,9 +942,9 @@ int main(int argc, char **argv) {
 
     Space space;
     space_init_with_universe(&space, &libraries.term_universe);
-    if (!space_match_backend_try_set(&space, match_backend_kind)) {
-        fprintf(stderr, "error: space match backend '%s' is recognized but not implemented yet\n",
-                space_match_backend_kind_name(match_backend_kind));
+    if (!space_match_backend_try_set(&space, space_engine)) {
+        fprintf(stderr, "error: space engine '%s' is recognized but not implemented yet\n",
+                space_match_backend_kind_name(space_engine));
         free(atoms);
         cetta_library_context_free(&libraries);
         arena_free(&eval_arena);

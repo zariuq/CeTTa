@@ -1,33 +1,35 @@
-!(bind! &ws (new-space mork))
-!(add-atom &ws (trigger))
-!(add-atom &ws
+!(import! &self mork)
+
+!(bind! &ws (mork:new-space))
+!(mork:add-atom &ws (trigger))
+!(mork:add-atom &ws
   (exec (0 (0 (0 0)))
     (, (trigger))
     (O (+ (fired (0 (0 (0 0))))))))
-!(add-atom &ws
+!(mork:add-atom &ws
   (exec (0 (0 (1 0)))
     (, (trigger))
     (O (+ (fired (0 (0 (1 0))))))))
-!(add-atom &ws
+!(mork:add-atom &ws
   (exec (0 (1 0))
     (, (trigger))
     (O (+ (fired (0 (1 0)))))))
-!(add-atom &ws
+!(mork:add-atom &ws
   (exec (1 0)
     (, (trigger))
     (O (+ (fired (1 0))))))
 !(assertEqualToResult
-  (step! &ws)
+  (mork:step! &ws)
   (1))
 !(assertEqual
-  (match &ws (fired $p) $p)
+  (mork:match &ws (fired $p) $p)
   (superpose ((0 (0 (0 0)))
               (0 (0 (1 0))))))
 !(assertEqualToResult
-  (step! &ws 3)
+  (mork:step! &ws 3)
   (2))
 !(assertEqual
-  (match &ws (fired $p) $p)
+  (mork:match &ws (fired $p) $p)
   (superpose ((0 (0 (0 0)))
               (0 (0 (1 0)))
               (0 (1 0))

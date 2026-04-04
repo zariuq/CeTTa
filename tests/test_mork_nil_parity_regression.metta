@@ -1,4 +1,4 @@
-; Regression: forward chaining over `new-space mork` must preserve the same
+; Regression: forward chaining over the PathMap-backed lane must preserve the same
 ; final solution-space counts as the native space on Nil Geisweiller's
 ; propositional-calculus benchmark shapes.
 
@@ -41,10 +41,10 @@
 !(add-atom &ab-native (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-native (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
 
-!(bind! &rb-mork (new-space mork))
+!(bind! &rb-mork (new-space pathmap))
 !(add-atom &rb-mork (: ax-mp (-> (→ $𝜑 $𝜓) $𝜑 $𝜓)))
 
-!(bind! &ab-mork (new-space mork))
+!(bind! &ab-mork (new-space pathmap))
 !(add-atom &ab-mork (: ax-1 (→ $𝜑 (→ $𝜓 $𝜑))))
 !(add-atom &ab-mork (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-mork (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
@@ -55,7 +55,7 @@
 !(fs-add-to-ss &rb-native &ss2-native)
 !(fs-add-to-ss &rb-native &ss2-native)
 
-!(bind! &ss2-mork (new-space mork))
+!(bind! &ss2-mork (new-space pathmap))
 !(seed-space &ab-mork &ss2-mork)
 !(fs-add-to-ss &rb-mork &ss2-mork)
 !(fs-add-to-ss &rb-mork &ss2-mork)
@@ -71,7 +71,7 @@
 !(fs-add-to-ss &rb-native &ss3-native)
 !(fs-add-to-ss &rb-native &ss3-native)
 
-!(bind! &ss3-mork (new-space mork))
+!(bind! &ss3-mork (new-space pathmap))
 !(seed-space &ab-mork &ss3-mork)
 !(fs-add-to-ss &rb-mork &ss3-mork)
 !(fs-add-to-ss &rb-mork &ss3-mork)
@@ -86,7 +86,7 @@
 !(fs-add-to-ss-nodup &rb-native &ss2n-native)
 !(fs-add-to-ss-nodup &rb-native &ss2n-native)
 
-!(bind! &ss2n-mork (new-space mork))
+!(bind! &ss2n-mork (new-space pathmap))
 !(seed-space-nodup &ab-mork &ss2n-mork)
 !(fs-add-to-ss-nodup &rb-mork &ss2n-mork)
 !(fs-add-to-ss-nodup &rb-mork &ss2n-mork)
@@ -102,7 +102,7 @@
 !(fs-add-to-ss-nodup &rb-native &ss3n-native)
 !(fs-add-to-ss-nodup &rb-native &ss3n-native)
 
-!(bind! &ss3n-mork (new-space mork))
+!(bind! &ss3n-mork (new-space pathmap))
 !(seed-space-nodup &ab-mork &ss3n-mork)
 !(fs-add-to-ss-nodup &rb-mork &ss3n-mork)
 !(fs-add-to-ss-nodup &rb-mork &ss3n-mork)

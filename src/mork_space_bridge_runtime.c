@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "mork_space_bridge_runtime.h"
 
 #include "atom.h"
@@ -6,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include <unistd.h>
 
 #if !CETTA_BUILD_WITH_MORK_STATIC
 #include <dlfcn.h>
@@ -76,6 +79,19 @@ static bool bridge_take_status_value(const char *ctx, CettaMorkStatus st,
     return false;
 }
 
+static bool bridge_take_status_bool(const char *ctx, CettaMorkStatus st,
+                                    bool *out_bool,
+                                    void (*free_bytes)(uint8_t *, size_t)) {
+    uint64_t value = 0;
+    if (out_bool)
+        *out_bool = false;
+    if (!bridge_take_status_value(ctx, st, &value, free_bytes))
+        return false;
+    if (out_bool)
+        *out_bool = (value != 0);
+    return true;
+}
+
 static bool bridge_take_buffer(const char *ctx, CettaMorkBuffer buf,
                                uint8_t **out_packet, size_t *out_len,
                                uint32_t *out_rows,
@@ -125,9 +141,116 @@ extern CettaMorkStatus mork_space_load_act_file(CettaMorkSpaceHandle *space,
                                                 const uint8_t *path,
                                                 size_t len);
 extern CettaMorkBuffer mork_space_dump(CettaMorkSpaceHandle *space);
+extern CettaMorkSpaceHandle *mork_space_join(const CettaMorkSpaceHandle *lhs,
+                                             const CettaMorkSpaceHandle *rhs);
+extern CettaMorkSpaceHandle *mork_space_meet(const CettaMorkSpaceHandle *lhs,
+                                             const CettaMorkSpaceHandle *rhs);
+extern CettaMorkSpaceHandle *mork_space_subtract(const CettaMorkSpaceHandle *lhs,
+                                                 const CettaMorkSpaceHandle *rhs);
+extern CettaMorkSpaceHandle *mork_space_restrict(const CettaMorkSpaceHandle *lhs,
+                                                 const CettaMorkSpaceHandle *rhs);
+extern CettaMorkCursorHandle *mork_cursor_new(const CettaMorkSpaceHandle *space);
+extern void mork_cursor_free(CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_path_exists(const CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_is_val(const CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_child_count(const CettaMorkCursorHandle *cursor);
+extern CettaMorkBuffer mork_cursor_path_bytes(const CettaMorkCursorHandle *cursor);
+extern CettaMorkBuffer mork_cursor_child_bytes(const CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_val_count(const CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_depth(const CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_reset(CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_ascend(CettaMorkCursorHandle *cursor,
+                                          uint64_t steps);
+extern CettaMorkStatus mork_cursor_descend_byte(CettaMorkCursorHandle *cursor,
+                                                uint32_t byte);
+extern CettaMorkStatus mork_cursor_descend_index(CettaMorkCursorHandle *cursor,
+                                                 uint64_t index);
+extern CettaMorkStatus mork_cursor_descend_first(CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_descend_until(CettaMorkCursorHandle *cursor);
+extern CettaMorkCursorHandle *mork_cursor_fork(const CettaMorkCursorHandle *cursor);
+extern CettaMorkSpaceHandle *mork_cursor_subspace(const CettaMorkCursorHandle *cursor);
+extern CettaMorkProductCursorHandle *mork_product_cursor_new(
+    const CettaMorkSpaceHandle *const *spaces,
+    size_t count);
+extern void mork_product_cursor_free(CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_path_exists(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_is_val(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_child_count(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkBuffer mork_product_cursor_path_bytes(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkBuffer mork_product_cursor_child_bytes(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_val_count(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_depth(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_factor_count(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_focus_factor(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkBuffer mork_product_cursor_path_indices(
+    const CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_reset(CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_ascend(CettaMorkProductCursorHandle *cursor,
+                                                  uint64_t steps);
+extern CettaMorkStatus mork_product_cursor_descend_byte(
+    CettaMorkProductCursorHandle *cursor,
+    uint32_t byte);
+extern CettaMorkStatus mork_product_cursor_descend_index(
+    CettaMorkProductCursorHandle *cursor,
+    uint64_t index);
+extern CettaMorkStatus mork_product_cursor_descend_first(
+    CettaMorkProductCursorHandle *cursor);
+extern CettaMorkStatus mork_product_cursor_descend_until(
+    CettaMorkProductCursorHandle *cursor);
+extern CettaMorkOverlayCursorHandle *mork_overlay_cursor_new(
+    const CettaMorkSpaceHandle *base,
+    const CettaMorkSpaceHandle *overlay);
+extern void mork_overlay_cursor_free(CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkStatus mork_overlay_cursor_path_exists(
+    const CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkStatus mork_overlay_cursor_is_val(
+    const CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkStatus mork_overlay_cursor_child_count(
+    const CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkBuffer mork_overlay_cursor_path_bytes(
+    const CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkBuffer mork_overlay_cursor_child_bytes(
+    const CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkStatus mork_overlay_cursor_depth(
+    const CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkStatus mork_overlay_cursor_reset(CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkStatus mork_overlay_cursor_ascend(CettaMorkOverlayCursorHandle *cursor,
+                                                  uint64_t steps);
+extern CettaMorkStatus mork_overlay_cursor_descend_byte(
+    CettaMorkOverlayCursorHandle *cursor,
+    uint32_t byte);
+extern CettaMorkStatus mork_overlay_cursor_descend_index(
+    CettaMorkOverlayCursorHandle *cursor,
+    uint64_t index);
+extern CettaMorkStatus mork_overlay_cursor_descend_first(
+    CettaMorkOverlayCursorHandle *cursor);
+extern CettaMorkStatus mork_overlay_cursor_descend_until(
+    CettaMorkOverlayCursorHandle *cursor);
 extern CettaMorkBuffer mork_space_query_indices(CettaMorkSpaceHandle *space,
                                                 const uint8_t *pattern,
                                                 size_t len);
+extern CettaMorkBuffer mork_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
+                                                          const uint8_t *pattern,
+                                                          size_t len)
+    __attribute__((weak));
+extern CettaMorkBuffer mork_space_query_candidates_prefix_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern_expr,
+    size_t len)
+    __attribute__((weak));
+extern CettaMorkBuffer mork_space_query_candidates_expr_bytes(CettaMorkSpaceHandle *space,
+                                                              const uint8_t *pattern_expr,
+                                                              size_t len)
+    __attribute__((weak));
 extern CettaMorkBuffer mork_space_query_bindings(CettaMorkSpaceHandle *space,
                                                  const uint8_t *pattern,
                                                  size_t len);
@@ -226,6 +349,19 @@ bool cetta_mork_bridge_space_clear(CettaMorkSpaceHandle *space) {
     return bridge_status_ok("mork_space_clear failed: ", mork_space_clear(space));
 }
 
+bool cetta_mork_bridge_space_add_text(CettaMorkSpaceHandle *space,
+                                      const char *text,
+                                      uint64_t *out_added) {
+    if (!text) {
+        bridge_set_error("cannot add null text to MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_add_sexpr(space,
+                                             (const uint8_t *)text,
+                                             strlen(text),
+                                             out_added);
+}
+
 bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len,
@@ -238,6 +374,19 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                     mork_space_add_sexpr(space, text, len),
                                     out_added,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
+                                              uint32_t atom_idx,
+                                              const char *text) {
+    if (!text) {
+        bridge_set_error("cannot add null indexed text to MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_add_indexed_sexpr(space,
+                                                     atom_idx,
+                                                     (const uint8_t *)text,
+                                                     strlen(text));
 }
 
 bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
@@ -308,6 +457,666 @@ bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                               bridge_free_bytes);
 }
 
+CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *joined;
+    if (!lhs || !rhs) {
+        bridge_set_error("cannot join null MORK bridge space");
+        return NULL;
+    }
+    joined = mork_space_join(lhs, rhs);
+    if (!joined)
+        bridge_set_error("mork_space_join returned null");
+    return joined;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_meet(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *met;
+    if (!lhs || !rhs) {
+        bridge_set_error("cannot meet null MORK bridge space");
+        return NULL;
+    }
+    met = mork_space_meet(lhs, rhs);
+    if (!met)
+        bridge_set_error("mork_space_meet returned null");
+    return met;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_subtract(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *subtracted;
+    if (!lhs || !rhs) {
+        bridge_set_error("cannot subtract null MORK bridge space");
+        return NULL;
+    }
+    subtracted = mork_space_subtract(lhs, rhs);
+    if (!subtracted)
+        bridge_set_error("mork_space_subtract returned null");
+    return subtracted;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_restrict(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *restricted;
+    if (!lhs || !rhs) {
+        bridge_set_error("cannot restrict null MORK bridge space");
+        return NULL;
+    }
+    restricted = mork_space_restrict(lhs, rhs);
+    if (!restricted)
+        bridge_set_error("mork_space_restrict returned null");
+    return restricted;
+}
+
+CettaMorkCursorHandle *cetta_mork_bridge_cursor_new(
+    const CettaMorkSpaceHandle *space) {
+    CettaMorkCursorHandle *cursor;
+    if (!space) {
+        bridge_set_error("cannot create cursor from null MORK bridge space");
+        return NULL;
+    }
+    cursor = mork_cursor_new(space);
+    if (!cursor)
+        bridge_set_error("mork_cursor_new returned null");
+    return cursor;
+}
+
+void cetta_mork_bridge_cursor_free(CettaMorkCursorHandle *cursor) {
+    if (cursor)
+        mork_cursor_free(cursor);
+}
+
+bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
+                                          bool *out_exists) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_path_exists failed: ",
+                                   mork_cursor_path_exists(cursor),
+                                   out_exists,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
+                                     bool *out_is_val) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_is_val failed: ",
+                                   mork_cursor_is_val(cursor),
+                                   out_is_val,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_child_count(const CettaMorkCursorHandle *cursor,
+                                          uint64_t *out_child_count) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_cursor_child_count failed: ",
+                                    mork_cursor_child_count(cursor),
+                                    out_child_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_path_bytes(const CettaMorkCursorHandle *cursor,
+                                         uint8_t **out_bytes,
+                                         size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK cursor");
+        return false;
+    }
+    return bridge_take_buffer("mork_cursor_path_bytes failed: ",
+                              mork_cursor_path_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_child_bytes(const CettaMorkCursorHandle *cursor,
+                                          uint8_t **out_bytes,
+                                          size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK cursor");
+        return false;
+    }
+    return bridge_take_buffer("mork_cursor_child_bytes failed: ",
+                              mork_cursor_child_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_val_count(const CettaMorkCursorHandle *cursor,
+                                        uint64_t *out_val_count) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_cursor_val_count failed: ",
+                                    mork_cursor_val_count(cursor),
+                                    out_val_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_depth(const CettaMorkCursorHandle *cursor,
+                                    uint64_t *out_depth) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_cursor_depth failed: ",
+                                    mork_cursor_depth(cursor),
+                                    out_depth,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_reset(CettaMorkCursorHandle *cursor) {
+    if (!cursor) {
+        bridge_set_error("cannot reset null MORK cursor");
+        return false;
+    }
+    return bridge_status_ok("mork_cursor_reset failed: ",
+                            mork_cursor_reset(cursor));
+}
+
+bool cetta_mork_bridge_cursor_ascend(CettaMorkCursorHandle *cursor,
+                                     uint64_t steps,
+                                     bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot ascend null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_ascend failed: ",
+                                   mork_cursor_ascend(cursor, steps),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_byte(CettaMorkCursorHandle *cursor,
+                                           uint32_t byte,
+                                           bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_byte failed: ",
+                                   mork_cursor_descend_byte(cursor, byte),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_index(CettaMorkCursorHandle *cursor,
+                                            uint64_t index,
+                                            bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_index failed: ",
+                                   mork_cursor_descend_index(cursor, index),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_first(CettaMorkCursorHandle *cursor,
+                                            bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_first failed: ",
+                                   mork_cursor_descend_first(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_until(CettaMorkCursorHandle *cursor,
+                                            bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_until failed: ",
+                                   mork_cursor_descend_until(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+CettaMorkCursorHandle *cetta_mork_bridge_cursor_fork(
+    const CettaMorkCursorHandle *cursor) {
+    CettaMorkCursorHandle *forked;
+    if (!cursor) {
+        bridge_set_error("cannot fork null MORK cursor");
+        return NULL;
+    }
+    forked = mork_cursor_fork(cursor);
+    if (!forked)
+        bridge_set_error("mork_cursor_fork returned null");
+    return forked;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_cursor_subspace(
+    const CettaMorkCursorHandle *cursor) {
+    CettaMorkSpaceHandle *subspace;
+    if (!cursor) {
+        bridge_set_error("cannot materialize subspace from null MORK cursor");
+        return NULL;
+    }
+    subspace = mork_cursor_subspace(cursor);
+    if (!subspace)
+        bridge_set_error("mork_cursor_subspace returned null");
+    return subspace;
+}
+
+CettaMorkProductCursorHandle *cetta_mork_bridge_product_cursor_new(
+    const CettaMorkSpaceHandle *const *spaces,
+    size_t count) {
+    CettaMorkProductCursorHandle *cursor;
+    if (!spaces || count < 2) {
+        bridge_set_error("cannot create MORK product cursor with fewer than two spaces");
+        return NULL;
+    }
+    cursor = mork_product_cursor_new(spaces, count);
+    if (!cursor)
+        bridge_set_error("mork_product_cursor_new returned null");
+    return cursor;
+}
+
+void cetta_mork_bridge_product_cursor_free(CettaMorkProductCursorHandle *cursor) {
+    if (cursor)
+        mork_product_cursor_free(cursor);
+}
+
+bool cetta_mork_bridge_product_cursor_path_exists(
+    const CettaMorkProductCursorHandle *cursor,
+    bool *out_exists) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_path_exists failed: ",
+                                   mork_product_cursor_path_exists(cursor),
+                                   out_exists,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_is_val(
+    const CettaMorkProductCursorHandle *cursor,
+    bool *out_is_val) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_is_val failed: ",
+                                   mork_product_cursor_is_val(cursor),
+                                   out_is_val,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_child_count(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_child_count) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_child_count failed: ",
+                                    mork_product_cursor_child_count(cursor),
+                                    out_child_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_path_bytes(
+    const CettaMorkProductCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_buffer("mork_product_cursor_path_bytes failed: ",
+                              mork_product_cursor_path_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_child_bytes(
+    const CettaMorkProductCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_buffer("mork_product_cursor_child_bytes failed: ",
+                              mork_product_cursor_child_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_val_count(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_val_count) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_val_count failed: ",
+                                    mork_product_cursor_val_count(cursor),
+                                    out_val_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_depth(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_depth) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_depth failed: ",
+                                    mork_product_cursor_depth(cursor),
+                                    out_depth,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_factor_count(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_factor_count) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_factor_count failed: ",
+                                    mork_product_cursor_factor_count(cursor),
+                                    out_factor_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_focus_factor(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_focus_factor) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_focus_factor failed: ",
+                                    mork_product_cursor_focus_factor(cursor),
+                                    out_focus_factor,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_path_indices(
+    const CettaMorkProductCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len,
+    uint32_t *out_count) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK product cursor");
+        return false;
+    }
+    return bridge_take_buffer("mork_product_cursor_path_indices failed: ",
+                              mork_product_cursor_path_indices(cursor),
+                              out_bytes, out_len, out_count,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_reset(CettaMorkProductCursorHandle *cursor) {
+    if (!cursor) {
+        bridge_set_error("cannot reset null MORK product cursor");
+        return false;
+    }
+    return bridge_status_ok("mork_product_cursor_reset failed: ",
+                            mork_product_cursor_reset(cursor));
+}
+
+bool cetta_mork_bridge_product_cursor_ascend(CettaMorkProductCursorHandle *cursor,
+                                             uint64_t steps,
+                                             bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot ascend null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_ascend failed: ",
+                                   mork_product_cursor_ascend(cursor, steps),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_byte(CettaMorkProductCursorHandle *cursor,
+                                                   uint32_t byte,
+                                                   bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_byte failed: ",
+                                   mork_product_cursor_descend_byte(cursor, byte),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_index(CettaMorkProductCursorHandle *cursor,
+                                                    uint64_t index,
+                                                    bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_index failed: ",
+                                   mork_product_cursor_descend_index(cursor, index),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_first(CettaMorkProductCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_first failed: ",
+                                   mork_product_cursor_descend_first(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_until(CettaMorkProductCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK product cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_until failed: ",
+                                   mork_product_cursor_descend_until(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+CettaMorkOverlayCursorHandle *cetta_mork_bridge_overlay_cursor_new(
+    const CettaMorkSpaceHandle *base,
+    const CettaMorkSpaceHandle *overlay) {
+    CettaMorkOverlayCursorHandle *cursor;
+    if (!base || !overlay) {
+        bridge_set_error("cannot create MORK overlay cursor with null spaces");
+        return NULL;
+    }
+    cursor = mork_overlay_cursor_new(base, overlay);
+    if (!cursor)
+        bridge_set_error("mork_overlay_cursor_new returned null");
+    return cursor;
+}
+
+void cetta_mork_bridge_overlay_cursor_free(CettaMorkOverlayCursorHandle *cursor) {
+    if (cursor)
+        mork_overlay_cursor_free(cursor);
+}
+
+bool cetta_mork_bridge_overlay_cursor_path_exists(
+    const CettaMorkOverlayCursorHandle *cursor,
+    bool *out_exists) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_path_exists failed: ",
+                                   mork_overlay_cursor_path_exists(cursor),
+                                   out_exists,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_is_val(
+    const CettaMorkOverlayCursorHandle *cursor,
+    bool *out_is_val) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_is_val failed: ",
+                                   mork_overlay_cursor_is_val(cursor),
+                                   out_is_val,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_child_count(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint64_t *out_child_count) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_overlay_cursor_child_count failed: ",
+                                    mork_overlay_cursor_child_count(cursor),
+                                    out_child_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_path_bytes(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_buffer("mork_overlay_cursor_path_bytes failed: ",
+                              mork_overlay_cursor_path_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_child_bytes(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_buffer("mork_overlay_cursor_child_bytes failed: ",
+                              mork_overlay_cursor_child_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_depth(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint64_t *out_depth) {
+    if (!cursor) {
+        bridge_set_error("cannot inspect null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_value("mork_overlay_cursor_depth failed: ",
+                                    mork_overlay_cursor_depth(cursor),
+                                    out_depth,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_reset(CettaMorkOverlayCursorHandle *cursor) {
+    if (!cursor) {
+        bridge_set_error("cannot reset null MORK overlay cursor");
+        return false;
+    }
+    return bridge_status_ok("mork_overlay_cursor_reset failed: ",
+                            mork_overlay_cursor_reset(cursor));
+}
+
+bool cetta_mork_bridge_overlay_cursor_ascend(CettaMorkOverlayCursorHandle *cursor,
+                                             uint64_t steps,
+                                             bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot ascend null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_ascend failed: ",
+                                   mork_overlay_cursor_ascend(cursor, steps),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_byte(CettaMorkOverlayCursorHandle *cursor,
+                                                   uint32_t byte,
+                                                   bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_byte failed: ",
+                                   mork_overlay_cursor_descend_byte(cursor, byte),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_index(CettaMorkOverlayCursorHandle *cursor,
+                                                    uint64_t index,
+                                                    bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_index failed: ",
+                                   mork_overlay_cursor_descend_index(cursor, index),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_first(CettaMorkOverlayCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_first failed: ",
+                                   mork_overlay_cursor_descend_first(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_until(CettaMorkOverlayCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor) {
+        bridge_set_error("cannot descend null MORK overlay cursor");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_until failed: ",
+                                   mork_overlay_cursor_descend_until(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
 bool cetta_mork_bridge_space_dump_act_file(CettaMorkSpaceHandle *space,
                                            const uint8_t *path,
                                            size_t len,
@@ -334,6 +1143,143 @@ bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
                                     mork_space_load_act_file(space, path, len),
                                     out_loaded,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_query_candidates_text(CettaMorkSpaceHandle *space,
+                                                   const char *pattern_text,
+                                                   uint32_t **out_indices,
+                                                   uint32_t *out_count) {
+    if (!pattern_text) {
+        bridge_set_error("cannot query null pattern text in MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_query_candidates(space,
+                                                    (const uint8_t *)pattern_text,
+                                                    strlen(pattern_text),
+                                                    out_indices,
+                                                    out_count);
+}
+
+bool cetta_mork_bridge_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
+                                                     const char *pattern_text,
+                                                     uint8_t **out_expr,
+                                                     size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!pattern_text) {
+        bridge_set_error("cannot compile null pattern text in MORK bridge space");
+        return false;
+    }
+    if (!space) {
+        bridge_set_error("cannot compile query expr for null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_compile_query_expr_text) {
+        bridge_set_error("mork_space_compile_query_expr_text is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_compile_query_expr_text failed: ",
+                              mork_space_compile_query_expr_text(space,
+                                                                 (const uint8_t *)pattern_text,
+                                                                 strlen(pattern_text)),
+                              out_expr, out_len, &ignored, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_query_candidates_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern_expr,
+    size_t len,
+    uint32_t **out_indices,
+    uint32_t *out_count) {
+    *out_indices = NULL;
+    *out_count = 0;
+    if (!space) {
+        bridge_set_error("cannot query null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_query_candidates_expr_bytes) {
+        bridge_set_error("mork_space_query_candidates_expr_bytes is unavailable in the linked MORK bridge");
+        return false;
+    }
+
+    CettaMorkBuffer buf = mork_space_query_candidates_expr_bytes(space, pattern_expr, len);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_space_query_candidates_expr_bytes failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_space_query_candidates_expr_bytes failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    bridge_free_bytes(buf.message, buf.message_len);
+    if (buf.len == 0 || buf.count == 0) {
+        bridge_free_bytes(buf.data, buf.len);
+        return true;
+    }
+    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
+        bridge_set_error("mork_space_query_candidates_expr_bytes returned malformed packet (%zu bytes for %u indices)",
+                         buf.len, buf.count);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
+    for (uint32_t i = 0; i < buf.count; i++)
+        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
+    bridge_free_bytes(buf.data, buf.len);
+    *out_indices = indices;
+    *out_count = buf.count;
+    return true;
+}
+
+bool cetta_mork_bridge_space_query_candidates_prefix_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern_expr,
+    size_t len,
+    uint32_t **out_indices,
+    uint32_t *out_count) {
+    *out_indices = NULL;
+    *out_count = 0;
+    if (!space) {
+        bridge_set_error("cannot query null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_query_candidates_prefix_expr_bytes) {
+        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes is unavailable in the linked MORK bridge");
+        return false;
+    }
+
+    CettaMorkBuffer buf = mork_space_query_candidates_prefix_expr_bytes(space, pattern_expr, len);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_space_query_candidates_prefix_expr_bytes failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_space_query_candidates_prefix_expr_bytes failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    bridge_free_bytes(buf.message, buf.message_len);
+    if (buf.len == 0 || buf.count == 0) {
+        bridge_free_bytes(buf.data, buf.len);
+        return true;
+    }
+    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
+        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes returned malformed packet (%zu bytes for %u indices)",
+                         buf.len, buf.count);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
+    for (uint32_t i = 0; i < buf.count; i++)
+        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
+    bridge_free_bytes(buf.data, buf.len);
+    *out_indices = indices;
+    *out_count = buf.count;
+    return true;
 }
 
 bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
@@ -387,6 +1333,23 @@ bool cetta_mork_bridge_space_query_candidates(CettaMorkSpaceHandle *space,
                                               uint32_t *out_count) {
     return cetta_mork_bridge_space_query_indices(space, pattern, len,
                                                  out_indices, out_count);
+}
+
+bool cetta_mork_bridge_space_query_bindings_text(CettaMorkSpaceHandle *space,
+                                                 const char *pattern_text,
+                                                 uint8_t **out_packet,
+                                                 size_t *out_len,
+                                                 uint32_t *out_rows) {
+    if (!pattern_text) {
+        bridge_set_error("cannot query null pattern text in MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_query_bindings(space,
+                                                  (const uint8_t *)pattern_text,
+                                                  strlen(pattern_text),
+                                                  out_packet,
+                                                  out_len,
+                                                  out_rows);
 }
 
 bool cetta_mork_bridge_space_query_bindings(CettaMorkSpaceHandle *space,
@@ -522,9 +1485,105 @@ typedef struct CettaMorkBridgeApi {
                                            const uint8_t *path,
                                            size_t len);
     CettaMorkBuffer (*space_dump)(CettaMorkSpaceHandle *space);
+    CettaMorkSpaceHandle *(*space_join)(const CettaMorkSpaceHandle *lhs,
+                                        const CettaMorkSpaceHandle *rhs);
+    CettaMorkSpaceHandle *(*space_meet)(const CettaMorkSpaceHandle *lhs,
+                                        const CettaMorkSpaceHandle *rhs);
+    CettaMorkSpaceHandle *(*space_subtract)(const CettaMorkSpaceHandle *lhs,
+                                            const CettaMorkSpaceHandle *rhs);
+    CettaMorkSpaceHandle *(*space_restrict)(const CettaMorkSpaceHandle *lhs,
+                                            const CettaMorkSpaceHandle *rhs);
+    CettaMorkCursorHandle *(*cursor_new)(const CettaMorkSpaceHandle *space);
+    void (*cursor_free)(CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_path_exists)(const CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_is_val)(const CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_child_count)(const CettaMorkCursorHandle *cursor);
+    CettaMorkBuffer (*cursor_path_bytes)(const CettaMorkCursorHandle *cursor);
+    CettaMorkBuffer (*cursor_child_bytes)(const CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_val_count)(const CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_depth)(const CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_reset)(CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_ascend)(CettaMorkCursorHandle *cursor, uint64_t steps);
+    CettaMorkStatus (*cursor_descend_byte)(CettaMorkCursorHandle *cursor, uint32_t byte);
+    CettaMorkStatus (*cursor_descend_index)(CettaMorkCursorHandle *cursor, uint64_t index);
+    CettaMorkStatus (*cursor_descend_first)(CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_descend_until)(CettaMorkCursorHandle *cursor);
+    CettaMorkCursorHandle *(*cursor_fork)(const CettaMorkCursorHandle *cursor);
+    CettaMorkSpaceHandle *(*cursor_subspace)(const CettaMorkCursorHandle *cursor);
+    CettaMorkProductCursorHandle *(*product_cursor_new)(
+        const CettaMorkSpaceHandle *const *spaces,
+        size_t count);
+    void (*product_cursor_free)(CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_path_exists)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_is_val)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_child_count)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkBuffer (*product_cursor_path_bytes)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkBuffer (*product_cursor_child_bytes)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_val_count)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_depth)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_factor_count)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_focus_factor)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkBuffer (*product_cursor_path_indices)(
+        const CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_reset)(CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_ascend)(CettaMorkProductCursorHandle *cursor,
+                                             uint64_t steps);
+    CettaMorkStatus (*product_cursor_descend_byte)(
+        CettaMorkProductCursorHandle *cursor,
+        uint32_t byte);
+    CettaMorkStatus (*product_cursor_descend_index)(
+        CettaMorkProductCursorHandle *cursor,
+        uint64_t index);
+    CettaMorkStatus (*product_cursor_descend_first)(CettaMorkProductCursorHandle *cursor);
+    CettaMorkStatus (*product_cursor_descend_until)(CettaMorkProductCursorHandle *cursor);
+    CettaMorkOverlayCursorHandle *(*overlay_cursor_new)(
+        const CettaMorkSpaceHandle *base,
+        const CettaMorkSpaceHandle *overlay);
+    void (*overlay_cursor_free)(CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkStatus (*overlay_cursor_path_exists)(
+        const CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkStatus (*overlay_cursor_is_val)(
+        const CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkStatus (*overlay_cursor_child_count)(
+        const CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkBuffer (*overlay_cursor_path_bytes)(
+        const CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkBuffer (*overlay_cursor_child_bytes)(
+        const CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkStatus (*overlay_cursor_depth)(
+        const CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkStatus (*overlay_cursor_reset)(CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkStatus (*overlay_cursor_ascend)(CettaMorkOverlayCursorHandle *cursor,
+                                             uint64_t steps);
+    CettaMorkStatus (*overlay_cursor_descend_byte)(
+        CettaMorkOverlayCursorHandle *cursor,
+        uint32_t byte);
+    CettaMorkStatus (*overlay_cursor_descend_index)(
+        CettaMorkOverlayCursorHandle *cursor,
+        uint64_t index);
+    CettaMorkStatus (*overlay_cursor_descend_first)(CettaMorkOverlayCursorHandle *cursor);
+    CettaMorkStatus (*overlay_cursor_descend_until)(CettaMorkOverlayCursorHandle *cursor);
     CettaMorkBuffer (*space_query_indices)(CettaMorkSpaceHandle *space,
                                            const uint8_t *pattern,
                                            size_t len);
+    CettaMorkBuffer (*space_compile_query_expr_text)(CettaMorkSpaceHandle *space,
+                                                     const uint8_t *pattern,
+                                                     size_t len);
+    CettaMorkBuffer (*space_query_candidates_prefix_expr_bytes)(CettaMorkSpaceHandle *space,
+                                                                const uint8_t *pattern_expr,
+                                                                size_t len);
+    CettaMorkBuffer (*space_query_candidates_expr_bytes)(CettaMorkSpaceHandle *space,
+                                                         const uint8_t *pattern_expr,
+                                                         size_t len);
     CettaMorkBuffer (*space_query_bindings)(CettaMorkSpaceHandle *space,
                                             const uint8_t *pattern,
                                             size_t len);
@@ -594,6 +1653,41 @@ static void bridge_resolve_symbol_optional(void **slot, const char *name) {
     (void)dlerror();
 }
 
+static uint32_t bridge_append_workspace_candidates(const char **candidates,
+                                                   char storage[][PATH_MAX],
+                                                   uint32_t ncandidates,
+                                                   uint32_t storage_cap) {
+    if (storage_cap < 2)
+        return ncandidates;
+
+    char exe_path[PATH_MAX];
+    ssize_t nread = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (nread <= 0)
+        return ncandidates;
+    exe_path[nread] = '\0';
+
+    char *slash = strrchr(exe_path, '/');
+    if (!slash)
+        return ncandidates;
+    *slash = '\0';
+
+    const char *suffixes[] = {
+        "/../../hyperon/MORK/target/release/libcetta_space_bridge.so",
+        "/../../hyperon/MORK/target/debug/libcetta_space_bridge.so"
+    };
+    const uint32_t nsuffixes = (uint32_t)(sizeof(suffixes) / sizeof(suffixes[0]));
+    for (uint32_t i = 0; i < nsuffixes && i < storage_cap; i++) {
+        size_t exe_len = strlen(exe_path);
+        size_t suffix_len = strlen(suffixes[i]);
+        if (exe_len + suffix_len + 1 > PATH_MAX)
+            continue;
+        memcpy(storage[i], exe_path, exe_len);
+        memcpy(storage[i] + exe_len, suffixes[i], suffix_len + 1);
+        candidates[ncandidates++] = storage[i];
+    }
+    return ncandidates;
+}
+
 static bool bridge_load_api(void) {
     if (g_mork_bridge_api.attempted)
         return g_mork_bridge_api.handle != NULL;
@@ -601,11 +1695,16 @@ static bool bridge_load_api(void) {
     g_mork_bridge_api.attempted = true;
 
     const char *env = getenv("CETTA_MORK_SPACE_BRIDGE_LIB");
-    const char *candidates[2];
+    const char *candidates[4];
+    char candidate_storage[2][PATH_MAX];
     uint32_t ncandidates = 0;
     if (env && *env)
         candidates[ncandidates++] = env;
     candidates[ncandidates++] = "libcetta_space_bridge.so";
+    ncandidates = bridge_append_workspace_candidates(candidates,
+                                                     candidate_storage,
+                                                     ncandidates,
+                                                     2);
 
     for (uint32_t i = 0; i < ncandidates; i++) {
         g_mork_bridge_api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_LOCAL);
@@ -659,6 +1758,174 @@ static bool bridge_load_api(void) {
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_logical_size,
         "mork_space_logical_size");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_join,
+        "mork_space_join");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_meet,
+        "mork_space_meet");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_subtract,
+        "mork_space_subtract");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_restrict,
+        "mork_space_restrict");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_new,
+        "mork_cursor_new");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_free,
+        "mork_cursor_free");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_path_exists,
+        "mork_cursor_path_exists");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_is_val,
+        "mork_cursor_is_val");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_child_count,
+        "mork_cursor_child_count");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_path_bytes,
+        "mork_cursor_path_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_child_bytes,
+        "mork_cursor_child_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_val_count,
+        "mork_cursor_val_count");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_depth,
+        "mork_cursor_depth");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_reset,
+        "mork_cursor_reset");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_ascend,
+        "mork_cursor_ascend");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_descend_byte,
+        "mork_cursor_descend_byte");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_descend_index,
+        "mork_cursor_descend_index");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_descend_first,
+        "mork_cursor_descend_first");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_descend_until,
+        "mork_cursor_descend_until");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_fork,
+        "mork_cursor_fork");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.cursor_subspace,
+        "mork_cursor_subspace");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_new,
+        "mork_product_cursor_new");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_free,
+        "mork_product_cursor_free");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_path_exists,
+        "mork_product_cursor_path_exists");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_is_val,
+        "mork_product_cursor_is_val");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_child_count,
+        "mork_product_cursor_child_count");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_path_bytes,
+        "mork_product_cursor_path_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_child_bytes,
+        "mork_product_cursor_child_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_val_count,
+        "mork_product_cursor_val_count");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_depth,
+        "mork_product_cursor_depth");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_factor_count,
+        "mork_product_cursor_factor_count");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_focus_factor,
+        "mork_product_cursor_focus_factor");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_path_indices,
+        "mork_product_cursor_path_indices");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_reset,
+        "mork_product_cursor_reset");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_ascend,
+        "mork_product_cursor_ascend");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_descend_byte,
+        "mork_product_cursor_descend_byte");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_descend_index,
+        "mork_product_cursor_descend_index");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_descend_first,
+        "mork_product_cursor_descend_first");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.product_cursor_descend_until,
+        "mork_product_cursor_descend_until");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_new,
+        "mork_overlay_cursor_new");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_free,
+        "mork_overlay_cursor_free");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_path_exists,
+        "mork_overlay_cursor_path_exists");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_is_val,
+        "mork_overlay_cursor_is_val");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_child_count,
+        "mork_overlay_cursor_child_count");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_path_bytes,
+        "mork_overlay_cursor_path_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_child_bytes,
+        "mork_overlay_cursor_child_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_depth,
+        "mork_overlay_cursor_depth");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_reset,
+        "mork_overlay_cursor_reset");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_ascend,
+        "mork_overlay_cursor_ascend");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_descend_byte,
+        "mork_overlay_cursor_descend_byte");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_descend_index,
+        "mork_overlay_cursor_descend_index");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_descend_first,
+        "mork_overlay_cursor_descend_first");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.overlay_cursor_descend_until,
+        "mork_overlay_cursor_descend_until");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_compile_query_expr_text,
+        "mork_space_compile_query_expr_text");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_query_candidates_prefix_expr_bytes,
+        "mork_space_query_candidates_prefix_expr_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_query_candidates_expr_bytes,
+        "mork_space_query_candidates_expr_bytes");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_query_bindings_query_only_v2,
         "mork_space_query_bindings_query_only_v2");
@@ -722,6 +1989,19 @@ bool cetta_mork_bridge_space_clear(CettaMorkSpaceHandle *space) {
                             g_mork_bridge_api.space_clear(space));
 }
 
+bool cetta_mork_bridge_space_add_text(CettaMorkSpaceHandle *space,
+                                      const char *text,
+                                      uint64_t *out_added) {
+    if (!text) {
+        bridge_set_error("cannot add null text to MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_add_sexpr(space,
+                                             (const uint8_t *)text,
+                                             strlen(text),
+                                             out_added);
+}
+
 bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len,
@@ -734,6 +2014,19 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_add_sexpr(space, text, len),
                                     out_added,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
+                                              uint32_t atom_idx,
+                                              const char *text) {
+    if (!text) {
+        bridge_set_error("cannot add null indexed text to MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_add_indexed_sexpr(space,
+                                                     atom_idx,
+                                                     (const uint8_t *)text,
+                                                     strlen(text));
 }
 
 bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
@@ -809,6 +2102,869 @@ bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                               bridge_free_bytes);
 }
 
+CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *joined;
+    if (!lhs || !rhs || !bridge_load_api()) {
+        bridge_set_error("cannot join null or unavailable MORK bridge space");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.space_join) {
+        bridge_set_error("mork_space_join is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    joined = g_mork_bridge_api.space_join(lhs, rhs);
+    if (!joined)
+        bridge_set_error("mork_space_join returned null");
+    return joined;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_meet(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *met;
+    if (!lhs || !rhs || !bridge_load_api()) {
+        bridge_set_error("cannot meet null or unavailable MORK bridge space");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.space_meet) {
+        bridge_set_error("mork_space_meet is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    met = g_mork_bridge_api.space_meet(lhs, rhs);
+    if (!met)
+        bridge_set_error("mork_space_meet returned null");
+    return met;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_subtract(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *subtracted;
+    if (!lhs || !rhs || !bridge_load_api()) {
+        bridge_set_error("cannot subtract null or unavailable MORK bridge space");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.space_subtract) {
+        bridge_set_error("mork_space_subtract is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    subtracted = g_mork_bridge_api.space_subtract(lhs, rhs);
+    if (!subtracted)
+        bridge_set_error("mork_space_subtract returned null");
+    return subtracted;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_restrict(
+    const CettaMorkSpaceHandle *lhs,
+    const CettaMorkSpaceHandle *rhs) {
+    CettaMorkSpaceHandle *restricted;
+    if (!lhs || !rhs || !bridge_load_api()) {
+        bridge_set_error("cannot restrict null or unavailable MORK bridge space");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.space_restrict) {
+        bridge_set_error("mork_space_restrict is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    restricted = g_mork_bridge_api.space_restrict(lhs, rhs);
+    if (!restricted)
+        bridge_set_error("mork_space_restrict returned null");
+    return restricted;
+}
+
+CettaMorkCursorHandle *cetta_mork_bridge_cursor_new(
+    const CettaMorkSpaceHandle *space) {
+    CettaMorkCursorHandle *cursor;
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot create cursor from null or unavailable MORK bridge space");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.cursor_new) {
+        bridge_set_error("mork_cursor_new is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    cursor = g_mork_bridge_api.cursor_new(space);
+    if (!cursor)
+        bridge_set_error("mork_cursor_new returned null");
+    return cursor;
+}
+
+void cetta_mork_bridge_cursor_free(CettaMorkCursorHandle *cursor) {
+    if (!cursor || !bridge_load_api() || !g_mork_bridge_api.cursor_free)
+        return;
+    g_mork_bridge_api.cursor_free(cursor);
+}
+
+bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
+                                          bool *out_exists) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_path_exists) {
+        bridge_set_error("mork_cursor_path_exists is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_path_exists failed: ",
+                                   g_mork_bridge_api.cursor_path_exists(cursor),
+                                   out_exists,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
+                                     bool *out_is_val) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_is_val) {
+        bridge_set_error("mork_cursor_is_val is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_is_val failed: ",
+                                   g_mork_bridge_api.cursor_is_val(cursor),
+                                   out_is_val,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_child_count(const CettaMorkCursorHandle *cursor,
+                                          uint64_t *out_child_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_child_count) {
+        bridge_set_error("mork_cursor_child_count is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_cursor_child_count failed: ",
+                                    g_mork_bridge_api.cursor_child_count(cursor),
+                                    out_child_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_path_bytes(const CettaMorkCursorHandle *cursor,
+                                         uint8_t **out_bytes,
+                                         size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_path_bytes) {
+        bridge_set_error("mork_cursor_path_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_cursor_path_bytes failed: ",
+                              g_mork_bridge_api.cursor_path_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_child_bytes(const CettaMorkCursorHandle *cursor,
+                                          uint8_t **out_bytes,
+                                          size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_child_bytes) {
+        bridge_set_error("mork_cursor_child_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_cursor_child_bytes failed: ",
+                              g_mork_bridge_api.cursor_child_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_val_count(const CettaMorkCursorHandle *cursor,
+                                        uint64_t *out_val_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_val_count) {
+        bridge_set_error("mork_cursor_val_count is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_cursor_val_count failed: ",
+                                    g_mork_bridge_api.cursor_val_count(cursor),
+                                    out_val_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_depth(const CettaMorkCursorHandle *cursor,
+                                    uint64_t *out_depth) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_depth) {
+        bridge_set_error("mork_cursor_depth is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_cursor_depth failed: ",
+                                    g_mork_bridge_api.cursor_depth(cursor),
+                                    out_depth,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_reset(CettaMorkCursorHandle *cursor) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot reset null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_reset) {
+        bridge_set_error("mork_cursor_reset is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_status_ok("mork_cursor_reset failed: ",
+                            g_mork_bridge_api.cursor_reset(cursor));
+}
+
+bool cetta_mork_bridge_cursor_ascend(CettaMorkCursorHandle *cursor,
+                                     uint64_t steps,
+                                     bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot ascend null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_ascend) {
+        bridge_set_error("mork_cursor_ascend is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_ascend failed: ",
+                                   g_mork_bridge_api.cursor_ascend(cursor, steps),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_byte(CettaMorkCursorHandle *cursor,
+                                           uint32_t byte,
+                                           bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_descend_byte) {
+        bridge_set_error("mork_cursor_descend_byte is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_byte failed: ",
+                                   g_mork_bridge_api.cursor_descend_byte(cursor, byte),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_index(CettaMorkCursorHandle *cursor,
+                                            uint64_t index,
+                                            bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_descend_index) {
+        bridge_set_error("mork_cursor_descend_index is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_index failed: ",
+                                   g_mork_bridge_api.cursor_descend_index(cursor, index),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_first(CettaMorkCursorHandle *cursor,
+                                            bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_descend_first) {
+        bridge_set_error("mork_cursor_descend_first is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_first failed: ",
+                                   g_mork_bridge_api.cursor_descend_first(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_cursor_descend_until(CettaMorkCursorHandle *cursor,
+                                            bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.cursor_descend_until) {
+        bridge_set_error("mork_cursor_descend_until is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_cursor_descend_until failed: ",
+                                   g_mork_bridge_api.cursor_descend_until(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+CettaMorkCursorHandle *cetta_mork_bridge_cursor_fork(
+    const CettaMorkCursorHandle *cursor) {
+    CettaMorkCursorHandle *forked;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot fork null or unavailable MORK cursor");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.cursor_fork) {
+        bridge_set_error("mork_cursor_fork is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    forked = g_mork_bridge_api.cursor_fork(cursor);
+    if (!forked)
+        bridge_set_error("mork_cursor_fork returned null");
+    return forked;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_cursor_subspace(
+    const CettaMorkCursorHandle *cursor) {
+    CettaMorkSpaceHandle *subspace;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot materialize subspace from null or unavailable MORK cursor");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.cursor_subspace) {
+        bridge_set_error("mork_cursor_subspace is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    subspace = g_mork_bridge_api.cursor_subspace(cursor);
+    if (!subspace)
+        bridge_set_error("mork_cursor_subspace returned null");
+    return subspace;
+}
+
+CettaMorkProductCursorHandle *cetta_mork_bridge_product_cursor_new(
+    const CettaMorkSpaceHandle *const *spaces,
+    size_t count) {
+    CettaMorkProductCursorHandle *cursor;
+    if (!spaces || count < 2 || !bridge_load_api()) {
+        bridge_set_error("cannot create MORK product cursor with fewer than two spaces or unavailable bridge");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.product_cursor_new) {
+        bridge_set_error("mork_product_cursor_new is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    cursor = g_mork_bridge_api.product_cursor_new(spaces, count);
+    if (!cursor)
+        bridge_set_error("mork_product_cursor_new returned null");
+    return cursor;
+}
+
+void cetta_mork_bridge_product_cursor_free(CettaMorkProductCursorHandle *cursor) {
+    if (!cursor || !bridge_load_api() || !g_mork_bridge_api.product_cursor_free)
+        return;
+    g_mork_bridge_api.product_cursor_free(cursor);
+}
+
+bool cetta_mork_bridge_product_cursor_path_exists(
+    const CettaMorkProductCursorHandle *cursor,
+    bool *out_exists) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_path_exists) {
+        bridge_set_error("mork_product_cursor_path_exists is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_path_exists failed: ",
+                                   g_mork_bridge_api.product_cursor_path_exists(cursor),
+                                   out_exists,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_is_val(
+    const CettaMorkProductCursorHandle *cursor,
+    bool *out_is_val) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_is_val) {
+        bridge_set_error("mork_product_cursor_is_val is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_is_val failed: ",
+                                   g_mork_bridge_api.product_cursor_is_val(cursor),
+                                   out_is_val,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_child_count(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_child_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_child_count) {
+        bridge_set_error("mork_product_cursor_child_count is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_child_count failed: ",
+                                    g_mork_bridge_api.product_cursor_child_count(cursor),
+                                    out_child_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_path_bytes(
+    const CettaMorkProductCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_path_bytes) {
+        bridge_set_error("mork_product_cursor_path_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_product_cursor_path_bytes failed: ",
+                              g_mork_bridge_api.product_cursor_path_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_child_bytes(
+    const CettaMorkProductCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_child_bytes) {
+        bridge_set_error("mork_product_cursor_child_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_product_cursor_child_bytes failed: ",
+                              g_mork_bridge_api.product_cursor_child_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_val_count(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_val_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_val_count) {
+        bridge_set_error("mork_product_cursor_val_count is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_val_count failed: ",
+                                    g_mork_bridge_api.product_cursor_val_count(cursor),
+                                    out_val_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_depth(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_depth) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_depth) {
+        bridge_set_error("mork_product_cursor_depth is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_depth failed: ",
+                                    g_mork_bridge_api.product_cursor_depth(cursor),
+                                    out_depth,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_factor_count(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_factor_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_factor_count) {
+        bridge_set_error("mork_product_cursor_factor_count is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_factor_count failed: ",
+                                    g_mork_bridge_api.product_cursor_factor_count(cursor),
+                                    out_factor_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_focus_factor(
+    const CettaMorkProductCursorHandle *cursor,
+    uint64_t *out_focus_factor) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_focus_factor) {
+        bridge_set_error("mork_product_cursor_focus_factor is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_product_cursor_focus_factor failed: ",
+                                    g_mork_bridge_api.product_cursor_focus_factor(cursor),
+                                    out_focus_factor,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_path_indices(
+    const CettaMorkProductCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len,
+    uint32_t *out_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_path_indices) {
+        bridge_set_error("mork_product_cursor_path_indices is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_product_cursor_path_indices failed: ",
+                              g_mork_bridge_api.product_cursor_path_indices(cursor),
+                              out_bytes, out_len, out_count,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_reset(CettaMorkProductCursorHandle *cursor) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot reset null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_reset) {
+        bridge_set_error("mork_product_cursor_reset is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_status_ok("mork_product_cursor_reset failed: ",
+                            g_mork_bridge_api.product_cursor_reset(cursor));
+}
+
+bool cetta_mork_bridge_product_cursor_ascend(CettaMorkProductCursorHandle *cursor,
+                                             uint64_t steps,
+                                             bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot ascend null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_ascend) {
+        bridge_set_error("mork_product_cursor_ascend is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_ascend failed: ",
+                                   g_mork_bridge_api.product_cursor_ascend(cursor, steps),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_byte(CettaMorkProductCursorHandle *cursor,
+                                                   uint32_t byte,
+                                                   bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_descend_byte) {
+        bridge_set_error("mork_product_cursor_descend_byte is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_byte failed: ",
+                                   g_mork_bridge_api.product_cursor_descend_byte(cursor, byte),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_index(CettaMorkProductCursorHandle *cursor,
+                                                    uint64_t index,
+                                                    bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_descend_index) {
+        bridge_set_error("mork_product_cursor_descend_index is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_index failed: ",
+                                   g_mork_bridge_api.product_cursor_descend_index(cursor, index),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_first(CettaMorkProductCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_descend_first) {
+        bridge_set_error("mork_product_cursor_descend_first is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_first failed: ",
+                                   g_mork_bridge_api.product_cursor_descend_first(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_product_cursor_descend_until(CettaMorkProductCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK product cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.product_cursor_descend_until) {
+        bridge_set_error("mork_product_cursor_descend_until is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_product_cursor_descend_until failed: ",
+                                   g_mork_bridge_api.product_cursor_descend_until(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+CettaMorkOverlayCursorHandle *cetta_mork_bridge_overlay_cursor_new(
+    const CettaMorkSpaceHandle *base,
+    const CettaMorkSpaceHandle *overlay) {
+    CettaMorkOverlayCursorHandle *cursor;
+    if (!base || !overlay || !bridge_load_api()) {
+        bridge_set_error("cannot create MORK overlay cursor with null spaces or unavailable bridge");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_new) {
+        bridge_set_error("mork_overlay_cursor_new is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    cursor = g_mork_bridge_api.overlay_cursor_new(base, overlay);
+    if (!cursor)
+        bridge_set_error("mork_overlay_cursor_new returned null");
+    return cursor;
+}
+
+void cetta_mork_bridge_overlay_cursor_free(CettaMorkOverlayCursorHandle *cursor) {
+    if (!cursor || !bridge_load_api() || !g_mork_bridge_api.overlay_cursor_free)
+        return;
+    g_mork_bridge_api.overlay_cursor_free(cursor);
+}
+
+bool cetta_mork_bridge_overlay_cursor_path_exists(
+    const CettaMorkOverlayCursorHandle *cursor,
+    bool *out_exists) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_path_exists) {
+        bridge_set_error("mork_overlay_cursor_path_exists is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_path_exists failed: ",
+                                   g_mork_bridge_api.overlay_cursor_path_exists(cursor),
+                                   out_exists,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_is_val(
+    const CettaMorkOverlayCursorHandle *cursor,
+    bool *out_is_val) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_is_val) {
+        bridge_set_error("mork_overlay_cursor_is_val is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_is_val failed: ",
+                                   g_mork_bridge_api.overlay_cursor_is_val(cursor),
+                                   out_is_val,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_child_count(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint64_t *out_child_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_child_count) {
+        bridge_set_error("mork_overlay_cursor_child_count is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_overlay_cursor_child_count failed: ",
+                                    g_mork_bridge_api.overlay_cursor_child_count(cursor),
+                                    out_child_count,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_path_bytes(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_path_bytes) {
+        bridge_set_error("mork_overlay_cursor_path_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_overlay_cursor_path_bytes failed: ",
+                              g_mork_bridge_api.overlay_cursor_path_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_child_bytes(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint8_t **out_bytes,
+    size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_child_bytes) {
+        bridge_set_error("mork_overlay_cursor_child_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_overlay_cursor_child_bytes failed: ",
+                              g_mork_bridge_api.overlay_cursor_child_bytes(cursor),
+                              out_bytes, out_len, &ignored,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_depth(
+    const CettaMorkOverlayCursorHandle *cursor,
+    uint64_t *out_depth) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot inspect null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_depth) {
+        bridge_set_error("mork_overlay_cursor_depth is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_overlay_cursor_depth failed: ",
+                                    g_mork_bridge_api.overlay_cursor_depth(cursor),
+                                    out_depth,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_reset(CettaMorkOverlayCursorHandle *cursor) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot reset null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_reset) {
+        bridge_set_error("mork_overlay_cursor_reset is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_status_ok("mork_overlay_cursor_reset failed: ",
+                            g_mork_bridge_api.overlay_cursor_reset(cursor));
+}
+
+bool cetta_mork_bridge_overlay_cursor_ascend(CettaMorkOverlayCursorHandle *cursor,
+                                             uint64_t steps,
+                                             bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot ascend null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_ascend) {
+        bridge_set_error("mork_overlay_cursor_ascend is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_ascend failed: ",
+                                   g_mork_bridge_api.overlay_cursor_ascend(cursor, steps),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_byte(CettaMorkOverlayCursorHandle *cursor,
+                                                   uint32_t byte,
+                                                   bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_descend_byte) {
+        bridge_set_error("mork_overlay_cursor_descend_byte is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_byte failed: ",
+                                   g_mork_bridge_api.overlay_cursor_descend_byte(cursor, byte),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_index(CettaMorkOverlayCursorHandle *cursor,
+                                                    uint64_t index,
+                                                    bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_descend_index) {
+        bridge_set_error("mork_overlay_cursor_descend_index is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_index failed: ",
+                                   g_mork_bridge_api.overlay_cursor_descend_index(cursor, index),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_first(CettaMorkOverlayCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_descend_first) {
+        bridge_set_error("mork_overlay_cursor_descend_first is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_first failed: ",
+                                   g_mork_bridge_api.overlay_cursor_descend_first(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_overlay_cursor_descend_until(CettaMorkOverlayCursorHandle *cursor,
+                                                    bool *out_moved) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot descend null or unavailable MORK overlay cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.overlay_cursor_descend_until) {
+        bridge_set_error("mork_overlay_cursor_descend_until is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_bool("mork_overlay_cursor_descend_until failed: ",
+                                   g_mork_bridge_api.overlay_cursor_descend_until(cursor),
+                                   out_moved,
+                                   bridge_free_bytes);
+}
+
 bool cetta_mork_bridge_space_dump_act_file(CettaMorkSpaceHandle *space,
                                            const uint8_t *path,
                                            size_t len,
@@ -835,6 +2991,146 @@ bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_load_act_file(space, path, len),
                                     out_loaded,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_query_candidates_text(CettaMorkSpaceHandle *space,
+                                                   const char *pattern_text,
+                                                   uint32_t **out_indices,
+                                                   uint32_t *out_count) {
+    if (!pattern_text) {
+        bridge_set_error("cannot query null pattern text in MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_query_candidates(space,
+                                                    (const uint8_t *)pattern_text,
+                                                    strlen(pattern_text),
+                                                    out_indices,
+                                                    out_count);
+}
+
+bool cetta_mork_bridge_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
+                                                     const char *pattern_text,
+                                                     uint8_t **out_expr,
+                                                     size_t *out_len) {
+    uint32_t ignored = 0;
+    if (!pattern_text) {
+        bridge_set_error("cannot compile null pattern text in MORK bridge space");
+        return false;
+    }
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot compile query expr for null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_compile_query_expr_text) {
+        bridge_set_error("mork_space_compile_query_expr_text is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_compile_query_expr_text failed: ",
+                              g_mork_bridge_api.space_compile_query_expr_text(
+                                  space,
+                                  (const uint8_t *)pattern_text,
+                                  strlen(pattern_text)),
+                              out_expr, out_len, &ignored, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_query_candidates_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern_expr,
+    size_t len,
+    uint32_t **out_indices,
+    uint32_t *out_count) {
+    *out_indices = NULL;
+    *out_count = 0;
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot query null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_query_candidates_expr_bytes) {
+        bridge_set_error("mork_space_query_candidates_expr_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+
+    CettaMorkBuffer buf =
+        g_mork_bridge_api.space_query_candidates_expr_bytes(space, pattern_expr, len);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_space_query_candidates_expr_bytes failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_space_query_candidates_expr_bytes failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    bridge_free_bytes(buf.message, buf.message_len);
+    if (buf.len == 0 || buf.count == 0) {
+        bridge_free_bytes(buf.data, buf.len);
+        return true;
+    }
+    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
+        bridge_set_error("mork_space_query_candidates_expr_bytes returned malformed packet (%zu bytes for %u indices)",
+                         buf.len, buf.count);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
+    for (uint32_t i = 0; i < buf.count; i++)
+        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
+    bridge_free_bytes(buf.data, buf.len);
+    *out_indices = indices;
+    *out_count = buf.count;
+    return true;
+}
+
+bool cetta_mork_bridge_space_query_candidates_prefix_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern_expr,
+    size_t len,
+    uint32_t **out_indices,
+    uint32_t *out_count) {
+    *out_indices = NULL;
+    *out_count = 0;
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot query null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_query_candidates_prefix_expr_bytes) {
+        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+
+    CettaMorkBuffer buf =
+        g_mork_bridge_api.space_query_candidates_prefix_expr_bytes(space, pattern_expr, len);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_space_query_candidates_prefix_expr_bytes failed: ", buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_space_query_candidates_prefix_expr_bytes failed with code %d", buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    bridge_free_bytes(buf.message, buf.message_len);
+    if (buf.len == 0 || buf.count == 0) {
+        bridge_free_bytes(buf.data, buf.len);
+        return true;
+    }
+    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
+        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes returned malformed packet (%zu bytes for %u indices)",
+                         buf.len, buf.count);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
+    for (uint32_t i = 0; i < buf.count; i++)
+        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
+    bridge_free_bytes(buf.data, buf.len);
+    *out_indices = indices;
+    *out_count = buf.count;
+    return true;
 }
 
 bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
@@ -879,6 +3175,32 @@ bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
     *out_indices = indices;
     *out_count = buf.count;
     return true;
+}
+
+bool cetta_mork_bridge_space_query_candidates(CettaMorkSpaceHandle *space,
+                                              const uint8_t *pattern,
+                                              size_t len,
+                                              uint32_t **out_indices,
+                                              uint32_t *out_count) {
+    return cetta_mork_bridge_space_query_indices(space, pattern, len,
+                                                 out_indices, out_count);
+}
+
+bool cetta_mork_bridge_space_query_bindings_text(CettaMorkSpaceHandle *space,
+                                                 const char *pattern_text,
+                                                 uint8_t **out_packet,
+                                                 size_t *out_len,
+                                                 uint32_t *out_rows) {
+    if (!pattern_text) {
+        bridge_set_error("cannot query null pattern text in MORK bridge space");
+        return false;
+    }
+    return cetta_mork_bridge_space_query_bindings(space,
+                                                  (const uint8_t *)pattern_text,
+                                                  strlen(pattern_text),
+                                                  out_packet,
+                                                  out_len,
+                                                  out_rows);
 }
 
 bool cetta_mork_bridge_space_query_bindings(CettaMorkSpaceHandle *space,

@@ -1,7 +1,9 @@
-!(bind! &ws (new-space mork))
-!(add-atom &ws (task milk))
-!(add-atom &ws (trigger))
-!(add-atom &ws
+!(import! &self mork)
+
+!(bind! &ws (mork:new-space))
+!(mork:add-atom &ws (task milk))
+!(mork:add-atom &ws (trigger))
+!(mork:add-atom &ws
   (exec (0 complete)
     (, (trigger)
        (task $name))
@@ -9,11 +11,11 @@
        (- (task $name))
        (- (trigger)))))
 !(assertEqualToResult
-  (step! &ws)
+  (mork:step! &ws)
   (1))
 !(assertEqual
-  (collapse (get-atoms &ws))
+  (collapse (mork:get-atoms &ws))
   ((done milk)))
 !(assertEqualToResult
-  (step! &ws)
+  (mork:step! &ws)
   (0))

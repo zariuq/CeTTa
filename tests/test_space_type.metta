@@ -7,5 +7,5 @@
 !(get-type &seen)
 !(bind! &q (new-space queue))
 !(get-type &q)
-!(bind! &ws (new-space mork))
+!(bind! &ws (new-space pathmap))
 !(get-type &ws)
