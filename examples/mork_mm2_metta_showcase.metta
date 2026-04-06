@@ -1,14 +1,19 @@
 ; mork + MM2 + MeTTa showcase
 ; ===========================
-; MM2 derives one fact, mork inspects the exact substrate shape of that
-; fact, and ordinary MeTTa annotates the restricted result.
+; MM2 derives a fact, mork inspects its exact substrate encoding,
+; and ordinary MeTTa annotates the result with semantic metadata.
+;
+; MM2 exec rule format:
+;   (exec (PRIORITY NAME) PATTERN (O ACTIONS))
+;   See mork_mm2_showcase.metta for details.
 
 !(include mork)
 
+; MeTTa equations for semantic annotation of derived facts.
 (= (path-tag a c) strong)
 (= (path-why a c) (two-hop a b c))
 
-!(println! "=== integrated mork + MM2 + MeTTa showcase ===")
+!(println! "=== derive a path via MM2 ===")
 !(bind! &ws (mork:new-space))
 !(mork:add-atom &ws
   (exec (0 step)
@@ -17,48 +22,47 @@
     (O (+ (path $x $z)))))
 !(mork:add-atom &ws (edge a b))
 !(mork:add-atom &ws (edge b c))
+!(println! ("before" (collapse (mork:get-atoms &ws))))
+!(println! ("steps" (mork:step! &ws 4)))
+!(println! ("derived" (collapse (mork:match &ws (path $x $y) ($x $y)))))
 
-!(println! (workspace-atoms
-             (collapse (mork:get-atoms &ws))))
-!(println! (before-step-edges
-             (collapse (mork:match &ws (edge $x $y) ($x $y)))))
-!(println! (steps-fired
-             (mork:step! &ws 4)))
-!(println! (derived-paths
-             (collapse (mork:match &ws (path $x $y) ($x $y)))))
+; ── Inspect the encoding of the derived atom ────────────────
+; The byte path is the raw trie key for (path a c).
+!(println! "=== substrate encoding ===")
+!(println! ("path-a-c-bytes" (mork:path-of-atom (path a c))))
 
-!(bind! &path-ac (mork:path-of-atom (path a c)))
-!(println! (target-path-bytes &path-ac))
-
+; ── Prefix-restrict to isolate the derived fact ─────────────
 !(bind! &selector (mork:new-space))
 !(mork:add-atom &selector (path a c))
 !(bind! &derived-only (mork:clone &ws))
 !(mork:prefix-restrict &derived-only &selector)
-!(println! (derived-only-size
-             (mork:size &derived-only)))
+!(println! "=== prefix-restrict: only derived paths ===")
+!(println! ("filtered" (collapse (mork:get-atoms &derived-only))))
 
+; ── Zipper: frozen cursor on the filtered workspace ─────────
+; descend-until! walks to the first value or branch.
+!(println! "=== zipper on filtered workspace ===")
 !(bind! &z (mork:zipper &derived-only))
-!(bind! &zipper-stepped (mork:zipper-descend-until! &z))
-!(println! (zipper-path-bytes
-             (mork:zipper-path-bytes &z)))
-!(println! (zipper-path-exists
-             (mork:zipper-path-exists &z)))
-!(println! (zipper-is-val
-             (mork:zipper-is-val &z)))
+!(let $_ (mork:zipper-descend-until! &z) ())
+!(println! ("at" (mork:zipper-path-bytes &z)
+            "is-val?" (mork:zipper-is-val &z)))
 !(mork:zipper-close! &z)
 
+; ── Overlay: virtual union of filtered + selector ───────────
+; Reads local <|> base at each path without materializing a join.
+!(println! "=== overlay: filtered + selector ===")
 !(bind! &oz (mork:overlay-zipper &derived-only &selector))
-!(bind! &overlay-stepped (mork:overlay-zipper-descend-until! &oz))
-!(println! (overlay-path-bytes
-             (mork:overlay-zipper-path-bytes &oz)))
-!(println! (overlay-path-exists
-             (mork:overlay-zipper-path-exists &oz)))
-!(println! (overlay-is-val
-             (mork:overlay-zipper-is-val &oz)))
+!(let $_ (mork:overlay-zipper-descend-until! &oz) ())
+!(println! ("at" (mork:overlay-zipper-path-bytes &oz)
+            "is-val?" (mork:overlay-zipper-is-val &oz)))
 !(mork:overlay-zipper-close! &oz)
 
-!(println! (metta-analysis
-             (collapse
-               (mork:match &derived-only (path $x $y)
-                 (annotated $x $y (path-tag $x $y) (path-why $x $y))))))
+; ── MeTTa annotation: semantic analysis of derived facts ────
+; Ordinary MeTTa equations attach meaning to what MORK derived.
+!(println! "=== MeTTa analysis ===")
+!(println! ("annotated"
+  (collapse
+    (mork:match &derived-only (path $x $y)
+      (annotated $x $y (path-tag $x $y) (path-why $x $y))))))
+
 !(println! "=== showcase complete ===")

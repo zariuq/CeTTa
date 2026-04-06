@@ -1,77 +1,95 @@
-; mork showcase
-; =============
-; A small command-line demo of the explicit MORK lane and the
-; machine-close PathMap/MORK cursor surface exposed via mork:.
+; mork showcase — cursor and substrate inspection
+; ================================================
+; This demo exercises the machine-close PathMap/MORK surface:
+; creating MorkSpaces, querying them, inspecting encoded byte paths,
+; navigating with zippers, and composing views with overlay/product.
+;
+; If you want algebra (join, meet, subtract) see mork_algebra_showcase.
+; If you want MM2 stepping see mork_mm2_showcase or mork_mm2_metta_showcase.
 
 !(include mork)
 
-!(println! "=== mork showcase: explicit MorkSpace lane ===")
+; ── Basic MorkSpace: create, add, query ─────────────────────
+; MorkSpace is a distinct type — use mork: verbs, not generic space verbs.
+
+!(println! "=== MorkSpace basics ===")
 !(bind! &m (mork:new-space))
-!(println! (space-type (get-type &m)))
 !(mork:add-atom &m (edge a b))
 !(mork:add-atom &m (edge a c))
-!(println! (mork-match
-             (collapse (mork:match &m (edge $x $y) ($x $y)))))
-!(println! (mork-size (mork:size &m)))
+!(println! ("type" (get-type &m)))
+!(println! ("atoms" (collapse (mork:get-atoms &m))))
+!(println! ("match edge a _"
+  (collapse (mork:match &m (edge a $y) $y))))
+!(println! ("size" (mork:size &m)))
 
-!(println! "=== encoded path introspection ===")
+; ── Encoded path introspection ──────────────────────────────
+; Every atom is stored as a byte path in a 256-radix trie.
+; mork:path-of-atom shows the raw key; zippers let you walk the trie.
+
+!(println! "=== encoded path of (edge a b) ===")
 !(bind! &path-ab (mork:path-of-atom (edge a b)))
-!(println! (path-of-edge-a-b &path-ab))
+!(println! ("bytes" &path-ab))
+
+; ── Zipper: snapshot cursor over the trie ───────────────────
+; A zipper is a frozen read cursor. descend-until! walks to the
+; first value or branch point. Useful for inspecting trie shape
+; without materializing the whole space.
+
+!(println! "=== zipper: walk to first branch/value ===")
 !(bind! &mz (mork:zipper &m))
-!(println! (root-child-bytes
-             (mork:zipper-child-bytes &mz)))
-!(bind! &zipper-stepped (mork:zipper-descend-until! &mz))
-!(println! (zipper-path-bytes
-             (mork:zipper-path-bytes &mz)))
-!(println! (zipper-path-exists
-             (mork:zipper-path-exists &mz)))
-!(println! (zipper-is-val
-             (mork:zipper-is-val &mz)))
+!(println! ("root-children" (mork:zipper-child-count &mz)
+            "child-bytes" (mork:zipper-child-bytes &mz)))
+!(let $_ (mork:zipper-descend-until! &mz) ())
+!(println! ("cursor-at" (mork:zipper-path-bytes &mz)))
+!(println! ("exists?" (mork:zipper-path-exists &mz)
+            "is-val?" (mork:zipper-is-val &mz)))
+!(let $_ (mork:zipper-descend-first! &mz) ())
+!(println! ("first-value-at" (mork:zipper-path-bytes &mz)
+            "is-val?" (mork:zipper-is-val &mz)))
 !(mork:zipper-close! &mz)
 
-!(println! "=== selector-shaped prefix restriction ===")
+; ── Prefix restriction: selector-shaped filtering ───────────
+; prefix-restrict keeps only atoms admitted by a valued prefix
+; in the selector. Not intersection — the selector acts as a
+; prefix gate on the encoded trie, not as a peer operand.
+
+!(println! "=== prefix-restrict: keep only (edge a b) ===")
 !(bind! &selector (mork:new-space))
 !(mork:add-atom &selector (edge a b))
 !(bind! &restricted (mork:clone &m))
 !(mork:prefix-restrict &restricted &selector)
-!(println! (restricted-size
-             (mork:size &restricted)))
-!(println! (restricted-match
-             (collapse (mork:match &restricted (edge $x $y) ($x $y)))))
+!(println! ("restricted" (collapse (mork:get-atoms &restricted))))
 
-!(println! "=== overlay zipper over restricted plus selector ===")
+; ── Overlay zipper: virtual fused trie (local <|> base) ─────
+; Reads the union of two spaces without materializing a join.
+; At each path, the overlay returns local's value if present,
+; else base's value.
+
+!(println! "=== overlay: restricted + selector ===")
 !(bind! &oz (mork:overlay-zipper &restricted &selector))
-!(bind! &overlay-stepped (mork:overlay-zipper-descend-until! &oz))
-!(println! (overlay-path-bytes
-             (mork:overlay-zipper-path-bytes &oz)))
-!(println! (overlay-path-exists
-             (mork:overlay-zipper-path-exists &oz)))
-!(println! (overlay-is-val
-             (mork:overlay-zipper-is-val &oz)))
+!(let $_ (mork:overlay-zipper-descend-until! &oz) ())
+!(println! ("cursor-at" (mork:overlay-zipper-path-bytes &oz)
+            "is-val?" (mork:overlay-zipper-is-val &oz)))
 !(mork:overlay-zipper-close! &oz)
 
-!(println! "=== stitched multi-factor product traversal ===")
+; ── Product zipper: stitched multi-factor traversal ─────────
+; Walks a virtual product of 2-4 spaces without materializing
+; the cross product. Each step lands on the factor whose next
+; byte is smallest. Useful for coordinated multi-space search.
+
+!(println! "=== product: three-factor traversal ===")
 !(bind! &a (mork:new-space))
 !(bind! &b (mork:new-space))
-!(mork:add-atom &a a)
-!(mork:add-atom &b b)
+!(mork:add-atom &a (x 1))
+!(mork:add-atom &b (y 2))
 !(bind! &pz (mork:product-zipper &a &b &m))
-!(println! (product-factor-count
-             (mork:product-zipper-factor-count &pz)))
-!(bind! &product-step-1 (mork:product-zipper-descend-until! &pz))
-!(println! (product-focus-factor
-             (mork:product-zipper-focus-factor &pz)))
-!(println! (product-path-bytes
-             (mork:product-zipper-path-bytes &pz)))
-!(println! (product-path-indices
-             (mork:product-zipper-path-indices &pz)))
-!(bind! &product-step-2 (mork:product-zipper-descend-until! &pz))
-!(println! (product-focus-factor-2
-             (mork:product-zipper-focus-factor &pz)))
-!(println! (product-path-bytes-2
-             (mork:product-zipper-path-bytes &pz)))
-!(println! (product-path-indices-2
-             (mork:product-zipper-path-indices &pz)))
+!(println! ("factors" (mork:product-zipper-factor-count &pz)))
+!(let $_ (mork:product-zipper-descend-until! &pz) ())
+!(println! ("focus" (mork:product-zipper-focus-factor &pz)
+            "bytes" (mork:product-zipper-path-bytes &pz)))
+!(let $_ (mork:product-zipper-descend-until! &pz) ())
+!(println! ("focus" (mork:product-zipper-focus-factor &pz)
+            "bytes" (mork:product-zipper-path-bytes &pz)))
 !(mork:product-zipper-close! &pz)
 
 !(println! "=== showcase complete ===")

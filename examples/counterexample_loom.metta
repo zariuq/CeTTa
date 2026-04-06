@@ -1,7 +1,17 @@
 ; Counterexample Loom — CeTTa working version
 ; =============================================
-; MeTTa searches over subsets of MM2 rules.
+; MeTTa searches over subsets of MM2 rules to find a rule bundle
+; that produces (artifact star-lantern) in EVERY test scenario.
 ; MM2 (MORK) acts as saturating oracle per candidate.
+;
+; Rule chains:
+;   Solar path: ember+dew → mist, mist+seed → sun-bloom, sun-bloom+echo → star-lantern
+;   Lunar path: dew+echo → dream-mist, dream-mist+seed → moon-veil, moon-veil+spark → star-lantern
+;   Decoys:     seed+echo → chorus (unwanted), ember+spark → ash (unwanted)
+;
+; Each candidate bundle selects a subset of these 8 rules. The loom
+; tests each bundle against 4 scenarios (solar, lunar, sterile, chorus-guard)
+; and reports which bundles produce the target while avoiding forbidden artifacts.
 ;
 ; CeTTa quirk: exec atoms contain (+ ...) and (- ...) which get
 ; evaluated if passed through equations. Work around by doing
@@ -95,6 +105,7 @@
     (empty)))
 
 !(println! "=== Counterexample Loom ===")
+!(println! "(legend solar/lunar=require star-lantern, sterile=no ash, chorus-guard=no chorus)")
 
 !(bind! &solarOnlySolar (mork:new-space))
 !(prepare-trial! &solarOnlySolar solar-only solar)
