@@ -52,12 +52,19 @@
 !(assertEqualToResult
   (mork:zipper-ascend! &z 1)
   (True))
-!(bind! &root-copy (mork:zipper-subspace &z))
+!(bind! &root-map (mork:zipper-make-map &z))
 !(assertEqualToResult
-  (get-type &root-copy)
+  (get-type &root-map)
   (MorkSpace))
 !(assertEqualToResult
-  (mork:size &root-copy)
+  (mork:size &root-map)
+  (2))
+!(bind! &root-snap (mork:zipper-make-snapshot-map &z))
+!(assertEqualToResult
+  (get-type &root-snap)
+  (MorkSpace))
+!(assertEqualToResult
+  (mork:size &root-snap)
   (2))
 !(assertEqualToResult
   (mork:zipper-descend-until! &z)
@@ -73,13 +80,74 @@
   (mork:zipper-path-exists &zf)
   (True))
 !(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193)))
+!(assertEqualToResult
   (mork:zipper-depth &zf)
-  (0))
+  (9))
+!(assertEqualToResult
+  (mork:zipper-descend-last! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193 99)))
+!(assertEqualToResult
+  (mork:zipper-prev-sibling-byte! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193 98)))
+!(assertEqualToResult
+  (mork:zipper-next-sibling-byte! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193 99)))
+!(assertEqualToResult
+  (mork:zipper-ascend-until-branch! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193)))
+!(assertEqualToResult
+  (mork:zipper-descend-first! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-next-step! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193 99)))
+!(assertEqualToResult
+  (mork:zipper-ascend-until-branch! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-next-val! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193 98)))
+!(assertEqualToResult
+  (mork:zipper-next-val! &zf)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zf)
+  ((3 196 101 100 103 101 193 97 193 99)))
 !(assertEqualToResult
   (mork:zipper-close! &zf)
   (()))
 !(assertEqualToResult
   (mork:zipper-reset! &z)
+  (()))
+!(bind! &zt (mork:zipper-fork &z))
+!(assertEqualToResult
+  (mork:zipper-descend-until-max-bytes! &zt 1)
+  (True))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &zt)
+  ((3)))
+!(assertEqualToResult
+  (mork:zipper-close! &zt)
   (()))
 !(assertEqualToResult
   (mork:zipper-depth &z)

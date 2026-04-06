@@ -1,0 +1,23 @@
+!(include mork)
+!(bind! &ws (mork:new-space))
+!(bind! &z (mork:zipper &ws))
+!(bind! &pz (mork:product-zipper &ws &ws))
+!(bind! &oz (mork:overlay-zipper &ws &ws))
+
+!(collapse (mork:zipper-depth &pz))
+!(collapse (mork:zipper-depth &oz))
+!(mork:zipper-close! &z)
+!(collapse (mork:zipper-depth &z))
+!(collapse (mork:zipper-close! &z))
+
+!(collapse (mork:product-zipper-depth &z))
+!(collapse (mork:product-zipper-depth &oz))
+!(mork:product-zipper-close! &pz)
+!(collapse (mork:product-zipper-depth &pz))
+!(collapse (mork:product-zipper-close! &pz))
+
+!(collapse (mork:overlay-zipper-depth &z))
+!(collapse (mork:overlay-zipper-depth &pz))
+!(mork:overlay-zipper-close! &oz)
+!(collapse (mork:overlay-zipper-depth &oz))
+!(collapse (mork:overlay-zipper-close! &oz))

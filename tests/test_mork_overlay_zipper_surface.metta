@@ -38,6 +38,36 @@
   (mork:overlay-zipper-path-exists &oz)
   (True))
 !(assertEqualToResult
+  (mork:overlay-zipper-reset! &oz)
+  (()))
+!(assertEqualToResult
+  (mork:overlay-zipper-next-step! &oz)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-path-bytes &oz)
+  ((3)))
+!(assertEqualToResult
+  (mork:overlay-zipper-next-sibling-byte! &oz)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-path-bytes &oz)
+  ((193)))
+!(assertEqualToResult
+  (mork:overlay-zipper-prev-sibling-byte! &oz)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-path-bytes &oz)
+  ((3)))
+!(assertEqualToResult
+  (mork:overlay-zipper-reset! &oz)
+  (()))
+!(assertEqualToResult
+  (mork:overlay-zipper-descend-last! &oz)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-path-bytes &oz)
+  ((193)))
+!(assertEqualToResult
   (mork:overlay-zipper-close! &oz)
   (()))
 !(bind! &lhs (mork:new-space))
@@ -66,6 +96,27 @@
 !(assertEqualToResult
   (mork:overlay-zipper-depth &shared)
   (9))
+!(assertEqualToResult
+  (mork:overlay-zipper-ascend! &shared 9)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-descend-until-max-bytes! &shared 2)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-path-bytes &shared)
+  ((3 196)))
+!(assertEqualToResult
+  (mork:overlay-zipper-reset! &shared)
+  (()))
+!(assertEqualToResult
+  (mork:overlay-zipper-descend-until! &shared)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-ascend-until-branch! &shared)
+  (True))
+!(assertEqualToResult
+  (mork:overlay-zipper-path-bytes &shared)
+  (()))
 !(assertEqualToResult
   (mork:overlay-zipper-close! &shared)
   (()))
