@@ -239,6 +239,7 @@ typedef struct {
     X(lib_mork_space_size, "__cetta_lib_mork_space_size") \
     X(lib_mork_space_count_atoms, "__cetta_lib_mork_space_count_atoms") \
     X(lib_mork_space_match, "__cetta_lib_mork_space_match") \
+    X(lib_mork_clone, "__cetta_lib_mork_clone") \
     X(lib_mork_join, "__cetta_lib_mork_join") \
     X(lib_mork_meet, "__cetta_lib_mork_meet") \
     X(lib_mork_subtract, "__cetta_lib_mork_subtract") \
@@ -258,9 +259,18 @@ typedef struct {
     X(lib_mork_zipper_descend_byte, "__cetta_lib_mork_zipper_descend_byte") \
     X(lib_mork_zipper_descend_index, "__cetta_lib_mork_zipper_descend_index") \
     X(lib_mork_zipper_descend_first, "__cetta_lib_mork_zipper_descend_first") \
+    X(lib_mork_zipper_descend_last, "__cetta_lib_mork_zipper_descend_last") \
     X(lib_mork_zipper_descend_until, "__cetta_lib_mork_zipper_descend_until") \
+    X(lib_mork_zipper_descend_until_max_bytes, "__cetta_lib_mork_zipper_descend_until_max_bytes") \
+    X(lib_mork_zipper_ascend_until, "__cetta_lib_mork_zipper_ascend_until") \
+    X(lib_mork_zipper_ascend_until_branch, "__cetta_lib_mork_zipper_ascend_until_branch") \
+    X(lib_mork_zipper_next_sibling_byte, "__cetta_lib_mork_zipper_next_sibling_byte") \
+    X(lib_mork_zipper_prev_sibling_byte, "__cetta_lib_mork_zipper_prev_sibling_byte") \
+    X(lib_mork_zipper_next_step, "__cetta_lib_mork_zipper_next_step") \
+    X(lib_mork_zipper_next_val, "__cetta_lib_mork_zipper_next_val") \
     X(lib_mork_zipper_fork, "__cetta_lib_mork_zipper_fork") \
-    X(lib_mork_zipper_subspace, "__cetta_lib_mork_zipper_subspace") \
+    X(lib_mork_zipper_make_map, "__cetta_lib_mork_zipper_make_map") \
+    X(lib_mork_zipper_make_snapshot_map, "__cetta_lib_mork_zipper_make_snapshot_map") \
     X(lib_mork_product_zipper_new, "__cetta_lib_mork_product_zipper_new") \
     X(lib_mork_product_zipper_close, "__cetta_lib_mork_product_zipper_close") \
     X(lib_mork_product_zipper_path_exists, "__cetta_lib_mork_product_zipper_path_exists") \
@@ -278,7 +288,15 @@ typedef struct {
     X(lib_mork_product_zipper_descend_byte, "__cetta_lib_mork_product_zipper_descend_byte") \
     X(lib_mork_product_zipper_descend_index, "__cetta_lib_mork_product_zipper_descend_index") \
     X(lib_mork_product_zipper_descend_first, "__cetta_lib_mork_product_zipper_descend_first") \
+    X(lib_mork_product_zipper_descend_last, "__cetta_lib_mork_product_zipper_descend_last") \
     X(lib_mork_product_zipper_descend_until, "__cetta_lib_mork_product_zipper_descend_until") \
+    X(lib_mork_product_zipper_descend_until_max_bytes, "__cetta_lib_mork_product_zipper_descend_until_max_bytes") \
+    X(lib_mork_product_zipper_ascend_until, "__cetta_lib_mork_product_zipper_ascend_until") \
+    X(lib_mork_product_zipper_ascend_until_branch, "__cetta_lib_mork_product_zipper_ascend_until_branch") \
+    X(lib_mork_product_zipper_next_sibling_byte, "__cetta_lib_mork_product_zipper_next_sibling_byte") \
+    X(lib_mork_product_zipper_prev_sibling_byte, "__cetta_lib_mork_product_zipper_prev_sibling_byte") \
+    X(lib_mork_product_zipper_next_step, "__cetta_lib_mork_product_zipper_next_step") \
+    X(lib_mork_product_zipper_next_val, "__cetta_lib_mork_product_zipper_next_val") \
     X(lib_mork_overlay_zipper_new, "__cetta_lib_mork_overlay_zipper_new") \
     X(lib_mork_overlay_zipper_close, "__cetta_lib_mork_overlay_zipper_close") \
     X(lib_mork_overlay_zipper_path_exists, "__cetta_lib_mork_overlay_zipper_path_exists") \
@@ -292,7 +310,14 @@ typedef struct {
     X(lib_mork_overlay_zipper_descend_byte, "__cetta_lib_mork_overlay_zipper_descend_byte") \
     X(lib_mork_overlay_zipper_descend_index, "__cetta_lib_mork_overlay_zipper_descend_index") \
     X(lib_mork_overlay_zipper_descend_first, "__cetta_lib_mork_overlay_zipper_descend_first") \
+    X(lib_mork_overlay_zipper_descend_last, "__cetta_lib_mork_overlay_zipper_descend_last") \
     X(lib_mork_overlay_zipper_descend_until, "__cetta_lib_mork_overlay_zipper_descend_until") \
+    X(lib_mork_overlay_zipper_descend_until_max_bytes, "__cetta_lib_mork_overlay_zipper_descend_until_max_bytes") \
+    X(lib_mork_overlay_zipper_ascend_until, "__cetta_lib_mork_overlay_zipper_ascend_until") \
+    X(lib_mork_overlay_zipper_ascend_until_branch, "__cetta_lib_mork_overlay_zipper_ascend_until_branch") \
+    X(lib_mork_overlay_zipper_next_sibling_byte, "__cetta_lib_mork_overlay_zipper_next_sibling_byte") \
+    X(lib_mork_overlay_zipper_prev_sibling_byte, "__cetta_lib_mork_overlay_zipper_prev_sibling_byte") \
+    X(lib_mork_overlay_zipper_next_step, "__cetta_lib_mork_overlay_zipper_next_step") \
     X(lib_mm2_program_new, "__cetta_lib_mm2_program_new") \
     X(lib_mm2_program_clear, "__cetta_lib_mm2_program_clear") \
     X(lib_mm2_program_add, "__cetta_lib_mm2_program_add") \

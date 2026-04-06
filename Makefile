@@ -31,20 +31,28 @@ ENABLE_MORK_STATIC := 1
 endif
 
 MORK_BRIDGE_DIR ?= $(abspath ../../hyperon/MORK/target/release)
+MORK_BRIDGE_MANIFEST ?= $(abspath ../../hyperon/MORK/experiments/cetta-space-bridge/Cargo.toml)
+MORK_BRIDGE_WORKDIR ?= $(abspath ../../hyperon/MORK/experiments/cetta-space-bridge)
 MORK_BRIDGE_STATICLIB := $(MORK_BRIDGE_DIR)/libcetta_space_bridge.a
 BRIDGE_DEPS =
 BRIDGE_CFLAGS =
 BRIDGE_LDFLAGS =
 MORK_BUILD_HAS_BRIDGE := 0
 ifeq ($(ENABLE_MORK_STATIC),1)
-ifeq ($(wildcard $(MORK_BRIDGE_STATICLIB)),)
-$(error BUILD=$(BUILD_CANON) requires $(MORK_BRIDGE_STATICLIB))
+ifeq ($(wildcard $(MORK_BRIDGE_MANIFEST)),)
+$(error BUILD=$(BUILD_CANON) requires $(MORK_BRIDGE_MANIFEST))
 endif
 BRIDGE_DEPS += $(MORK_BRIDGE_STATICLIB)
 BRIDGE_CFLAGS += -DCETTA_MORK_BRIDGE_STATIC=1
 BRIDGE_LDFLAGS += $(MORK_BRIDGE_STATICLIB) -lrt
 MORK_BUILD_HAS_BRIDGE := 1
 endif
+
+$(MORK_BRIDGE_STATICLIB): $(MORK_BRIDGE_MANIFEST) FORCE
+	@cd $(MORK_BRIDGE_WORKDIR) && \
+	ulimit -v 10485760 && \
+	cargo build --release
+
 PY_CFLAGS =
 PY_LDFLAGS =
 PY_RPATH =
@@ -333,10 +341,12 @@ test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2
 		     [ "$$f" = "tests/test_mork_act_roundtrip.metta" ] || \
 		     [ "$$f" = "tests/test_mork_attached_exact_match_regression.metta" ] || \
 		     [ "$$f" = "tests/test_mork_algebra_surface.metta" ] || \
+		     [ "$$f" = "tests/test_mork_encoding_boundary_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_full_pipeline_surface.metta" ] || \
+		     [ "$$f" = "tests/test_mork_handle_errors_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_kiss_examples.metta" ] || \
 		     [ "$$f" = "tests/test_mork_lib_surface.metta" ] || \
-		     [ "$$f" = "tests/test_morkl_mm2_metta_showcase.metta" ] || \
+		     [ "$$f" = "tests/test_mork_mm2_metta_showcase.metta" ] || \
 		     [ "$$f" = "tests/test_mork_open_act_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_zipper_surface.metta" ] || \
 		     [ "$$f" = "tests/test_new_space_mork_surface.metta" ] || \
@@ -991,10 +1001,12 @@ test-mork-surface-suite: $(BIN)
 		test_mork_algebra_surface \
 		test_mork_act_roundtrip \
 		test_mork_attached_exact_match_regression \
+		test_mork_encoding_boundary_surface \
 		test_mork_full_pipeline_surface \
+		test_mork_handle_errors_surface \
 		test_mork_kiss_examples \
 		test_mork_lib_surface \
-		test_morkl_mm2_metta_showcase \
+		test_mork_mm2_metta_showcase \
 		test_mork_open_act_surface \
 		test_mork_overlay_zipper_surface \
 		test_mork_product_zipper_surface \

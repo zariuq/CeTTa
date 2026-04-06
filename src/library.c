@@ -2427,10 +2427,11 @@ static Atom *mork_space_algebra_native(CettaLibraryContext *ctx, Arena *a,
     CettaMorkSpaceResource *rhs;
     CettaMorkSpaceHandle *lhs_bridge = NULL;
     CettaMorkSpaceHandle *rhs_bridge = NULL;
-    CettaMorkSpaceHandle *result_bridge = NULL;
     const char *missing = "expected two MorkSpace handles";
     const char *bridge_prefix = "MORK algebra failed: ";
-    const char *fallback_error = "MORK algebra materialization failed";
+    bool ok = false;
+
+    (void)ctx;
 
     if (nargs != 2) {
         return library_signature_error(a, head, args, nargs, missing);
@@ -2445,27 +2446,50 @@ static Atom *mork_space_algebra_native(CettaLibraryContext *ctx, Arena *a,
 
     if (which == g_builtin_syms.lib_mork_join) {
         bridge_prefix = "MORK join failed: ";
-        fallback_error = "MORK join materialization failed";
-        result_bridge = cetta_mork_bridge_space_join(lhs_bridge, rhs_bridge);
+        ok = cetta_mork_bridge_space_join_into(lhs_bridge, rhs_bridge);
     } else if (which == g_builtin_syms.lib_mork_meet) {
         bridge_prefix = "MORK meet failed: ";
-        fallback_error = "MORK meet materialization failed";
-        result_bridge = cetta_mork_bridge_space_meet(lhs_bridge, rhs_bridge);
+        ok = cetta_mork_bridge_space_meet_into(lhs_bridge, rhs_bridge);
     } else if (which == g_builtin_syms.lib_mork_subtract) {
         bridge_prefix = "MORK subtract failed: ";
-        fallback_error = "MORK subtract materialization failed";
-        result_bridge = cetta_mork_bridge_space_subtract(lhs_bridge, rhs_bridge);
+        ok = cetta_mork_bridge_space_subtract_into(lhs_bridge, rhs_bridge);
     } else {
         bridge_prefix = "MORK restrict failed: ";
-        fallback_error = "MORK restrict materialization failed";
-        result_bridge = cetta_mork_bridge_space_restrict(lhs_bridge, rhs_bridge);
+        ok = cetta_mork_bridge_space_restrict_into(lhs_bridge, rhs_bridge);
     }
-    if (!result_bridge) {
+    if (!ok) {
         return library_mork_bridge_error(a, head, args, nargs, bridge_prefix);
     }
-    return library_mork_space_handle_atom(ctx, a, head, args, nargs,
-                                          result_bridge, lhs->kind,
-                                          fallback_error);
+    return atom_unit(a);
+}
+
+static Atom *mork_space_clone_native(CettaLibraryContext *ctx, Arena *a,
+                                     Atom *head, Atom **args, uint32_t nargs) {
+    CettaMorkSpaceResource *space;
+    CettaMorkSpaceHandle *bridge = NULL;
+    CettaMorkSpaceHandle *clone = NULL;
+
+    if (nargs != 1) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected MorkSpace");
+    }
+    space = library_explicit_mork_space_arg(ctx, args[0]);
+    if (!space) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected MorkSpace");
+    }
+    if (!library_mork_space_bridge(space, &bridge) || !bridge) {
+        return library_mork_bridge_error(a, head, args, nargs,
+                                         "MORK clone bridge unavailable: ");
+    }
+    clone = cetta_mork_bridge_space_clone(bridge);
+    if (!clone) {
+        return library_mork_bridge_error(a, head, args, nargs,
+                                         "MORK clone failed: ");
+    }
+    return library_mork_space_handle_atom(ctx, a, head, args, nargs, clone,
+                                          space->kind,
+                                          "MORK clone handle allocation failed");
 }
 
 static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
@@ -3009,11 +3033,71 @@ static Atom *mork_zipper_descend_simple_native(CettaLibraryContext *ctx, Arena *
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK zipper descend-first failed: ");
         }
-    } else {
+    } else if (which == g_builtin_syms.lib_mork_zipper_descend_last) {
+        if (!cetta_mork_bridge_cursor_descend_last(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK zipper descend-last failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_zipper_descend_until) {
         if (!cetta_mork_bridge_cursor_descend_until(resource->cursor, &moved)) {
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK zipper descend-until failed: ");
         }
+    } else if (which == g_builtin_syms.lib_mork_zipper_ascend_until) {
+        if (!cetta_mork_bridge_cursor_ascend_until(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK zipper ascend-until failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_zipper_ascend_until_branch) {
+        if (!cetta_mork_bridge_cursor_ascend_until_branch(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK zipper ascend-until-branch failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_zipper_next_sibling_byte) {
+        if (!cetta_mork_bridge_cursor_next_sibling_byte(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK zipper next-sibling-byte failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_zipper_prev_sibling_byte) {
+        if (!cetta_mork_bridge_cursor_prev_sibling_byte(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK zipper prev-sibling-byte failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_zipper_next_step) {
+        if (!cetta_mork_bridge_cursor_next_step(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK zipper next-step failed: ");
+        }
+    } else {
+        if (!cetta_mork_bridge_cursor_next_val(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK zipper next-val failed: ");
+        }
+    }
+    return atom_bool(a, moved);
+}
+
+static Atom *mork_zipper_descend_until_max_bytes_native(CettaLibraryContext *ctx, Arena *a,
+                                                        Atom *head, Atom **args,
+                                                        uint32_t nargs) {
+    CettaMorkCursorResource *resource;
+    bool moved = false;
+    int max_bytes = 0;
+
+    if (nargs != 2 || !library_int_arg(args[1], &max_bytes) || max_bytes < 0) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-cursor handle and non-negative max byte count");
+    }
+    resource = library_mork_cursor_handle(ctx, args[0]);
+    if (!resource || !resource->cursor) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-cursor handle as first argument");
+    }
+    if (!cetta_mork_bridge_cursor_descend_until_max_bytes(resource->cursor,
+                                                          (uint64_t)max_bytes,
+                                                          &moved)) {
+        return library_mork_bridge_error(a, head, args, nargs,
+                                         "MORK zipper descend-until-max-bytes failed: ");
     }
     return atom_bool(a, moved);
 }
@@ -3051,8 +3135,9 @@ static Atom *mork_zipper_fork_native(CettaLibraryContext *ctx, Arena *a,
     return cetta_native_handle_atom(a, CETTA_MORK_CURSOR_HANDLE_KIND, id);
 }
 
-static Atom *mork_zipper_subspace_native(CettaLibraryContext *ctx, Arena *a,
-                                         Atom *head, Atom **args, uint32_t nargs) {
+static Atom *mork_zipper_materialize_native(CettaLibraryContext *ctx, Arena *a,
+                                            Atom *head, Atom **args, uint32_t nargs,
+                                            SymbolId which) {
     CettaMorkCursorResource *resource;
     CettaMorkSpaceHandle *bridge_space = NULL;
 
@@ -3065,14 +3150,18 @@ static Atom *mork_zipper_subspace_native(CettaLibraryContext *ctx, Arena *a,
         return library_signature_error(a, head, args, nargs,
                                        "expected mork-cursor handle");
     }
-    bridge_space = cetta_mork_bridge_cursor_subspace(resource->cursor);
+    if (which == g_builtin_syms.lib_mork_zipper_make_map) {
+        bridge_space = cetta_mork_bridge_cursor_make_map(resource->cursor);
+    } else {
+        bridge_space = cetta_mork_bridge_cursor_make_snapshot_map(resource->cursor);
+    }
     if (!bridge_space) {
         return library_mork_bridge_error(a, head, args, nargs,
-                                         "MORK zipper subspace failed: ");
+                                         "MORK zipper materialization failed: ");
     }
     return library_mork_space_handle_atom(ctx, a, head, args, nargs,
                                           bridge_space, resource->kind,
-                                          "MORK zipper subspace materialization failed");
+                                          "MORK zipper materialization failed");
 }
 
 static Atom *mork_product_zipper_new_native(CettaLibraryContext *ctx, Arena *a,
@@ -3365,11 +3454,74 @@ static Atom *mork_product_zipper_descend_simple_native(CettaLibraryContext *ctx,
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK product-zipper descend-first failed: ");
         }
-    } else {
+    } else if (which == g_builtin_syms.lib_mork_product_zipper_descend_last) {
+        if (!cetta_mork_bridge_product_cursor_descend_last(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK product-zipper descend-last failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_product_zipper_descend_until) {
         if (!cetta_mork_bridge_product_cursor_descend_until(resource->cursor, &moved)) {
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK product-zipper descend-until failed: ");
         }
+    } else if (which == g_builtin_syms.lib_mork_product_zipper_ascend_until) {
+        if (!cetta_mork_bridge_product_cursor_ascend_until(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK product-zipper ascend-until failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_product_zipper_ascend_until_branch) {
+        if (!cetta_mork_bridge_product_cursor_ascend_until_branch(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK product-zipper ascend-until-branch failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_product_zipper_next_sibling_byte) {
+        if (!cetta_mork_bridge_product_cursor_next_sibling_byte(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK product-zipper next-sibling-byte failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_product_zipper_prev_sibling_byte) {
+        if (!cetta_mork_bridge_product_cursor_prev_sibling_byte(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK product-zipper prev-sibling-byte failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_product_zipper_next_step) {
+        if (!cetta_mork_bridge_product_cursor_next_step(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK product-zipper next-step failed: ");
+        }
+    } else {
+        if (!cetta_mork_bridge_product_cursor_next_val(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK product-zipper next-val failed: ");
+        }
+    }
+    return atom_bool(a, moved);
+}
+
+static Atom *mork_product_zipper_descend_until_max_bytes_native(
+    CettaLibraryContext *ctx,
+    Arena *a,
+    Atom *head,
+    Atom **args,
+    uint32_t nargs) {
+    CettaMorkProductCursorResource *resource;
+    bool moved = false;
+    int max_bytes = 0;
+
+    if (nargs != 2 || !library_int_arg(args[1], &max_bytes) || max_bytes < 0) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-product-cursor handle and non-negative max byte count");
+    }
+    resource = library_mork_product_cursor_handle(ctx, args[0]);
+    if (!resource || !resource->cursor) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-product-cursor handle as first argument");
+    }
+    if (!cetta_mork_bridge_product_cursor_descend_until_max_bytes(resource->cursor,
+                                                                  (uint64_t)max_bytes,
+                                                                  &moved)) {
+        return library_mork_bridge_error(a, head, args, nargs,
+                                         "MORK product-zipper descend-until-max-bytes failed: ");
     }
     return atom_bool(a, moved);
 }
@@ -3641,11 +3793,72 @@ static Atom *mork_overlay_zipper_descend_simple_native(CettaLibraryContext *ctx,
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK overlay-zipper descend-first failed: ");
         }
-    } else {
+    } else if (which == g_builtin_syms.lib_mork_overlay_zipper_descend_last) {
+        if (!cetta_mork_bridge_overlay_cursor_descend_last(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK overlay-zipper descend-last failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_overlay_zipper_descend_until) {
         if (!cetta_mork_bridge_overlay_cursor_descend_until(resource->cursor, &moved)) {
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK overlay-zipper descend-until failed: ");
         }
+    } else if (which == g_builtin_syms.lib_mork_overlay_zipper_ascend_until) {
+        if (!cetta_mork_bridge_overlay_cursor_ascend_until(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK overlay-zipper ascend-until failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_overlay_zipper_ascend_until_branch) {
+        if (!cetta_mork_bridge_overlay_cursor_ascend_until_branch(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK overlay-zipper ascend-until-branch failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_overlay_zipper_next_sibling_byte) {
+        if (!cetta_mork_bridge_overlay_cursor_next_sibling_byte(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK overlay-zipper next-sibling-byte failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_overlay_zipper_prev_sibling_byte) {
+        if (!cetta_mork_bridge_overlay_cursor_prev_sibling_byte(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK overlay-zipper prev-sibling-byte failed: ");
+        }
+    } else if (which == g_builtin_syms.lib_mork_overlay_zipper_next_step) {
+        if (!cetta_mork_bridge_overlay_cursor_next_step(resource->cursor, &moved)) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK overlay-zipper next-step failed: ");
+        }
+    } else {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "unsupported overlay zipper movement"));
+    }
+    return atom_bool(a, moved);
+}
+
+static Atom *mork_overlay_zipper_descend_until_max_bytes_native(
+    CettaLibraryContext *ctx,
+    Arena *a,
+    Atom *head,
+    Atom **args,
+    uint32_t nargs) {
+    CettaMorkOverlayCursorResource *resource;
+    bool moved = false;
+    int max_bytes = 0;
+
+    if (nargs != 2 || !library_int_arg(args[1], &max_bytes) || max_bytes < 0) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-overlay-cursor handle and non-negative max byte count");
+    }
+    resource = library_mork_overlay_cursor_handle(ctx, args[0]);
+    if (!resource || !resource->cursor) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected mork-overlay-cursor handle as first argument");
+    }
+    if (!cetta_mork_bridge_overlay_cursor_descend_until_max_bytes(resource->cursor,
+                                                                  (uint64_t)max_bytes,
+                                                                  &moved)) {
+        return library_mork_bridge_error(a, head, args, nargs,
+                                         "MORK overlay-zipper descend-until-max-bytes failed: ");
     }
     return atom_bool(a, moved);
 }
@@ -3734,6 +3947,9 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
     if (head_id == g_builtin_syms.lib_mork_space_import_act) {
         return mork_space_import_act_native(ctx, a, head, args, nargs);
     }
+    if (head_id == g_builtin_syms.lib_mork_clone) {
+        return mork_space_clone_native(ctx, a, head, args, nargs);
+    }
     if (head_id == g_builtin_syms.lib_mork_space_step ||
         head_id == g_builtin_syms.lib_mork_space_add_atom ||
         head_id == g_builtin_syms.lib_mork_space_remove_atom ||
@@ -3784,14 +4000,25 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         return mork_zipper_descend_index_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_zipper_descend_first ||
-        head_id == g_builtin_syms.lib_mork_zipper_descend_until) {
+        head_id == g_builtin_syms.lib_mork_zipper_descend_last ||
+        head_id == g_builtin_syms.lib_mork_zipper_descend_until ||
+        head_id == g_builtin_syms.lib_mork_zipper_ascend_until ||
+        head_id == g_builtin_syms.lib_mork_zipper_ascend_until_branch ||
+        head_id == g_builtin_syms.lib_mork_zipper_next_sibling_byte ||
+        head_id == g_builtin_syms.lib_mork_zipper_prev_sibling_byte ||
+        head_id == g_builtin_syms.lib_mork_zipper_next_step ||
+        head_id == g_builtin_syms.lib_mork_zipper_next_val) {
         return mork_zipper_descend_simple_native(ctx, a, head, args, nargs, head_id);
+    }
+    if (head_id == g_builtin_syms.lib_mork_zipper_descend_until_max_bytes) {
+        return mork_zipper_descend_until_max_bytes_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_zipper_fork) {
         return mork_zipper_fork_native(ctx, a, head, args, nargs);
     }
-    if (head_id == g_builtin_syms.lib_mork_zipper_subspace) {
-        return mork_zipper_subspace_native(ctx, a, head, args, nargs);
+    if (head_id == g_builtin_syms.lib_mork_zipper_make_map ||
+        head_id == g_builtin_syms.lib_mork_zipper_make_snapshot_map) {
+        return mork_zipper_materialize_native(ctx, a, head, args, nargs, head_id);
     }
     if (head_id == g_builtin_syms.lib_mork_product_zipper_new) {
         return mork_product_zipper_new_native(ctx, a, head, args, nargs);
@@ -3828,9 +4055,19 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         return mork_product_zipper_descend_index_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_product_zipper_descend_first ||
-        head_id == g_builtin_syms.lib_mork_product_zipper_descend_until) {
+        head_id == g_builtin_syms.lib_mork_product_zipper_descend_last ||
+        head_id == g_builtin_syms.lib_mork_product_zipper_descend_until ||
+        head_id == g_builtin_syms.lib_mork_product_zipper_ascend_until ||
+        head_id == g_builtin_syms.lib_mork_product_zipper_ascend_until_branch ||
+        head_id == g_builtin_syms.lib_mork_product_zipper_next_sibling_byte ||
+        head_id == g_builtin_syms.lib_mork_product_zipper_prev_sibling_byte ||
+        head_id == g_builtin_syms.lib_mork_product_zipper_next_step ||
+        head_id == g_builtin_syms.lib_mork_product_zipper_next_val) {
         return mork_product_zipper_descend_simple_native(ctx, a, head, args, nargs,
                                                          head_id);
+    }
+    if (head_id == g_builtin_syms.lib_mork_product_zipper_descend_until_max_bytes) {
+        return mork_product_zipper_descend_until_max_bytes_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_overlay_zipper_new) {
         return mork_overlay_zipper_new_native(ctx, a, head, args, nargs);
@@ -3863,9 +4100,18 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         return mork_overlay_zipper_descend_index_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_overlay_zipper_descend_first ||
-        head_id == g_builtin_syms.lib_mork_overlay_zipper_descend_until) {
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_descend_last ||
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_descend_until ||
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_ascend_until ||
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_ascend_until_branch ||
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_next_sibling_byte ||
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_prev_sibling_byte ||
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_next_step) {
         return mork_overlay_zipper_descend_simple_native(ctx, a, head, args, nargs,
                                                          head_id);
+    }
+    if (head_id == g_builtin_syms.lib_mork_overlay_zipper_descend_until_max_bytes) {
+        return mork_overlay_zipper_descend_until_max_bytes_native(ctx, a, head, args, nargs);
     }
     return NULL;
 }

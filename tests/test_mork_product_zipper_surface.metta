@@ -102,3 +102,83 @@
 !(assertEqualToResult
   (mork:product-zipper-close! &pz4)
   (()))
+!(bind! &pa (mork:new-space))
+!(bind! &pb (mork:new-space))
+!(bind! &pc (mork:new-space))
+!(mork:add-atom &pa a)
+!(mork:add-atom &pa d)
+!(mork:add-atom &pb b)
+!(mork:add-atom &pc c)
+!(bind! &pnav (mork:product-zipper &pa &pb &pc))
+!(assertEqualToResult
+  (mork:product-zipper-descend-first! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-descend-last! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193 100)))
+!(assertEqualToResult
+  (mork:product-zipper-ascend-until-branch! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193)))
+!(assertEqualToResult
+  (mork:product-zipper-descend-first! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-next-sibling-byte! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193 100)))
+!(assertEqualToResult
+  (mork:product-zipper-prev-sibling-byte! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193 97)))
+!(assertEqualToResult
+  (mork:product-zipper-reset! &pnav)
+  (()))
+!(assertEqualToResult
+  (mork:product-zipper-descend-until-max-bytes! &pnav 1)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193)))
+!(assertEqualToResult
+  (mork:product-zipper-reset! &pnav)
+  (()))
+!(assertEqualToResult
+  (mork:product-zipper-next-step! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193)))
+!(assertEqualToResult
+  (mork:product-zipper-reset! &pnav)
+  (()))
+!(assertEqualToResult
+  (mork:product-zipper-next-val! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193 97)))
+!(assertEqualToResult
+  (mork:product-zipper-next-val! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193 97 193 98)))
+!(assertEqualToResult
+  (mork:product-zipper-next-val! &pnav)
+  (True))
+!(assertEqualToResult
+  (mork:product-zipper-path-bytes &pnav)
+  ((193 97 193 98 193 99)))
+!(assertEqualToResult
+  (mork:product-zipper-close! &pnav)
+  (()))

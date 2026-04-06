@@ -1,6 +1,6 @@
-; morkl + MM2 + MeTTa showcase
-; ============================
-; MM2 derives one fact, morkl inspects the exact substrate shape of that
+; mork + MM2 + MeTTa showcase
+; ===========================
+; MM2 derives one fact, mork inspects the exact substrate shape of that
 ; fact, and ordinary MeTTa annotates the restricted result.
 
 !(include mork)
@@ -8,7 +8,7 @@
 (= (path-tag a c) strong)
 (= (path-why a c) (two-hop a b c))
 
-!(println! "=== integrated morkl + MM2 + MeTTa showcase ===")
+!(println! "=== integrated mork + MM2 + MeTTa showcase ===")
 !(bind! &ws (mork:new-space))
 !(mork:add-atom &ws
   (exec (0 step)
@@ -32,12 +32,13 @@
 
 !(bind! &selector (mork:new-space))
 !(mork:add-atom &selector (path a c))
-!(bind! &derived-only (mork:prefix-restrict &ws &selector))
+!(bind! &derived-only (mork:clone &ws))
+!(mork:prefix-restrict &derived-only &selector)
 !(println! (derived-only-size
              (mork:size &derived-only)))
 
 !(bind! &z (mork:zipper &derived-only))
-!(mork:zipper-descend-until! &z)
+!(bind! &zipper-stepped (mork:zipper-descend-until! &z))
 !(println! (zipper-path-bytes
              (mork:zipper-path-bytes &z)))
 !(println! (zipper-path-exists
@@ -47,7 +48,7 @@
 !(mork:zipper-close! &z)
 
 !(bind! &oz (mork:overlay-zipper &derived-only &selector))
-!(mork:overlay-zipper-descend-until! &oz)
+!(bind! &overlay-stepped (mork:overlay-zipper-descend-until! &oz))
 !(println! (overlay-path-bytes
              (mork:overlay-zipper-path-bytes &oz)))
 !(println! (overlay-path-exists
