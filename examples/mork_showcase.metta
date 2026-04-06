@@ -1,11 +1,11 @@
-; morkl showcase
-; ==============
+; mork showcase
+; =============
 ; A small command-line demo of the explicit MORK lane and the
 ; machine-close PathMap/MORK cursor surface exposed via mork:.
 
 !(include mork)
 
-!(println! "=== morkl showcase: explicit MorkSpace lane ===")
+!(println! "=== mork showcase: explicit MorkSpace lane ===")
 !(bind! &m (mork:new-space))
 !(println! (space-type (get-type &m)))
 !(mork:add-atom &m (edge a b))
@@ -32,7 +32,8 @@
 !(println! "=== selector-shaped prefix restriction ===")
 !(bind! &selector (mork:new-space))
 !(mork:add-atom &selector (edge a b))
-!(bind! &restricted (mork:prefix-restrict &m &selector))
+!(bind! &restricted (mork:clone &m))
+!(mork:prefix-restrict &restricted &selector)
 !(println! (restricted-size
              (mork:size &restricted)))
 !(println! (restricted-match

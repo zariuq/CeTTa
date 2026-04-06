@@ -18,9 +18,7 @@
 !(assertEqual
   (collapse (mork:get-atoms &h))
   ((edge a b) (edge b c)))
-!(bind! &snap (mork:new-space))
-!(bind! &atoms (collapse (mork:get-atoms &h)))
-!(mork:add-atoms &snap &atoms)
+!(bind! &snap (mork:clone &h))
 !(mork:add-atom &h (edge c d))
 !(assertEqual
   (collapse (mork:get-atoms &snap))

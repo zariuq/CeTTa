@@ -21,6 +21,26 @@
 !(assertEqualToResult
   (mork:match &compiled (edge b c) hit)
   (hit))
+!(bind! &compiled-clone (mork:clone &compiled))
+!(assertEqualToResult
+  (get-type &compiled-clone)
+  (MorkSpace))
+!(assertEqualToResult
+  (mork:size &compiled-clone)
+  (2))
+!(assertEqualToResult
+  (mork:match &compiled-clone (edge a b) hit)
+  (hit))
+!(mork:add-atom &compiled-clone (edge z y))
+!(assertEqualToResult
+  (mork:size &compiled)
+  (2))
+!(assertEqualToResult
+  (mork:size &compiled-clone)
+  (3))
+!(assertEqualToResult
+  (mork:match &compiled-clone (edge z y) hit)
+  (hit))
 !(mork:add-atom &compiled (edge c d))
 !(assertEqualToResult
   (mork:size &compiled)

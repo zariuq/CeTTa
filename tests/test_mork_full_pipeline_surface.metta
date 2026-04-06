@@ -25,7 +25,10 @@
 
 !(bind! &selector (mork:new-space))
 !(mork:add-atom &selector (edge a b))
-!(bind! &restricted (mork:prefix-restrict &compiled &selector))
+!(bind! &restricted (mork:clone &compiled))
+!(assertEqual
+  (mork:prefix-restrict &restricted &selector)
+  ())
 !(assertEqualToResult
   (get-type &restricted)
   (MorkSpace))

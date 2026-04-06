@@ -25,11 +25,15 @@ intended long-term public model.
 Primary CeTTa bridge surface:
 
 - cetta_mork_bridge_space_add_indexed_text() mirrors CeTTa row ids into MORK
+  and activates stable row provenance for that bridge-owned space
 - cetta_mork_bridge_space_logical_size() reports duplicate-aware logical atom
   count when row metadata is available
 - cetta_mork_bridge_space_unique_size() reports unique structural support
 - cetta_mork_bridge_space_query_candidates_text() is the current UTF-8
-  S-expression candidate transport and returns mirrored candidate rows
+  S-expression candidate transport and returns candidate row slots; direct
+  indexed ingress mirrors CeTTa rows, structural rewrites preserve surviving
+  row ids where possible, and fresh row ids are allocated only for genuinely
+  new support or row-id collision repair
 - cetta_mork_bridge_space_query_candidates_expr_bytes() is the first
   structured sibling and accepts one already-encoded stable MORK query expr
   byte span
@@ -53,6 +57,9 @@ Current limitation:
 
 - raw add/remove without mirrored row metadata still collapse duplicates to
   structural support for counting purposes
+- stable provenance is only tracked once row metadata is active; pure
+  structural spaces stay support-only until a row-aware bridge surface such as
+  indexed ingress or candidate-row query activates it
 
 The packet-binding exports below are compatibility/experimental surfaces. The
 preferred query path for CeTTa is candidate rows plus native matching.
@@ -101,15 +108,25 @@ bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,
                                   uint32_t *out_rows);
+bool cetta_mork_bridge_space_join_into(CettaMorkSpaceHandle *dst,
+                                       const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
     const CettaMorkSpaceHandle *lhs,
     const CettaMorkSpaceHandle *rhs);
+CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
+    const CettaMorkSpaceHandle *space);
+bool cetta_mork_bridge_space_meet_into(CettaMorkSpaceHandle *dst,
+                                       const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_meet(
     const CettaMorkSpaceHandle *lhs,
     const CettaMorkSpaceHandle *rhs);
+bool cetta_mork_bridge_space_subtract_into(CettaMorkSpaceHandle *dst,
+                                           const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_subtract(
     const CettaMorkSpaceHandle *lhs,
     const CettaMorkSpaceHandle *rhs);
+bool cetta_mork_bridge_space_restrict_into(CettaMorkSpaceHandle *dst,
+                                           const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_restrict(
     const CettaMorkSpaceHandle *lhs,
     const CettaMorkSpaceHandle *rhs);
@@ -144,11 +161,31 @@ bool cetta_mork_bridge_cursor_descend_index(CettaMorkCursorHandle *cursor,
                                             bool *out_moved);
 bool cetta_mork_bridge_cursor_descend_first(CettaMorkCursorHandle *cursor,
                                             bool *out_moved);
+bool cetta_mork_bridge_cursor_descend_last(CettaMorkCursorHandle *cursor,
+                                           bool *out_moved);
 bool cetta_mork_bridge_cursor_descend_until(CettaMorkCursorHandle *cursor,
                                             bool *out_moved);
+bool cetta_mork_bridge_cursor_descend_until_max_bytes(
+    CettaMorkCursorHandle *cursor,
+    uint64_t max_bytes,
+    bool *out_moved);
+bool cetta_mork_bridge_cursor_ascend_until(CettaMorkCursorHandle *cursor,
+                                           bool *out_moved);
+bool cetta_mork_bridge_cursor_ascend_until_branch(CettaMorkCursorHandle *cursor,
+                                                  bool *out_moved);
+bool cetta_mork_bridge_cursor_next_sibling_byte(CettaMorkCursorHandle *cursor,
+                                                bool *out_moved);
+bool cetta_mork_bridge_cursor_prev_sibling_byte(CettaMorkCursorHandle *cursor,
+                                                bool *out_moved);
+bool cetta_mork_bridge_cursor_next_step(CettaMorkCursorHandle *cursor,
+                                        bool *out_moved);
+bool cetta_mork_bridge_cursor_next_val(CettaMorkCursorHandle *cursor,
+                                       bool *out_moved);
 CettaMorkCursorHandle *cetta_mork_bridge_cursor_fork(
     const CettaMorkCursorHandle *cursor);
-CettaMorkSpaceHandle *cetta_mork_bridge_cursor_subspace(
+CettaMorkSpaceHandle *cetta_mork_bridge_cursor_make_map(
+    const CettaMorkCursorHandle *cursor);
+CettaMorkSpaceHandle *cetta_mork_bridge_cursor_make_snapshot_map(
     const CettaMorkCursorHandle *cursor);
 CettaMorkProductCursorHandle *cetta_mork_bridge_product_cursor_new(
     const CettaMorkSpaceHandle *const *spaces,
@@ -204,7 +241,32 @@ bool cetta_mork_bridge_product_cursor_descend_index(
 bool cetta_mork_bridge_product_cursor_descend_first(
     CettaMorkProductCursorHandle *cursor,
     bool *out_moved);
+bool cetta_mork_bridge_product_cursor_descend_last(
+    CettaMorkProductCursorHandle *cursor,
+    bool *out_moved);
 bool cetta_mork_bridge_product_cursor_descend_until(
+    CettaMorkProductCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_product_cursor_descend_until_max_bytes(
+    CettaMorkProductCursorHandle *cursor,
+    uint64_t max_bytes,
+    bool *out_moved);
+bool cetta_mork_bridge_product_cursor_ascend_until(
+    CettaMorkProductCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_product_cursor_ascend_until_branch(
+    CettaMorkProductCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_product_cursor_next_sibling_byte(
+    CettaMorkProductCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_product_cursor_prev_sibling_byte(
+    CettaMorkProductCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_product_cursor_next_step(
+    CettaMorkProductCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_product_cursor_next_val(
     CettaMorkProductCursorHandle *cursor,
     bool *out_moved);
 CettaMorkOverlayCursorHandle *cetta_mork_bridge_overlay_cursor_new(
@@ -247,7 +309,29 @@ bool cetta_mork_bridge_overlay_cursor_descend_index(
 bool cetta_mork_bridge_overlay_cursor_descend_first(
     CettaMorkOverlayCursorHandle *cursor,
     bool *out_moved);
+bool cetta_mork_bridge_overlay_cursor_descend_last(
+    CettaMorkOverlayCursorHandle *cursor,
+    bool *out_moved);
 bool cetta_mork_bridge_overlay_cursor_descend_until(
+    CettaMorkOverlayCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_overlay_cursor_descend_until_max_bytes(
+    CettaMorkOverlayCursorHandle *cursor,
+    uint64_t max_bytes,
+    bool *out_moved);
+bool cetta_mork_bridge_overlay_cursor_ascend_until(
+    CettaMorkOverlayCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_overlay_cursor_ascend_until_branch(
+    CettaMorkOverlayCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_overlay_cursor_next_sibling_byte(
+    CettaMorkOverlayCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_overlay_cursor_prev_sibling_byte(
+    CettaMorkOverlayCursorHandle *cursor,
+    bool *out_moved);
+bool cetta_mork_bridge_overlay_cursor_next_step(
     CettaMorkOverlayCursorHandle *cursor,
     bool *out_moved);
 bool cetta_mork_bridge_space_dump_act_file(CettaMorkSpaceHandle *space,

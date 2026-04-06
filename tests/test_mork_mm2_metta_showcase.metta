@@ -25,7 +25,8 @@
 !(bind! &path-ac (mork:path-of-atom (path a c)))
 !(bind! &selector (mork:new-space))
 !(mork:add-atom &selector (path a c))
-!(bind! &derived-only (mork:prefix-restrict &ws &selector))
+!(bind! &derived-only (mork:clone &ws))
+!(mork:prefix-restrict &derived-only &selector)
 
 !(assertEqualToResult
   (mork:size &derived-only)

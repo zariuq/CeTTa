@@ -14,8 +14,8 @@
 (: mork:remove-atom (-> MorkSpace Atom (->)))
 (: mork:get-atoms (-> MorkSpace Atom))
 (: mork:size (-> MorkSpace Number))
-(: mork:count-atoms (-> MorkSpace Number))
 (: mork:match (-> MorkSpace Atom Atom Atom))
+(: mork:clone (-> MorkSpace MorkSpace))
 (: mork:step! (-> MorkSpace Number))
 (: mork:step! (-> MorkSpace Number Number))
 (: mork:include! (-> MorkSpace Atom (->)))
@@ -24,11 +24,10 @@
 (: mork:open-act (-> Atom Atom MorkSpace))
 (: mork:dump! (-> MorkSpace Atom (->)))
 (: mork:load-act! (-> MorkSpace Atom (->)))
-(: mork:join (-> MorkSpace MorkSpace MorkSpace))
-(: mork:meet (-> MorkSpace MorkSpace MorkSpace))
-(: mork:subtract (-> MorkSpace MorkSpace MorkSpace))
-(: mork:restrict (-> MorkSpace MorkSpace MorkSpace))
-(: mork:prefix-restrict (-> MorkSpace MorkSpace MorkSpace))
+(: mork:join (-> MorkSpace MorkSpace (->)))
+(: mork:meet (-> MorkSpace MorkSpace (->)))
+(: mork:subtract (-> MorkSpace MorkSpace (->)))
+(: mork:prefix-restrict (-> MorkSpace MorkSpace (->)))
 (: mork:path-of-atom (-> Atom Atom))
 (: mork:zipper (-> MorkSpace Atom))
 (: mork:zipper-close! (-> Atom (->)))
@@ -44,9 +43,18 @@
 (: mork:zipper-descend-byte! (-> Atom Number Bool))
 (: mork:zipper-descend-index! (-> Atom Number Bool))
 (: mork:zipper-descend-first! (-> Atom Bool))
+(: mork:zipper-descend-last! (-> Atom Bool))
 (: mork:zipper-descend-until! (-> Atom Bool))
+(: mork:zipper-descend-until-max-bytes! (-> Atom Number Bool))
+(: mork:zipper-ascend-until! (-> Atom Bool))
+(: mork:zipper-ascend-until-branch! (-> Atom Bool))
+(: mork:zipper-next-sibling-byte! (-> Atom Bool))
+(: mork:zipper-prev-sibling-byte! (-> Atom Bool))
+(: mork:zipper-next-step! (-> Atom Bool))
+(: mork:zipper-next-val! (-> Atom Bool))
 (: mork:zipper-fork (-> Atom Atom))
-(: mork:zipper-subspace (-> Atom MorkSpace))
+(: mork:zipper-make-map (-> Atom MorkSpace))
+(: mork:zipper-make-snapshot-map (-> Atom MorkSpace))
 (: mork:product-zipper (-> MorkSpace MorkSpace Atom))
 (: mork:product-zipper (-> MorkSpace MorkSpace MorkSpace Atom))
 (: mork:product-zipper (-> MorkSpace MorkSpace MorkSpace MorkSpace Atom))
@@ -66,7 +74,15 @@
 (: mork:product-zipper-descend-byte! (-> Atom Number Bool))
 (: mork:product-zipper-descend-index! (-> Atom Number Bool))
 (: mork:product-zipper-descend-first! (-> Atom Bool))
+(: mork:product-zipper-descend-last! (-> Atom Bool))
 (: mork:product-zipper-descend-until! (-> Atom Bool))
+(: mork:product-zipper-descend-until-max-bytes! (-> Atom Number Bool))
+(: mork:product-zipper-ascend-until! (-> Atom Bool))
+(: mork:product-zipper-ascend-until-branch! (-> Atom Bool))
+(: mork:product-zipper-next-sibling-byte! (-> Atom Bool))
+(: mork:product-zipper-prev-sibling-byte! (-> Atom Bool))
+(: mork:product-zipper-next-step! (-> Atom Bool))
+(: mork:product-zipper-next-val! (-> Atom Bool))
 (: mork:overlay-zipper (-> MorkSpace MorkSpace Atom))
 (: mork:overlay-zipper-close! (-> Atom (->)))
 (: mork:overlay-zipper-path-exists (-> Atom Bool))
@@ -80,7 +96,14 @@
 (: mork:overlay-zipper-descend-byte! (-> Atom Number Bool))
 (: mork:overlay-zipper-descend-index! (-> Atom Number Bool))
 (: mork:overlay-zipper-descend-first! (-> Atom Bool))
+(: mork:overlay-zipper-descend-last! (-> Atom Bool))
 (: mork:overlay-zipper-descend-until! (-> Atom Bool))
+(: mork:overlay-zipper-descend-until-max-bytes! (-> Atom Number Bool))
+(: mork:overlay-zipper-ascend-until! (-> Atom Bool))
+(: mork:overlay-zipper-ascend-until-branch! (-> Atom Bool))
+(: mork:overlay-zipper-next-sibling-byte! (-> Atom Bool))
+(: mork:overlay-zipper-prev-sibling-byte! (-> Atom Bool))
+(: mork:overlay-zipper-next-step! (-> Atom Bool))
 
 (@doc mork:new-space
   (@desc "Creates an explicit MorkSpace handle. This stays separate from ordinary SpaceType values even though the implementation reuses the PathMap substrate underneath. The zero-argument form defaults to atom discipline; the one-argument form accepts an unordered discipline such as atom or hash. This is the blessed public constructor for the MORK lane.")
@@ -103,6 +126,12 @@
     (@param "Template/result expression")))
   (@return "Superposed query results"))
 
+(@doc mork:clone
+  (@desc "Creates a fresh MorkSpace snapshot of an existing workspace handle while preserving the source workspace's live encoding universe. Use this when you want persistence before applying mutating workspace algebra.")
+  (@params (
+    (@param "MorkSpace handle to snapshot")))
+  (@return "Fresh cloned MorkSpace"))
+
 (@doc mork:get-atoms
   (@desc "Explicit enumeration surface for MorkSpace. This returns the current atom fan-out of the MORK workspace without pretending the value is an ordinary generic CeTTa space.")
   (@params (
@@ -110,10 +139,10 @@
   (@return "Superposed atoms currently visible in the workspace"))
 
 (@doc mork:size
-  (@desc "Explicit size/count surface for MorkSpace.")
+  (@desc "Explicit size/count surface for MorkSpace. This reports the current unique structural support size of the workspace, not duplicate-aware ACT logical copy counts.")
   (@params (
     (@param "Explicit MorkSpace handle")))
-  (@return "Current logical item count"))
+  (@return "Current unique structural support count"))
 
 (@doc mork:step!
   (@desc "Explicit MORK execution surface. Advances an unordered MorkSpace and returns the number of steps actually performed. Attached compiled ACT spaces materialize into live storage before stepping.")
@@ -130,7 +159,7 @@
   (@return "Unit on success"))
 
 (@doc mork:dump!
-  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current deduplicated contents of an unordered MorkSpace into a PathMap .act artifact at the given path. Ordered queue/stack semantics remain out of scope for this phase-1 ACT surface.")
+  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current unordered MorkSpace into a PathMap .act artifact at the given path. When mirrored row metadata is available, duplicate indexed copies are preserved through the ACT sidecar metadata; otherwise the export follows structural support.")
   (@params (
     (@param "MorkSpace to compile into a .act artifact")
     (@param "Output ACT filename")))
@@ -151,39 +180,32 @@
   (@return "Fresh MorkSpace handle attached to compiled ACT data"))
 
 (@doc mork:join
-  (@desc "PathMap structural union over two MorkSpace workspaces. The result is always fresh and remains a MorkSpace handle.")
+  (@desc "PathMap structural union over two MorkSpace workspaces, mutating the left destination workspace in place. Use mork:clone first when you want a persistent branch.")
   (@params (
-    (@param "Left MorkSpace")
+    (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
-  (@return "Fresh union MorkSpace"))
+  (@return "Unit on success"))
 
 (@doc mork:meet
-  (@desc "PathMap structural intersection over two MorkSpace workspaces. This is support-level algebra over the trie substrate, and the result stays a fresh MorkSpace handle.")
+  (@desc "PathMap structural intersection over two MorkSpace workspaces, mutating the left destination workspace in place.")
   (@params (
-    (@param "Left MorkSpace")
+    (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
-  (@return "Fresh intersection MorkSpace"))
+  (@return "Unit on success"))
 
 (@doc mork:subtract
-  (@desc "PathMap structural subtraction over two MorkSpace workspaces. The result is always fresh and remains a MorkSpace handle.")
+  (@desc "PathMap structural subtraction over two MorkSpace workspaces, mutating the left destination workspace in place.")
   (@params (
-    (@param "Left MorkSpace")
+    (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
-  (@return "Fresh difference MorkSpace"))
-
-(@doc mork:restrict
-  (@desc "Compatibility alias for mork:prefix-restrict. This is not ordinary logical filtering: the right-hand side is read through the valued-prefix support of its encoded paths, and only those left-hand encoded paths admitted by that selector support survive. Prefer mork:prefix-restrict when you want the selector-role reading to stay visible.")
-  (@params (
-    (@param "Left MorkSpace whose support is being filtered")
-    (@param "Right MorkSpace acting as a valued-prefix selector")))
-  (@return "Fresh restricted MorkSpace"))
+  (@return "Unit on success"))
 
 (@doc mork:prefix-restrict
-  (@desc "Preferred public spelling for PathMap restrict over two MorkSpace workspaces. The right-hand operand acts as a valued-prefix selector over encoded paths, not as a logical query pattern. The result is always fresh and remains a MorkSpace handle.")
+  (@desc "Preferred public spelling for selector-shaped restriction over two MorkSpace workspaces. The right-hand operand acts as a valued-prefix selector over encoded paths, not as a logical query pattern, and the left destination workspace is mutated in place.")
   (@params (
-    (@param "Left MorkSpace whose support is being filtered")
+    (@param "Destination MorkSpace whose support is being filtered")
     (@param "Right MorkSpace acting as a valued-prefix selector")))
-  (@return "Fresh restricted MorkSpace"))
+  (@return "Unit on success"))
 
 (@doc mork:path-of-atom
   (@desc "Encodes one ordinary CeTTa atom through the live MORK/PathMap parser path and returns the exact byte path currently used as the structural key in the trie. This is an expert projection, not a logical query operation.")
@@ -192,7 +214,7 @@
   (@return "Expression of byte numbers in 0..255"))
 
 (@doc mork:zipper
-  (@desc "Creates a direct read-only zipper snapshot over a MorkSpace. This is the first machine-close PathMap cursor surface: movement is explicit, values are inspected by local shape, and subspaces are materialized only when asked.")
+  (@desc "Creates a direct read-only zipper snapshot over a MorkSpace. This is the first machine-close PathMap cursor surface: movement is explicit, values are inspected by local shape, and structural maps or rooted focus snapshots are materialized only when asked. The returned handle is an opaque typed native resource: wrong cursor-kind calls and use-after-close fail as ordinary errors instead of being coerced across families.")
   (@params (
     (@param "MorkSpace handle")))
   (@return "Native mork-cursor handle"))
@@ -209,14 +231,26 @@
     (@param "mork-cursor handle")))
   (@return "Expression of child byte numbers in ascending order"))
 
-(@doc mork:zipper-subspace
-  (@desc "Materializes the current zipper focus as a fresh MorkSpace snapshot rooted at the current focus.")
+(@doc mork:zipper-fork
+  (@desc "Duplicates the current zipper state at the same snapshot and path. This is the cursor analogue of PathMap fork: it does not re-root at the current focus.")
   (@params (
     (@param "mork-cursor handle")))
-  (@return "Fresh MorkSpace rooted at the zipper focus"))
+  (@return "Fresh mork-cursor handle at the same focus"))
+
+(@doc mork:zipper-make-map
+  (@desc "Materializes the current zipper focus as a fresh structural MorkSpace using PathMap's raw make-map semantics. This is the direct structural export primitive; it does not add any extra CeTTa-side transformation beyond the substrate behavior, and can therefore agree with the snapshot form when the focused structural subtrie already carries a root value.")
+  (@params (
+    (@param "mork-cursor handle")))
+  (@return "Fresh structural MorkSpace rooted below the current focus"))
+
+(@doc mork:zipper-make-snapshot-map
+  (@desc "Materializes the current zipper focus as a fresh rooted snapshot MorkSpace. This is the PathMap snapshot export form built on top of make-map semantics, so any extra grafting at [] is exactly the substrate's snapshot behavior rather than a CeTTa-specific rewrite.")
+  (@params (
+    (@param "mork-cursor handle")))
+  (@return "Fresh rooted snapshot MorkSpace"))
 
 (@doc mork:product-zipper
-  (@desc "Creates a direct read-only product zipper over 2 to 4 MorkSpace workspaces. This exposes the multi-factor traversal that the PathMap/MORK substrate already uses for conjunction-style search, without materializing a brute-force join.")
+  (@desc "Creates a direct read-only product zipper over 2 to 4 MorkSpace workspaces. This exposes the multi-factor traversal that the PathMap/MORK substrate already uses for conjunction-style search, without materializing a brute-force join. The returned handle is opaque and product-specific, so plain or overlay cursor verbs do not silently cross-apply to it.")
   (@params (
     (@param "Two to four MorkSpace handles")))
   (@return "Native mork-product-cursor handle"))
@@ -228,7 +262,7 @@
   (@return "Expression of factor-boundary indices"))
 
 (@doc mork:overlay-zipper
-  (@desc "Creates a direct read-only overlay zipper over two MorkSpace workspaces. This exposes the virtual fused-trie view directly, without materializing a join: the overlay lane can inspect the merged support while still seeing the exact machine path it is traversing. This is an expert PathMap view, so the current focus may be a sharp internal prefix rather than an ordinary CeTTa atom.")
+  (@desc "Creates a direct read-only overlay zipper over two MorkSpace workspaces. This exposes the virtual fused-trie view directly, without materializing a join: the overlay lane can inspect the merged support while still seeing the exact machine path it is traversing. This is an expert PathMap view, so the current focus may be a sharp internal prefix rather than an ordinary CeTTa atom. The returned handle is opaque and overlay-specific. The public movement surface here follows the current substrate exactly: sibling and step traversal are exposed, while lazy next-val iteration is not because the underlying overlay zipper does not provide it yet.")
   (@params (
     (@param "Base MorkSpace")
     (@param "Overlay MorkSpace")))
@@ -270,11 +304,6 @@
     (case (__cetta_lib_mork_space_size $space)
       (($result (return $result))))))
 
-(= (mork:count-atoms $space)
-  (function
-    (case (__cetta_lib_mork_space_count_atoms $space)
-      (($result (return $result))))))
-
 (= (mork:match $space $pattern $template)
   (function
     (chain (__cetta_lib_mork_space_match $space $pattern $template) $quoted-results
@@ -282,6 +311,11 @@
         (chain (eval (superpose $results)) $row
           (let (quote $result) $row
             (return $result)))))))
+
+(= (mork:clone $space)
+  (function
+    (case (__cetta_lib_mork_clone $space)
+      (($result (return $result))))))
 
 (= (mork:step! $space)
   (mork:step! $space 1))
@@ -335,9 +369,6 @@
   (function
     (case (__cetta_lib_mork_restrict $lhs $rhs)
       (($result (return $result))))))
-
-(= (mork:restrict $lhs $rhs)
-  (mork:prefix-restrict $lhs $rhs))
 
 (= (mork:path-of-atom $atom)
   (function
@@ -414,9 +445,49 @@
     (case (__cetta_lib_mork_zipper_descend_first $zipper)
       (($result (return $result))))))
 
+(= (mork:zipper-descend-last! $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_descend_last $zipper)
+      (($result (return $result))))))
+
 (= (mork:zipper-descend-until! $zipper)
   (function
     (case (__cetta_lib_mork_zipper_descend_until $zipper)
+      (($result (return $result))))))
+
+(= (mork:zipper-descend-until-max-bytes! $zipper $max-bytes)
+  (function
+    (case (__cetta_lib_mork_zipper_descend_until_max_bytes $zipper $max-bytes)
+      (($result (return $result))))))
+
+(= (mork:zipper-ascend-until! $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_ascend_until $zipper)
+      (($result (return $result))))))
+
+(= (mork:zipper-ascend-until-branch! $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_ascend_until_branch $zipper)
+      (($result (return $result))))))
+
+(= (mork:zipper-next-sibling-byte! $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_next_sibling_byte $zipper)
+      (($result (return $result))))))
+
+(= (mork:zipper-prev-sibling-byte! $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_prev_sibling_byte $zipper)
+      (($result (return $result))))))
+
+(= (mork:zipper-next-step! $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_next_step $zipper)
+      (($result (return $result))))))
+
+(= (mork:zipper-next-val! $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_next_val $zipper)
       (($result (return $result))))))
 
 (= (mork:zipper-fork $zipper)
@@ -424,9 +495,14 @@
     (case (__cetta_lib_mork_zipper_fork $zipper)
       (($result (return $result))))))
 
-(= (mork:zipper-subspace $zipper)
+(= (mork:zipper-make-map $zipper)
   (function
-    (case (__cetta_lib_mork_zipper_subspace $zipper)
+    (case (__cetta_lib_mork_zipper_make_map $zipper)
+      (($result (return $result))))))
+
+(= (mork:zipper-make-snapshot-map $zipper)
+  (function
+    (case (__cetta_lib_mork_zipper_make_snapshot_map $zipper)
       (($result (return $result))))))
 
 (= (mork:product-zipper $lhs $rhs)
@@ -524,9 +600,49 @@
     (case (__cetta_lib_mork_product_zipper_descend_first $zipper)
       (($result (return $result))))))
 
+(= (mork:product-zipper-descend-last! $zipper)
+  (function
+    (case (__cetta_lib_mork_product_zipper_descend_last $zipper)
+      (($result (return $result))))))
+
 (= (mork:product-zipper-descend-until! $zipper)
   (function
     (case (__cetta_lib_mork_product_zipper_descend_until $zipper)
+      (($result (return $result))))))
+
+(= (mork:product-zipper-descend-until-max-bytes! $zipper $max-bytes)
+  (function
+    (case (__cetta_lib_mork_product_zipper_descend_until_max_bytes $zipper $max-bytes)
+      (($result (return $result))))))
+
+(= (mork:product-zipper-ascend-until! $zipper)
+  (function
+    (case (__cetta_lib_mork_product_zipper_ascend_until $zipper)
+      (($result (return $result))))))
+
+(= (mork:product-zipper-ascend-until-branch! $zipper)
+  (function
+    (case (__cetta_lib_mork_product_zipper_ascend_until_branch $zipper)
+      (($result (return $result))))))
+
+(= (mork:product-zipper-next-sibling-byte! $zipper)
+  (function
+    (case (__cetta_lib_mork_product_zipper_next_sibling_byte $zipper)
+      (($result (return $result))))))
+
+(= (mork:product-zipper-prev-sibling-byte! $zipper)
+  (function
+    (case (__cetta_lib_mork_product_zipper_prev_sibling_byte $zipper)
+      (($result (return $result))))))
+
+(= (mork:product-zipper-next-step! $zipper)
+  (function
+    (case (__cetta_lib_mork_product_zipper_next_step $zipper)
+      (($result (return $result))))))
+
+(= (mork:product-zipper-next-val! $zipper)
+  (function
+    (case (__cetta_lib_mork_product_zipper_next_val $zipper)
       (($result (return $result))))))
 
 (= (mork:overlay-zipper $base $overlay)
@@ -594,7 +710,42 @@
     (case (__cetta_lib_mork_overlay_zipper_descend_first $zipper)
       (($result (return $result))))))
 
+(= (mork:overlay-zipper-descend-last! $zipper)
+  (function
+    (case (__cetta_lib_mork_overlay_zipper_descend_last $zipper)
+      (($result (return $result))))))
+
 (= (mork:overlay-zipper-descend-until! $zipper)
   (function
     (case (__cetta_lib_mork_overlay_zipper_descend_until $zipper)
+      (($result (return $result))))))
+
+(= (mork:overlay-zipper-descend-until-max-bytes! $zipper $max-bytes)
+  (function
+    (case (__cetta_lib_mork_overlay_zipper_descend_until_max_bytes $zipper $max-bytes)
+      (($result (return $result))))))
+
+(= (mork:overlay-zipper-ascend-until! $zipper)
+  (function
+    (case (__cetta_lib_mork_overlay_zipper_ascend_until $zipper)
+      (($result (return $result))))))
+
+(= (mork:overlay-zipper-ascend-until-branch! $zipper)
+  (function
+    (case (__cetta_lib_mork_overlay_zipper_ascend_until_branch $zipper)
+      (($result (return $result))))))
+
+(= (mork:overlay-zipper-next-sibling-byte! $zipper)
+  (function
+    (case (__cetta_lib_mork_overlay_zipper_next_sibling_byte $zipper)
+      (($result (return $result))))))
+
+(= (mork:overlay-zipper-prev-sibling-byte! $zipper)
+  (function
+    (case (__cetta_lib_mork_overlay_zipper_prev_sibling_byte $zipper)
+      (($result (return $result))))))
+
+(= (mork:overlay-zipper-next-step! $zipper)
+  (function
+    (case (__cetta_lib_mork_overlay_zipper_next_step $zipper)
       (($result (return $result))))))
