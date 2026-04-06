@@ -1312,9 +1312,104 @@ static bool build_library_path(CettaLibraryContext *ctx, const char *name,
     return false;
 }
 
+static bool library_starts_with(const char *s, const char *prefix) {
+    if (!s || !prefix) return false;
+    return strncmp(s, prefix, strlen(prefix)) == 0;
+}
+
+static bool library_mork_suffix_needs_bang(const char *suffix) {
+    if (!suffix) return false;
+    if (strcmp(suffix, "space_include") == 0 ||
+        strcmp(suffix, "space_step") == 0 ||
+        strcmp(suffix, "space_add_atom") == 0 ||
+        strcmp(suffix, "space_remove_atom") == 0 ||
+        strcmp(suffix, "space_dump_act") == 0 ||
+        strcmp(suffix, "space_import_act") == 0) {
+        return true;
+    }
+    if (strstr(suffix, "zipper_close") || strstr(suffix, "zipper_reset") ||
+        strstr(suffix, "zipper_ascend") || strstr(suffix, "zipper_descend") ||
+        strstr(suffix, "zipper_next_") || strstr(suffix, "zipper_prev_")) {
+        return true;
+    }
+    return false;
+}
+
+static bool library_mork_public_name(const char *head_name, char *out, size_t out_sz) {
+    const char *suffix = NULL;
+    const char *base = NULL;
+    size_t n = 0;
+    bool bang = false;
+
+    if (!head_name || !out || out_sz == 0) return false;
+    if (!library_starts_with(head_name, "__cetta_lib_mork_")) return false;
+    suffix = head_name + strlen("__cetta_lib_mork_");
+    if (!suffix[0]) return false;
+
+    if (strcmp(suffix, "space_new") == 0) {
+        base = "new-space";
+    } else if (strcmp(suffix, "space_include") == 0) {
+        base = "include";
+    } else if (strcmp(suffix, "space_open_act") == 0) {
+        base = "open-act";
+    } else if (strcmp(suffix, "space_dump_act") == 0) {
+        base = "dump";
+    } else if (strcmp(suffix, "space_import_act") == 0) {
+        base = "load-act";
+    } else if (strcmp(suffix, "space_step") == 0) {
+        base = "step";
+    } else if (strcmp(suffix, "space_add_atom") == 0) {
+        base = "add-atom";
+    } else if (strcmp(suffix, "space_remove_atom") == 0) {
+        base = "remove-atom";
+    } else if (strcmp(suffix, "space_atoms") == 0) {
+        base = "get-atoms";
+    } else if (strcmp(suffix, "space_count_atoms") == 0) {
+        base = "size";
+    } else if (strcmp(suffix, "space_match") == 0) {
+        base = "match";
+    } else if (strcmp(suffix, "restrict") == 0) {
+        base = "prefix-restrict";
+    }
+
+    if (snprintf(out, out_sz, "mork:") >= (int)out_sz) return false;
+    n = strlen(out);
+    if (base) {
+        if (snprintf(out + n, out_sz - n, "%s", base) >= (int)(out_sz - n)) {
+            return false;
+        }
+    } else {
+        size_t i = 0;
+        const char *name = suffix;
+        if (library_starts_with(name, "space_")) name += strlen("space_");
+        while (name[i] != '\0' && n + 1 < out_sz) {
+            out[n++] = (name[i] == '_') ? '-' : name[i];
+            i++;
+        }
+        if (name[i] != '\0') return false;
+        out[n] = '\0';
+    }
+
+    bang = library_mork_suffix_needs_bang(suffix);
+    if (bang) {
+        n = strlen(out);
+        if (n + 1 >= out_sz) return false;
+        out[n] = '!';
+        out[n + 1] = '\0';
+    }
+    return true;
+}
+
 static Atom *library_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
     elems[0] = head;
+    if (head && head->kind == ATOM_SYMBOL) {
+        const char *head_name = atom_name_cstr(head);
+        char mork_name[192];
+        if (library_mork_public_name(head_name, mork_name, sizeof(mork_name))) {
+            elems[0] = atom_symbol(a, mork_name);
+        }
+    }
     for (uint32_t i = 0; i < nargs; i++) elems[i + 1] = args[i];
     return atom_expr(a, elems, nargs + 1);
 }
