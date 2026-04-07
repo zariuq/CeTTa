@@ -25,7 +25,7 @@
 !(println! ("after" (collapse (mork:get-atoms &ws))))
 !(println! ("derived" (collapse (mork:match &ws (path $x $y) ($x $y)))))
 
-; Stepping again returns 0 — the workspace has reached fixpoint.
+; Stepping again returns 0 — the space has reached fixpoint.
 ; No new rule firings are possible with the current atoms.
 !(println! ("step-2-fixpoint" (mork:step! &ws)))
 

@@ -302,7 +302,7 @@ define require_mork_bridge_or_reexec
 endef
 
 test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-mm2-kiss-suite test-mork-surface-suite
-	@pass=0; fail=0; skip=0; \
+	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
 		[ -f "$$f" ] || continue; \
@@ -315,22 +315,14 @@ test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
-		if [ "$$f" = "tests/test_pretty_vars_surface.metta" ]; then \
-			echo "SKIP: $$f (covered by dedicated pretty-vars flag target)"; \
-			skip=$$((skip + 1)); \
-			continue; \
-		fi; \
-		if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ]; then \
+		if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ] || \
+		   [ "$$f" = "tests/test_imported_match_chain_conjunction_lowering.metta" ]; then \
 			echo "SKIP: $$f (pathmap specific regression)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
-		if [ "$$f" = "tests/test_imported_match_chain_conjunction_lowering.metta" ]; then \
-			echo "SKIP: $$f (pathmap specific regression)"; \
-			skip=$$((skip + 1)); \
-			continue; \
-		fi; \
-		if { [ "$$f" = "tests/test_import_act_module_surface.metta" ] || \
+		if { [ "$$f" = "tests/test_pretty_vars_surface.metta" ] || \
+		     [ "$$f" = "tests/test_import_act_module_surface.metta" ] || \
 		     [ "$$f" = "tests/test_import_mm2_module_surface.metta" ] || \
 		     [ "$$f" = "tests/test_include_mm2_space_target.metta" ] || \
 		     [ "$$f" = "tests/test_mm2_kiss_add_remove.metta" ] || \
@@ -341,6 +333,7 @@ test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2
 		     [ "$$f" = "tests/test_mork_act_roundtrip.metta" ] || \
 		     [ "$$f" = "tests/test_mork_attached_exact_match_regression.metta" ] || \
 		     [ "$$f" = "tests/test_mork_algebra_surface.metta" ] || \
+		     [ "$$f" = "tests/test_mork_counterexample_loom_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_encoding_boundary_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_full_pipeline_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_handle_errors_surface.metta" ] || \
@@ -348,17 +341,16 @@ test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2
 		     [ "$$f" = "tests/test_mork_lib_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_mm2_metta_showcase.metta" ] || \
 		     [ "$$f" = "tests/test_mork_open_act_surface.metta" ] || \
+		     [ "$$f" = "tests/test_mork_overlay_zipper_surface.metta" ] || \
+		     [ "$$f" = "tests/test_mork_product_zipper_surface.metta" ] || \
 		     [ "$$f" = "tests/test_mork_zipper_surface.metta" ] || \
 		     [ "$$f" = "tests/test_new_space_mork_surface.metta" ] || \
 		     [ "$$f" = "tests/test_step_space_surface.metta" ]; }; then \
-			echo "SKIP: $$f (covered by dedicated MM2/MORK suite)"; \
-			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
 		exp="$${f%.metta}.expected"; \
 		if [ ! -f "$$exp" ]; then \
-			echo "SKIP: $$f (no .expected file)"; \
-			skip=$$((skip + 1)); \
+			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
 		result=$$(./$(BIN) --lang he "$$f" 2>&1); \
@@ -372,7 +364,10 @@ test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2
 		fi; \
 	done; \
 	echo "---"; \
-	echo "$$pass passed, $$fail failed, $$skip skipped"
+	summary="$$pass passed, $$fail failed"; \
+	if [ $$skip -gt 0 ]; then summary="$$summary, $$skip skipped"; fi; \
+	if [ $$no_exp -gt 0 ]; then summary="$$summary, $$no_exp no .expected file"; fi; \
+	echo "$$summary"
 
 test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 	@pass=0; fail=0; \

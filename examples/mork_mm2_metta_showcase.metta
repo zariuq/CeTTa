@@ -39,9 +39,9 @@
 !(println! "=== prefix-restrict: only derived paths ===")
 !(println! ("filtered" (collapse (mork:get-atoms &derived-only))))
 
-; ── Zipper: frozen cursor on the filtered workspace ─────────
+; ── Zipper: frozen cursor on the filtered space ─────────────
 ; descend-until! walks to the first value or branch.
-!(println! "=== zipper on filtered workspace ===")
+!(println! "=== zipper on filtered space ===")
 !(bind! &z (mork:zipper &derived-only))
 !(let $_ (mork:zipper-descend-until! &z) ())
 !(println! ("at" (mork:zipper-path-bytes &z)
