@@ -7,7 +7,7 @@ The short version:
 - load `lib/mork.metta`
 - create a `MorkSpace` with `mork:new-space`
 - use `mork:add-atom`, `mork:match`, `mork:get-atoms`, `mork:size`, `mork:clone`, and `mork:step!`
-- use `mork:` algebra as destination-mutating workspace operations, and use cursor operators when you want machine-close PathMap/MORK behavior
+- use `mork:` algebra as destination-mutating space operations, and use cursor operators when you want machine-close PathMap/MORK behavior
 - do **not** treat `MorkSpace` as an ordinary generic `Space`
 
 ## 1. Load The Library
@@ -73,7 +73,7 @@ Bare generic space verbs reject `MorkSpace` on purpose.
 
 ## 3. Basic Mutation And Query
 
-### Create a workspace
+### Create a space
 
 ```metta
 !(bind! &ws (mork:new-space))
@@ -148,7 +148,7 @@ An empty `mork:match` result is still one of the rougher current wrapper seams. 
 
 ## 4. MM2 Stepping
 
-`MorkSpace` is the live MM2 workspace lane.
+`MorkSpace` is the live MM2 space.
 
 ```metta
 !(include mork)
@@ -166,7 +166,7 @@ An empty `mork:match` result is still one of the rougher current wrapper seams. 
 
 Positive example:
 
-- `mork:step!` advances the live workspace.
+- `mork:step!` advances the live space.
 
 Negative example:
 
@@ -174,7 +174,7 @@ Negative example:
 
 ## 5. ACT Dump, Load, And Open
 
-Dump a live workspace to ACT:
+Dump a live space to ACT:
 
 ```metta
 !(mork:dump! &ws "../runtime/example.act")
@@ -182,7 +182,7 @@ Dump a live workspace to ACT:
 
 When mirrored row metadata is available, ACT export preserves duplicate indexed copies through the sidecar metadata; otherwise export follows structural support.
 
-Load ACT contents into an existing live workspace:
+Load ACT contents into an existing live space:
 
 ```metta
 !(bind! &dst (mork:new-space))
@@ -203,9 +203,9 @@ Negative example:
 
 - opening ACT is not the same as generic `import!` into an ordinary space.
 
-## 6. Workspace Algebra
+## 6. Algebra
 
-These operators mutate the left-hand (destination) workspace in place using PathMap's native WriteZipper algebra. The right-hand workspace is read but not modified.
+These operators mutate the left-hand (destination) space in place using PathMap's native WriteZipper algebra. The right-hand space is read but not modified.
 
 If you want persistence before mutating, clone first:
 
@@ -288,7 +288,7 @@ Negative example:
 
 ## 8. Zippers
 
-A `mork:zipper` creates a snapshot-based read cursor over a workspace. The snapshot is taken at creation time, so the cursor sees a frozen view regardless of later mutations to the source workspace.
+A `mork:zipper` creates a snapshot-based read cursor over a space. The snapshot is taken at creation time, so the cursor sees a frozen view regardless of later mutations to the source space.
 
 ### Plain zipper — creation, navigation, and cleanup
 
@@ -392,7 +392,7 @@ Overlay zippers support the same movement ops as plain zippers (`descend-byte!`,
 
 Positive example:
 
-- overlay zipper exposes the merged view without mutating either input workspace.
+- overlay zipper exposes the merged view without mutating either input space.
 
 Negative example:
 
@@ -420,7 +420,7 @@ ulimit -v 6291456 && ./cetta --quiet examples/mork_mm2_showcase.metta
 ulimit -v 6291456 && ./cetta --quiet examples/mork_mm2_metta_showcase.metta
 ```
 
-### Workspace algebra showcase
+### Algebra showcase
 
 ```bash
 ulimit -v 6291456 && ./cetta --quiet examples/mork_algebra_showcase.metta
@@ -441,7 +441,7 @@ This one is intentionally a finite candidate-comparison demo. It keeps live `Mor
 ### Using the low-level backend API instead of `mork:new-space`
 
 `space-set-backend!` is a low-level runtime primitive for switching an existing
-space's storage backend. For new MORK workspaces, prefer `mork:new-space`
+space's storage backend. For new MORK spaces, prefer `mork:new-space`
 which creates a properly configured `MorkSpace` directly.
 
 Negative example:
@@ -492,14 +492,14 @@ Prefer:
 
 The intended mental model is:
 
-- `MorkSpace` for live MM2 workspaces, workspace algebra, and expert PathMap/MORK inspection
+- `MorkSpace` for live MM2 spaces, algebra, and expert PathMap/MORK inspection
 - `mork:clone` for branching and persistence before mutating algebra
 - ordinary spaces for ordinary CeTTa host-space workflows
 - explicit exports and demos when crossing between them
 
 Positive example:
 
-- run MM2 in `MorkSpace`, compose workspaces with `mork:join`, branch with `mork:clone`, inspect exact encoded paths with zippers.
+- run MM2 in `MorkSpace`, compose spaces with `mork:join`, branch with `mork:clone`, inspect exact encoded paths with zippers.
 
 Negative example:
 

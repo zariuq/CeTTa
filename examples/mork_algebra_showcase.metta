@@ -1,7 +1,7 @@
 ; mork algebra showcase
 ; =====================
 ; Two transit agencies publish overlapping route segments.
-; Workspace algebra composes, intersects, and diffs them,
+; Algebra composes, intersects, and diffs them,
 ; then MM2 derives all reachable connections from the combined network.
 
 !(include mork)

@@ -127,19 +127,19 @@
   (@return "Superposed query results"))
 
 (@doc mork:clone
-  (@desc "Creates a fresh MorkSpace snapshot of an existing workspace handle while preserving the source workspace's live encoding universe. Use this when you want persistence before applying mutating workspace algebra.")
+  (@desc "Creates a fresh MorkSpace snapshot while preserving the source space's encoding universe. Use this when you want persistence before applying mutating algebra.")
   (@params (
     (@param "MorkSpace handle to snapshot")))
   (@return "Fresh cloned MorkSpace"))
 
 (@doc mork:get-atoms
-  (@desc "Explicit enumeration surface for MorkSpace. This returns the current atom fan-out of the MORK workspace without pretending the value is an ordinary generic CeTTa space.")
+  (@desc "Explicit enumeration surface for MorkSpace. Returns the current atom fan-out without pretending the value is an ordinary generic CeTTa space.")
   (@params (
     (@param "Explicit MorkSpace handle")))
-  (@return "Superposed atoms currently visible in the workspace"))
+  (@return "Superposed atoms currently visible in the space"))
 
 (@doc mork:size
-  (@desc "Explicit size/count surface for MorkSpace. This reports the current unique structural support size of the workspace, not duplicate-aware ACT logical copy counts.")
+  (@desc "Explicit size/count surface for MorkSpace. Reports the current unique structural support size, not duplicate-aware ACT logical copy counts.")
   (@params (
     (@param "Explicit MorkSpace handle")))
   (@return "Current unique structural support count"))
@@ -180,28 +180,28 @@
   (@return "Fresh MorkSpace handle attached to compiled ACT data"))
 
 (@doc mork:join
-  (@desc "PathMap structural union over two MorkSpace workspaces, mutating the left destination workspace in place. Use mork:clone first when you want a persistent branch.")
+  (@desc "PathMap structural union. Mutates the left destination space in place. Use mork:clone first when you want a persistent branch.")
   (@params (
     (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
   (@return "Unit on success"))
 
 (@doc mork:meet
-  (@desc "PathMap structural intersection over two MorkSpace workspaces, mutating the left destination workspace in place.")
+  (@desc "PathMap structural intersection. Mutates the left destination space in place.")
   (@params (
     (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
   (@return "Unit on success"))
 
 (@doc mork:subtract
-  (@desc "PathMap structural subtraction over two MorkSpace workspaces, mutating the left destination workspace in place.")
+  (@desc "PathMap structural subtraction. Mutates the left destination space in place.")
   (@params (
     (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
   (@return "Unit on success"))
 
 (@doc mork:prefix-restrict
-  (@desc "Preferred public spelling for selector-shaped restriction over two MorkSpace workspaces. The right-hand operand acts as a valued-prefix selector over encoded paths, not as a logical query pattern, and the left destination workspace is mutated in place.")
+  (@desc "Selector-shaped restriction. The right-hand operand acts as a valued-prefix selector over encoded paths, not as a logical query pattern. Mutates the left destination space in place.")
   (@params (
     (@param "Destination MorkSpace whose support is being filtered")
     (@param "Right MorkSpace acting as a valued-prefix selector")))
@@ -250,7 +250,7 @@
   (@return "Fresh rooted snapshot MorkSpace"))
 
 (@doc mork:product-zipper
-  (@desc "Creates a direct read-only product zipper over 2 to 4 MorkSpace workspaces. This exposes the multi-factor traversal that the PathMap/MORK substrate already uses for conjunction-style search, without materializing a brute-force join. The returned handle is opaque and product-specific, so plain or overlay cursor verbs do not silently cross-apply to it.")
+  (@desc "Creates a direct read-only product zipper over 2 to 4 MorkSpaces. Exposes the multi-factor traversal that PathMap uses for conjunction-style search, without materializing a brute-force join. The returned handle is opaque and product-specific.")
   (@params (
     (@param "Two to four MorkSpace handles")))
   (@return "Native mork-product-cursor handle"))
@@ -262,7 +262,7 @@
   (@return "Expression of factor-boundary indices"))
 
 (@doc mork:overlay-zipper
-  (@desc "Creates a direct read-only overlay zipper over two MorkSpace workspaces. This exposes the virtual fused-trie view directly, without materializing a join: the overlay lane can inspect the merged support while still seeing the exact machine path it is traversing. This is an expert PathMap view, so the current focus may be a sharp internal prefix rather than an ordinary CeTTa atom. The returned handle is opaque and overlay-specific. The public movement surface here follows the current substrate exactly: sibling and step traversal are exposed, while lazy next-val iteration is not because the underlying overlay zipper does not provide it yet.")
+  (@desc "Creates a direct read-only overlay zipper over two MorkSpaces. Exposes the virtual fused-trie view (local <|> base) without materializing a join. The returned handle is opaque and overlay-specific. Sibling and step traversal are exposed; lazy next-val iteration is not, as the underlying overlay zipper does not provide it yet.")
   (@params (
     (@param "Base MorkSpace")
     (@param "Overlay MorkSpace")))
