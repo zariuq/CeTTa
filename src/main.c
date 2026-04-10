@@ -556,6 +556,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
     fputs("       note: --lang selects the driver/front-end; --profile selects the visible surface policy\n", out);
+    fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
@@ -754,6 +755,10 @@ int main(int argc, char **argv) {
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
 
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            print_usage(stdout);
+            return 0;
+        }
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
             print_version(stdout);
             return 0;
