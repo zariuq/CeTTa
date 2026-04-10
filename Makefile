@@ -301,7 +301,7 @@ define require_mork_bridge_or_reexec
 	fi
 endef
 
-test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-mm2-kiss-suite test-mork-surface-suite
+test: $(BIN) test-git-module test-symbolid-guard test-runtime-stats-cli test-help-flags test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-mm2-kiss-suite test-mork-surface-suite
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -1292,6 +1292,23 @@ test-runtime-stats-cli: $(BIN)
 		exit 1; \
 	fi
 
+test-help-flags: $(BIN)
+	$(call require_mork_bridge_or_reexec,cli help flags,$@)
+	@help_long=$$(./$(BIN) --help 2>&1); \
+	help_short=$$(./$(BIN) -h 2>&1); \
+	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] <file.metta>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
+	   [ "$$help_long" = "$$help_short" ]; then \
+		echo "PASS: cli help flags"; \
+	else \
+		echo "FAIL: cli help flags"; \
+		printf '%s\n' '--- --help ---'; \
+		printf '%s\n' "$$help_long"; \
+		printf '%s\n' '--- -h ---'; \
+		printf '%s\n' "$$help_short"; \
+		exit 1; \
+	fi
+
 probe-imported-conjunction-lanes: $(BIN)
 	$(call require_mork_bridge_or_reexec,imported conjunction lane probe,$@)
 	@ \
@@ -1527,4 +1544,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork full clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: FORCE all core python mork full clean test test-backends test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta tail-recursion-check compile-test refresh-he-matrices promote-runtime
