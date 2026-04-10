@@ -28,7 +28,7 @@
 
 !(println! "=== encoded path of (edge a b) ===")
 !(bind! &path-ab (mork:path-of-atom (edge a b)))
-!(println! ("bytes" &path-ab))
+!(println! ("path-of" (edge a b) &path-ab))
 
 ; ── Zipper: snapshot cursor over the trie ───────────────────
 ; A zipper is a frozen read cursor. descend-until! walks to the
@@ -40,11 +40,11 @@
 !(println! ("root-children" (mork:zipper-child-count &mz)
             "child-bytes" (mork:zipper-child-bytes &mz)))
 !(let $_ (mork:zipper-descend-until! &mz) ())
-!(println! ("cursor-at" (mork:zipper-path-bytes &mz)))
+!(println! ("shared-prefix-bytes" (mork:zipper-path-bytes &mz)))
 !(println! ("exists?" (mork:zipper-path-exists &mz)
             "is-val?" (mork:zipper-is-val &mz)))
 !(let $_ (mork:zipper-descend-first! &mz) ())
-!(println! ("first-value-at" (mork:zipper-path-bytes &mz)
+!(println! ("first-leaf-bytes" (mork:zipper-path-bytes &mz)
             "is-val?" (mork:zipper-is-val &mz)))
 !(mork:zipper-close! &mz)
 
@@ -68,7 +68,7 @@
 !(println! "=== overlay: restricted + selector ===")
 !(bind! &oz (mork:overlay-zipper &restricted &selector))
 !(let $_ (mork:overlay-zipper-descend-until! &oz) ())
-!(println! ("cursor-at" (mork:overlay-zipper-path-bytes &oz)
+!(println! ("overlay-focus-bytes" (mork:overlay-zipper-path-bytes &oz)
             "is-val?" (mork:overlay-zipper-is-val &oz)))
 !(mork:overlay-zipper-close! &oz)
 
@@ -85,11 +85,11 @@
 !(bind! &pz (mork:product-zipper &a &b &m))
 !(println! ("factors" (mork:product-zipper-factor-count &pz)))
 !(let $_ (mork:product-zipper-descend-until! &pz) ())
-!(println! ("focus" (mork:product-zipper-focus-factor &pz)
-            "bytes" (mork:product-zipper-path-bytes &pz)))
+!(println! ("focus-factor" (mork:product-zipper-focus-factor &pz)
+            "product-path-bytes" (mork:product-zipper-path-bytes &pz)))
 !(let $_ (mork:product-zipper-descend-until! &pz) ())
-!(println! ("focus" (mork:product-zipper-focus-factor &pz)
-            "bytes" (mork:product-zipper-path-bytes &pz)))
+!(println! ("focus-factor" (mork:product-zipper-focus-factor &pz)
+            "product-path-bytes" (mork:product-zipper-path-bytes &pz)))
 !(mork:product-zipper-close! &pz)
 
 !(println! "=== showcase complete ===")
