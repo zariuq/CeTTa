@@ -28,10 +28,17 @@ static int cmp_uint32(const void *a, const void *b) {
 }
 
 static bool imported_ensure_bridge_space(PathmapImportedState *st);
+static bool imported_rebuild_bridge(Space *s);
 static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
                                          SubstMatchSet *out);
 static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
                                             SubstMatchSet *out);
+static bool imported_bridge_query_bindings(Space *s, Arena *a, Atom *query,
+                                           SubstMatchSet *out);
+static bool imported_bridge_query_conjunction_fast(Space *s, Arena *a,
+                                                   Atom **patterns, uint32_t npatterns,
+                                                   const Bindings *seed,
+                                                   BindingSet *out);
 
 static uint32_t sort_unique_uint32(uint32_t *items, uint32_t len) {
     if (!items || len <= 1)
@@ -315,6 +322,25 @@ typedef struct {
     uint32_t expr_len;
 } ImportedBridgeBindingEntryV2;
 
+static void imported_bridge_varmap_init(ImportedBridgeVarMap *map);
+static void imported_bridge_varmap_free(ImportedBridgeVarMap *map);
+static ImportedBridgeVarSlot *imported_bridge_varmap_lookup(ImportedBridgeVarMap *map,
+                                                            uint32_t query_slot);
+static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map);
+static bool imported_bridge_read_u32(const uint8_t *packet, size_t len, size_t *off,
+                                     uint32_t *out);
+static bool imported_bridge_read_u16(const uint8_t *packet, size_t len, size_t *off,
+                                     uint16_t *out);
+static Atom *imported_bridge_parse_value_raw_query_only_v2(
+    Arena *a,
+    const uint8_t *expr,
+    uint32_t expr_len,
+    uint8_t value_env,
+    uint8_t value_flags,
+    bool *value_ok);
+static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
+                                                    uint32_t npatterns);
+
 typedef enum {
     IMPORTED_COREF_FAIL = 0,
     IMPORTED_COREF_EXACT = 1,
@@ -398,7 +424,7 @@ bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *o
         *out_loaded = 0;
     if (!s || !path)
         return false;
-    if (s->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)
+    if (!space_engine_uses_pathmap(s->match_backend.kind))
         return false;
     if (space_is_ordered(s) || s->len != 0)
         return false;
@@ -477,16 +503,325 @@ bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena)
 }
 
 bool space_match_backend_is_attached_compiled(const Space *s) {
-    return s && s->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED &&
+    return s && space_engine_uses_pathmap(s->match_backend.kind) &&
            s->match_backend.imported.attached_compiled;
+}
+
+bool space_match_backend_bridge_space(Space *s,
+                                      CettaMorkSpaceHandle **out_bridge) {
+    PathmapImportedState *st;
+
+    if (out_bridge)
+        *out_bridge = NULL;
+    if (!s || !space_engine_uses_pathmap(s->match_backend.kind) ||
+        space_is_ordered(s)) {
+        return false;
+    }
+
+    st = &s->match_backend.imported;
+    if (st->attached_compiled) {
+        if (!st->bridge_space)
+            return false;
+        if (out_bridge)
+            *out_bridge = (CettaMorkSpaceHandle *)st->bridge_space;
+        return true;
+    }
+
+    if (!st->bridge_active && !imported_rebuild_bridge(s))
+        return false;
+    if (!st->bridge_active || !st->bridge_space)
+        return false;
+    if (out_bridge)
+        *out_bridge = (CettaMorkSpaceHandle *)st->bridge_space;
+    return true;
 }
 
 uint32_t space_match_backend_logical_len(const Space *s) {
     if (!s)
         return 0;
-    if (s->match_backend.kind == SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)
+    if (space_engine_uses_pathmap(s->match_backend.kind))
         return imported_logical_len(s);
     return s->len;
+}
+
+bool space_match_backend_mork_query_bindings_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom *query,
+    BindingSet *out) {
+    Arena scratch;
+    uint8_t *packet = NULL;
+    size_t packet_len = 0;
+    uint32_t row_count = 0;
+    ImportedBridgeVarMap query_vars;
+    bool success = true;
+    size_t off = 0;
+    uint32_t magic = 0;
+    uint16_t version = 0;
+    uint16_t flags = 0;
+    uint32_t parsed_rows = 0;
+
+    if (!bridge || !a || !query || !out)
+        return false;
+
+    arena_init(&scratch);
+    char *pattern_text = atom_to_string(&scratch, query);
+    bool ok = cetta_mork_bridge_space_query_bindings_query_only_v2(
+        bridge, (const uint8_t *)pattern_text, strlen(pattern_text),
+        &packet, &packet_len, &row_count);
+    arena_free(&scratch);
+    if (!ok)
+        return false;
+
+    binding_set_init(out);
+    imported_bridge_varmap_init(&query_vars);
+    if (!imported_bridge_collect_vars(query, &query_vars)) {
+        imported_bridge_varmap_free(&query_vars);
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+        return false;
+    }
+
+    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
+        !imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows)) {
+        success = false;
+        goto cleanup;
+    }
+    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
+        version != IMPORTED_MORK_QUERY_ONLY_V2_VERSION ||
+        flags != (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES) ||
+        parsed_rows != row_count) {
+        success = false;
+        goto cleanup;
+    }
+
+    for (uint32_t row = 0; row < parsed_rows && success; row++) {
+        uint32_t ref_count = 0;
+        uint32_t binding_count = 0;
+        Bindings row_bindings;
+        bindings_init(&row_bindings);
+
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
+            off + (size_t)ref_count * 4u > packet_len) {
+            bindings_free(&row_bindings);
+            success = false;
+            break;
+        }
+        off += (size_t)ref_count * 4u;
+
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
+            bindings_free(&row_bindings);
+            success = false;
+            break;
+        }
+
+        for (uint32_t bi = 0; bi < binding_count && success; bi++) {
+            uint16_t query_slot = 0;
+            uint8_t value_env = 0;
+            uint8_t value_flags = 0;
+            uint32_t expr_len = 0;
+            if (!imported_bridge_read_u16(packet, packet_len, &off, &query_slot) ||
+                off + 2 > packet_len) {
+                success = false;
+                break;
+            }
+            value_env = packet[off++];
+            value_flags = packet[off++];
+            if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
+                off + expr_len > packet_len) {
+                success = false;
+                break;
+            }
+            ImportedBridgeVarSlot *key_slot =
+                imported_bridge_varmap_lookup(&query_vars, query_slot);
+            if (!key_slot) {
+                success = false;
+                break;
+            }
+            bool value_ok = true;
+            Atom *value = imported_bridge_parse_value_raw_query_only_v2(
+                a, packet + off, expr_len, value_env, value_flags, &value_ok);
+            off += expr_len;
+            if (!value_ok ||
+                !bindings_add_id(&row_bindings, key_slot->var_id, key_slot->spelling, value)) {
+                success = false;
+                break;
+            }
+        }
+
+        if (success && !bindings_has_loop(&row_bindings) &&
+            !binding_set_push(out, &row_bindings)) {
+            success = false;
+        }
+        bindings_free(&row_bindings);
+    }
+
+cleanup:
+    if (!success) {
+        binding_set_free(out);
+        binding_set_init(out);
+    }
+    imported_bridge_varmap_free(&query_vars);
+    cetta_mork_bridge_bytes_free(packet, packet_len);
+    return success;
+}
+
+bool space_match_backend_mork_query_conjunction_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom **patterns,
+    uint32_t npatterns,
+    const Bindings *seed,
+    BindingSet *out) {
+    if (!bridge || !a || !patterns || !out)
+        return false;
+    if (npatterns == 0) {
+        binding_set_init(out);
+        if (seed)
+            return binding_set_push(out, seed);
+        return true;
+    }
+    if (npatterns > 32)
+        return false;
+
+    Arena scratch;
+    arena_init(&scratch);
+    Atom **grounded = arena_alloc(&scratch, sizeof(Atom *) * npatterns);
+    ImportedBridgeVarMap query_vars;
+    imported_bridge_varmap_init(&query_vars);
+    binding_set_init(out);
+
+    bool success = true;
+    uint8_t *packet = NULL;
+    size_t packet_len = 0;
+    uint32_t row_count = 0;
+    uint32_t factor_count = 0;
+
+    for (uint32_t i = 0; i < npatterns; i++) {
+        grounded[i] = seed ? bindings_apply((Bindings *)seed, &scratch, patterns[i])
+                           : patterns[i];
+        if (!imported_bridge_collect_vars(grounded[i], &query_vars)) {
+            success = false;
+            goto cleanup;
+        }
+    }
+
+    char *query_text = imported_bridge_build_conjunction_text(&scratch, grounded, npatterns);
+    if (!query_text) {
+        success = false;
+        goto cleanup;
+    }
+    if (!cetta_mork_bridge_space_query_bindings_multi_ref_v3(
+            bridge, (const uint8_t *)query_text, strlen(query_text),
+            &packet, &packet_len, &row_count)) {
+        success = false;
+        goto cleanup;
+    }
+
+    size_t off = 0;
+    uint32_t magic = 0;
+    uint16_t version = 0;
+    uint16_t flags = 0;
+    uint32_t parsed_rows = 0;
+    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
+        !imported_bridge_read_u32(packet, packet_len, &off, &factor_count) ||
+        !imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows)) {
+        success = false;
+        goto cleanup;
+    }
+    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
+        version != IMPORTED_MORK_MULTI_REF_V3_VERSION ||
+        flags != (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
+                  IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) ||
+        factor_count != npatterns ||
+        parsed_rows != row_count) {
+        success = false;
+        goto cleanup;
+    }
+
+    for (uint32_t row = 0; row < parsed_rows && success; row++) {
+        for (uint32_t fi = 0; fi < factor_count; fi++) {
+            uint32_t ref_count = 0;
+            if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
+                off + (size_t)ref_count * 4u > packet_len) {
+                success = false;
+                break;
+            }
+            off += (size_t)ref_count * 4u;
+        }
+        if (!success)
+            break;
+
+        uint32_t binding_count = 0;
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
+            success = false;
+            break;
+        }
+
+        Bindings merged;
+        if (seed) {
+            if (!bindings_clone(&merged, seed)) {
+                success = false;
+                break;
+            }
+        } else {
+            bindings_init(&merged);
+        }
+
+        for (uint32_t bi = 0; bi < binding_count && success; bi++) {
+            uint16_t query_slot = 0;
+            uint8_t value_env = 0;
+            uint8_t value_flags = 0;
+            uint32_t expr_len = 0;
+            if (!imported_bridge_read_u16(packet, packet_len, &off, &query_slot) ||
+                off + 2 > packet_len) {
+                success = false;
+                break;
+            }
+            value_env = packet[off++];
+            value_flags = packet[off++];
+            if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
+                off + expr_len > packet_len) {
+                success = false;
+                break;
+            }
+            ImportedBridgeVarSlot *slot =
+                imported_bridge_varmap_lookup(&query_vars, query_slot);
+            if (!slot) {
+                success = false;
+                break;
+            }
+            bool value_ok = true;
+            Atom *value = imported_bridge_parse_value_raw_query_only_v2(
+                a, packet + off, expr_len, value_env, value_flags, &value_ok);
+            off += expr_len;
+            if (!value_ok ||
+                !bindings_add_id(&merged, slot->var_id, slot->spelling, value)) {
+                success = false;
+                break;
+            }
+        }
+
+        if (success && !bindings_has_loop(&merged) && !binding_set_push(out, &merged)) {
+            success = false;
+        }
+        bindings_free(&merged);
+    }
+
+cleanup:
+    if (!success) {
+        binding_set_free(out);
+        binding_set_init(out);
+    }
+    imported_bridge_varmap_free(&query_vars);
+    cetta_mork_bridge_bytes_free(packet, packet_len);
+    arena_free(&scratch);
+    return success;
 }
 
 static void imported_builder_push(ImportedFlatBuilder *b, ImportedFlatToken tok) {
@@ -1069,9 +1404,8 @@ static bool imported_rebuild_bridge(Space *s) {
         Arena scratch;
         arena_init(&scratch);
         char *sexpr = atom_to_string(&scratch, s->atoms[i]);
-        bool ok = cetta_mork_bridge_space_add_indexed_sexpr(
-            (CettaMorkSpaceHandle *)st->bridge_space, i,
-            (const uint8_t *)sexpr, strlen(sexpr));
+        bool ok = cetta_mork_bridge_space_add_indexed_text(
+            (CettaMorkSpaceHandle *)st->bridge_space, i, sexpr);
         arena_free(&scratch);
         if (!ok) {
             cetta_mork_bridge_space_clear((CettaMorkSpaceHandle *)st->bridge_space);
@@ -1106,7 +1440,7 @@ bool space_match_backend_step(Space *s, Arena *persistent_arena,
 
     if (out_performed)
         *out_performed = 0;
-    if (!s || s->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)
+    if (!s || !space_engine_supports_exec(s->match_backend.kind))
         return false;
     if (space_is_ordered(s))
         return false;
@@ -1183,7 +1517,7 @@ bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
 
     if (out_added)
         *out_added = 0;
-    if (!s || s->match_backend.kind != SPACE_MATCH_BACKEND_PATHMAP_IMPORTED)
+    if (!s || !space_engine_uses_pathmap(s->match_backend.kind))
         return false;
     if (space_is_ordered(s))
         return false;
@@ -1212,6 +1546,85 @@ bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
     if (out_added)
         *out_added = added;
     if (added == 0)
+        return true;
+    if (!cetta_mork_bridge_space_dump((CettaMorkSpaceHandle *)st->bridge_space,
+                                      &packet, &packet_len, &packet_rows)) {
+        st->bridge_active = false;
+        st->built = false;
+        st->dirty = true;
+        return false;
+    }
+
+    fresh = cetta_malloc(sizeof(Space));
+    space_init_with_universe(fresh, s ? s->universe : NULL);
+    fresh->kind = s->kind;
+    if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
+        goto done;
+    }
+    ok = imported_parse_dump_text_into_space(fresh, persistent_arena, packet, packet_len);
+    if (!ok)
+        goto done;
+
+    space_replace_contents(s, fresh);
+    ok = true;
+
+done:
+    if (packet)
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+    if (fresh) {
+        if (ok) {
+            free(fresh);
+        } else {
+            space_free(fresh);
+            free(fresh);
+        }
+    }
+    (void)packet_rows;
+    return ok;
+}
+
+bool space_match_backend_remove_sexpr_chunk(Space *s, Arena *persistent_arena,
+                                            const uint8_t *text, size_t len,
+                                            uint64_t *out_removed) {
+    PathmapImportedState *st;
+    Space *fresh = NULL;
+    uint8_t *packet = NULL;
+    size_t packet_len = 0;
+    uint32_t packet_rows = 0;
+    uint64_t removed = 0;
+    bool ok = false;
+
+    if (out_removed)
+        *out_removed = 0;
+    if (!s || !space_engine_uses_pathmap(s->match_backend.kind))
+        return false;
+    if (space_is_ordered(s))
+        return false;
+    if (!text && len != 0)
+        return false;
+    if (len == 0) {
+        if (out_removed)
+            *out_removed = 0;
+        return true;
+    }
+    if (!space_match_backend_materialize_attached(s, persistent_arena))
+        return false;
+
+    st = &s->match_backend.imported;
+    if (!st->bridge_active && !imported_rebuild_bridge(s))
+        return false;
+    if (!st->bridge_active || !st->bridge_space)
+        return false;
+    if (!cetta_mork_bridge_space_remove_sexpr((CettaMorkSpaceHandle *)st->bridge_space,
+                                              text, len, &removed)) {
+        st->bridge_active = false;
+        st->built = false;
+        st->dirty = true;
+        return false;
+    }
+    if (out_removed)
+        *out_removed = removed;
+    if (removed == 0)
         return true;
     if (!cetta_mork_bridge_space_dump((CettaMorkSpaceHandle *)st->bridge_space,
                                       &packet, &packet_len, &packet_rows)) {
@@ -1495,12 +1908,32 @@ imported_bridge_query_indices(Space *s, Atom *pattern,
                               uint32_t **out, uint32_t *nout) {
     PathmapImportedState *st = &s->match_backend.imported;
     Arena scratch;
+    uint8_t *pattern_expr = NULL;
+    size_t pattern_expr_len = 0;
     arena_init(&scratch);
     char *pattern_text = atom_to_string(&scratch, pattern);
-    bool ok = cetta_mork_bridge_space_query_indices(
+    bool ok = cetta_mork_bridge_space_compile_query_expr_text(
         (CettaMorkSpaceHandle *)st->bridge_space,
-        (const uint8_t *)pattern_text, strlen(pattern_text),
-        out, nout);
+        pattern_text,
+        &pattern_expr,
+        &pattern_expr_len);
+    if (ok) {
+        ok = cetta_mork_bridge_space_query_candidates_prefix_expr_bytes(
+            (CettaMorkSpaceHandle *)st->bridge_space,
+            pattern_expr,
+            pattern_expr_len,
+            out,
+            nout);
+    }
+    if (!ok && pattern_expr) {
+        ok = cetta_mork_bridge_space_query_candidates_expr_bytes(
+            (CettaMorkSpaceHandle *)st->bridge_space,
+            pattern_expr,
+            pattern_expr_len,
+            out,
+            nout);
+    }
+    cetta_mork_bridge_bytes_free(pattern_expr, pattern_expr_len);
     arena_free(&scratch);
     if (!ok)
         return false;
@@ -1519,9 +1952,9 @@ imported_bridge_query_bindings(Space *s, Arena *a, Atom *query,
     uint8_t *packet = NULL;
     size_t packet_len = 0;
     uint32_t row_count = 0;
-    bool ok = cetta_mork_bridge_space_query_bindings(
+    bool ok = cetta_mork_bridge_space_query_bindings_text(
         (CettaMorkSpaceHandle *)st->bridge_space,
-        (const uint8_t *)pattern_text, strlen(pattern_text),
+        pattern_text,
         &packet, &packet_len, &row_count);
     arena_free(&scratch);
     if (!ok)
@@ -1967,9 +2400,8 @@ static void imported_note_add(Space *s, Atom *atom, uint32_t atom_idx) {
         Arena scratch;
         arena_init(&scratch);
         char *sexpr = atom_to_string(&scratch, atom);
-        bool ok = cetta_mork_bridge_space_add_indexed_sexpr(
-            (CettaMorkSpaceHandle *)st->bridge_space, atom_idx,
-            (const uint8_t *)sexpr, strlen(sexpr));
+        bool ok = cetta_mork_bridge_space_add_indexed_text(
+            (CettaMorkSpaceHandle *)st->bridge_space, atom_idx, sexpr);
         arena_free(&scratch);
         if (ok)
             return;
@@ -2414,7 +2846,7 @@ static const SpaceMatchBackendOps NATIVE_CANDIDATE_EXACT_BACKEND_OPS = {
 };
 
 static const SpaceMatchBackendOps IMPORTED_BACKEND_OPS = {
-    .name = "pathmap-imported",
+    .name = "pathmap",
     .supports_direct_bindings = true,
     .free = imported_free_backend,
     .note_add = imported_note_add,
@@ -2425,7 +2857,7 @@ static const SpaceMatchBackendOps IMPORTED_BACKEND_OPS = {
 };
 
 void space_match_backend_init(Space *s) {
-    s->match_backend.kind = SPACE_MATCH_BACKEND_NATIVE;
+    s->match_backend.kind = SPACE_ENGINE_NATIVE;
     s->match_backend.ops = &NATIVE_BACKEND_OPS;
     s->match_backend.native.match_trie = NULL;
     s->match_backend.native.match_trie_dirty = false;
@@ -2439,16 +2871,17 @@ void space_match_backend_free(Space *s) {
         s->match_backend.ops->free(s);
 }
 
-bool space_match_backend_try_set(Space *s, SpaceMatchBackendKind kind) {
+bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
     const SpaceMatchBackendOps *ops = NULL;
     switch (kind) {
-    case SPACE_MATCH_BACKEND_NATIVE:
+    case SPACE_ENGINE_NATIVE:
         ops = &NATIVE_BACKEND_OPS;
         break;
-    case SPACE_MATCH_BACKEND_NATIVE_CANDIDATE_EXACT:
+    case SPACE_ENGINE_NATIVE_CANDIDATE_EXACT:
         ops = &NATIVE_CANDIDATE_EXACT_BACKEND_OPS;
         break;
-    case SPACE_MATCH_BACKEND_PATHMAP_IMPORTED:
+    case SPACE_ENGINE_PATHMAP:
+    case SPACE_ENGINE_MORK:
         ops = &IMPORTED_BACKEND_OPS;
         break;
     default:
@@ -2490,49 +2923,58 @@ void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *o
 }
 
 const char *space_match_backend_name(const Space *s) {
+    if (!s)
+        return "unconfigured";
     if (!s->match_backend.ops || !s->match_backend.ops->name)
         return "unconfigured";
-    return s->match_backend.ops->name;
+    return space_match_backend_kind_name(s->match_backend.kind);
 }
 
 bool space_match_backend_supports_direct_bindings(const Space *s) {
     return s->match_backend.ops && s->match_backend.ops->supports_direct_bindings;
 }
 
-const char *space_match_backend_kind_name(SpaceMatchBackendKind kind) {
+const char *space_match_backend_kind_name(SpaceEngine kind) {
     switch (kind) {
-    case SPACE_MATCH_BACKEND_NATIVE:
-        return "native-subst-tree";
-    case SPACE_MATCH_BACKEND_NATIVE_CANDIDATE_EXACT:
+    case SPACE_ENGINE_NATIVE:
+        return "native";
+    case SPACE_ENGINE_NATIVE_CANDIDATE_EXACT:
         return "native-candidate-exact";
-    case SPACE_MATCH_BACKEND_PATHMAP_IMPORTED:
-        return "pathmap-imported";
+    case SPACE_ENGINE_PATHMAP:
+        return "pathmap";
+    case SPACE_ENGINE_MORK:
+        return "mork";
     default:
         return "unknown";
     }
 }
 
-bool space_match_backend_kind_from_name(const char *name, SpaceMatchBackendKind *out) {
-    if (strcmp(name, "native-subst-tree") == 0) {
-        *out = SPACE_MATCH_BACKEND_NATIVE;
+bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out) {
+    if (strcmp(name, "native") == 0 || strcmp(name, "native-subst-tree") == 0) {
+        *out = SPACE_ENGINE_NATIVE;
         return true;
     }
     if (strcmp(name, "native-candidate-exact") == 0) {
-        *out = SPACE_MATCH_BACKEND_NATIVE_CANDIDATE_EXACT;
+        *out = SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
         return true;
     }
-    if (strcmp(name, "pathmap-imported") == 0) {
-        *out = SPACE_MATCH_BACKEND_PATHMAP_IMPORTED;
+    if (strcmp(name, "pathmap") == 0 || strcmp(name, "pathmap-imported") == 0) {
+        *out = SPACE_ENGINE_PATHMAP;
+        return true;
+    }
+    if (strcmp(name, "mork") == 0) {
+        *out = SPACE_ENGINE_MORK;
         return true;
     }
     return false;
 }
 
 void space_match_backend_print_inventory(FILE *out) {
-    fprintf(out, "space match backends:\n");
-    fprintf(out, "  native-subst-tree      direct bindings via substitution tree fast-path\n");
-    fprintf(out, "  native-candidate-exact exact matcher over trie-pruned candidates\n");
-    fprintf(out, "  pathmap-imported       flat/path imported matcher with direct bindings + coref fast-path\n");
+    fprintf(out, "space engines:\n");
+    fprintf(out, "  native                 standard CeTTa / HE engine\n");
+    fprintf(out, "  pathmap                PathMap-backed CeTTa engine with fast candidate narrowing\n");
+    fprintf(out, "  mork                   explicit MORK / MM2 engine over PathMap\n");
+    fprintf(out, "  native-candidate-exact diagnostic native exact-matcher lane\n");
 }
 
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out) {

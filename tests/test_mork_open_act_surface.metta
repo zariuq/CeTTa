@@ -1,31 +1,54 @@
 !(import! &self mork)
 
-!(bind! &src (new-space mork))
-!(add-atom &src (edge a b))
-!(add-atom &src (edge a b))
-!(add-atom &src (edge b c))
+!(bind! &src (mork:new-space))
+!(mork:add-atom &src (edge a b))
+!(mork:add-atom &src (edge a b))
+!(mork:add-atom &src (edge b c))
 !(assertEqual
   (mork:dump! &src "../runtime/test_mork_open_act_surface.act")
   ())
 
-!(bind! &compiled (mork.open-act "../runtime/test_mork_open_act_surface.act"))
+!(bind! &compiled (mork:open-act "../runtime/test_mork_open_act_surface.act"))
 !(assertEqualToResult
-  (size &compiled)
+  (get-type &compiled)
+  (MorkSpace))
+!(assertEqualToResult
+  (mork:size &compiled)
+  (2))
+!(assertEqualToResult
+  (mork:match &compiled (edge a b) hit)
+  (hit))
+!(assertEqualToResult
+  (mork:match &compiled (edge b c) hit)
+  (hit))
+!(bind! &compiled-clone (mork:clone &compiled))
+!(assertEqualToResult
+  (get-type &compiled-clone)
+  (MorkSpace))
+!(assertEqualToResult
+  (mork:size &compiled-clone)
+  (2))
+!(assertEqualToResult
+  (mork:match &compiled-clone (edge a b) hit)
+  (hit))
+!(mork:add-atom &compiled-clone (edge z y))
+!(assertEqualToResult
+  (mork:size &compiled)
+  (2))
+!(assertEqualToResult
+  (mork:size &compiled-clone)
   (3))
 !(assertEqualToResult
-  (match &compiled (edge a b) hit)
-  (hit hit))
-!(assertEqualToResult
-  (match &compiled (edge b c) hit)
+  (mork:match &compiled-clone (edge z y) hit)
   (hit))
-!(add-atom &compiled (edge c d))
+!(mork:add-atom &compiled (edge c d))
 !(assertEqualToResult
-  (size &compiled)
-  (4))
+  (mork:size &compiled)
+  (3))
 !(assertEqualToResult
-  (match &compiled (edge c d) hit)
+  (mork:match &compiled (edge c d) hit)
   (hit))
 !(assertEqual
-  (collapse (get-atoms &compiled))
-  ((edge a b) (edge a b) (edge b c) (edge c d)))
+  (collapse (mork:get-atoms &compiled))
+  ((edge a b) (edge b c) (edge c d)))
 ; Note: collapse returns a single list, so assertEqual compares one value — safe.

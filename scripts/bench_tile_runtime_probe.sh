@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/cetta"
-BACKEND="${1:-native-subst-tree}"
+BACKEND="${1:-native}"
 PROBE="$ROOT/tests/bench_tilepuzzle_probe.metta"
 
 if [ ! -x "$BIN" ]; then
@@ -19,7 +19,7 @@ time_file="$ROOT/runtime/tile_runtime_probe_${BACKEND}.time"
 mkdir -p "$ROOT/runtime"
 
 /usr/bin/time -v -o "$time_file" \
-    bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --count-only --emit-runtime-stats --profile he_extended --space-match-backend '$BACKEND' --lang he '$PROBE'" \
+    bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --count-only --emit-runtime-stats --profile he_extended --space-engine '$BACKEND' --lang he '$PROBE'" \
     > "$out_file" 2> "$stats_file"
 
 counter() {
