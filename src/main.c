@@ -626,6 +626,100 @@ static bool compile_profile_guard_ok(const CettaProfile *profile, Atom **atoms, 
     return true;
 }
 
+typedef struct {
+    char *inline_buf;
+    Atom **atoms;
+    FILE *output_spool;
+    Arena *arena;
+    bool arena_initialized;
+    Arena *eval_arena;
+    bool eval_arena_initialized;
+    SymbolTable *symbol_table;
+    bool symbol_table_initialized;
+    VarInternTable *var_intern_table;
+    bool var_intern_initialized;
+    HashConsTable *hashcons_table;
+    bool hashcons_initialized;
+    CettaLibraryContext *libraries;
+    bool libraries_initialized;
+    Space *space;
+    bool space_initialized;
+    Registry *registry;
+    bool registry_initialized;
+} CettaMainCleanup;
+
+static void cetta_main_cleanup_registry_spaces(Registry *registry, Space *root_space) {
+    if (!registry || !root_space) return;
+    for (uint32_t ri = 0; ri < registry->len; ri++) {
+        Atom *val = registry->entries[ri].value;
+        if (!val) continue;
+        if (val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE) {
+            Space *sp = (Space *)val->ground.ptr;
+            if (sp != root_space) {
+                space_free(sp);
+            }
+        }
+    }
+}
+
+static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
+    if (!cleanup) return;
+
+    if (cleanup->output_spool) {
+        fclose(cleanup->output_spool);
+        cleanup->output_spool = NULL;
+    }
+
+    free(cleanup->atoms);
+    cleanup->atoms = NULL;
+
+    if (cleanup->registry_initialized && cleanup->space_initialized) {
+        cetta_main_cleanup_registry_spaces(cleanup->registry, cleanup->space);
+        cleanup->registry_initialized = false;
+    }
+
+    if (cleanup->libraries_initialized) {
+        cetta_library_context_free(cleanup->libraries);
+        cleanup->libraries_initialized = false;
+    }
+
+    if (cleanup->space_initialized) {
+        space_free(cleanup->space);
+        cleanup->space_initialized = false;
+    }
+
+    free(cleanup->inline_buf);
+    cleanup->inline_buf = NULL;
+
+    if (cleanup->eval_arena_initialized) {
+        arena_free(cleanup->eval_arena);
+        cleanup->eval_arena_initialized = false;
+    }
+
+    if (cleanup->arena_initialized) {
+        arena_free(cleanup->arena);
+        cleanup->arena_initialized = false;
+    }
+
+    if (cleanup->var_intern_initialized) {
+        g_var_intern = NULL;
+        var_intern_free(cleanup->var_intern_table);
+        cleanup->var_intern_initialized = false;
+    }
+
+    if (cleanup->symbol_table_initialized) {
+        g_symbols = NULL;
+        symbol_table_free(cleanup->symbol_table);
+        cleanup->symbol_table_initialized = false;
+    }
+
+    if (cleanup->hashcons_initialized) {
+        g_hashcons = NULL;
+        hashcons_free(cleanup->hashcons_table);
+        cleanup->hashcons_initialized = false;
+    }
+}
+
 int main(int argc, char **argv) {
     /* Install SIGSEGV handler on alternate stack so it works during stack overflow */
     {
@@ -861,48 +955,63 @@ int main(int argc, char **argv) {
         return mm2_rc;
     }
 
+    int rc = 0;
+    Arena arena;       /* persistent: parsed atoms, space content, type decls */
+    Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
+    SymbolTable symbol_table;
+    VarInternTable var_intern_table;
+    HashConsTable hashcons_table;
+    Atom **atoms = NULL;
+    CettaLibraryContext libraries;
+    Space space;
+    Registry registry;
+    CettaMainCleanup cleanup = {0};
+
     g_count_only = count_only;
     if (fuel_override > 0) eval_set_default_fuel(fuel_override);
 
-    Arena arena;       /* persistent: parsed atoms, space content, type decls */
-    Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
+    cleanup.inline_buf = inline_buf;
+    cleanup.arena = &arena;
+    cleanup.eval_arena = &eval_arena;
+    cleanup.symbol_table = &symbol_table;
+    cleanup.var_intern_table = &var_intern_table;
+    cleanup.hashcons_table = &hashcons_table;
+    cleanup.libraries = &libraries;
+    cleanup.space = &space;
+    cleanup.registry = &registry;
+
     arena_init(&arena);
+    cleanup.arena_initialized = true;
     arena_init(&eval_arena);
+    cleanup.eval_arena_initialized = true;
 
     /* Global symbol table / builtin ids */
-    SymbolTable symbol_table;
     symbol_table_init(&symbol_table);
     symbol_table_init_builtins(&symbol_table, &g_builtin_syms);
+    cleanup.symbol_table_initialized = true;
     g_symbols = &symbol_table;
-    VarInternTable var_intern_table;
     var_intern_init(&var_intern_table);
+    cleanup.var_intern_initialized = true;
     g_var_intern = &var_intern_table;
 
     /* Hash-consing for structural sharing (reduces memory for large derivations) */
-    HashConsTable hashcons_table;
     hashcons_init(&hashcons_table);
+    cleanup.hashcons_initialized = true;
     g_hashcons = &hashcons_table;
     arena_set_hashcons(&arena, &hashcons_table);
 
-    Atom **atoms = NULL;
     int n = inline_text
         ? parse_metta_text(inline_text, &arena, &atoms)
         : parse_metta_file(filename, &arena, &atoms);
+    cleanup.atoms = atoms;
     if (n < 0) {
         if (inline_text) {
             fprintf(stderr, "error: could not parse inline MeTTa text\n");
         } else {
             fprintf(stderr, "error: could not read %s\n", filename);
         }
-        arena_free(&eval_arena);
-        arena_free(&arena);
-        g_var_intern = NULL;
-        var_intern_free(&var_intern_table);
-        g_symbols = NULL;
-        symbol_table_free(&symbol_table);
-        g_hashcons = NULL;
-        hashcons_free(&hashcons_table);
-        return 1;
+        rc = 1;
+        goto cleanup;
     }
     if (strcmp(lang->canonical, "mm2") == 0) {
         cetta_mm2_lower_atoms(&arena, atoms, n);
@@ -920,46 +1029,29 @@ int main(int argc, char **argv) {
             cetta_runtime_stats_snapshot(&stats);
             cetta_runtime_stats_print(stderr, &stats);
         }
-        free(atoms);
-        arena_free(&eval_arena);
-        arena_free(&arena);
-        g_var_intern = NULL;
-        var_intern_free(&var_intern_table);
-        g_symbols = NULL;
-        symbol_table_free(&symbol_table);
-        g_hashcons = NULL;
-        hashcons_free(&hashcons_table);
-        return mm2_rc;
+        rc = mm2_rc;
+        goto cleanup;
     }
 
-    CettaLibraryContext libraries;
     cetta_library_context_init_with_profile(&libraries, profile);
+    cleanup.libraries_initialized = true;
     libraries.term_universe.persistent_arena = &arena;
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
     eval_set_library_context(&libraries);
 
-    Space space;
     space_init_with_universe(&space, &libraries.term_universe);
+    cleanup.space_initialized = true;
     if (!space_match_backend_try_set(&space, space_engine)) {
         fprintf(stderr, "error: space engine '%s' is recognized but not implemented yet\n",
                 space_match_backend_kind_name(space_engine));
-        free(atoms);
-        cetta_library_context_free(&libraries);
-        arena_free(&eval_arena);
-        arena_free(&arena);
-        g_var_intern = NULL;
-        var_intern_free(&var_intern_table);
-        g_symbols = NULL;
-        symbol_table_free(&symbol_table);
-        g_hashcons = NULL;
-        hashcons_free(&hashcons_table);
-        return 2;
+        rc = 2;
+        goto cleanup;
     }
 
-    Registry registry;
     registry_init(&registry);
+    cleanup.registry_initialized = true;
     registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
 
     /* Load precompiled stdlib equations into the space */
@@ -997,18 +1089,8 @@ int main(int argc, char **argv) {
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
         if (!compile_profile_guard_ok(profile, atoms, n)) {
-            free(atoms);
-            cetta_library_context_free(&libraries);
-            space_free(&space);
-            arena_free(&eval_arena);
-            arena_free(&arena);
-            g_var_intern = NULL;
-            var_intern_free(&var_intern_table);
-            g_symbols = NULL;
-            symbol_table_free(&symbol_table);
-            g_hashcons = NULL;
-            hashcons_free(&hashcons_table);
-            return 2;
+            rc = 2;
+            goto cleanup;
         }
         for (int pi = 0; pi < n; pi++) {
             Atom *at = atoms[pi];
@@ -1019,17 +1101,8 @@ int main(int argc, char **argv) {
             space_add(&space, at);
         }
         compile_space_to_llvm(&space, &arena, stdout);
-        free(atoms);
-        space_free(&space);
-        arena_free(&eval_arena);
-        arena_free(&arena);
-        g_var_intern = NULL;
-        var_intern_free(&var_intern_table);
-        g_symbols = NULL;
-        symbol_table_free(&symbol_table);
-        g_hashcons = NULL;
-        hashcons_free(&hashcons_table);
-        return 0;
+        rc = 0;
+        goto cleanup;
     }
 
     /* Process top-level atoms */
@@ -1037,19 +1110,10 @@ int main(int argc, char **argv) {
     FILE *output_spool = tmpfile();
     if (!output_spool) {
         fprintf(stderr, "error: could not create output spool\n");
-        free(atoms);
-        cetta_library_context_free(&libraries);
-        space_free(&space);
-        arena_free(&eval_arena);
-        arena_free(&arena);
-        g_var_intern = NULL;
-        var_intern_free(&var_intern_table);
-        g_symbols = NULL;
-        symbol_table_free(&symbol_table);
-        g_hashcons = NULL;
-        hashcons_free(&hashcons_table);
-        return 1;
+        rc = 1;
+        goto cleanup;
     }
+    cleanup.output_spool = output_spool;
     while (i < n) {
         Atom *at = atoms[i];
 
@@ -1063,18 +1127,8 @@ int main(int argc, char **argv) {
             if (fflush(output_spool) != 0) {
                 fprintf(stderr, "error: could not write output spool\n");
                 free(rs.items);
-                fclose(output_spool);
-                free(atoms);
-                space_free(&space);
-                arena_free(&eval_arena);
-                arena_free(&arena);
-                g_var_intern = NULL;
-                var_intern_free(&var_intern_table);
-                g_symbols = NULL;
-                symbol_table_free(&symbol_table);
-                g_hashcons = NULL;
-                hashcons_free(&hashcons_table);
-                return 1;
+                rc = 1;
+                goto cleanup;
             }
             bool stop_after_error = result_set_has_error(&rs);
             free(rs.items);
@@ -1095,19 +1149,8 @@ int main(int argc, char **argv) {
 
     if (fseek(output_spool, 0, SEEK_SET) != 0) {
         fprintf(stderr, "error: could not rewind output spool\n");
-        fclose(output_spool);
-        free(atoms);
-        cetta_library_context_free(&libraries);
-        space_free(&space);
-        arena_free(&eval_arena);
-        arena_free(&arena);
-        g_var_intern = NULL;
-        var_intern_free(&var_intern_table);
-        g_symbols = NULL;
-        symbol_table_free(&symbol_table);
-        g_hashcons = NULL;
-        hashcons_free(&hashcons_table);
-        return 1;
+        rc = 1;
+        goto cleanup;
     }
     {
         char io_buf[8192];
@@ -1115,23 +1158,11 @@ int main(int argc, char **argv) {
         while ((nread = fread(io_buf, 1, sizeof(io_buf), output_spool)) > 0) {
             if (fwrite(io_buf, 1, nread, stdout) != nread) {
                 fprintf(stderr, "error: could not flush output spool to stdout\n");
-                fclose(output_spool);
-                free(atoms);
-                cetta_library_context_free(&libraries);
-                space_free(&space);
-                arena_free(&eval_arena);
-                arena_free(&arena);
-                g_var_intern = NULL;
-                var_intern_free(&var_intern_table);
-                g_symbols = NULL;
-                symbol_table_free(&symbol_table);
-                g_hashcons = NULL;
-                hashcons_free(&hashcons_table);
-                return 1;
+                rc = 1;
+                goto cleanup;
             }
         }
     }
-    fclose(output_spool);
 
     if (emit_runtime_stats) {
         CettaRuntimeStats stats;
@@ -1139,31 +1170,9 @@ int main(int argc, char **argv) {
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    free(atoms);
+    rc = 0;
 
-    /* Free registry-owned space contents. Space structs themselves may live
-       in the persistent arena, so cleanup must not free the struct pointer. */
-    for (uint32_t ri = 0; ri < registry.len; ri++) {
-        Atom *val = registry.entries[ri].value;
-        if (!val) continue;
-        if (val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE) {
-            Space *sp = (Space *)val->ground.ptr;
-            if (sp != &space) {
-                space_free(sp);
-            }
-        }
-    }
-
-    cetta_library_context_free(&libraries);
-    space_free(&space);
-    free(inline_buf);
-    arena_free(&eval_arena);
-    arena_free(&arena);
-    g_var_intern = NULL;
-    var_intern_free(&var_intern_table);
-    g_symbols = NULL;
-    symbol_table_free(&symbol_table);
-    g_hashcons = NULL;
-    hashcons_free(&hashcons_table);
-    return 0;
+cleanup:
+    cetta_main_cleanup(&cleanup);
+    return rc;
 }
