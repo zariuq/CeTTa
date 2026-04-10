@@ -42,6 +42,7 @@
 (: search-policy (-> Atom Atom))
 (: new-space (-> SpaceType))
 (: new-space (-> Atom SpaceType))
+(: space-set-backend! (-> SpaceType Atom (->)))
 (: space-set-match-backend! (-> SpaceType Atom (->)))
 (: space-len (-> SpaceType Number))
 (: space-push (-> SpaceType Atom (->)))
@@ -196,17 +197,27 @@
   (@return "Results produced by evaluating the body against the snapshot-bound space"))
 
 (@doc new-space
-  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The he_extended/he_prime form accepts semantic kinds such as stack, queue, or hash, and also the engine shortcut mork for an ordinary atom-disciplined space whose matcher is explicitly configured to the imported PathMap/MORK lane. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms.")
+  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The he_extended/he_prime form accepts semantic kinds such as stack, queue, or hash, and also explicit engine selectors such as native or pathmap. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms. The MORK lane is no longer constructed through generic new-space: use (mork:new-space) from lib/mork.metta when you want the explicit MORK API.")
   (@params (
-    (@param "Optional space selector such as stack, queue, hash, or mork in extension profiles")))
+    (@param "Optional selector such as stack, queue, hash, native, or pathmap in extension profiles")))
   (@return "Fresh space value"))
 
-(@doc space-set-match-backend!
-  (@desc "Mutates the exact CeTTa match backend attached to a space. This is a low-level extension seam intended for explicit engine/backend experiments and library code; use higher-level helpers such as lib/mork.metta when you want a cleaner MORK-facing surface.")
+(@doc space-set-backend!
+  (@desc "Preferred compact spelling for the low-level backend mutation surface.")
   (@params (
     (@param "Space to mutate")
-    (@param "Backend symbol such as native-subst-tree, native-candidate-exact, or pathmap-imported")))
+    (@param "Backend symbol such as native, pathmap, or the diagnostic lane native-candidate-exact")))
   (@return "Unit on success"))
+
+(@doc space-set-match-backend!
+  (@desc "Legacy longer spelling for the low-level backend mutation surface. This remains available for compatibility, but new code should prefer space-set-backend!. The MORK lane is no longer reachable here: use lib/mork.metta for explicit MORK handles instead.")
+  (@params (
+    (@param "Space to mutate")
+    (@param "Backend symbol such as native, pathmap, or the diagnostic lane native-candidate-exact")))
+  (@return "Unit on success"))
+
+(= (space-set-match-backend! $space $backend)
+  (space-set-backend! $space $backend))
 
 (@doc space-len
   (@desc "Returns the current number of stored items in a space. Unlike count-atoms, this is an explicit structured-space surface.")
@@ -254,20 +265,20 @@
   (@return "Unit on success"))
 
 (@doc step!
-  (@desc "Advances a space that has explicit step semantics and returns the number of steps actually performed. The one-argument form performs one step. The two-argument form performs up to the given non-negative step count. Today this is supported for unordered MORK-backed spaces such as (new-space mork). Ordered spaces and ordinary native atom/hash spaces report NoStepSemantics. Attached compiled ACT spaces materialize into live storage before stepping.")
+  (@desc "Low-level stepping surface. The one-argument form performs one step. The two-argument form performs up to the given non-negative step count. Ordinary native/pathmap spaces report NoStepSemantics. Explicit MORK workflows should use mork:step! from lib/mork.metta by default; bare step! on Space mork stays guarded unless you enable (pragma! mork-space-sugar allow).")
   (@params (
-    (@param "Target step-capable space")
+    (@param "Target space")
     (@param "Optional non-negative step count")))
   (@return "Number of steps actually performed"))
 
 (@doc include
-  (@desc "Loads a module into a space transactionally. The one-argument form (include spec) merges into &self. The two-argument form (include &dst spec) merges into an already-existing named space; on failure the target space is rolled back unchanged. Relative specs may resolve to .metta, .act, or raw .mm2 files. Including a .mm2 file loads its facts and execs through the raw MORK bridge path into the destination space; unordered destinations are promoted to the live MORK stepping lane as needed.")
+  (@desc "Loads a module into a space transactionally. The one-argument form (include spec) merges into &self. The two-argument form (include &dst spec) merges into an already-existing named space; on failure the target space is rolled back unchanged. Relative specs may resolve to .metta, .act, or raw .mm2 files. Including a .mm2 file lowers its surface into ordinary atoms; those atoms stay plain data unless the destination space is already an explicit MorkSpace.")
   (@params (
     (@param "Module spec or path to include, or an explicit destination space reference followed by the module spec")))
   (@return "Unit on success, or an Error value on failure"))
 
 (@doc import!
-  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled spaces instead of reparsing, and fresh raw .mm2 imports materialize as live MORK-backed spaces ready for step!. Loader failures can surface ModuleImportCycle or ModuleParseFailed.")
+  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled PathMap spaces instead of reparsing, and raw .mm2 imports are stored as ordinary atoms unless the destination space is already an explicit MorkSpace. Loader failures can surface ModuleImportCycle or ModuleParseFailed.")
   (@params (
     (@param "Destination space reference: &self or a fresh &name")
     (@param "Module spec or path to import")))
@@ -283,13 +294,13 @@
 (@doc ModuleImportCycle
   (@desc "Structured runtime error constructor for cyclic module imports.")
   (@params (
-    (@param "Canonical path of the module that was already loading")))
+    (@param "Resolved module path, shown relative to the active script or project root when possible")))
   (@return "ErrorType payload describing the detected import cycle"))
 
 (@doc ModuleParseFailed
   (@desc "Structured runtime error constructor for malformed module files that fail CeTTa's file parser checks.")
   (@params (
-    (@param "Canonical path of the module file that could not be parsed")))
+    (@param "Resolved module path, shown relative to the active script or project root when possible")))
   (@return "ErrorType payload describing the module parse failure"))
 
 (@doc sqrt-math

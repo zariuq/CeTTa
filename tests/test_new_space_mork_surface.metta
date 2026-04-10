@@ -1,5 +1,15 @@
-!(bind! &m (new-space mork))
-!(assertEqualToResult (get-type &m) ((Space mork)))
-!(add-atom &m (edge a b))
-!(assertEqualToResult (match &m (edge $x $y) ($x $y)) ((a b)))
-!(assertEqualToResult (size &m) (1))
+!(import! &self mork)
+; Preferred explicit constructor.
+!(bind! &m (mork:new-space))
+!(assertEqualToResult (get-type &m) (MorkSpace))
+!(assertEqualToResult
+  (add-atom &m (edge a b))
+  ((Error (add-atom &m (edge a b)) "MorkSpace requires explicit mork:add-atom; add-atom does not operate on MorkSpace")))
+!(mork:add-atom &m (edge a b))
+!(assertEqual (mork:match &m (edge $x $y) ($x $y)) (superpose ((a b))))
+!(assertEqualToResult (mork:size &m) (1))
+
+; Legacy generic construction is now quarantined.
+!(assertEqualToResult
+  (new-space mork)
+  ((Error (new-space mork) "generic (new-space mork) is disabled; use (mork:new-space)")))

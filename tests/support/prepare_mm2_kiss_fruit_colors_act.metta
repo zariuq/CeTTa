@@ -1,0 +1,10 @@
+!(import! &self mork)
+
+!(bind! &colors (mork:new-space))
+!(mork:add-atom &colors (color apple red))
+!(mork:add-atom &colors (color banana yellow))
+!(mork:add-atom &colors (color cherry red))
+!(mork:add-atom &colors (color grape purple))
+!(mork:add-atom &colors (color lemon yellow))
+!(mork:add-atom &colors (color strawberry red))
+!(mork:dump! &colors "/dev/shm/cetta_mm2_fruit_colors.act")

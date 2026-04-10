@@ -1,5 +1,5 @@
 !(import! &self mork)
-!(bind! &h (new-space mork))
-!(assertEqualToResult (get-type &h) ((Space mork)))
+!(bind! &h (new-space pathmap))
+!(assertEqualToResult (get-type &h) ((Space pathmap)))
 !(add-atom &h (edge a b))
 !(assertEqualToResult (match &h (edge $x $y) ($x $y)) ((a b)))
