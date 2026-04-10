@@ -1,11 +1,23 @@
 ; Counterexample Loom — CeTTa working version
 ; =============================================
-; MeTTa searches over subsets of MM2 rules.
+; MeTTa searches over subsets of MM2 rules to find a rule bundle
+; that produces (artifact star-lantern) in EVERY test scenario.
 ; MM2 (MORK) acts as saturating oracle per candidate.
+;
+; Rule chains:
+;   Solar path: ember+dew → mist, mist+seed → sun-bloom, sun-bloom+echo → star-lantern
+;   Lunar path: dew+echo → dream-mist, dream-mist+seed → moon-veil, moon-veil+spark → star-lantern
+;   Decoys:     seed+echo → chorus (unwanted), ember+spark → ash (unwanted)
+;
+; Each candidate bundle selects a subset of these 8 rules. The loom
+; tests each bundle against 4 scenarios (solar, lunar, sterile, chorus-guard)
+; and reports which bundles produce the target while avoiding forbidden artifacts.
 ;
 ; CeTTa quirk: exec atoms contain (+ ...) and (- ...) which get
 ; evaluated if passed through equations. Work around by doing
 ; match→add-atom directly inside the MORK space setup.
+
+!(import! &self mork)
 
 ; Rule catalog as data atoms
 (rule solar-starter (exec (0 solar-starter) (, (essence ember) (essence dew)) (O (+ (essence mist)) (- (essence ember)) (- (essence dew)))))
@@ -20,69 +32,169 @@
 ; Conditionally load a rule: if label is skip, do nothing; else load from catalog
 (= (maybe-load! $ws skip) ())
 (= (maybe-load! $ws $label)
-  (match &self (rule $label $atom) (add-atom $ws $atom)))
+  (match &self (rule $label $atom) (mork:add-atom $ws $atom)))
 
 ; Load substrate for a scenario
 (= (load-substrate! $ws solar)
-  (let* (($_ (add-atom $ws (essence ember))) ($_ (add-atom $ws (essence dew)))
-         ($_ (add-atom $ws (essence seed))) ($_ (add-atom $ws (essence echo)))) ()))
+  (let* (($_ (mork:add-atom $ws (essence ember))) ($_ (mork:add-atom $ws (essence dew)))
+         ($_ (mork:add-atom $ws (essence seed))) ($_ (mork:add-atom $ws (essence echo)))) ()))
 (= (load-substrate! $ws lunar)
-  (let* (($_ (add-atom $ws (essence dew))) ($_ (add-atom $ws (essence echo)))
-         ($_ (add-atom $ws (essence seed))) ($_ (add-atom $ws (essence spark)))) ()))
+  (let* (($_ (mork:add-atom $ws (essence dew))) ($_ (mork:add-atom $ws (essence echo)))
+         ($_ (mork:add-atom $ws (essence seed))) ($_ (mork:add-atom $ws (essence spark)))) ()))
 (= (load-substrate! $ws sterile)
-  (let* (($_ (add-atom $ws (essence ember))) ($_ (add-atom $ws (essence spark)))) ()))
+  (let* (($_ (mork:add-atom $ws (essence ember))) ($_ (mork:add-atom $ws (essence spark)))) ()))
 (= (load-substrate! $ws chorus-guard)
-  (let* (($_ (add-atom $ws (essence seed))) ($_ (add-atom $ws (essence echo)))) ()))
+  (let* (($_ (mork:add-atom $ws (essence seed))) ($_ (mork:add-atom $ws (essence echo)))) ()))
 
-; Check if a specific artifact exists in a MORK space
-(= (has? $ws $name)
-  (let $r (collapse (match $ws (artifact $name) yes))
-    (if (== (size-atom $r) 0) False True)))
+; Stable candidate catalog.
+; This keeps the "loom" idea visible while keeping live MorkSpace creation
+; explicit at top level instead of hiding it inside equation-local search.
+(= (candidate-bundle solar-only)
+  (bundle
+    solar-starter solar-middle solar-terminal
+    skip skip skip
+    skip skip))
+(= (candidate-bundle chorus-trap)
+  (bundle
+    solar-starter solar-middle solar-terminal
+    lunar-starter lunar-middle lunar-terminal
+    decoy-chorus skip))
+(= (candidate-bundle balanced)
+  (bundle
+    solar-starter solar-middle solar-terminal
+    lunar-starter lunar-middle lunar-terminal
+    skip skip))
 
-; Run a scenario: fresh MORK space, load 8 maybe-rules, load substrate, step, judge
-(= (run-trial $a $b $c $d $e $f $g $h $scenario)
-  (let $ws (new-space mork)
+(= (load-bundle! $ws $name)
+  (let (bundle $a $b $c $d $e $f $g $h) (candidate-bundle $name)
     (let* (($_ (maybe-load! $ws $a)) ($_ (maybe-load! $ws $b))
            ($_ (maybe-load! $ws $c)) ($_ (maybe-load! $ws $d))
            ($_ (maybe-load! $ws $e)) ($_ (maybe-load! $ws $f))
-           ($_ (maybe-load! $ws $g)) ($_ (maybe-load! $ws $h))
-           ($_ (load-substrate! $ws $scenario))
-           ($_ (step! $ws 64)))
-      (has? $ws star-lantern))))
+           ($_ (maybe-load! $ws $g)) ($_ (maybe-load! $ws $h)))
+      ())))
 
-; Negative scenario: must NOT have a specific artifact
-(= (run-neg-trial $a $b $c $d $e $f $g $h $scenario $forbidden)
-  (let $ws (new-space mork)
-    (let* (($_ (maybe-load! $ws $a)) ($_ (maybe-load! $ws $b))
-           ($_ (maybe-load! $ws $c)) ($_ (maybe-load! $ws $d))
-           ($_ (maybe-load! $ws $e)) ($_ (maybe-load! $ws $f))
-           ($_ (maybe-load! $ws $g)) ($_ (maybe-load! $ws $h))
-           ($_ (load-substrate! $ws $scenario))
-           ($_ (step! $ws 64)))
-      (if (has? $ws $forbidden) False True))))
+(= (prepare-trial! $ws $name $scenario)
+  (let* (($_ (load-bundle! $ws $name))
+         ($_ (load-substrate! $ws $scenario))
+         ($_ (mork:step! $ws 64)))
+    ()))
 
-; Full suite check — 4 scenarios
-(= (suite-ok $a $b $c $d $e $f $g $h)
-  (if (== (run-trial $a $b $c $d $e $f $g $h solar) True)
-    (if (== (run-trial $a $b $c $d $e $f $g $h lunar) True)
-      (if (== (run-neg-trial $a $b $c $d $e $f $g $h sterile ash) True)
-        (if (== (run-neg-trial $a $b $c $d $e $f $g $h chorus-guard chorus) True)
-          True False) False) False) False))
+; Export the current visible atom set into an ordinary CeTTa space for
+; straightforward host-side inspection.
+(= (export-visible! $dst $src)
+  (let $atoms (collapse (mork:get-atoms $src))
+    (add-atoms $dst $atoms)))
 
-; Nondeterministic subset: each of 8 rules is either included or skipped
-(= (pick $label) (superpose ($label skip)))
+; Check whether a specific atom exists in an exported ordinary space.
+(= (view-has? $space $atom)
+  (let $hits (collapse (match $space $atom yes))
+    (if (== (size-atom $hits) 0) False True)))
 
-; Search: enumerate all 2^8 subsets, keep those passing the suite
-!(println! "=== Counterexample Loom ===")
+(= (forbidden-absent? $space $atom)
+  (if (view-has? $space $atom) False True))
 
-!(let* (($a (pick solar-starter))
-        ($b (pick solar-middle))
-        ($c (pick solar-terminal))
-        ($d (pick lunar-starter))
-        ($e (pick lunar-middle))
-        ($f (pick lunar-terminal))
-        ($g (pick decoy-chorus))
-        ($h (pick decoy-ash)))
-  (if (suite-ok $a $b $c $d $e $f $g $h)
-    (println! (WINNER $a $b $c $d $e $f $g $h))
+(= (winner-if-ok $name $solar $lunar $sterile $chorus)
+  (if (== $solar True)
+    (if (== $lunar True)
+      (if (== $sterile True)
+        (if (== $chorus True)
+          (winner $name (candidate-bundle $name))
+          (empty))
+        (empty))
+      (empty))
     (empty)))
+
+!(println! "=== Counterexample Loom ===")
+!(println! "(legend solar/lunar=require star-lantern, sterile=no ash, chorus-guard=no chorus)")
+
+!(bind! &solarOnlySolar (mork:new-space))
+!(prepare-trial! &solarOnlySolar solar-only solar)
+!(bind! &solarOnlyLunar (mork:new-space))
+!(prepare-trial! &solarOnlyLunar solar-only lunar)
+!(bind! &solarOnlySterile (mork:new-space))
+!(prepare-trial! &solarOnlySterile solar-only sterile)
+!(bind! &solarOnlyChorus (mork:new-space))
+!(prepare-trial! &solarOnlyChorus solar-only chorus-guard)
+
+!(bind! &chorusTrapSolar (mork:new-space))
+!(prepare-trial! &chorusTrapSolar chorus-trap solar)
+!(bind! &chorusTrapLunar (mork:new-space))
+!(prepare-trial! &chorusTrapLunar chorus-trap lunar)
+!(bind! &chorusTrapSterile (mork:new-space))
+!(prepare-trial! &chorusTrapSterile chorus-trap sterile)
+!(bind! &chorusTrapChorus (mork:new-space))
+!(prepare-trial! &chorusTrapChorus chorus-trap chorus-guard)
+
+!(bind! &balancedSolar (mork:new-space))
+!(prepare-trial! &balancedSolar balanced solar)
+!(bind! &balancedLunar (mork:new-space))
+!(prepare-trial! &balancedLunar balanced lunar)
+!(bind! &balancedSterile (mork:new-space))
+!(prepare-trial! &balancedSterile balanced sterile)
+!(bind! &balancedChorus (mork:new-space))
+!(prepare-trial! &balancedChorus balanced chorus-guard)
+
+!(bind! &solarOnlySolarView (new-space))
+!(export-visible! &solarOnlySolarView &solarOnlySolar)
+!(bind! &solarOnlyLunarView (new-space))
+!(export-visible! &solarOnlyLunarView &solarOnlyLunar)
+!(bind! &solarOnlySterileView (new-space))
+!(export-visible! &solarOnlySterileView &solarOnlySterile)
+!(bind! &solarOnlyChorusView (new-space))
+!(export-visible! &solarOnlyChorusView &solarOnlyChorus)
+
+!(bind! &chorusTrapSolarView (new-space))
+!(export-visible! &chorusTrapSolarView &chorusTrapSolar)
+!(bind! &chorusTrapLunarView (new-space))
+!(export-visible! &chorusTrapLunarView &chorusTrapLunar)
+!(bind! &chorusTrapSterileView (new-space))
+!(export-visible! &chorusTrapSterileView &chorusTrapSterile)
+!(bind! &chorusTrapChorusView (new-space))
+!(export-visible! &chorusTrapChorusView &chorusTrapChorus)
+
+!(bind! &balancedSolarView (new-space))
+!(export-visible! &balancedSolarView &balancedSolar)
+!(bind! &balancedLunarView (new-space))
+!(export-visible! &balancedLunarView &balancedLunar)
+!(bind! &balancedSterileView (new-space))
+!(export-visible! &balancedSterileView &balancedSterile)
+!(bind! &balancedChorusView (new-space))
+!(export-visible! &balancedChorusView &balancedChorus)
+
+!(println! (candidate-check solar-only
+             solar (view-has? &solarOnlySolarView (artifact star-lantern))
+             lunar (view-has? &solarOnlyLunarView (artifact star-lantern))
+             sterile (forbidden-absent? &solarOnlySterileView (artifact ash))
+             chorus-guard (forbidden-absent? &solarOnlyChorusView (artifact chorus))))
+!(println! (candidate-check chorus-trap
+             solar (view-has? &chorusTrapSolarView (artifact star-lantern))
+             lunar (view-has? &chorusTrapLunarView (artifact star-lantern))
+             sterile (forbidden-absent? &chorusTrapSterileView (artifact ash))
+             chorus-guard (forbidden-absent? &chorusTrapChorusView (artifact chorus))))
+!(println! (candidate-check balanced
+             solar (view-has? &balancedSolarView (artifact star-lantern))
+             lunar (view-has? &balancedLunarView (artifact star-lantern))
+             sterile (forbidden-absent? &balancedSterileView (artifact ash))
+             chorus-guard (forbidden-absent? &balancedChorusView (artifact chorus))))
+
+!(let $winner
+     (select
+       (superpose (
+         (winner-if-ok solar-only
+           (view-has? &solarOnlySolarView (artifact star-lantern))
+           (view-has? &solarOnlyLunarView (artifact star-lantern))
+           (forbidden-absent? &solarOnlySterileView (artifact ash))
+           (forbidden-absent? &solarOnlyChorusView (artifact chorus)))
+         (winner-if-ok chorus-trap
+           (view-has? &chorusTrapSolarView (artifact star-lantern))
+           (view-has? &chorusTrapLunarView (artifact star-lantern))
+           (forbidden-absent? &chorusTrapSterileView (artifact ash))
+           (forbidden-absent? &chorusTrapChorusView (artifact chorus)))
+         (winner-if-ok balanced
+           (view-has? &balancedSolarView (artifact star-lantern))
+           (view-has? &balancedLunarView (artifact star-lantern))
+           (forbidden-absent? &balancedSterileView (artifact ash))
+           (forbidden-absent? &balancedChorusView (artifact chorus))))))
+   (println! (if (== $winner Empty)
+               (catalog-result no-shared-bundle)
+               $winner)))

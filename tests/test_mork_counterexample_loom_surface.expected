@@ -1,0 +1,7 @@
+=== Counterexample Loom ===
+(legend solar/lunar=require star-lantern, sterile=no ash, chorus-guard=no chorus)
+(candidate-check solar-only solar True lunar False sterile True chorus-guard True)
+(candidate-check chorus-trap solar False lunar False sterile True chorus-guard False)
+(candidate-check balanced solar False lunar True sterile True chorus-guard True)
+(catalog-result no-shared-bundle)
+[()]

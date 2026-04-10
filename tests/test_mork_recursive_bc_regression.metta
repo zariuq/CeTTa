@@ -1,4 +1,4 @@
-; Regression: recursive backward chaining over `new-space mork`
+; Regression: recursive backward chaining over the PathMap-backed lane
 ; must preserve the same theorem as the native space on Nil's
 ; depth-2 propositional-calculus witness.
 
@@ -28,10 +28,10 @@
 !(add-atom &ab-native (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-native (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
 
-!(bind! &rb-mork (new-space mork))
+!(bind! &rb-mork (new-space pathmap))
 !(add-atom &rb-mork (: ax-mp (-> (→ $𝜑 $𝜓) $𝜑 $𝜓)))
 
-!(bind! &ab-mork (new-space mork))
+!(bind! &ab-mork (new-space pathmap))
 !(add-atom &ab-mork (: ax-1 (→ $𝜑 (→ $𝜓 $𝜑))))
 !(add-atom &ab-mork (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
 !(add-atom &ab-mork (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
