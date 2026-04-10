@@ -226,6 +226,12 @@ Why this can look surprising at first:
 
 See `examples/mork_mm2_showcase.metta` for the runnable version.
 
+For raw `.mm2` files at the CLI, use:
+
+```bash
+./cetta --lang mm2 examples/bc_socrates_pln.mm2
+```
+
 ## 5. ACT Dump, Load, And Open
 
 ACT (Atom-Compiled Trie) is MORK's binary persistence format. It serializes a live PathMap trie to disk so you can reload it without reparsing. Think of it as a compiled snapshot — fast to open, portable between sessions.
