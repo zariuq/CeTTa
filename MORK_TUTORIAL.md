@@ -32,6 +32,8 @@ Further reading:
 - [Data in MORK](https://github.com/trueagi-io/MORK/wiki/Data-in-MORK)
 - [MM2 Structuring Code](https://github.com/ClarkeRemy/MM2_Structuring_Code)
 
+**Build prerequisites:** The `mork:` surface requires specific branches of MORK and PathMap. See the "MORK Bridge Prerequisites" section in `README.md` for exact branch/commit requirements.
+
 **Why use MorkSpace?**
 
 MorkSpace exposes capabilities that ordinary spaces don't surface:
