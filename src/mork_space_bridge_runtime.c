@@ -2152,6 +2152,8 @@ static uint32_t bridge_append_workspace_candidates(const char **candidates,
     *slash = '\0';
 
     const char *suffixes[] = {
+        "/rust/target/release/libcetta_space_bridge.so",
+        "/rust/target/debug/libcetta_space_bridge.so",
         "/../../hyperon/MORK/target/release/libcetta_space_bridge.so",
         "/../../hyperon/MORK/target/debug/libcetta_space_bridge.so"
     };
@@ -2175,8 +2177,8 @@ static bool bridge_load_api(void) {
     g_mork_bridge_api.attempted = true;
 
     const char *env = getenv("CETTA_MORK_SPACE_BRIDGE_LIB");
-    const char *candidates[4];
-    char candidate_storage[2][PATH_MAX];
+    const char *candidates[6];
+    char candidate_storage[4][PATH_MAX];
     uint32_t ncandidates = 0;
     if (env && *env)
         candidates[ncandidates++] = env;
@@ -2184,7 +2186,7 @@ static bool bridge_load_api(void) {
     ncandidates = bridge_append_workspace_candidates(candidates,
                                                      candidate_storage,
                                                      ncandidates,
-                                                     2);
+                                                     4);
 
     for (uint32_t i = 0; i < ncandidates; i++) {
         g_mork_bridge_api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_LOCAL);

@@ -42,18 +42,21 @@ make BUILD=full
 
 ### MORK Bridge Prerequisites
 
-The `BUILD=full` and `BUILD=mork` modes require specific branches of MORK and PathMap:
+The `BUILD=full` and `BUILD=mork` modes build the bridge from CeTTa's own Rust
+workspace (`rust/`). This requires MORK and PathMap checked out as siblings:
 
-| Repo | Fork | Branch | Commit |
-|------|------|--------|--------|
-| **PathMap** | [zariuq/PathMap](https://github.com/zariuq/PathMap) | `feature/morkl-restrict-clean` | `928df84` |
-| **MORK** | [zariuq/MORK](https://github.com/zariuq/MORK) | `feature/arithsinks` | `a7d895c` |
+| Repo | Source | Notes |
+|------|--------|-------|
+| **PathMap** | [Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap) `master` | Mainline works |
+| **MORK** | [zariuq/MORK](https://github.com/zariuq/MORK) `feature/arithsinks` | Fork still needed |
 
-Clone or checkout these branches at:
+Clone or checkout at:
 - `hyperon/PathMap/` (relative to the claude workspace root)
 - `hyperon/MORK/` (relative to the claude workspace root)
 
-The MORK branch includes the arith-sink lineage plus the CeTTa space bridge. Future work will factor these into mainline-compatible adapters.
+The CeTTa-owned bridge includes a PathMap compatibility adapter (`rust/cetta-pathmap-adapter/`)
+that works with mainline PathMap. The MORK fork is still required for one query helper
+(`query_multi_with_factor_exprs`); a future `cetta-mork-adapter` will eliminate this dependency.
 
 ## Quick Start
 
@@ -97,9 +100,9 @@ make promote-runtime
 
 ## Optional MORK / PathMap Bridge
 
-If the static bridge library exists at
-`../../hyperon/MORK/target/release/libcetta_space_bridge.a`, `make BUILD=full`
-links it statically. Non-MORK builds can still load a bridge dynamically at
+The MORK bridge is built from CeTTa's own Rust workspace at `rust/`. Running
+`make BUILD=mork` or `make BUILD=full` builds `rust/target/release/libcetta_space_bridge.a`
+and links it statically. Non-MORK builds can still load a bridge dynamically at
 runtime.
 
 ```bash
@@ -264,6 +267,12 @@ Core runtime:
 - `src/compile.c`: LLVM IR emission
 - `src/mork_space_bridge_runtime.c`, `src/mork_space_bridge_runtime.h`:
   runtime-side bridge glue for the PathMap / MORK bridge lane
+
+MORK bridge (Rust):
+
+- `rust/Cargo.toml`: workspace root for CeTTa-owned Rust crates
+- `rust/cetta-space-bridge/`: C FFI bridge between CeTTa and MORK/PathMap
+- `rust/cetta-pathmap-adapter/`: PathMap compatibility layer (OverlayZipper, snapshot helpers)
 
 Libraries:
 
