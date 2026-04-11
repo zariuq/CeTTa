@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "cetta-space-bridge",
     "cetta-pathmap-adapter",
+    "cetta-mork-adapter",
 ]
 
 [workspace.package]
@@ -15,3 +16,4 @@ mork = { path = "../../../hyperon/MORK/kernel" }
 mork-expr = { path = "../../../hyperon/MORK/expr" }
 mork-frontend = { path = "../../../hyperon/MORK/frontend" }
 cetta-pathmap-adapter = { path = "cetta-pathmap-adapter" }
+cetta-mork-adapter = { path = "cetta-mork-adapter" }

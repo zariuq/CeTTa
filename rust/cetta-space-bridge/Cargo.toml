@@ -12,3 +12,4 @@ mork-expr = { workspace = true }
 mork-frontend = { workspace = true }
 pathmap = { workspace = true }
 cetta-pathmap-adapter = { workspace = true }
+cetta-mork-adapter = { workspace = true }
