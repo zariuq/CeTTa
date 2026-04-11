@@ -110,6 +110,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cetta-mork-adapter"
+version = "0.1.0"
+dependencies = [
+ "mork",
+ "mork-expr",
+ "pathmap",
+]
+
+[[package]]
 name = "cetta-pathmap-adapter"
 version = "0.1.0"
 dependencies = [
@@ -121,6 +130,7 @@ dependencies = [
 name = "cetta-space-bridge"
 version = "0.1.0"
 dependencies = [
+ "cetta-mork-adapter",
  "cetta-pathmap-adapter",
  "mork",
  "mork-expr",

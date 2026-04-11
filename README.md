@@ -48,15 +48,31 @@ workspace (`rust/`). This requires MORK and PathMap checked out as siblings:
 | Repo | Source | Notes |
 |------|--------|-------|
 | **PathMap** | [Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap) `master` | Mainline works |
-| **MORK** | [zariuq/MORK](https://github.com/zariuq/MORK) `feature/arithsinks` | Fork still needed |
+| **MORK** | [zariuq/MORK](https://github.com/zariuq/MORK) `feature/arithsinks` | Fork needed (pending upstream PR) |
 
 Clone or checkout at:
 - `hyperon/PathMap/` (relative to the claude workspace root)
 - `hyperon/MORK/` (relative to the claude workspace root)
 
-The CeTTa-owned bridge includes a PathMap compatibility adapter (`rust/cetta-pathmap-adapter/`)
-that works with mainline PathMap. The MORK fork is still required for one query helper
-(`query_multi_with_factor_exprs`); a future `cetta-mork-adapter` will eliminate this dependency.
+Build with the MORK bridge:
+
+```bash
+cd c-projects/CeTTa
+ulimit -v 10485760 && make BUILD=mork
+
+# smoke tests
+./cetta examples/mork_showcase.metta
+./cetta examples/mork_mm2_showcase.metta
+```
+
+The CeTTa-owned bridge includes two compatibility adapters:
+- `rust/cetta-pathmap-adapter/`: PathMap compatibility (OverlayZipper, snapshot helpers)
+- `rust/cetta-mork-adapter/`: MORK compatibility (factor expression query wrapper)
+
+Both adapters are thin forwarding layers with zero overhead. The MORK fork is only
+required for `query_multi_with_factor_exprs`; once the upstream PR
+([zariuq/MORK:cetta/query-multi-factor-exprs](https://github.com/zariuq/MORK/tree/cetta/query-multi-factor-exprs))
+merges to trueagi-io/MORK, mainline MORK will work.
 
 ## Quick Start
 
@@ -273,6 +289,7 @@ MORK bridge (Rust):
 - `rust/Cargo.toml`: workspace root for CeTTa-owned Rust crates
 - `rust/cetta-space-bridge/`: C FFI bridge between CeTTa and MORK/PathMap
 - `rust/cetta-pathmap-adapter/`: PathMap compatibility layer (OverlayZipper, snapshot helpers)
+- `rust/cetta-mork-adapter/`: MORK compatibility layer (factor expression query wrapper)
 
 Libraries:
 

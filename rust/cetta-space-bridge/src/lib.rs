@@ -1682,7 +1682,7 @@ fn query_bindings_multi_ref_v3_packet(
     let mut packet = Vec::new();
     let mut pending_rows: Vec<Vec<u8>> = Vec::new();
 
-    Space::query_multi_with_factor_exprs(
+    cetta_mork_adapter::query_multi_with_factor_exprs(
         &space.inner.btm,
         pattern_expr,
         |bindings, factor_exprs| {
