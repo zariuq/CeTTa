@@ -30,9 +30,11 @@ ENABLE_PYTHON := 1
 ENABLE_MORK_STATIC := 1
 endif
 
-MORK_BRIDGE_DIR ?= $(abspath ../../hyperon/MORK/target/release)
-MORK_BRIDGE_MANIFEST ?= $(abspath ../../hyperon/MORK/experiments/cetta-space-bridge/Cargo.toml)
-MORK_BRIDGE_WORKDIR ?= $(abspath ../../hyperon/MORK/experiments/cetta-space-bridge)
+CETTA_RUST_DIR ?= $(abspath ./rust)
+MORK_BRIDGE_DIR ?= $(CETTA_RUST_DIR)/target/release
+MORK_BRIDGE_MANIFEST ?= $(CETTA_RUST_DIR)/cetta-space-bridge/Cargo.toml
+MORK_BRIDGE_WORKDIR ?= $(CETTA_RUST_DIR)
+MORK_BRIDGE_RUSTFLAGS ?= -C target-cpu=native
 MORK_BRIDGE_STATICLIB := $(MORK_BRIDGE_DIR)/libcetta_space_bridge.a
 BRIDGE_DEPS =
 BRIDGE_CFLAGS =
@@ -51,7 +53,8 @@ endif
 $(MORK_BRIDGE_STATICLIB): $(MORK_BRIDGE_MANIFEST) FORCE
 	@cd $(MORK_BRIDGE_WORKDIR) && \
 	ulimit -v 10485760 && \
-	cargo build --release
+	RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
+	cargo build -p cetta-space-bridge --release
 
 PY_CFLAGS =
 PY_LDFLAGS =

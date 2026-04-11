@@ -1,0 +1,8 @@
+[package]
+name = "cetta-pathmap-adapter"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+fast-slice-utils = { workspace = true }
+pathmap = { workspace = true }
