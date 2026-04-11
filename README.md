@@ -48,11 +48,22 @@ workspace (`rust/`). This requires MORK and PathMap checked out as siblings:
 | Repo | Source | Notes |
 |------|--------|-------|
 | **PathMap** | [Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap) `master` | Mainline works |
-| **MORK** | [zariuq/MORK](https://github.com/zariuq/MORK) `feature/arithsinks` | Fork needed (pending upstream PR) |
+| **MORK** | [zariuq/MORK](https://github.com/zariuq/MORK) | See branch options below |
 
 Clone or checkout at:
 - `hyperon/PathMap/` (relative to the claude workspace root)
 - `hyperon/MORK/` (relative to the claude workspace root)
+
+**Which MORK branch do I need?**
+
+- **Basic bridge / MM2 stepping**: Use the
+  [`cetta/query-multi-factor-exprs`](https://github.com/zariuq/MORK/tree/cetta/query-multi-factor-exprs)
+  branch until that helper merges upstream. Once merged, mainline MORK works.
+
+- **Arithmetic sink examples**: If you want MM2 arithmetic sink examples working
+  today (`i+`, `i-`, `i*`, `f+`, `f-`, `f*`), use the
+  [`feature/arithsinks-pr-sync`](https://github.com/zariuq/MORK/tree/feature/arithsinks-pr-sync)
+  branch instead.
 
 Build with the MORK bridge:
 
@@ -60,19 +71,19 @@ Build with the MORK bridge:
 cd c-projects/CeTTa
 ulimit -v 10485760 && make BUILD=mork
 
-# smoke tests
+# smoke tests (basic MM2)
 ./cetta examples/mork_showcase.metta
 ./cetta examples/mork_mm2_showcase.metta
+
+# smoke test (arithmetic sinks - requires arithsinks branch)
+./cetta examples/mork_intarith_showcase.metta
 ```
 
 The CeTTa-owned bridge includes two compatibility adapters:
 - `rust/cetta-pathmap-adapter/`: PathMap compatibility (OverlayZipper, snapshot helpers)
 - `rust/cetta-mork-adapter/`: MORK compatibility (factor expression query wrapper)
 
-Both adapters are thin forwarding layers with zero overhead. The MORK fork is only
-required for `query_multi_with_factor_exprs`; once the upstream PR
-([zariuq/MORK:cetta/query-multi-factor-exprs](https://github.com/zariuq/MORK/tree/cetta/query-multi-factor-exprs))
-merges to trueagi-io/MORK, mainline MORK will work.
+Both adapters are thin forwarding layers with zero overhead.
 
 ## Quick Start
 
