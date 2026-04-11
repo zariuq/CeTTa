@@ -40,6 +40,21 @@ If you also want the local static MORK bridge:
 make BUILD=full
 ```
 
+### MORK Bridge Prerequisites
+
+The `BUILD=full` and `BUILD=mork` modes require specific branches of MORK and PathMap:
+
+| Repo | Fork | Branch | Commit |
+|------|------|--------|--------|
+| **PathMap** | [zariuq/PathMap](https://github.com/zariuq/PathMap) | `feature/morkl-restrict-clean` | `928df84` |
+| **MORK** | [zariuq/MORK](https://github.com/zariuq/MORK) | `feature/arithsinks` | `a7d895c` |
+
+Clone or checkout these branches at:
+- `hyperon/PathMap/` (relative to the claude workspace root)
+- `hyperon/MORK/` (relative to the claude workspace root)
+
+The MORK branch includes the arith-sink lineage plus the CeTTa space bridge. Future work will factor these into mainline-compatible adapters.
+
 ## Quick Start
 
 Run a small file:
