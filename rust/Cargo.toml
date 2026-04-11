@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "cetta-space-bridge",
+    "cetta-pathmap-adapter",
+]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+fast-slice-utils = "0.1"
+pathmap = { path = "../../../hyperon/PathMap", features = ["jemalloc", "arena_compact", "nightly"] }
+mork = { path = "../../../hyperon/MORK/kernel" }
+mork-expr = { path = "../../../hyperon/MORK/expr" }
+mork-frontend = { path = "../../../hyperon/MORK/frontend" }
+cetta-pathmap-adapter = { path = "cetta-pathmap-adapter" }

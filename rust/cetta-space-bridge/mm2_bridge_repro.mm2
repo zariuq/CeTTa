@@ -1,0 +1,3 @@
+(edge a b)
+(edge b c)
+(exec (0 step) (, (edge $a $b) (edge $b $c)) (O (+ (path $a $c))))
