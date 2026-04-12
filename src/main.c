@@ -1049,8 +1049,13 @@ int main(int argc, char **argv) {
     space_init_with_universe(&space, &libraries.term_universe);
     cleanup.space_initialized = true;
     if (!space_match_backend_try_set(&space, space_engine)) {
-        fprintf(stderr, "error: space engine '%s' is recognized but not implemented yet\n",
-                space_match_backend_kind_name(space_engine));
+        const char *reason = space_match_backend_unavailable_reason(space_engine);
+        if (reason) {
+            fprintf(stderr, "error: %s\n", reason);
+        } else {
+            fprintf(stderr, "error: space engine '%s' is recognized but not implemented yet\n",
+                    space_match_backend_kind_name(space_engine));
+        }
         rc = 2;
         goto cleanup;
     }
