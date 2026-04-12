@@ -657,32 +657,44 @@ static bool bindings_apply_memo_store(BindingApplyMemo *memo, VarId id, Atom *va
     return true;
 }
 
-static Atom *bindings_apply_seen(Bindings *b, Arena *a, Atom *atom,
-                                 VarId *seen, uint32_t seen_len,
-                                 BindingApplyMemo *memo) {
+static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
+                                              VarId *seen, uint32_t seen_len,
+                                              BindingApplyMemo *memo,
+                                              BindingsRewriteVarFn rewrite_var,
+                                              void *rewrite_ctx) {
     switch (atom->kind) {
     case ATOM_VAR: {
         Atom *memoized = bindings_apply_memo_lookup(memo, atom->var_id);
         if (memoized) return memoized;
         if (bindings_seen_var(seen, seen_len, atom->var_id)) {
-            bindings_apply_memo_store(memo, atom->var_id, atom);
-            return atom;
+            Atom *result = rewrite_var ? rewrite_var(a, atom, rewrite_ctx) : atom;
+            if (result)
+                bindings_apply_memo_store(memo, atom->var_id, result);
+            return result;
         }
         Atom *val = bindings_lookup_id(b, atom->var_id);
         if (!val) val = bindings_lookup_spelling(b, atom->sym_id);
         if (!val) {
-            bindings_apply_memo_store(memo, atom->var_id, atom);
-            return atom;
+            Atom *result = rewrite_var ? rewrite_var(a, atom, rewrite_ctx) : atom;
+            if (result)
+                bindings_apply_memo_store(memo, atom->var_id, result);
+            return result;
         }
         seen[seen_len] = atom->var_id;
-        Atom *result = bindings_apply_seen(b, a, val, seen, seen_len + 1, memo);
-        bindings_apply_memo_store(memo, atom->var_id, result);
+        Atom *result = bindings_apply_seen_with_rewrite(b, a, val, seen, seen_len + 1,
+                                                        memo, rewrite_var, rewrite_ctx);
+        if (result)
+            bindings_apply_memo_store(memo, atom->var_id, result);
         return result;
     }
     case ATOM_EXPR: {
         Atom **new_elems = NULL;
         for (uint32_t i = 0; i < atom->expr.len; i++) {
-            Atom *next = bindings_apply_seen(b, a, atom->expr.elems[i], seen, seen_len, memo);
+            Atom *next = bindings_apply_seen_with_rewrite(b, a, atom->expr.elems[i],
+                                                          seen, seen_len, memo,
+                                                          rewrite_var, rewrite_ctx);
+            if (!next)
+                return NULL;
             if (!new_elems && next != atom->expr.elems[i]) {
                 new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
                 for (uint32_t j = 0; j < i; j++)
@@ -699,11 +711,14 @@ static Atom *bindings_apply_seen(Bindings *b, Arena *a, Atom *atom,
     }
 }
 
-Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY);
-    if (b->len == 0)
+Atom *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
+                                  BindingsRewriteVarFn rewrite_var,
+                                  void *rewrite_ctx) {
+    if (!b || !a || !atom)
+        return NULL;
+    if (b->len == 0 && !rewrite_var)
         return atom;
-    uint32_t seen_cap = b->len;
+    uint32_t seen_cap = b->len ? b->len : 1;
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
     VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
     Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
@@ -713,11 +728,17 @@ Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
     BindingApplyMemo memo;
     bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
                              BINDINGS_MEMO_STACK_CAP);
-    Atom *result = bindings_apply_seen(b, a, atom, seen, 0, &memo);
+    Atom *result = bindings_apply_seen_with_rewrite(b, a, atom, seen, 0, &memo,
+                                                    rewrite_var, rewrite_ctx);
     bindings_apply_memo_release(&memo);
     if (seen != seen_stack)
         free(seen);
     return result;
+}
+
+Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY);
+    return bindings_apply_rewrite_vars(b, a, atom, NULL, NULL);
 }
 
 static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch,

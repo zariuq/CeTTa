@@ -49,6 +49,8 @@ typedef struct {
     uint32_t trail_cap;
 } BindingsBuilder;
 
+typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
+
 void      bindings_init(Bindings *b);
 void      bindings_free(Bindings *b);
 bool      bindings_clone(Bindings *dst, const Bindings *src);
@@ -65,6 +67,9 @@ bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
+Atom     *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
+                                      BindingsRewriteVarFn rewrite_var,
+                                      void *rewrite_ctx);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);

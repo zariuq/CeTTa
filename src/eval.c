@@ -346,8 +346,8 @@ void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env) {
         os->len--;
         return;
     }
-    if (slot->env.len == 0 || !atom_contains_vars(atom))
-        slot->materialized_atom = atom;
+    if (slot->env.len == 0 || !atom_contains_vars(slot->atom))
+        slot->materialized_atom = slot->atom;
 }
 
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env) {
@@ -355,8 +355,8 @@ void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env) {
     slot->atom = atom;
     slot->materialized_atom = NULL;
     bindings_move(&slot->env, env);
-    if (slot->env.len == 0 || !atom_contains_vars(atom))
-        slot->materialized_atom = atom;
+    if (slot->env.len == 0 || !atom_contains_vars(slot->atom))
+        slot->materialized_atom = slot->atom;
 }
 
 static void outcome_set_add_existing(OutcomeSet *os, const Outcome *src) {
