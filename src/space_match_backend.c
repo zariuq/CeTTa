@@ -668,6 +668,84 @@ cleanup:
     return success;
 }
 
+static bool mork_query_conjunction_iterative(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom **patterns,
+    uint32_t npatterns,
+    const Bindings *seed,
+    BindingSet *out) {
+    if (!bridge || !a || !patterns || !out)
+        return false;
+    binding_set_init(out);
+    if (npatterns == 0) {
+        if (seed)
+            return binding_set_push(out, seed);
+        return true;
+    }
+
+    BindingSet cur;
+    binding_set_init(&cur);
+    if (seed) {
+        if (!binding_set_push(&cur, seed)) {
+            binding_set_free(&cur);
+            return false;
+        }
+    } else {
+        Bindings empty;
+        bindings_init(&empty);
+        if (!binding_set_push(&cur, &empty)) {
+            bindings_free(&empty);
+            binding_set_free(&cur);
+            return false;
+        }
+        bindings_free(&empty);
+    }
+
+    for (uint32_t pi = 0; pi < npatterns; pi++) {
+        bool success = true;
+        BindingSet next;
+        binding_set_init(&next);
+        for (uint32_t bi = 0; bi < cur.len; bi++) {
+            Atom *grounded = bindings_apply(&cur.items[bi], a, patterns[pi]);
+            BindingSet matches;
+            binding_set_init(&matches);
+            if (!space_match_backend_mork_query_bindings_direct(
+                    bridge, a, grounded, &matches)) {
+                binding_set_free(&matches);
+                success = false;
+                break;
+            }
+            for (uint32_t mi = 0; mi < matches.len; mi++) {
+                Bindings merged;
+                if (!bindings_clone_merge(&merged, &cur.items[bi], &matches.items[mi])) {
+                    success = false;
+                    break;
+                }
+                if (!bindings_has_loop(&merged))
+                    binding_set_push_move(&next, &merged);
+                bindings_free(&merged);
+            }
+            binding_set_free(&matches);
+            if (!success)
+                break;
+        }
+        binding_set_free(&cur);
+        if (!success) {
+            binding_set_free(&next);
+            binding_set_free(out);
+            binding_set_init(out);
+            return false;
+        }
+        cur = next;
+        if (cur.len == 0)
+            break;
+    }
+
+    *out = cur;
+    return true;
+}
+
 bool space_match_backend_mork_query_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
@@ -684,7 +762,7 @@ bool space_match_backend_mork_query_conjunction_direct(
         return true;
     }
     if (npatterns > 32)
-        return false;
+        return mork_query_conjunction_iterative(bridge, a, patterns, npatterns, seed, out);
 
     Arena scratch;
     arena_init(&scratch);
@@ -716,8 +794,9 @@ bool space_match_backend_mork_query_conjunction_direct(
     if (!cetta_mork_bridge_space_query_bindings_multi_ref_v3(
             bridge, (const uint8_t *)query_text, strlen(query_text),
             &packet, &packet_len, &row_count)) {
-        success = false;
-        goto cleanup;
+        imported_bridge_varmap_free(&query_vars);
+        arena_free(&scratch);
+        return mork_query_conjunction_iterative(bridge, a, patterns, npatterns, seed, out);
     }
 
     size_t off = 0;
@@ -2872,6 +2951,8 @@ void space_match_backend_free(Space *s) {
 }
 
 bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
+    if (space_match_backend_unavailable_reason(kind))
+        return false;
     const SpaceMatchBackendOps *ops = NULL;
     switch (kind) {
     case SPACE_ENGINE_NATIVE:
@@ -2934,6 +3015,15 @@ bool space_match_backend_supports_direct_bindings(const Space *s) {
     return s->match_backend.ops && s->match_backend.ops->supports_direct_bindings;
 }
 
+const char *space_match_backend_unavailable_reason(SpaceEngine kind) {
+#if !CETTA_BUILD_WITH_PATHMAP_SPACE
+    if (kind == SPACE_ENGINE_PATHMAP)
+        return "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full";
+#endif
+    (void)kind;
+    return NULL;
+}
+
 const char *space_match_backend_kind_name(SpaceEngine kind) {
     switch (kind) {
     case SPACE_ENGINE_NATIVE:
@@ -2972,7 +3062,11 @@ bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out) {
 void space_match_backend_print_inventory(FILE *out) {
     fprintf(out, "space engines:\n");
     fprintf(out, "  native                 standard CeTTa / HE engine\n");
-    fprintf(out, "  pathmap                PathMap-backed CeTTa engine with fast candidate narrowing\n");
+    fprintf(out, "  pathmap                PathMap-backed CeTTa engine with fast candidate narrowing");
+#if !CETTA_BUILD_WITH_PATHMAP_SPACE
+    fprintf(out, " (requires BUILD=pathmap or BUILD=full)");
+#endif
+    fprintf(out, "\n");
     fprintf(out, "  mork                   explicit MORK / MM2 engine over PathMap\n");
     fprintf(out, "  native-candidate-exact diagnostic native exact-matcher lane\n");
 }

@@ -93,9 +93,13 @@ const QUERY_ONLY_V2_MAGIC: u32 = 0x4354_4252;
 const QUERY_ONLY_V2_VERSION: u16 = 2;
 const QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
+#[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_VERSION: u16 = 3;
+#[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
+#[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
+#[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_FLAG_MULTI_REF_GROUPS: u16 = 1 << 2;
 const ACT_COPY_SIDECAR_MAGIC: u32 = 0x4354_434f;
 const ACT_COPY_SIDECAR_VERSION: u16 = 2;
@@ -1426,6 +1430,7 @@ fn append_query_only_v2_header(out: &mut Vec<u8>, row_count: u32) {
     append_u32_be(out, row_count);
 }
 
+#[cfg(feature = "pathmap-space")]
 fn append_multi_ref_v3_header(out: &mut Vec<u8>, factor_count: u32, row_count: u32) {
     append_u32_be(out, QUERY_ONLY_V2_MAGIC);
     append_u16_be(out, MULTI_REF_V3_VERSION);
@@ -1536,6 +1541,7 @@ fn append_query_only_v2_row(
     append_query_only_binding_entries(space, out, bindings)
 }
 
+#[cfg(feature = "pathmap-space")]
 fn append_multi_ref_groups(
     space: &BridgeSpace,
     out: &mut Vec<u8>,
@@ -1660,6 +1666,7 @@ fn query_bindings_query_only_v2_packet(
     Ok((packet, row_count))
 }
 
+#[cfg(feature = "pathmap-space")]
 fn query_bindings_multi_ref_v3_packet(
     space: &mut BridgeSpace,
     pattern: &[u8],
@@ -1714,6 +1721,14 @@ fn query_bindings_multi_ref_v3_packet(
         packet.extend_from_slice(&row);
     }
     Ok((packet, row_count))
+}
+
+#[cfg(not(feature = "pathmap-space"))]
+fn query_bindings_multi_ref_v3_packet(
+    _space: &mut BridgeSpace,
+    _pattern: &[u8],
+) -> Result<(Vec<u8>, u32), String> {
+    Err("multi-ref v3 packets require the pathmap-space bridge feature".to_string())
 }
 
 fn query_index_packet(space: &mut BridgeSpace, pattern: &[u8]) -> Result<(Vec<u8>, u32), String> {
@@ -5356,6 +5371,7 @@ mod tests {
         mork_space_free(raw);
     }
 
+    #[cfg(feature = "pathmap-space")]
     #[test]
     fn multi_ref_v3_packet_reports_factor_groups_and_ground_bindings() {
         let raw = mork_space_new();
@@ -5441,6 +5457,22 @@ mod tests {
         assert!(data[58] > 0);
         assert!(data[38] == 2 || data[48] == 2 || data[58] == 2);
         mork_bytes_free(packet.data, packet.len);
+        mork_space_free(raw);
+    }
+
+    #[cfg(not(feature = "pathmap-space"))]
+    #[test]
+    fn multi_ref_v3_packet_reports_unavailable_without_pathmap_feature() {
+        let raw = mork_space_new();
+        assert!(!raw.is_null());
+        let query = b"(, (pair $x $y) (pair $y $z))";
+
+        let packet = mork_space_query_bindings_multi_ref_v3(raw, query.as_ptr(), query.len());
+        assert_eq!(packet.code, MorkStatusCode::Internal as i32);
+        let text = unsafe { std::slice::from_raw_parts(packet.message, packet.message_len) };
+        let rendered = std::str::from_utf8(text).unwrap();
+        assert!(rendered.contains("pathmap-space bridge feature"));
+        mork_bytes_free(packet.message, packet.message_len);
         mork_space_free(raw);
     }
 
