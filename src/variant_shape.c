@@ -20,8 +20,21 @@ static const char *variant_shape_slot_name_or_default(const CettaVariantShapeOpt
     return "$_slot";
 }
 
+/*
+ * Private variant slots need a detectable namespace so generic Bindings merge
+ * paths can reject accidental leaks before they corrupt semantic env state.
+ * This tag is a practical reservation rather than a theorem about all VarIds;
+ * the eventual opaque instance layer will make the separation stronger.
+ */
+static const VarId kVariantPrivateSlotMask = 0xFFFFFFFF00000000ULL;
+static const VarId kVariantPrivateSlotTag = 0xFFFFA11A00000000ULL;
+
 VarId variant_shape_slot_id(uint32_t ordinal) {
-    return ((VarId)ordinal << 32) | (VarId)ordinal;
+    return kVariantPrivateSlotTag | (VarId)ordinal;
+}
+
+bool variant_private_var_id(VarId id) {
+    return (id & kVariantPrivateSlotMask) == kVariantPrivateSlotTag;
 }
 
 void variant_shape_init(VariantShape *shape) {

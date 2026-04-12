@@ -1,5 +1,7 @@
 #include "match.h"
 #include "stats.h"
+#include "variant_shape.h"
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -25,6 +27,49 @@ static BindingPoolBlock *g_binding_constraint_pools[BINDINGS_POOL_CLASS_COUNT];
 
 static inline bool binding_var_eq(VarId lhs, VarId rhs) {
     return lhs == rhs;
+}
+
+static bool atom_contains_private_variant_var(const Atom *atom) {
+    if (!atom)
+        return false;
+    switch (atom->kind) {
+    case ATOM_VAR:
+        return variant_private_var_id(atom->var_id);
+    case ATOM_EXPR:
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (atom_contains_private_variant_var(atom->expr.elems[i]))
+                return true;
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+bool bindings_contains_private_variant_slots(const Bindings *b) {
+    if (!b)
+        return false;
+    for (uint32_t i = 0; i < b->len; i++) {
+        if (variant_private_var_id(b->entries[i].var_id) ||
+            atom_contains_private_variant_var(b->entries[i].val)) {
+            return true;
+        }
+    }
+    for (uint32_t i = 0; i < b->eq_len; i++) {
+        if (atom_contains_private_variant_var(b->constraints[i].lhs) ||
+            atom_contains_private_variant_var(b->constraints[i].rhs)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void bindings_assert_no_private_variant_slots(const Bindings *b) {
+#ifndef NDEBUG
+    assert(!bindings_contains_private_variant_slots(b));
+#else
+    (void)b;
+#endif
 }
 
 static int bindings_pool_class(uint32_t cap) {
@@ -501,6 +546,8 @@ bool bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
 }
 
 static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
+    bindings_assert_no_private_variant_slots(dst);
+    bindings_assert_no_private_variant_slots(src);
     uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
     BindingConstraint *pending = pending_cap <= BINDINGS_TEMP_STACK_CAP
@@ -554,6 +601,8 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
 bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
     if (!src || (src->len == 0 && src->eq_len == 0))
         return true;
+    bindings_assert_no_private_variant_slots(dst);
+    bindings_assert_no_private_variant_slots(src);
 
     BindingsBuilder builder;
     bindings_builder_init_owned(&builder, dst);
@@ -1145,6 +1194,8 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
         return true;
     if (src->len == 0 && src->eq_len == 0)
         return true;
+    bindings_assert_no_private_variant_slots(&bb->current);
+    bindings_assert_no_private_variant_slots(src);
 
     uint32_t mark = bindings_builder_save(bb);
     uint32_t pending_cap = bb->current.eq_len + src->eq_len + 1;
