@@ -8,6 +8,7 @@
 #include "stats.h"
 #include "table_store.h"
 #include "term_universe.h"
+#include "variant_shape.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,8 @@ static TermUniverse g_eval_fallback_universe = {0};
 /* Query cache for the current logical evaluation episode. */
 static TableStore g_episode_table;
 static bool g_episode_table_ready = false;
+static VariantBank g_episode_outcome_variant_bank;
+static bool g_episode_outcome_variant_bank_ready = false;
 /* Active importable library set */
 static CettaLibraryContext *g_library_context = NULL;
 static CettaEvalSession g_fallback_eval_session;
@@ -195,6 +198,44 @@ static void eval_release_episode_table(void) {
     g_episode_table_ready = false;
 }
 
+static bool outcome_variant_sharing_enabled(void) {
+    const CettaEvalOptionEntry *option = active_eval_option("outcome-variant-sharing");
+    if (!option)
+        return true;
+    if (option->kind == CETTA_EVAL_OPTION_VALUE_INT)
+        return option->int_value != 0;
+    return strcmp(option->repr, "off") != 0 &&
+           strcmp(option->repr, "false") != 0 &&
+           strcmp(option->repr, "0") != 0;
+}
+
+static VariantBank *eval_active_outcome_variant_bank(void) {
+    static const CettaVariantShapeOptions kOutcomeVariantOptions = {
+        .slot_policy = CETTA_VARIANT_SLOT_FIXED_SPELLING,
+        .slot_name = "$_slot",
+        .share_immutable = true,
+    };
+    if (!outcome_variant_sharing_enabled()) {
+        if (g_episode_outcome_variant_bank_ready) {
+            variant_bank_free(&g_episode_outcome_variant_bank);
+            g_episode_outcome_variant_bank_ready = false;
+        }
+        return NULL;
+    }
+    if (!g_episode_outcome_variant_bank_ready) {
+        variant_bank_init(&g_episode_outcome_variant_bank, kOutcomeVariantOptions);
+        g_episode_outcome_variant_bank_ready = true;
+    }
+    return &g_episode_outcome_variant_bank;
+}
+
+static void eval_release_outcome_variant_bank(void) {
+    if (!g_episode_outcome_variant_bank_ready)
+        return;
+    variant_bank_free(&g_episode_outcome_variant_bank);
+    g_episode_outcome_variant_bank_ready = false;
+}
+
 /* ── Result Set ─────────────────────────────────────────────────────────── */
 
 void result_set_init(ResultSet *rs) {
@@ -300,27 +341,80 @@ static Outcome *outcome_set_push_slot(OutcomeSet *os) {
     return &os->items[os->len++];
 }
 
+static void outcome_init(Outcome *out) {
+    if (!out)
+        return;
+    out->atom = NULL;
+    out->materialized_atom = NULL;
+    bindings_init(&out->env);
+    bindings_init(&out->slot_env);
+}
+
+static void outcome_free_fields(Outcome *out) {
+    if (!out)
+        return;
+    bindings_free(&out->env);
+    bindings_free(&out->slot_env);
+    out->atom = NULL;
+    out->materialized_atom = NULL;
+}
+
 static void outcome_move(Outcome *dst, Outcome *src) {
     dst->atom = src->atom;
     dst->materialized_atom = src->materialized_atom;
     bindings_move(&dst->env, &src->env);
+    bindings_move(&dst->slot_env, &src->slot_env);
+    src->atom = NULL;
+    src->materialized_atom = NULL;
 }
 
 static bool atom_contains_vars(const Atom *atom) {
     return atom_has_vars(atom);
 }
 
+static void outcome_refresh_materialized_fast_path(Outcome *out) {
+    if (!out)
+        return;
+    if (out->slot_env.len == 0 &&
+        (out->env.len == 0 || !atom_contains_vars(out->atom))) {
+        out->materialized_atom = out->atom;
+    } else {
+        out->materialized_atom = NULL;
+    }
+}
+
+static void outcome_try_factor_variant(Outcome *out) {
+    if (!out || out->slot_env.len > 0 || !out->atom || !atom_contains_vars(out->atom))
+        return;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_ATTEMPT);
+    VariantBank *bank = eval_active_outcome_variant_bank();
+    if (!bank)
+        return;
+    VariantShape shape;
+    if (!variant_shape_from_bound_atom(bank, &out->env, out->atom, &shape))
+        return;
+    out->atom = shape.skeleton;
+    bindings_move(&out->slot_env, &shape.slot_env);
+    variant_shape_free(&shape);
+    out->materialized_atom = NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_SUCCESS);
+}
+
 static Atom *outcome_atom_materialize(Arena *a, Outcome *out) {
+    Atom *materialized;
     if (!out)
         return NULL;
     if (out->materialized_atom)
         return out->materialized_atom;
-    if (out->env.len == 0 || !atom_contains_vars(out->atom)) {
-        out->materialized_atom = out->atom;
-        return out->atom;
+    materialized = out->atom;
+    if (out->slot_env.len > 0) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_SLOT_MATERIALIZE);
+        materialized = bindings_apply(&out->slot_env, a, materialized);
     }
-    out->materialized_atom = bindings_apply(&out->env, a, out->atom);
-    return out->materialized_atom;
+    if (out->env.len > 0 && atom_contains_vars(materialized))
+        materialized = bindings_apply(&out->env, a, materialized);
+    out->materialized_atom = materialized;
+    return materialized;
 }
 
 static bool outcome_atom_is_error(Arena *a, Outcome *out) {
@@ -340,44 +434,119 @@ static void bindings_array_free(Bindings *items, uint32_t len) {
 
 void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env) {
     Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
     slot->atom = atom;
-    slot->materialized_atom = NULL;
+    bindings_assert_no_private_variant_slots(env);
     if (!bindings_clone(&slot->env, env)) {
+        outcome_free_fields(slot);
         os->len--;
         return;
     }
-    if (slot->env.len == 0 || !atom_contains_vars(slot->atom))
-        slot->materialized_atom = slot->atom;
+    outcome_try_factor_variant(slot);
+    outcome_refresh_materialized_fast_path(slot);
 }
 
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env) {
     Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
     slot->atom = atom;
-    slot->materialized_atom = NULL;
+    bindings_assert_no_private_variant_slots(env);
     bindings_move(&slot->env, env);
-    if (slot->env.len == 0 || !atom_contains_vars(slot->atom))
-        slot->materialized_atom = slot->atom;
+    outcome_try_factor_variant(slot);
+    outcome_refresh_materialized_fast_path(slot);
 }
 
 static void outcome_set_add_existing(OutcomeSet *os, const Outcome *src) {
     Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
     slot->atom = src->atom;
     slot->materialized_atom = src->materialized_atom;
-    if (!bindings_clone(&slot->env, &src->env)) {
+    bindings_assert_no_private_variant_slots(&src->env);
+    if (!bindings_clone(&slot->env, &src->env) ||
+        !bindings_clone(&slot->slot_env, &src->slot_env)) {
+        outcome_free_fields(slot);
         os->len--;
         return;
     }
-    if (!slot->materialized_atom &&
-        (slot->env.len == 0 || !atom_contains_vars(slot->atom)))
-        slot->materialized_atom = slot->atom;
+    if (!slot->materialized_atom)
+        outcome_refresh_materialized_fast_path(slot);
 }
 
 static void outcome_set_add_existing_move(OutcomeSet *os, Outcome *src) {
     Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
     outcome_move(slot, src);
-    if (!slot->materialized_atom &&
-        (slot->env.len == 0 || !atom_contains_vars(slot->atom)))
-        slot->materialized_atom = slot->atom;
+    if (!slot->materialized_atom)
+        outcome_refresh_materialized_fast_path(slot);
+}
+
+static void outcome_set_add_existing_with_env(OutcomeSet *os,
+                                              const Outcome *src,
+                                              const Bindings *env) {
+    Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
+    slot->atom = src->atom;
+    bindings_assert_no_private_variant_slots(&src->env);
+    bindings_assert_no_private_variant_slots(env);
+    if (!bindings_clone(&slot->env, env) ||
+        !bindings_clone(&slot->slot_env, &src->slot_env)) {
+        outcome_free_fields(slot);
+        os->len--;
+        return;
+    }
+    outcome_refresh_materialized_fast_path(slot);
+}
+
+static Atom *outcome_materialize_with_outer_env(Arena *a, const Outcome *src,
+                                                const Bindings *outer_env) {
+    Atom *materialized = src->atom;
+    bindings_assert_no_private_variant_slots(&src->env);
+    bindings_assert_no_private_variant_slots(outer_env);
+    if (src->slot_env.len > 0) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_SLOT_MATERIALIZE);
+        materialized = bindings_apply((Bindings *)&src->slot_env, a, materialized);
+    }
+    if ((outer_env && outer_env->len > 0) || src->env.len > 0) {
+        if (outer_env && outer_env->len > 0 && src->env.len > 0) {
+            Bindings merged;
+            if (!bindings_clone_merge(&merged, outer_env, &src->env))
+                return NULL;
+            materialized = bindings_apply(&merged, a, materialized);
+            bindings_free(&merged);
+        } else {
+            Bindings *single = (Bindings *)((outer_env && outer_env->len > 0)
+                ? outer_env
+                : &src->env);
+            materialized = bindings_apply(single, a, materialized);
+        }
+    }
+    return materialized;
+}
+
+static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
+                                             const Outcome *src,
+                                             const Bindings *outer_env,
+                                             bool preserve_bindings) {
+    Bindings empty;
+    bindings_init(&empty);
+    bindings_assert_no_private_variant_slots(&src->env);
+    bindings_assert_no_private_variant_slots(outer_env);
+    if (!preserve_bindings) {
+        Atom *applied = outcome_materialize_with_outer_env(a, src, outer_env);
+        if (!applied)
+            return;
+        outcome_set_add(os, applied, &empty);
+        return;
+    }
+    if (!outer_env || outer_env->len == 0) {
+        outcome_set_add_existing(os, src);
+        return;
+    }
+    Bindings merged;
+    if (!bindings_clone_merge(&merged, outer_env, &src->env))
+        return;
+    outcome_set_add_existing_with_env(os, src, &merged);
+    bindings_free(&merged);
 }
 
 static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
@@ -395,19 +564,20 @@ static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
         if (outcome_atom_is_error(a, &os->items[i]))
             continue;
         if (out != i) {
-            bindings_free(&os->items[out].env);
+            outcome_free_fields(&os->items[out]);
+            outcome_init(&os->items[out]);
             outcome_move(&os->items[out], &os->items[i]);
         }
         out++;
     }
     for (uint32_t i = out; i < os->len; i++)
-        bindings_free(&os->items[i].env);
+        outcome_free_fields(&os->items[i]);
     os->len = out;
 }
 
 void outcome_set_free(OutcomeSet *os) {
     for (uint32_t i = 0; i < os->len; i++)
-        bindings_free(&os->items[i].env);
+        outcome_free_fields(&os->items[i]);
     free(os->items);
     os->items = NULL;
     os->len = os->cap = 0;
@@ -2591,6 +2761,7 @@ static Space *space_persistent_clone(Space *src, Arena *dst) {
 
 void eval_release_temporary_spaces(void) {
     eval_release_episode_table();
+    eval_release_outcome_variant_bank();
     for (uint32_t i = 0; i < g_temp_spaces.len; i++) {
         space_free(g_temp_spaces.items[i]);
         free(g_temp_spaces.items[i]);
@@ -3335,7 +3506,7 @@ static void eval_with_prefix_bindings(Space *s, Arena *a, Atom *type, Atom *atom
         if (!bindings_builder_merge_or_clone(&merged_builder, prefix,
                                              &inner.items[i].env, &attempt))
             continue;
-        outcome_set_add(os, inner.items[i].atom, attempt.env);
+        outcome_set_add_existing_with_env(os, &inner.items[i], attempt.env);
         bindings_merge_attempt_finish(&merged_builder, &attempt);
     }
     bindings_builder_free(&merged_builder);
@@ -3521,10 +3692,11 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
     bindings_free(&merged);
 }
 
-static void outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
-                                          Bindings *local_env,
-                                          const Bindings *outer_env,
-                                          bool preserve_bindings) {
+static __attribute__((unused)) void
+outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
+                              Bindings *local_env,
+                              const Bindings *outer_env,
+                              bool preserve_bindings) {
     Bindings empty;
     bindings_init(&empty);
     Bindings *inner = local_env ? local_env : &empty;
@@ -3576,7 +3748,7 @@ static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *s
             if (!bindings_builder_merge_or_clone(&merged_builder, outer_env,
                                                  &src->items[i].env, &attempt))
                 continue;
-            outcome_set_add(dst, src->items[i].atom, attempt.env);
+            outcome_set_add_existing_with_env(dst, &src->items[i], attempt.env);
             bindings_merge_attempt_finish(&merged_builder, &attempt);
         }
         bindings_builder_free(&merged_builder);
@@ -3587,8 +3759,8 @@ static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *s
             outcome_set_add_existing(dst, &src->items[i]);
             continue;
         }
-        outcome_set_add_prefixed(a, dst, src->items[i].atom, &src->items[i].env,
-                                 outer_env, preserve_bindings);
+        outcome_set_add_prefixed_outcome(a, dst, &src->items[i],
+                                         outer_env, preserve_bindings);
     }
 }
 
@@ -3605,7 +3777,7 @@ static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
             if (!bindings_builder_merge_or_clone(&merged_builder, outer_env,
                                                  &src->items[i].env, &attempt))
                 continue;
-            outcome_set_add(dst, src->items[i].atom, attempt.env);
+            outcome_set_add_existing_with_env(dst, &src->items[i], attempt.env);
             bindings_merge_attempt_finish(&merged_builder, &attempt);
         }
         bindings_builder_free(&merged_builder);
@@ -3616,9 +3788,8 @@ static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
             outcome_set_add_existing_move(dst, &src->items[i]);
             continue;
         }
-        outcome_set_add_prefixed_move(a, dst, src->items[i].atom,
-                                      &src->items[i].env, outer_env,
-                                      preserve_bindings);
+        outcome_set_add_prefixed_outcome(a, dst, &src->items[i],
+                                         outer_env, preserve_bindings);
     }
 }
 
@@ -5839,6 +6010,13 @@ tail_call: ;
             const char *kind_name = string_like_atom(expr_arg(atom, 0));
             if (kind_name && strcmp(kind_name, "pathmap") == 0) {
                 backend_kind = SPACE_ENGINE_PATHMAP;
+                const char *reason = space_match_backend_unavailable_reason(backend_kind);
+                if (reason) {
+                    outcome_set_add(os,
+                        atom_error(a, atom, atom_string(a, reason)),
+                        &_empty);
+                    return;
+                }
             } else if (kind_name && strcmp(kind_name, "mork") == 0) {
                 outcome_set_add(os,
                     atom_error(a, atom,
@@ -6207,8 +6385,22 @@ tail_call: ;
             return;
         }
         if (!backend_name ||
-            !space_match_backend_kind_from_name(backend_name, &kind) ||
-            !space_match_backend_try_set(target, kind)) {
+            !space_match_backend_kind_from_name(backend_name, &kind)) {
+            free(backend_rs.items);
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
+                &_empty);
+            return;
+        }
+        const char *reason = space_match_backend_unavailable_reason(kind);
+        if (reason) {
+            free(backend_rs.items);
+            outcome_set_add(os,
+                atom_error(a, atom, atom_string(a, reason)),
+                &_empty);
+            return;
+        }
+        if (!space_match_backend_try_set(target, kind)) {
             free(backend_rs.items);
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
@@ -7522,14 +7714,18 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     g_registry = NULL;
     g_eval_root_space = s;
     g_eval_fallback_universe.persistent_arena = NULL;
+    eval_release_outcome_variant_bank();
     metta_eval(s, a, NULL, expr, current_eval_fuel_limit(), rs);
+    eval_release_outcome_variant_bank();
 }
 
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs) {
     g_registry = r;
     g_eval_root_space = s;
     g_eval_fallback_universe.persistent_arena = persistent;
+    eval_release_outcome_variant_bank();
     metta_eval(s, a, NULL, expr, current_eval_fuel_limit(), rs);
+    eval_release_outcome_variant_bank();
 }
 
 void eval_set_default_fuel(int fuel) {

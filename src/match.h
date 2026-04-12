@@ -66,6 +66,8 @@ bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
+bool      bindings_contains_private_variant_slots(const Bindings *b);
+void      bindings_assert_no_private_variant_slots(const Bindings *b);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
 Atom     *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
                                       BindingsRewriteVarFn rewrite_var,
