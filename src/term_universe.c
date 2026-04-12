@@ -1,5 +1,5 @@
 #include "term_universe.h"
-#include "term_canon.h"
+#include "variant_shape.h"
 
 static bool term_universe_atom_contains_epoch_var(Atom *atom) {
     if (!atom)
@@ -18,28 +18,19 @@ static bool term_universe_atom_contains_epoch_var(Atom *atom) {
     }
 }
 
-static Atom *term_universe_make_canonical_var(Arena *dst, Atom *src_var,
-                                              uint32_t ordinal, void *ctx) {
-    (void)ctx;
-    VarId canonical_id = ((VarId)ordinal << 32) | (VarId)ordinal;
-    return atom_var_with_spelling(dst, src_var->sym_id, canonical_id);
-}
-
-static Atom *term_universe_rewrite_var(Arena *dst, Atom *src_var, void *ctx) {
-    CettaVarMap *map = ctx;
-    return cetta_var_map_get_or_add(map, dst, src_var,
-                                    term_universe_make_canonical_var, NULL);
-}
-
 Atom *term_universe_canonicalize_atom(Arena *dst, Atom *src) {
     if (!term_universe_atom_contains_epoch_var(src))
         return atom_deep_copy(dst, src);
 
     CettaVarMap map;
     cetta_var_map_init(&map);
-    Atom *canonical = cetta_atom_rewrite_vars(dst, src,
-                                              term_universe_rewrite_var, &map,
-                                              true);
+    static const CettaVariantShapeOptions kTermUniverseVariantOptions = {
+        .slot_policy = CETTA_VARIANT_SLOT_SOURCE_SPELLING,
+        .slot_name = NULL,
+        .share_immutable = true,
+    };
+    Atom *canonical = variant_shape_canonicalize_atom(dst, src, &map, NULL,
+                                                      &kTermUniverseVariantOptions);
     cetta_var_map_free(&map);
     return canonical;
 }

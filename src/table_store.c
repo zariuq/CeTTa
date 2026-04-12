@@ -1,6 +1,6 @@
 #include "table_store.h"
 #include "stats.h"
-#include "term_canon.h"
+#include "variant_shape.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,175 +32,11 @@ typedef struct {
     bool target_stale;
 } TableQueryState;
 
-static Atom *table_store_make_canonical_var(Arena *dst, uint32_t ordinal) {
-    char name[32];
-    snprintf(name, sizeof(name), "$T%u", ordinal);
-    VarId canonical_id = ((VarId)ordinal << 32) | (VarId)ordinal;
-    return atom_var_with_id(dst, name, canonical_id);
-}
-
-typedef struct {
-    CettaVarMap *map;
-    CettaVarMap *inverse;
-} TableStoreCanonCtx;
-
-typedef struct {
-    const CettaVarMap *goal_instantiation;
-    CettaVarMap *local_map;
-} TableStoreMaterializeCtx;
-
-static Atom *table_store_create_canonical_var(Arena *dst, Atom *src_var,
-                                              uint32_t ordinal, void *ctx) {
-    (void)src_var;
-    (void)ctx;
-    return table_store_make_canonical_var(dst, ordinal);
-}
-
-static Atom *table_store_rewrite_canonical_var(Arena *dst, Atom *src_var,
-                                               void *ctx) {
-    TableStoreCanonCtx *canon = ctx;
-    Atom *canonical = cetta_var_map_get_or_add(canon->map, dst, src_var,
-                                               table_store_create_canonical_var,
-                                               NULL);
-    if (!canonical)
-        return NULL;
-    if (canon->inverse &&
-        !cetta_var_map_add(canon->inverse, canonical->var_id, src_var)) {
-        return NULL;
-    }
-    return canonical;
-}
-
-static Atom *table_store_create_materialized_var(Arena *dst, Atom *src_var,
-                                                 uint32_t ordinal, void *ctx) {
-    (void)ordinal;
-    (void)ctx;
-    return atom_var_with_spelling(dst, src_var->sym_id, fresh_var_id());
-}
-
-static Atom *table_store_rewrite_materialized_var(Arena *dst, Atom *src_var,
-                                                  void *ctx) {
-    TableStoreMaterializeCtx *materialize = ctx;
-    Atom *goal_var = cetta_var_map_lookup(materialize->goal_instantiation,
-                                          src_var->var_id);
-    if (goal_var)
-        return goal_var;
-    return cetta_var_map_get_or_add(materialize->local_map, dst, src_var,
-                                    table_store_create_materialized_var, NULL);
-}
-
-static Atom *table_store_canonicalize_atom(Arena *dst, Atom *src,
-                                           CettaVarMap *map,
-                                           CettaVarMap *inverse) {
-    TableStoreCanonCtx ctx = {
-        .map = map,
-        .inverse = inverse,
-    };
-    return cetta_atom_rewrite_vars(dst, src, table_store_rewrite_canonical_var,
-                                   &ctx, false);
-}
-
-static Atom *table_store_materialize_atom(Arena *dst, Atom *src,
-                                          const CettaVarMap *goal_instantiation,
-                                          CettaVarMap *local_map) {
-    TableStoreMaterializeCtx ctx = {
-        .goal_instantiation = goal_instantiation,
-        .local_map = local_map,
-    };
-    return cetta_atom_rewrite_vars(dst, src,
-                                   table_store_rewrite_materialized_var,
-                                   &ctx, false);
-}
-
-static bool table_store_canonicalize_bindings(Arena *dst, const Bindings *src,
-                                              CettaVarMap *map,
-                                              Bindings *out) {
-    bindings_init(out);
-    if (!src)
-        return true;
-    for (uint32_t i = 0; i < src->len; i++) {
-        Atom binding_var = {
-            .kind = ATOM_VAR,
-            .sym_id = src->entries[i].spelling,
-            .var_id = src->entries[i].var_id,
-        };
-        Atom *canonical_var =
-            cetta_var_map_get_or_add(map, dst, &binding_var,
-                                     table_store_create_canonical_var,
-                                     NULL);
-        Atom *canonical_val =
-            table_store_canonicalize_atom(dst, src->entries[i].val, map, NULL);
-        if (!canonical_var || !canonical_val ||
-            !bindings_add_id(out, canonical_var->var_id, canonical_var->sym_id,
-                             canonical_val)) {
-            bindings_free(out);
-            return false;
-        }
-        out->entries[out->len - 1].legacy_name_fallback =
-            src->entries[i].legacy_name_fallback;
-    }
-    for (uint32_t i = 0; i < src->eq_len; i++) {
-        Atom *lhs = table_store_canonicalize_atom(dst, src->constraints[i].lhs,
-                                                  map, NULL);
-        Atom *rhs = table_store_canonicalize_atom(dst, src->constraints[i].rhs,
-                                                  map, NULL);
-        if (!lhs || !rhs || !bindings_add_constraint(out, lhs, rhs)) {
-            bindings_free(out);
-            return false;
-        }
-    }
-    out->lookup_cache_count = 0;
-    out->lookup_cache_next = 0;
-    return true;
-}
-
-static bool table_store_materialize_bindings(Arena *dst, const Bindings *src,
-                                             const CettaVarMap *goal_instantiation,
-                                             CettaVarMap *local_map,
-                                             Bindings *out) {
-    bindings_init(out);
-    if (!src)
-        return true;
-    for (uint32_t i = 0; i < src->len; i++) {
-        Atom binding_var = {
-            .kind = ATOM_VAR,
-            .sym_id = src->entries[i].spelling,
-            .var_id = src->entries[i].var_id,
-        };
-        Atom *goal_var = cetta_var_map_lookup(goal_instantiation,
-                                              src->entries[i].var_id);
-        if (!goal_var) {
-            goal_var = table_store_materialize_atom(dst, &binding_var,
-                                                    goal_instantiation,
-                                                    local_map);
-        }
-        Atom *materialized_val = table_store_materialize_atom(dst,
-                                                              src->entries[i].val,
-                                                              goal_instantiation,
-                                                              local_map);
-        if (!goal_var || !materialized_val ||
-            !bindings_add_id(out, goal_var->var_id, goal_var->sym_id,
-                             materialized_val)) {
-            bindings_free(out);
-            return false;
-        }
-        out->entries[out->len - 1].legacy_name_fallback =
-            src->entries[i].legacy_name_fallback;
-    }
-    for (uint32_t i = 0; i < src->eq_len; i++) {
-        Atom *lhs = table_store_materialize_atom(dst, src->constraints[i].lhs,
-                                                 goal_instantiation, local_map);
-        Atom *rhs = table_store_materialize_atom(dst, src->constraints[i].rhs,
-                                                 goal_instantiation, local_map);
-        if (!lhs || !rhs || !bindings_add_constraint(out, lhs, rhs)) {
-            bindings_free(out);
-            return false;
-        }
-    }
-    out->lookup_cache_count = 0;
-    out->lookup_cache_next = 0;
-    return true;
-}
+static const CettaVariantShapeOptions kTableStoreVariantOptions = {
+    .slot_policy = CETTA_VARIANT_SLOT_ORDINAL_NAME,
+    .slot_name = "$T",
+    .share_immutable = false,
+};
 
 static void table_store_entry_init(TableStoreEntry *entry) {
     arena_init(&entry->arena);
@@ -303,8 +139,9 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
     arena_set_hashcons(&probe_arena, NULL);
     CettaVarMap probe_map;
     cetta_var_map_init(&probe_map);
-    Atom *probe_key = table_store_canonicalize_atom(&probe_arena, query,
-                                                    &probe_map, NULL);
+    Atom *probe_key = variant_shape_canonicalize_atom(&probe_arena, query,
+                                                      &probe_map, NULL,
+                                                      &kTableStoreVariantOptions);
     if (!probe_key) {
         cetta_var_map_free(&probe_map);
         arena_free(&probe_arena);
@@ -341,10 +178,11 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
 
     state->staged.space = space;
     state->staged.revision = revision;
-    state->staged.goal_key = table_store_canonicalize_atom(&state->staged.arena,
-                                                           query,
-                                                           &state->query_map,
-                                                           NULL);
+    state->staged.goal_key = variant_shape_canonicalize_atom(&state->staged.arena,
+                                                             query,
+                                                             &state->query_map,
+                                                             NULL,
+                                                             &kTableStoreVariantOptions);
     if (!state->staged.goal_key) {
         table_query_state_free(state, true);
         return false;
@@ -374,15 +212,17 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
         source_bindings = &empty_bindings;
     }
 
-    Atom *canonical_result = table_store_canonicalize_atom(&state->staged.arena,
-                                                           result,
-                                                           &answer_map, NULL);
+    Atom *canonical_result = variant_shape_canonicalize_atom(&state->staged.arena,
+                                                             result,
+                                                             &answer_map, NULL,
+                                                             &kTableStoreVariantOptions);
     Bindings canonical_bindings;
     if (!canonical_result ||
-        !table_store_canonicalize_bindings(&state->staged.arena,
-                                           source_bindings,
-                                           &answer_map,
-                                           &canonical_bindings)) {
+        !variant_shape_canonicalize_bindings(&state->staged.arena,
+                                             source_bindings,
+                                             &answer_map,
+                                             &kTableStoreVariantOptions,
+                                             &canonical_bindings)) {
         cetta_var_map_free(&answer_map);
         return false;
     }
@@ -445,16 +285,16 @@ static uint32_t table_store_entry_visit(const TableStoreEntry *entry,
     for (uint32_t i = 0; i < entry->results.len; i++) {
         CettaVarMap local_map;
         cetta_var_map_init(&local_map);
-        Atom *result = table_store_materialize_atom(out_arena,
-                                                    entry->results.items[i].result,
-                                                    goal_instantiation,
-                                                    &local_map);
+        Atom *result = variant_shape_materialize_atom(out_arena,
+                                                      entry->results.items[i].result,
+                                                      goal_instantiation,
+                                                      &local_map);
         Bindings materialized;
-        if (!table_store_materialize_bindings(out_arena,
-                                              &entry->results.items[i].bindings,
-                                              goal_instantiation,
-                                              &local_map,
-                                              &materialized)) {
+        if (!variant_shape_materialize_bindings(out_arena,
+                                                &entry->results.items[i].bindings,
+                                                goal_instantiation,
+                                                &local_map,
+                                                &materialized)) {
             cetta_var_map_free(&local_map);
             continue;
         }
@@ -487,8 +327,10 @@ bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision
     CettaVarMap goal_instantiation;
     cetta_var_map_init(&probe_map);
     cetta_var_map_init(&goal_instantiation);
-    Atom *goal_key = table_store_canonicalize_atom(&probe_arena, query, &probe_map,
-                                                   &goal_instantiation);
+    Atom *goal_key = variant_shape_canonicalize_atom(&probe_arena, query,
+                                                     &probe_map,
+                                                     &goal_instantiation,
+                                                     &kTableStoreVariantOptions);
     uint32_t goal_hash = atom_hash(goal_key);
     TableStoreMatch match = table_store_find_match(store, space, revision,
                                                    goal_key, goal_hash);
