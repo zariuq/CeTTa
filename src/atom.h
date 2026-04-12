@@ -158,7 +158,8 @@ Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
 Atom *atom_expr(Arena *a, Atom **elems, uint32_t len);
-/* Explicit structural sharing constructor for long-lived arenas. */
+/* Compatibility wrapper; immutable atoms are shared universally when the
+   global hash-cons table is active. */
 Atom *atom_expr_shared(Arena *a, Atom **elems, uint32_t len);
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2);
 Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);

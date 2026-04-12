@@ -688,6 +688,7 @@ bool space_match_backend_mork_query_conjunction_direct(
 
     Arena scratch;
     arena_init(&scratch);
+    arena_set_hashcons(&scratch, NULL);
     Atom **grounded = arena_alloc(&scratch, sizeof(Atom *) * npatterns);
     ImportedBridgeVarMap query_vars;
     imported_bridge_varmap_init(&query_vars);
@@ -2580,6 +2581,7 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
 
     Arena scratch;
     arena_init(&scratch);
+    arena_set_hashcons(&scratch, NULL);
     Atom **grounded = arena_alloc(&scratch, sizeof(Atom *) * npatterns);
     ImportedBridgeVarMap query_vars;
     imported_bridge_varmap_init(&query_vars);

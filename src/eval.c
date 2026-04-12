@@ -2895,6 +2895,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
     bool tried_func_type = false;
     Arena scratch;
     arena_init(&scratch);
+    arena_set_hashcons(&scratch, NULL);
 
     for (uint32_t oi = 0; oi < nop; oi++) {
         Atom *ft = op_types[oi];
