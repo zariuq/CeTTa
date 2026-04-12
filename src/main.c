@@ -342,6 +342,7 @@ static bool write_pretty_results(FILE *out, ResultSet *rs, bool pretty_vars,
     Arena pretty_arena;
     CettaDisplayVarMap map = {0};
     arena_init(&pretty_arena);
+    arena_set_hashcons(&pretty_arena, NULL);
 
     if (pretty_vars) {
         for (uint32_t i = 0; i < rs->len; i++) {
@@ -1004,6 +1005,7 @@ int main(int argc, char **argv) {
     cleanup.hashcons_initialized = true;
     g_hashcons = &hashcons_table;
     arena_set_hashcons(&arena, &hashcons_table);
+    arena_set_hashcons(&eval_arena, &hashcons_table);
 
     int n = inline_text
         ? parse_metta_text(inline_text, &arena, &atoms)
@@ -1142,6 +1144,7 @@ int main(int argc, char **argv) {
                This makes CeTTa safe for unlimited chaining iterations. */
             arena_free(&eval_arena);
             arena_init(&eval_arena);
+            arena_set_hashcons(&eval_arena, g_hashcons);
             if (stop_after_error) break;
             i += 2;
             continue;

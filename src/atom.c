@@ -27,7 +27,7 @@ void *cetta_realloc(void *ptr, size_t size) {
 
 void arena_init(Arena *a) {
     a->head = NULL;
-    a->hashcons = NULL;
+    a->hashcons = g_hashcons;
 }
 
 void arena_free(Arena *a) {
@@ -188,9 +188,23 @@ static bool atom_is_hash_stable(const Atom *atom) {
     return false;
 }
 
+static bool atom_expr_is_contextual(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0 &&
+           atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.native_handle);
+}
+
 static bool atom_can_hashcons(const Atom *atom) {
-    if (!atom || atom->kind == ATOM_VAR) return false;
-    return atom_is_hash_stable(atom);
+    if (!atom)
+        return false;
+    if (!atom_is_hash_stable(atom) || atom_expr_is_contextual(atom))
+        return false;
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (uint32_t i = 0; i < atom->expr.len; i++) {
+        if (!atom_can_hashcons(atom->expr.elems[i]))
+            return false;
+    }
+    return true;
 }
 
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
@@ -228,7 +242,20 @@ static void hashcons_grow(HashConsTable *hc) {
     free(old_table);
 }
 
-static Atom *hashcons_alloc_owned(const Atom *atom) {
+static Atom *hashcons_intern(HashConsTable *hc, Atom *atom);
+
+static void hashcons_free_owned_atom(Atom *atom) {
+    if (!atom)
+        return;
+    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        free((void *)atom->ground.sval);
+    } else if (atom->kind == ATOM_EXPR) {
+        free(atom->expr.elems);
+    }
+    free(atom);
+}
+
+static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
     Atom *owned = cetta_malloc(sizeof(Atom));
     *owned = *atom;
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
@@ -240,14 +267,17 @@ static Atom *hashcons_alloc_owned(const Atom *atom) {
             owned->expr.elems = NULL;
         } else {
             owned->expr.elems = cetta_malloc(sizeof(Atom *) * atom->expr.len);
-            memcpy(owned->expr.elems, atom->expr.elems, sizeof(Atom *) * atom->expr.len);
+            for (uint32_t i = 0; i < atom->expr.len; i++) {
+                owned->expr.elems[i] = hashcons_intern(hc, atom->expr.elems[i]);
+            }
         }
     }
     return owned;
 }
 
-Atom *hashcons_get(HashConsTable *hc, Atom *atom) {
-    if (!hc || !atom) return atom;
+static Atom *hashcons_intern(HashConsTable *hc, Atom *atom) {
+    if (!hc || !atom)
+        return atom;
     if (!atom_can_hashcons(atom))
         return atom;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_ATTEMPT);
@@ -259,13 +289,28 @@ Atom *hashcons_get(HashConsTable *hc, Atom *atom) {
     }
     if (slot >= hc->size)
         return atom;
-    Atom *owned = hashcons_alloc_owned(atom);
+    Atom *owned = hashcons_alloc_owned(hc, atom);
+    slot = hashcons_find_slot(hc, owned, &found);
+    if (found) {
+        Atom *shared = hc->table[slot];
+        hashcons_free_owned_atom(owned);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_HIT);
+        return shared;
+    }
+    if (slot >= hc->size) {
+        hashcons_free_owned_atom(owned);
+        return atom;
+    }
     hc->table[slot] = owned;
     hc->used++;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_INSERT);
     if (hc->used * 10 > hc->size * 7)
         hashcons_grow(hc);
     return owned;
+}
+
+Atom *hashcons_get(HashConsTable *hc, Atom *atom) {
+    return hashcons_intern(hc, atom);
 }
 
 /* ── Variables / cached literal lookups ────────────────────────────────── */
@@ -446,12 +491,16 @@ Atom *atom_symbol(Arena *a, const char *name) {
 }
 
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
+    Atom temp = {0};
+    temp.kind = ATOM_VAR;
+    temp.flags = ATOM_FLAG_HAS_VARS;
+    temp.var_id = id ? id : fresh_var_id();
+    temp.sym_id = spelling;
+    temp.hash_cache = 0;
+    Atom *shared = atom_maybe_hashcons(a, &temp);
+    if (shared) return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_VAR;
-    at->flags = ATOM_FLAG_HAS_VARS;
-    at->var_id = id ? id : fresh_var_id();
-    at->sym_id = spelling;
-    at->hash_cache = 0;
+    *at = temp;
     return at;
 }
 
@@ -609,21 +658,6 @@ Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
 }
 
 Atom *atom_expr_shared(Arena *a, Atom **elems, uint32_t len) {
-    Atom temp = {0};
-    temp.kind = ATOM_EXPR;
-    temp.flags = 0;
-    temp.var_id = VAR_ID_NONE;
-    temp.hash_cache = 0;
-    for (uint32_t i = 0; i < len; i++) {
-        if (atom_has_vars(elems[i])) {
-            temp.flags |= ATOM_FLAG_HAS_VARS;
-            break;
-        }
-    }
-    temp.expr.len = len;
-    temp.expr.elems = elems;
-    if (g_hashcons && atom_can_hashcons(&temp))
-        return hashcons_get(g_hashcons, &temp);
     return atom_expr(a, elems, len);
 }
 

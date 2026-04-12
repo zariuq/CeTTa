@@ -1372,6 +1372,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
             uint32_t nop = get_annotated_types(s, a, op, &op_types);
             Arena scratch;
             arena_init(&scratch);
+            arena_set_hashcons(&scratch, NULL);
             /* Also try recursively inferred types for the operator */
             if (nop == 0 && op->kind == ATOM_EXPR) {
                 Atom **recur_types = NULL;
