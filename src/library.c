@@ -4829,6 +4829,14 @@ static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *
         *error_out = module_reason(ctx, eval_arena, "ModuleCompiledAttachRequiresFreshSpace", path);
         return false;
     }
+    const char *backend_reason =
+        space_match_backend_unavailable_reason(SPACE_ENGINE_PATHMAP);
+    if (backend_reason) {
+        *error_out = module_reason_with_detail(
+            ctx, eval_arena, "ModuleCompiledAttachBackendUnavailable", path,
+            atom_string(eval_arena, backend_reason));
+        return false;
+    }
     if (!space_match_backend_try_set(target_space, SPACE_ENGINE_PATHMAP)) {
         *error_out = module_reason(ctx, eval_arena, "ModuleCompiledAttachBackendUnavailable", path);
         return false;

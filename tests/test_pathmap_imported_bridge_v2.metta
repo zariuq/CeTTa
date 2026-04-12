@@ -8,11 +8,11 @@
   (b))
 !(bind! &unary-stats (runtime-stats!))
 !(assertEqualToResult
-  (match &unary-stats (runtime-counter imported-bridge-v2-hit $n) (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &unary-stats (runtime-counter imported-bridge-v2-fallback $n) $n)
+  (match &unary-stats (runtime-counter imported-bridge-v2-hit $n) $n)
   (0))
+!(assertEqualToResult
+  (match &unary-stats (runtime-counter imported-bridge-v2-fallback $n) (> $n 0))
+  (True))
 
 !(reset-runtime-stats!)
 !(assertEqualToResult

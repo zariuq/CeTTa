@@ -66,6 +66,7 @@ int main(void) {
     assert(variant_shape_from_atom(&bank, pair_term, &pair_shape));
     assert(pair_shape.slot_env.len == 1);
     assert(pair_shape.skeleton != NULL);
+    assert(variant_private_var_id(pair_shape.slot_env.entries[0].var_id));
     Atom *pair_roundtrip = variant_shape_materialize(&out, &pair_shape);
     assert(pair_roundtrip != NULL);
     assert(atom_eq(pair_roundtrip, pair_term));
@@ -84,12 +85,32 @@ int main(void) {
     VariantShape bound_shape;
     assert(variant_shape_from_bound_atom(&bank, &env, bound_term, &bound_shape));
     assert(bound_shape.slot_env.len == 1);
+    assert(variant_private_var_id(bound_shape.slot_env.entries[0].var_id));
+    assert(!bindings_contains_private_variant_slots(&env));
+    assert(bindings_contains_private_variant_slots(&bound_shape.slot_env));
     Atom *expected_bound = bindings_apply(&env, &src_b, bound_term);
     assert(expected_bound != NULL);
     arena_reset(&out, out_mark);
     Atom *bound_roundtrip = variant_shape_materialize(&out, &bound_shape);
     assert(bound_roundtrip != NULL);
     assert(atom_eq(bound_roundtrip, expected_bound));
+
+    Arena src_d;
+    arena_init(&src_d);
+    Atom *y = atom_var_with_id(&src_d, "y", 401);
+    Atom *pair_term_y = make_term3(&src_d, pair_sym, y, y);
+    VariantShape pair_shape_y;
+    assert(variant_shape_from_atom(&bank, pair_term_y, &pair_shape_y));
+    assert(pair_shape_y.slot_env.len == 1);
+    assert(variant_private_var_id(pair_shape_y.slot_env.entries[0].var_id));
+    assert(pair_shape.slot_env.entries[0].var_id ==
+           pair_shape_y.slot_env.entries[0].var_id);
+    assert(!atom_eq(pair_shape.slot_env.entries[0].val,
+                    pair_shape_y.slot_env.entries[0].val));
+    arena_reset(&out, out_mark);
+    Atom *pair_roundtrip_y = variant_shape_materialize(&out, &pair_shape_y);
+    assert(pair_roundtrip_y != NULL);
+    assert(atom_eq(pair_roundtrip_y, pair_term_y));
 
     Atom *u = atom_var_with_id(&src_b, "u", 201);
     Atom *v = atom_var_with_id(&src_c, "v", 301);
@@ -117,11 +138,13 @@ int main(void) {
 
     variant_shape_free(&ctx_shape2);
     variant_shape_free(&ctx_shape1);
+    variant_shape_free(&pair_shape_y);
     variant_shape_free(&bound_shape);
     variant_shape_free(&pair_shape);
     bindings_free(&env);
     variant_bank_free(&bank);
     arena_free(&out);
+    arena_free(&src_d);
     arena_free(&src_c);
     arena_free(&src_b);
     arena_free(&src_a);

@@ -14,6 +14,7 @@ typedef struct Outcome {
     Atom *atom;
     Atom *materialized_atom;
     Bindings env;
+    Bindings slot_env;
 } Outcome;
 
 typedef struct OutcomeSet {

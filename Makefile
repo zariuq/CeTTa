@@ -3,31 +3,43 @@ CC = gcc
 
 # Build mode:
 #   make                   -> BUILD=python      (default: Python foreign-module support enabled)
-#   make BUILD=core        -> no Python embed dependency
-#   make BUILD=python      -> Python foreign-module support enabled
-#   make BUILD=mork        -> statically link the local MORK bridge
-#   make BUILD=full        -> Python + statically linked MORK bridge
+#   make BUILD=core        -> bare CeTTa (no Python, no static MORK bridge)
+#   make BUILD=python      -> CeTTa + Python (no static MORK bridge)
+#   make BUILD=mork        -> mainline-safe lib_mork lane (no Python, no generic pathmap spaces)
+#   make BUILD=main        -> BUILD=mork + Python
+#   make BUILD=pathmap     -> modified-MORK lane with generic pathmap-backed spaces (no Python)
+#   make BUILD=full        -> BUILD=pathmap + Python
 #
 # Core and python builds do not auto-link local MORK artifacts. Non-mork
 # builds can still load a bridge dynamically at runtime via
 # CETTA_MORK_SPACE_BRIDGE_LIB or a globally installed libcetta_space_bridge.so.
 BUILD ?= python
 BUILD_CANON := $(BUILD)
-ifneq ($(filter $(BUILD_CANON),core python mork full),$(BUILD_CANON))
-$(error BUILD must be core, python, mork, or full)
+ifneq ($(filter $(BUILD_CANON),core python mork main pathmap full),$(BUILD_CANON))
+$(error BUILD must be core, python, mork, main, pathmap, or full)
 endif
 
 ENABLE_PYTHON := 0
 ENABLE_MORK_STATIC := 0
+ENABLE_PATHMAP_SPACE := 0
 ifeq ($(BUILD_CANON),python)
 ENABLE_PYTHON := 1
 endif
 ifeq ($(BUILD_CANON),mork)
 ENABLE_MORK_STATIC := 1
 endif
+ifeq ($(BUILD_CANON),main)
+ENABLE_PYTHON := 1
+ENABLE_MORK_STATIC := 1
+endif
+ifeq ($(BUILD_CANON),pathmap)
+ENABLE_MORK_STATIC := 1
+ENABLE_PATHMAP_SPACE := 1
+endif
 ifeq ($(BUILD_CANON),full)
 ENABLE_PYTHON := 1
 ENABLE_MORK_STATIC := 1
+ENABLE_PATHMAP_SPACE := 1
 endif
 
 CETTA_RUST_DIR ?= $(abspath ./rust)
@@ -35,6 +47,10 @@ MORK_BRIDGE_DIR ?= $(CETTA_RUST_DIR)/target/release
 MORK_BRIDGE_MANIFEST ?= $(CETTA_RUST_DIR)/cetta-space-bridge/Cargo.toml
 MORK_BRIDGE_WORKDIR ?= $(CETTA_RUST_DIR)
 MORK_BRIDGE_RUSTFLAGS ?= -C target-cpu=native
+MORK_BRIDGE_CARGO_FEATURE_ARGS =
+ifeq ($(ENABLE_PATHMAP_SPACE),0)
+MORK_BRIDGE_CARGO_FEATURE_ARGS += --no-default-features
+endif
 MORK_BRIDGE_STATICLIB := $(MORK_BRIDGE_DIR)/libcetta_space_bridge.a
 BRIDGE_DEPS =
 BRIDGE_CFLAGS =
@@ -54,7 +70,7 @@ $(MORK_BRIDGE_STATICLIB): $(MORK_BRIDGE_MANIFEST) FORCE
 	@cd $(MORK_BRIDGE_WORKDIR) && \
 	(ulimit -v 10485760 2>/dev/null || true) && \
 	RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
-	cargo build -p cetta-space-bridge --release
+	cargo build -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
 
 PY_CFLAGS =
 PY_LDFLAGS =
@@ -82,7 +98,10 @@ LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
-SPACE_ENGINES = native native-candidate-exact pathmap
+SPACE_ENGINES = native native-candidate-exact
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+SPACE_ENGINES += pathmap
+endif
 D4_PROBE_TIMEOUT ?= 60
 GIT_TEST_FIXTURE_ROOT = $(CURDIR)/runtime/git_module_fixture
 GIT_TEST_CACHE_DIR = $(CURDIR)/runtime/test-git-module-cache
@@ -90,6 +109,17 @@ GIT_TEST_URL = file://$(GIT_TEST_FIXTURE_ROOT)
 GIT_TEST_DYNAMIC = $(CURDIR)/runtime/test-git-module-dynamic.metta
 GIT_TEST_COMPAT_DYNAMIC = $(CURDIR)/runtime/test-git-module-compat.metta
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
+PATHMAP_REQUIRED_TESTS = \
+	tests/test_space_type.metta \
+	tests/test_space_engine_backend.metta \
+	tests/test_import_act_module_surface.metta \
+	tests/test_include_mm2_space_target.metta \
+	tests/test_module_inventory_act_registered_root.metta \
+	tests/test_mork_act_roundtrip.metta \
+	tests/test_mork_fc_depth3_witness_regression.metta \
+	tests/test_mork_nil_parity_regression.metta \
+	tests/test_mork_recursive_bc_micro_regression.metta \
+	tests/test_mork_recursive_bc_regression.metta
 
 # Two-stage bootstrap: cetta compiles its own stdlib
 STDLIB_SRC = lib/stdlib.metta
@@ -105,6 +135,12 @@ python:
 
 mork:
 	@$(MAKE) BUILD=mork $(BIN)
+
+main:
+	@$(MAKE) BUILD=main $(BIN)
+
+pathmap:
+	@$(MAKE) BUILD=pathmap $(BIN)
 
 full:
 	@$(MAKE) BUILD=full $(BIN)
@@ -147,6 +183,7 @@ $(BUILD_CONFIG_HEADER): FORCE
 	printf '#define CETTA_BUILD_MODE_STRING "%s"\n' "$(BUILD_CANON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
 	if [ -f "$@" ] && cmp -s "$$tmp_cfg" "$@"; then \
 		rm -f "$$tmp_cfg"; \
 	else \
@@ -303,19 +340,33 @@ MORK_MM2_SINK_HEAD_LIMIT := $(abspath ../../hyperon/MORK/examples/sinks/archive/
 
 define require_mork_bridge_or_reexec
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" != "1" ] && [ -z "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
-		if [ -f "$(MORK_BRIDGE_STATICLIB)" ]; then \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
 			bridge_build=mork; \
-			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
+			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 			echo "INFO: $(1) requires the MORK bridge; re-running with BUILD=$$bridge_build"; \
 			$(MAKE) BUILD=$$bridge_build $(2); \
 		else \
-			echo "SKIP: $(1) (no MORK bridge library configured)"; \
+			echo "SKIP: $(1) (no MORK bridge manifest configured)"; \
 		fi; \
 		exit $$?; \
 	fi
 endef
 
-test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip test-runtime-stats-cli test-help-flags test-mm2-mork-program-space test-mm2-exec-basic test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-mm2-kiss-suite test-mork-surface-suite
+define require_pathmap_bridge_or_reexec
+	@if [ "$(ENABLE_PATHMAP_SPACE)" != "1" ]; then \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+			bridge_build=pathmap; \
+			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
+			echo "INFO: $(1) requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
+			$(MAKE) BUILD=$$bridge_build $(2); \
+		else \
+			echo "SKIP: $(1) (no MORK bridge manifest configured)"; \
+		fi; \
+		exit $$?; \
+	fi
+endef
+
+test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip test-runtime-stats-cli test-help-flags test-mork-lane
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -325,13 +376,12 @@ test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip te
 		     [ "$$f" = "tests/test_import_foreign_python_file.metta" ] || \
 		     [ "$$f" = "tests/test_import_foreign_pkg_error.metta" ] || \
 		     [ "$$f" = "tests/test_namespace_sugar_guardrails.metta" ]; }; then \
-			echo "SKIP: $$f (requires BUILD=python)"; \
+			echo "SKIP: $$f (requires a Python-enabled build)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
-		if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ] || \
-		   [ "$$f" = "tests/test_imported_match_chain_conjunction_lowering.metta" ]; then \
-			echo "SKIP: $$f (pathmap specific regression)"; \
+		if printf '%s\n' $(PATHMAP_REQUIRED_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (covered by test-pathmap-lane)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
@@ -873,7 +923,7 @@ test-backends: $(BIN)
 		     [ "$$f" = "tests/test_import_foreign_python_file.metta" ] || \
 		     [ "$$f" = "tests/test_import_foreign_pkg_error.metta" ] || \
 		     [ "$$f" = "tests/test_namespace_sugar_guardrails.metta" ]; }; then \
-			echo "SKIP: $$f (requires BUILD=python)"; \
+			echo "SKIP: $$f (requires a Python-enabled build)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
@@ -882,13 +932,8 @@ test-backends: $(BIN)
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
-			if [ "$$f" = "tests/test_imported_conjunction_bridge_init_regression.metta" ]; then \
-				echo "SKIP: $$f (pathmap specific regression)"; \
-				skip=$$((skip + 1)); \
-				continue; \
-			fi; \
-			if [ "$$f" = "tests/test_imported_match_chain_conjunction_lowering.metta" ]; then \
-				echo "SKIP: $$f (pathmap specific regression)"; \
+			if printf '%s\n' $(PATHMAP_REQUIRED_TESTS) | grep -Fxq "$$f"; then \
+				echo "SKIP: $$f (covered by test-pathmap-lane)"; \
 				skip=$$((skip + 1)); \
 				continue; \
 			fi; \
@@ -912,13 +957,72 @@ test-backends: $(BIN)
 		echo "$$pass passed, $$fail failed, $$skip skipped"; \
 		[ $$fail -eq 0 ] || exit 1; \
 	done
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lane
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-lane
+endif
+
+test-mork-lane: $(BIN)
+	$(call require_mork_bridge_or_reexec,mork lane regression suite,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-mork-program-space
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-exec-basic
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-conformance-var-binding
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-conformance-lean-suite
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-kiss-suite
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-surface-suite
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-basic-pathmap-guard
+
+test-mork-basic-pathmap-guard: $(BIN)
+	@if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
+		echo "SKIP: mork/basic pathmap guards (pathmap lane enabled)"; \
+	else \
+		result=$$(./$(BIN) --lang he \
+			-e '!(assertEqualToResult (new-space pathmap) ((Error (new-space pathmap) "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full")))' \
+			-e '!(bind! &h (new-space hash))' \
+			-e '!(assertEqualToResult (space-set-backend! &h pathmap) ((Error (space-set-backend! &h pathmap) "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full")))' \
+			2>&1); \
+		expected=$$'[()]\n[()]\n[()]'; \
+		if [ "$$result" = "$$expected" ]; then \
+			echo "PASS: mork/basic pathmap guards"; \
+		else \
+			echo "FAIL: mork/basic pathmap guards"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
+			exit 1; \
+		fi; \
+	fi
+
+test-pathmap-lane: $(BIN)
+	$(call require_pathmap_bridge_or_reexec,pathmap lane regression suite,$@)
+	@pass=0; fail=0; no_exp=0; \
+	for f in $(PATHMAP_REQUIRED_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		if [ ! -f "$$exp" ]; then \
+			echo "SKIP: $$f (no .expected file)"; \
+			no_exp=$$((no_exp + 1)); \
+			continue; \
+		fi; \
+		result=$$(./$(BIN) --lang he "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat $$exp)" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "---"; \
+	summary="$$pass passed, $$fail failed"; \
+	if [ $$no_exp -gt 0 ]; then summary="$$summary, $$no_exp no .expected file"; fi; \
+	echo "$$summary"; \
+	[ $$fail -eq 0 ]
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-bridge-v2
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-long-string-regression
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-conjunction-init
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-match-chain
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-match-chain-v3
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lib-pathmap
-	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-mork-program-space
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-duplicate-multiplicity-backends
 
 test-mm2-mork-program-space: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 MORK program-space lowering regression,$@)
@@ -975,7 +1079,7 @@ test-mm2-kiss-suite: $(BIN)
 		diff <(cat tests/mm2_kiss_fractal_priority.step1.expected) <(echo "$$step_result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for stem in test_include_mm2_space_target test_import_mm2_module_surface; do \
+	for stem in test_import_mm2_module_surface; do \
 		result=$$(./$(BIN) --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
@@ -986,6 +1090,18 @@ test-mm2-kiss-suite: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
+		stem=test_include_mm2_space_target; \
+		result=$$(./$(BIN) --lang he "tests/$$stem.metta" 2>&1); \
+		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
+			echo "PASS: $$stem"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$stem"; \
+			diff <(cat "tests/$$stem.expected") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	fi; \
 	echo "---"; \
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
@@ -995,10 +1111,7 @@ test-mork-surface-suite: $(BIN)
 	@pass=0; fail=0; \
 	for stem in \
 		test_mork_counterexample_loom_surface \
-		test_import_act_module_surface \
-		test_module_inventory_act_registered_root \
 		test_mork_algebra_surface \
-		test_mork_act_roundtrip \
 		test_mork_attached_exact_match_regression \
 		test_mork_encoding_boundary_surface \
 		test_mork_full_pipeline_surface \
@@ -1090,7 +1203,7 @@ test-mm2-sink-suite: $(BIN)
 	[ $$fail -eq 0 ]
 
 test-pathmap-conjunction-init: $(BIN)
-	$(call require_mork_bridge_or_reexec,pathmap conjunction init regression,$@)
+	$(call require_pathmap_bridge_or_reexec,pathmap conjunction init regression,$@)
 	@ \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_conjunction_bridge_init_regression.expected)" ]; then \
@@ -1102,7 +1215,7 @@ test-pathmap-conjunction-init: $(BIN)
 	fi
 
 test-pathmap-bridge-v2: $(BIN)
-	$(call require_mork_bridge_or_reexec,pathmap bridge v2 regression,$@)
+	$(call require_pathmap_bridge_or_reexec,pathmap bridge v2 regression,$@)
 	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
@@ -1114,7 +1227,7 @@ test-pathmap-bridge-v2: $(BIN)
 		fi
 
 test-pathmap-long-string-regression: $(BIN)
-	$(call require_mork_bridge_or_reexec,pathmap long-string regression,$@)
+	$(call require_pathmap_bridge_or_reexec,pathmap long-string regression,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --space-engine pathmap --lang he tests/support/pathmap_imported_long_string_probe.metta 2>&1); \
@@ -1127,7 +1240,7 @@ test-pathmap-long-string-regression: $(BIN)
 	fi
 
 test-pathmap-match-chain: $(BIN)
-	$(call require_mork_bridge_or_reexec,pathmap nested-match chain regression,$@)
+	$(call require_pathmap_bridge_or_reexec,pathmap nested-match chain regression,$@)
 	@ \
 	result=$$(./$(BIN) --space-engine pathmap --lang he tests/test_match_chain_imported_regression.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_match_chain_imported_regression.expected)" ]; then \
@@ -1139,7 +1252,7 @@ test-pathmap-match-chain: $(BIN)
 	fi
 
 test-pathmap-match-chain-v3: $(BIN)
-	$(call require_mork_bridge_or_reexec,pathmap nested-match conjunction lowering regression,$@)
+	$(call require_pathmap_bridge_or_reexec,pathmap nested-match conjunction lowering regression,$@)
 	@ \
 	result=$$(./$(BIN) --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_match_chain_conjunction_lowering.expected)" ]; then \
@@ -1151,7 +1264,7 @@ test-pathmap-match-chain-v3: $(BIN)
 	fi
 
 test-mork-lib-pathmap: $(BIN)
-	$(call require_mork_bridge_or_reexec,mork lib pathmap probe,$@)
+	$(call require_pathmap_bridge_or_reexec,mork lib pathmap probe,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
@@ -1263,7 +1376,7 @@ bench-bio-1m-act-modes: $(BIN)
 	./scripts/bench_mork_act_bio_1m_attach.sh
 
 test-duplicate-multiplicity-backends: $(BIN)
-	$(call require_mork_bridge_or_reexec,duplicate multiplicity backend probe,$@)
+	$(call require_pathmap_bridge_or_reexec,duplicate multiplicity backend probe,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	for backend in native native-candidate-exact pathmap; do \
@@ -1307,7 +1420,7 @@ test-help-flags: $(BIN)
 	fi
 
 probe-imported-conjunction-lanes: $(BIN)
-	$(call require_mork_bridge_or_reexec,imported conjunction lane probe,$@)
+	$(call require_pathmap_bridge_or_reexec,imported conjunction lane probe,$@)
 	@ \
 	./$(BIN) --profile he_extended --space-engine pathmap --lang he \
 		tests/support/imported_conjunction_lane_probe.metta
@@ -1322,7 +1435,7 @@ oracle-refresh:
 		     [ "$$f" = "tests/test_import_foreign_python_file.metta" ] || \
 		     [ "$$f" = "tests/test_import_foreign_pkg_error.metta" ] || \
 		     [ "$$f" = "tests/test_namespace_sugar_guardrails.metta" ]; }; then \
-			echo "SKIP: $$f (requires BUILD=python)"; \
+			echo "SKIP: $$f (requires a Python-enabled build)"; \
 			continue; \
 		fi; \
 		exp="$${f%.metta}.expected"; \
@@ -1546,4 +1659,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork full clean test test-backends test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
