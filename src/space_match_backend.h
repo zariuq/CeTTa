@@ -106,6 +106,7 @@ const char *space_match_backend_name(const Space *s);
 bool space_match_backend_supports_direct_bindings(const Space *s);
 const char *space_match_backend_kind_name(SpaceEngine kind);
 bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out);
+const char *space_match_backend_unavailable_reason(SpaceEngine kind);
 bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *out_loaded);
 bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena);
 bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,

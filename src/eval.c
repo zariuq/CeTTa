@@ -5838,6 +5838,13 @@ tail_call: ;
             const char *kind_name = string_like_atom(expr_arg(atom, 0));
             if (kind_name && strcmp(kind_name, "pathmap") == 0) {
                 backend_kind = SPACE_ENGINE_PATHMAP;
+                const char *reason = space_match_backend_unavailable_reason(backend_kind);
+                if (reason) {
+                    outcome_set_add(os,
+                        atom_error(a, atom, atom_string(a, reason)),
+                        &_empty);
+                    return;
+                }
             } else if (kind_name && strcmp(kind_name, "mork") == 0) {
                 outcome_set_add(os,
                     atom_error(a, atom,
@@ -6206,8 +6213,22 @@ tail_call: ;
             return;
         }
         if (!backend_name ||
-            !space_match_backend_kind_from_name(backend_name, &kind) ||
-            !space_match_backend_try_set(target, kind)) {
+            !space_match_backend_kind_from_name(backend_name, &kind)) {
+            free(backend_rs.items);
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
+                &_empty);
+            return;
+        }
+        const char *reason = space_match_backend_unavailable_reason(kind);
+        if (reason) {
+            free(backend_rs.items);
+            outcome_set_add(os,
+                atom_error(a, atom, atom_string(a, reason)),
+                &_empty);
+            return;
+        }
+        if (!space_match_backend_try_set(target, kind)) {
             free(backend_rs.items);
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
