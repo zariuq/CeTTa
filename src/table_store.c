@@ -300,6 +300,7 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
 
     Arena probe_arena;
     arena_init(&probe_arena);
+    arena_set_hashcons(&probe_arena, NULL);
     CettaVarMap probe_map;
     cetta_var_map_init(&probe_map);
     Atom *probe_key = table_store_canonicalize_atom(&probe_arena, query,
@@ -481,6 +482,7 @@ bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision
 
     Arena probe_arena;
     arena_init(&probe_arena);
+    arena_set_hashcons(&probe_arena, NULL);
     CettaVarMap probe_map;
     CettaVarMap goal_instantiation;
     cetta_var_map_init(&probe_map);
