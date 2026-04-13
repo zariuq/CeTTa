@@ -1,0 +1,211 @@
+CeTTa Counted PathMap Space Design (Prototype A)
+===============================================
+
+Status
+------
+
+This document specifies a CeTTa-owned replacement candidate for the current
+generic `new-space pathmap` duplicate/provenance layer.
+
+This is:
+- for CeTTa's `new-space pathmap` lane
+- for a MeTTa space implemented over mainline PathMap
+- not `lib_mork`
+- not `mork:`
+- not a request for MORK or PathMap fork-only behavior
+
+Goals
+-----
+
+1. Keep PathMap as the single structural term index / storage truth.
+2. Represent multiplicity without `atom_index_rows`.
+3. Stay compatible with mainline `/home/zar/claude/hyperon/PathMap`.
+4. Preserve prefix-based narrowing for factor queries.
+5. Keep CeTTa free to optimize query semantics locally.
+
+Non-goals
+---------
+
+1. Reusing `mork::Space` query internals for this backend.
+2. Preserving the current duplicate-row packet ABI as internal storage truth.
+3. Solving the clean semiring-over-`V` route immediately. That remains Approach B.
+
+Key Layout
+----------
+
+Each stored atom uses exactly one PathMap key:
+
+  atom_expr_bytes || count_expr_bytes
+
+where:
+
+- `atom_expr_bytes` is the normal canonical MORK expr serialization of the atom.
+- `count_expr_bytes` is the normal canonical MORK expr serialization of a bare
+  positive decimal natural number.
+
+Interpretation:
+
+- A key encodes one distinct atom plus its multiplicity.
+- The trie's support is "distinct stored atoms".
+- The logical multiplicity lives only in `count_expr_bytes`.
+
+Positive example:
+
+- Logical atom: `(edge a b)` with multiplicity `3`
+- Stored key: `serialize((edge a b)) || serialize(3)`
+
+Negative example:
+
+- Do not store this as the ordinary MeTTa/MORK pair expression `((edge a b) 3)`.
+- Current expr serialization starts with the outer arity tag, so the atom bytes
+  are not a direct key prefix. That breaks the main reason to use PathMap here:
+  prefix narrowing on the atom itself.
+
+Why this layout
+---------------
+
+This layout keeps the atom bytes at the very front of the key. That means a
+query factor prefix can search:
+
+  factor_prefix(atom)
+
+and still benefit from PathMap prefix traversal.
+
+The count is still stored as an ordinary serialized expression, not a special
+binary counter payload.
+
+Core Operations
+---------------
+
+Insert one atom:
+
+1. Canonicalize the atom to `atom_expr_bytes`.
+2. Scan under `atom_expr_bytes`.
+3. If no exact counted key exists, insert count `1`.
+4. If an exact counted key exists with count `n`, remove that key and insert a
+   replacement key with count `n + 1`.
+
+Remove one atom:
+
+1. Canonicalize the atom to `atom_expr_bytes`.
+2. Find the exact counted key.
+3. If no key exists, no-op / miss.
+4. If count is `1`, delete the key.
+5. If count is `n > 1`, delete the old key and insert count `n - 1`.
+
+Exact query:
+
+1. Canonicalize the query factor.
+2. Prefix-scan under `factor_prefix`.
+3. Decode each counted key.
+4. Locally rematch the factor against `atom_expr_bytes`.
+5. Emit multiplicity `count`.
+
+Conjunction query:
+
+1. Enumerate factor candidates independently by prefix scan.
+2. Decode each factor's local count.
+3. Build the Cartesian product of candidate choices.
+4. Locally unify the chosen factors.
+5. Multiply factor counts for each successful witness tuple.
+6. Sum multiplicities for identical projected bindings if the surface consumer
+   wants bag projection rather than witness rows.
+
+Single Source of Truth Mapping
+------------------------------
+
+Current `atom_index_rows` responsibility:
+  Exact duplicate count per atom.
+Current implementation:
+  `atom_index_rows[expr_bytes].len()`
+Counted-key replacement:
+  Decode the count from the one exact counted key for `atom_expr_bytes`.
+
+Current `atom_index_rows` responsibility:
+  Logical atom count.
+Current implementation:
+  Sum row-vector lengths in `bridge_stored_atom_count`.
+Counted-key replacement:
+  Sum decoded counts across all counted keys.
+
+Current `atom_index_rows` responsibility:
+  Unique atom count.
+Current implementation:
+  PathMap support size plus side metadata.
+Counted-key replacement:
+  `PathMap::val_count()` directly equals the number of distinct atoms.
+
+Current `atom_index_rows` responsibility:
+  Incremental add.
+Current implementation:
+  Append a fresh row id or rebuild metadata.
+Counted-key replacement:
+  Exact counted-key lookup, then rewrite count `n -> n + 1`.
+
+Current `atom_index_rows` responsibility:
+  Remove one occurrence.
+Current implementation:
+  Drop one row id or mark dirty/rebuild.
+Counted-key replacement:
+  Exact counted-key lookup, then rewrite count `n -> n - 1` or delete.
+
+Current `atom_index_rows` responsibility:
+  Query packet row expansion.
+Current implementation:
+  Expand one structural hit into many external row ids.
+Counted-key replacement:
+  Either emit multiplicity directly, or synthesize repeated logical hits as a
+  view when compatibility requires it.
+
+Current `atom_index_rows` responsibility:
+  Multi-ref factor grouping for conjunction packets.
+Current implementation:
+  `query_multi_with_factor_exprs` + row-group reconstruction.
+Counted-key replacement:
+  CeTTa-owned local conjunction logic:
+  factor prefix scan -> local rematch -> multiply counts across witnesses.
+
+Current `atom_index_rows` responsibility:
+  Join/meet/subtract/restrict metadata rebuild.
+Current implementation:
+  Rebuild parallel row vectors after structural PathMap algebra.
+Counted-key replacement:
+  Future CeTTa-owned counted-space algebra:
+  rewrite counts in the trie itself, with no separate metadata structure.
+
+Prototype Scope
+---------------
+
+The first prototype only needs to prove:
+
+1. Counted key round-trip is unambiguous.
+2. Insert/remove-one work with no side index.
+3. Single-factor query returns multiplicity from the count.
+4. Conjunction query multiplies counts without `query_multi_with_factor_exprs`.
+
+The first prototype does not need to replace the bridge ABI yet.
+
+Important Caveats
+-----------------
+
+1. This is a CeTTa-owned backend protocol. It should not be described as a MORK
+   storage format.
+2. The current duplicate-row packet ABI may still need a compatibility shim, but
+   any row ids should become a derived view, not stored truth.
+3. Count overflow policy must be explicit. The prototype uses saturating `u32`
+   arithmetic; production policy may choose checked overflow instead.
+4. Query-time multiplicity handling is semantically central. Storage cleanup
+   alone is not enough.
+5. If CeTTa ever deliberately mixes counted keys with other key families inside
+   one shared PathMap instance, an explicit discriminator byte or header can be
+   reintroduced. The simplest fresh-space prototype does not need one.
+
+Future Bridge to Approach B
+---------------------------
+
+Approach A remains compatible with a later move to `PathMap<CountValue>`.
+The migration path is:
+
+1. Collapse external multiplicity state into one trie-owned truth now.
+2. Keep CeTTa-owned local query semantics.
+3. Later move count from key tail into `V` when the algebra path is mature.
