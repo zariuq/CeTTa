@@ -253,7 +253,8 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.isnan_math ||
            id == g_builtin_syms.isinf_math ||
            id == g_builtin_syms.size ||
-           id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom;
+           id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom ||
+           id == g_builtin_syms.range_atom || id == g_builtin_syms.repeat_atom;
 }
 
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */
@@ -485,6 +486,80 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     return atom_expr(a, chain_args, 4);
 }
 
+static Atom *grounded_range_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    int64_t start = 0;
+    int64_t end = 0;
+
+    if (nargs != 1 && nargs != 2)
+        return grounded_incorrect_arity(a, head, args, nargs);
+
+    if (nargs == 1) {
+        if (args[0]->kind != ATOM_GROUNDED || args[0]->ground.gkind != GV_INT) {
+            if (args[0]->kind == ATOM_GROUNDED)
+                return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                             atom_symbol(a, "Number"), args[0]);
+            return NULL;
+        }
+        end = args[0]->ground.ival;
+    } else {
+        if (args[0]->kind != ATOM_GROUNDED || args[0]->ground.gkind != GV_INT) {
+            if (args[0]->kind == ATOM_GROUNDED)
+                return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                             atom_symbol(a, "Number"), args[0]);
+            return NULL;
+        }
+        if (args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT) {
+            if (args[1]->kind == ATOM_GROUNDED)
+                return grounded_bad_arg_type(a, head, args, nargs, 2,
+                                             atom_symbol(a, "Number"), args[1]);
+            return NULL;
+        }
+        start = args[0]->ground.ival;
+        end = args[1]->ground.ival;
+    }
+
+    if (end <= start)
+        return atom_expr(a, NULL, 0);
+
+    uint64_t len64 = (uint64_t)(end - start);
+    if (len64 > UINT32_MAX) {
+        return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                          atom_symbol(a, "RangeTooLarge"));
+    }
+
+    uint32_t len = (uint32_t)len64;
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
+    for (uint32_t i = 0; i < len; i++)
+        elems[i] = atom_int(a, start + (int64_t)i);
+    return atom_expr(a, elems, len);
+}
+
+static Atom *grounded_repeat_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 2)
+        return grounded_incorrect_arity(a, head, args, nargs);
+
+    if (args[0]->kind != ATOM_GROUNDED || args[0]->ground.gkind != GV_INT) {
+        if (args[0]->kind == ATOM_GROUNDED)
+            return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                         atom_symbol(a, "Number"), args[0]);
+        return NULL;
+    }
+
+    int64_t count = args[0]->ground.ival;
+    if (count <= 0)
+        return atom_expr(a, NULL, 0);
+    if ((uint64_t)count > UINT32_MAX) {
+        return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                          atom_symbol(a, "RepeatTooLarge"));
+    }
+
+    uint32_t len = (uint32_t)count;
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
+    for (uint32_t i = 0; i < len; i++)
+        elems[i] = args[1];
+    return atom_expr(a, elems, len);
+}
+
 /* ── Dispatch ──────────────────────────────────────────────────────────── */
 
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
@@ -524,6 +599,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.minimal_foldl_atom ||
         head_id == g_builtin_syms.foldl_atom_in_space)
         return grounded_foldl_in_space(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.range_atom)
+        return grounded_range_atom(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.repeat_atom)
+        return grounded_repeat_atom(a, head, args, nargs);
 
     if (head_id == g_builtin_syms.alpha_eq) {
         if (nargs != 2)

@@ -170,6 +170,8 @@ typedef struct {
     X(size, "size") \
     X(size_atom, "size-atom") \
     X(index_atom, "index-atom") \
+    X(range_atom, "range-atom") \
+    X(repeat_atom, "repeat-atom") \
     X(map_atom, "map-atom") \
     X(filter_atom, "filter-atom") \
     X(foldl_atom, "foldl-atom") \

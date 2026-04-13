@@ -4496,6 +4496,17 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     if (atom->kind != ATOM_EXPR || atom->expr.len < 1) return false;
 
     Atom *op = atom->expr.elems[0];
+    if (op->kind == ATOM_SYMBOL &&
+        (op->sym_id == g_builtin_syms.range_atom ||
+         op->sym_id == g_builtin_syms.repeat_atom)) {
+        Atom *direct = dispatch_native_op(s, a, op,
+                                          atom->expr.elems + 1,
+                                          atom->expr.len - 1);
+        if (direct) {
+            outcome_set_add(os, direct, &_empty);
+            return true;
+        }
+    }
     Atom **op_types;
     uint32_t n_op_types = get_atom_types_profiled(s, a, op, &op_types);
     bool only_function_types = (n_op_types > 0);

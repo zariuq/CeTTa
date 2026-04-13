@@ -13,3 +13,8 @@
 !(assertEqual (list:map (1 2 3) $x (+ $x 1)) (2 3 4))
 !(assertEqual (list:filter (1 2 3 4) $x (> $x 2)) (3 4))
 !(assertEqual (list:foldl (1 2 3 4) 0 $acc $item (+ $acc $item)) 10)
+!(assertEqual (list:range 5) (0 1 2 3 4))
+!(assertEqual (list:range 2 6) (2 3 4 5))
+!(assertEqual (list:range 4 1) ())
+!(assertEqual (list:repeat 3 z) (z z z))
+!(assertEqual (list:repeat 0 z) ())
