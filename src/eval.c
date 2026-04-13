@@ -430,8 +430,53 @@ static Atom *outcome_atom_materialize(Arena *a, Outcome *out) {
     return materialized;
 }
 
+static Atom *outcome_atom_materialize_traced(Arena *a, Outcome *out,
+                                             CettaRuntimeCounter site_counter) {
+    if (out && !out->materialized_atom && variant_instance_present(&out->variant))
+        cetta_runtime_stats_inc(site_counter);
+    return outcome_atom_materialize(a, out);
+}
+
+static bool outcome_skip_call_observation_fast_path(Space *s,
+                                                    const Outcome *out) {
+    Atom *head;
+    if (!s || !out || !out->atom || out->atom->kind != ATOM_EXPR ||
+        out->atom->expr.len == 0) {
+        return false;
+    }
+    head = out->atom->expr.elems[0];
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    if (is_grounded_op(head->sym_id))
+        return false;
+    if (g_library_context && g_library_context->foreign_runtime &&
+        cetta_foreign_is_callable_atom(head)) {
+        return false;
+    }
+    if (space_equations_may_match_known_head(s, head->sym_id))
+        return false;
+    return true;
+}
+
 static bool outcome_atom_is_error(Arena *a, Outcome *out) {
-    return atom_is_error(outcome_atom_materialize(a, out));
+    Atom *candidate;
+    Atom *head;
+    if (!out)
+        return false;
+    if (out->materialized_atom)
+        return atom_is_error(out->materialized_atom);
+    candidate = out->atom;
+    if (!candidate)
+        return false;
+    if (candidate->kind == ATOM_EXPR && candidate->expr.len > 0) {
+        head = candidate->expr.elems[0];
+        if (head && head->kind == ATOM_SYMBOL)
+            return atom_is_symbol_id(head, g_builtin_syms.error);
+    } else if (candidate->kind != ATOM_VAR) {
+        return false;
+    }
+    return atom_is_error(outcome_atom_materialize_traced(
+        a, out, CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_ERROR_FILTER));
 }
 
 static __attribute__((unused)) bool outcome_atom_is_empty_or_error(Arena *a, Outcome *out) {
@@ -503,6 +548,22 @@ static void outcome_set_add_existing_with_env(OutcomeSet *os,
     bindings_assert_no_private_variant_slots(env);
     if (!bindings_clone(&slot->env, env) ||
         !variant_instance_clone(&slot->variant, &src->variant)) {
+        outcome_free_fields(slot);
+        os->len--;
+        return;
+    }
+    outcome_refresh_materialized_fast_path(slot);
+}
+
+static void outcome_set_add_with_variant(OutcomeSet *os, Atom *atom,
+                                         const Bindings *env,
+                                         const VariantInstance *variant) {
+    Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
+    slot->atom = atom;
+    bindings_assert_no_private_variant_slots(env);
+    if (!bindings_clone(&slot->env, env) ||
+        !variant_instance_clone(&slot->variant, variant)) {
         outcome_free_fields(slot);
         os->len--;
         return;
@@ -2279,24 +2340,6 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
                             const Bindings *prefix, bool preserve_bindings,
                             OutcomeSet *os);
 
-static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
-                                             QueryResultVisitor visitor,
-                                             void *ctx) {
-    TableStore *table = eval_active_episode_table();
-    uint64_t revision = space_revision(s);
-    uint32_t visited = 0;
-    if (table && table_store_lookup_visit(table, s, revision, query, a,
-                                          visitor, ctx, &visited))
-        return visited;
-    QueryResults results;
-    query_results_init(&results);
-    query_equations(s, query, a, &results);
-    visited = query_results_visit(&results, visitor, ctx);
-    query_equations_cache_store(table, s, revision, query, &results);
-    query_results_free(&results);
-    return visited;
-}
-
 typedef struct {
     Space *space;
     Arena *arena;
@@ -2329,6 +2372,24 @@ static bool query_visit_eval_for_caller(Atom *result, const Bindings *bindings,
     bindings_merge_attempt_finish(search_context_builder(query_eval->context),
                                   &attempt);
     return true;
+}
+
+static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
+                                             QueryEvalVisitorCtx *query_eval) {
+    TableStore *table = eval_active_episode_table();
+    uint64_t revision = space_revision(s);
+    uint32_t visited = 0;
+    if (table && table_store_lookup_visit(table, s, revision, query, a,
+                                          query_visit_eval_for_caller,
+                                          query_eval, &visited))
+        return visited;
+    QueryResults results;
+    query_results_init(&results);
+    query_equations(s, query, a, &results);
+    visited = query_results_visit(&results, query_visit_eval_for_caller, query_eval);
+    query_equations_cache_store(table, s, revision, query, &results);
+    query_results_free(&results);
+    return visited;
 }
 
 static bool query_result_apply_single_tail(SearchContext *context,
@@ -3460,7 +3521,10 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
         metta_call(s, a, atom, etype, fuel > 0 ? fuel - 1 : fuel, false, &os);
         outcome_set_filter_errors_if_success(a, &os);
         for (uint32_t oi = 0; oi < os.len; oi++)
-            result_set_add(rs, outcome_atom_materialize(a, &os.items[oi]));
+            result_set_add(rs,
+                           outcome_atom_materialize_traced(
+                               a, &os.items[oi],
+                               CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL));
         outcome_set_free(&os);
     }
 }
@@ -3855,8 +3919,8 @@ static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
 }
 
 /* When the caller only cares about atoms, apply pending bindings before
-   evaluation and continue through metta_eval so recursive branches can keep
-   using the atom-only tail-call path. */
+   evaluation and drop only semantic envs at the boundary so delayed variants
+   can survive until a true observation point. */
 static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
                             const Bindings *prefix, bool preserve_bindings,
                             OutcomeSet *os) {
@@ -3868,14 +3932,12 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     Atom *applied = (!prefix || prefix->len == 0)
         ? atom
         : bindings_apply((Bindings *)prefix, a, atom);
-    ResultSet rs;
-    result_set_init(&rs);
-    Bindings empty;
-    bindings_init(&empty);
-    metta_eval(s, a, type, applied, fuel, &rs);
-    for (uint32_t i = 0; i < rs.len; i++)
-        outcome_set_add(os, rs.items[i], &empty);
-    result_set_free(&rs);
+    OutcomeSet inner;
+    outcome_set_init(&inner);
+    metta_eval_bind_typed(s, a, type, applied, fuel, &inner);
+    outcome_set_filter_errors_if_success(a, &inner);
+    outcome_set_append_prefixed_move(a, os, &inner, NULL, false);
+    outcome_set_free(&inner);
 }
 
 static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
@@ -3984,7 +4046,10 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
     }
     for (uint32_t i = 0; i < arg_os.len; i++) {
         BindingsMergeAttempt attempt;
-        Atom *arg_atom = outcome_atom_materialize(a, &arg_os.items[i]);
+        Atom *arg_atom =
+            outcome_atom_materialize_traced(
+                a, &arg_os.items[i],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
         if (!bindings_builder_merge_or_clone(&merged_builder, env,
                                              &arg_os.items[i].env, &attempt))
             continue;
@@ -4101,7 +4166,10 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
     for (uint32_t hi = 0; hi < heads.len; hi++) {
         if (outcome_atom_is_empty_or_error(a, &heads.items[hi]))
             continue;
-        Atom *head_atom = outcome_atom_materialize(a, &heads.items[hi]);
+        Atom *head_atom =
+            outcome_atom_materialize_traced(
+                a, &heads.items[hi],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_HEAD);
         if (is_capture_closure(head_atom))
             saw_capture = true;
         else
@@ -4115,7 +4183,10 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
 
     Atom *exp_type = etype ? etype : atom_undefined_type(a);
     for (uint32_t hi = 0; hi < heads.len; hi++) {
-        Atom *head_atom = outcome_atom_materialize(a, &heads.items[hi]);
+        Atom *head_atom =
+            outcome_atom_materialize_traced(
+                a, &heads.items[hi],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_HEAD);
         Bindings *head_env = &heads.items[hi].env;
 
         if (atom_is_empty_or_error(head_atom)) {
@@ -4151,7 +4222,10 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
                                 expr_narg, 0, prefix, head_env, fuel, &call_terms);
 
         for (uint32_t ci = 0; ci < call_terms.len; ci++) {
-            Atom *call_atom = outcome_atom_materialize(a, &call_terms.items[ci]);
+            Atom *call_atom =
+                outcome_atom_materialize_traced(
+                    a, &call_terms.items[ci],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
             Bindings *combo_ctx = &call_terms.items[ci].env;
             if (call_atom->kind == ATOM_EXPR && call_atom->expr.len >= 1 &&
                 is_capture_closure(call_atom->expr.elems[0])) {
@@ -4177,12 +4251,39 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
    The bindings parameter threads variable bindings from earlier elements
    to later ones (spec line 376: interpret_tuple($tail, $space, $hb)). */
 
+static bool outcome_atom_is_error_at_site(Arena *a, Outcome *out,
+                                          CettaRuntimeCounter site_counter) {
+    Atom *candidate;
+    Atom *head;
+    if (!out)
+        return false;
+    if (out->materialized_atom)
+        return atom_is_error(out->materialized_atom);
+    candidate = out->atom;
+    if (!candidate)
+        return false;
+    if (candidate->kind == ATOM_EXPR && candidate->expr.len > 0) {
+        head = candidate->expr.elems[0];
+        if (head && head->kind == ATOM_SYMBOL)
+            return atom_is_symbol_id(head, g_builtin_syms.error);
+    } else if (candidate->kind != ATOM_VAR) {
+        return false;
+    }
+    return atom_is_error(outcome_atom_materialize_traced(a, out, site_counter));
+}
+
 static void interpret_tuple(Space *s, Arena *a,
                             Atom **orig_elems, uint32_t len,
                             uint32_t idx, Atom **prefix,
-                            Bindings *ctx, int fuel, ResultBindSet *rbs) {
+                            Bindings *ctx, const VariantInstance *prefix_variant,
+                            int fuel, ResultBindSet *rbs) {
     if (idx == len) {
-        rb_set_add(rbs, atom_expr(a, prefix, len), ctx);
+        Atom *tuple_atom = atom_expr(a, prefix, len);
+        if (prefix_variant && variant_instance_present(prefix_variant)) {
+            outcome_set_add_with_variant(rbs, tuple_atom, ctx, prefix_variant);
+        } else {
+            rb_set_add(rbs, tuple_atom, ctx);
+        }
         return;
     }
     /* Apply accumulated bindings to this element before evaluating */
@@ -4202,19 +4303,53 @@ static void interpret_tuple(Space *s, Arena *a,
         return;
     }
     for (uint32_t i = 0; i < sub.len; i++) {
-        Atom *sub_atom = outcome_atom_materialize(a, &sub.items[i]);
-        if (atom_is_empty(sub_atom) || atom_is_error(sub_atom)) {
-            rb_set_add(rbs, sub_atom, &empty);
+        Atom *sub_atom = sub.items[i].atom;
+        Atom *effective_atom = sub_atom;
+        const VariantInstance *next_variant_ref = prefix_variant;
+        VariantInstance next_variant;
+        bool owns_next_variant = false;
+
+        if (atom_is_empty(sub_atom) ||
+            outcome_atom_is_error_at_site(
+                a, &sub.items[i],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_INTERPRET_TUPLE)) {
+            effective_atom = outcome_atom_materialize_traced(
+                a, &sub.items[i],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_INTERPRET_TUPLE);
+            rb_set_add(rbs, effective_atom, &empty);
+            continue;
+        }
+        if (variant_instance_present(&sub.items[i].variant)) {
+            variant_instance_init(&next_variant);
+            if (prefix_variant && variant_instance_present(prefix_variant) &&
+                !variant_instance_clone(&next_variant, prefix_variant)) {
+                continue;
+            }
+            if (!variant_instance_append_rebased(a, &next_variant, &effective_atom,
+                                                 sub_atom, &sub.items[i].variant)) {
+                variant_instance_free(&next_variant);
+                continue;
+            }
+            next_variant_ref = &next_variant;
+            owns_next_variant = true;
+        }
+        if (atom_is_empty(effective_atom) || atom_is_error(effective_atom)) {
+            if (owns_next_variant)
+                variant_instance_free(&next_variant);
+            rb_set_add(rbs, effective_atom, &empty);
         } else {
-            prefix[idx] = sub_atom;
             BindingsMergeAttempt attempt;
             if (!bindings_builder_merge_or_clone(&merged_builder, ctx,
                                                  &sub.items[i].env, &attempt))
-                continue;
+                goto next_item;
+            prefix[idx] = effective_atom;
             interpret_tuple(s, a, orig_elems, len, idx + 1, prefix,
-                            (Bindings *)attempt.env, fuel, rbs);
+                            (Bindings *)attempt.env, next_variant_ref, fuel, rbs);
             bindings_merge_attempt_finish(&merged_builder, &attempt);
         }
+next_item:
+        if (owns_next_variant)
+            variant_instance_free(&next_variant);
     }
     bindings_builder_free(&merged_builder);
     outcome_set_free(&sub);
@@ -4866,11 +5001,19 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         Bindings empty_ctx;
         bindings_init(&empty_ctx);
         interpret_tuple(s, a, atom->expr.elems, atom->expr.len,
-                        0, prefix, &empty_ctx, fuel, &tuples);
+                        0, prefix, &empty_ctx, NULL, fuel, &tuples);
 
         if (tuples.len == 1) {
+            if (outcome_skip_call_observation_fast_path(s, &tuples.items[0])) {
+                outcome_set_add_existing_move(os, &tuples.items[0]);
+                outcome_set_free(&tuples);
+                return true;
+            }
             Bindings *tuple_bindings = &tuples.items[0].env;
-            Atom *call_atom = outcome_atom_materialize(a, &tuples.items[0]);
+            Atom *call_atom =
+                outcome_atom_materialize_traced(
+                    a, &tuples.items[0],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
             if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
                 outcome_set_add(os, call_atom, &_empty);
                 outcome_set_free(&tuples);
@@ -4976,7 +5119,14 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         }
 
         for (uint32_t ti = 0; ti < tuples.len; ti++) {
-            Atom *call_atom = outcome_atom_materialize(a, &tuples.items[ti]);
+            if (outcome_skip_call_observation_fast_path(s, &tuples.items[ti])) {
+                outcome_set_add_existing_move(os, &tuples.items[ti]);
+                continue;
+            }
+            Atom *call_atom =
+                outcome_atom_materialize_traced(
+                    a, &tuples.items[ti],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
             Bindings *tuple_bindings = &tuples.items[ti].env;
 
             if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
@@ -5033,9 +5183,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 .context = &qr_context,
                 .outcomes = os,
             };
-            if (query_equations_cached_visit(s, call_atom, a,
-                                             query_visit_eval_for_caller,
-                                             &query_eval) > 0) {
+            if (query_equations_cached_visit(s, call_atom, a, &query_eval) > 0) {
                 search_context_free(&qr_context);
                 continue;
             }
@@ -5417,21 +5565,31 @@ tail_call: ;
         metta_eval_bind(s, a, val_expr, fuel, &vals);
         bool all_errors = vals.len > 0;
         for (uint32_t i = 0; i < vals.len; i++) {
-            if (!atom_is_error(outcome_atom_materialize(a, &vals.items[i]))) {
+            if (!atom_is_error(
+                    outcome_atom_materialize_traced(
+                        a, &vals.items[i],
+                        CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN))) {
                 all_errors = false;
                 break;
             }
         }
         if (all_errors) {
             for (uint32_t i = 0; i < vals.len; i++)
-                outcome_set_add(os, outcome_atom_materialize(a, &vals.items[i]), &_empty);
+                outcome_set_add(os,
+                                outcome_atom_materialize_traced(
+                                    a, &vals.items[i],
+                                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN),
+                                &_empty);
             outcome_set_free(&vals);
             return;
         }
         if (vals.len == 1) {
             /* Single-result fast path with TCO */
             bool ok = false;
-            Atom *val_atom = outcome_atom_materialize(a, &vals.items[0]);
+            Atom *val_atom =
+                outcome_atom_materialize_traced(
+                    a, &vals.items[0],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
             const Bindings *val_env = &vals.items[0].env;
             if (pat->kind == ATOM_VAR) {
                 BindingsBuilder b;
@@ -5497,7 +5655,10 @@ tail_call: ;
         }
         /* Multi-result: no TCO */
         for (uint32_t i = 0; i < vals.len; i++) {
-            Atom *val_atom = outcome_atom_materialize(a, &vals.items[i]);
+            Atom *val_atom =
+                outcome_atom_materialize_traced(
+                    a, &vals.items[i],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
             const Bindings *val_env = &vals.items[i].env;
             if (pat->kind == ATOM_VAR) {
                 BindingsBuilder b;
@@ -5587,12 +5748,18 @@ tail_call: ;
             return;
         }
         if (inner.len == 1 &&
-            !atom_is_empty(outcome_atom_materialize(a, &inner.items[0]))) {
+            !atom_is_empty(
+                outcome_atom_materialize_traced(
+                    a, &inner.items[0],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN))) {
             /* Single-result fast path with TCO */
             Atom *next_atom;
             bool has_binding = false;
             {
-                Atom *inner_atom = outcome_atom_materialize(a, &inner.items[0]);
+                Atom *inner_atom =
+                    outcome_atom_materialize_traced(
+                        a, &inner.items[0],
+                        CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
                 const Bindings *inner_env = &inner.items[0].env;
                 BindingsBuilder b;
                 if (!bindings_builder_init(&b, inner_env)) {
@@ -5630,7 +5797,10 @@ tail_call: ;
         }
         /* Multi-result: no TCO */
         for (uint32_t i = 0; i < inner.len; i++) {
-            Atom *r = outcome_atom_materialize(a, &inner.items[i]);
+            Atom *r =
+                outcome_atom_materialize_traced(
+                    a, &inner.items[i],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
             if (atom_is_empty(r)) continue;
             {
                 const Bindings *inner_env = &inner.items[i].env;

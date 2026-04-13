@@ -13,6 +13,10 @@ typedef struct {
     const VariantInstance *instance;
 } VariantInstanceMaterializeCtx;
 
+typedef struct {
+    uint32_t ordinal_base;
+} VariantInstanceRebaseCtx;
+
 static VariantInstanceStorage *variant_instance_storage(const VariantInstance *instance) {
     return instance ? instance->storage : NULL;
 }
@@ -52,6 +56,16 @@ static Atom *variant_instance_rewrite_slot_var(Arena *dst, Atom *src_var,
         return src_var;
     Atom *slot_val = storage->slot_vals[ordinal];
     return slot_val ? slot_val : src_var;
+}
+
+static Atom *variant_instance_rewrite_rebased_slot_var(Arena *dst, Atom *src_var,
+                                                       void *ctx) {
+    VariantInstanceRebaseCtx *rebase = ctx;
+    if (!variant_private_var_id(src_var->var_id))
+        return src_var;
+    return atom_var_with_spelling(dst, src_var->sym_id,
+                                  variant_shape_slot_id(rebase->ordinal_base +
+                                                        variant_shape_slot_ordinal(src_var->var_id)));
 }
 
 void variant_instance_init(VariantInstance *instance) {
@@ -135,6 +149,38 @@ bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape
     variant_instance_free(out);
     *out = next;
     return true;
+}
+
+bool variant_instance_append_rebased(Arena *dst, VariantInstance *instance,
+                                     Atom **out_skeleton,
+                                     Atom *skeleton,
+                                     const VariantInstance *child) {
+    VariantInstanceStorage *dst_storage;
+    VariantInstanceStorage *child_storage;
+    uint32_t base;
+
+    if (!dst || !instance || !out_skeleton || !skeleton || !child)
+        return false;
+    child_storage = variant_instance_storage(child);
+    if (!child_storage || child_storage->slot_count == 0) {
+        *out_skeleton = skeleton;
+        return true;
+    }
+    if (!instance->storage)
+        instance->storage = variant_instance_storage_new();
+    dst_storage = instance->storage;
+    base = dst_storage->slot_count;
+    if (!variant_instance_reserve_slots(dst_storage, base + child_storage->slot_count))
+        return false;
+    for (uint32_t i = 0; i < child_storage->slot_count; i++)
+        dst_storage->slot_vals[base + i] = child_storage->slot_vals[i];
+    VariantInstanceRebaseCtx ctx = {
+        .ordinal_base = base,
+    };
+    *out_skeleton = cetta_atom_rewrite_vars(dst, skeleton,
+                                            variant_instance_rewrite_rebased_slot_var,
+                                            &ctx, false);
+    return *out_skeleton != NULL;
 }
 
 bool variant_instance_sink_env(Arena *dst, VariantInstance *out,
