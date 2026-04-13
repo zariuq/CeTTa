@@ -175,6 +175,7 @@ void query_results_free(QueryResults *qr);
 /* Find all (= lhs rhs) in space where lhs matches query (bidirectional).
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
+bool space_equations_may_match_known_head(Space *s, SymbolId head);
 
 /* ── Space Registry (named spaces) ─────────────────────────────────────── */
 

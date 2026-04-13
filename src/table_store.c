@@ -383,6 +383,17 @@ typedef struct {
     QueryResults *results;
 } QueryResultsCollectCtx;
 
+typedef bool (*TableDelayedResultVisitor)(Atom *result,
+                                          const Bindings *bindings,
+                                          const VariantInstance *variant,
+                                          void *ctx);
+
+typedef struct {
+    Arena *out_arena;
+    QueryResultVisitor visitor;
+    void *ctx;
+} TableMaterializeVisitorCtx;
+
 static bool query_results_collect_visit(Atom *result, const Bindings *bindings,
                                         void *ctx) {
     QueryResultsCollectCtx *collect = ctx;
@@ -390,11 +401,27 @@ static bool query_results_collect_visit(Atom *result, const Bindings *bindings,
     return true;
 }
 
-static uint32_t table_store_entry_visit(const TableStoreEntry *entry,
-                                        Arena *out_arena,
-                                        const CettaVarMap *goal_instantiation,
-                                        QueryResultVisitor visitor,
-                                        void *ctx) {
+static bool table_store_materialize_visit(Atom *result,
+                                          const Bindings *bindings,
+                                          const VariantInstance *variant,
+                                          void *ctx) {
+    TableMaterializeVisitorCtx *materialize = ctx;
+    Atom *materialized = result;
+    if (variant_instance_present(variant)) {
+        materialized = variant_instance_materialize(materialize->out_arena,
+                                                    materialized,
+                                                    variant);
+        if (!materialized)
+            return true;
+    }
+    return materialize->visitor(materialized, bindings, materialize->ctx);
+}
+
+static uint32_t table_store_entry_visit_delayed(const TableStoreEntry *entry,
+                                                Arena *out_arena,
+                                                const CettaVarMap *goal_instantiation,
+                                                TableDelayedResultVisitor visitor,
+                                                void *ctx) {
     Bindings goal_bindings;
     uint32_t visited = 0;
     if (!entry || !visitor)
@@ -424,23 +451,22 @@ static uint32_t table_store_entry_visit(const TableStoreEntry *entry,
             cetta_var_map_free(&local_map);
             continue;
         }
+        VariantInstance replay_variant;
+        variant_instance_init(&replay_variant);
         if (variant_instance_present(&entry->results.items[i].variant)) {
             if (goal_bindings.len > 0 || goal_bindings.eq_len > 0) {
-                VariantInstance compacted;
-                variant_instance_init(&compacted);
-                if (!variant_instance_sink_env(out_arena, &compacted,
+                if (!variant_instance_sink_env(out_arena, &replay_variant,
                                                &entry->results.items[i].variant,
                                                &goal_bindings)) {
-                    variant_instance_free(&compacted);
+                    variant_instance_free(&replay_variant);
                     cetta_var_map_free(&local_map);
                     continue;
                 }
-                result =
-                    variant_instance_materialize(out_arena, result, &compacted);
-                variant_instance_free(&compacted);
-            } else {
-                result = variant_instance_materialize(out_arena, result,
-                                                      &entry->results.items[i].variant);
+            } else if (!variant_instance_clone(&replay_variant,
+                                               &entry->results.items[i].variant)) {
+                variant_instance_free(&replay_variant);
+                cetta_var_map_free(&local_map);
+                continue;
             }
         }
         Bindings materialized;
@@ -449,11 +475,13 @@ static uint32_t table_store_entry_visit(const TableStoreEntry *entry,
                                                 goal_instantiation,
                                                 &local_map,
                                                 &materialized)) {
+            variant_instance_free(&replay_variant);
             cetta_var_map_free(&local_map);
             continue;
         }
         visited++;
-        bool keep_going = visitor(result, &materialized, ctx);
+        bool keep_going = visitor(result, &materialized, &replay_variant, ctx);
+        variant_instance_free(&replay_variant);
         bindings_free(&materialized);
         cetta_var_map_free(&local_map);
         if (!keep_going)
@@ -461,6 +489,22 @@ static uint32_t table_store_entry_visit(const TableStoreEntry *entry,
     }
     bindings_free(&goal_bindings);
     return visited;
+}
+
+static uint32_t table_store_entry_visit(const TableStoreEntry *entry,
+                                        Arena *out_arena,
+                                        const CettaVarMap *goal_instantiation,
+                                        QueryResultVisitor visitor,
+                                        void *ctx) {
+    TableMaterializeVisitorCtx materialize = {
+        .out_arena = out_arena,
+        .visitor = visitor,
+        .ctx = ctx,
+    };
+    return table_store_entry_visit_delayed(entry, out_arena,
+                                           goal_instantiation,
+                                           table_store_materialize_visit,
+                                           &materialize);
 }
 
 bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision,
