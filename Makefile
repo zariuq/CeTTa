@@ -116,6 +116,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_include_mm2_space_target.metta \
 	tests/test_module_inventory_act_registered_root.metta \
 	tests/test_mork_act_roundtrip.metta \
+	tests/test_pathmap_counted_space_surface.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
 	tests/test_mork_nil_parity_regression.metta \
 	tests/test_mork_recursive_bc_micro_regression.metta \
@@ -1536,6 +1537,23 @@ bench-conj12-runtime-backends: $(BIN)
 		echo "---"; \
 	done
 
+bench-dup-conj-backends: $(BIN)
+	@for backend in $(SPACE_ENGINES); do \
+		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/bench_duplicate_conjunction_he.metta 2>&1 | tail -1); \
+		echo "$$backend duplicate conjunction total: $$count results"; \
+		if [ "$$count" = "4096" ]; then \
+			echo "PASS: $$backend duplicate conjunction count matches"; \
+		else \
+			echo "FAIL: expected 4096, got $$count for $$backend"; exit 1; \
+		fi; \
+	done
+
+bench-dup-conj-runtime-backends: $(BIN)
+	@for backend in $(SPACE_ENGINES); do \
+		./scripts/bench_space_match_runtime.sh tests/bench_duplicate_conjunction_he.metta "$$backend"; \
+		echo "---"; \
+	done
+
 bench-join8-runtime-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
 		./scripts/bench_space_match_runtime.sh tests/bench_matchjoin8_he.metta "$$backend"; \
@@ -1652,4 +1670,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
