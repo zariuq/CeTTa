@@ -1477,6 +1477,24 @@ fn validate_expr_bytes(input: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_expr_batch_packet(input: &[u8]) -> Result<Vec<&[u8]>, String> {
+    let mut offset = 0usize;
+    let mut exprs = Vec::new();
+
+    while offset < input.len() {
+        let expr_len = read_u32_be_at(input, &mut offset)? as usize;
+        if input.len().saturating_sub(offset) < expr_len {
+            return Err("expr-byte batch truncated while reading expr bytes".to_string());
+        }
+        let expr = &input[offset..offset + expr_len];
+        validate_expr_bytes(expr).map_err(|err| format!("expr-byte batch item invalid: {err}"))?;
+        exprs.push(expr);
+        offset += expr_len;
+    }
+
+    Ok(exprs)
+}
+
 fn query_factor_count(pattern_expr: Expr) -> Result<usize, String> {
     let arity = pattern_expr
         .arity()
@@ -2239,6 +2257,100 @@ pub extern "C" fn mork_space_add_sexpr(
     mork_space_add_text(space, text, len)
 }
 
+/// Adds one already-encoded stable bridge expression without going through UTF-8 parsing.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_add_expr_bytes(
+    space: *mut MorkSpace,
+    expr_bytes: *const u8,
+    len: usize,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        if expr_bytes.is_null() {
+            return MorkStatus::err(MorkStatusCode::Null, b"null expr bytes".to_vec());
+        }
+        let before = if bridge.row_metadata_active {
+            Some(bridge_row_state(bridge))
+        } else {
+            None
+        };
+        let expr_bytes = std::slice::from_raw_parts(expr_bytes, len);
+        if let Err(err) = validate_expr_bytes(expr_bytes) {
+            return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
+        }
+        if bridge_uses_counted_storage(bridge) {
+            match counted_pathmap::counted_insert_expr(&mut bridge.inner, expr_bytes) {
+                Ok(_) => {
+                    if let Some(before) = before.as_ref() {
+                        bridge_rebuild_after_preserving_existing_rows(bridge, before);
+                    }
+                    MorkStatus::ok(1)
+                }
+                Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+            }
+        } else {
+            bridge.inner.btm.insert(expr_bytes, ());
+            if let Some(before) = before.as_ref() {
+                bridge_rebuild_after_preserving_existing_rows(bridge, before);
+            }
+            MorkStatus::ok(1)
+        }
+    })
+}
+
+/// Adds a packed batch of stable bridge expressions without going through UTF-8 parsing.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_add_expr_bytes_batch(
+    space: *mut MorkSpace,
+    packet: *const u8,
+    len: usize,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        if packet.is_null() && len != 0 {
+            return MorkStatus::err(MorkStatusCode::Null, b"null expr byte batch".to_vec());
+        }
+        let packet = if len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(packet, len)
+        };
+        let exprs = match parse_expr_batch_packet(packet) {
+            Ok(exprs) => exprs,
+            Err(err) => return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+        };
+        if exprs.is_empty() {
+            return MorkStatus::ok(0);
+        }
+        let before = if bridge.row_metadata_active {
+            Some(bridge_row_state(bridge))
+        } else {
+            None
+        };
+        if bridge_uses_counted_storage(bridge) {
+            for expr in &exprs {
+                if let Err(err) = counted_pathmap::counted_insert_expr(&mut bridge.inner, expr) {
+                    return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+                }
+            }
+        } else {
+            for expr in &exprs {
+                bridge.inner.btm.insert(expr, ());
+            }
+        }
+        if let Some(before) = before.as_ref() {
+            bridge_rebuild_after_preserving_existing_rows(bridge, before);
+        }
+        MorkStatus::ok(exprs.len() as u64)
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn mork_space_remove_text(
     space: *mut MorkSpace,
@@ -2304,6 +2416,55 @@ pub extern "C" fn mork_space_remove_sexpr(
     len: usize,
 ) -> MorkStatus {
     mork_space_remove_text(space, text, len)
+}
+
+/// Removes one already-encoded stable bridge expression without going through UTF-8 parsing.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_remove_expr_bytes(
+    space: *mut MorkSpace,
+    expr_bytes: *const u8,
+    len: usize,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        if expr_bytes.is_null() {
+            return MorkStatus::err(MorkStatusCode::Null, b"null expr bytes".to_vec());
+        }
+        let before = if bridge.row_metadata_active {
+            Some(bridge_row_state(bridge))
+        } else {
+            None
+        };
+        let expr_bytes = std::slice::from_raw_parts(expr_bytes, len);
+        if let Err(err) = validate_expr_bytes(expr_bytes) {
+            return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
+        }
+        if bridge_uses_counted_storage(bridge) {
+            match counted_pathmap::counted_remove_one_expr(&mut bridge.inner, expr_bytes) {
+                Ok(Some(_)) => {
+                    if let Some(before) = before.as_ref() {
+                        bridge_rebuild_after_preserving_existing_rows(bridge, before);
+                    }
+                    MorkStatus::ok(1)
+                }
+                Ok(None) => MorkStatus::ok(0),
+                Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+            }
+        } else {
+            let removed = bridge.inner.btm.remove(expr_bytes).is_some();
+            if removed {
+                if let Some(before) = before.as_ref() {
+                    bridge_rebuild_after_preserving_existing_rows(bridge, before);
+                }
+                MorkStatus::ok(1)
+            } else {
+                MorkStatus::ok(0)
+            }
+        }
+    })
 }
 
 /// Adds one parsed expression while mirroring the caller's row id for later candidate replay.
@@ -4665,6 +4826,86 @@ mod tests {
         assert!(rendered.contains("(nest (pair a (pair b c)) (text \"x y\"))\n"));
         assert!(rendered.contains("(FList (FSDepth 0) (Cons (\"formula\" \"x\") Nil))\n"));
         mork_bytes_free(dump.data, dump.len);
+        mork_space_free(raw);
+    }
+
+    #[test]
+    fn expr_bytes_mutation_matches_text_surface_roundtrip() {
+        let raw = mork_space_new();
+        assert!(!raw.is_null());
+
+        let mut scratch = Space::new();
+        let edge = parse_single_expr(&mut scratch, b"(edge a b)").unwrap();
+        let nested = parse_single_expr(
+            &mut scratch,
+            b"(nest (pair a (pair b c)) (text \"x y\"))",
+        )
+        .unwrap();
+
+        let add1 = mork_space_add_expr_bytes(raw, edge.as_ptr(), edge.len());
+        let add2 = mork_space_add_expr_bytes(raw, nested.as_ptr(), nested.len());
+        assert!(status_ok(&add1));
+        assert!(status_ok(&add2));
+
+        let size = mork_space_size(raw);
+        assert!(status_ok(&size));
+        assert_eq!(size.value, 2);
+
+        let removed = mork_space_remove_expr_bytes(raw, edge.as_ptr(), edge.len());
+        assert!(status_ok(&removed));
+        assert_eq!(removed.value, 1);
+
+        let packet = mork_space_query_candidates_text(raw, b"(edge a b)".as_ptr(), 10);
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 0);
+        mork_bytes_free(packet.data, packet.len);
+
+        let dump = mork_space_dump(raw);
+        assert!(buffer_ok(&dump));
+        let text = unsafe { std::slice::from_raw_parts(dump.data, dump.len) };
+        let rendered = std::str::from_utf8(text).unwrap();
+        assert!(!rendered.contains("(edge a b)\n"));
+        assert!(rendered.contains("(nest (pair a (pair b c)) (text \"x y\"))\n"));
+        mork_bytes_free(dump.data, dump.len);
+
+        mork_space_free(raw);
+    }
+
+    #[test]
+    fn expr_bytes_batch_mutation_matches_individual_adds() {
+        let raw = mork_space_new();
+        assert!(!raw.is_null());
+
+        let mut scratch = Space::new();
+        let edge = parse_single_expr(&mut scratch, b"(edge a b)").unwrap();
+        let nested = parse_single_expr(
+            &mut scratch,
+            b"(nest (pair a (pair b c)) (text \"x y\"))",
+        )
+        .unwrap();
+
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&(edge.len() as u32).to_be_bytes());
+        packet.extend_from_slice(&edge);
+        packet.extend_from_slice(&(nested.len() as u32).to_be_bytes());
+        packet.extend_from_slice(&nested);
+
+        let add = mork_space_add_expr_bytes_batch(raw, packet.as_ptr(), packet.len());
+        assert!(status_ok(&add));
+        assert_eq!(add.value, 2);
+
+        let size = mork_space_size(raw);
+        assert!(status_ok(&size));
+        assert_eq!(size.value, 2);
+
+        let dump = mork_space_dump(raw);
+        assert!(buffer_ok(&dump));
+        let text = unsafe { std::slice::from_raw_parts(dump.data, dump.len) };
+        let rendered = std::str::from_utf8(text).unwrap();
+        assert!(rendered.contains("(edge a b)\n"));
+        assert!(rendered.contains("(nest (pair a (pair b c)) (text \"x y\"))\n"));
+        mork_bytes_free(dump.data, dump.len);
+
         mork_space_free(raw);
     }
 
