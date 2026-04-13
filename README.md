@@ -34,16 +34,25 @@ If you want the smaller no-Python binary explicitly:
 make BUILD=core
 ```
 
-If you also want the local static MORK bridge:
+If you want the local static MORK bridge (lib_mork / MM2 lane):
 
 ```bash
-make BUILD=full
+make BUILD=mork     # no Python
+make BUILD=main     # with Python
+```
+
+If you want generic `(new-space pathmap)` with multiset semantics:
+
+```bash
+make BUILD=pathmap  # no Python
+make BUILD=full     # with Python
 ```
 
 ### MORK Bridge Prerequisites
 
-The `BUILD=full` and `BUILD=mork` modes build the bridge from CeTTa's own Rust
-workspace (`rust/`). This requires MORK and PathMap checked out as siblings:
+The `BUILD=mork`, `BUILD=main`, `BUILD=pathmap`, and `BUILD=full` modes build the
+bridge from CeTTa's own Rust workspace (`rust/`). This requires MORK and PathMap
+checked out as siblings:
 
 | Repo | Source | Notes |
 |------|--------|-------|
@@ -54,18 +63,23 @@ Clone or checkout at:
 - `hyperon/PathMap/` (relative to the claude workspace root)
 - `hyperon/MORK/` (relative to the claude workspace root)
 
-**Which MORK branch do I need?**
+**Build modes and MORK branches:**
 
-- **Basic bridge / MM2 stepping**: Use the
-  [`cetta/query-multi-factor-exprs`](https://github.com/zariuq/MORK/tree/cetta/query-multi-factor-exprs)
-  branch until that helper merges upstream. Once merged, mainline MORK works.
+| Build Mode | Purpose | MORK Branch Needed |
+|------------|---------|-------------------|
+| `BUILD=mork` | lib_mork / MM2 stepping (set semantics) | `cetta/query-multi-factor-exprs` |
+| `BUILD=main` | above + Python | `cetta/query-multi-factor-exprs` |
+| `BUILD=pathmap` | generic `(new-space pathmap)` with multiset semantics | `cetta/query-multi-factor-exprs` |
+| `BUILD=full` | above + Python | `cetta/query-multi-factor-exprs` |
 
-- **Arithmetic sink examples**: If you want MM2 arithmetic sink examples working
-  today (`i+`, `i-`, `i*`, `f+`, `f-`, `f*`), use the
-  [`feature/arithsinks-pr-sync`](https://github.com/zariuq/MORK/tree/feature/arithsinks-pr-sync)
-  branch instead.
+Once `query-multi-factor-exprs` merges upstream, mainline MORK works for all modes.
 
-Build with the MORK bridge:
+**Arithmetic sink examples**: If you want MM2 arithmetic sink examples working
+today (`i+`, `i-`, `i*`, `f+`, `f-`, `f*`), use the
+[`feature/arithsinks-pr-sync`](https://github.com/zariuq/MORK/tree/feature/arithsinks-pr-sync)
+branch instead.
+
+**Build with the MORK bridge (lib_mork / MM2):**
 
 ```bash
 cd c-projects/CeTTa
@@ -78,6 +92,22 @@ ulimit -v 10485760 && make BUILD=mork
 # smoke test (arithmetic sinks - requires arithsinks branch)
 ./cetta examples/mork_intarith_showcase.metta
 ```
+
+**Build with counted-key PathMap spaces (multiset semantics):**
+
+```bash
+cd c-projects/CeTTa
+ulimit -v 10485760 && make BUILD=pathmap
+
+# multiset semantics test
+./cetta tests/test_pathmap_counted_space_surface.metta
+```
+
+The `BUILD=pathmap` and `BUILD=full` modes enable `(new-space pathmap)` with
+counted-key storage. This stores `atom_bytes || count_bytes` as PathMap keys,
+preserving multiset semantics (duplicates matter) while benefiting from PathMap's
+prefix-based structural matching. See `specs/pathmap_counted_space_design.txt`
+for the full design.
 
 The CeTTa-owned bridge includes two compatibility adapters:
 - `rust/cetta-pathmap-adapter/`: PathMap compatibility (OverlayZipper, snapshot helpers)
@@ -120,21 +150,37 @@ make promote-runtime
 - Runtime counters plus `--profile`-aware surface guards
 - Explicit `TermUniverse` / persistent term-store seam
 - Variant tabling infrastructure with shared canonicalization substrate
-- Optional `pathmap` engine for ordinary MeTTa over PathMap
-- Explicit `mork:` helper surface for the MORK/MM2 execution lane
+- Optional `pathmap` engine for ordinary MeTTa over PathMap (multiset semantics via counted-key storage)
+- Explicit `mork:` helper surface for the MORK/MM2 execution lane (set semantics)
 - Local git-module and module-inventory surfaces
 - Python foreign-module support in the default build
 
 ## Optional MORK / PathMap Bridge
 
 The MORK bridge is built from CeTTa's own Rust workspace at `rust/`. Running
-`make BUILD=mork` or `make BUILD=full` builds `rust/target/release/libcetta_space_bridge.a`
-and links it statically. Non-MORK builds can still load a bridge dynamically at
-runtime.
+`make BUILD=mork`, `BUILD=pathmap`, or `BUILD=full` builds
+`rust/target/release/libcetta_space_bridge.a` and links it statically. Non-MORK
+builds can still load a bridge dynamically at runtime.
+
+**lib_mork lane** (MM2 stepping, set semantics):
+
+```bash
+./cetta examples/mork_showcase.metta
+./cetta examples/mork_mm2_showcase.metta
+```
+
+**Counted PathMap spaces** (MeTTa multiset semantics, `BUILD=pathmap` or `BUILD=full`):
 
 ```bash
 ./cetta --profile he_extended --space-engine pathmap \
   tests/test_pathmap_imported_bridge_v2.metta
+
+# Or explicitly create a pathmap space:
+./cetta -e '!(bind! &s (new-space pathmap))' \
+        -e '!(add-atom &s x)' \
+        -e '!(add-atom &s x)' \
+        -e '!(match &s x hit)'
+# → [hit, hit]  (multiset: two copies, two results)
 ```
 
 ## Test Status
@@ -299,8 +345,13 @@ MORK bridge (Rust):
 
 - `rust/Cargo.toml`: workspace root for CeTTa-owned Rust crates
 - `rust/cetta-space-bridge/`: C FFI bridge between CeTTa and MORK/PathMap
+- `rust/cetta-space-bridge/src/counted_pathmap.rs`: counted-key multiset storage for `(new-space pathmap)`
 - `rust/cetta-pathmap-adapter/`: PathMap compatibility layer (OverlayZipper, snapshot helpers)
 - `rust/cetta-mork-adapter/`: MORK compatibility layer (factor expression query wrapper)
+
+Specs:
+
+- `specs/pathmap_counted_space_design.txt`: counted-key storage design for multiset over PathMap
 
 Libraries:
 
@@ -318,6 +369,8 @@ Useful workloads:
 - `tests/profile_tilepuzzle_5k.metta`: smaller profiling variant
 - `tests/bench_conjunction12_he.metta`: conjunction stress benchmark
 - `tests/bench_matchjoin8_he.metta`: join stress benchmark
+- `tests/test_pathmap_counted_space_surface.metta`: multiset semantics over PathMap
+- `tests/bench_duplicate_conjunction_he.metta`: duplicate conjunction parity test
 
 ## CLI
 

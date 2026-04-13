@@ -121,6 +121,7 @@ static bool bridge_take_buffer(const char *ctx, CettaMorkBuffer buf,
 #if CETTA_BUILD_WITH_MORK_STATIC
 
 extern CettaMorkSpaceHandle *mork_space_new(void);
+extern CettaMorkSpaceHandle *mork_space_new_pathmap(void) __attribute__((weak));
 extern void mork_space_free(CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_clear(CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_add_sexpr(CettaMorkSpaceHandle *space,
@@ -390,6 +391,16 @@ CettaMorkSpaceHandle *cetta_mork_bridge_space_new(void) {
     return space;
 }
 
+CettaMorkSpaceHandle *cetta_mork_bridge_space_new_pathmap(void) {
+    /* Generic `(new-space pathmap)` goes through the counted CeTTa-owned lane.
+       Raw `mork:` keeps using `cetta_mork_bridge_space_new()` instead. */
+    CettaMorkSpaceHandle *space =
+        mork_space_new_pathmap ? mork_space_new_pathmap() : mork_space_new();
+    if (!space)
+        bridge_set_error("mork_space_new_pathmap returned null");
+    return space;
+}
+
 void cetta_mork_bridge_space_free(CettaMorkSpaceHandle *space) {
     if (space)
         mork_space_free(space);
@@ -478,6 +489,8 @@ bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
         bridge_set_error("cannot add to null MORK bridge space");
         return false;
     }
+    /* Indexed ingress is an adapter seam for CeTTa-native/imported callers that
+       still identify candidates by `atom_idx`. It is not the storage truth. */
     return bridge_status_ok("mork_space_add_indexed_sexpr failed: ",
                             mork_space_add_indexed_sexpr(space, atom_idx, text, len));
 }
@@ -1905,6 +1918,7 @@ typedef struct CettaMorkBridgeApi {
     bool attempted;
     void *handle;
     CettaMorkSpaceHandle *(*space_new)(void);
+    CettaMorkSpaceHandle *(*space_new_pathmap)(void);
     void (*space_free)(CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_clear)(CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_add_sexpr)(CettaMorkSpaceHandle *space,
@@ -2239,6 +2253,9 @@ static bool bridge_load_api(void) {
         return false;
     }
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_new_pathmap,
+        "mork_space_new_pathmap");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_logical_size,
         "mork_space_logical_size");
     bridge_resolve_symbol_optional(
@@ -2541,6 +2558,17 @@ CettaMorkSpaceHandle *cetta_mork_bridge_space_new(void) {
     CettaMorkSpaceHandle *space = g_mork_bridge_api.space_new();
     if (!space)
         bridge_set_error("mork_space_new returned null");
+    return space;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_new_pathmap(void) {
+    if (!bridge_load_api())
+        return NULL;
+    CettaMorkSpaceHandle *space = g_mork_bridge_api.space_new_pathmap
+                                      ? g_mork_bridge_api.space_new_pathmap()
+                                      : g_mork_bridge_api.space_new();
+    if (!space)
+        bridge_set_error("mork_space_new_pathmap returned null");
     return space;
 }
 
