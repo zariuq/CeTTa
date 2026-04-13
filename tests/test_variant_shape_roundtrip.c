@@ -4,6 +4,7 @@
 
 #include "stats.h"
 #include "symbol.h"
+#include "variant_instance.h"
 #include "variant_shape.h"
 
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
@@ -48,6 +49,7 @@ int main(void) {
     arena_init(&src_b);
     arena_init(&src_c);
     arena_init(&out);
+    ArenaMark out_mark = arena_mark(&out);
 
     CettaVariantShapeOptions options = {
         .slot_policy = CETTA_VARIANT_SLOT_FIXED_SPELLING,
@@ -67,11 +69,18 @@ int main(void) {
     assert(pair_shape.slot_env.len == 1);
     assert(pair_shape.skeleton != NULL);
     assert(variant_private_var_id(pair_shape.slot_env.entries[0].var_id));
+    VariantInstance pair_instance;
+    variant_instance_init(&pair_instance);
+    assert(variant_instance_from_shape(&pair_instance, &pair_shape));
+    assert(variant_instance_present(&pair_instance));
     Atom *pair_roundtrip = variant_shape_materialize(&out, &pair_shape);
     assert(pair_roundtrip != NULL);
     assert(atom_eq(pair_roundtrip, pair_term));
-
-    ArenaMark out_mark = arena_mark(&out);
+    arena_reset(&out, out_mark);
+    Atom *pair_instance_roundtrip =
+        variant_instance_materialize(&out, pair_shape.skeleton, &pair_instance);
+    assert(pair_instance_roundtrip != NULL);
+    assert(atom_eq(pair_instance_roundtrip, pair_term));
     Bindings env;
     bindings_init(&env);
     Atom *bx = atom_var_with_id(&src_a, "bx", 111);
@@ -88,12 +97,35 @@ int main(void) {
     assert(variant_private_var_id(bound_shape.slot_env.entries[0].var_id));
     assert(!bindings_contains_private_variant_slots(&env));
     assert(bindings_contains_private_variant_slots(&bound_shape.slot_env));
+    VariantInstance bound_instance;
+    variant_instance_init(&bound_instance);
+    assert(variant_instance_from_shape(&bound_instance, &bound_shape));
     Atom *expected_bound = bindings_apply(&env, &src_b, bound_term);
     assert(expected_bound != NULL);
     arena_reset(&out, out_mark);
     Atom *bound_roundtrip = variant_shape_materialize(&out, &bound_shape);
     assert(bound_roundtrip != NULL);
     assert(atom_eq(bound_roundtrip, expected_bound));
+    arena_reset(&out, out_mark);
+    Atom *bound_instance_roundtrip =
+        variant_instance_materialize(&out, bound_shape.skeleton, &bound_instance);
+    assert(bound_instance_roundtrip != NULL);
+    assert(atom_eq(bound_instance_roundtrip, expected_bound));
+
+    Bindings sink_env;
+    bindings_init(&sink_env);
+    Atom *wrapped_pair_bz = make_term2(&src_a, wrap_sym, bz);
+    assert(bindings_add_var(&sink_env, x, wrapped_pair_bz));
+    VariantInstance sunk_instance;
+    variant_instance_init(&sunk_instance);
+    assert(variant_instance_sink_env(&out, &sunk_instance, &pair_instance, &sink_env));
+    Atom *expected_sunk = bindings_apply(&sink_env, &src_a, pair_term);
+    assert(expected_sunk != NULL);
+    arena_reset(&out, out_mark);
+    Atom *sunk_roundtrip =
+        variant_instance_materialize(&out, pair_shape.skeleton, &sunk_instance);
+    assert(sunk_roundtrip != NULL);
+    assert(atom_eq(sunk_roundtrip, expected_sunk));
 
     Arena src_d;
     arena_init(&src_d);
@@ -139,7 +171,11 @@ int main(void) {
     variant_shape_free(&ctx_shape2);
     variant_shape_free(&ctx_shape1);
     variant_shape_free(&pair_shape_y);
+    variant_instance_free(&sunk_instance);
+    bindings_free(&sink_env);
+    variant_instance_free(&bound_instance);
     variant_shape_free(&bound_shape);
+    variant_instance_free(&pair_instance);
     variant_shape_free(&pair_shape);
     bindings_free(&env);
     variant_bank_free(&bank);

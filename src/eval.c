@@ -347,14 +347,14 @@ static void outcome_init(Outcome *out) {
     out->atom = NULL;
     out->materialized_atom = NULL;
     bindings_init(&out->env);
-    bindings_init(&out->slot_env);
+    variant_instance_init(&out->variant);
 }
 
 static void outcome_free_fields(Outcome *out) {
     if (!out)
         return;
     bindings_free(&out->env);
-    bindings_free(&out->slot_env);
+    variant_instance_free(&out->variant);
     out->atom = NULL;
     out->materialized_atom = NULL;
 }
@@ -363,7 +363,7 @@ static void outcome_move(Outcome *dst, Outcome *src) {
     dst->atom = src->atom;
     dst->materialized_atom = src->materialized_atom;
     bindings_move(&dst->env, &src->env);
-    bindings_move(&dst->slot_env, &src->slot_env);
+    variant_instance_move(&dst->variant, &src->variant);
     src->atom = NULL;
     src->materialized_atom = NULL;
 }
@@ -375,7 +375,7 @@ static bool atom_contains_vars(const Atom *atom) {
 static void outcome_refresh_materialized_fast_path(Outcome *out) {
     if (!out)
         return;
-    if (out->slot_env.len == 0 &&
+    if (!variant_instance_present(&out->variant) &&
         (out->env.len == 0 || !atom_contains_vars(out->atom))) {
         out->materialized_atom = out->atom;
     } else {
@@ -384,7 +384,8 @@ static void outcome_refresh_materialized_fast_path(Outcome *out) {
 }
 
 static void outcome_try_factor_variant(Outcome *out) {
-    if (!out || out->slot_env.len > 0 || !out->atom || !atom_contains_vars(out->atom))
+    if (!out || variant_instance_present(&out->variant) ||
+        !out->atom || !atom_contains_vars(out->atom))
         return;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_ATTEMPT);
     VariantBank *bank = eval_active_outcome_variant_bank();
@@ -393,8 +394,11 @@ static void outcome_try_factor_variant(Outcome *out) {
     VariantShape shape;
     if (!variant_shape_from_bound_atom(bank, &out->env, out->atom, &shape))
         return;
+    if (!variant_instance_from_shape(&out->variant, &shape)) {
+        variant_shape_free(&shape);
+        return;
+    }
     out->atom = shape.skeleton;
-    bindings_move(&out->slot_env, &shape.slot_env);
     variant_shape_free(&shape);
     out->materialized_atom = NULL;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_SUCCESS);
@@ -402,17 +406,26 @@ static void outcome_try_factor_variant(Outcome *out) {
 
 static Atom *outcome_atom_materialize(Arena *a, Outcome *out) {
     Atom *materialized;
+    VariantInstance compacted;
     if (!out)
         return NULL;
     if (out->materialized_atom)
         return out->materialized_atom;
     materialized = out->atom;
-    if (out->slot_env.len > 0) {
+    if (variant_instance_present(&out->variant)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_SLOT_MATERIALIZE);
-        materialized = bindings_apply(&out->slot_env, a, materialized);
-    }
-    if (out->env.len > 0 && atom_contains_vars(materialized))
+        if (out->env.len > 0 || out->env.eq_len > 0) {
+            variant_instance_init(&compacted);
+            if (!variant_instance_sink_env(a, &compacted, &out->variant, &out->env))
+                return NULL;
+            materialized = variant_instance_materialize(a, materialized, &compacted);
+            variant_instance_free(&compacted);
+        } else {
+            materialized = variant_instance_materialize(a, materialized, &out->variant);
+        }
+    } else if (out->env.len > 0 && atom_contains_vars(materialized)) {
         materialized = bindings_apply(&out->env, a, materialized);
+    }
     out->materialized_atom = materialized;
     return materialized;
 }
@@ -463,7 +476,7 @@ static void outcome_set_add_existing(OutcomeSet *os, const Outcome *src) {
     slot->materialized_atom = src->materialized_atom;
     bindings_assert_no_private_variant_slots(&src->env);
     if (!bindings_clone(&slot->env, &src->env) ||
-        !bindings_clone(&slot->slot_env, &src->slot_env)) {
+        !variant_instance_clone(&slot->variant, &src->variant)) {
         outcome_free_fields(slot);
         os->len--;
         return;
@@ -489,7 +502,7 @@ static void outcome_set_add_existing_with_env(OutcomeSet *os,
     bindings_assert_no_private_variant_slots(&src->env);
     bindings_assert_no_private_variant_slots(env);
     if (!bindings_clone(&slot->env, env) ||
-        !bindings_clone(&slot->slot_env, &src->slot_env)) {
+        !variant_instance_clone(&slot->variant, &src->variant)) {
         outcome_free_fields(slot);
         os->len--;
         return;
@@ -502,10 +515,8 @@ static Atom *outcome_materialize_with_outer_env(Arena *a, const Outcome *src,
     Atom *materialized = src->atom;
     bindings_assert_no_private_variant_slots(&src->env);
     bindings_assert_no_private_variant_slots(outer_env);
-    if (src->slot_env.len > 0) {
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_SLOT_MATERIALIZE);
-        materialized = bindings_apply((Bindings *)&src->slot_env, a, materialized);
-    }
+    if (variant_instance_present(&src->variant))
+        return NULL;
     if ((outer_env && outer_env->len > 0) || src->env.len > 0) {
         if (outer_env && outer_env->len > 0 && src->env.len > 0) {
             Bindings merged;
@@ -523,6 +534,52 @@ static Atom *outcome_materialize_with_outer_env(Arena *a, const Outcome *src,
     return materialized;
 }
 
+static bool outcome_set_add_compacted_variant(Arena *a, OutcomeSet *os,
+                                              const Outcome *src,
+                                              const Bindings *outer_env) {
+    Outcome *slot;
+    Bindings merged;
+    Bindings *effective = NULL;
+
+    if (!variant_instance_present(&src->variant))
+        return false;
+
+    bindings_init(&merged);
+    if ((outer_env && (outer_env->len > 0 || outer_env->eq_len > 0)) &&
+        (src->env.len > 0 || src->env.eq_len > 0)) {
+        if (!bindings_clone_merge(&merged, outer_env, &src->env)) {
+            bindings_free(&merged);
+            return false;
+        }
+        effective = &merged;
+    } else if (outer_env && (outer_env->len > 0 || outer_env->eq_len > 0)) {
+        effective = (Bindings *)outer_env;
+    } else if (src->env.len > 0 || src->env.eq_len > 0) {
+        effective = (Bindings *)&src->env;
+    }
+
+    slot = outcome_set_push_slot(os);
+    outcome_init(slot);
+    slot->atom = src->atom;
+    if (effective) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_PREFIX_COMPACT);
+        if (!variant_instance_sink_env(a, &slot->variant, &src->variant, effective)) {
+            bindings_free(&merged);
+            outcome_free_fields(slot);
+            os->len--;
+            return false;
+        }
+    } else if (!variant_instance_clone(&slot->variant, &src->variant)) {
+        bindings_free(&merged);
+        outcome_free_fields(slot);
+        os->len--;
+        return false;
+    }
+    outcome_refresh_materialized_fast_path(slot);
+    bindings_free(&merged);
+    return true;
+}
+
 static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
                                              const Outcome *src,
                                              const Bindings *outer_env,
@@ -532,6 +589,10 @@ static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
     bindings_assert_no_private_variant_slots(&src->env);
     bindings_assert_no_private_variant_slots(outer_env);
     if (!preserve_bindings) {
+        if (variant_instance_present(&src->variant)) {
+            if (outcome_set_add_compacted_variant(a, os, src, outer_env))
+                return;
+        }
         Atom *applied = outcome_materialize_with_outer_env(a, src, outer_env);
         if (!applied)
             return;
@@ -4484,6 +4545,50 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
     return true;
 }
 
+static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
+                                    Atom *surface_atom, uint32_t nargs,
+                                    Atom **args, bool evaluate_rows, int fuel,
+                                    OutcomeSet *os) {
+    Bindings _empty;
+    bindings_init(&_empty);
+    Atom *internal_head = atom_symbol_id(a, internal_head_id);
+    Atom **resolved_args = arena_alloc(a, sizeof(Atom *) * nargs);
+    for (uint32_t i = 0; i < nargs; i++) {
+        resolved_args[i] = resolve_registry_refs(a, args[i]);
+    }
+    Atom *result = dispatch_native_op(s, a, internal_head, resolved_args, nargs);
+    if (!result) return false;
+    if (atom_is_error(result)) {
+        outcome_set_add(os, result, &_empty);
+        return true;
+    }
+    Atom *payload = result;
+    if (payload->kind == ATOM_EXPR && payload->expr.len == 2 &&
+        atom_is_symbol_id(payload->expr.elems[0], g_builtin_syms.quote)) {
+        payload = payload->expr.elems[1];
+    }
+    if (payload->kind == ATOM_EXPR) {
+        for (uint32_t i = 0; i < payload->expr.len; i++) {
+            Atom *row = payload->expr.elems[i];
+            if (row->kind == ATOM_EXPR && row->expr.len == 2 &&
+                atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.quote)) {
+                row = row->expr.elems[1];
+            }
+            if (evaluate_rows) {
+                eval_for_caller(s, a, NULL, row, fuel, &_empty, false, os);
+            } else {
+                outcome_set_add(os, row, &_empty);
+            }
+        }
+        return true;
+    }
+    if (payload != surface_atom) {
+        outcome_set_add(os, payload, &_empty);
+        return true;
+    }
+    return false;
+}
+
 static __attribute__((noinline)) bool
 handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 bool preserve_bindings, Atom **tail_next, Atom **tail_type,
@@ -5109,9 +5214,25 @@ tail_call: ;
         else
             outcome_set_add(os,
                 atom_error(a, atom,
-                    atom_string(a, "cdr-atom expects a non-empty expression as an argument")),
+                atom_string(a, "cdr-atom expects a non-empty expression as an argument")),
                 &_empty);
         return;
+    }
+
+    /* ── explicit mork: surface reads ────────────────────────────────── */
+    if (head_id == g_builtin_syms.mork_get_atoms_surface && nargs == 1) {
+        if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_atoms,
+                                    atom, nargs, atom->expr.elems + 1,
+                                    false, fuel, os)) {
+            return;
+        }
+    }
+    if (head_id == g_builtin_syms.mork_match_surface && nargs == 3) {
+        if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_match,
+                                    atom, nargs, atom->expr.elems + 1,
+                                    true, fuel, os)) {
+            return;
+        }
     }
 
     /* ── match (with nested-match fusion + join reordering) ──────────── */

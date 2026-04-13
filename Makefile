@@ -95,7 +95,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_ENGINES = native native-candidate-exact
@@ -161,9 +161,9 @@ perf-stable: perf-runtime-stats
 test-symbolid-guard:
 	@./scripts/check_symbolid_guards.sh
 
-runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c $(BUILD_CONFIG_HEADER)
+runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c -lm
 
 test-variant-shape-roundtrip: runtime/test_variant_shape_roundtrip
 	@./runtime/test_variant_shape_roundtrip
