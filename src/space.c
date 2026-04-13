@@ -1630,3 +1630,12 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
     query_bucket(&s->eq_idx.wildcard, query, &visible, a, out);
     query_visible_var_set_free(&visible);
 }
+
+bool space_equations_may_match_known_head(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return true;
+    ensure_eq_index(s);
+    if (s->eq_idx.wildcard.len > 0)
+        return true;
+    return s->eq_idx.buckets[symbol_hash(head)].len > 0;
+}
