@@ -1,0 +1,15 @@
+!(bind! &s (new-space pathmap))
+!(add-atom &s (edge a b))
+!(add-atom &s (edge a b))
+!(add-atom &s (edge b c))
+!(add-atom &s (edge b c))
+!(add-atom &s (edge b c))
+!(assertEqualToResult (count-atoms &s) (5))
+!(assertEqualToResult (match &s (edge a b) hit) (hit hit))
+!(assertEqualToResult
+  (match &s (, (edge $x $y) (edge $y $z)) ($x $z))
+  ((a c) (a c) (a c) (a c) (a c) (a c)))
+!(remove-atom &s (edge a b))
+!(assertEqualToResult
+  (match &s (, (edge $x $y) (edge $y $z)) ($x $z))
+  ((a c) (a c) (a c)))
