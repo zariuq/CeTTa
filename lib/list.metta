@@ -57,3 +57,12 @@
 
 (= (list:foldl $xs $init $acc $item $step)
    (foldl-atom $xs $init $acc $item $step))
+
+(= (list:range $end)
+   (range-atom $end))
+
+(= (list:range $start $end)
+   (range-atom $start $end))
+
+(= (list:repeat $count $item)
+   (repeat-atom $count $item))

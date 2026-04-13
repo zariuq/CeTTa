@@ -1,6 +1,26 @@
 #ifndef CETTA_VARIANT_SHAPE_H
 #define CETTA_VARIANT_SHAPE_H
 
+/*
+ * VariantShape is CeTTa's current runtime representation for open-term
+ * sharing: a renaming-insensitive skeleton plus a per-instance slot
+ * environment.
+ *
+ * Informal correspondence to the literature:
+ * - explicit substitutions / closures:
+ *     skeleton  ~ term-with-holes
+ *     slot_env  ~ delayed substitution environment
+ *     materialize ~ apply the delayed substitutions
+ * - rho-style naming:
+ *     the private slot namespace plays a role similar to a restricted,
+ *     runtime-only name discipline, but this module does not implement
+ *     full rho-calculus semantics.
+ *
+ * This header intentionally states only the representation idea and the
+ * safety boundary. It does not claim formal theorems or specific proof
+ * artifacts; those should be referenced only once they actually exist.
+ */
+
 #include "match.h"
 #include "term_canon.h"
 
