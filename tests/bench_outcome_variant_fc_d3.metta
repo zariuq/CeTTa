@@ -60,3 +60,7 @@
                      (outcome-variant-factor-success $n)))
 !(println! (match &stats (runtime-counter outcome-variant-slot-materialize $n)
                      (outcome-variant-slot-materialize $n)))
+!(println! (match &stats (runtime-counter outcome-variant-slot-sink $n)
+                     (outcome-variant-slot-sink $n)))
+!(println! (match &stats (runtime-counter outcome-variant-prefix-compact $n)
+                     (outcome-variant-prefix-compact $n)))
