@@ -26,6 +26,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{self, slice_from_raw_parts_mut};
 use std::sync::{Mutex, OnceLock};
 
+mod counted_pathmap;
+
 #[repr(C)]
 pub struct MorkSpace {
     _private: [u8; 0],
@@ -61,6 +63,15 @@ struct BridgeSpace {
     atom_index_rows: HashMap<Vec<u8>, Vec<u32>>,
     next_row_id: u32,
     row_metadata_active: bool,
+    storage_mode: BridgeStorageMode,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum BridgeStorageMode {
+    // Raw expression storage for explicit lib_mork / `mork:` surfaces.
+    RawExprs,
+    // CeTTa-owned counted storage for generic `(new-space pathmap)`.
+    CountedPathmap,
 }
 
 struct BridgeProgram {
@@ -100,7 +111,7 @@ const MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 #[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
 #[cfg(feature = "pathmap-space")]
-const MULTI_REF_V3_FLAG_MULTI_REF_GROUPS: u16 = 1 << 2;
+const MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES: u16 = 1 << 3;
 const ACT_COPY_SIDECAR_MAGIC: u32 = 0x4354_434f;
 const ACT_COPY_SIDECAR_VERSION: u16 = 2;
 
@@ -535,12 +546,14 @@ fn bridge_space_from_parts(
     atom_index_rows: HashMap<Vec<u8>, Vec<u32>>,
     next_row_id: u32,
     row_metadata_active: bool,
+    storage_mode: BridgeStorageMode,
 ) -> *mut MorkSpace {
     let bridge_space = Box::new(BridgeSpace {
         inner: space,
         atom_index_rows,
         next_row_id,
         row_metadata_active,
+        storage_mode,
     });
     Box::into_raw(bridge_space) as *mut MorkSpace
 }
@@ -548,7 +561,13 @@ fn bridge_space_from_parts(
 fn bridge_space_from_snapshot(snapshot: PathMap<()>) -> *mut MorkSpace {
     let mut space = Space::new();
     space.btm = snapshot;
-    bridge_space_from_parts(space, HashMap::new(), 0, false)
+    bridge_space_from_parts(
+        space,
+        HashMap::new(),
+        0,
+        false,
+        BridgeStorageMode::RawExprs,
+    )
 }
 
 fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
@@ -565,11 +584,59 @@ fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
         source.atom_index_rows.clone(),
         source.next_row_id,
         source.row_metadata_active,
+        source.storage_mode,
     )
+}
+
+fn bridge_uses_counted_storage(bridge: &BridgeSpace) -> bool {
+    bridge.storage_mode == BridgeStorageMode::CountedPathmap
+}
+
+fn bridge_counted_entries(
+    bridge: &BridgeSpace,
+) -> Result<Vec<counted_pathmap::CountedEntry>, String> {
+    counted_pathmap::counted_entries(&bridge.inner)
+}
+
+fn bridge_counted_row_ids_for_expr(
+    bridge: &BridgeSpace,
+    atom_expr_bytes: &[u8],
+    count: u32,
+) -> Result<Vec<u32>, String> {
+    // Compatibility shim only: some indexed bridge APIs still need stable
+    // `atom_idx`-style identities back into CeTTa's native `Space`.
+    if bridge.row_metadata_active {
+        return Ok(bridge
+            .atom_index_rows
+            .get(atom_expr_bytes)
+            .cloned()
+            .unwrap_or_default());
+    }
+
+    let mut base = 0u32;
+    for entry in bridge_counted_entries(bridge)? {
+        let end = base.saturating_add(entry.count);
+        if entry.atom_expr_bytes == atom_expr_bytes {
+            return Ok((base..end).collect());
+        }
+        base = end;
+    }
+
+    Ok((0..count).collect())
+}
+
+fn bridge_counted_copy_count(bridge: &BridgeSpace, atom_expr_bytes: &[u8]) -> usize {
+    counted_pathmap::counted_exact_entry(&bridge.inner, atom_expr_bytes)
+        .ok()
+        .flatten()
+        .map(|entry| entry.count as usize)
+        .unwrap_or(1)
 }
 
 #[derive(Clone)]
 struct RowMetadataState {
+    // Compatibility-only mapping from expr bytes to stable row identities for
+    // older indexed packet paths and imported-space rematch consumers.
     active: bool,
     rows_by_expr: HashMap<Vec<u8>, Vec<u32>>,
     next_row_id: u32,
@@ -635,11 +702,26 @@ fn bridge_activate_row_metadata(bridge: &mut BridgeSpace) {
     let mut next_row_id = bridge.next_row_id;
     let mut used = HashSet::new();
     let mut rows_by_expr = HashMap::new();
-    let mut rz = bridge.inner.btm.read_zipper();
-    while rz.to_next_val() {
-        let expr_bytes = rz.path().to_vec();
-        let row = bridge_allocate_row_id(&mut next_row_id, &mut used);
-        rows_by_expr.insert(expr_bytes, vec![row]);
+    if bridge_uses_counted_storage(bridge) {
+        if let Ok(entries) = bridge_counted_entries(bridge) {
+            for entry in entries {
+                let mut rows = Vec::with_capacity(entry.count as usize);
+                bridge_fill_rows_for_expr(
+                    &mut rows,
+                    entry.count as usize,
+                    &mut used,
+                    &mut next_row_id,
+                );
+                rows_by_expr.insert(entry.atom_expr_bytes, rows);
+            }
+        }
+    } else {
+        let mut rz = bridge.inner.btm.read_zipper();
+        while rz.to_next_val() {
+            let expr_bytes = rz.path().to_vec();
+            let row = bridge_allocate_row_id(&mut next_row_id, &mut used);
+            rows_by_expr.insert(expr_bytes, vec![row]);
+        }
     }
     bridge_store_row_state(
         bridge,
@@ -721,21 +803,43 @@ fn bridge_rebuild_after_preserving_existing_rows(
     let mut next_row_id = before.next_row_id;
     let mut used = HashSet::new();
     let mut rows_by_expr = HashMap::new();
-    let mut rz = bridge.inner.btm.read_zipper();
-    while rz.to_next_val() {
-        let expr_bytes = rz.path().to_vec();
-        let mut rows = Vec::new();
-        bridge_extend_rows_for_expr(
-            &mut rows,
-            before.rows_by_expr.get(&expr_bytes),
-            usize::MAX,
-            &mut used,
-            &mut next_row_id,
-        );
-        if rows.is_empty() {
-            rows.push(bridge_allocate_row_id(&mut next_row_id, &mut used));
+    if bridge_uses_counted_storage(bridge) {
+        if let Ok(entries) = bridge_counted_entries(bridge) {
+            for entry in entries {
+                let mut rows = Vec::new();
+                bridge_extend_rows_for_expr(
+                    &mut rows,
+                    before.rows_by_expr.get(&entry.atom_expr_bytes),
+                    entry.count as usize,
+                    &mut used,
+                    &mut next_row_id,
+                );
+                bridge_fill_rows_for_expr(
+                    &mut rows,
+                    entry.count as usize,
+                    &mut used,
+                    &mut next_row_id,
+                );
+                rows_by_expr.insert(entry.atom_expr_bytes, rows);
+            }
         }
-        rows_by_expr.insert(expr_bytes, rows);
+    } else {
+        let mut rz = bridge.inner.btm.read_zipper();
+        while rz.to_next_val() {
+            let expr_bytes = rz.path().to_vec();
+            let mut rows = Vec::new();
+            bridge_extend_rows_for_expr(
+                &mut rows,
+                before.rows_by_expr.get(&expr_bytes),
+                usize::MAX,
+                &mut used,
+                &mut next_row_id,
+            );
+            if rows.is_empty() {
+                rows.push(bridge_allocate_row_id(&mut next_row_id, &mut used));
+            }
+            rows_by_expr.insert(expr_bytes, rows);
+        }
     }
 
     bridge.row_metadata_active = true;
@@ -1071,6 +1175,9 @@ fn act_copy_sidecar_path(path: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn bridge_copy_count(bridge: &BridgeSpace, expr_bytes: &[u8]) -> usize {
+    if bridge_uses_counted_storage(bridge) {
+        return bridge_counted_copy_count(bridge, expr_bytes);
+    }
     if !bridge.row_metadata_active {
         return 1;
     }
@@ -1082,6 +1189,9 @@ fn bridge_copy_count(bridge: &BridgeSpace, expr_bytes: &[u8]) -> usize {
 }
 
 fn bridge_stored_atom_count(bridge: &BridgeSpace) -> u64 {
+    if bridge_uses_counted_storage(bridge) {
+        return counted_pathmap::counted_logical_size(&bridge.inner).unwrap_or(0);
+    }
     if !bridge.row_metadata_active {
         return bridge.inner.btm.val_count() as u64;
     }
@@ -1139,6 +1249,9 @@ unsafe fn bridge_space_mutate_from_raw(
 }
 
 fn build_act_copy_sidecar(bridge: &BridgeSpace) -> Vec<u8> {
+    if bridge_uses_counted_storage(bridge) {
+        return Vec::new();
+    }
     let state = bridge_row_state(bridge);
     if !state.active {
         return Vec::new();
@@ -1187,6 +1300,12 @@ fn read_u32_be_at(input: &[u8], offset: &mut usize) -> Result<u32, String> {
 }
 
 fn apply_act_copy_sidecar(bridge: &mut BridgeSpace, data: &[u8]) -> Result<(), String> {
+    if bridge_uses_counted_storage(bridge) {
+        if data.is_empty() {
+            return Ok(());
+        }
+        return Err("counted PathMap spaces do not accept ACT row-id sidecars".to_string());
+    }
     let mut offset = 0usize;
     let magic = read_u32_be_at(data, &mut offset)?;
     if magic != ACT_COPY_SIDECAR_MAGIC {
@@ -1267,6 +1386,33 @@ fn parse_single_expr(space: &mut Space, input: &[u8]) -> Result<Vec<u8>, String>
 
     parse_buffer.truncate(ez.loc);
     Ok(parse_buffer)
+}
+
+fn parse_expr_chunk(space: &mut Space, input: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let mut parser = ParDataParser::new(&space.sm);
+    let mut context = Context::new(input);
+    let mut out = Vec::new();
+
+    loop {
+        skip_trailing(&mut context)
+            .map_err(|e| format!("chunk trailing parse failed: {:?}", e))?;
+        if context.loc >= context.src.len() {
+            break;
+        }
+
+        let remaining = &context.src[context.loc..];
+        let mut parse_buffer = vec![0u8; remaining.len().saturating_mul(4).saturating_add(4096)];
+        let mut ez = ExprZipper::new(Expr {
+            ptr: parse_buffer.as_mut_ptr(),
+        });
+        parser
+            .sexpr(&mut context, &mut ez)
+            .map_err(|e| format!("chunk parse failed: {:?}", e))?;
+        parse_buffer.truncate(ez.loc);
+        out.push(parse_buffer);
+    }
+
+    Ok(out)
 }
 
 fn normalize_query_text(input: &[u8]) -> Result<Vec<u8>, String> {
@@ -1431,15 +1577,10 @@ fn append_query_only_v2_header(out: &mut Vec<u8>, row_count: u32) {
 }
 
 #[cfg(feature = "pathmap-space")]
-fn append_multi_ref_v3_header(out: &mut Vec<u8>, factor_count: u32, row_count: u32) {
+fn append_multi_ref_v3_header(out: &mut Vec<u8>, flags: u16, factor_count: u32, row_count: u32) {
     append_u32_be(out, QUERY_ONLY_V2_MAGIC);
     append_u16_be(out, MULTI_REF_V3_VERSION);
-    append_u16_be(
-        out,
-        MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY
-            | MULTI_REF_V3_FLAG_RAW_EXPR_BYTES
-            | MULTI_REF_V3_FLAG_MULTI_REF_GROUPS,
-    );
+    append_u16_be(out, flags);
     append_u32_be(out, factor_count);
     append_u32_be(out, row_count);
 }
@@ -1528,6 +1669,23 @@ fn append_query_only_binding_entries(
     Ok(())
 }
 
+fn append_query_only_binding_signature(
+    space: &mut Space,
+    out: &mut Vec<u8>,
+    bindings: &[(u8, String)],
+) -> Result<(), String> {
+    append_u32_be(out, bindings.len() as u32);
+    for (query_slot, value_text) in bindings {
+        append_u16_be(out, *query_slot as u16);
+        out.push(0);
+        out.push(1);
+        let expr_bytes = parse_single_expr(space, value_text.as_bytes())?;
+        append_u32_be(out, expr_bytes.len() as u32);
+        out.extend_from_slice(&expr_bytes);
+    }
+    Ok(())
+}
+
 fn append_query_only_v2_row(
     space: &Space,
     out: &mut Vec<u8>,
@@ -1541,25 +1699,30 @@ fn append_query_only_v2_row(
     append_query_only_binding_entries(space, out, bindings)
 }
 
-#[cfg(feature = "pathmap-space")]
-fn append_multi_ref_groups(
+fn counted_query_indices_for_factor(
     space: &BridgeSpace,
+    factor_expr: Expr,
+) -> Result<Vec<u32>, String> {
+    let mut indices = Vec::<u32>::new();
+    for entry in counted_pathmap::counted_factor_candidates(&space.inner, factor_expr)? {
+        let mut rows = bridge_counted_row_ids_for_expr(space, &entry.atom_expr_bytes, entry.count)?;
+        indices.append(&mut rows);
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    Ok(indices)
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_multi_ref_counted_multiplicities(
     out: &mut Vec<u8>,
-    factor_exprs: &[Expr],
+    factor_counts: &[u32],
 ) -> Result<(), String> {
-    for &factor_expr in factor_exprs {
-        let atom_indices = space
-            .atom_index_rows
-            .get(expr_span_bytes(factor_expr))
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if atom_indices.is_empty() {
-            return Err("multi-ref v3 packet rejected an unindexed matched factor".to_string());
+    for count in factor_counts {
+        if *count == 0 {
+            return Err("counted multi-ref row resolved to zero multiplicity".to_string());
         }
-        append_u32_be(out, atom_indices.len() as u32);
-        for &idx in atom_indices {
-            append_u32_be(out, idx);
-        }
+        append_u32_be(out, *count);
     }
     Ok(())
 }
@@ -1671,7 +1834,6 @@ fn query_bindings_multi_ref_v3_packet(
     space: &mut BridgeSpace,
     pattern: &[u8],
 ) -> Result<(Vec<u8>, u32), String> {
-    bridge_ensure_query_row_metadata(space);
     let normalized = normalize_query_text(pattern)?;
     let pattern_bytes = parse_single_expr(&mut space.inner, &normalized)?;
     let pattern_expr = Expr {
@@ -1684,39 +1846,36 @@ fn query_bindings_multi_ref_v3_packet(
         return Err("multi-ref v3 requires at least one query factor".to_string());
     }
 
-    let mut error: Option<String> = None;
     let mut row_count = 0u32;
     let mut packet = Vec::new();
     let mut pending_rows: Vec<Vec<u8>> = Vec::new();
 
-    cetta_mork_adapter::query_multi_with_factor_exprs(
-        &space.inner.btm,
-        pattern_expr,
-        |bindings, factor_exprs| {
+    if bridge_uses_counted_storage(space) {
+        for counted_row in counted_pathmap::counted_query_rows_detailed(&space.inner, &pattern_bytes)?
+        {
             let mut row = Vec::new();
-            let append_result =
-                append_multi_ref_groups(space, &mut row, factor_exprs).and_then(|()| {
-                    append_query_only_binding_entries(&space.inner, &mut row, &bindings)
-                });
-            match append_result {
-                Ok(()) => {
-                    row_count += 1;
-                    pending_rows.push(row);
-                    true
-                }
-                Err(err) => {
-                    error = Some(err);
-                    false
-                }
-            }
-        },
-    );
-
-    if let Some(err) = error {
-        return Err(err);
+            append_multi_ref_counted_multiplicities(&mut row, &counted_row.factor_counts)
+            .and_then(|()| {
+                append_query_only_binding_signature(&mut space.inner, &mut row, &counted_row.bindings)
+            })?;
+            row_count += 1;
+            pending_rows.push(row);
+        }
+    } else {
+        return Err(
+            "multi-ref v3 packets are only available for counted PathMap bridge spaces"
+                .to_string(),
+        );
     }
 
-    append_multi_ref_v3_header(&mut packet, factor_count as u32, row_count);
+    append_multi_ref_v3_header(
+        &mut packet,
+        MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY
+            | MULTI_REF_V3_FLAG_RAW_EXPR_BYTES
+            | MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES,
+        factor_count as u32,
+        row_count,
+    );
     for row in pending_rows {
         packet.extend_from_slice(&row);
     }
@@ -1745,19 +1904,34 @@ fn query_index_packet_expr(
     space: &mut BridgeSpace,
     pattern_expr_bytes: &[u8],
 ) -> Result<(Vec<u8>, u32), String> {
-    bridge_ensure_query_row_metadata(space);
     validate_expr_bytes(pattern_expr_bytes)?;
     let pattern_expr = Expr {
         ptr: pattern_expr_bytes.as_ptr().cast_mut(),
     };
     let mut indices = Vec::<u32>::new();
 
-    Space::query_multi(&space.inner.btm, pattern_expr, |_result, matched_expr| {
-        if let Some(rows) = space.atom_index_rows.get(expr_span_bytes(matched_expr)) {
-            indices.extend(rows.iter().copied());
+    if bridge_uses_counted_storage(space) {
+        let n_factors = pattern_expr
+            .arity()
+            .ok_or_else(|| "counted candidate query expected a wrapped expression".to_string())?
+            as usize;
+        if n_factors < 2 {
+            return Err("counted candidate query is missing wrapped factors".to_string());
         }
-        true
-    });
+        let mut pat_args = Vec::with_capacity(n_factors);
+        ExprEnv::new(0, pattern_expr).args(&mut pat_args);
+        for factor in &pat_args[1..] {
+            indices.extend(counted_query_indices_for_factor(space, factor.subsexpr())?);
+        }
+    } else {
+        bridge_ensure_query_row_metadata(space);
+        Space::query_multi(&space.inner.btm, pattern_expr, |_result, matched_expr| {
+            if let Some(rows) = space.atom_index_rows.get(expr_span_bytes(matched_expr)) {
+                indices.extend(rows.iter().copied());
+            }
+            true
+        });
+    }
 
     indices.sort_unstable();
     let mut packet = Vec::with_capacity(indices.len() * 4);
@@ -1768,6 +1942,9 @@ fn query_index_packet_expr(
 }
 
 fn prefix_candidate_indices_for_factor(space: &BridgeSpace, factor_expr: Expr) -> Vec<u32> {
+    if bridge_uses_counted_storage(space) {
+        return counted_query_indices_for_factor(space, factor_expr).unwrap_or_default();
+    }
     // SAFETY: `factor_expr` is validated expression input coming from the bridge query pipeline,
     // so taking its prefix span and borrowing the resulting bytes is valid for the duration of this call.
     let prefix = unsafe {
@@ -1891,6 +2068,21 @@ fn query_debug_text(space: &mut Space, pattern: &[u8]) -> Result<(Vec<u8>, u32),
 }
 
 fn dump_bridge_space_text(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), String> {
+    if bridge_uses_counted_storage(bridge) {
+        let mut text = Vec::new();
+        let mut count = 0u32;
+        for entry in bridge_counted_entries(bridge)? {
+            let mut line = Vec::new();
+            let mut view = Space::new();
+            view.btm.insert(&entry.atom_expr_bytes, ());
+            view.dump_all_sexpr(&mut line)?;
+            for _ in 0..entry.count {
+                text.extend_from_slice(&line);
+                count = count.saturating_add(1);
+            }
+        }
+        return Ok((text, count));
+    }
     let mut unique_text = Vec::new();
     bridge.inner.dump_all_sexpr(&mut unique_text)?;
     if !bridge.row_metadata_active {
@@ -1935,6 +2127,22 @@ pub extern "C" fn mork_space_new() -> *mut MorkSpace {
             atom_index_rows: HashMap::new(),
             next_row_id: 0,
             row_metadata_active: false,
+            storage_mode: BridgeStorageMode::RawExprs,
+        });
+        Box::into_raw(bridge) as *mut MorkSpace
+    })
+}
+
+/// Allocates a fresh bridge-owned counted PathMap space for generic CeTTa pathmap backends.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_new_pathmap() -> *mut MorkSpace {
+    with_catch(|| {
+        let bridge = Box::new(BridgeSpace {
+            inner: Space::new(),
+            atom_index_rows: HashMap::new(),
+            next_row_id: 0,
+            row_metadata_active: false,
+            storage_mode: BridgeStorageMode::CountedPathmap,
         });
         Box::into_raw(bridge) as *mut MorkSpace
     })
@@ -1989,14 +2197,35 @@ pub extern "C" fn mork_space_add_text(
         };
         // SAFETY: `text` is checked for null above and borrowed only for the duration of parsing.
         let bytes = std::slice::from_raw_parts(text, len);
-        match bridge.inner.add_all_sexpr(bytes) {
-            Ok(count) => {
-                if let Some(before) = before.as_ref() {
-                    bridge_rebuild_after_preserving_existing_rows(bridge, before);
+        if bridge_uses_counted_storage(bridge) {
+            match parse_expr_chunk(&mut bridge.inner, bytes) {
+                Ok(exprs) => {
+                    let mut added = 0u64;
+                    for expr_bytes in exprs {
+                        if let Err(err) =
+                            counted_pathmap::counted_insert_expr(&mut bridge.inner, &expr_bytes)
+                        {
+                            return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+                        }
+                        added = added.saturating_add(1);
+                    }
+                    if let Some(before) = before.as_ref() {
+                        bridge_rebuild_after_preserving_existing_rows(bridge, before);
+                    }
+                    MorkStatus::ok(added)
                 }
-                MorkStatus::ok(count as u64)
+                Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
-            Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+        } else {
+            match bridge.inner.add_all_sexpr(bytes) {
+                Ok(count) => {
+                    if let Some(before) = before.as_ref() {
+                        bridge_rebuild_after_preserving_existing_rows(bridge, before);
+                    }
+                    MorkStatus::ok(count as u64)
+                }
+                Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+            }
         }
     })
 }
@@ -2030,14 +2259,40 @@ pub extern "C" fn mork_space_remove_text(
             None
         };
         let bytes = std::slice::from_raw_parts(text, len);
-        match bridge.inner.remove_all_sexpr(bytes) {
-            Ok(count) => {
-                if let Some(before) = before.as_ref() {
-                    bridge_rebuild_after_preserving_existing_rows(bridge, before);
+        if bridge_uses_counted_storage(bridge) {
+            match parse_expr_chunk(&mut bridge.inner, bytes) {
+                Ok(exprs) => {
+                    let mut removed = 0u64;
+                    for expr_bytes in exprs {
+                        match counted_pathmap::counted_remove_one_expr(&mut bridge.inner, &expr_bytes)
+                        {
+                            Ok(Some(_)) => removed = removed.saturating_add(1),
+                            Ok(None) => {}
+                            Err(err) => {
+                                return MorkStatus::err(
+                                    MorkStatusCode::Internal,
+                                    err.into_bytes(),
+                                );
+                            }
+                        }
+                    }
+                    if let Some(before) = before.as_ref() {
+                        bridge_rebuild_after_preserving_existing_rows(bridge, before);
+                    }
+                    MorkStatus::ok(removed)
                 }
-                MorkStatus::ok(count as u64)
+                Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
-            Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+        } else {
+            match bridge.inner.remove_all_sexpr(bytes) {
+                Ok(count) => {
+                    if let Some(before) = before.as_ref() {
+                        bridge_rebuild_after_preserving_existing_rows(bridge, before);
+                    }
+                    MorkStatus::ok(count as u64)
+                }
+                Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+            }
         }
     })
 }
@@ -2073,10 +2328,18 @@ pub extern "C" fn mork_space_add_indexed_text(
             Ok(expr) => expr,
             Err(err) => return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
         };
+        // Compatibility entry point: indexed callers still expect bridge results to
+        // round-trip back into CeTTa's native `space->atoms[atom_idx]` world.
         if !bridge.row_metadata_active && bridge.inner.btm.val_count() > 0 {
             bridge_activate_row_metadata(bridge);
         }
-        bridge.inner.btm.insert(&expr_bytes, ());
+        if bridge_uses_counted_storage(bridge) {
+            if let Err(err) = counted_pathmap::counted_insert_expr(&mut bridge.inner, &expr_bytes) {
+                return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+            }
+        } else {
+            bridge.inner.btm.insert(&expr_bytes, ());
+        }
         bridge.row_metadata_active = true;
         bridge
             .atom_index_rows
@@ -2136,6 +2399,12 @@ pub extern "C" fn mork_space_step(space: *mut MorkSpace, steps: u64) -> MorkStat
             Ok(space) => space,
             Err(err) => return err,
         };
+        if bridge_uses_counted_storage(bridge) {
+            return MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"counted PathMap bridge spaces do not support metta_calculus stepping".to_vec(),
+            );
+        }
         let before = if bridge.row_metadata_active {
             Some(bridge_row_state(bridge))
         } else {
@@ -5373,18 +5642,39 @@ mod tests {
 
     #[cfg(feature = "pathmap-space")]
     #[test]
-    fn multi_ref_v3_packet_reports_factor_groups_and_ground_bindings() {
+    fn multi_ref_v3_packet_is_unavailable_on_raw_bridge() {
         let raw = mork_space_new();
         assert!(!raw.is_null());
-        let fact1 = b"(pair a b)";
-        let fact2 = b"(pair b c)";
         let query = b"(, (pair $x $y) (pair $y $z))";
-        let add1 = mork_space_add_indexed_sexpr(raw, 31, fact1.as_ptr(), fact1.len());
-        let add2 = mork_space_add_indexed_sexpr(raw, 37, fact2.as_ptr(), fact2.len());
-        assert!(status_ok(&add1));
-        assert!(status_ok(&add2));
 
         let packet = mork_space_query_bindings_multi_ref_v3(raw, query.as_ptr(), query.len());
+        assert_eq!(packet.code, MorkStatusCode::Internal as i32);
+        let text = unsafe { std::slice::from_raw_parts(packet.message, packet.message_len) };
+        let rendered = std::str::from_utf8(text).unwrap();
+        assert!(rendered.contains("counted PathMap bridge spaces"));
+        mork_bytes_free(packet.message, packet.message_len);
+        mork_space_free(raw);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn multi_ref_v3_packet_reports_direct_factor_multiplicities_and_ground_bindings() {
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let edge_ab = b"(edge a b)";
+        let edge_bc = b"(edge b c)";
+        let query = b"(, (edge $x $y) (edge $y $z))";
+
+        for _ in 0..2 {
+            let add = mork_space_add_sexpr(counted, edge_ab.as_ptr(), edge_ab.len());
+            assert!(status_ok(&add));
+        }
+        for _ in 0..3 {
+            let add = mork_space_add_sexpr(counted, edge_bc.as_ptr(), edge_bc.len());
+            assert!(status_ok(&add));
+        }
+
+        let packet = mork_space_query_bindings_multi_ref_v3(counted, query.as_ptr(), query.len());
         assert!(buffer_ok(&packet));
         assert_eq!(packet.count, 1);
         let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
@@ -5397,7 +5687,7 @@ mod tests {
             u16::from_be_bytes([data[6], data[7]]),
             MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY
                 | MULTI_REF_V3_FLAG_RAW_EXPR_BYTES
-                | MULTI_REF_V3_FLAG_MULTI_REF_GROUPS
+                | MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES
         );
         assert_eq!(
             u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
@@ -5409,55 +5699,47 @@ mod tests {
         );
         assert_eq!(
             u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
-            1
+            2
         );
         assert_eq!(
             u32::from_be_bytes([data[20], data[21], data[22], data[23]]),
-            31
+            3
         );
         assert_eq!(
             u32::from_be_bytes([data[24], data[25], data[26], data[27]]),
-            1
-        );
-        assert_eq!(
-            u32::from_be_bytes([data[28], data[29], data[30], data[31]]),
-            37
-        );
-        assert_eq!(
-            u32::from_be_bytes([data[32], data[33], data[34], data[35]]),
             3
         );
-        assert_eq!(u16::from_be_bytes([data[36], data[37]]), 0);
-        assert_eq!(data[38], 1);
-        assert_eq!(data[39], 1);
+        assert_eq!(u16::from_be_bytes([data[28], data[29]]), 0);
+        assert_eq!(data[30], 1);
+        assert_eq!(data[31], 1);
         assert_eq!(
-            u32::from_be_bytes([data[40], data[41], data[42], data[43]]) as usize,
+            u32::from_be_bytes([data[32], data[33], data[34], data[35]]) as usize,
             2
         );
-        assert_eq!(data[44], item_byte(Tag::SymbolSize(1)));
-        assert_eq!(data[45], b'a');
-        assert_eq!(u16::from_be_bytes([data[46], data[47]]), 1);
-        assert_eq!(data[49], 1);
+        assert_eq!(data[36], item_byte(Tag::SymbolSize(1)));
+        assert_eq!(data[37], b'a');
+        assert_eq!(u16::from_be_bytes([data[38], data[39]]), 1);
+        assert_eq!(data[41], 1);
         assert_eq!(
-            u32::from_be_bytes([data[50], data[51], data[52], data[53]]) as usize,
+            u32::from_be_bytes([data[42], data[43], data[44], data[45]]) as usize,
             2
         );
-        assert_eq!(data[54], item_byte(Tag::SymbolSize(1)));
-        assert_eq!(data[55], b'b');
-        assert_eq!(u16::from_be_bytes([data[56], data[57]]), 2);
-        assert_eq!(data[59], 1);
+        assert_eq!(data[46], item_byte(Tag::SymbolSize(1)));
+        assert_eq!(data[47], b'b');
+        assert_eq!(u16::from_be_bytes([data[48], data[49]]), 2);
+        assert_eq!(data[51], 1);
         assert_eq!(
-            u32::from_be_bytes([data[60], data[61], data[62], data[63]]) as usize,
+            u32::from_be_bytes([data[52], data[53], data[54], data[55]]) as usize,
             2
         );
-        assert_eq!(data[64], item_byte(Tag::SymbolSize(1)));
-        assert_eq!(data[65], b'c');
-        assert!(data[38] > 0);
-        assert!(data[48] > 0);
-        assert!(data[58] > 0);
-        assert!(data[38] == 2 || data[48] == 2 || data[58] == 2);
+        assert_eq!(data[56], item_byte(Tag::SymbolSize(1)));
+        assert_eq!(data[57], b'c');
+        assert!(data[30] > 0);
+        assert!(data[40] > 0);
+        assert!(data[50] > 0);
+        assert!(data[30] == 2 || data[40] == 2 || data[50] == 2);
         mork_bytes_free(packet.data, packet.len);
-        mork_space_free(raw);
+        mork_space_free(counted);
     }
 
     #[cfg(not(feature = "pathmap-space"))]

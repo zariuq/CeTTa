@@ -17,6 +17,7 @@
 #define IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY 0x0001u
 #define IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES 0x0002u
 #define IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS 0x0004u
+#define IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES 0x0008u
 #define IMPORTED_MORK_TAG_VARREF_MASK 0xC0u
 #define IMPORTED_MORK_TAG_VARREF_PREFIX 0x80u
 #define IMPORTED_MORK_TAG_SYMBOL_PREFIX 0xC0u
@@ -33,8 +34,6 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
                                          SubstMatchSet *out);
 static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
                                             SubstMatchSet *out);
-static bool imported_bridge_query_bindings(Space *s, Arena *a, Atom *query,
-                                           SubstMatchSet *out);
 static bool imported_bridge_query_conjunction_fast(Space *s, Arena *a,
                                                    Atom **patterns, uint32_t npatterns,
                                                    const Bindings *seed,
@@ -777,6 +776,8 @@ bool space_match_backend_mork_query_conjunction_direct(
     size_t packet_len = 0;
     uint32_t row_count = 0;
     uint32_t factor_count = 0;
+    bool multi_ref_groups = false;
+    bool direct_multiplicities = false;
 
     for (uint32_t i = 0; i < npatterns; i++) {
         grounded[i] = seed ? bindings_apply((Bindings *)seed, &scratch, patterns[i])
@@ -814,25 +815,46 @@ bool space_match_backend_mork_query_conjunction_direct(
         goto cleanup;
     }
     if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
-        version != IMPORTED_MORK_MULTI_REF_V3_VERSION ||
-        flags != (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
-                  IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) ||
-        factor_count != npatterns ||
-        parsed_rows != row_count) {
+        version != IMPORTED_MORK_MULTI_REF_V3_VERSION) {
+        success = false;
+        goto cleanup;
+    }
+    multi_ref_groups = (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) != 0;
+    direct_multiplicities =
+        (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES) != 0;
+    if ((flags & (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) !=
+            (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+             IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES) ||
+        (flags & ~(IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
+                   IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS |
+                   IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES)) != 0 ||
+        multi_ref_groups == direct_multiplicities ||
+        factor_count != npatterns || parsed_rows != row_count) {
         success = false;
         goto cleanup;
     }
 
     for (uint32_t row = 0; row < parsed_rows && success; row++) {
         for (uint32_t fi = 0; fi < factor_count; fi++) {
-            uint32_t ref_count = 0;
-            if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
-                off + (size_t)ref_count * 4u > packet_len) {
-                success = false;
-                break;
+            if (direct_multiplicities) {
+                uint32_t factor_multiplicity = 0;
+                if (!imported_bridge_read_u32(packet, packet_len, &off,
+                                              &factor_multiplicity) ||
+                    factor_multiplicity == 0) {
+                    success = false;
+                    break;
+                }
+            } else {
+                uint32_t ref_count = 0;
+                if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
+                    off + (size_t)ref_count * 4u > packet_len) {
+                    success = false;
+                    break;
+                }
+                off += (size_t)ref_count * 4u;
             }
-            off += (size_t)ref_count * 4u;
         }
         if (!success)
             break;
@@ -1032,61 +1054,6 @@ static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map) 
     }
 }
 
-static bool imported_bridge_parse_marker(const char *name,
-                                         uint8_t *side_out,
-                                         uint8_t *index_out) {
-    unsigned side = 0, index = 0;
-    char tail = '\0';
-    if (sscanf(name, "__mork_b%u_%u%c", &side, &index, &tail) != 2)
-        return false;
-    if (side > 255 || index > 255)
-        return false;
-    *side_out = (uint8_t)side;
-    *index_out = (uint8_t)index;
-    return true;
-}
-
-static Atom *imported_bridge_rewrite_value_atom(
-    Arena *a,
-    Atom *atom,
-    ImportedBridgeVarMap *query_vars,
-    ImportedBridgeVarMap *candidate_vars,
-    uint32_t epoch,
-    bool *ok
-) {
-    if (!atom || !*ok)
-        return atom;
-    switch (atom->kind) {
-    case ATOM_VAR: {
-        uint8_t side = 0, index = 0;
-        const char *marker = atom_name_cstr(atom);
-        if (!marker || !imported_bridge_parse_marker(marker, &side, &index))
-            return atom;
-        ImportedBridgeVarSlot *slot =
-            side == 0 ? imported_bridge_varmap_lookup(query_vars, index)
-                      : imported_bridge_varmap_lookup(candidate_vars, index);
-        if (!slot) {
-            *ok = false;
-            return atom;
-        }
-        VarId id = side == 0 ? slot->var_id : var_epoch_id(slot->var_id, epoch);
-        return atom_var_with_spelling(a, slot->spelling, id);
-    }
-    case ATOM_EXPR: {
-        Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
-            elems[i] = imported_bridge_rewrite_value_atom(
-                a, atom->expr.elems[i], query_vars, candidate_vars, epoch, ok);
-            if (!*ok)
-                return atom;
-        }
-        return atom_expr(a, elems, atom->expr.len);
-    }
-    default:
-        return atom;
-    }
-}
-
 static bool imported_bridge_read_u32(const uint8_t *packet, size_t len, size_t *off,
                                      uint32_t *out) {
     if (*off + 4 > len)
@@ -1241,24 +1208,6 @@ static Atom *imported_bridge_parse_value_raw_query_only_v2(
         return NULL;
     }
     return value;
-}
-
-static Atom *imported_bridge_parse_value_text(Arena *a,
-                                              const uint8_t *text,
-                                              uint32_t text_len) {
-    char *buf = arena_alloc(a, (size_t)text_len + 1);
-    memcpy(buf, text, text_len);
-    buf[text_len] = '\0';
-    size_t pos = 0;
-    Atom *value = parse_sexpr(a, buf, &pos);
-    if (!value)
-        return NULL;
-    while (buf[pos] && ((unsigned char)buf[pos] == ' ' ||
-                        (unsigned char)buf[pos] == '\t' ||
-                        (unsigned char)buf[pos] == '\n' ||
-                        (unsigned char)buf[pos] == '\r'))
-        pos++;
-    return buf[pos] == '\0' ? value : NULL;
 }
 
 static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
@@ -1469,7 +1418,7 @@ static void imported_rebuild_flat(Space *s) {
 static bool imported_ensure_bridge_space(PathmapImportedState *st) {
     if (st->bridge_space)
         return true;
-    st->bridge_space = cetta_mork_bridge_space_new();
+    st->bridge_space = cetta_mork_bridge_space_new_pathmap();
     return st->bridge_space != NULL;
 }
 
@@ -1484,6 +1433,9 @@ static bool imported_rebuild_bridge(Space *s) {
         Arena scratch;
         arena_init(&scratch);
         char *sexpr = atom_to_string(&scratch, s->atoms[i]);
+        /* Imported/pathmap spaces now store counted keys in the bridge, but the
+           host matcher still rematches through `space->atoms[i]`, so we mirror
+           the current native index as an adapter contract at rebuild time. */
         bool ok = cetta_mork_bridge_space_add_indexed_text(
             (CettaMorkSpaceHandle *)st->bridge_space, i, sexpr);
         arena_free(&scratch);
@@ -2021,325 +1973,6 @@ imported_bridge_query_indices(Space *s, Atom *pattern,
     return true;
 }
 
-static __attribute__((unused)) bool
-imported_bridge_query_bindings(Space *s, Arena *a, Atom *query,
-                               SubstMatchSet *out) {
-    PathmapImportedState *st = &s->match_backend.imported;
-    uint32_t logical_len = imported_logical_len(s);
-    Arena scratch;
-    arena_init(&scratch);
-    char *pattern_text = atom_to_string(&scratch, query);
-    uint8_t *packet = NULL;
-    size_t packet_len = 0;
-    uint32_t row_count = 0;
-    bool ok = cetta_mork_bridge_space_query_bindings_text(
-        (CettaMorkSpaceHandle *)st->bridge_space,
-        pattern_text,
-        &packet, &packet_len, &row_count);
-    arena_free(&scratch);
-    if (!ok)
-        return false;
-
-    smset_init(out);
-
-    ImportedBridgeVarMap query_vars;
-    imported_bridge_varmap_init(&query_vars);
-    if (!imported_bridge_collect_vars(query, &query_vars)) {
-        imported_bridge_varmap_free(&query_vars);
-        cetta_mork_bridge_bytes_free(packet, packet_len);
-        return false;
-    }
-
-    bool success = true;
-    size_t off = 0;
-    uint32_t parsed_rows = 0;
-    if (!imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows) ||
-        parsed_rows != row_count) {
-        success = false;
-        goto cleanup;
-    }
-
-    for (uint32_t row = 0; row < parsed_rows && success; row++) {
-        uint32_t ref_count = 0;
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count)) {
-            success = false;
-            break;
-        }
-        if (off + (size_t)ref_count * 4u > packet_len) {
-            success = false;
-            break;
-        }
-        const uint8_t *ref_bytes = packet + off;
-        off += (size_t)ref_count * 4u;
-
-        uint32_t binding_count = 0;
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
-            success = false;
-            break;
-        }
-
-        ImportedBridgeBindingEntry *entries = NULL;
-        if (binding_count > 0) {
-            entries = cetta_malloc(sizeof(ImportedBridgeBindingEntry) * binding_count);
-            for (uint32_t bi = 0; bi < binding_count; bi++) {
-                if (off + 2 > packet_len) {
-                    success = false;
-                    break;
-                }
-                entries[bi].side = packet[off++];
-                entries[bi].index = packet[off++];
-                if (!imported_bridge_read_u32(packet, packet_len, &off, &entries[bi].text_len)) {
-                    success = false;
-                    break;
-                }
-                if (off + entries[bi].text_len > packet_len) {
-                    success = false;
-                    break;
-                }
-                entries[bi].text = packet + off;
-                off += entries[bi].text_len;
-            }
-        }
-        if (!success) {
-            free(entries);
-            break;
-        }
-
-        for (uint32_t ri = 0; ri < ref_count && success; ri++) {
-            uint32_t atom_idx = ((uint32_t)ref_bytes[(size_t)ri * 4u] << 24) |
-                                ((uint32_t)ref_bytes[(size_t)ri * 4u + 1] << 16) |
-                                ((uint32_t)ref_bytes[(size_t)ri * 4u + 2] << 8) |
-                                (uint32_t)ref_bytes[(size_t)ri * 4u + 3];
-            if (atom_idx >= logical_len) {
-                success = false;
-                break;
-            }
-            if (st->attached_compiled) {
-                success = false;
-                break;
-            }
-
-            ImportedBridgeVarMap candidate_vars;
-            imported_bridge_varmap_init(&candidate_vars);
-            if (!imported_bridge_collect_vars(s->atoms[atom_idx], &candidate_vars)) {
-                imported_bridge_varmap_free(&candidate_vars);
-                success = false;
-                break;
-            }
-
-            uint32_t epoch = fresh_var_suffix();
-            Bindings row_bindings;
-            bindings_init(&row_bindings);
-
-            for (uint32_t bi = 0; bi < binding_count && success; bi++) {
-                /* Imported bridge rows that bind candidate-side vars are not yet
-                   semantically stable for chained nested-match workloads.
-                   Reject and fall back to candidate-index + local rematch. */
-                if (entries[bi].side != 0) {
-                    success = false;
-                    break;
-                }
-                ImportedBridgeVarSlot *key_slot =
-                    imported_bridge_varmap_lookup(&query_vars, entries[bi].index);
-                if (!key_slot) {
-                    success = false;
-                    break;
-                }
-
-                Atom *parsed = imported_bridge_parse_value_text(
-                    a, entries[bi].text, entries[bi].text_len);
-                if (!parsed) {
-                    success = false;
-                    break;
-                }
-
-                bool rewrite_ok = true;
-                Atom *value = imported_bridge_rewrite_value_atom(
-                    a, parsed, &query_vars, &candidate_vars, epoch, &rewrite_ok);
-                if (!rewrite_ok) {
-                    success = false;
-                    break;
-                }
-
-                VarId binding_id = key_slot->var_id;
-                if (!bindings_add_id(&row_bindings, binding_id, key_slot->spelling, value)) {
-                    success = false;
-                    break;
-                }
-            }
-
-            if (success && !bindings_has_loop(&row_bindings))
-                subst_matchset_push(out, atom_idx, epoch, &row_bindings, true);
-            bindings_free(&row_bindings);
-            imported_bridge_varmap_free(&candidate_vars);
-        }
-        free(entries);
-    }
-
-cleanup:
-    if (!success) {
-        smset_free(out);
-        smset_init(out);
-    } else {
-        subst_matchset_normalize(out);
-    }
-    imported_bridge_varmap_free(&query_vars);
-    cetta_mork_bridge_bytes_free(packet, packet_len);
-    return success;
-}
-
-static __attribute__((unused)) bool
-imported_bridge_query_bindings_query_only_v2(Space *s, Arena *a,
-                                             Atom *query,
-                                             SubstMatchSet *out) {
-    PathmapImportedState *st = &s->match_backend.imported;
-    uint32_t logical_len = imported_logical_len(s);
-    Arena scratch;
-    arena_init(&scratch);
-    char *pattern_text = atom_to_string(&scratch, query);
-    uint8_t *packet = NULL;
-    size_t packet_len = 0;
-    uint32_t row_count = 0;
-    bool ok = cetta_mork_bridge_space_query_bindings_query_only_v2(
-        (CettaMorkSpaceHandle *)st->bridge_space,
-        (const uint8_t *)pattern_text, strlen(pattern_text),
-        &packet, &packet_len, &row_count);
-    arena_free(&scratch);
-    if (!ok)
-        return false;
-
-    smset_init(out);
-
-    ImportedBridgeVarMap query_vars;
-    imported_bridge_varmap_init(&query_vars);
-    if (!imported_bridge_collect_vars(query, &query_vars)) {
-        imported_bridge_varmap_free(&query_vars);
-        cetta_mork_bridge_bytes_free(packet, packet_len);
-        return false;
-    }
-
-    bool success = true;
-    size_t off = 0;
-    uint32_t magic = 0;
-    uint16_t version = 0;
-    uint16_t flags = 0;
-    uint32_t parsed_rows = 0;
-
-    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
-        !imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows)) {
-        success = false;
-        goto cleanup;
-    }
-
-    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
-        version != IMPORTED_MORK_QUERY_ONLY_V2_VERSION ||
-        flags != (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES) ||
-        parsed_rows != row_count) {
-        success = false;
-        goto cleanup;
-    }
-
-    for (uint32_t row = 0; row < parsed_rows && success; row++) {
-        uint32_t ref_count = 0;
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count)) {
-            success = false;
-            break;
-        }
-        if (off + (size_t)ref_count * 4u > packet_len) {
-            success = false;
-            break;
-        }
-        const uint8_t *ref_bytes = packet + off;
-        off += (size_t)ref_count * 4u;
-
-        uint32_t binding_count = 0;
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
-            success = false;
-            break;
-        }
-
-        ImportedBridgeBindingEntryV2 *entries = NULL;
-        if (binding_count > 0) {
-            entries = cetta_malloc(sizeof(ImportedBridgeBindingEntryV2) * binding_count);
-            for (uint32_t bi = 0; bi < binding_count; bi++) {
-                if (!imported_bridge_read_u16(packet, packet_len, &off, &entries[bi].query_slot) ||
-                    off + 2 > packet_len) {
-                    success = false;
-                    break;
-                }
-                entries[bi].value_env = packet[off++];
-                entries[bi].value_flags = packet[off++];
-                if (!imported_bridge_read_u32(packet, packet_len, &off, &entries[bi].expr_len) ||
-                    off + entries[bi].expr_len > packet_len) {
-                    success = false;
-                    break;
-                }
-                entries[bi].expr = packet + off;
-                off += entries[bi].expr_len;
-            }
-        }
-        if (!success) {
-            free(entries);
-            break;
-        }
-
-        for (uint32_t ri = 0; ri < ref_count && success; ri++) {
-            uint32_t atom_idx = ((uint32_t)ref_bytes[(size_t)ri * 4u] << 24) |
-                                ((uint32_t)ref_bytes[(size_t)ri * 4u + 1] << 16) |
-                                ((uint32_t)ref_bytes[(size_t)ri * 4u + 2] << 8) |
-                                (uint32_t)ref_bytes[(size_t)ri * 4u + 3];
-            if (atom_idx >= logical_len) {
-                success = false;
-                break;
-            }
-
-            Bindings row_bindings;
-            bindings_init(&row_bindings);
-
-            for (uint32_t bi = 0; bi < binding_count && success; bi++) {
-                ImportedBridgeVarSlot *key_slot =
-                    imported_bridge_varmap_lookup(&query_vars, entries[bi].query_slot);
-                if (!key_slot) {
-                    success = false;
-                    break;
-                }
-                bool value_ok = true;
-                Atom *value = imported_bridge_parse_value_raw_query_only_v2(
-                    a,
-                    entries[bi].expr,
-                    entries[bi].expr_len,
-                    entries[bi].value_env,
-                    entries[bi].value_flags,
-                    &value_ok);
-                if (!value_ok ||
-                    !bindings_add_id(&row_bindings, key_slot->var_id, key_slot->spelling, value)) {
-                    success = false;
-                    break;
-                }
-            }
-
-            if (success && !bindings_has_loop(&row_bindings))
-                subst_matchset_push(out, atom_idx, 0, &row_bindings, true);
-            bindings_free(&row_bindings);
-        }
-        free(entries);
-    }
-
-cleanup:
-    if (!success) {
-        smset_free(out);
-        smset_init(out);
-    } else {
-        subst_matchset_normalize(out);
-    }
-    imported_bridge_varmap_free(&query_vars);
-    cetta_mork_bridge_bytes_free(packet, packet_len);
-    return success;
-}
-
 static __attribute__((unused)) uint32_t
 imported_candidates_flat(Space *s, Atom *pattern, uint32_t **out) {
     PathmapImportedState *st = &s->match_backend.imported;
@@ -2671,6 +2304,8 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
     size_t packet_len = 0;
     uint32_t row_count = 0;
     uint32_t factor_count = 0;
+    bool multi_ref_groups = false;
+    bool direct_multiplicities = false;
 
     for (uint32_t i = 0; i < npatterns; i++) {
         grounded[i] = seed ? bindings_apply((Bindings *)seed, &scratch, order[i].pattern)
@@ -2712,12 +2347,23 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
         goto cleanup;
     }
     if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
-        version != IMPORTED_MORK_MULTI_REF_V3_VERSION ||
-        flags != (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
-                  IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) ||
-        factor_count != npatterns ||
-        parsed_rows != row_count) {
+        version != IMPORTED_MORK_MULTI_REF_V3_VERSION) {
+        success = false;
+        goto cleanup;
+    }
+    multi_ref_groups = (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) != 0;
+    direct_multiplicities =
+        (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES) != 0;
+    if ((flags & (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) !=
+            (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+             IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES) ||
+        (flags & ~(IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
+                   IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS |
+                   IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES)) != 0 ||
+        multi_ref_groups == direct_multiplicities ||
+        factor_count != npatterns || parsed_rows != row_count) {
         success = false;
         goto cleanup;
     }
@@ -2725,31 +2371,43 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
     for (uint32_t row = 0; row < parsed_rows && success; row++) {
         uint64_t multiplicity = 1;
         for (uint32_t fi = 0; fi < factor_count; fi++) {
-            uint32_t ref_count = 0;
-            if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
-                ref_count == 0 ||
-                off + (size_t)ref_count * 4u > packet_len) {
-                success = false;
-                break;
-            }
-            if (multiplicity > UINT64_MAX / ref_count) {
-                success = false;
-                break;
-            }
-            multiplicity *= ref_count;
-            for (uint32_t ri = 0; ri < ref_count; ri++) {
-                uint32_t atom_idx = ((uint32_t)packet[off] << 24) |
-                                    ((uint32_t)packet[off + 1] << 16) |
-                                    ((uint32_t)packet[off + 2] << 8) |
-                                    (uint32_t)packet[off + 3];
-                if (atom_idx >= imported_logical_len(s)) {
+            uint64_t factor_multiplicity = 0;
+            if (direct_multiplicities) {
+                uint32_t count = 0;
+                if (!imported_bridge_read_u32(packet, packet_len, &off, &count) ||
+                    count == 0) {
                     success = false;
                     break;
                 }
-                off += 4u;
+                factor_multiplicity = count;
+            } else {
+                uint32_t ref_count = 0;
+                if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
+                    ref_count == 0 ||
+                    off + (size_t)ref_count * 4u > packet_len) {
+                    success = false;
+                    break;
+                }
+                factor_multiplicity = ref_count;
+                for (uint32_t ri = 0; ri < ref_count; ri++) {
+                    uint32_t atom_idx = ((uint32_t)packet[off] << 24) |
+                                        ((uint32_t)packet[off + 1] << 16) |
+                                        ((uint32_t)packet[off + 2] << 8) |
+                                        (uint32_t)packet[off + 3];
+                    if (atom_idx >= imported_logical_len(s)) {
+                        success = false;
+                        break;
+                    }
+                    off += 4u;
+                }
+                if (!success)
+                    break;
             }
-            if (!success)
+            if (multiplicity > UINT64_MAX / factor_multiplicity) {
+                success = false;
                 break;
+            }
+            multiplicity *= factor_multiplicity;
         }
         if (!success)
             break;
