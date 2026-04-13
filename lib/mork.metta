@@ -291,26 +291,10 @@
     (case (__cetta_lib_mork_space_remove_atom $space (quote $atom))
       (($result (return $result))))))
 
-(= (mork:get-atoms $space)
-  (function
-    (chain (__cetta_lib_mork_space_atoms $space) $quoted-results
-      (let (quote $results) $quoted-results
-        (chain (eval (superpose $results)) $row
-          (let (quote $result) $row
-            (return $result)))))))
-
 (= (mork:size $space)
   (function
     (case (__cetta_lib_mork_space_size $space)
       (($result (return $result))))))
-
-(= (mork:match $space $pattern $template)
-  (function
-    (chain (__cetta_lib_mork_space_match $space $pattern $template) $quoted-results
-      (let (quote $results) $quoted-results
-        (chain (eval (superpose $results)) $row
-          (let (quote $result) $row
-            (return $result)))))))
 
 (= (mork:clone $space)
   (function

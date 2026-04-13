@@ -56,6 +56,8 @@ typedef struct {
     X(order, "order") \
     X(native, "native") \
     X(mork_text, "mork") \
+    X(mork_get_atoms_surface, "mork:get-atoms") \
+    X(mork_match_surface, "mork:match") \
     X(reverse, "reverse") \
     X(lex, "lex") \
     X(shortlex, "shortlex") \

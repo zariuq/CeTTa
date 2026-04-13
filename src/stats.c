@@ -65,6 +65,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "outcome-variant-factor-attempt",
     "outcome-variant-factor-success",
     "outcome-variant-slot-materialize",
+    "outcome-variant-slot-sink",
+    "outcome-variant-prefix-compact",
 };
 
 static int64_t clamp_counter(uint64_t value) {
