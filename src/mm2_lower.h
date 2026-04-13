@@ -22,4 +22,12 @@ Atom *cetta_mm2_raise_atom(Arena *a, Atom *atom);
 /* Render one raw or lowered MM2 atom as surface MM2 S-expression text. */
 char *cetta_mm2_atom_to_surface_string(Arena *a, Atom *atom);
 
+/* Encode one raw or lowered MM2 atom as stable MORK bridge expr bytes.
+   This keeps the CeTTa<->MORK mutation boundary below UTF-8 surface text while
+   preserving the same raised/MM2-visible term shape as the text path. */
+bool cetta_mm2_atom_to_bridge_expr_bytes(Arena *a, Atom *atom,
+                                         uint8_t **out_bytes,
+                                         size_t *out_len,
+                                         const char **out_error);
+
 #endif /* CETTA_MM2_LOWER_H */

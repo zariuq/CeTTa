@@ -64,7 +64,21 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_ATTEMPT = 53,
     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_SUCCESS = 54,
     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_SLOT_MATERIALIZE = 55,
-    CETTA_RUNTIME_COUNTER_COUNT = 56
+    CETTA_RUNTIME_COUNTER_MORK_ADD_CALL = 56,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_LOWER_NS = 57,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_FFI_NS = 58,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_EXPR_BYTES = 59,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_CALL = 60,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_ITEMS = 61,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_PACK_NS = 62,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_FFI_NS = 63,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_PACKET_BYTES = 64,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_NATIVE_NS = 65,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_DISPATCH_NS = 66,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_RESOLVE_NS = 67,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_STREAM_EVAL_NS = 68,
+    CETTA_RUNTIME_COUNTER_MORK_ADD_STREAM_INSERT_NS = 69,
+    CETTA_RUNTIME_COUNTER_COUNT = 70
 } CettaRuntimeCounter;
 
 typedef struct {
@@ -75,6 +89,7 @@ const char *cetta_runtime_counter_name(CettaRuntimeCounter counter);
 void cetta_runtime_stats_reset(void);
 void cetta_runtime_stats_enable(void);
 void cetta_runtime_stats_disable(void);
+bool cetta_runtime_stats_is_enabled(void);
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta);
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out);
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats);

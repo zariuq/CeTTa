@@ -56,6 +56,8 @@ typedef struct {
     X(order, "order") \
     X(native, "native") \
     X(mork_text, "mork") \
+    X(mork_get_atoms_surface, "mork:get-atoms") \
+    X(mork_match_surface, "mork:match") \
     X(reverse, "reverse") \
     X(lex, "lex") \
     X(shortlex, "shortlex") \
@@ -114,6 +116,9 @@ typedef struct {
     X(add_reduct, "add-reduct") \
     X(add_atom, "add-atom") \
     X(add_atom_nodup, "add-atom-nodup") \
+    X(mork_add_atoms, "mork:add-atoms") \
+    X(mork_add_atom, "mork:add-atom") \
+    X(mork_remove_atom, "mork:remove-atom") \
     X(remove_atom, "remove-atom") \
     X(get_atoms, "get-atoms") \
     X(count_atoms, "count-atoms") \

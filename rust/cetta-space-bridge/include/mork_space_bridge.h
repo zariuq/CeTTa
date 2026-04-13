@@ -41,6 +41,10 @@ Primary storage/query surface:
 
 - mork_space_add_text()/mork_space_remove_text() are the current UTF-8
   S-expression transport helpers.
+- mork_space_add_expr_bytes()/mork_space_remove_expr_bytes() accept one stable
+  bridge expr-byte span directly and bypass UTF-8 parsing.
+- mork_space_add_expr_bytes_batch() accepts a packed length-prefixed sequence
+  of stable bridge expr-byte spans and keeps bulk mutation on the same low ABI.
 - mork_space_add_indexed_text() mirrors a CeTTa row id for candidate replay.
 - mork_space_logical_size() reports duplicate-aware logical atom count when
   row metadata is available.
@@ -100,6 +104,15 @@ void mork_space_free(MorkSpace *space);
 MorkStatus mork_space_clear(MorkSpace *space);
 MorkStatus mork_space_add_text(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_remove_text(MorkSpace *space, const uint8_t *text, size_t len);
+MorkStatus mork_space_add_expr_bytes(MorkSpace *space,
+                                     const uint8_t *expr_bytes,
+                                     size_t len);
+MorkStatus mork_space_add_expr_bytes_batch(MorkSpace *space,
+                                           const uint8_t *packet,
+                                           size_t len);
+MorkStatus mork_space_remove_expr_bytes(MorkSpace *space,
+                                        const uint8_t *expr_bytes,
+                                        size_t len);
 MorkStatus mork_space_add_indexed_text(MorkSpace *space, uint32_t atom_idx,
                                        const uint8_t *text, size_t len);
 MorkStatus mork_space_add_sexpr(MorkSpace *space, const uint8_t *text, size_t len);

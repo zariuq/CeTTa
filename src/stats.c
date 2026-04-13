@@ -65,6 +65,20 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "outcome-variant-factor-attempt",
     "outcome-variant-factor-success",
     "outcome-variant-slot-materialize",
+    "mork-add-call",
+    "mork-add-lower-ns",
+    "mork-add-ffi-ns",
+    "mork-add-expr-bytes",
+    "mork-add-batch-call",
+    "mork-add-batch-items",
+    "mork-add-batch-pack-ns",
+    "mork-add-batch-ffi-ns",
+    "mork-add-batch-packet-bytes",
+    "mork-add-batch-native-ns",
+    "mork-add-batch-dispatch-ns",
+    "mork-add-batch-resolve-ns",
+    "mork-add-stream-eval-ns",
+    "mork-add-stream-insert-ns",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -85,6 +99,7 @@ void cetta_runtime_stats_reset(void) {
 
 void cetta_runtime_stats_enable(void) { g_runtime_stats_enabled = true; }
 void cetta_runtime_stats_disable(void) { g_runtime_stats_enabled = false; }
+bool cetta_runtime_stats_is_enabled(void) { return g_runtime_stats_enabled; }
 
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
     if (__builtin_expect(!g_runtime_stats_enabled, 1))

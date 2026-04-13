@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "foreign.h"
+#include "mork_space_bridge_runtime.h"
 #include "native_handle.h"
 #include "session.h"
 #include "space.h"
@@ -106,5 +107,8 @@ bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
 Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
                                     Arena *a,
                                     Atom *head, Atom **args, uint32_t nargs);
+bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
+                                               Atom *space_arg,
+                                               CettaMorkSpaceHandle **bridge_out);
 
 #endif /* CETTA_LIBRARY_H */

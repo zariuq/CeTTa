@@ -26,6 +26,12 @@ Primary CeTTa bridge surface:
 
 - cetta_mork_bridge_space_add_indexed_text() mirrors CeTTa row ids into MORK
   and activates stable row provenance for that bridge-owned space
+- cetta_mork_bridge_space_add_expr_bytes()/remove_expr_bytes() accept one
+  stable bridge expr-byte span directly and bypass UTF-8 parsing on the
+  mutation path
+- cetta_mork_bridge_space_add_expr_bytes_batch() accepts a packed sequence of
+  length-prefixed stable bridge expr-byte spans so bulk mutation stays on the
+  same low ABI as singular mutation
 - cetta_mork_bridge_space_logical_size() reports duplicate-aware logical atom
   count when row metadata is available
 - cetta_mork_bridge_space_unique_size() reports unique structural support
@@ -80,6 +86,14 @@ bool cetta_mork_bridge_space_clear(CettaMorkSpaceHandle *space);
 bool cetta_mork_bridge_space_add_text(CettaMorkSpaceHandle *space,
                                       const char *text,
                                       uint64_t *out_added);
+bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
+                                            const uint8_t *expr_bytes,
+                                            size_t len,
+                                            uint64_t *out_added);
+bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
+                                                  const uint8_t *packet,
+                                                  size_t len,
+                                                  uint64_t *out_added);
 bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len,
@@ -87,6 +101,10 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
 bool cetta_mork_bridge_space_remove_text(CettaMorkSpaceHandle *space,
                                          const char *text,
                                          uint64_t *out_removed);
+bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
+                                               const uint8_t *expr_bytes,
+                                               size_t len,
+                                               uint64_t *out_removed);
 bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
                                           const uint8_t *text,
                                           size_t len,
