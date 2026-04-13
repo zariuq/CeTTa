@@ -74,3 +74,12 @@
 
 (= (clist:foldl $list $init $acc $item $step)
    (list:foldl (clist:to-list $list) $init $acc $item $step))
+
+(= (clist:range $end)
+   (clist:from-list (list:range $end)))
+
+(= (clist:range $start $end)
+   (clist:from-list (list:range $start $end)))
+
+(= (clist:repeat $count $item)
+   (clist:from-list (list:repeat $count $item)))

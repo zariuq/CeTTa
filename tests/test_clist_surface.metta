@@ -21,3 +21,8 @@
 !(assertEqual
   (clist:foldl (clist:from-list (1 2 3 4)) 0 $acc $item (+ $acc $item))
   10)
+!(assertEqual (clist:range 5) (clist:from-list (0 1 2 3 4)))
+!(assertEqual (clist:range 2 6) (clist:from-list (2 3 4 5)))
+!(assertEqual (clist:range 4 1) (clist:nil))
+!(assertEqual (clist:repeat 3 z) (clist:from-list (z z z)))
+!(assertEqual (clist:repeat 0 z) (clist:nil))

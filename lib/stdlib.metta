@@ -119,6 +119,9 @@
 (: size (-> %Undefined% Number))
 (: size-atom (-> Expression Number))
 (: index-atom (-> Expression Number Atom))
+(: range-atom (-> Number Expression))
+(: range-atom (-> Number Number Expression))
+(: repeat-atom (-> Number Atom Expression))
 
 (@doc sort-strings
   (@desc "Sorts expression which contains strings in alphabet order")
