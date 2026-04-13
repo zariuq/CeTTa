@@ -6,6 +6,7 @@
 #include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
 #include "parser.h"
+#include "stats.h"
 #include "text_source.h"
 #include <ctype.h>
 #include <dirent.h>
@@ -17,6 +18,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 enum {
@@ -70,6 +72,12 @@ typedef struct {
     size_t cap;
 } CettaStringBuf;
 
+static uint64_t library_monotonic_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
 static void library_mork_cursor_free_resource(void *resource);
 static void library_mork_product_cursor_free_resource(void *resource);
 static void library_mork_overlay_cursor_free_resource(void *resource);
@@ -106,6 +114,15 @@ static void cetta_sb_append_n(CettaStringBuf *sb, const char *s, size_t n) {
 
 static void cetta_sb_append(CettaStringBuf *sb, const char *s) {
     cetta_sb_append_n(sb, s, strlen(s));
+}
+
+static void cetta_sb_append_u32_be(CettaStringBuf *sb, uint32_t value) {
+    char bytes[4];
+    bytes[0] = (char)((value >> 24) & 0xff);
+    bytes[1] = (char)((value >> 16) & 0xff);
+    bytes[2] = (char)((value >> 8) & 0xff);
+    bytes[3] = (char)(value & 0xff);
+    cetta_sb_append_n(sb, bytes, sizeof(bytes));
 }
 
 static void cetta_sb_free(CettaStringBuf *sb) {
@@ -2245,6 +2262,13 @@ static bool library_mork_space_bridge(CettaMorkSpaceResource *resource,
     return true;
 }
 
+bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
+                                               Atom *space_arg,
+                                               CettaMorkSpaceHandle **bridge_out) {
+    return library_mork_space_bridge(library_explicit_mork_space_arg(ctx, space_arg),
+                                     bridge_out);
+}
+
 static __attribute__((unused)) bool library_mork_materialize_temp_space(CettaLibraryContext *ctx,
                                                                         Arena *a,
                                                                         CettaMorkSpaceResource *resource,
@@ -2701,21 +2725,151 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
                                            : "expected MorkSpace as first argument");
     }
 
-    if (which == g_builtin_syms.lib_mork_space_add_atom) {
+    if (which == g_builtin_syms.mork_add_atoms) {
+        Arena scratch;
+        CettaStringBuf packet;
+        Atom *items;
+        uint64_t added = 0;
+        const bool emit_stats = cetta_runtime_stats_is_enabled();
+        uint64_t native_started_ns = 0;
+        uint64_t ffi_started_ns = 0;
+
+        if (nargs != 2) {
+            return library_signature_error(a, head, args, nargs,
+                                           "expected MorkSpace and expression of atoms");
+        }
+        items = args[1];
+        if (items->kind != ATOM_EXPR) {
+            return library_signature_error(a, head, args, nargs,
+                                           "expected MorkSpace and expression of atoms");
+        }
+        if (!library_mork_space_bridge(target, &bridge) || !bridge) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK bridge unavailable: ");
+        }
+        arena_init(&scratch);
+        cetta_sb_init(&packet);
+        if (emit_stats) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_CALL);
+            native_started_ns = library_monotonic_ns();
+        }
+        for (uint32_t i = 0; i < items->expr.len; i++) {
+            ArenaMark mark = arena_mark(&scratch);
+            uint8_t *expr_bytes = NULL;
+            size_t expr_len = 0;
+            const char *encode_error = NULL;
+            uint64_t item_started_ns = emit_stats ? library_monotonic_ns() : 0;
+            if (!cetta_mm2_atom_to_bridge_expr_bytes(
+                    &scratch, items->expr.elems[i],
+                    &expr_bytes, &expr_len, &encode_error)) {
+                Atom *error = atom_error(
+                    a, library_call_expr(a, head, args, nargs),
+                    atom_string(a, encode_error ? encode_error
+                                                : "MORK expr-byte lowering failed"));
+                free(expr_bytes);
+                cetta_sb_free(&packet);
+                arena_free(&scratch);
+                return error;
+            }
+            cetta_sb_append_u32_be(&packet, (uint32_t)expr_len);
+            cetta_sb_append_n(&packet, (const char *)expr_bytes, expr_len);
+            free(expr_bytes);
+            arena_reset(&scratch, mark);
+            if (emit_stats) {
+                uint64_t item_finished_ns = library_monotonic_ns();
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_ITEMS);
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_PACKET_BYTES,
+                                        (uint64_t)expr_len + 4u);
+                if (item_finished_ns >= item_started_ns) {
+                    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_PACK_NS,
+                                            item_finished_ns - item_started_ns);
+                }
+            }
+        }
+        if (emit_stats) {
+            ffi_started_ns = library_monotonic_ns();
+        }
+        bool ok = cetta_mork_bridge_space_add_expr_bytes_batch(
+            bridge, (const uint8_t *)packet.buf, packet.len, &added);
+        if (emit_stats) {
+            uint64_t ffi_finished_ns = library_monotonic_ns();
+            if (ffi_finished_ns >= ffi_started_ns) {
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_FFI_NS,
+                                        ffi_finished_ns - ffi_started_ns);
+            }
+            if (ffi_finished_ns >= native_started_ns) {
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_NATIVE_NS,
+                                        ffi_finished_ns - native_started_ns);
+            }
+        }
+        cetta_sb_free(&packet);
+        arena_free(&scratch);
+        if (!ok) {
+            return library_mork_bridge_error(a, head, args, nargs,
+                                             "MORK bulk add failed: ");
+        }
+        return atom_unit(a);
+    }
+
+    if (which == g_builtin_syms.lib_mork_space_add_atom ||
+        which == g_builtin_syms.mork_add_atom) {
         Arena scratch;
         Atom *item;
-        char *sexpr;
+        uint8_t *expr_bytes = NULL;
+        size_t expr_len = 0;
+        const char *encode_error = NULL;
+        const bool emit_stats = cetta_runtime_stats_is_enabled();
+        uint64_t started_ns = 0;
+        uint64_t lowered_ns = 0;
 
         if (nargs != 2) {
             return library_signature_error(a, head, args, nargs,
                                            "expected MorkSpace and atom");
         }
-        item = library_unquote_atom(args[1]);
+        item = (which == g_builtin_syms.mork_add_atom)
+                   ? args[1]
+                   : library_unquote_atom(args[1]);
+        if (emit_stats) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MORK_ADD_CALL);
+            started_ns = library_monotonic_ns();
+        }
         arena_init(&scratch);
-        sexpr = cetta_mm2_atom_to_surface_string(&scratch, item);
+        if (!cetta_mm2_atom_to_bridge_expr_bytes(
+                &scratch, item, &expr_bytes, &expr_len, &encode_error)) {
+            Atom *error = atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, encode_error ? encode_error
+                                            : "MORK expr-byte lowering failed"));
+            if (emit_stats && started_ns) {
+                lowered_ns = library_monotonic_ns();
+                if (lowered_ns >= started_ns) {
+                    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_LOWER_NS,
+                                            lowered_ns - started_ns);
+                }
+            }
+            arena_free(&scratch);
+            return error;
+        }
+        if (emit_stats) {
+            lowered_ns = library_monotonic_ns();
+            if (lowered_ns >= started_ns) {
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_LOWER_NS,
+                                        lowered_ns - started_ns);
+            }
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_EXPR_BYTES,
+                                    (uint64_t)expr_len);
+        }
         bool ok = library_mork_space_bridge(target, &bridge) &&
-                  cetta_mork_bridge_space_add_sexpr(
-                      bridge, (const uint8_t *)sexpr, strlen(sexpr), NULL);
+                  cetta_mork_bridge_space_add_expr_bytes(
+                      bridge, expr_bytes, expr_len, NULL);
+        if (emit_stats && lowered_ns) {
+            uint64_t finished_ns = library_monotonic_ns();
+            if (finished_ns >= lowered_ns) {
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_FFI_NS,
+                                        finished_ns - lowered_ns);
+            }
+        }
+        free(expr_bytes);
         arena_free(&scratch);
         if (!ok) {
             return library_mork_bridge_error(a, head, args, nargs,
@@ -2724,21 +2878,35 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
         return atom_unit(a);
     }
 
-    if (which == g_builtin_syms.lib_mork_space_remove_atom) {
+    if (which == g_builtin_syms.lib_mork_space_remove_atom ||
+        which == g_builtin_syms.mork_remove_atom) {
         Arena scratch;
         Atom *item;
-        char *sexpr;
+        uint8_t *expr_bytes = NULL;
+        size_t expr_len = 0;
+        const char *encode_error = NULL;
 
         if (nargs != 2) {
             return library_signature_error(a, head, args, nargs,
                                            "expected MorkSpace and atom");
         }
-        item = library_unquote_atom(args[1]);
+        item = (which == g_builtin_syms.mork_remove_atom)
+                   ? args[1]
+                   : library_unquote_atom(args[1]);
         arena_init(&scratch);
-        sexpr = cetta_mm2_atom_to_surface_string(&scratch, item);
+        if (!cetta_mm2_atom_to_bridge_expr_bytes(
+                &scratch, item, &expr_bytes, &expr_len, &encode_error)) {
+            Atom *error = atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, encode_error ? encode_error
+                                            : "MORK expr-byte lowering failed"));
+            arena_free(&scratch);
+            return error;
+        }
         bool ok = library_mork_space_bridge(target, &bridge) &&
-                  cetta_mork_bridge_space_remove_sexpr(
-                      bridge, (const uint8_t *)sexpr, strlen(sexpr), NULL);
+                  cetta_mork_bridge_space_remove_expr_bytes(
+                      bridge, expr_bytes, expr_len, NULL);
+        free(expr_bytes);
         arena_free(&scratch);
         if (!ok) {
             return library_mork_bridge_error(a, head, args, nargs,
@@ -4046,8 +4214,11 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         return mork_space_clone_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_space_step ||
+        head_id == g_builtin_syms.mork_add_atoms ||
         head_id == g_builtin_syms.lib_mork_space_add_atom ||
+        head_id == g_builtin_syms.mork_add_atom ||
         head_id == g_builtin_syms.lib_mork_space_remove_atom ||
+        head_id == g_builtin_syms.mork_remove_atom ||
         head_id == g_builtin_syms.lib_mork_space_atoms ||
         head_id == g_builtin_syms.lib_mork_space_size ||
         head_id == g_builtin_syms.lib_mork_space_count_atoms ||

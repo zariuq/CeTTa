@@ -210,6 +210,10 @@ bool is_grounded_op(SymbolId id) {
     const char *name = symbol_bytes(g_symbols, id);
     if (name && strncmp(name, "__cetta_lib_", 12) == 0)
         return true;
+    if (id == g_builtin_syms.mork_add_atoms ||
+        id == g_builtin_syms.mork_add_atom ||
+        id == g_builtin_syms.mork_remove_atom)
+        return true;
     return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
            id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
            id == g_builtin_syms.op_mod || id == g_builtin_syms.op_lt ||

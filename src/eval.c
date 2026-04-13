@@ -4,6 +4,7 @@
 #include "search_machine.h"
 #include "grounded.h"
 #include "library.h"
+#include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "stats.h"
 #include "table_store.h"
@@ -13,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static Registry *g_registry = NULL;
@@ -37,6 +39,14 @@ typedef struct {
 static TempSpaceSet g_temp_spaces = {0};
 
 static Atom *resolve_registry_refs(Arena *a, Atom *atom);
+
+static uint64_t eval_monotonic_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
 
 static void ensure_fallback_eval_session(void) {
     if (g_fallback_eval_session_ready) return;
@@ -2728,6 +2738,155 @@ static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
     return resolved;
 }
 
+typedef struct {
+    CettaMorkSpaceHandle *bridge;
+    Arena scratch;
+    Atom *error_atom;
+    const char *error_message;
+    bool emit_stats;
+} MorkAddStreamVisitCtx;
+
+static bool mork_add_stream_item(MorkAddStreamVisitCtx *ctx, Atom *item) {
+    if (atom_is_error(item)) {
+        ctx->error_atom = item;
+        return false;
+    }
+
+    ArenaMark mark = arena_mark(&ctx->scratch);
+    uint8_t *expr_bytes = NULL;
+    size_t expr_len = 0;
+    const char *encode_error = NULL;
+    uint64_t started_ns = 0;
+    uint64_t lowered_ns = 0;
+
+    if (ctx->emit_stats) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MORK_ADD_CALL);
+        started_ns = eval_monotonic_ns();
+    }
+    if (!cetta_mm2_atom_to_bridge_expr_bytes(&ctx->scratch, item,
+                                             &expr_bytes, &expr_len,
+                                             &encode_error)) {
+        if (ctx->emit_stats) {
+            lowered_ns = eval_monotonic_ns();
+            if (lowered_ns >= started_ns) {
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_LOWER_NS,
+                                        lowered_ns - started_ns);
+            }
+        }
+        ctx->error_message = encode_error ? encode_error
+                                          : "MORK expr-byte lowering failed";
+        arena_reset(&ctx->scratch, mark);
+        return false;
+    }
+    if (ctx->emit_stats) {
+        lowered_ns = eval_monotonic_ns();
+        if (lowered_ns >= started_ns) {
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_LOWER_NS,
+                                    lowered_ns - started_ns);
+        }
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_EXPR_BYTES,
+                                (uint64_t)expr_len);
+    }
+    bool ok = cetta_mork_bridge_space_add_expr_bytes(ctx->bridge, expr_bytes,
+                                                     expr_len, NULL);
+    free(expr_bytes);
+    if (ctx->emit_stats) {
+        uint64_t finished_ns = eval_monotonic_ns();
+        if (finished_ns >= lowered_ns) {
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_FFI_NS,
+                                    finished_ns - lowered_ns);
+        }
+    }
+    arena_reset(&ctx->scratch, mark);
+    if (!ok) {
+        ctx->error_message = cetta_mork_bridge_last_error();
+        return false;
+    }
+    return true;
+}
+
+static bool emit_mork_add_atoms_from_collapse(Space *s, Arena *a, Atom *call_atom,
+                                              Atom *space_arg, Atom *stream_arg,
+                                              const Bindings *current_env,
+                                              int fuel, OutcomeSet *os) {
+    Bindings empty;
+    bindings_init(&empty);
+    if (!g_library_context || !expr_head_is_id(stream_arg, g_builtin_syms.collapse) ||
+        expr_nargs(stream_arg) != 1) {
+        return false;
+    }
+
+    CettaMorkSpaceHandle *bridge = NULL;
+    if (!cetta_library_lookup_explicit_mork_bridge(g_library_context, space_arg, &bridge) ||
+        !bridge) {
+        return false;
+    }
+
+    MorkAddStreamVisitCtx ctx = {
+        .bridge = bridge,
+        .error_atom = NULL,
+        .error_message = NULL,
+        .emit_stats = cetta_runtime_stats_is_enabled(),
+    };
+    ResultSet stream_items;
+    result_set_init(&stream_items);
+    uint64_t eval_started_ns = ctx.emit_stats ? eval_monotonic_ns() : 0;
+    arena_init(&ctx.scratch);
+    if (a->hashcons)
+        arena_set_hashcons(&ctx.scratch, a->hashcons);
+    Atom *applied_stream = (!current_env || current_env->len == 0)
+        ? stream_arg
+        : bindings_apply((Bindings *)current_env, a, stream_arg);
+    metta_eval(s, a, NULL, applied_stream, fuel, &stream_items);
+    uint64_t eval_finished_ns = ctx.emit_stats ? eval_monotonic_ns() : 0;
+    if (ctx.emit_stats && eval_finished_ns >= eval_started_ns) {
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_STREAM_EVAL_NS,
+                                eval_finished_ns - eval_started_ns);
+    }
+    uint64_t insert_started_ns = ctx.emit_stats ? eval_finished_ns : 0;
+    for (uint32_t i = 0; i < stream_items.len; i++) {
+        Atom *result = stream_items.items[i];
+        if (atom_is_error(result)) {
+            ctx.error_atom = result;
+            break;
+        }
+        if (result->kind == ATOM_EXPR) {
+            for (uint32_t j = 0; j < result->expr.len; j++) {
+                if (!mork_add_stream_item(&ctx, result->expr.elems[j])) {
+                    break;
+                }
+            }
+            if (ctx.error_atom || ctx.error_message) {
+                break;
+            }
+        } else if (!mork_add_stream_item(&ctx, result)) {
+            break;
+        }
+    }
+    if (ctx.emit_stats) {
+        uint64_t insert_finished_ns = eval_monotonic_ns();
+        if (insert_finished_ns >= insert_started_ns) {
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_STREAM_INSERT_NS,
+                                    insert_finished_ns - insert_started_ns);
+        }
+    }
+    result_set_free(&stream_items);
+    arena_free(&ctx.scratch);
+
+    if (ctx.error_atom) {
+        outcome_set_add(os, ctx.error_atom, &empty);
+        return true;
+    }
+    if (ctx.error_message) {
+        outcome_set_add(os, atom_error(a, call_atom,
+                                       atom_string(a, ctx.error_message)),
+                        &empty);
+        return true;
+    }
+    outcome_set_add(os, atom_unit(a), &empty);
+    return true;
+}
+
 static void temp_space_register(Space *space) {
     if (g_temp_spaces.len >= g_temp_spaces.cap) {
         g_temp_spaces.cap = g_temp_spaces.cap ? g_temp_spaces.cap * 2 : 4;
@@ -4484,8 +4643,54 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
     return true;
 }
 
+static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
+                                    Atom *surface_atom, uint32_t nargs,
+                                    Atom **args, bool evaluate_rows, int fuel,
+                                    OutcomeSet *os) {
+    Bindings _empty;
+    bindings_init(&_empty);
+    Atom *internal_head = atom_symbol_id(a, internal_head_id);
+    Atom **resolved_args = arena_alloc(a, sizeof(Atom *) * nargs);
+    for (uint32_t i = 0; i < nargs; i++) {
+        resolved_args[i] = resolve_registry_refs(a, args[i]);
+    }
+    Atom *result = dispatch_native_op(s, a, internal_head, resolved_args, nargs);
+    if (!result)
+        return false;
+    if (atom_is_error(result)) {
+        outcome_set_add(os, result, &_empty);
+        return true;
+    }
+    Atom *payload = result;
+    if (payload->kind == ATOM_EXPR && payload->expr.len == 2 &&
+        atom_is_symbol_id(payload->expr.elems[0], g_builtin_syms.quote)) {
+        payload = payload->expr.elems[1];
+    }
+    if (payload->kind == ATOM_EXPR) {
+        for (uint32_t i = 0; i < payload->expr.len; i++) {
+            Atom *row = payload->expr.elems[i];
+            if (row->kind == ATOM_EXPR && row->expr.len == 2 &&
+                atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.quote)) {
+                row = row->expr.elems[1];
+            }
+            if (evaluate_rows) {
+                eval_for_caller(s, a, NULL, row, fuel, &_empty, false, os);
+            } else {
+                outcome_set_add(os, row, &_empty);
+            }
+        }
+        return true;
+    }
+    if (payload != surface_atom) {
+        outcome_set_add(os, payload, &_empty);
+        return true;
+    }
+    return false;
+}
+
 static __attribute__((noinline)) bool
 handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
+                const Bindings *current_env,
                 bool preserve_bindings, Atom **tail_next, Atom **tail_type,
                 Bindings *tail_env,
                 OutcomeSet *os) {
@@ -4496,12 +4701,67 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     if (atom->kind != ATOM_EXPR || atom->expr.len < 1) return false;
 
     Atom *op = atom->expr.elems[0];
+    SymbolId head_id = op->kind == ATOM_SYMBOL ? op->sym_id : SYMBOL_ID_NONE;
+    uint32_t nargs = atom->expr.len - 1;
+    if (head_id == g_builtin_syms.mork_get_atoms_surface && nargs == 1) {
+        if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_atoms,
+                                    atom, nargs, atom->expr.elems + 1,
+                                    false, fuel, os)) {
+            return true;
+        }
+    }
+    if (head_id == g_builtin_syms.mork_match_surface && nargs == 3) {
+        if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_match,
+                                    atom, nargs, atom->expr.elems + 1,
+                                    true, fuel, os)) {
+            return true;
+        }
+    }
+    if (head_id == g_builtin_syms.mork_add_atoms && nargs == 2) {
+        Atom *space_arg = resolve_registry_refs(a, atom->expr.elems[1]);
+        if (emit_mork_add_atoms_from_collapse(s, a, atom, space_arg,
+                                              atom->expr.elems[2], current_env,
+                                              fuel, os)) {
+            return true;
+        }
+    }
     if (op->kind == ATOM_SYMBOL &&
-        (op->sym_id == g_builtin_syms.range_atom ||
-         op->sym_id == g_builtin_syms.repeat_atom)) {
+        (head_id == g_builtin_syms.range_atom ||
+         head_id == g_builtin_syms.repeat_atom)) {
         Atom *direct = dispatch_native_op(s, a, op,
                                           atom->expr.elems + 1,
                                           atom->expr.len - 1);
+        if (direct) {
+            outcome_set_add(os, direct, &_empty);
+            return true;
+        }
+    }
+    if (op->kind == ATOM_SYMBOL &&
+        (head_id == g_builtin_syms.mork_add_atoms ||
+         head_id == g_builtin_syms.mork_add_atom ||
+         head_id == g_builtin_syms.mork_remove_atom)) {
+        const bool emit_stats = cetta_runtime_stats_is_enabled();
+        uint64_t dispatch_started_ns = emit_stats ? eval_monotonic_ns() : 0;
+        uint64_t resolve_started_ns = dispatch_started_ns;
+        Atom **resolved_args = arena_alloc(a, sizeof(Atom *) * nargs);
+        for (uint32_t i = 0; i < nargs; i++) {
+            resolved_args[i] = resolve_registry_refs(a, atom->expr.elems[i + 1]);
+        }
+        if (emit_stats && head_id == g_builtin_syms.mork_add_atoms) {
+            uint64_t resolve_finished_ns = eval_monotonic_ns();
+            if (resolve_finished_ns >= resolve_started_ns) {
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_RESOLVE_NS,
+                                        resolve_finished_ns - resolve_started_ns);
+            }
+        }
+        Atom *direct = dispatch_native_op(s, a, op, resolved_args, nargs);
+        if (emit_stats && head_id == g_builtin_syms.mork_add_atoms) {
+            uint64_t dispatch_finished_ns = eval_monotonic_ns();
+            if (dispatch_finished_ns >= dispatch_started_ns) {
+                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_DISPATCH_NS,
+                                        dispatch_finished_ns - dispatch_started_ns);
+            }
+        }
         if (direct) {
             outcome_set_add(os, direct, &_empty);
             return true;
@@ -5109,7 +5369,7 @@ tail_call: ;
         else
             outcome_set_add(os,
                 atom_error(a, atom,
-                    atom_string(a, "cdr-atom expects a non-empty expression as an argument")),
+                atom_string(a, "cdr-atom expects a non-empty expression as an argument")),
                 &_empty);
         return;
     }
@@ -7691,7 +7951,7 @@ tail_call: ;
         __attribute__((cleanup(bindings_free))) Bindings tail_env;
         OutcomeSet dispatch_results;
         outcome_set_init(&dispatch_results);
-        if (handle_dispatch(s, a, atom, etype, fuel, preserve_bindings,
+        if (handle_dispatch(s, a, atom, etype, fuel, CURRENT_ENV, preserve_bindings,
                             &tail_next, &tail_type, &tail_env,
                             &dispatch_results)) {
             if (tail_next) {

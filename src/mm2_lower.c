@@ -2,6 +2,12 @@
 
 #include "symbol.h"
 
+#include <inttypes.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 typedef enum {
     MM2_CTX_GENERAL = 0,
     MM2_CTX_PATTERN,
@@ -321,4 +327,299 @@ Atom *cetta_mm2_raise_atom(Arena *a, Atom *atom) {
 char *cetta_mm2_atom_to_surface_string(Arena *a, Atom *atom) {
     Atom *raised = cetta_mm2_raise_atom(a, atom);
     return atom_to_string(a, raised);
+}
+
+typedef struct {
+    uint8_t *data;
+    size_t len;
+    size_t cap;
+} BridgeExprBuf;
+
+typedef struct {
+    const uint8_t *token;
+    uint32_t len;
+} BridgeVarSlot;
+
+typedef struct {
+    BridgeVarSlot slots[64];
+    uint8_t len;
+} BridgeVarMap;
+
+static void bridge_expr_buf_init(BridgeExprBuf *buf) {
+    buf->data = NULL;
+    buf->len = 0;
+    buf->cap = 0;
+}
+
+static bool bridge_expr_buf_reserve(BridgeExprBuf *buf, size_t extra) {
+    if (buf->len + extra <= buf->cap)
+        return true;
+    size_t next_cap = buf->cap ? buf->cap : 128;
+    while (next_cap < buf->len + extra)
+        next_cap *= 2;
+    buf->data = cetta_realloc(buf->data, next_cap);
+    buf->cap = next_cap;
+    return true;
+}
+
+static bool bridge_expr_buf_push_u8(BridgeExprBuf *buf, uint8_t byte) {
+    if (!bridge_expr_buf_reserve(buf, 1))
+        return false;
+    buf->data[buf->len++] = byte;
+    return true;
+}
+
+static bool bridge_expr_buf_push_bytes(BridgeExprBuf *buf,
+                                       const uint8_t *bytes,
+                                       size_t len) {
+    if (!bridge_expr_buf_reserve(buf, len))
+        return false;
+    memcpy(buf->data + buf->len, bytes, len);
+    buf->len += len;
+    return true;
+}
+
+static bool bridge_expr_buf_push_symbol(BridgeExprBuf *buf,
+                                        const uint8_t *token,
+                                        uint32_t len,
+                                        const char **out_error) {
+    if (!token || len == 0) {
+        if (out_error)
+            *out_error = "MORK bridge tokens must not be empty";
+        return false;
+    }
+    if (len >= 64) {
+        if (out_error)
+            *out_error = "MORK bridge tokens must be at most 63 bytes";
+        return false;
+    }
+    return bridge_expr_buf_push_u8(buf, (uint8_t)(0xC0u | len)) &&
+           bridge_expr_buf_push_bytes(buf, token, len);
+}
+
+static const uint8_t *bridge_var_token(Arena *a, Atom *atom, uint32_t *out_len) {
+    const char *name = atom_name_cstr(atom);
+    uint32_t name_len = (uint32_t)strlen(name);
+    uint32_t epoch = var_epoch_suffix(atom->var_id);
+    if (epoch == 0) {
+        char *token = arena_alloc(a, (size_t)name_len + 2);
+        token[0] = '$';
+        memcpy(token + 1, name, name_len);
+        token[name_len + 1] = '\0';
+        if (out_len)
+            *out_len = name_len + 1;
+        return (const uint8_t *)token;
+    }
+
+    int digits = snprintf(NULL, 0, "#%u", epoch);
+    if (digits < 0)
+        return NULL;
+    char *token = arena_alloc(a, (size_t)name_len + (size_t)digits + 2);
+    token[0] = '$';
+    memcpy(token + 1, name, name_len);
+    snprintf(token + 1 + name_len, (size_t)digits + 1, "#%u", epoch);
+    if (out_len)
+        *out_len = name_len + 1 + (uint32_t)digits;
+    return (const uint8_t *)token;
+}
+
+static bool bridge_var_map_index(BridgeVarMap *vars,
+                                 const uint8_t *token,
+                                 uint32_t len,
+                                 uint8_t *out_index,
+                                 bool *out_is_new) {
+    for (uint8_t i = 0; i < vars->len; i++) {
+        if (vars->slots[i].len == len &&
+            memcmp(vars->slots[i].token, token, len) == 0) {
+            if (out_index)
+                *out_index = i;
+            if (out_is_new)
+                *out_is_new = false;
+            return true;
+        }
+    }
+    if (vars->len >= 64)
+        return false;
+    vars->slots[vars->len].token = token;
+    vars->slots[vars->len].len = len;
+    if (out_index)
+        *out_index = vars->len;
+    if (out_is_new)
+        *out_is_new = true;
+    vars->len++;
+    return true;
+}
+
+static bool bridge_emit_float_token(BridgeExprBuf *buf,
+                                    double value,
+                                    const char **out_error) {
+    char tmp[128];
+    int len = 0;
+    if (isnan(value)) {
+        len = snprintf(tmp, sizeof(tmp), "NaN");
+    } else if (isinf(value)) {
+        len = snprintf(tmp, sizeof(tmp), "%s", signbit(value) ? "-inf" : "inf");
+    } else if (isfinite(value) && floor(value) == value) {
+        len = snprintf(tmp, sizeof(tmp), "%.1f", value);
+    } else {
+        len = snprintf(tmp, sizeof(tmp), "%.16g", value);
+    }
+    if (len <= 0 || (size_t)len >= sizeof(tmp)) {
+        if (out_error)
+            *out_error = "failed to format MORK bridge float token";
+        return false;
+    }
+    return bridge_expr_buf_push_symbol(buf, (const uint8_t *)tmp,
+                                       (uint32_t)len, out_error);
+}
+
+static bool bridge_emit_string_token(Arena *a,
+                                     BridgeExprBuf *buf,
+                                     const char *text,
+                                     const char **out_error) {
+    size_t text_len = strlen(text);
+    char *quoted = arena_alloc(a, text_len * 2 + 3);
+    size_t off = 0;
+    quoted[off++] = '"';
+    for (size_t i = 0; i < text_len; i++) {
+        char c = text[i];
+        if (c == '\n') {
+            quoted[off++] = '\\';
+            quoted[off++] = 'n';
+        } else if (c == '"' || c == '\\') {
+            quoted[off++] = '\\';
+            quoted[off++] = c;
+        } else {
+            quoted[off++] = c;
+        }
+    }
+    quoted[off++] = '"';
+    quoted[off] = '\0';
+    return bridge_expr_buf_push_symbol(buf, (const uint8_t *)quoted,
+                                       (uint32_t)off, out_error);
+}
+
+static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
+                                   BridgeExprBuf *buf, const char **out_error) {
+    if (!atom) {
+        if (out_error)
+            *out_error = "cannot encode null atom to MORK bridge expr bytes";
+        return false;
+    }
+
+    switch (atom->kind) {
+    case ATOM_SYMBOL: {
+        const uint8_t *sym = (const uint8_t *)symbol_bytes(g_symbols, atom->sym_id);
+        uint32_t len = symbol_len(g_symbols, atom->sym_id);
+        return bridge_expr_buf_push_symbol(buf, sym, len, out_error);
+    }
+    case ATOM_VAR: {
+        uint32_t token_len = 0;
+        const uint8_t *token = bridge_var_token(a, atom, &token_len);
+        uint8_t index = 0;
+        bool is_new = false;
+        if (!token || !bridge_var_map_index(vars, token, token_len, &index, &is_new)) {
+            if (out_error)
+                *out_error = "MORK bridge expressions support at most 64 distinct variables";
+            return false;
+        }
+        return bridge_expr_buf_push_u8(
+            buf, is_new ? 0xC0u : (uint8_t)(0x80u | index));
+    }
+    case ATOM_GROUNDED: {
+        char tmp[128];
+        int len = 0;
+        switch (atom->ground.gkind) {
+        case GV_INT:
+            len = snprintf(tmp, sizeof(tmp), "%" PRId64, atom->ground.ival);
+            if (len <= 0 || (size_t)len >= sizeof(tmp)) {
+                if (out_error)
+                    *out_error = "failed to format MORK bridge integer token";
+                return false;
+            }
+            return bridge_expr_buf_push_symbol(buf, (const uint8_t *)tmp,
+                                               (uint32_t)len, out_error);
+        case GV_FLOAT:
+            return bridge_emit_float_token(buf, atom->ground.fval, out_error);
+        case GV_BOOL:
+            return bridge_expr_buf_push_symbol(
+                buf,
+                (const uint8_t *)(atom->ground.bval ? "True" : "False"),
+                atom->ground.bval ? 4u : 5u,
+                out_error);
+        case GV_STRING:
+            return bridge_emit_string_token(a, buf, atom->ground.sval, out_error);
+        case GV_SPACE:
+            if (out_error)
+                *out_error = "MORK bridge expr-byte ingress does not support grounded Space values";
+            return false;
+        case GV_STATE:
+            if (out_error)
+                *out_error = "MORK bridge expr-byte ingress does not support grounded State values";
+            return false;
+        case GV_CAPTURE:
+            if (out_error)
+                *out_error = "MORK bridge expr-byte ingress does not support capture values";
+            return false;
+        case GV_FOREIGN:
+            if (out_error)
+                *out_error = "MORK bridge expr-byte ingress does not support foreign grounded values";
+            return false;
+        }
+        break;
+    }
+    case ATOM_EXPR:
+        if (atom->expr.len >= 64) {
+            if (out_error)
+                *out_error = "MORK bridge expressions support arity at most 63";
+            return false;
+        }
+        if (!bridge_expr_buf_push_u8(buf, (uint8_t)atom->expr.len))
+            return false;
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (!bridge_encode_atom_rec(a, atom->expr.elems[i], vars, buf, out_error))
+                return false;
+        }
+        return true;
+    }
+
+    if (out_error)
+        *out_error = "unknown atom kind while encoding MORK bridge expr bytes";
+    return false;
+}
+
+bool cetta_mm2_atom_to_bridge_expr_bytes(Arena *a, Atom *atom,
+                                         uint8_t **out_bytes,
+                                         size_t *out_len,
+                                         const char **out_error) {
+    BridgeExprBuf buf;
+    BridgeVarMap vars = {0};
+    Atom *raised;
+
+    if (out_bytes)
+        *out_bytes = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_error)
+        *out_error = NULL;
+    if (!a || !atom) {
+        if (out_error)
+            *out_error = "cannot encode null atom to MORK bridge expr bytes";
+        return false;
+    }
+
+    raised = cetta_mm2_raise_atom(a, atom);
+    bridge_expr_buf_init(&buf);
+    if (!bridge_encode_atom_rec(a, raised, &vars, &buf, out_error)) {
+        free(buf.data);
+        return false;
+    }
+
+    if (out_bytes)
+        *out_bytes = buf.data;
+    else
+        free(buf.data);
+    if (out_len)
+        *out_len = buf.len;
+    return true;
 }

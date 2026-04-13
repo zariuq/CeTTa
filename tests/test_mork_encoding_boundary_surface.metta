@@ -16,6 +16,11 @@
 !(assertEqualToResult
   (mork:match &ws (FList (FSDepth 0) (Cons ("formula" "x") Nil)) hit)
   (hit))
+!(mork:remove-atom &ws (nest (pair a (pair b c)) (text "x y")))
+!(assertEqualToResult
+  (mork:size &ws)
+  (2))
+!(mork:add-atom &ws (nest (pair a (pair b c)) (text "x y")))
 !(assertEqual
   (collapse (mork:get-atoms &ws))
   ((edge a b)

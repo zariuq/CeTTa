@@ -1483,17 +1483,21 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 static void query_bucket_legacy(EqBucket *bucket, Atom *query,
                                 const QueryVisibleVarSet *visible, Arena *a,
                                 QueryResults *out) {
+    SymbolId query_head = eq_head_symbol(query);
     if (bucket->trie && bucket->len > 4) {
         uint32_t *candidates = NULL;
         uint32_t ncand = 0, ccand = 0;
+        uint32_t considered = 0;
         disc_lookup(bucket->trie, query, &candidates, &ncand, &ccand);
-        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
-                                ncand);
-        cetta_runtime_stats_add(
-            CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES, ncand);
         for (uint32_t ci = 0; ci < ncand; ci++) {
             uint32_t i = candidates[ci];
             if (i >= bucket->len) continue;
+            SymbolId lhs_head = eq_head_symbol(bucket->lhs[i]);
+            if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
+                lhs_head != query_head) {
+                continue;
+            }
+            considered++;
             uint32_t suffix = fresh_var_suffix();
             Atom *rlhs = rename_vars(a, bucket->lhs[i], suffix);
             Atom *rrhs = rename_vars(a, bucket->rhs[i], suffix);
@@ -1509,15 +1513,22 @@ static void query_bucket_legacy(EqBucket *bucket, Atom *query,
             }
             bindings_free(&b);
         }
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
+                                considered);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES, considered);
         free(candidates);
         return;
     }
 
-    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
-                            bucket->len);
-    cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES, bucket->len);
+    uint32_t considered = 0;
     for (uint32_t i = 0; i < bucket->len; i++) {
+        SymbolId lhs_head = eq_head_symbol(bucket->lhs[i]);
+        if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
+            lhs_head != query_head) {
+            continue;
+        }
+        considered++;
         uint32_t suffix = fresh_var_suffix();
         Atom *rlhs = rename_vars(a, bucket->lhs[i], suffix);
         Atom *rrhs = rename_vars(a, bucket->rhs[i], suffix);
@@ -1533,6 +1544,10 @@ static void query_bucket_legacy(EqBucket *bucket, Atom *query,
         }
         bindings_free(&b);
     }
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
+                            considered);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES, considered);
 }
 
 /* Try matching equations from a bucket against a query.
@@ -1541,6 +1556,7 @@ static void query_bucket_legacy(EqBucket *bucket, Atom *query,
 static void query_bucket(EqBucket *bucket, Atom *query,
                          const QueryVisibleVarSet *visible, Arena *a,
                          QueryResults *out) {
+    SymbolId query_head = eq_head_symbol(query);
     if (!bucket || bucket->len == 0)
         return;
     if (bucket->subst.count <= 4 || !bucket->subst.root ||
@@ -1551,16 +1567,19 @@ static void query_bucket(EqBucket *bucket, Atom *query,
 
     uint32_t out_before = out->len;
     SubstMatchSet matches;
+    uint32_t considered = 0;
     smset_init(&matches);
     stree_query_bucket(&bucket->subst, a, query, bucket->lhs, &matches);
-    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
-                            matches.len);
-    cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_CANDIDATES, matches.len);
     for (uint32_t mi = 0; mi < matches.len; mi++) {
         const SubstMatch *sm = &matches.items[mi];
         if (sm->atom_idx >= bucket->len)
             continue;
+        SymbolId lhs_head = eq_head_symbol(bucket->lhs[sm->atom_idx]);
+        if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
+            lhs_head != query_head) {
+            continue;
+        }
+        considered++;
         bool emitted = false;
         Bindings merged;
         if (!bindings_clone(&merged, &sm->bindings))
@@ -1598,6 +1617,10 @@ static void query_bucket(EqBucket *bucket, Atom *query,
             bindings_free(&exact);
         }
     }
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
+                            considered);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_CANDIDATES, considered);
     smset_free(&matches);
     if (out->len == out_before) {
         cetta_runtime_stats_inc(
