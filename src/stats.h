@@ -85,6 +85,10 @@ typedef struct {
     uint64_t counters[CETTA_RUNTIME_COUNTER_COUNT];
 } CettaRuntimeStats;
 
+#ifndef CETTA_BUILD_WITH_RUNTIME_TIMING
+#define CETTA_BUILD_WITH_RUNTIME_TIMING 0
+#endif
+
 const char *cetta_runtime_counter_name(CettaRuntimeCounter counter);
 void cetta_runtime_stats_reset(void);
 void cetta_runtime_stats_enable(void);
@@ -98,6 +102,14 @@ void cetta_runtime_stats_populate_space(Space *space, Arena *a,
 
 static inline void cetta_runtime_stats_inc(CettaRuntimeCounter counter) {
     cetta_runtime_stats_add(counter, 1);
+}
+
+static inline bool cetta_runtime_timing_is_enabled(void) {
+#if CETTA_BUILD_WITH_RUNTIME_TIMING
+    return cetta_runtime_stats_is_enabled();
+#else
+    return false;
+#endif
 }
 
 #endif
