@@ -244,18 +244,7 @@ static void hashcons_grow(HashConsTable *hc) {
 
 static Atom *hashcons_intern(HashConsTable *hc, Atom *atom);
 
-static void hashcons_free_owned_atom(Atom *atom) {
-    if (!atom)
-        return;
-    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
-        free((void *)atom->ground.sval);
-    } else if (atom->kind == ATOM_EXPR) {
-        free(atom->expr.elems);
-    }
-    free(atom);
-}
-
-static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
+static Atom *hashcons_alloc_owned(const Atom *atom) {
     Atom *owned = cetta_malloc(sizeof(Atom));
     *owned = *atom;
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
@@ -267,9 +256,8 @@ static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
             owned->expr.elems = NULL;
         } else {
             owned->expr.elems = cetta_malloc(sizeof(Atom *) * atom->expr.len);
-            for (uint32_t i = 0; i < atom->expr.len; i++) {
-                owned->expr.elems[i] = hashcons_intern(hc, atom->expr.elems[i]);
-            }
+            memcpy(owned->expr.elems, atom->expr.elems,
+                   sizeof(Atom *) * atom->expr.len);
         }
     }
     return owned;
@@ -289,18 +277,7 @@ static Atom *hashcons_intern(HashConsTable *hc, Atom *atom) {
     }
     if (slot >= hc->size)
         return atom;
-    Atom *owned = hashcons_alloc_owned(hc, atom);
-    slot = hashcons_find_slot(hc, owned, &found);
-    if (found) {
-        Atom *shared = hc->table[slot];
-        hashcons_free_owned_atom(owned);
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_HIT);
-        return shared;
-    }
-    if (slot >= hc->size) {
-        hashcons_free_owned_atom(owned);
-        return atom;
-    }
+    Atom *owned = hashcons_alloc_owned(atom);
     hc->table[slot] = owned;
     hc->used++;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_INSERT);
