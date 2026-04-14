@@ -12,6 +12,9 @@
 !(assertEqualToResult
   (mork:size &h)
   (2))
+!(assertEqualToResult
+  (collapse (mork:match &h (edge a b) hit))
+  ((hit)))
 !(assertEqual
   (mork:match &h (edge $x $y) ($x $y))
   (superpose ((a b) (b c))))
