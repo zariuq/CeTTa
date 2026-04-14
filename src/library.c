@@ -162,7 +162,7 @@ void cetta_library_context_init(CettaLibraryContext *ctx) {
 void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
                                              const CettaProfile *profile) {
     cetta_eval_session_init(&ctx->session, profile);
-    ctx->term_universe.persistent_arena = NULL;
+    term_universe_init(&ctx->term_universe);
     ctx->active_mask = 0;
     ctx->root_dir[0] = '\0';
     ctx->script_dir[0] = '\0';
@@ -187,6 +187,7 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->loaded_modules[i].space = NULL;
     }
     ctx->loaded_module_len = 0;
+    term_universe_free(&ctx->term_universe);
     cetta_native_handle_cleanup_all(ctx);
     if (ctx->foreign_runtime) {
         cetta_foreign_runtime_free(ctx->foreign_runtime);
@@ -262,12 +263,12 @@ static const char *cetta_library_current_dir(CettaLibraryContext *ctx) {
     return ".";
 }
 
-static const TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
-                                                        Arena *persistent_arena) {
+static TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
+                                                  Arena *persistent_arena) {
     if (!ctx || !persistent_arena)
         return NULL;
     if (!ctx->term_universe.persistent_arena)
-        ctx->term_universe.persistent_arena = persistent_arena;
+        term_universe_set_persistent_arena(&ctx->term_universe, persistent_arena);
     if (ctx->term_universe.persistent_arena != persistent_arena)
         return NULL;
     return &ctx->term_universe;

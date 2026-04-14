@@ -83,7 +83,7 @@ typedef struct {
 /* ── Query Result ──────────────────────────────────────────────────────── */
 
 typedef struct {
-    uint32_t atom_idx;      /* index into space->atoms[] */
+    uint32_t atom_idx;      /* index into the logical space atom sequence */
     uint32_t epoch;         /* standardization-apart epoch for this indexed atom */
     Bindings bindings;      /* epoch-tagged, ready for bindings_apply */
     bool exact;             /* backend already proved this match exactly */

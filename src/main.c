@@ -1042,7 +1042,7 @@ int main(int argc, char **argv) {
 
     cetta_library_context_init_with_profile(&libraries, profile);
     cleanup.libraries_initialized = true;
-    libraries.term_universe.persistent_arena = &arena;
+    term_universe_set_persistent_arena(&libraries.term_universe, &arena);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);

@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "space.h"
+#include "variant_instance.h"
 typedef struct CettaLibraryContext CettaLibraryContext;
 
 /* ── Outcome: the unified result type for all evaluator functions ───────── */
@@ -14,7 +15,7 @@ typedef struct Outcome {
     Atom *atom;
     Atom *materialized_atom;
     Bindings env;
-    Bindings slot_env;
+    VariantInstance variant;
 } Outcome;
 
 typedef struct OutcomeSet {
