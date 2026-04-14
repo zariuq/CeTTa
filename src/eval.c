@@ -382,6 +382,45 @@ static bool atom_contains_vars(const Atom *atom) {
     return atom_has_vars(atom);
 }
 
+static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static Atom *materialize_runtime_token(Space *s, Arena *a, Atom *atom);
+
+static bool atom_eval_is_immediate_value(Atom *atom, int fuel) {
+    return fuel == 0 ||
+           atom->kind == ATOM_SYMBOL ||
+           atom->kind == ATOM_GROUNDED ||
+           atom->kind == ATOM_VAR ||
+           (atom->kind == ATOM_EXPR && atom->expr.len == 0);
+}
+
+static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
+                                              const Bindings *prefix, int fuel) {
+    Atom *bound = registry_lookup_atom(atom);
+    if (bound)
+        atom = bound;
+    atom = materialize_runtime_token(s, a, atom);
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0)
+        return NULL;
+
+    Atom *head = atom->expr.elems[0];
+    if (head->kind != ATOM_SYMBOL || !is_grounded_op(head->sym_id))
+        return NULL;
+
+    uint32_t nargs = atom->expr.len - 1;
+    Atom **args = arena_alloc(a, sizeof(Atom *) * nargs);
+    for (uint32_t i = 0; i < nargs; i++) {
+        Atom *arg = atom->expr.elems[i + 1];
+        if (prefix && prefix->len != 0)
+            arg = bindings_apply((Bindings *)prefix, a, arg);
+        Atom *resolved = registry_lookup_atom(arg);
+        args[i] = materialize_runtime_token(s, a, resolved ? resolved : arg);
+        if (atom_is_empty(args[i]) || atom_is_error(args[i]) ||
+            !atom_eval_is_immediate_value(args[i], fuel))
+            return NULL;
+    }
+    return dispatch_native_op(s, a, head, args, nargs);
+}
+
 static void outcome_refresh_materialized_fast_path(Outcome *out) {
     if (!out)
         return;
@@ -2312,6 +2351,57 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
 
 typedef bool (*OrderedOutcomeVisitor)(Arena *a, Atom *atom,
                                       const Bindings *env, void *ctx);
+static __attribute__((unused)) void
+eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
+                        int fuel, const Bindings *prefix,
+                        const Bindings *outer_env,
+                        bool preserve_bindings, OutcomeSet *os);
+
+static bool direct_outcome_walk_supported(Space *s, Arena *a, Atom *atom, int fuel) {
+    Atom *bound = registry_lookup_atom(atom);
+    if (bound)
+        atom = bound;
+    atom = materialize_runtime_token(s, a, atom);
+    if (atom_is_empty(atom) || atom_is_error(atom) || atom_eval_is_immediate_value(atom, fuel))
+        return true;
+    if (expr_head_is_id(atom, g_builtin_syms.superpose) && expr_nargs(atom) == 1) {
+        Atom *list = expr_arg(atom, 0);
+        if (list->kind != ATOM_EXPR)
+            return false;
+        for (uint32_t i = 0; i < list->expr.len; i++) {
+            if (!direct_outcome_walk_supported(s, a, list->expr.elems[i], fuel))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
+                                OrderedOutcomeVisitor visitor, void *ctx,
+                                uint32_t *visited) {
+    Bindings empty;
+    bindings_init(&empty);
+    Atom *bound = registry_lookup_atom(atom);
+    if (bound)
+        atom = bound;
+    atom = materialize_runtime_token(s, a, atom);
+    if (atom_is_empty(atom) || atom_is_error(atom) || atom_eval_is_immediate_value(atom, fuel)) {
+        (*visited)++;
+        return visitor(a, atom, &empty, ctx);
+    }
+    if (expr_head_is_id(atom, g_builtin_syms.superpose) && expr_nargs(atom) == 1) {
+        Atom *list = expr_arg(atom, 0);
+        if (list->kind != ATOM_EXPR)
+            return false;
+        for (uint32_t i = 0; i < list->expr.len; i++) {
+            if (!direct_outcome_walk(s, a, list->expr.elems[i], fuel, visitor, ctx, visited))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
 
 static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
                                           CettaSearchPolicyOrder order,
@@ -2376,6 +2466,12 @@ static uint32_t metta_eval_bind_visit(Space *s, Arena *a, Atom *atom, int fuel,
                                       CettaSearchPolicyOrder order,
                                       OrderedOutcomeVisitor visitor,
                                       void *ctx) {
+    if (order == CETTA_SEARCH_POLICY_ORDER_NATIVE &&
+        direct_outcome_walk_supported(s, a, atom, fuel)) {
+        uint32_t visited = 0;
+        direct_outcome_walk(s, a, atom, fuel, visitor, ctx, &visited);
+        return visited;
+    }
     OutcomeSet inner;
     outcome_set_init(&inner);
     metta_eval_bind(s, a, atom, fuel, &inner);
@@ -2416,6 +2512,58 @@ static bool stream_visit_emit_first(Arena *a, Atom *atom, const Bindings *env, v
     StreamFirstResultCtx *first = ctx;
     outcome_set_add(first->os, atom, env);
     return false;
+}
+
+typedef struct {
+    Space *s;
+    Arena *a;
+    Atom *pat;
+    Atom *body;
+    int fuel;
+    const Bindings *outer_env;
+    bool preserve_bindings;
+    bool body_closed;
+    OutcomeSet *os;
+    ResultSet errors;
+    bool has_success;
+} LetDirectVisitCtx;
+
+static bool let_direct_branch_visit(Arena *a, Atom *atom, const Bindings *env, void *ctx) {
+    (void)a;
+    LetDirectVisitCtx *let_ctx = ctx;
+    Bindings empty;
+    bindings_init(&empty);
+    if (atom_is_error(atom)) {
+        result_set_add(&let_ctx->errors, atom);
+        return true;
+    }
+    let_ctx->has_success = true;
+    if (let_ctx->pat->kind == ATOM_VAR &&
+        !let_ctx->preserve_bindings &&
+        let_ctx->body_closed) {
+        eval_for_current_caller(let_ctx->s, let_ctx->a, NULL, let_ctx->body,
+                                let_ctx->fuel, &empty, let_ctx->outer_env,
+                                false, let_ctx->os);
+        return true;
+    }
+
+    BindingsBuilder b;
+    if (!bindings_builder_init(&b, env))
+        return true;
+
+    bool ok = false;
+    if (let_ctx->pat->kind == ATOM_VAR)
+        ok = bindings_builder_add_var_fresh(&b, let_ctx->pat, atom);
+    else
+        ok = simple_match_builder(let_ctx->pat, atom, &b);
+    if (ok) {
+        const Bindings *bb = bindings_builder_bindings(&b);
+        eval_for_current_caller(let_ctx->s, let_ctx->a, NULL, let_ctx->body,
+                                let_ctx->fuel, bb, let_ctx->outer_env,
+                                let_ctx->preserve_bindings, let_ctx->os);
+    }
+    bindings_builder_free(&b);
+    return true;
 }
 
 typedef struct {
@@ -3585,9 +3733,7 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
     }
     atom = materialize_runtime_token(s, a, atom);
 
-    if (fuel == 0 || atom->kind == ATOM_SYMBOL || atom->kind == ATOM_GROUNDED ||
-        atom->kind == ATOM_VAR ||
-        (atom->kind == ATOM_EXPR && atom->expr.len == 0)) {
+    if (atom_eval_is_immediate_value(atom, fuel)) {
         outcome_set_add(os, atom, &empty);
         return;
     }
@@ -3969,13 +4115,27 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
         return;
     }
 
+    Bindings empty;
+    bindings_init(&empty);
+    Atom *direct_grounded = eval_direct_grounded_application(s, a, atom, prefix, fuel);
+    if (direct_grounded) {
+        outcome_set_add(os, direct_grounded, &empty);
+        return;
+    }
     Atom *applied = (!prefix || prefix->len == 0)
         ? atom
         : bindings_apply((Bindings *)prefix, a, atom);
+    if (atom_eval_is_immediate_value(applied, fuel)) {
+        outcome_set_add(os, applied, &empty);
+        return;
+    }
+    Atom *applied_grounded = eval_direct_grounded_application(s, a, applied, &empty, fuel);
+    if (applied_grounded) {
+        outcome_set_add(os, applied_grounded, &empty);
+        return;
+    }
     ResultSet rs;
     result_set_init(&rs);
-    Bindings empty;
-    bindings_init(&empty);
     metta_eval(s, a, type, applied, fuel, &rs);
     for (uint32_t i = 0; i < rs.len; i++)
         outcome_set_add(os, rs.items[i], &empty);
@@ -5558,6 +5718,37 @@ tail_call: ;
         Atom *val_expr = expr_arg(atom, 1);
         Atom *body_let = expr_arg(atom, 2);
         OutcomeSet vals;
+        bool body_let_closed = !atom_contains_vars(body_let);
+        if (!preserve_bindings) {
+            Atom *applied_val_expr = (!CURRENT_ENV || CURRENT_ENV->len == 0)
+                ? val_expr
+                : bindings_apply((Bindings *)CURRENT_ENV, a, val_expr);
+            if (direct_outcome_walk_supported(s, a, applied_val_expr, fuel)) {
+                LetDirectVisitCtx visit = {
+                    .s = s,
+                    .a = a,
+                    .pat = pat,
+                    .body = body_let,
+                    .fuel = fuel,
+                    .outer_env = CURRENT_ENV,
+                    .preserve_bindings = preserve_bindings,
+                    .body_closed = body_let_closed,
+                    .os = os,
+                    .errors = {0},
+                    .has_success = false,
+                };
+                result_set_init(&visit.errors);
+                (void)metta_eval_bind_visit(s, a, applied_val_expr, fuel,
+                                            CETTA_SEARCH_POLICY_ORDER_NATIVE,
+                                            let_direct_branch_visit, &visit);
+                if (!visit.has_success) {
+                    for (uint32_t i = 0; i < visit.errors.len; i++)
+                        outcome_set_add(os, visit.errors.items[i], &_empty);
+                }
+                result_set_free(&visit.errors);
+                return;
+            }
+        }
         outcome_set_init(&vals);
         metta_eval_bind(s, a, val_expr, fuel, &vals);
         bool all_errors = vals.len > 0;
