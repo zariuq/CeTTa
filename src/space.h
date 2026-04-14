@@ -58,8 +58,7 @@ void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, ui
 #define EQ_INDEX_BUCKETS 256
 
 typedef struct {
-    Atom **lhs;   /* equation LHS atoms */
-    Atom **rhs;   /* equation RHS atoms */
+    uint32_t *atom_indices; /* indices into the logical atom sequence */
     uint32_t len, cap;
     DiscNode *trie; /* discrimination trie over LHS patterns */
     SubstBucket subst; /* epoch-tagged substitution tree over LHS patterns */
@@ -74,8 +73,7 @@ typedef struct {
 /* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */
 
 typedef struct {
-    Atom **annotated_atoms;  /* the atom in (: atom type) */
-    Atom **types;            /* the type in (: atom type) */
+    uint32_t *atom_indices;  /* indices into the logical atom sequence */
     uint32_t len, cap;
 } TypeAnnBucket;
 
@@ -106,11 +104,11 @@ typedef enum {
 #define MATCH_TRIE_THRESHOLD 16
 
 typedef struct Space {
-    Atom **atoms;
+    AtomId *atom_ids;
     uint32_t start;
     uint32_t len, cap;
     SpaceKind kind;
-    const TermUniverse *universe;
+    TermUniverse *universe;
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
     ExactAtomIndex exact_idx; /* exact stable-atom membership index */
@@ -123,10 +121,10 @@ typedef struct Space {
     SpaceMatchBackend match_backend;
 } Space;
 
-void space_init_with_universe(Space *s, const TermUniverse *universe);
+void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init(Space *s);
 void space_free(Space *s);
-Atom *space_store_atom(const Space *s, Arena *fallback, Atom *atom);
+Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_linearize(Space *s);
 Space *space_heap_clone_shallow(Space *src);
@@ -137,6 +135,7 @@ bool space_is_ordered(const Space *s);
 bool space_is_stack(const Space *s);
 bool space_is_queue(const Space *s);
 bool space_is_hash(const Space *s);
+AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
 Atom *space_get_at(const Space *s, uint32_t idx);
 Atom *space_peek(const Space *s);
 bool space_pop(Space *s, Atom **out);
