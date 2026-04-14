@@ -22,6 +22,7 @@ endif
 ENABLE_PYTHON := 0
 ENABLE_MORK_STATIC := 0
 ENABLE_PATHMAP_SPACE := 0
+ENABLE_RUNTIME_TIMING ?= 0
 ifeq ($(BUILD_CANON),python)
 ENABLE_PYTHON := 1
 endif
@@ -185,6 +186,7 @@ $(BUILD_CONFIG_HEADER): FORCE
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
 	if [ -f "$@" ] && cmp -s "$$tmp_cfg" "$@"; then \
 		rm -f "$$tmp_cfg"; \
 	else \
@@ -971,6 +973,7 @@ test-mork-lane: $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-conformance-lean-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-kiss-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-surface-suite
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-runtime-stats-isolation
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-basic-pathmap-guard
 
 test-mork-basic-pathmap-guard: $(BIN)
@@ -1139,6 +1142,17 @@ test-mork-surface-suite: $(BIN)
 	echo "---"; \
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+
+test-mork-runtime-stats-isolation: $(BIN)
+	$(call require_mork_bridge_or_reexec,mork runtime-stats isolation,$@)
+	@result=$$(./$(BIN) --profile he_extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_mork_runtime_stats_isolation.expected)" ]; then \
+		echo "PASS: test_mork_runtime_stats_isolation"; \
+	else \
+		echo "FAIL: test_mork_runtime_stats_isolation"; \
+		diff <(cat tests/test_mork_runtime_stats_isolation.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
 
 test-mm2-conformance-var-binding: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 var-binding conformance seam,$@)
@@ -1636,6 +1650,13 @@ bench-d4-nodup-backends: $(BIN)
 bench-compare-petta: $(BIN)
 	@./scripts/bench_compare_cetta_petta.sh
 
+bench-mork-add-interface: $(BIN)
+	$(call require_mork_bridge_or_reexec,mork add interface benchmark,$@)
+	@./scripts/bench_mork_add_interface.sh
+
+bench-mork-add-interface-timing:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_TIMING=1 bench-mork-add-interface
+
 tail-recursion-check: $(BIN)
 	@result=$$(./$(BIN) tests/tail_recursion_deep.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/tail_recursion_deep.expected)" ]; then \
@@ -1677,4 +1698,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
