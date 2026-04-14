@@ -373,7 +373,7 @@ define require_pathmap_bridge_or_reexec
 	fi
 endef
 
-test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip test-runtime-stats-cli test-help-flags test-mork-lane
+test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip test-runtime-stats-cli test-help-flags test-mork-lane test-closed-stream-fastpath test-closed-stream-runtime-stats
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -1158,6 +1158,26 @@ test-mork-runtime-stats-isolation: $(BIN)
 		exit 1; \
 	fi
 
+test-closed-stream-fastpath: $(BIN)
+	@result=$$(./$(BIN) --quiet --lang he tests/test_closed_stream_fastpath.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_closed_stream_fastpath.expected)" ]; then \
+		echo "PASS: test_closed_stream_fastpath"; \
+	else \
+		echo "FAIL: test_closed_stream_fastpath"; \
+		diff <(cat tests/test_closed_stream_fastpath.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-closed-stream-runtime-stats: $(BIN)
+	@result=$$(./$(BIN) --quiet --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_closed_stream_runtime_stats.expected)" ]; then \
+		echo "PASS: test_closed_stream_runtime_stats"; \
+	else \
+		echo "FAIL: test_closed_stream_runtime_stats"; \
+		diff <(cat tests/test_closed_stream_runtime_stats.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
 test-mm2-conformance-var-binding: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 var-binding conformance seam,$@)
 	@ \
@@ -1670,6 +1690,9 @@ bench-mork-bridge-add:
 		echo; \
 	done
 
+bench-closed-stream-fastpath: $(BIN)
+	@./scripts/bench_closed_stream_fastpath.sh $(or $(BENCH_CLOSED_STREAM_SIZES),1000 10000 100000) $(or $(BENCH_CLOSED_STREAM_REPEAT),3)
+
 tail-recursion-check: $(BIN)
 	@result=$$(./$(BIN) tests/tail_recursion_deep.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/tail_recursion_deep.expected)" ]; then \
@@ -1711,4 +1734,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
+.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime
