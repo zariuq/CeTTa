@@ -169,6 +169,10 @@ runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/s
 test-variant-shape-roundtrip: runtime/test_variant_shape_roundtrip
 	@./runtime/test_variant_shape_roundtrip
 
+runtime/bench_mork_bridge_add: tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.stage0.o)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d)
@@ -1656,6 +1660,15 @@ bench-mork-add-interface: $(BIN)
 
 bench-mork-add-interface-timing:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_TIMING=1 bench-mork-add-interface
+
+bench-mork-bridge-add:
+	$(call require_mork_bridge_or_reexec,mork low-level bridge add benchmark,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_add
+	@for n in $(or $(BENCH_MORK_BRIDGE_SIZES),1000 10000 100000); do \
+		echo "=== bridge-add $$n ==="; \
+		(ulimit -v 10485760; ./runtime/bench_mork_bridge_add "$$n" $(or $(BENCH_MORK_BRIDGE_REPEAT),3)); \
+		echo; \
+	done
 
 tail-recursion-check: $(BIN)
 	@result=$$(./$(BIN) tests/tail_recursion_deep.metta 2>&1); \
