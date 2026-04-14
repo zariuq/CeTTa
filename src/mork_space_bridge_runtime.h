@@ -92,7 +92,7 @@ bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
                                           size_t len,
                                           uint64_t *out_removed);
 /* Compatibility ingress for CeTTa-native/imported spaces that still rematch by
-   `atom_idx` against `space->atoms[]`. Counted PathMap storage remains the truth;
+   `atom_idx` against the logical host space view. Counted PathMap storage remains the truth;
    the mirrored indices are only an adapter contract at this seam. */
 bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
                                               uint32_t atom_idx,

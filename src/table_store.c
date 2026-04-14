@@ -383,11 +383,6 @@ typedef struct {
     QueryResults *results;
 } QueryResultsCollectCtx;
 
-typedef bool (*TableDelayedResultVisitor)(Atom *result,
-                                          const Bindings *bindings,
-                                          const VariantInstance *variant,
-                                          void *ctx);
-
 typedef struct {
     Arena *out_arena;
     QueryResultVisitor visitor;
@@ -491,26 +486,12 @@ static uint32_t table_store_entry_visit_delayed(const TableStoreEntry *entry,
     return visited;
 }
 
-static uint32_t table_store_entry_visit(const TableStoreEntry *entry,
-                                        Arena *out_arena,
-                                        const CettaVarMap *goal_instantiation,
-                                        QueryResultVisitor visitor,
-                                        void *ctx) {
-    TableMaterializeVisitorCtx materialize = {
-        .out_arena = out_arena,
-        .visitor = visitor,
-        .ctx = ctx,
-    };
-    return table_store_entry_visit_delayed(entry, out_arena,
-                                           goal_instantiation,
-                                           table_store_materialize_visit,
-                                           &materialize);
-}
-
-bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision,
-                              Atom *query, Arena *out_arena,
-                              QueryResultVisitor visitor, void *ctx,
-                              uint32_t *visited_out) {
+bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
+                                      uint64_t revision,
+                                      Atom *query, Arena *out_arena,
+                                      TableDelayedResultVisitor visitor,
+                                      void *ctx,
+                                      uint32_t *visited_out) {
     if (visited_out)
         *visited_out = 0;
     if (!store || store->mode != CETTA_TABLE_MODE_VARIANT || !space || !query ||
@@ -542,9 +523,9 @@ bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision
         return false;
     }
     TableStoreEntry *entry = match.exact;
-    uint32_t visited = table_store_entry_visit(entry, out_arena,
-                                               &goal_instantiation,
-                                               visitor, ctx);
+    uint32_t visited = table_store_entry_visit_delayed(entry, out_arena,
+                                                       &goal_instantiation,
+                                                       visitor, ctx);
 
     cetta_var_map_free(&probe_map);
     cetta_var_map_free(&goal_instantiation);
@@ -553,6 +534,22 @@ bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision
         *visited_out = visited;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_HIT);
     return true;
+}
+
+bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision,
+                              Atom *query, Arena *out_arena,
+                              QueryResultVisitor visitor, void *ctx,
+                              uint32_t *visited_out) {
+    TableMaterializeVisitorCtx materialize = {
+        .out_arena = out_arena,
+        .visitor = visitor,
+        .ctx = ctx,
+    };
+    return table_store_lookup_visit_delayed(store, space, revision, query,
+                                            out_arena,
+                                            table_store_materialize_visit,
+                                            &materialize,
+                                            visited_out);
 }
 
 bool table_store_lookup(TableStore *store, Space *space, uint64_t revision,
