@@ -278,6 +278,18 @@
     (case (__cetta_lib_mork_space_new $kind)
       (($result (return $result))))))
 
+(= (mork:add-atom $space $atom)
+  (function
+    (case (__cetta_lib_mork_space_add_atom $space (quote $atom))
+      (($result (return $result))))))
+
+(= (mork:add-atoms $space $tuple)
+  (foldl-atom $tuple () $a $b (mork:add-atom $space $b)))
+
+(= (mork:remove-atom $space $atom)
+  (function
+    (case (__cetta_lib_mork_space_remove_atom $space (quote $atom))
+      (($result (return $result))))))
 (= (mork:size $space)
   (function
     (case (__cetta_lib_mork_space_size $space)
