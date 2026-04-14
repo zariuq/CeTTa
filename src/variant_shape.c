@@ -33,6 +33,10 @@ VarId variant_shape_slot_id(uint32_t ordinal) {
     return kVariantPrivateSlotTag | (VarId)ordinal;
 }
 
+uint32_t variant_shape_slot_ordinal(VarId id) {
+    return (uint32_t)(id & 0xFFFFFFFFu);
+}
+
 bool variant_private_var_id(VarId id) {
     return (id & kVariantPrivateSlotMask) == kVariantPrivateSlotTag;
 }

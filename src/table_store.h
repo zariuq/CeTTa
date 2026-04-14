@@ -2,6 +2,7 @@
 #define CETTA_TABLE_STORE_H
 
 #include "space.h"
+#include "variant_instance.h"
 
 /*
  * TableStore is the first tabling seam beside SearchContext.
@@ -35,6 +36,11 @@ typedef struct {
     CettaTableMode mode;
 } TableStore;
 
+typedef bool (*TableDelayedResultVisitor)(Atom *result,
+                                          const Bindings *bindings,
+                                          const VariantInstance *variant,
+                                          void *ctx);
+
 void table_store_init(TableStore *store, CettaTableMode mode);
 void table_store_free(TableStore *store);
 bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
@@ -50,6 +56,12 @@ bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision
                               Atom *query, Arena *out_arena,
                               QueryResultVisitor visitor, void *ctx,
                               uint32_t *visited_out);
+bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
+                                      uint64_t revision,
+                                      Atom *query, Arena *out_arena,
+                                      TableDelayedResultVisitor visitor,
+                                      void *ctx,
+                                      uint32_t *visited_out);
 bool table_store_put(TableStore *store, Space *space, uint64_t revision,
                      Atom *query, const QueryResults *results);
 

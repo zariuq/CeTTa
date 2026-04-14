@@ -61,6 +61,7 @@ typedef struct {
 } VariantShape;
 
 VarId variant_shape_slot_id(uint32_t ordinal);
+uint32_t variant_shape_slot_ordinal(VarId id);
 bool variant_private_var_id(VarId id);
 
 void variant_shape_init(VariantShape *shape);

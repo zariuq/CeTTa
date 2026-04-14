@@ -156,7 +156,7 @@ static void native_rebuild_match_trie(Space *s) {
     disc_node_free(st->match_trie);
     st->match_trie = disc_node_new();
     for (uint32_t i = 0; i < s->len; i++)
-        disc_insert(st->match_trie, s->atoms[i], i);
+        disc_insert(st->match_trie, space_get_at(s, i), i);
     st->match_trie_dirty = false;
 }
 
@@ -165,7 +165,7 @@ static void native_ensure_match_trie(Space *s) {
     if (!st->match_trie) {
         st->match_trie = disc_node_new();
         for (uint32_t i = 0; i < s->len; i++)
-            disc_insert(st->match_trie, s->atoms[i], i);
+            disc_insert(st->match_trie, space_get_at(s, i), i);
         st->match_trie_dirty = false;
     } else if (st->match_trie_dirty) {
         native_rebuild_match_trie(s);
@@ -178,13 +178,13 @@ static void native_ensure_stree(Space *s) {
         st->stree = cetta_malloc(sizeof(SubstTree));
         stree_init(st->stree);
         for (uint32_t i = 0; i < s->len; i++)
-            stree_insert(st->stree, s->atoms[i], i);
+            stree_insert(st->stree, space_get_at(s, i), i);
         st->stree_dirty = false;
     } else if (st->stree_dirty) {
         stree_free(st->stree);
         stree_init(st->stree);
         for (uint32_t i = 0; i < s->len; i++)
-            stree_insert(st->stree, s->atoms[i], i);
+            stree_insert(st->stree, space_get_at(s, i), i);
         st->stree_dirty = false;
     }
 }
@@ -246,7 +246,7 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
             uint32_t epoch = fresh_var_suffix();
             Bindings b;
             bindings_init(&b);
-            if (match_atoms_epoch(query, s->atoms[i], &b, a, epoch) &&
+            if (match_atoms_epoch(query, space_get_at(s, i), &b, a, epoch) &&
                 !bindings_has_loop(&b)) {
                 subst_matchset_push(out, i, epoch, &b, false);
             }
@@ -264,12 +264,12 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
 
     if (head != SYMBOL_ID_NONE) {
         stree_query_bucket(&st->stree->buckets[stree_head_hash(head)],
-                           a, query, s->atoms, out);
+                           a, query, NULL, out);
     } else {
         for (uint32_t i = 0; i < STREE_BUCKETS; i++)
-            stree_query_bucket(&st->stree->buckets[i], a, query, s->atoms, out);
+            stree_query_bucket(&st->stree->buckets[i], a, query, NULL, out);
     }
-    stree_query_bucket(&st->stree->wildcard, a, query, s->atoms, out);
+    stree_query_bucket(&st->stree->wildcard, a, query, NULL, out);
 
     subst_matchset_normalize(out);
 }
@@ -1405,8 +1405,9 @@ static void imported_rebuild_flat(Space *s) {
     PathmapImportedState *st = &s->match_backend.imported;
     imported_flat_state_clear(st);
     for (uint32_t i = 0; i < s->len; i++) {
-        ImportedFlatBucket *bucket = imported_bucket_for_atom(st, s->atoms[i]);
-        imported_bucket_add_entry(bucket, s->atoms[i], i, stree_next_epoch());
+        Atom *atom = space_get_at(s, i);
+        ImportedFlatBucket *bucket = imported_bucket_for_atom(st, atom);
+        imported_bucket_add_entry(bucket, atom, i, stree_next_epoch());
     }
     st->bridge_active = false;
     st->attached_compiled = false;
@@ -1432,10 +1433,11 @@ static bool imported_rebuild_bridge(Space *s) {
     for (uint32_t i = 0; i < s->len; i++) {
         Arena scratch;
         arena_init(&scratch);
-        char *sexpr = atom_to_string(&scratch, s->atoms[i]);
+        char *sexpr = atom_to_string(&scratch, space_get_at(s, i));
         /* Imported/pathmap spaces now store counted keys in the bridge, but the
-           host matcher still rematches through `space->atoms[i]`, so we mirror
-           the current native index as an adapter contract at rebuild time. */
+           host matcher still rematches through `space_get_at(space, i)`, so we
+           mirror the current native index as an adapter contract at rebuild
+           time. */
         bool ok = cetta_mork_bridge_space_add_indexed_text(
             (CettaMorkSpaceHandle *)st->bridge_space, i, sexpr);
         arena_free(&scratch);
@@ -2153,7 +2155,7 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         uint32_t epoch = fresh_var_suffix();
         Bindings b;
         bindings_init(&b);
-        if (match_atoms_epoch(query, s->atoms[idx], &b, a, epoch) &&
+        if (match_atoms_epoch(query, space_get_at(s, idx), &b, a, epoch) &&
             !bindings_has_loop(&b)) {
             subst_matchset_push(out, idx, epoch, &b, false);
         }

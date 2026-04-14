@@ -121,7 +121,7 @@ static bool group_has_known_strict_types(Space *s, Arena *a, EqGroup *g) {
 static void analyze_equations(Space *s, Arena *a, EqGroupSet *out) {
     eq_group_set_init(out);
     for (uint32_t i = 0; i < s->len; i++) {
-        Atom *a = s->atoms[i];
+        Atom *a = space_get_at(s, i);
         if (a->kind != ATOM_EXPR || a->expr.len != 3) continue;
         if (!atom_is_symbol_id(a->expr.elems[0], g_builtin_syms.equals)) continue;
         Atom *lhs = a->expr.elems[1], *rhs = a->expr.elems[2];

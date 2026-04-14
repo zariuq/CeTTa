@@ -2,6 +2,8 @@
 ; Preferred explicit constructor.
 !(bind! &m (mork:new-space))
 !(assertEqualToResult (get-type &m) (MorkSpace))
+!(assertEqualToResult (mork:get-atoms &m) ())
+!(assertEqualToResult (mork:match &m (edge $x $y) ($x $y)) ())
 !(assertEqualToResult
   (add-atom &m (edge a b))
   ((Error (add-atom &m (edge a b)) "MorkSpace requires explicit mork:add-atom; add-atom does not operate on MorkSpace")))

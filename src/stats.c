@@ -79,6 +79,14 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "mork-add-batch-resolve-ns",
     "mork-add-stream-eval-ns",
     "mork-add-stream-insert-ns",
+    "outcome-variant-slot-sink",
+    "outcome-variant-prefix-compact",
+    "outcome-variant-materialize-top-level",
+    "outcome-variant-materialize-interpret-tuple",
+    "outcome-variant-materialize-dispatch-head",
+    "outcome-variant-materialize-dispatch-call-term",
+    "outcome-variant-materialize-let-chain",
+    "outcome-variant-materialize-error-filter",
 };
 
 static int64_t clamp_counter(uint64_t value) {
