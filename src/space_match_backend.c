@@ -22,6 +22,7 @@
 #define IMPORTED_MORK_TAG_VARREF_PREFIX 0x80u
 #define IMPORTED_MORK_TAG_SYMBOL_PREFIX 0xC0u
 #define IMPORTED_MORK_TAG_NEWVAR 0xC0u
+#define IMPORTED_CONJUNCTION_PATTERN_LIMIT 32u
 
 static int cmp_uint32(const void *a, const void *b) {
     uint32_t va = *(const uint32_t *)a, vb = *(const uint32_t *)b;
@@ -57,6 +58,38 @@ static SymbolId atom_head_sym(Atom *a) {
         a->expr.elems[0]->kind == ATOM_SYMBOL)
         return a->expr.elems[0]->sym_id;
     return SYMBOL_ID_NONE;
+}
+
+static bool native_atom_id_insertable(const TermUniverse *universe,
+                                      AtomId atom_id) {
+    if (!universe || atom_id == CETTA_ATOM_ID_NONE || !tu_hdr(universe, atom_id))
+        return false;
+    if (tu_kind(universe, atom_id) != ATOM_EXPR)
+        return true;
+    for (uint32_t i = 0; i < tu_arity(universe, atom_id); i++) {
+        if (!native_atom_id_insertable(universe, tu_child(universe, atom_id, i)))
+            return false;
+    }
+    return true;
+}
+
+static void native_insert_match_trie_entry(Space *s, uint32_t atom_idx) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    AtomId atom_id = space_get_atom_id_at(s, atom_idx);
+    if (native_atom_id_insertable(s->universe, atom_id) &&
+        disc_insert_id(st->match_trie, s->universe, atom_id, atom_idx)) {
+        return;
+    }
+    Atom *atom = space_get_at(s, atom_idx);
+    if (atom)
+        disc_insert(st->match_trie, atom, atom_idx);
+}
+
+static void native_insert_stree_entry(Space *s, uint32_t atom_idx) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    Atom *atom = space_get_at(s, atom_idx);
+    if (atom)
+        stree_insert(st->stree, atom, atom_idx);
 }
 
 static __attribute__((unused)) bool imported_atom_has_vars(const Atom *atom) {
@@ -156,7 +189,7 @@ static void native_rebuild_match_trie(Space *s) {
     disc_node_free(st->match_trie);
     st->match_trie = disc_node_new();
     for (uint32_t i = 0; i < s->len; i++)
-        disc_insert(st->match_trie, space_get_at(s, i), i);
+        native_insert_match_trie_entry(s, i);
     st->match_trie_dirty = false;
 }
 
@@ -165,7 +198,7 @@ static void native_ensure_match_trie(Space *s) {
     if (!st->match_trie) {
         st->match_trie = disc_node_new();
         for (uint32_t i = 0; i < s->len; i++)
-            disc_insert(st->match_trie, space_get_at(s, i), i);
+            native_insert_match_trie_entry(s, i);
         st->match_trie_dirty = false;
     } else if (st->match_trie_dirty) {
         native_rebuild_match_trie(s);
@@ -178,13 +211,13 @@ static void native_ensure_stree(Space *s) {
         st->stree = cetta_malloc(sizeof(SubstTree));
         stree_init(st->stree);
         for (uint32_t i = 0; i < s->len; i++)
-            stree_insert(st->stree, space_get_at(s, i), i);
+            native_insert_stree_entry(s, i);
         st->stree_dirty = false;
     } else if (st->stree_dirty) {
         stree_free(st->stree);
         stree_init(st->stree);
         for (uint32_t i = 0; i < s->len; i++)
-            stree_insert(st->stree, space_get_at(s, i), i);
+            native_insert_stree_entry(s, i);
         st->stree_dirty = false;
     }
 }
@@ -202,12 +235,22 @@ static void native_free(Space *s) {
     st->stree_dirty = false;
 }
 
-static void native_note_add(Space *s, Atom *atom, uint32_t atom_idx) {
+static void native_note_add(Space *s, AtomId atom_id, Atom *atom, uint32_t atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
-    if (st->match_trie)
-        disc_insert(st->match_trie, atom, atom_idx);
-    if (st->stree)
-        stree_insert(st->stree, atom, atom_idx);
+    if (st->match_trie) {
+        if (!(native_atom_id_insertable(s->universe, atom_id) &&
+              disc_insert_id(st->match_trie, s->universe, atom_id, atom_idx)) &&
+            atom) {
+            disc_insert(st->match_trie, atom, atom_idx);
+        }
+    }
+    if (st->stree) {
+        if (atom) {
+            stree_insert(st->stree, atom, atom_idx);
+        } else {
+            st->stree_dirty = true;
+        }
+    }
 }
 
 static void native_note_remove(Space *s) {
@@ -215,6 +258,180 @@ static void native_note_remove(Space *s) {
     (void)s;
     st->match_trie_dirty = true;
     st->stree_dirty = true;
+}
+
+static bool match_atoms_bound_depth(Atom *left, Atom *right, Bindings *b,
+                                    Arena *a, int depth) {
+    if (depth <= 0 || !left || !right)
+        return false;
+    if (left->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(b, left);
+        if (existing)
+            return match_atoms_bound_depth(existing, right, b, a, depth - 1);
+        if (right->kind == ATOM_VAR) {
+            Atom *right_existing = bindings_lookup_id(b, right->var_id);
+            if (right_existing)
+                return match_atoms_bound_depth(left, right_existing, b, a, depth - 1);
+            if (left->var_id == right->var_id)
+                return true;
+            return bindings_add_var(b, left, right);
+        }
+        return bindings_add_var(b, left, right);
+    }
+    if (right->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_id(b, right->var_id);
+        if (existing)
+            return match_atoms_bound_depth(left, existing, b, a, depth - 1);
+        return bindings_add_id(b, right->var_id, right->sym_id, left);
+    }
+    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL)
+        return left->sym_id == right->sym_id;
+    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED)
+        return atom_eq(left, right);
+    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
+        if (left->expr.len != right->expr.len)
+            return false;
+        for (uint32_t i = 0; i < left->expr.len; i++) {
+            if (!match_atoms_bound_depth(left->expr.elems[i], right->expr.elems[i],
+                                         b, a, depth - 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    (void)a;
+    return false;
+}
+
+static bool match_atoms_stored_epoch_depth(Atom *left,
+                                           const TermUniverse *candidate_universe,
+                                           AtomId right_id, Bindings *b,
+                                           Arena *a, uint32_t epoch,
+                                           int depth) {
+    if (depth <= 0 || !left || !candidate_universe ||
+        right_id == CETTA_ATOM_ID_NONE) {
+        return false;
+    }
+
+    const CettaTermHdr *hdr = tu_hdr(candidate_universe, right_id);
+    if (!hdr) {
+        Atom *right = term_universe_get_atom(candidate_universe, right_id);
+        return right ? match_atoms_epoch(left, right, b, a, epoch) : false;
+    }
+
+    AtomKind right_kind = tu_kind(candidate_universe, right_id);
+    if (left->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(b, left);
+        if (existing) {
+            return match_atoms_stored_epoch_depth(existing, candidate_universe,
+                                                  right_id, b, a, epoch,
+                                                  depth - 1);
+        }
+        if (right_kind == ATOM_VAR) {
+            VarId right_var_id =
+                var_epoch_id(tu_var_id(candidate_universe, right_id), epoch);
+            Atom *right_existing = bindings_lookup_id(b, right_var_id);
+            if (right_existing)
+                return match_atoms_bound_depth(left, right_existing, b, a,
+                                               depth - 1);
+            if (left->var_id == right_var_id)
+                return true;
+            return bindings_add_var(
+                b, left,
+                atom_var_with_spelling(a, tu_sym(candidate_universe, right_id),
+                                       right_var_id));
+        }
+        Atom *right_value =
+            term_universe_copy_atom_epoch(candidate_universe, a, right_id, epoch);
+        return right_value && bindings_add_var(b, left, right_value);
+    }
+
+    if (right_kind == ATOM_VAR) {
+        VarId right_var_id =
+            var_epoch_id(tu_var_id(candidate_universe, right_id), epoch);
+        Atom *existing = bindings_lookup_id(b, right_var_id);
+        if (existing)
+            return match_atoms_bound_depth(left, existing, b, a, depth - 1);
+        return bindings_add_id(b, right_var_id,
+                               tu_sym(candidate_universe, right_id), left);
+    }
+
+    switch (left->kind) {
+    case ATOM_SYMBOL:
+        return right_kind == ATOM_SYMBOL &&
+               left->sym_id == tu_sym(candidate_universe, right_id);
+    case ATOM_VAR:
+        return false;
+    case ATOM_GROUNDED:
+        if (right_kind != ATOM_GROUNDED)
+            return false;
+        switch (left->ground.gkind) {
+        case GV_INT:
+            return tu_ground_kind(candidate_universe, right_id) == GV_INT &&
+                   left->ground.ival == tu_int(candidate_universe, right_id);
+        case GV_FLOAT:
+            return tu_ground_kind(candidate_universe, right_id) == GV_FLOAT &&
+                   left->ground.fval == tu_float(candidate_universe, right_id);
+        case GV_BOOL:
+            return tu_ground_kind(candidate_universe, right_id) == GV_BOOL &&
+                   left->ground.bval == tu_bool(candidate_universe, right_id);
+        case GV_STRING: {
+            const char *rhs = tu_string_cstr(candidate_universe, right_id);
+            return tu_ground_kind(candidate_universe, right_id) == GV_STRING &&
+                   rhs && strcmp(left->ground.sval, rhs) == 0;
+        }
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return false;
+        }
+        return false;
+    case ATOM_EXPR:
+        if (right_kind != ATOM_EXPR ||
+            left->expr.len != tu_arity(candidate_universe, right_id)) {
+            return false;
+        }
+        for (uint32_t i = 0; i < left->expr.len; i++) {
+            if (!match_atoms_stored_epoch_depth(
+                    left->expr.elems[i], candidate_universe,
+                    tu_child(candidate_universe, right_id, i), b, a, epoch,
+                    depth - 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool match_space_atom_epoch(Space *s, uint32_t atom_idx, Atom *query,
+                                   Bindings *b, Arena *a, uint32_t epoch) {
+    if (!s || !query || !b || atom_idx >= s->len)
+        return false;
+    AtomId atom_id = space_get_atom_id_at(s, atom_idx);
+    if (tu_hdr(s->universe, atom_id)) {
+        return match_atoms_stored_epoch_depth(query, s->universe, atom_id, b, a,
+                                              epoch,
+                                              CETTA_MATCH_DEPTH_LIMIT);
+    }
+    Atom *candidate = space_get_at(s, atom_idx);
+    return candidate ? match_atoms_epoch(query, candidate, b, a, epoch) : false;
+}
+
+static char *imported_bridge_atom_text(Arena *scratch,
+                                       const TermUniverse *universe,
+                                       AtomId atom_id, Atom *fallback_atom) {
+    if (scratch && universe && tu_hdr(universe, atom_id))
+        return term_universe_atom_to_parseable_string(scratch, universe, atom_id);
+    if (fallback_atom)
+        return atom_to_parseable_string(scratch, fallback_atom);
+    if (universe && atom_id != CETTA_ATOM_ID_NONE) {
+        Atom *decoded = term_universe_get_atom(universe, atom_id);
+        if (decoded)
+            return atom_to_parseable_string(scratch, decoded);
+    }
+    return NULL;
 }
 
 static uint32_t native_candidates(Space *s, Atom *pattern, uint32_t **out) {
@@ -246,7 +463,7 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
             uint32_t epoch = fresh_var_suffix();
             Bindings b;
             bindings_init(&b);
-            if (match_atoms_epoch(query, space_get_at(s, i), &b, a, epoch) &&
+            if (match_space_atom_epoch(s, i, query, &b, a, epoch) &&
                 !bindings_has_loop(&b)) {
                 subst_matchset_push(out, i, epoch, &b, false);
             }
@@ -543,11 +760,12 @@ uint32_t space_match_backend_logical_len(const Space *s) {
     return s->len;
 }
 
-bool space_match_backend_mork_query_bindings_direct(
+bool space_match_backend_mork_visit_bindings_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
     Atom *query,
-    BindingSet *out) {
+    CettaMorkBindingsVisitor visitor,
+    void *ctx) {
     Arena scratch;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
@@ -560,11 +778,11 @@ bool space_match_backend_mork_query_bindings_direct(
     uint16_t flags = 0;
     uint32_t parsed_rows = 0;
 
-    if (!bridge || !a || !query || !out)
+    if (!bridge || !a || !query || !visitor)
         return false;
 
     arena_init(&scratch);
-    char *pattern_text = atom_to_string(&scratch, query);
+    char *pattern_text = atom_to_parseable_string(&scratch, query);
     bool ok = cetta_mork_bridge_space_query_bindings_query_only_v2(
         bridge, (const uint8_t *)pattern_text, strlen(pattern_text),
         &packet, &packet_len, &row_count);
@@ -572,7 +790,6 @@ bool space_match_backend_mork_query_bindings_direct(
     if (!ok)
         return false;
 
-    binding_set_init(out);
     imported_bridge_varmap_init(&query_vars);
     if (!imported_bridge_collect_vars(query, &query_vars)) {
         imported_bridge_varmap_free(&query_vars);
@@ -651,20 +868,49 @@ bool space_match_backend_mork_query_bindings_direct(
         }
 
         if (success && !bindings_has_loop(&row_bindings) &&
-            !binding_set_push(out, &row_bindings)) {
+            !visitor(&row_bindings, ctx)) {
             success = false;
         }
         bindings_free(&row_bindings);
     }
 
 cleanup:
-    if (!success) {
-        binding_set_free(out);
-        binding_set_init(out);
-    }
     imported_bridge_varmap_free(&query_vars);
     cetta_mork_bridge_bytes_free(packet, packet_len);
     return success;
+}
+
+static bool mork_query_collect_bindings(const Bindings *bindings, void *ctx) {
+    return binding_set_push((BindingSet *)ctx, bindings);
+}
+
+bool space_match_backend_mork_query_bindings_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom *query,
+    BindingSet *out) {
+    if (!out)
+        return false;
+    binding_set_init(out);
+    if (space_match_backend_mork_visit_bindings_direct(
+            bridge, a, query, mork_query_collect_bindings, out)) {
+        return true;
+    }
+    binding_set_free(out);
+    binding_set_init(out);
+    return false;
+}
+
+static bool mork_visit_collected_bindings(const BindingSet *set,
+                                          CettaMorkBindingsVisitor visitor,
+                                          void *ctx) {
+    if (!set || !visitor)
+        return false;
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (!visitor(&set->items[i], ctx))
+            return false;
+    }
+    return true;
 }
 
 static bool mork_query_conjunction_iterative(
@@ -745,23 +991,31 @@ static bool mork_query_conjunction_iterative(
     return true;
 }
 
-bool space_match_backend_mork_query_conjunction_direct(
+bool space_match_backend_mork_visit_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
     Atom **patterns,
     uint32_t npatterns,
     const Bindings *seed,
-    BindingSet *out) {
-    if (!bridge || !a || !patterns || !out)
+    CettaMorkBindingsVisitor visitor,
+    void *ctx) {
+    if (!bridge || !a || !patterns || !visitor)
         return false;
     if (npatterns == 0) {
-        binding_set_init(out);
         if (seed)
-            return binding_set_push(out, seed);
+            return visitor(seed, ctx);
         return true;
     }
-    if (npatterns > 32)
-        return mork_query_conjunction_iterative(bridge, a, patterns, npatterns, seed, out);
+    if (npatterns > IMPORTED_CONJUNCTION_PATTERN_LIMIT) {
+        BindingSet collected;
+        if (!mork_query_conjunction_iterative(bridge, a, patterns, npatterns,
+                                              seed, &collected)) {
+            return false;
+        }
+        bool ok = mork_visit_collected_bindings(&collected, visitor, ctx);
+        binding_set_free(&collected);
+        return ok;
+    }
 
     Arena scratch;
     arena_init(&scratch);
@@ -769,7 +1023,6 @@ bool space_match_backend_mork_query_conjunction_direct(
     Atom **grounded = arena_alloc(&scratch, sizeof(Atom *) * npatterns);
     ImportedBridgeVarMap query_vars;
     imported_bridge_varmap_init(&query_vars);
-    binding_set_init(out);
 
     bool success = true;
     uint8_t *packet = NULL;
@@ -798,7 +1051,14 @@ bool space_match_backend_mork_query_conjunction_direct(
             &packet, &packet_len, &row_count)) {
         imported_bridge_varmap_free(&query_vars);
         arena_free(&scratch);
-        return mork_query_conjunction_iterative(bridge, a, patterns, npatterns, seed, out);
+        BindingSet collected;
+        if (!mork_query_conjunction_iterative(bridge, a, patterns, npatterns,
+                                              seed, &collected)) {
+            return false;
+        }
+        bool ok = mork_visit_collected_bindings(&collected, visitor, ctx);
+        binding_set_free(&collected);
+        return ok;
     }
 
     size_t off = 0;
@@ -909,21 +1169,37 @@ bool space_match_backend_mork_query_conjunction_direct(
             }
         }
 
-        if (success && !bindings_has_loop(&merged) && !binding_set_push(out, &merged)) {
+        if (success && !bindings_has_loop(&merged) && !visitor(&merged, ctx)) {
             success = false;
         }
         bindings_free(&merged);
     }
 
 cleanup:
-    if (!success) {
-        binding_set_free(out);
-        binding_set_init(out);
-    }
     imported_bridge_varmap_free(&query_vars);
     cetta_mork_bridge_bytes_free(packet, packet_len);
     arena_free(&scratch);
     return success;
+}
+
+bool space_match_backend_mork_query_conjunction_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom **patterns,
+    uint32_t npatterns,
+    const Bindings *seed,
+    BindingSet *out) {
+    if (!out)
+        return false;
+    binding_set_init(out);
+    if (space_match_backend_mork_visit_conjunction_direct(
+            bridge, a, patterns, npatterns, seed,
+            mork_query_collect_bindings, out)) {
+        return true;
+    }
+    binding_set_free(out);
+    binding_set_init(out);
+    return false;
 }
 
 static void imported_builder_push(ImportedFlatBuilder *b, ImportedFlatToken tok) {
@@ -936,8 +1212,9 @@ static void imported_builder_push(ImportedFlatBuilder *b, ImportedFlatToken tok)
 
 static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
     uint32_t start = b->len;
-    ImportedFlatToken tok;
+    ImportedFlatToken tok = {0};
     tok.origin = atom;
+    tok.origin_id = CETTA_ATOM_ID_NONE;
     tok.span = 1;
     switch (atom->kind) {
     case ATOM_SYMBOL:
@@ -955,6 +1232,15 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
         if (atom->ground.gkind == GV_INT) {
             tok.kind = IMPORTED_FLAT_INT;
             tok.ival = atom->ground.ival;
+        } else if (atom->ground.gkind == GV_FLOAT) {
+            tok.kind = IMPORTED_FLAT_FLOAT;
+            tok.fval = atom->ground.fval;
+        } else if (atom->ground.gkind == GV_BOOL) {
+            tok.kind = IMPORTED_FLAT_BOOL;
+            tok.bval = atom->ground.bval;
+        } else if (atom->ground.gkind == GV_STRING) {
+            tok.kind = IMPORTED_FLAT_STRING;
+            tok.sym_id = symbol_intern_cstr(g_symbols, atom->ground.sval);
         } else {
             tok.kind = IMPORTED_FLAT_GROUNDED_OTHER;
         }
@@ -971,6 +1257,91 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
     }
 }
 
+static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
+                                     const TermUniverse *universe,
+                                     AtomId atom_id) {
+    if (!b || !universe || atom_id == CETTA_ATOM_ID_NONE || !tu_hdr(universe, atom_id))
+        return false;
+    uint32_t start = b->len;
+    ImportedFlatToken tok = {0};
+    tok.origin = NULL;
+    tok.origin_id = atom_id;
+    tok.span = 1;
+    switch (tu_kind(universe, atom_id)) {
+    case ATOM_SYMBOL:
+        tok.kind = IMPORTED_FLAT_SYMBOL;
+        tok.sym_id = tu_sym(universe, atom_id);
+        imported_builder_push(b, tok);
+        return true;
+    case ATOM_VAR:
+        tok.kind = IMPORTED_FLAT_VAR;
+        tok.sym_id = tu_sym(universe, atom_id);
+        tok.var_id = tu_var_id(universe, atom_id);
+        imported_builder_push(b, tok);
+        return true;
+    case ATOM_GROUNDED:
+        switch (tu_ground_kind(universe, atom_id)) {
+        case GV_INT:
+            tok.kind = IMPORTED_FLAT_INT;
+            tok.ival = tu_int(universe, atom_id);
+            break;
+        case GV_FLOAT:
+            tok.kind = IMPORTED_FLAT_FLOAT;
+            tok.fval = tu_float(universe, atom_id);
+            break;
+        case GV_BOOL:
+            tok.kind = IMPORTED_FLAT_BOOL;
+            tok.bval = tu_bool(universe, atom_id);
+            break;
+        case GV_STRING:
+            tok.kind = IMPORTED_FLAT_STRING;
+            tok.sym_id = symbol_intern_cstr(g_symbols, tu_string_cstr(universe, atom_id));
+            break;
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return false;
+        }
+        imported_builder_push(b, tok);
+        return true;
+    case ATOM_EXPR:
+        tok.kind = IMPORTED_FLAT_EXPR;
+        tok.arity = tu_arity(universe, atom_id);
+        imported_builder_push(b, tok);
+        for (uint32_t i = 0; i < tu_arity(universe, atom_id); i++) {
+            if (!imported_flatten_atom_id(b, universe, tu_child(universe, atom_id, i)))
+                return false;
+        }
+        b->items[start].span = b->len - start;
+        return true;
+    }
+    return false;
+}
+
+static Atom *imported_token_atom(const ImportedFlatToken *tok,
+                                 const TermUniverse *universe) {
+    if (!tok)
+        return NULL;
+    if (tok->origin)
+        return tok->origin;
+    if (tok->origin_id != CETTA_ATOM_ID_NONE)
+        return term_universe_get_atom(universe, tok->origin_id);
+    return NULL;
+}
+
+static Atom *imported_token_copy_epoch(Arena *a, const ImportedFlatToken *tok,
+                                       const TermUniverse *universe,
+                                       uint32_t epoch) {
+    if (!tok)
+        return NULL;
+    if (tok->origin_id != CETTA_ATOM_ID_NONE && universe)
+        return term_universe_copy_atom_epoch(universe, a, tok->origin_id, epoch);
+    if (tok->origin)
+        return rename_vars(a, tok->origin, epoch);
+    return NULL;
+}
+
 static bool imported_token_equal(const ImportedFlatToken *lhs,
                                  const ImportedFlatToken *rhs) {
     if (lhs->kind != rhs->kind) return false;
@@ -983,7 +1354,19 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
         return lhs->arity == rhs->arity;
     case IMPORTED_FLAT_INT:
         return lhs->ival == rhs->ival;
+    case IMPORTED_FLAT_FLOAT:
+        return lhs->fval == rhs->fval;
+    case IMPORTED_FLAT_BOOL:
+        return lhs->bval == rhs->bval;
+    case IMPORTED_FLAT_STRING:
+        return lhs->sym_id == rhs->sym_id;
     case IMPORTED_FLAT_GROUNDED_OTHER:
+        if (lhs->origin_id != CETTA_ATOM_ID_NONE &&
+            rhs->origin_id != CETTA_ATOM_ID_NONE) {
+            return lhs->origin_id == rhs->origin_id;
+        }
+        if (!lhs->origin || !rhs->origin)
+            return false;
         return atom_eq(lhs->origin, rhs->origin);
     }
     return false;
@@ -1217,7 +1600,7 @@ static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
     char **parts = arena_alloc(a, sizeof(char *) * npatterns);
     size_t total = 3;
     for (uint32_t i = 0; i < npatterns; i++) {
-        parts[i] = atom_to_string(a, patterns[i]);
+        parts[i] = atom_to_parseable_string(a, patterns[i]);
         total += 1 + strlen(parts[i]);
     }
     char *buf = arena_alloc(a, total + 1);
@@ -1349,11 +1732,13 @@ static ImportedCorefVerdict imported_bind_indexed_value(ImportedCorefState *refs
 static bool imported_materialize_bindings(const ImportedCorefState *refs,
                                           const ImportedFlatToken *qtokens,
                                           const ImportedFlatToken *ctokens,
+                                          const TermUniverse *candidate_universe,
                                           uint32_t epoch, Arena *a,
                                           Bindings *out) {
     bindings_init(out);
     for (uint32_t i = 0; i < refs->nquery; i++) {
-        Atom *val = rename_vars(a, ctokens[refs->query[i].idx].origin, epoch);
+        Atom *val = imported_token_copy_epoch(
+            a, &ctokens[refs->query[i].idx], candidate_universe, epoch);
         if (!bindings_add_id(out, refs->query[i].var_id, refs->query[i].spelling, val)) {
             bindings_free(out);
             return false;
@@ -1369,7 +1754,8 @@ static bool imported_materialize_bindings(const ImportedCorefState *refs,
         }
     }
     for (uint32_t i = 0; i < refs->nindexed_value; i++) {
-        Atom *val = rename_vars(a, ctokens[refs->indexed_value[i].idx].origin, epoch);
+        Atom *val = imported_token_copy_epoch(
+            a, &ctokens[refs->indexed_value[i].idx], candidate_universe, epoch);
         if (!bindings_add_id(out,
                              var_epoch_id(refs->indexed_value[i].var_id, epoch),
                              refs->indexed_value[i].spelling, val)) {
@@ -1380,10 +1766,11 @@ static bool imported_materialize_bindings(const ImportedCorefState *refs,
     return true;
 }
 
-static void imported_bucket_add_entry(ImportedFlatBucket *bucket, Atom *atom,
-                                      uint32_t atom_idx, uint32_t epoch) {
-    ImportedFlatBuilder b = {0};
-    imported_flatten_atom(&b, atom);
+static void imported_bucket_push_builder(ImportedFlatBucket *bucket,
+                                         ImportedFlatBuilder *builder,
+                                         uint32_t atom_idx, uint32_t epoch) {
+    if (!bucket || !builder)
+        return;
     if (bucket->len >= bucket->cap) {
         bucket->cap = bucket->cap ? bucket->cap * 2 : 8;
         bucket->entries = cetta_realloc(bucket->entries,
@@ -1391,9 +1778,16 @@ static void imported_bucket_add_entry(ImportedFlatBucket *bucket, Atom *atom,
     }
     bucket->entries[bucket->len].atom_idx = atom_idx;
     bucket->entries[bucket->len].epoch = epoch;
-    bucket->entries[bucket->len].tokens = b.items;
-    bucket->entries[bucket->len].len = b.len;
+    bucket->entries[bucket->len].tokens = builder->items;
+    bucket->entries[bucket->len].len = builder->len;
     bucket->len++;
+}
+
+static void imported_bucket_add_entry(ImportedFlatBucket *bucket, Atom *atom,
+                                      uint32_t atom_idx, uint32_t epoch) {
+    ImportedFlatBuilder b = {0};
+    imported_flatten_atom(&b, atom);
+    imported_bucket_push_builder(bucket, &b, atom_idx, epoch);
 }
 
 static ImportedFlatBucket *imported_bucket_for_atom(PathmapImportedState *st, Atom *atom) {
@@ -1401,10 +1795,28 @@ static ImportedFlatBucket *imported_bucket_for_atom(PathmapImportedState *st, At
     return head != SYMBOL_ID_NONE ? &st->buckets[stree_head_hash(head)] : &st->wildcard;
 }
 
+static ImportedFlatBucket *imported_bucket_for_atom_id(PathmapImportedState *st,
+                                                       const TermUniverse *universe,
+                                                       AtomId atom_id) {
+    SymbolId head = tu_head_sym(universe, atom_id);
+    return head != SYMBOL_ID_NONE ? &st->buckets[stree_head_hash(head)] : &st->wildcard;
+}
+
 static void imported_rebuild_flat(Space *s) {
     PathmapImportedState *st = &s->match_backend.imported;
     imported_flat_state_clear(st);
     for (uint32_t i = 0; i < s->len; i++) {
+        AtomId atom_id = space_get_atom_id_at(s, i);
+        if (tu_hdr(s->universe, atom_id)) {
+            ImportedFlatBuilder b = {0};
+            if (imported_flatten_atom_id(&b, s->universe, atom_id)) {
+                ImportedFlatBucket *bucket =
+                    imported_bucket_for_atom_id(st, s->universe, atom_id);
+                imported_bucket_push_builder(bucket, &b, i, stree_next_epoch());
+                continue;
+            }
+            free(b.items);
+        }
         Atom *atom = space_get_at(s, i);
         ImportedFlatBucket *bucket = imported_bucket_for_atom(st, atom);
         imported_bucket_add_entry(bucket, atom, i, stree_next_epoch());
@@ -1433,13 +1845,16 @@ static bool imported_rebuild_bridge(Space *s) {
     for (uint32_t i = 0; i < s->len; i++) {
         Arena scratch;
         arena_init(&scratch);
-        char *sexpr = atom_to_string(&scratch, space_get_at(s, i));
+        AtomId atom_id = space_get_atom_id_at(s, i);
+        char *sexpr =
+            imported_bridge_atom_text(&scratch, s->universe, atom_id, NULL);
         /* Imported/pathmap spaces now store counted keys in the bridge, but the
            host matcher still rematches through `space_get_at(space, i)`, so we
            mirror the current native index as an adapter contract at rebuild
            time. */
-        bool ok = cetta_mork_bridge_space_add_indexed_text(
-            (CettaMorkSpaceHandle *)st->bridge_space, i, sexpr);
+        bool ok = sexpr &&
+                  cetta_mork_bridge_space_add_indexed_text(
+                      (CettaMorkSpaceHandle *)st->bridge_space, i, sexpr);
         arena_free(&scratch);
         if (!ok) {
             cetta_mork_bridge_space_clear((CettaMorkSpaceHandle *)st->bridge_space);
@@ -1715,6 +2130,11 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
     const ImportedFlatToken *ct = &c[ci];
 
     if (qt->kind == IMPORTED_FLAT_VAR) {
+        if (ct->kind == IMPORTED_FLAT_VAR &&
+            (imported_find_indexed_ref(refs, ct->var_id) ||
+             imported_find_indexed_value(refs, ct->var_id))) {
+            return IMPORTED_COREF_NEEDS_FALLBACK;
+        }
         ImportedCorefRef *existing = imported_find_query_ref(refs, qt->var_id);
         if (existing) {
             if (!imported_flat_equal(c, existing->idx, c, ci)) {
@@ -1795,8 +2215,24 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
         *qnext = qi + 1;
         *cnext = ci + 1;
         return IMPORTED_COREF_EXACT;
+    case IMPORTED_FLAT_FLOAT:
+        if (qt->fval != ct->fval) return IMPORTED_COREF_FAIL;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return IMPORTED_COREF_EXACT;
+    case IMPORTED_FLAT_BOOL:
+        if (qt->bval != ct->bval) return IMPORTED_COREF_FAIL;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return IMPORTED_COREF_EXACT;
+    case IMPORTED_FLAT_STRING:
+        if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return IMPORTED_COREF_EXACT;
     case IMPORTED_FLAT_GROUNDED_OTHER:
-        if (!atom_eq(qt->origin, ct->origin)) return IMPORTED_COREF_FAIL;
+        if (!ct->origin || !atom_eq(qt->origin, ct->origin))
+            return IMPORTED_COREF_FAIL;
         *qnext = qi + 1;
         *cnext = ci + 1;
         return IMPORTED_COREF_EXACT;
@@ -1823,6 +2259,7 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
 
 static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t qi,
                                           const ImportedFlatToken *c, uint32_t ci,
+                                          const TermUniverse *candidate_universe,
                                           Bindings *b, Arena *a, uint32_t epoch,
                                           uint32_t *qnext, uint32_t *cnext, int depth) {
     if (depth <= 0) return false;
@@ -1832,11 +2269,21 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
     if (qt->kind == IMPORTED_FLAT_VAR) {
         Atom *existing = bindings_lookup_id(b, qt->var_id);
         if (existing) {
-            if (!match_atoms_epoch(existing, ct->origin, b, a, epoch))
+            if (ct->origin_id != CETTA_ATOM_ID_NONE) {
+                if (!match_atoms_stored_epoch_depth(existing, candidate_universe,
+                                                    ct->origin_id, b, a, epoch,
+                                                    CETTA_MATCH_DEPTH_LIMIT))
+                    return false;
+            } else if (!match_atoms_epoch(existing,
+                                          imported_token_atom(ct, candidate_universe),
+                                          b, a, epoch)) {
                 return false;
+            }
         } else {
+            Atom *value =
+                imported_token_copy_epoch(a, ct, candidate_universe, epoch);
             if (!bindings_add_id(b, qt->var_id, qt->sym_id,
-                                 rename_vars(a, ct->origin, epoch)))
+                                 value))
                 return false;
         }
         *qnext = qi + qt->span;
@@ -1872,8 +2319,24 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
         *qnext = qi + 1;
         *cnext = ci + 1;
         return true;
+    case IMPORTED_FLAT_FLOAT:
+        if (qt->fval != ct->fval) return false;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return true;
+    case IMPORTED_FLAT_BOOL:
+        if (qt->bval != ct->bval) return false;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return true;
+    case IMPORTED_FLAT_STRING:
+        if (qt->sym_id != ct->sym_id) return false;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return true;
     case IMPORTED_FLAT_GROUNDED_OTHER:
-        if (!atom_eq(qt->origin, ct->origin)) return false;
+        if (!atom_eq(qt->origin, imported_token_atom(ct, candidate_universe)))
+            return false;
         *qnext = qi + 1;
         *cnext = ci + 1;
         return true;
@@ -1882,7 +2345,8 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
         uint32_t qcur = qi + 1;
         uint32_t ccur = ci + 1;
         for (uint32_t i = 0; i < qt->arity; i++) {
-            if (!imported_match_subtree_legacy(q, qcur, c, ccur, b, a, epoch,
+            if (!imported_match_subtree_legacy(q, qcur, c, ccur,
+                                               candidate_universe, b, a, epoch,
                                                &qcur, &ccur, depth - 1))
                 return false;
         }
@@ -1898,6 +2362,7 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
 
 static void imported_collect_bucket(const ImportedFlatBucket *bucket,
                                     const ImportedFlatToken *qtokens, uint32_t qlen,
+                                    const TermUniverse *candidate_universe,
                                     Arena *a, SubstMatchSet *out) {
     for (uint32_t i = 0; i < bucket->len; i++) {
         const ImportedFlatEntry *entry = &bucket->entries[i];
@@ -1907,12 +2372,13 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
         ImportedCorefState refs = {0};
         ImportedCorefVerdict verdict =
             imported_match_subtree_coref(qtokens, 0, entry->tokens, 0, &refs,
-                                         &qnext, &cnext, 64);
+                                         &qnext, &cnext,
+                                         CETTA_MATCH_DEPTH_LIMIT);
         if (verdict == IMPORTED_COREF_EXACT &&
             qnext == qlen && cnext == entry->len) {
             Bindings b;
             if (imported_materialize_bindings(&refs, qtokens, entry->tokens,
-                                              match_epoch, a, &b) &&
+                                              candidate_universe, match_epoch, a, &b) &&
                 !bindings_has_loop(&b)) {
                 subst_matchset_push(out, entry->atom_idx, match_epoch, &b, true);
                 bindings_free(&b);
@@ -1926,8 +2392,10 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
             bindings_init(&b);
             qnext = 0;
             cnext = 0;
-            if (imported_match_subtree_legacy(qtokens, 0, entry->tokens, 0, &b, a,
-                                              match_epoch, &qnext, &cnext, 64) &&
+            if (imported_match_subtree_legacy(qtokens, 0, entry->tokens, 0,
+                                              candidate_universe, &b, a,
+                                              match_epoch, &qnext, &cnext,
+                                              CETTA_MATCH_DEPTH_LIMIT) &&
                 qnext == qlen && cnext == entry->len &&
                 !bindings_has_loop(&b)) {
                 subst_matchset_push(out, entry->atom_idx, match_epoch, &b, true);
@@ -1945,7 +2413,7 @@ imported_bridge_query_indices(Space *s, Atom *pattern,
     uint8_t *pattern_expr = NULL;
     size_t pattern_expr_len = 0;
     arena_init(&scratch);
-    char *pattern_text = atom_to_string(&scratch, pattern);
+    char *pattern_text = atom_to_parseable_string(&scratch, pattern);
     bool ok = cetta_mork_bridge_space_compile_query_expr_text(
         (CettaMorkSpaceHandle *)st->bridge_space,
         pattern_text,
@@ -2035,12 +2503,13 @@ static void imported_query_flat(Space *s, Arena *a, Atom *query, SubstMatchSet *
     SymbolId head = atom_head_sym(query);
     if (head != SYMBOL_ID_NONE) {
         imported_collect_bucket(&st->buckets[stree_head_hash(head)],
-                                q.items, q.len, a, out);
+                                q.items, q.len, s->universe, a, out);
     } else {
         for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++)
-            imported_collect_bucket(&st->buckets[bi], q.items, q.len, a, out);
+            imported_collect_bucket(&st->buckets[bi], q.items, q.len,
+                                    s->universe, a, out);
     }
-    imported_collect_bucket(&st->wildcard, q.items, q.len, a, out);
+    imported_collect_bucket(&st->wildcard, q.items, q.len, s->universe, a, out);
     free(q.items);
 
     subst_matchset_normalize(out);
@@ -2101,7 +2570,8 @@ static void imported_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) 
     free(candidates);
 }
 
-static void imported_note_add(Space *s, Atom *atom, uint32_t atom_idx) {
+static void imported_note_add(Space *s, AtomId atom_id, Atom *atom,
+                              uint32_t atom_idx) {
     PathmapImportedState *st = &s->match_backend.imported;
     if (st->attached_compiled) {
         st->bridge_active = false;
@@ -2114,9 +2584,11 @@ static void imported_note_add(Space *s, Atom *atom, uint32_t atom_idx) {
     if (st->bridge_active) {
         Arena scratch;
         arena_init(&scratch);
-        char *sexpr = atom_to_string(&scratch, atom);
-        bool ok = cetta_mork_bridge_space_add_indexed_text(
-            (CettaMorkSpaceHandle *)st->bridge_space, atom_idx, sexpr);
+        char *sexpr =
+            imported_bridge_atom_text(&scratch, s->universe, atom_id, atom);
+        bool ok = sexpr &&
+                  cetta_mork_bridge_space_add_indexed_text(
+                      (CettaMorkSpaceHandle *)st->bridge_space, atom_idx, sexpr);
         arena_free(&scratch);
         if (ok)
             return;
@@ -2124,8 +2596,37 @@ static void imported_note_add(Space *s, Atom *atom, uint32_t atom_idx) {
         st->dirty = true;
         return;
     }
+    if (tu_hdr(s->universe, atom_id)) {
+        ImportedFlatBuilder b = {0};
+        if (imported_flatten_atom_id(&b, s->universe, atom_id)) {
+            imported_bucket_push_builder(imported_bucket_for_atom_id(st, s->universe, atom_id),
+                                         &b, atom_idx, stree_next_epoch());
+            return;
+        }
+        free(b.items);
+    }
     imported_bucket_add_entry(imported_bucket_for_atom(st, atom), atom, atom_idx,
                               stree_next_epoch());
+}
+
+static bool native_needs_atom_on_add(const Space *s, AtomId atom_id) {
+    const SpaceMatchNativeState *st =
+        s ? &s->match_backend.native : NULL;
+    if (!st || (st->match_trie == NULL && st->stree == NULL))
+        return false;
+    return !native_atom_id_insertable(s->universe, atom_id);
+}
+
+static bool imported_needs_atom_on_add(const Space *s, AtomId atom_id) {
+    const PathmapImportedState *st =
+        s ? &s->match_backend.imported : NULL;
+    if (!st)
+        return false;
+    if (st->attached_compiled)
+        return false;
+    if (!(st->built && !st->dirty))
+        return false;
+    return !tu_hdr(s->universe, atom_id);
 }
 
 static void imported_note_remove(Space *s) {
@@ -2155,7 +2656,7 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         uint32_t epoch = fresh_var_suffix();
         Bindings b;
         bindings_init(&b);
-        if (match_atoms_epoch(query, space_get_at(s, idx), &b, a, epoch) &&
+        if (match_space_atom_epoch(s, idx, query, &b, a, epoch) &&
             !bindings_has_loop(&b)) {
             subst_matchset_push(out, idx, epoch, &b, false);
         }
@@ -2282,10 +2783,10 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
             return binding_set_push(out, seed);
         return true;
     }
-    if (npatterns > 32)
+    if (npatterns > IMPORTED_CONJUNCTION_PATTERN_LIMIT)
         return false;
 
-    ImportedConjStep order[32];
+    ImportedConjStep order[IMPORTED_CONJUNCTION_PATTERN_LIMIT];
     for (uint32_t i = 0; i < npatterns; i++) {
         order[i].pattern = patterns[i];
         order[i].idx = i;
@@ -2517,8 +3018,8 @@ static void imported_query_conjunction(Space *s, Arena *a, Atom **patterns,
         return;
     }
 
-    ImportedConjStep order[32];
-    if (npatterns > 32) {
+    ImportedConjStep order[IMPORTED_CONJUNCTION_PATTERN_LIMIT];
+    if (npatterns > IMPORTED_CONJUNCTION_PATTERN_LIMIT) {
         space_query_conjunction_default(s, a, patterns, npatterns, seed, out);
         return;
     }
@@ -2637,9 +3138,25 @@ bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
     return true;
 }
 
-void space_match_backend_note_add(Space *s, Atom *atom, uint32_t atom_idx) {
+bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id) {
+    if (!s)
+        return false;
+    switch (s->match_backend.kind) {
+    case SPACE_ENGINE_NATIVE:
+    case SPACE_ENGINE_NATIVE_CANDIDATE_EXACT:
+        return native_needs_atom_on_add(s, atom_id);
+    case SPACE_ENGINE_PATHMAP:
+    case SPACE_ENGINE_MORK:
+        return imported_needs_atom_on_add(s, atom_id);
+    default:
+        return false;
+    }
+}
+
+void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
+                                  uint32_t atom_idx) {
     if (s->match_backend.ops && s->match_backend.ops->note_add)
-        s->match_backend.ops->note_add(s, atom, atom_idx);
+        s->match_backend.ops->note_add(s, atom_id, atom, atom_idx);
 }
 
 void space_match_backend_note_remove(Space *s) {
@@ -2782,15 +3299,17 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
     if (sm->atom_idx >= space->len)
         return false;
 
-    Atom *matched_atom = space_get_at(space, sm->atom_idx);
-    if (!matched_atom)
-        return false;
     uint32_t suffix = fresh_var_suffix();
-    Atom *renamed = rename_vars(a, matched_atom, suffix);
     Bindings exact;
+    Bindings empty_seed;
+    if (!seed) {
+        bindings_init(&empty_seed);
+        seed = &empty_seed;
+    }
     if (!bindings_clone(&exact, seed))
         return false;
-    if (match_atoms(renamed, pattern, &exact) && !bindings_has_loop(&exact)) {
+    if (match_space_atom_epoch(space, sm->atom_idx, pattern, &exact, a, suffix) &&
+        !bindings_has_loop(&exact)) {
         bindings_move(out, &exact);
         return true;
     }

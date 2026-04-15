@@ -205,6 +205,7 @@ bool atom_eq(Atom *a, Atom *b);
 void atom_print(Atom *a, FILE *out);
 /* Print into arena-allocated string */
 char *atom_to_string(Arena *a, Atom *atom);
+char *atom_to_parseable_string(Arena *a, Atom *atom);
 
 /* Deep-copy an atom tree into a different arena */
 Atom *atom_deep_copy(Arena *dst, Atom *src);

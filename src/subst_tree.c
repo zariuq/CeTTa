@@ -211,6 +211,47 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
     return node;
 }
 
+static SubstNode *snode_insert_atom_id(SubstNode *node,
+                                       const TermUniverse *universe,
+                                       AtomId atom_id) {
+    if (!node || !universe || atom_id == CETTA_ATOM_ID_NONE ||
+        !tu_hdr(universe, atom_id)) {
+        return NULL;
+    }
+
+    switch (tu_kind(universe, atom_id)) {
+    case ATOM_SYMBOL:
+        return snode_get_sym(node, tu_sym(universe, atom_id));
+    case ATOM_VAR:
+        return snode_get_var(node, tu_var_id(universe, atom_id),
+                             tu_sym(universe, atom_id));
+    case ATOM_GROUNDED:
+        if (tu_ground_kind(universe, atom_id) == GV_INT)
+            return snode_get_int(node, tu_int(universe, atom_id));
+        if (tu_ground_kind(universe, atom_id) == GV_STRING) {
+            SymbolId string_id =
+                symbol_intern_cstr(g_symbols, tu_string_cstr(universe, atom_id));
+            return snode_get_sym(node, string_id);
+        }
+        return snode_get_var(node,
+                             g_var_intern ? var_intern(g_var_intern,
+                                                       symbol_intern_cstr(g_symbols, "__grounded__"))
+                                          : fresh_var_id(),
+                             symbol_intern_cstr(g_symbols, "__grounded__"));
+    case ATOM_EXPR: {
+        SubstNode *cur = snode_get_expr(node, tu_arity(universe, atom_id));
+        for (uint32_t i = 0; i < tu_arity(universe, atom_id); i++) {
+            AtomId child_id = tu_child(universe, atom_id, i);
+            cur = snode_insert_atom_id(cur, universe, child_id);
+            if (!cur)
+                return NULL;
+        }
+        return cur;
+    }
+    }
+    return node;
+}
+
 /* ── SubstTree (head-partitioned) ──────────────────────────────────────── */
 
 void stree_init(SubstTree *t) {
@@ -263,6 +304,25 @@ void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx) {
                         ? &t->buckets[stree_head_hash(head)]
                         : &t->wildcard;
     stree_bucket_insert(bucket, atom, atom_idx);
+}
+
+bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
+                     AtomId atom_id, uint32_t atom_idx) {
+    if (!t || !universe || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    SymbolId head = tu_head_sym(universe, atom_id);
+    SubstBucket *bucket = head != SYMBOL_ID_NONE
+                        ? &t->buckets[stree_head_hash(head)]
+                        : &t->wildcard;
+    uint32_t epoch = stree_next_epoch();
+    if (!bucket->root)
+        bucket->root = snode_new();
+    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id);
+    if (!leaf)
+        return false;
+    snode_add_leaf(leaf, atom_idx, epoch);
+    bucket->count++;
+    return true;
 }
 
 /* ── Result Set ────────────────────────────────────────────────────────── */

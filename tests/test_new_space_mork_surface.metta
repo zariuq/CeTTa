@@ -12,10 +12,43 @@
 !(assertEqualToResult (collapse (mork:match &m (edge x y) hit)) (()))
 !(assertEqualToResult (mork:size &m) (1))
 !(bind! &bulk (mork:new-space))
+!(reset-runtime-stats!)
 !(mork:add-atoms &bulk (collapse (superpose ((edge c d) (edge e f) (edge g h)))))
+!(bind! &bulk-stats (runtime-stats!))
+!(assertEqualToResult
+  (match &bulk-stats (runtime-counter mork-add-batch-call $n) $n)
+  (1))
+!(assertEqualToResult
+  (match &bulk-stats (runtime-counter mork-add-batch-items $n) $n)
+  (3))
+!(assertEqualToResult
+  (match &bulk-stats (runtime-counter mork-add-call $n) $n)
+  (0))
 !(assertEqualToResult (mork:size &bulk) (3))
 !(assertEqual (mork:match &bulk (edge $x $y) ($x $y))
   (superpose ((c d) (e f) (g h))))
+!(bind! &bulk-direct (mork:new-space))
+!(__cetta_lib_mork_space_add_stream &bulk-direct
+  (superpose ((edge i j) (edge j k) (edge k l))))
+!(assertEqualToResult (mork:size &bulk-direct) (3))
+!(assertEqual (mork:match &bulk-direct (edge $x $y) ($x $y))
+  (superpose ((i j) (j k) (k l))))
+!(assertEqualToResult (select (mork:match &bulk (edge c d) hit)) (hit))
+!(assertEqual (once (mork:match &bulk (edge e f) hit))
+  (select (mork:match &bulk (edge e f) hit)))
+!(assertEqual (collect (mork:match &bulk (edge g h) hit)) (hit))
+!(assertEqual (select 0 (mork:match &bulk (edge $x $y) ($x $y))) ())
+!(bind! &join (mork:new-space))
+!(mork:add-atoms &join (collapse (superpose ((edge a b) (edge b c) (edge a d) (edge d e)))))
+!(assertEqualToResult
+  (select (mork:match &join (, (edge a $y) (edge $y c)) $y))
+  (b))
+!(assertEqual
+  (once (mork:match &join (, (edge a $y) (edge $y c)) $y))
+  (select (mork:match &join (, (edge a $y) (edge $y c)) $y)))
+!(assertEqual
+  (collect (mork:match &join (, (edge a $y) (edge $y c)) $y))
+  (b))
 
 ; Legacy generic construction is now quarantined.
 !(assertEqualToResult

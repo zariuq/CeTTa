@@ -48,6 +48,8 @@ typedef struct DiscNode {
 DiscNode *disc_node_new(void);
 void disc_node_free(DiscNode *n);
 void disc_insert(DiscNode *root, Atom *lhs, uint32_t eq_idx);
+bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
+                    AtomId atom_id, uint32_t eq_idx);
 /* Collect all matching equation indices into result array */
 void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, uint32_t *cout);
 

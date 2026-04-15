@@ -1619,15 +1619,16 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
                                     uint32_t epoch, bool right_original, int depth);
 
 bool match_atoms(Atom *left, Atom *right, Bindings *b) {
-    return match_atoms_depth(left, right, b, 64);
+    return match_atoms_depth(left, right, b, CETTA_MATCH_DEPTH_LIMIT);
 }
 
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb) {
-    return match_atoms_builder_depth(left, right, bb, 64);
+    return match_atoms_builder_depth(left, right, bb, CETTA_MATCH_DEPTH_LIMIT);
 }
 
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {
-    return match_atoms_epoch_depth(left, right, b, a, epoch, true, 64);
+    return match_atoms_epoch_depth(left, right, b, a, epoch, true,
+                                   CETTA_MATCH_DEPTH_LIMIT);
 }
 
 typedef struct {
