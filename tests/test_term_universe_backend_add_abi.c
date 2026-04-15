@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "mork_space_bridge_runtime.h"
+#include "parser.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -507,6 +508,52 @@ static void test_byte_backed_rematch_delay(TermUniverse *universe, Arena *scratc
     space_free(&space);
 }
 
+static void test_parser_direct_add_boundary(TermUniverse *universe, Arena *scratch) {
+    const char *stable_text = "(pair alpha 17) \"hello\" (ns.foo beta)";
+    const char *var_text = "(pair $x $x)";
+    AtomId *ids = NULL;
+    AtomId *var_ids = NULL;
+    Atom **atoms = NULL;
+    Space space;
+
+    int n = parse_metta_text_ids(stable_text, universe, &ids);
+    assert(n == 3);
+    assert(ids != NULL);
+    assert(tu_kind(universe, ids[0]) == ATOM_EXPR);
+    assert(tu_kind(universe, ids[1]) == ATOM_GROUNDED);
+    assert(tu_kind(universe, ids[2]) == ATOM_EXPR);
+    assert(tu_head_sym(universe, ids[2]) ==
+           symbol_intern_cstr(g_symbols, "ns:foo"));
+
+    int legacy_n = parse_metta_text(stable_text, scratch, &atoms);
+    assert(legacy_n == n);
+    for (int i = 0; i < n; i++) {
+        assert(term_universe_store_atom_id(universe, NULL, atoms[i]) == ids[i]);
+    }
+    free(atoms);
+
+    space_init_with_universe(&space, universe);
+    reset_test_counters();
+    for (int i = 0; i < n; i++) {
+        space_add_atom_id(&space, ids[i]);
+    }
+    assert(space_length(&space) == (uint32_t)n);
+    assert(space_get_atom_id_at(&space, 0) == ids[0]);
+    assert(space_get_atom_id_at(&space, 1) == ids[1]);
+    assert(space_get_atom_id_at(&space, 2) == ids[2]);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+    space_free(&space);
+    free(ids);
+
+    n = parse_metta_text_ids(var_text, universe, &var_ids);
+    assert(n == 1);
+    assert(var_ids != NULL);
+    assert(tu_kind(universe, var_ids[0]) == ATOM_EXPR);
+    assert(tu_child(universe, var_ids[0], 1) ==
+           tu_child(universe, var_ids[0], 2));
+    free(var_ids);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -523,6 +570,7 @@ int main(void) {
     test_imported_flat_add_boundary(&universe, &scratch);
     test_imported_bridge_add_boundary(&universe, &scratch);
     test_byte_backed_rematch_delay(&universe, &scratch);
+    test_parser_direct_add_boundary(&universe, &scratch);
 
     term_universe_free(&universe);
     reset_bridge_capture();

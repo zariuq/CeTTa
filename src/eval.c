@@ -108,6 +108,33 @@ static bool generic_mork_space_sugar_allowed(void) {
     return mork_space_sugar_option_allows(active_eval_option("mork-space-sugar"));
 }
 
+static bool atom_resolves_to_mork_handle(Space *s, Arena *a, Atom *space_expr,
+                                         int fuel) {
+    uint64_t id = 0;
+    Atom *direct = resolve_registry_refs(a, space_expr);
+    if (cetta_native_handle_arg(direct, "mork-space", &id)) {
+        return true;
+    }
+
+    ResultSet rs;
+    result_set_init(&rs);
+    metta_eval(s, a, NULL, space_expr, fuel, &rs);
+    for (uint32_t i = 0; i < rs.len; i++) {
+        if (cetta_native_handle_arg(rs.items[i], "mork-space", &id)) {
+            free(rs.items);
+            return true;
+        }
+    }
+    free(rs.items);
+    return false;
+}
+
+static bool generic_mork_handle_sugar_allowed(Space *s, Arena *a, Atom *space_expr,
+                                              int fuel) {
+    return generic_mork_space_sugar_allowed() &&
+           atom_resolves_to_mork_handle(s, a, space_expr, fuel);
+}
+
 static bool atom_is_mork_space_handle_value(Atom *atom) {
     uint64_t id = 0;
     return cetta_native_handle_arg(atom, "mork-space", &id);
@@ -124,7 +151,7 @@ static Atom *mork_space_surface_error(Arena *a, Atom *call,
                                       const char *explicit_surface) {
     char buf[256];
     snprintf(buf, sizeof(buf),
-             "Space mork requires explicit %s; generic %s is disabled unless you enable (pragma! mork-space-sugar allow)",
+             "deprecated generic MORK-backed spaces require explicit %s; generic %s is disabled unless you enable (pragma! mork-space-sugar allow)",
              explicit_surface, surface);
     return atom_error(a, call, atom_string(a, buf));
 }
@@ -137,6 +164,78 @@ static Atom *mork_handle_surface_error(Arena *a, Atom *call,
              "MorkSpace requires explicit %s; %s does not operate on MorkSpace",
              explicit_surface, surface);
     return atom_error(a, call, atom_string(a, buf));
+}
+
+static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
+                                    Atom *surface_atom, uint32_t nargs,
+                                    Atom **args, bool evaluate_rows, int fuel,
+                                    OutcomeSet *os);
+static bool emit_direct_mork_match_rows(Space *s, Arena *a, Atom *surface_atom,
+                                        Atom **args, int fuel,
+                                        OutcomeSet *os);
+
+static Atom *dispatch_named_native(Space *s, Arena *a, SymbolId head_id,
+                                   Atom **args, uint32_t nargs) {
+    Atom *head = atom_symbol_id(a, head_id);
+    Atom *result = grounded_dispatch(a, head, args, nargs);
+    if (result) return result;
+    if (g_library_context) {
+        return cetta_library_dispatch_native(g_library_context, s, a, head, args, nargs);
+    }
+    return NULL;
+}
+
+static Atom *rewrite_error_call(Arena *a, Atom *surface_atom, Atom *result) {
+    if (!result || !atom_is_error(result) || result->kind != ATOM_EXPR ||
+        result->expr.len < 3) {
+        return result;
+    }
+    return atom_error(a, surface_atom, result->expr.elems[2]);
+}
+
+static bool emit_generic_mork_handle_native_surface(
+    Space *s, Arena *a, Atom *surface_atom, Atom **args, uint32_t nargs,
+    int fuel, SymbolId explicit_head_id, OutcomeSet *os) {
+    Bindings empty;
+    bindings_init(&empty);
+    if (!generic_mork_handle_sugar_allowed(s, a, args[0], fuel)) {
+        return false;
+    }
+    Atom **resolved_args = arena_alloc(a, sizeof(Atom *) * nargs);
+    for (uint32_t i = 0; i < nargs; i++) {
+        resolved_args[i] = resolve_registry_refs(a, args[i]);
+    }
+    Atom *result = dispatch_named_native(s, a, explicit_head_id, resolved_args, nargs);
+    if (!result) {
+        return false;
+    }
+    outcome_set_add(os, rewrite_error_call(a, surface_atom, result), &empty);
+    return true;
+}
+
+static bool emit_generic_mork_handle_atoms_surface(
+    Space *s, Arena *a, Atom *surface_atom, Atom *space_arg, int fuel,
+    OutcomeSet *os) {
+    Atom *args[] = { space_arg };
+    if (!generic_mork_handle_sugar_allowed(s, a, space_arg, fuel)) {
+        return false;
+    }
+    return emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_atoms,
+                                   surface_atom, 1, args, false, fuel, os);
+}
+
+static bool emit_generic_mork_handle_match_surface(
+    Space *s, Arena *a, Atom *surface_atom, Atom **args, int fuel,
+    OutcomeSet *os) {
+    if (!generic_mork_handle_sugar_allowed(s, a, args[0], fuel)) {
+        return false;
+    }
+    if (emit_direct_mork_match_rows(s, a, surface_atom, args, fuel, os)) {
+        return true;
+    }
+    return emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_match,
+                                   surface_atom, 3, args, true, fuel, os);
 }
 
 static Atom *guard_mork_space_surface(Arena *a, Atom *call, Space *space,
@@ -154,21 +253,9 @@ static Atom *guard_mork_handle_surface(Space *s, Arena *a, Atom *call,
                                        const char *explicit_surface) {
     if (!g_registry) return NULL;
 
-    Atom *direct = resolve_registry_refs(a, space_expr);
-    if (atom_is_mork_space_handle_value(direct)) {
+    if (atom_resolves_to_mork_handle(s, a, space_expr, fuel)) {
         return mork_handle_surface_error(a, call, surface, explicit_surface);
     }
-
-    ResultSet rs;
-    result_set_init(&rs);
-    metta_eval(s, a, NULL, space_expr, fuel, &rs);
-    for (uint32_t i = 0; i < rs.len; i++) {
-        if (atom_is_mork_space_handle_value(rs.items[i])) {
-            free(rs.items);
-            return mork_handle_surface_error(a, call, surface, explicit_surface);
-        }
-    }
-    free(rs.items);
     return NULL;
 }
 
@@ -1101,6 +1188,14 @@ static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uin
     if (head && atom_is_symbol_id(head, g_builtin_syms.size) &&
         nargs == 1) {
         Atom *call = make_call_expr(a, head, args, nargs);
+        if (generic_mork_handle_sugar_allowed(
+                s, a, args[0], eval_get_default_fuel())) {
+            Atom *resolved = resolve_registry_refs(a, args[0]);
+            Atom *mork_args[] = { resolved };
+            Atom *result = dispatch_named_native(
+                s, a, g_builtin_syms.lib_mork_space_size, mork_args, 1);
+            return rewrite_error_call(a, call, result);
+        }
         Atom *handle_error = guard_mork_handle_surface(
             s, a, call, args[0], eval_get_default_fuel(), "size", "mork:size");
         if (handle_error) return handle_error;
@@ -4981,6 +5076,10 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
     if (atom_head_symbol_id(atom) != g_builtin_syms.match || nargs != 3) return false;
 
     Atom *space_ref = expr_arg(atom, 0);
+    Atom *mork_args[] = { expr_arg(atom, 0), expr_arg(atom, 1), expr_arg(atom, 2) };
+    if (emit_generic_mork_handle_match_surface(s, a, atom, mork_args, fuel, os)) {
+        return true;
+    }
     Atom *pattern = resolve_registry_refs(a, expr_arg(atom, 1));
     Atom *template = resolve_registry_refs(a, expr_arg(atom, 2));
     Atom *mork_handle_error = guard_mork_handle_surface(
@@ -7296,6 +7395,12 @@ tail_call: ;
                 &_empty);
             return;
         }
+        if (nargs == 2 &&
+            emit_generic_mork_handle_native_surface(
+                s, a, atom, atom->expr.elems + 1, nargs, fuel,
+                g_builtin_syms.lib_mork_space_include, os)) {
+            return;
+        }
         Atom *error = NULL;
         Space *target_space = s;
         const char *spec = NULL;
@@ -7567,6 +7672,11 @@ tail_call: ;
                 &_empty);
             return;
         }
+        if (emit_generic_mork_handle_native_surface(
+                s, a, atom, atom->expr.elems + 1, nargs, fuel,
+                g_builtin_syms.lib_mork_space_size, os)) {
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, expr_arg(atom, 0), fuel);
         Atom *mork_handle_error = guard_mork_handle_surface(
             s, a, atom, expr_arg(atom, 0), fuel, "space-len", "mork:size");
@@ -7599,6 +7709,11 @@ tail_call: ;
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
                 &_empty);
+            return;
+        }
+        if (emit_generic_mork_handle_native_surface(
+                s, a, atom, atom->expr.elems + 1, nargs, fuel,
+                g_builtin_syms.lib_mork_space_step, os)) {
             return;
         }
         Atom *mork_handle_error = guard_mork_handle_surface(
@@ -7905,6 +8020,11 @@ tail_call: ;
     if (head_id == g_builtin_syms.add_atom && nargs == 2 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
         Atom *atom_to_add = expr_arg(atom, 1);
+        if (emit_generic_mork_handle_native_surface(
+                s, a, atom, atom->expr.elems + 1, nargs, fuel,
+                g_builtin_syms.mork_add_atom, os)) {
+            return;
+        }
         Atom *mork_handle_error = guard_mork_handle_surface(
             s, a, atom, space_ref, fuel, "add-atom", "mork:add-atom");
         if (mork_handle_error) {
@@ -7986,6 +8106,11 @@ tail_call: ;
     if (head_id == g_builtin_syms.remove_atom && nargs == 2 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
         Atom *atom_to_rm = expr_arg(atom, 1);
+        if (emit_generic_mork_handle_native_surface(
+                s, a, atom, atom->expr.elems + 1, nargs, fuel,
+                g_builtin_syms.mork_remove_atom, os)) {
+            return;
+        }
         Atom *mork_handle_error = guard_mork_handle_surface(
             s, a, atom, space_ref, fuel, "remove-atom", "mork:remove-atom");
         if (mork_handle_error) {
@@ -8020,6 +8145,10 @@ tail_call: ;
     /* ── get-atoms ─────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.get_atoms && nargs == 1 && g_registry) {
         Atom *space_ref = expr_arg(atom, 0);
+        if (emit_generic_mork_handle_atoms_surface(
+                s, a, atom, space_ref, fuel, os)) {
+            return;
+        }
         Atom *mork_handle_error = guard_mork_handle_surface(
             s, a, atom, space_ref, fuel, "get-atoms", "mork:get-atoms");
         if (mork_handle_error) {

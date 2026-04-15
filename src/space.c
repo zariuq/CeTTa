@@ -1050,18 +1050,12 @@ static void space_bump_revision(Space *s) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
 }
 
-void space_add(Space *s, Atom *atom) {
-    AtomId atom_id = CETTA_ATOM_ID_NONE;
-    Atom *backend_atom = atom;
+static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     bool queue_gap = space_is_queue(s) && s->start != 0;
-    if (space_tracks_atom_ids(s) && atom) {
-        atom_id = term_universe_store_atom_id(s->universe, NULL, atom);
-        if (atom_id == CETTA_ATOM_ID_NONE)
-            return;
-    }
     bool backend_needs_atom =
         !queue_gap && space_match_backend_needs_atom_on_add(s, atom_id);
-    if (backend_needs_atom && space_tracks_atom_ids(s) && atom_id != CETTA_ATOM_ID_NONE) {
+    if (backend_needs_atom && space_tracks_atom_ids(s) &&
+        atom_id != CETTA_ATOM_ID_NONE && !backend_atom) {
         backend_atom = term_universe_get_atom(s->universe, atom_id);
         if (!backend_atom)
             return;
@@ -1110,6 +1104,22 @@ void space_add(Space *s, Atom *atom) {
     /* Match backend owns its own incremental indexing policy. */
     space_match_backend_note_add(s, atom_id,
                                  backend_needs_atom ? backend_atom : NULL, idx);
+}
+
+void space_add_atom_id(Space *s, AtomId atom_id) {
+    if (!s || !space_tracks_atom_ids(s) || atom_id == CETTA_ATOM_ID_NONE)
+        return;
+    space_add_stored_id(s, atom_id, NULL);
+}
+
+void space_add(Space *s, Atom *atom) {
+    AtomId atom_id = CETTA_ATOM_ID_NONE;
+    if (space_tracks_atom_ids(s) && atom) {
+        atom_id = term_universe_store_atom_id(s->universe, NULL, atom);
+        if (atom_id == CETTA_ATOM_ID_NONE)
+            return;
+    }
+    space_add_stored_id(s, atom_id, atom);
 }
 
 Space *space_heap_clone_shallow(Space *src) {
@@ -1625,7 +1635,7 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
             } else if (space->match_backend.kind == SPACE_ENGINE_PATHMAP) {
                 space_type = "pathmap";
             } else if (space->match_backend.kind == SPACE_ENGINE_MORK) {
-                space_type = "mork";
+                space_type = "pathmap";
             } else if (space_is_hash(space)) {
                 space_type = "hash";
             }

@@ -5096,37 +5096,17 @@ static bool load_module_mm2_file(CettaLibraryContext *ctx, const char *path,
                                  Arena *eval_arena,
                                  Arena *persistent_arena,
                                  Atom **error_out) {
-    Arena *parse_arena = persistent_arena ? persistent_arena : eval_arena;
-    Atom **atoms = NULL;
-    int n = 0;
-    bool exec_enabled = space_engine_supports_exec(work_space->match_backend.kind);
+    (void)work_space;
+    (void)persistent_arena;
 
-    if (space_is_ordered(work_space)) {
-        *error_out = module_reason(ctx, eval_arena, "ModuleMm2OrderedSpaceUnsupported", path);
-        return false;
+    if (error_out) {
+        *error_out = module_reason_with_detail(
+            ctx, eval_arena, "ModuleMm2LoadFailed", path,
+            atom_string(eval_arena,
+                        "generic import/include does not accept .mm2; use "
+                        "(mork:include! <MorkSpace> spec)"));
     }
-
-    n = parse_metta_file(path, parse_arena, &atoms);
-    if (n < 0) {
-        *error_out = module_reason(ctx, eval_arena, "ModuleMm2ReadFailed", path);
-        return false;
-    }
-
-    if (cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
-        free(atoms);
-        *error_out = module_reason(ctx, eval_arena, "ModuleMm2LoadFailed", path);
-        return false;
-    }
-    if (!exec_enabled) {
-        cetta_mm2_lower_atoms(parse_arena, atoms, n);
-    }
-
-    for (int i = 0; i < n; i++) {
-        space_add(work_space, atoms[i]);
-    }
-
-    free(atoms);
-    return true;
+    return false;
 }
 
 static void skip_mork_include_whitespace_and_comments(const char *text, size_t *pos) {
@@ -5270,6 +5250,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     }
 
     Atom **atoms = NULL;
+    AtomId *atom_ids = NULL;
     CettaModuleFormat format = {
         .kind = CETTA_MODULE_FORMAT_METTA,
         .foreign_backend = CETTA_FOREIGN_BACKEND_NONE,
@@ -5294,18 +5275,32 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         ok = load_module_mm2_file(ctx, path, work_space, eval_arena,
                                   persistent_arena, error_out);
     } else {
-        int n = parse_metta_file(path, persistent_arena, &atoms);
+        int n = parse_metta_file_ids(path, work_space ? work_space->universe : NULL,
+                                     &atom_ids);
         if (n < 0) {
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
         } else {
             for (int i = 0; i < n; i++) {
-                Atom *at = atoms[i];
-                if (atom_is_symbol_id(at, g_builtin_syms.bang) && i + 1 < n) {
+                AtomId at_id = atom_ids[i];
+                if (tu_kind(work_space->universe, at_id) == ATOM_SYMBOL &&
+                    tu_sym(work_space->universe, at_id) == g_builtin_syms.bang &&
+                    i + 1 < n) {
                     ResultSet rs;
                     result_set_init(&rs);
+                    Atom *eval_form = term_universe_copy_atom(
+                        work_space->universe,
+                        persistent_arena ? persistent_arena : eval_arena,
+                        atom_ids[i + 1]);
+                    if (!eval_form) {
+                        free(rs.items);
+                        ok = false;
+                        *error_out = module_reason(ctx, eval_arena,
+                                                   "ModuleParseFailed", path);
+                        break;
+                    }
                     eval_top_with_registry(work_space, eval_arena, persistent_arena, registry,
-                                           atoms[i + 1], &rs);
+                                           eval_form, &rs);
                     Atom *first_error = result_set_first_error(eval_arena, &rs);
                     bool stop_after_error = first_error != NULL || result_set_has_error(&rs);
                     free(rs.items);
@@ -5319,7 +5314,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                     i++;
                     continue;
                 }
-                space_add(work_space, at);
+                space_add_atom_id(work_space, at_id);
             }
         }
     }
@@ -5331,6 +5326,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     }
     cetta_library_pop_dir(ctx);
     free(atoms);
+    free(atom_ids);
 
     if (!ok) {
         ctx->imported_files[slot].loading = false;
