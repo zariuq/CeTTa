@@ -100,4 +100,13 @@ const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
 AtomId tu_child(const TermUniverse *universe, AtomId id, uint32_t idx);
 bool tu_has_vars(const TermUniverse *universe, AtomId id);
 
+AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id);
+AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id);
+AtomId tu_intern_int(TermUniverse *universe, int64_t value);
+AtomId tu_intern_float(TermUniverse *universe, double value);
+AtomId tu_intern_bool(TermUniverse *universe, bool value);
+AtomId tu_intern_string(TermUniverse *universe, const char *value);
+AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
+                        uint32_t arity);
+
 #endif /* CETTA_TERM_UNIVERSE_H */

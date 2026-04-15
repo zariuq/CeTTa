@@ -1012,14 +1012,34 @@ endif
 
 test-mork-lane: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork lane regression suite,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-deprecated-space-engine-mork-guard
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-mork-program-space
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-exec-basic
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-import-mm2-mork-session-lowering
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-conformance-var-binding
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-conformance-lean-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-kiss-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-surface-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-runtime-stats-isolation
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-basic-pathmap-guard
+
+test-deprecated-space-engine-mork-guard: $(BIN)
+	@status=0; \
+	result=$$(./$(BIN) --space-engine mork --lang he tests/test_space_type.metta 2>&1) || status=$$?; \
+	expected=$$(printf '%s\n' \
+		"error: unknown space engine 'mork'" \
+		"space engines:" \
+		"  native                 standard CeTTa / HE engine" \
+		"  pathmap                PathMap-backed CeTTa engine with fast candidate narrowing (requires BUILD=pathmap or BUILD=full)" \
+		"  native-candidate-exact diagnostic native exact-matcher lane"); \
+	if [ "$$status" -eq 2 ] && [ "$$result" = "$$expected" ]; then \
+		echo "PASS: deprecated space-engine mork guard"; \
+	else \
+		echo "FAIL: deprecated space-engine mork guard"; \
+		echo "status=$$status"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
+		exit 1; \
+	fi
 
 test-mork-basic-pathmap-guard: $(BIN)
 	@if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
@@ -1078,7 +1098,7 @@ test-mm2-mork-program-space: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 MORK program-space lowering regression,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$(./$(BIN) --space-engine mork --lang mm2 tests/support/mm2_mork_program_space.metta 2>&1); \
+	result=$$(./$(BIN) --lang mm2 tests/support/mm2_mork_program_space.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mm2 MORK program-space lowering regression"; \
 	else \
@@ -1096,6 +1116,19 @@ test-mm2-exec-basic: $(BIN)
 	else \
 		echo "FAIL: mm2 direct execution seam"; \
 		diff <(cat tests/mm2_exec_basic.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-import-mm2-mork-session-lowering: $(BIN)
+	$(call require_mork_bridge_or_reexec,mork-space sugar over explicit handles,$@)
+	@ \
+	result=$$(./$(BIN) --lang he \
+		tests/test_import_mm2_mork_session_lowering.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_import_mm2_mork_session_lowering.expected)" ]; then \
+		echo "PASS: mork-space sugar over explicit handles"; \
+	else \
+		echo "FAIL: mork-space sugar over explicit handles"; \
+		diff <(cat tests/test_import_mm2_mork_session_lowering.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
 

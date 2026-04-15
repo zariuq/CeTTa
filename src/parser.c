@@ -285,6 +285,124 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
     return result;
 }
 
+static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
+                                       const char *text, size_t *pos,
+                                       ParserVarScope *scope) {
+    skip_whitespace_and_comments(text, pos);
+    if (!text[*pos] || !universe)
+        return CETTA_ATOM_ID_NONE;
+
+    if (text[*pos] == '"') {
+        (*pos)++;
+        size_t start = *pos;
+        while (text[*pos] && text[*pos] != '"') {
+            if (text[*pos] == '\\' && text[*pos + 1])
+                (*pos)++;
+            (*pos)++;
+        }
+        size_t len = *pos - start;
+        char *buf = arena_alloc(scratch, len + 1);
+        size_t out = 0;
+        for (size_t i = start; i < *pos; i++) {
+            if (text[i] == '\\' && i + 1 < *pos) {
+                buf[out++] = decode_string_escape(text[++i]);
+            } else {
+                buf[out++] = text[i];
+            }
+        }
+        buf[out] = '\0';
+        if (text[*pos] == '"')
+            (*pos)++;
+        return tu_intern_string(universe, buf);
+    }
+
+    if (text[*pos] == '(') {
+        AtomId *children = NULL;
+        uint32_t n = 0;
+        uint32_t ccap = 0;
+        AtomId expr_id = CETTA_ATOM_ID_NONE;
+        (*pos)++;
+        for (;;) {
+            skip_whitespace_and_comments(text, pos);
+            if (!text[*pos] || text[*pos] == ')')
+                break;
+            AtomId child_id =
+                parse_sexpr_to_id_scoped(universe, scratch, text, pos, scope);
+            if (child_id == CETTA_ATOM_ID_NONE)
+                break;
+            if (n >= ccap) {
+                ccap = ccap ? ccap * 2 : 16;
+                children = cetta_realloc(children, sizeof(AtomId) * ccap);
+            }
+            children[n++] = child_id;
+        }
+        if (text[*pos] == ')')
+            (*pos)++;
+        expr_id = tu_expr_from_ids(universe, children, n);
+        free(children);
+        return expr_id;
+    }
+
+    size_t start = *pos;
+    while (is_token_char(text[*pos]))
+        (*pos)++;
+    size_t len = *pos - start;
+    if (len == 0)
+        return CETTA_ATOM_ID_NONE;
+
+    char *tok = arena_alloc(scratch, len + 1);
+    memcpy(tok, text + start, len);
+    tok[len] = '\0';
+
+    if (tok[0] == '$' && len > 1) {
+        const char *spelling_text =
+            parser_canonicalize_namespace_token(scratch, tok + 1);
+        SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
+        VarId id = parser_var_scope_id(scope, spelling);
+        return tu_intern_var(universe, spelling, id);
+    }
+
+    if (strcmp(tok, "True") == 0)
+        return tu_intern_bool(universe, true);
+    if (strcmp(tok, "False") == 0)
+        return tu_intern_bool(universe, false);
+    if (strcmp(tok, "PI") == 0)
+        return tu_intern_float(universe, M_PI);
+    if (strcmp(tok, "EXP") == 0)
+        return tu_intern_float(universe, M_E);
+
+    char *endp;
+    errno = 0;
+    long long val = strtoll(tok, &endp, 10);
+    if (*endp == '\0' && errno == 0)
+        return tu_intern_int(universe, (int64_t)val);
+
+    if (strchr(tok, '.')) {
+        char *fendp;
+        errno = 0;
+        double fval = strtod(tok, &fendp);
+        if (*fendp == '\0' && errno == 0)
+            return tu_intern_float(universe, fval);
+    }
+
+    return tu_intern_symbol(
+        universe, symbol_intern_cstr(
+                      g_symbols, parser_canonicalize_namespace_token(scratch, tok)));
+}
+
+AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos) {
+    ParserVarScope scope;
+    Arena scratch;
+    AtomId result = CETTA_ATOM_ID_NONE;
+    parser_var_scope_init(&scope);
+    arena_init(&scratch);
+    arena_set_hashcons(&scratch, NULL);
+    result = parse_sexpr_to_id_scoped(universe, &scratch, text, pos, &scope);
+    arena_free(&scratch);
+    parser_var_scope_free(&scope);
+    return result;
+}
+
 /* ── Parse entire file ──────────────────────────────────────────────────── */
 
 static int parse_metta_buffer(const char *text, Arena *a, Atom ***out_atoms) {
@@ -308,6 +426,44 @@ static int parse_metta_buffer(const char *text, Arena *a, Atom ***out_atoms) {
     }
 
     *out_atoms = atoms;
+    return count;
+}
+
+static int parse_metta_buffer_ids(const char *text, TermUniverse *universe,
+                                  AtomId **out_ids) {
+    Arena scratch;
+    if (!out_ids)
+        return -1;
+    *out_ids = NULL;
+    if (!text || !universe || !parser_text_well_formed(text))
+        return -1;
+
+    arena_init(&scratch);
+    arena_set_hashcons(&scratch, NULL);
+
+    AtomId *ids = NULL;
+    int count = 0;
+    int cap = 0;
+    size_t pos = 0;
+    for (;;) {
+        ParserVarScope scope;
+        ArenaMark mark = arena_mark(&scratch);
+        AtomId id;
+        parser_var_scope_init(&scope);
+        id = parse_sexpr_to_id_scoped(universe, &scratch, text, &pos, &scope);
+        parser_var_scope_free(&scope);
+        arena_reset(&scratch, mark);
+        if (id == CETTA_ATOM_ID_NONE)
+            break;
+        if (count >= cap) {
+            cap = cap ? cap * 2 : 64;
+            ids = cetta_realloc(ids, sizeof(AtomId) * (size_t)cap);
+        }
+        ids[count++] = id;
+    }
+
+    arena_free(&scratch);
+    *out_ids = ids;
     return count;
 }
 
@@ -377,6 +533,36 @@ int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
     fclose(f);
 
     int count = parse_metta_buffer(text, a, out_atoms);
+    (void)nread;
+    free(text);
+    return count;
+}
+
+int parse_metta_text_ids(const char *text, TermUniverse *universe,
+                         AtomId **out_ids) {
+    if (!text) {
+        if (out_ids)
+            *out_ids = NULL;
+        return -1;
+    }
+    return parse_metta_buffer_ids(text, universe, out_ids);
+}
+
+int parse_metta_file_ids(const char *filename, TermUniverse *universe,
+                         AtomId **out_ids) {
+    FILE *f = fopen(filename, "r");
+    if (!f)
+        return -1;
+
+    char *text = NULL;
+    size_t nread = 0;
+    if (!read_all_text(f, &text, &nread)) {
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+
+    int count = parse_metta_buffer_ids(text, universe, out_ids);
     (void)nread;
     free(text);
     return count;

@@ -4,25 +4,26 @@
 !(assertEqualToResult
   (get-type &plain)
   ((Space pathmap)))
-!(include &plain mm2_exec_basic.mm2)
+!(assertEqualToResult
+  (size &plain)
+  (0))
+!(collapse (include &plain mm2_exec_basic.mm2))
 !(assertEqualToResult
   (get-type &plain)
   ((Space pathmap)))
 !(assertEqualToResult
   (size &plain)
-  (3))
-!(assertEqualToResult
-  (step! &plain 5)
-  ((Error (step! &plain 5) NoStepSemantics)))
+  (0))
 !(assertEqualToResult
   (match &plain (mm2_exec $p $src $snk) exec-present)
-  (exec-present))
+  ())
 
 !(bind! &ws (mork:new-space))
 !(assertEqualToResult
   (get-type &ws)
   (MorkSpace))
-!(mork:include! &ws mm2_exec_basic.mm2)
+!(pragma! mork-space-sugar allow)
+!(include &ws mm2_exec_basic.mm2)
 !(assertEqualToResult
   (get-type &ws)
   (MorkSpace))
