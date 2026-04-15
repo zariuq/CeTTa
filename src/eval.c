@@ -565,6 +565,20 @@ void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env) {
     outcome_refresh_materialized_fast_path(slot);
 }
 
+static void outcome_set_add_unfactored(OutcomeSet *os, Atom *atom,
+                                       const Bindings *env) {
+    Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
+    slot->atom = atom;
+    bindings_assert_no_private_variant_slots(env);
+    if (!bindings_clone(&slot->env, env)) {
+        outcome_free_fields(slot);
+        os->len--;
+        return;
+    }
+    outcome_refresh_materialized_fast_path(slot);
+}
+
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env) {
     Outcome *slot = outcome_set_push_slot(os);
     outcome_init(slot);
@@ -8032,7 +8046,7 @@ tail_call: ;
             return;
         }
         for (uint32_t i = 0; i < space_length(target); i++)
-            outcome_set_add(os, space_get_at(target, i), &_empty);
+            outcome_set_add_unfactored(os, space_get_at(target, i), &_empty);
         return;
     }
 

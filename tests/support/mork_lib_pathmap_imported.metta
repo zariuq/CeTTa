@@ -3,3 +3,8 @@
 !(assertEqualToResult (get-type &h) ((Space pathmap)))
 !(add-atom &h (edge a b))
 !(assertEqualToResult (match &h (edge $x $y) ($x $y)) ((a b)))
+!(add-atom &h "solo")
+!(assertEqualToResult (match &h "solo" hit) (hit))
+!(bind! &m (mork:new-space))
+!(mork:add-atom &m "solo")
+!(assertEqualToResult (mork:match &m "solo" hit) (hit))

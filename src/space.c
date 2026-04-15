@@ -383,6 +383,7 @@ void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, ui
 /* ── Equation Index ─────────────────────────────────────────────────────── */
 
 static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom);
+static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id);
 
 static void eq_bucket_init(EqBucket *b) {
     b->atom_indices = NULL; b->len = 0; b->cap = 0;
@@ -405,6 +406,40 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, uint32_t atom_idx) {
     disc_insert(b->trie, lhs, idx);
     stree_bucket_insert(&b->subst, lhs, idx);
     b->subst_safe = b->subst_safe && atom_is_eq_subst_safe(lhs);
+}
+
+static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
+                             uint32_t atom_idx) {
+    if (!b || !s || !s->universe || lhs_id == CETTA_ATOM_ID_NONE ||
+        !tu_hdr(s->universe, lhs_id)) {
+        Atom *lhs = (s && s->universe)
+                        ? term_universe_get_atom(s->universe, lhs_id)
+                        : NULL;
+        if (lhs)
+            eq_bucket_add(b, lhs, atom_idx);
+        return;
+    }
+    uint32_t idx = b->len;
+    if (b->len >= b->cap) {
+        b->cap = b->cap ? b->cap * 2 : 8;
+        b->atom_indices =
+            cetta_realloc(b->atom_indices, sizeof(uint32_t) * b->cap);
+    }
+    b->atom_indices[b->len] = atom_idx;
+    b->len++;
+    if (!b->trie)
+        b->trie = disc_node_new();
+    if (!disc_insert_id(b->trie, s->universe, lhs_id, idx)) {
+        Atom *lhs = term_universe_get_atom(s->universe, lhs_id);
+        if (lhs)
+            disc_insert(b->trie, lhs, idx);
+    }
+    if (!stree_bucket_insert_id(&b->subst, s->universe, lhs_id, idx)) {
+        Atom *lhs = term_universe_get_atom(s->universe, lhs_id);
+        if (lhs)
+            stree_bucket_insert(&b->subst, lhs, idx);
+    }
+    b->subst_safe = b->subst_safe && atom_id_is_eq_subst_safe(s, lhs_id);
 }
 
 static void eq_bucket_free(EqBucket *b) {
@@ -438,6 +473,31 @@ static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom) {
     return false;
 }
 
+static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
+    if (!s || !s->universe || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    const CettaTermHdr *hdr = tu_hdr(s->universe, atom_id);
+    if (!hdr) {
+        Atom *atom = term_universe_get_atom(s->universe, atom_id);
+        return atom ? atom_is_eq_subst_safe(atom) : false;
+    }
+    switch (tu_kind(s->universe, atom_id)) {
+    case ATOM_SYMBOL:
+    case ATOM_VAR:
+        return true;
+    case ATOM_GROUNDED:
+        return tu_ground_kind(s->universe, atom_id) == GV_INT ||
+               tu_ground_kind(s->universe, atom_id) == GV_STRING;
+    case ATOM_EXPR:
+        for (uint32_t i = 0; i < tu_arity(s->universe, atom_id); i++) {
+            if (!atom_id_is_eq_subst_safe(s, tu_child(s->universe, atom_id, i)))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 /* Get the head symbol of an equation LHS for indexing.
    Returns NULL if the head is not a symbol (variable, complex expr). */
 static SymbolId eq_head_symbol(Atom *lhs) {
@@ -446,6 +506,12 @@ static SymbolId eq_head_symbol(Atom *lhs) {
         lhs->expr.elems[0]->kind == ATOM_SYMBOL)
         return lhs->expr.elems[0]->sym_id;
     return SYMBOL_ID_NONE;
+}
+
+static SymbolId eq_head_symbol_id(const Space *s, AtomId lhs_id) {
+    if (!s || !s->universe || lhs_id == CETTA_ATOM_ID_NONE)
+        return SYMBOL_ID_NONE;
+    return tu_head_sym(s->universe, lhs_id);
 }
 
 static void eq_index_init(EqIndex *idx) {
@@ -466,6 +532,16 @@ static void eq_index_add(EqIndex *idx, Atom *lhs, uint32_t atom_idx) {
         eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx);
     } else {
         eq_bucket_add(&idx->wildcard, lhs, atom_idx);
+    }
+}
+
+static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
+                            uint32_t atom_idx) {
+    SymbolId head = eq_head_symbol_id(s, lhs_id);
+    if (head != SYMBOL_ID_NONE) {
+        eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx);
+    } else {
+        eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx);
     }
 }
 
@@ -920,8 +996,14 @@ static void eq_index_rebuild(Space *s) {
     eq_index_free(&s->eq_idx);
     eq_index_init(&s->eq_idx);
     for (uint32_t i = 0; i < s->len; i++) {
-        Atom *lhs, *rhs;
         AtomId atom_id = space_get_atom_id_at(s, i);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
+            eq_index_add_id(&s->eq_idx, s, lhs_id, i);
+            continue;
+        }
+        Atom *lhs, *rhs;
         if (space_equation_children_at_id(s, atom_id, &lhs, &rhs))
             eq_index_add(&s->eq_idx, lhs, i);
     }
@@ -1000,9 +1082,17 @@ void space_add(Space *s, Atom *atom) {
         return;
     }
     /* Index equations by head symbol */
-    Atom *lhs, *rhs;
-    if (!s->eq_idx_dirty && space_equation_children_at_id(s, atom_id, &lhs, &rhs))
-        eq_index_add(&s->eq_idx, lhs, idx);
+    if (!s->eq_idx_dirty) {
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
+            eq_index_add_id(&s->eq_idx, s, lhs_id, idx);
+        } else {
+            Atom *lhs, *rhs;
+            if (space_equation_children_at_id(s, atom_id, &lhs, &rhs))
+                eq_index_add(&s->eq_idx, lhs, idx);
+        }
+    }
     /* Index type annotations (: atom type) */
     if (!s->ty_idx_dirty) {
         AtomId subject_id = CETTA_ATOM_ID_NONE;
@@ -1752,6 +1842,12 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
+static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
+                                       Atom *query,
+                                       const QueryVisibleVarSet *visible,
+                                       Arena *a, uint32_t epoch,
+                                       const Bindings *seed, QueryResults *out);
+
 static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
                                 const QueryVisibleVarSet *visible, Arena *a,
                                 QueryResults *out) {
@@ -1768,6 +1864,20 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
             if (atom_idx >= s->len)
                 continue;
             AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+            AtomId lhs_id = CETTA_ATOM_ID_NONE;
+            AtomId rhs_id = CETTA_ATOM_ID_NONE;
+            if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+                SymbolId lhs_head = eq_head_symbol_id(s, lhs_id);
+                if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
+                    lhs_head != query_head) {
+                    continue;
+                }
+                considered++;
+                (void)query_equation_emit_stored(
+                    s, lhs_id, rhs_id, query, visible, a, fresh_var_suffix(),
+                    NULL, out);
+                continue;
+            }
             Atom *lhs = NULL, *rhs = NULL;
             if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
                 continue;
@@ -1806,6 +1916,20 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         if (atom_idx >= s->len)
             continue;
         AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            SymbolId lhs_head = eq_head_symbol_id(s, lhs_id);
+            if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
+                lhs_head != query_head) {
+                continue;
+            }
+            considered++;
+            (void)query_equation_emit_stored(
+                s, lhs_id, rhs_id, query, visible, a, fresh_var_suffix(),
+                NULL, out);
+            continue;
+        }
         Atom *lhs = NULL, *rhs = NULL;
         if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
             continue;
@@ -1836,6 +1960,43 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES, considered);
 }
 
+static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
+                                       Atom *query,
+                                       const QueryVisibleVarSet *visible,
+                                       Arena *a, uint32_t epoch,
+                                       const Bindings *seed, QueryResults *out) {
+    if (!s || !s->universe || lhs_id == CETTA_ATOM_ID_NONE ||
+        rhs_id == CETTA_ATOM_ID_NONE || !tu_hdr(s->universe, lhs_id) ||
+        !tu_hdr(s->universe, rhs_id)) {
+        return false;
+    }
+    Bindings merged;
+    if (seed) {
+        if (!bindings_clone(&merged, (Bindings *)seed))
+            return false;
+    } else {
+        bindings_init(&merged);
+    }
+    bool emitted = false;
+    if (match_atoms_atom_id_epoch(query, s->universe, lhs_id,
+                                  &merged, a, epoch) &&
+        !bindings_has_loop(&merged)) {
+        Atom *rhs_copy =
+            term_universe_copy_atom_epoch(s->universe, a, rhs_id, epoch);
+        if (rhs_copy) {
+            Atom *result = bindings_apply(&merged, a, rhs_copy);
+            Bindings projected;
+            if (project_query_visible_bindings(a, visible, &merged, &projected)) {
+                query_results_push_move(out, result, &projected);
+                bindings_free(&projected);
+                emitted = true;
+            }
+        }
+    }
+    bindings_free(&merged);
+    return emitted;
+}
+
 /* Try matching equations from a bucket against a query.
    Large buckets reuse the substitution-tree epoch path to avoid per-candidate
    rename_vars on both sides of each equation. */
@@ -1864,6 +2025,22 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         if (atom_idx >= s->len)
             continue;
         AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            SymbolId lhs_head = eq_head_symbol_id(s, lhs_id);
+            if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
+                lhs_head != query_head) {
+                continue;
+            }
+            considered++;
+            if (query_equation_emit_stored(s, lhs_id, rhs_id, query, visible, a,
+                                           sm->epoch, &sm->bindings, out)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
+            }
+            continue;
+        }
         Atom *lhs = NULL, *rhs = NULL;
         if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
             continue;

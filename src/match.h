@@ -2,6 +2,7 @@
 #define CETTA_MATCH_H
 
 #include "atom.h"
+#include "term_universe.h"
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
@@ -127,6 +128,9 @@ Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
+bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
+                               AtomId right_id, Bindings *b, Arena *a,
+                               uint32_t epoch);
 
 /* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
    renaming of variable names. */

@@ -2431,7 +2431,7 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
     uint32_t n = space_length(space);
     for (uint32_t i = 0; i < n; i++) {
         ArenaMark mark = arena_mark(&scratch);
-        char *sexpr = atom_to_string(&scratch, space_get_at(space, i));
+        char *sexpr = atom_to_parseable_string(&scratch, space_get_at(space, i));
         bool ok = cetta_mork_bridge_space_add_indexed_text(bridge, i, sexpr);
         arena_reset(&scratch, mark);
         if (!ok) {
@@ -4208,7 +4208,7 @@ static Atom *mork_path_of_atom_native(CettaLibraryContext *ctx, Arena *a,
     }
 
     arena_init(&scratch);
-    text = atom_to_string(&scratch, args[0]);
+    text = atom_to_parseable_string(&scratch, args[0]);
     if (!text) {
         arena_free(&scratch);
         return atom_error(a, library_call_expr(a, head, args, nargs),

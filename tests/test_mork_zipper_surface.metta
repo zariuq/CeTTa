@@ -5,6 +5,16 @@
   (MorkSpace))
 !(mork:add-atom &kb (edge a b))
 !(mork:add-atom &kb (edge a c))
+!(bind! &string-kb (mork:new-space))
+!(mork:add-atom &string-kb "solo")
+!(bind! &string-z (mork:zipper &string-kb))
+!(assertEqualToResult
+  (mork:zipper-descend-until! &string-z)
+  (True))
+!(bind! &solo-path (mork:path-of-atom "solo"))
+!(assertEqualToResult
+  (mork:zipper-path-bytes &string-z)
+  (&solo-path))
 !(bind! &z (mork:zipper &kb))
 !(assertEqualToResult
   (mork:path-of-atom (edge a b))
