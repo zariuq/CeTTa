@@ -284,7 +284,9 @@
       (($result (return $result))))))
 
 (= (mork:add-atoms $space $tuple)
-  (foldl-atom $tuple () $a $b (mork:add-atom $space $b)))
+  (function
+    (case (__cetta_lib_mork_space_add_atoms $space $tuple)
+      (($result (return $result))))))
 
 (= (mork:remove-atom $space $atom)
   (function

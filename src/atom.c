@@ -870,10 +870,7 @@ void atom_print(Atom *a, FILE *out) {
     }
 }
 
-char *atom_to_string(Arena *a, Atom *atom) {
-    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
-        return arena_strdup(a, atom->ground.sval);
-    }
+char *atom_to_parseable_string(Arena *a, Atom *atom) {
     char *buf = NULL;
     size_t len = 0;
     FILE *mem = open_memstream(&buf, &len);
@@ -885,4 +882,11 @@ char *atom_to_string(Arena *a, Atom *atom) {
     char *out = arena_strdup(a, buf ? buf : "");
     free(buf);
     return out;
+}
+
+char *atom_to_string(Arena *a, Atom *atom) {
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        return arena_strdup(a, atom->ground.sval);
+    }
+    return atom_to_parseable_string(a, atom);
 }

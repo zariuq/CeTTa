@@ -38,18 +38,24 @@ typedef enum {
     IMPORTED_FLAT_VAR = 1,
     IMPORTED_FLAT_EXPR = 2,
     IMPORTED_FLAT_INT = 3,
-    IMPORTED_FLAT_GROUNDED_OTHER = 4,
+    IMPORTED_FLAT_FLOAT = 4,
+    IMPORTED_FLAT_BOOL = 5,
+    IMPORTED_FLAT_STRING = 6,
+    IMPORTED_FLAT_GROUNDED_OTHER = 7,
 } ImportedFlatTokenKind;
 
 typedef struct {
     ImportedFlatTokenKind kind;
     Atom *origin;
+    AtomId origin_id;
     uint32_t span;
     VarId var_id;
     union {
         SymbolId sym_id;
         uint32_t arity;
         int64_t ival;
+        double fval;
+        bool bval;
     };
 } ImportedFlatToken;
 
@@ -80,7 +86,7 @@ typedef struct SpaceMatchBackendOps {
     const char *name;
     bool supports_direct_bindings;
     void (*free)(Space *s);
-    void (*note_add)(Space *s, Atom *atom, uint32_t atom_idx);
+    void (*note_add)(Space *s, AtomId atom_id, Atom *atom, uint32_t atom_idx);
     void (*note_remove)(Space *s);
     uint32_t (*candidates)(Space *s, Atom *pattern, uint32_t **out);
     void (*query)(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
@@ -95,10 +101,14 @@ typedef struct {
     PathmapImportedState imported;
 } SpaceMatchBackend;
 
+typedef bool (*CettaMorkBindingsVisitor)(const Bindings *bindings, void *ctx);
+
 void space_match_backend_init(Space *s);
 void space_match_backend_free(Space *s);
 bool space_match_backend_try_set(Space *s, SpaceEngine kind);
-void space_match_backend_note_add(Space *s, Atom *atom, uint32_t atom_idx);
+bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id);
+void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
+                                  uint32_t atom_idx);
 void space_match_backend_note_remove(Space *s);
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out);
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
@@ -126,6 +136,20 @@ bool space_match_backend_mork_query_bindings_direct(
     Arena *a,
     Atom *query,
     BindingSet *out);
+bool space_match_backend_mork_visit_bindings_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom *query,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx);
+bool space_match_backend_mork_visit_conjunction_direct(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom **patterns,
+    uint32_t npatterns,
+    const Bindings *seed,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx);
 bool space_match_backend_mork_query_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,

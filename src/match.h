@@ -5,6 +5,10 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
+/* Keep recursive matcher behavior aligned across decoded and store-backed
+   paths. */
+#define CETTA_MATCH_DEPTH_LIMIT 64
+
 typedef struct {
     VarId var_id;
     SymbolId spelling;

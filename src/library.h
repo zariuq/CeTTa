@@ -110,5 +110,12 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
 bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
                                                Atom *space_arg,
                                                CettaMorkSpaceHandle **bridge_out);
+bool cetta_library_pack_mork_expr_batch(Arena *scratch, Atom **items,
+                                        uint32_t item_count,
+                                        uint8_t **packet_out,
+                                        size_t *packet_len_out,
+                                        uint64_t *packet_bytes_out,
+                                        uint64_t *pack_ns_out,
+                                        const char **error_out);
 
 #endif /* CETTA_LIBRARY_H */

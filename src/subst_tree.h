@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "match.h"
+#include "term_universe.h"
 
 /* ── Substitution Tree (Space-internal fast-path for match) ──────────── *
  *
@@ -102,6 +103,8 @@ void       snode_free(SubstNode *n);
 void stree_init(SubstTree *t);
 void stree_free(SubstTree *t);
 void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx);
+bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
+                     AtomId atom_id, uint32_t atom_idx);
 void stree_bucket_init(SubstBucket *bucket);
 void stree_bucket_free(SubstBucket *bucket);
 void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx);
