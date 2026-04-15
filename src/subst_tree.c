@@ -298,6 +298,21 @@ void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx) {
     bucket->count++;
 }
 
+bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
+                            AtomId atom_id, uint32_t atom_idx) {
+    if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    uint32_t epoch = stree_next_epoch();
+    if (!bucket->root)
+        bucket->root = snode_new();
+    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id);
+    if (!leaf)
+        return false;
+    snode_add_leaf(leaf, atom_idx, epoch);
+    bucket->count++;
+    return true;
+}
+
 void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx) {
     SymbolId head = atom_head_sym(atom);
     SubstBucket *bucket = head != SYMBOL_ID_NONE
@@ -314,15 +329,7 @@ bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
     SubstBucket *bucket = head != SYMBOL_ID_NONE
                         ? &t->buckets[stree_head_hash(head)]
                         : &t->wildcard;
-    uint32_t epoch = stree_next_epoch();
-    if (!bucket->root)
-        bucket->root = snode_new();
-    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id);
-    if (!leaf)
-        return false;
-    snode_add_leaf(leaf, atom_idx, epoch);
-    bucket->count++;
-    return true;
+    return stree_bucket_insert_id(bucket, universe, atom_id, atom_idx);
 }
 
 /* ── Result Set ────────────────────────────────────────────────────────── */

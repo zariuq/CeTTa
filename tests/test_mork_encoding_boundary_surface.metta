@@ -4,9 +4,10 @@
 !(mork:add-atom &ws (edge a b))
 !(mork:add-atom &ws (nest (pair a (pair b c)) (text "x y")))
 !(mork:add-atom &ws (FList (FSDepth 0) (Cons ("formula" "x") Nil)))
+!(mork:add-atom &ws "solo")
 !(assertEqualToResult
   (mork:size &ws)
-  (3))
+  (4))
 !(assertEqualToResult
   (mork:match &ws (edge a b) hit)
   (hit))
@@ -19,25 +20,27 @@
 !(mork:remove-atom &ws (nest (pair a (pair b c)) (text "x y")))
 !(assertEqualToResult
   (mork:size &ws)
-  (2))
+  (3))
 !(mork:add-atom &ws (nest (pair a (pair b c)) (text "x y")))
 !(assertEqual
   (collapse (mork:get-atoms &ws))
   ((edge a b)
    (nest (pair a (pair b c)) (text "x y"))
-   (FList (FSDepth 0) (Cons ("formula" "x") Nil))))
+   (FList (FSDepth 0) (Cons ("formula" "x") Nil))
+   "solo"))
 
 !(bind! &copy (mork:new-space))
 !(bind! &atoms (collapse (mork:get-atoms &ws)))
 !(mork:add-atoms &copy &atoms)
 !(assertEqualToResult
   (mork:size &copy)
-  (3))
+  (4))
 !(assertEqual
   (collapse (mork:get-atoms &copy))
   ((edge a b)
    (nest (pair a (pair b c)) (text "x y"))
-   (FList (FSDepth 0) (Cons ("formula" "x") Nil))))
+   (FList (FSDepth 0) (Cons ("formula" "x") Nil))
+   "solo"))
 
 !(assertEqual
   (mork:dump! &ws "../runtime/test_mork_encoding_boundary_surface.act")
@@ -45,12 +48,13 @@
 !(bind! &compiled (mork:open-act "../runtime/test_mork_encoding_boundary_surface.act"))
 !(assertEqualToResult
   (mork:size &compiled)
-  (3))
+  (4))
 !(assertEqual
   (collapse (mork:get-atoms &compiled))
   ((edge a b)
    (nest (pair a (pair b c)) (text "x y"))
-   (FList (FSDepth 0) (Cons ("formula" "x") Nil))))
+   (FList (FSDepth 0) (Cons ("formula" "x") Nil))
+   "solo"))
 !(assertEqualToResult
   (mork:match &compiled (edge a b) hit)
   (hit))
