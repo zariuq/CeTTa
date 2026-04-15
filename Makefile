@@ -1347,7 +1347,7 @@ test-pathmap-match-chain-v3: $(BIN)
 test-mork-lib-pathmap: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,mork lib pathmap probe,$@)
 	@ \
-	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mork lib pathmap probe"; \

@@ -108,6 +108,8 @@ bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
 void stree_bucket_init(SubstBucket *bucket);
 void stree_bucket_free(SubstBucket *bucket);
 void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx);
+bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
+                            AtomId atom_id, uint32_t atom_idx);
 
 /* Full unification retrieval: walk tree with query, produce bindings.
    Caller must free(out->items). */

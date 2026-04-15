@@ -1,11 +1,8 @@
 ; Regression: Nil's FC depth 3 on native spaces must give 3421 results.
-; PeTTa oracle: 3421. Main branch CeTTa: 3421.
-; Term-sharing branch regression: 3379.
 ;
-; This uses the exact Nil FC program, just at depth 3.
-; Note: an older probe used `size-atom (collapse ...)`, which is not a reliable
-; witness here under CeTTa/HE's current evaluation discipline. This test uses
-; the direct space-count surface instead.
+; This intentionally follows the snapshot/add accumulation lane used by the
+; byte-backed FC witness. An older collapse-based accumulation probe was not a
+; stable correctness witness for CeTTa/HE's current evaluation discipline.
 
 (= (depth) 3)
 
@@ -24,9 +21,11 @@
         (match $ss (: $x2 $a2) (: $x2 $a2))))
 
 (= (fs-add-to-ss $rb $ss)
-   (let $ns (collapse (fs $rb $ss))
-     (let $nss (superpose $ns)
-       (add-atom $ss $nss))))
+   (with-space-snapshot $ss0 $ss
+     (match $ss0 (: $x1 $a1)
+       (match $ss0 (: $x2 $a2)
+         (match $rb (: $f (-> $a1 $a2 $b))
+           (add-atom $ss (: ($f $x1 $x2) $b)))))))
 
 !(bind! &rb (new-space))
 !(add-atom &rb (: ax-mp (-> (→ $p $q) $p $q)))
@@ -37,11 +36,21 @@
 !(add-atom &ab (: ax-3 (→ (→ (¬ $a) (¬ $b)) (→ $b $a))))
 
 !(bind! &ss (new-space))
-!(let* (
-    ($seed (collapse (match &ab (: $x $a) (add-atom &ss (: $x $a)))))
-    ($step1 (collapse (fs-add-to-ss &rb &ss)))
-    ($step2 (collapse (fs-add-to-ss &rb &ss)))
-    ($step3 (collapse (fs-add-to-ss &rb &ss)))
-    (() (assertEqualToResult (count-atoms &ss) (3421)))
-  )
-  ())
+!(match &ab (: $x $a) (add-atom &ss (: $x $a)))
+!(reset-runtime-stats!)
+!(fs-add-to-ss &rb &ss)
+!(fs-add-to-ss &rb &ss)
+!(fs-add-to-ss &rb &ss)
+!(assertEqualToResult (count-atoms &ss) (3421))
+!(bind! &all-results (get-atoms &ss))
+!(bind! &stats (runtime-stats!))
+!(assertEqualToResult
+  (match &stats
+         (runtime-counter outcome-variant-slot-materialize $n)
+         (== $n 0))
+  (True))
+!(assertEqualToResult
+  (match &stats
+         (runtime-counter outcome-variant-materialize-top-level $n)
+         (== $n 0))
+  (True))

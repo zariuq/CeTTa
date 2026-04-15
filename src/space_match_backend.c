@@ -260,163 +260,12 @@ static void native_note_remove(Space *s) {
     st->stree_dirty = true;
 }
 
-static bool match_atoms_bound_depth(Atom *left, Atom *right, Bindings *b,
-                                    Arena *a, int depth) {
-    if (depth <= 0 || !left || !right)
-        return false;
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, left);
-        if (existing)
-            return match_atoms_bound_depth(existing, right, b, a, depth - 1);
-        if (right->kind == ATOM_VAR) {
-            Atom *right_existing = bindings_lookup_id(b, right->var_id);
-            if (right_existing)
-                return match_atoms_bound_depth(left, right_existing, b, a, depth - 1);
-            if (left->var_id == right->var_id)
-                return true;
-            return bindings_add_var(b, left, right);
-        }
-        return bindings_add_var(b, left, right);
-    }
-    if (right->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_id(b, right->var_id);
-        if (existing)
-            return match_atoms_bound_depth(left, existing, b, a, depth - 1);
-        return bindings_add_id(b, right->var_id, right->sym_id, left);
-    }
-    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL)
-        return left->sym_id == right->sym_id;
-    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED)
-        return atom_eq(left, right);
-    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len)
-            return false;
-        for (uint32_t i = 0; i < left->expr.len; i++) {
-            if (!match_atoms_bound_depth(left->expr.elems[i], right->expr.elems[i],
-                                         b, a, depth - 1)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    (void)a;
-    return false;
-}
-
-static bool match_atoms_stored_epoch_depth(Atom *left,
-                                           const TermUniverse *candidate_universe,
-                                           AtomId right_id, Bindings *b,
-                                           Arena *a, uint32_t epoch,
-                                           int depth) {
-    if (depth <= 0 || !left || !candidate_universe ||
-        right_id == CETTA_ATOM_ID_NONE) {
-        return false;
-    }
-
-    const CettaTermHdr *hdr = tu_hdr(candidate_universe, right_id);
-    if (!hdr) {
-        Atom *right = term_universe_get_atom(candidate_universe, right_id);
-        return right ? match_atoms_epoch(left, right, b, a, epoch) : false;
-    }
-
-    AtomKind right_kind = tu_kind(candidate_universe, right_id);
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, left);
-        if (existing) {
-            return match_atoms_stored_epoch_depth(existing, candidate_universe,
-                                                  right_id, b, a, epoch,
-                                                  depth - 1);
-        }
-        if (right_kind == ATOM_VAR) {
-            VarId right_var_id =
-                var_epoch_id(tu_var_id(candidate_universe, right_id), epoch);
-            Atom *right_existing = bindings_lookup_id(b, right_var_id);
-            if (right_existing)
-                return match_atoms_bound_depth(left, right_existing, b, a,
-                                               depth - 1);
-            if (left->var_id == right_var_id)
-                return true;
-            return bindings_add_var(
-                b, left,
-                atom_var_with_spelling(a, tu_sym(candidate_universe, right_id),
-                                       right_var_id));
-        }
-        Atom *right_value =
-            term_universe_copy_atom_epoch(candidate_universe, a, right_id, epoch);
-        return right_value && bindings_add_var(b, left, right_value);
-    }
-
-    if (right_kind == ATOM_VAR) {
-        VarId right_var_id =
-            var_epoch_id(tu_var_id(candidate_universe, right_id), epoch);
-        Atom *existing = bindings_lookup_id(b, right_var_id);
-        if (existing)
-            return match_atoms_bound_depth(left, existing, b, a, depth - 1);
-        return bindings_add_id(b, right_var_id,
-                               tu_sym(candidate_universe, right_id), left);
-    }
-
-    switch (left->kind) {
-    case ATOM_SYMBOL:
-        return right_kind == ATOM_SYMBOL &&
-               left->sym_id == tu_sym(candidate_universe, right_id);
-    case ATOM_VAR:
-        return false;
-    case ATOM_GROUNDED:
-        if (right_kind != ATOM_GROUNDED)
-            return false;
-        switch (left->ground.gkind) {
-        case GV_INT:
-            return tu_ground_kind(candidate_universe, right_id) == GV_INT &&
-                   left->ground.ival == tu_int(candidate_universe, right_id);
-        case GV_FLOAT:
-            return tu_ground_kind(candidate_universe, right_id) == GV_FLOAT &&
-                   left->ground.fval == tu_float(candidate_universe, right_id);
-        case GV_BOOL:
-            return tu_ground_kind(candidate_universe, right_id) == GV_BOOL &&
-                   left->ground.bval == tu_bool(candidate_universe, right_id);
-        case GV_STRING: {
-            const char *rhs = tu_string_cstr(candidate_universe, right_id);
-            return tu_ground_kind(candidate_universe, right_id) == GV_STRING &&
-                   rhs && strcmp(left->ground.sval, rhs) == 0;
-        }
-        case GV_SPACE:
-        case GV_STATE:
-        case GV_CAPTURE:
-        case GV_FOREIGN:
-            return false;
-        }
-        return false;
-    case ATOM_EXPR:
-        if (right_kind != ATOM_EXPR ||
-            left->expr.len != tu_arity(candidate_universe, right_id)) {
-            return false;
-        }
-        for (uint32_t i = 0; i < left->expr.len; i++) {
-            if (!match_atoms_stored_epoch_depth(
-                    left->expr.elems[i], candidate_universe,
-                    tu_child(candidate_universe, right_id, i), b, a, epoch,
-                    depth - 1)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    return false;
-}
-
 static bool match_space_atom_epoch(Space *s, uint32_t atom_idx, Atom *query,
                                    Bindings *b, Arena *a, uint32_t epoch) {
     if (!s || !query || !b || atom_idx >= s->len)
         return false;
     AtomId atom_id = space_get_atom_id_at(s, atom_idx);
-    if (tu_hdr(s->universe, atom_id)) {
-        return match_atoms_stored_epoch_depth(query, s->universe, atom_id, b, a,
-                                              epoch,
-                                              CETTA_MATCH_DEPTH_LIMIT);
-    }
-    Atom *candidate = space_get_at(s, atom_idx);
-    return candidate ? match_atoms_epoch(query, candidate, b, a, epoch) : false;
+    return match_atoms_atom_id_epoch(query, s->universe, atom_id, b, a, epoch);
 }
 
 static char *imported_bridge_atom_text(Arena *scratch,
@@ -2270,9 +2119,8 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
         Atom *existing = bindings_lookup_id(b, qt->var_id);
         if (existing) {
             if (ct->origin_id != CETTA_ATOM_ID_NONE) {
-                if (!match_atoms_stored_epoch_depth(existing, candidate_universe,
-                                                    ct->origin_id, b, a, epoch,
-                                                    CETTA_MATCH_DEPTH_LIMIT))
+                if (!match_atoms_atom_id_epoch(existing, candidate_universe,
+                                               ct->origin_id, b, a, epoch))
                     return false;
             } else if (!match_atoms_epoch(existing,
                                           imported_token_atom(ct, candidate_universe),
