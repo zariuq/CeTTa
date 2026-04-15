@@ -27,8 +27,16 @@ bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
     return true;
 }
 
-void space_match_backend_note_add(Space *s, Atom *atom, uint32_t atom_idx) {
+bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id) {
     (void)s;
+    (void)atom_id;
+    return false;
+}
+
+void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
+                                  uint32_t atom_idx) {
+    (void)s;
+    (void)atom_id;
     (void)atom;
     (void)atom_idx;
 }
@@ -247,14 +255,26 @@ int main(void) {
     Atom *pair_a = make_pair(&scratch_a, pair_sym, 1, 2);
     Atom *pair_b = make_pair(&scratch_b, pair_sym, 1, 2);
     space_add(&left, pair_a);
-    assert(universe.len == 1);
+    assert(universe.len == 4);
     assert(left.atom_ids != NULL);
     assert(left.atom_ids[0] != CETTA_ATOM_ID_NONE);
+    AtomId pair_id = left.atom_ids[0];
+    assert(tu_hdr(&universe, pair_id) != NULL);
+    assert(tu_kind(&universe, pair_id) == ATOM_EXPR);
+    assert(tu_arity(&universe, pair_id) == 3);
+    assert(tu_head_sym(&universe, pair_id) == pair_sym);
+    AtomId pair_head_id = tu_child(&universe, pair_id, 0);
+    AtomId pair_lhs_id = tu_child(&universe, pair_id, 1);
+    AtomId pair_rhs_id = tu_child(&universe, pair_id, 2);
+    assert(tu_kind(&universe, pair_head_id) == ATOM_SYMBOL);
+    assert(tu_sym(&universe, pair_head_id) == pair_sym);
+    assert(term_universe_get_atom(&universe, pair_lhs_id)->ground.ival == 1);
+    assert(term_universe_get_atom(&universe, pair_rhs_id)->ground.ival == 2);
     assert(space_get_at(&left, 0) ==
            term_universe_get_atom(&universe, left.atom_ids[0]));
 
     space_add(&right, pair_b);
-    assert(universe.len == 1);
+    assert(universe.len == 4);
     assert(right.atom_ids[0] == left.atom_ids[0]);
     assert(space_get_at(&right, 0) == space_get_at(&left, 0));
 
@@ -262,9 +282,10 @@ int main(void) {
     Atom *stored_boxed = space_store_atom(&left, &persistent, boxed_space);
     AtomId boxed_id = term_universe_store_atom_id(&universe, NULL, stored_boxed);
     assert(boxed_id != CETTA_ATOM_ID_NONE);
-    assert(universe.len == 2);
+    assert(universe.len == 5);
+    assert(tu_hdr(&universe, boxed_id) == NULL);
     space_add(&left, stored_boxed);
-    assert(universe.len == 2);
+    assert(universe.len == 5);
     assert(left.atom_ids[1] == boxed_id);
     assert(space_get_at(&left, 1) == stored_boxed);
 

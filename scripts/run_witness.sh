@@ -85,12 +85,27 @@ last_payload="$(awk '
 ' "$logfile")"
 last_payload="${last_payload//$'\t'/ }"
 
+first_surface_error="$(awk '
+    /^[A-Z_]+=/{next}
+    index($0, "(Error ") > 0 { print; exit }
+' "$logfile")"
+first_surface_error="${first_surface_error//$'\t'/ }"
+
+status_reason="exit-status"
+if [[ "$status" == "timeout" ]]; then
+    status_reason="timeout"
+elif [[ "$status" == "pass" && -n "$first_surface_error" ]]; then
+    status="fail"
+    status_reason="surface-error-payload"
+fi
+
 printf 'NAME=%s\n' "$witness_name"
 printf 'CATEGORY=%s\n' "$category"
 printf 'BUILD_HINT=%s\n' "$build_hint"
 printf 'COMMIT=%s\n' "$commit"
 printf 'TREE_STATE=%s\n' "$tree_state"
 printf 'STATUS=%s\n' "$status"
+printf 'STATUS_REASON=%s\n' "$status_reason"
 printf 'TIMEOUT_S=%s\n' "$timeout_s"
 printf 'MEM_KIB=%s\n' "$mem_kib"
 printf 'ELAPSED=%s\n' "${elapsed:-unknown}"
@@ -98,6 +113,7 @@ printf 'RSS_KB=%s\n' "${rss_kib:-unknown}"
 printf 'COMMAND=%s\n' "$command"
 printf 'NOTES=%s\n' "$notes"
 printf 'LAST_PAYLOAD=%s\n' "${last_payload:-}"
+printf 'FIRST_SURFACE_ERROR=%s\n' "${first_surface_error:-}"
 printf 'TSV_RECORD=%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$witness_name" \
     "$commit" \

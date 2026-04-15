@@ -1,12 +1,12 @@
-name	repo_label	commit	status	elapsed	rss_kib	build_hint	timeout_s	mem_kib	note
-tu_fc_d3_variant	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	0:09.04	15992	core	60	6291456	Clean TU checkpoint hot-path benchmark baseline.
-core_conjunction12_count	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	0:00.10	25208	core	60	6291456	Clean TU checkpoint structured-space count benchmark baseline.
-tu_tail_special_forms	CeTTa-main-preTU-fc3afa7	fc3afa7	pass	0:00.65	479268	core	300	10485760	True pre-TU main anchor.
-tu_tail_special_forms	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	3:04.71	484132	core	300	10485760	Clean TU checkpoint baseline.
-tu_tail_special_forms	CeTTa-main	6c8327f	pass	3:02.04	484012	core	300	10485760	Current main after later merges; similar envelope to 4ac722a.
-tu_tilepuzzle	CeTTa-main-preTU-fc3afa7	fc3afa7	pass	2:59.59	5231112	core	300	10485760	True pre-TU main anchor.
-tu_tilepuzzle	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	timeout	5:00.01	51840	core	300	10485760	Clean TU checkpoint no longer completes within the 300s envelope.
-tu_tilepuzzle	CeTTa-main	6c8327f	timeout	5:00.01	51468	core	300	10485760	Current main remains outside the 300s envelope.
-tu_metamath_stream_basic	CeTTa-main-preTU-fc3afa7	fc3afa7	pass	0:00.20	23452	core	300	10485760	True pre-TU main anchor.
-tu_metamath_stream_basic	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	2:41.90	32916	core	300	10485760	Clean TU checkpoint baseline.
-tu_metamath_stream_basic	CeTTa-main	6c8327f	pass	2:36.51	32652	core	300	10485760	Current main remains in the later TU-era envelope.
+name	repo_label	commit	status	elapsed	rss_kib	build_hint	timeout_s	mem_kib	note	role
+tu_fc_d3_variant	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	0:09.04	15992	core	60	6291456	Clean TU checkpoint hot-path benchmark baseline.	solid_anchor
+core_conjunction12_count	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	0:00.10	25208	core	60	6291456	Clean TU checkpoint structured-space count benchmark baseline.	solid_anchor
+tu_tail_special_forms	CeTTa-main-preTU-fc3afa7	fc3afa7	pass	0:00.65	479268	core	300	10485760	True pre-TU main anchor.	solid_anchor
+tu_tail_special_forms	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	3:04.71	484132	core	300	10485760	Clean TU checkpoint baseline.	context
+tu_tail_special_forms	CeTTa-main	6c8327f	pass	3:02.04	484012	core	300	10485760	Current main after later merges; similar envelope to 4ac722a.	context
+tu_tilepuzzle	CeTTa-main-preTU-fc3afa7	fc3afa7	pass	2:59.59	5231112	core	300	10485760	True pre-TU main anchor.	solid_anchor
+tu_tilepuzzle	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	timeout	5:00.01	51840	core	300	10485760	Clean TU checkpoint no longer completes within the 300s envelope.	context
+tu_tilepuzzle	CeTTa-main	6c8327f	timeout	5:00.01	51468	core	300	10485760	Current main remains outside the 300s envelope.	context
+tu_metamath_stream_basic	CeTTa-main-preTU-fc3afa7	fc3afa7	pass	0:00.20	23452	core	300	10485760	True pre-TU main anchor.	solid_anchor
+tu_metamath_stream_basic	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	2:41.90	32916	core	300	10485760	Clean TU checkpoint baseline.	context
+tu_metamath_stream_basic	CeTTa-main	6c8327f	pass	2:36.51	32652	core	300	10485760	Current main remains in the later TU-era envelope.	context
