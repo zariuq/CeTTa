@@ -3079,10 +3079,6 @@ bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out) {
         *out = SPACE_ENGINE_PATHMAP;
         return true;
     }
-    if (strcmp(name, "mork") == 0) {
-        *out = SPACE_ENGINE_MORK;
-        return true;
-    }
     return false;
 }
 
@@ -3094,7 +3090,6 @@ void space_match_backend_print_inventory(FILE *out) {
     fprintf(out, " (requires BUILD=pathmap or BUILD=full)");
 #endif
     fprintf(out, "\n");
-    fprintf(out, "  mork                   explicit MORK / MM2 engine over PathMap\n");
     fprintf(out, "  native-candidate-exact diagnostic native exact-matcher lane\n");
 }
 

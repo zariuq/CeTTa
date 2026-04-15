@@ -289,6 +289,20 @@ int main(void) {
     assert(strcmp(tu_string_cstr(&universe, str_id), "hello") == 0);
     assert(strcmp(term_universe_atom_to_parseable_string(&scratch, &universe, str_id),
                   "\"hello\"") == 0);
+    AtomId sym_id_direct = tu_intern_symbol(&universe, pair_sym);
+    AtomId var_id_direct = tu_intern_var(&universe, var_sym, 42);
+    AtomId int_id_direct = tu_intern_int(&universe, 17);
+    AtomId float_id_direct = tu_intern_float(&universe, 3.5);
+    AtomId bool_id_direct = tu_intern_bool(&universe, true);
+    AtomId str_id_direct = tu_intern_string(&universe, "hello");
+    assert(sym_id_direct == sym_id);
+    assert(var_id_direct == var_id);
+    assert(int_id_direct == int_id);
+    assert(float_id_direct == float_id);
+    assert(bool_id_direct == bool_id);
+    assert(str_id_direct == str_id);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 6);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 6);
 
     Atom *expr_elems[4] = {sym, ival, str, var};
     Atom *expr = atom_expr(&scratch, expr_elems, 4);
@@ -306,6 +320,10 @@ int main(void) {
     assert(tu_child(&universe, expr_id, 1) == int_id);
     assert(tu_child(&universe, expr_id, 2) == str_id);
     assert(tu_child(&universe, expr_id, 3) == var_id);
+    AtomId expr_children[4] = {sym_id, int_id, str_id, var_id};
+    AtomId expr_id_direct = tu_expr_from_ids(&universe, expr_children, 4);
+    assert(expr_id_direct == expr_id);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 7);
 
     Atom *box_elems[2] = {
         atom_symbol_id(&scratch, box_sym),
@@ -321,6 +339,35 @@ int main(void) {
     assert(universe.entries[boxed_id].decoded_cache != NULL);
     assert(term_universe_get_atom(&universe, boxed_id) ==
            universe.entries[boxed_id].decoded_cache);
+    AtomId bad_children[2] = {sym_id, boxed_id};
+    assert(tu_expr_from_ids(&universe, bad_children, 2) == CETTA_ATOM_ID_NONE);
+
+    reset_test_counters();
+    AtomId empty_direct = tu_expr_from_ids(&universe, NULL, 0);
+    assert(empty_direct != CETTA_ATOM_ID_NONE);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 1);
+    Atom *empty_expr = atom_expr(&scratch, NULL, 0);
+    AtomId empty_legacy = term_universe_store_atom_id(&universe, NULL, empty_expr);
+    assert(empty_legacy == empty_direct);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 1);
+
+    reset_test_counters();
+    SymbolId direct_head_sym = symbol_intern_cstr(&symbols, "direct-first");
+    AtomId direct_head_id = tu_intern_symbol(&universe, direct_head_sym);
+    AtomId direct_expr_children[2] = {direct_head_id, int_id};
+    AtomId direct_expr_id = tu_expr_from_ids(&universe, direct_expr_children, 2);
+    assert(direct_head_id != CETTA_ATOM_ID_NONE);
+    assert(direct_expr_id != CETTA_ATOM_ID_NONE);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 2);
+    Atom *direct_expr_elems[2] = {
+        atom_symbol_id(&scratch, direct_head_sym),
+        atom_int(&scratch, 17),
+    };
+    Atom *direct_expr = atom_expr(&scratch, direct_expr_elems, 2);
+    AtomId direct_expr_legacy =
+        term_universe_store_atom_id(&universe, NULL, direct_expr);
+    assert(direct_expr_legacy == direct_expr_id);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 2);
 
     g_test_counters[CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE] = 0;
     Atom *sym_load = term_universe_get_atom(&universe, sym_id);
