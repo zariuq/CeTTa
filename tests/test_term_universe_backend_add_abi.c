@@ -416,15 +416,10 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     space_add(&imported_space, say);
 
     reset_bridge_capture();
-    g_bridge_accept_indexed = true;
     reset_test_counters();
-    assert(space_match_backend_bridge_space(&imported_space, &bridge));
-    assert(bridge == g_fake_bridge_space);
-    assert(g_bridge_text_count == 2);
-    assert(g_bridge_indices[0] == 0);
-    assert(g_bridge_indices[1] == 1);
-    assert(strcmp(g_bridge_texts[0], "(:= (I foo) bar)") == 0);
-    assert(strcmp(g_bridge_texts[1], "(say \"line\\nbreak\")") == 0);
+    assert(!space_match_backend_bridge_space(&imported_space, &bridge));
+    assert(bridge == NULL);
+    assert(g_bridge_text_count == 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
 
     Atom *stable_add = expr2(scratch, sym(scratch, "later"), sym(scratch, "ok"));
@@ -433,23 +428,23 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     assert(tu_hdr(universe, stable_id) != NULL);
     assert(!space_match_backend_needs_atom_on_add(&imported_space, stable_id));
     reset_bridge_capture();
-    g_bridge_accept_indexed = true;
     reset_test_counters();
     space_add(&imported_space, stable_add);
-    assert(g_bridge_text_count == 1);
-    assert(g_bridge_indices[0] == 2);
-    assert(strcmp(g_bridge_texts[0], "(later ok)") == 0);
+    assert(g_bridge_text_count == 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
 
     Atom *top_string = atom_string(scratch, "solo");
     reset_bridge_capture();
-    g_bridge_accept_indexed = true;
     reset_test_counters();
     space_add(&imported_space, top_string);
-    assert(g_bridge_text_count == 1);
-    assert(g_bridge_indices[0] == 3);
-    assert(strcmp(g_bridge_texts[0], "\"solo\"") == 0);
+    assert(g_bridge_text_count == 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+
+    SubstMatchSet string_matches;
+    smset_init(&string_matches);
+    space_subst_query(&imported_space, scratch, top_string, &string_matches);
+    assert(string_matches.len == 1);
+    smset_free(&string_matches);
 
     Atom *unstable_add =
         expr2(scratch, sym(scratch, "wrap-space"), atom_space(scratch, &imported_space));
@@ -458,7 +453,18 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     assert(tu_hdr(universe, unstable_id) == NULL);
     assert(space_match_backend_needs_atom_on_add(&imported_space, unstable_id));
 
+    SubstMatchSet rule_matches;
+    smset_init(&rule_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, ":="),
+                            expr2(scratch, sym(scratch, "I"), sym(scratch, "foo")),
+                            var(scratch, "rhs", 7001)),
+                      &rule_matches);
+    assert(rule_matches.len == 1);
+    smset_free(&rule_matches);
+
     reset_bridge_capture();
+    assert(g_bridge_text_count == 0);
     space_free(&imported_space);
 }
 

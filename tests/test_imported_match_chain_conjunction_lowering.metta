@@ -18,8 +18,8 @@
   (match &stats (runtime-counter imported-bridge-v2-fallback $n) $n)
   (0))
 !(assertEqualToResult
-  (match &stats (runtime-counter imported-bridge-v3-hit $n) (> $n 0))
-  (True))
+  (match &stats (runtime-counter imported-bridge-v3-hit $n) $n)
+  (0))
 !(assertEqualToResult
   (match &stats (runtime-counter imported-bridge-v3-fallback $n) $n)
   (0))

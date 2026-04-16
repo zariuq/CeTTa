@@ -2388,10 +2388,12 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
                                  Arena *persistent_arena,
                                  Atom **error_out);
 
-static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *path,
-                                          Space *target_space,
-                                          Arena *eval_arena,
-                                          Atom **error_out);
+static bool load_module_act_file_pathmap_materialized(CettaLibraryContext *ctx,
+                                                      const char *path,
+                                                      Space *target_space,
+                                                      Arena *eval_arena,
+                                                      Arena *persistent_arena,
+                                                      Atom **error_out);
 
 static Atom *module_reason_with_detail(CettaLibraryContext *ctx, Arena *a,
                                        const char *tag,
@@ -5054,11 +5056,12 @@ cleanup:
     return ok;
 }
 
-static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *path,
-                                          Space *target_space,
-                                          Arena *eval_arena,
-                                          Atom **error_out) {
-    uint64_t loaded = 0;
+static bool load_module_act_file_pathmap_materialized(CettaLibraryContext *ctx,
+                                                      const char *path,
+                                                      Space *target_space,
+                                                      Arena *eval_arena,
+                                                      Arena *persistent_arena,
+                                                      Atom **error_out) {
 
     if (space_is_ordered(target_space)) {
         *error_out = module_reason(ctx, eval_arena, "ModuleCompiledOrderedSpaceUnsupported", path);
@@ -5080,14 +5083,10 @@ static bool load_module_act_file_attached(CettaLibraryContext *ctx, const char *
         *error_out = module_reason(ctx, eval_arena, "ModuleCompiledAttachBackendUnavailable", path);
         return false;
     }
-    if (!space_match_backend_attach_act_file(target_space, path, &loaded)) {
-        *error_out = module_reason_with_detail(
-            ctx, eval_arena, "ModuleCompiledAttachFailed", path,
-            atom_string(eval_arena, cetta_mork_bridge_last_error()));
+    if (!load_module_act_file(ctx, path, target_space, eval_arena,
+                              persistent_arena, error_out)) {
         return false;
     }
-
-    (void)loaded;
     return true;
 }
 
@@ -5384,9 +5383,9 @@ static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan 
     if (plan->format.kind == CETTA_MODULE_FORMAT_MORK_ACT &&
         plan->target_is_fresh &&
         !plan->transactional) {
-        if (!load_module_act_file_attached(ctx, plan->canonical_path,
-                                           plan->execution_target_space,
-                                           eval_arena, error_out)) {
+        if (!load_module_act_file_pathmap_materialized(
+                ctx, plan->canonical_path, plan->execution_target_space,
+                eval_arena, persistent_arena, error_out)) {
             rollback_imported_files(ctx, imported_len_before);
             rollback_loaded_modules(ctx, loaded_len_before);
             return false;
@@ -5484,8 +5483,9 @@ static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
 
     bool ok = false;
     if (plan->format.kind == CETTA_MODULE_FORMAT_MORK_ACT) {
-        ok = load_module_act_file_attached(ctx, plan->canonical_path, entry->space,
-                                           eval_arena, error_out);
+        ok = load_module_act_file_pathmap_materialized(
+            ctx, plan->canonical_path, entry->space,
+            eval_arena, persistent_arena, error_out);
     } else {
         ok = load_module_file(ctx, plan->canonical_path, entry->space, entry->space,
                               eval_arena, persistent_arena, registry, fuel, error_out);
