@@ -12,6 +12,7 @@
 !(assertEqual (collect (coin)) (heads tails))
 !(assertEqual (collect (identity (a b c))) ((a b c)))
 !(assertEqual (collect (superpose ())) ())
+!(assertEqual (collect (superpose (a Empty b))) (a b))
 !(assertEqual (collect (mixed)) (ok done))
 !(assertEqual (collect (match &self (= marker $x) $x)) (a))
 !(assertEqual (let $r (collect (match &self (= marker $x) $x)) $r) (a))
