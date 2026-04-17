@@ -1,5 +1,6 @@
 #include "stats.h"
 #include "space.h"
+#include "symbol.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -138,12 +139,50 @@ void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats) {
 void cetta_runtime_stats_populate_space(Space *space, Arena *a,
                                         const CettaRuntimeStats *stats) {
     if (!space || !a || !stats) return;
+    if (space->universe) {
+        AtomId fact_ids[CETTA_RUNTIME_COUNTER_COUNT];
+        bool direct_ok = true;
+        AtomId fact_head_id =
+            tu_intern_symbol(space->universe,
+                             symbol_intern_cstr(g_symbols, "runtime-counter"));
+        if (fact_head_id != CETTA_ATOM_ID_NONE) {
+            for (uint32_t i = 0; i < CETTA_RUNTIME_COUNTER_COUNT; i++) {
+                AtomId counter_name_id =
+                    tu_intern_symbol(space->universe,
+                                     symbol_intern_cstr(
+                                         g_symbols,
+                                         cetta_runtime_counter_name(
+                                             (CettaRuntimeCounter)i)));
+                AtomId counter_value_id =
+                    tu_intern_int(space->universe,
+                                  clamp_counter(stats->counters[i]));
+                AtomId fact_children[3] = {
+                    fact_head_id,
+                    counter_name_id,
+                    counter_value_id,
+                };
+                fact_ids[i] = tu_expr_from_ids(space->universe, fact_children, 3);
+                if (fact_ids[i] == CETTA_ATOM_ID_NONE) {
+                    direct_ok = false;
+                    break;
+                }
+            }
+            if (direct_ok) {
+                for (uint32_t i = 0; i < CETTA_RUNTIME_COUNTER_COUNT; i++) {
+                    space_add_atom_id(space, fact_ids[i]);
+                }
+                return;
+            }
+        }
+    }
     for (uint32_t i = 0; i < CETTA_RUNTIME_COUNTER_COUNT; i++) {
         Atom *fact[3] = {
             atom_symbol(a, "runtime-counter"),
             atom_symbol(a, cetta_runtime_counter_name((CettaRuntimeCounter)i)),
             atom_int(a, clamp_counter(stats->counters[i]))
         };
-        space_add(space, atom_expr(a, fact, 3));
+        Atom *fact_atom = atom_expr(a, fact, 3);
+        if (!space_admit_atom(space, a, fact_atom))
+            space_add(space, fact_atom);
     }
 }

@@ -628,9 +628,167 @@ static bool compile_profile_guard_ok(const CettaProfile *profile, Atom **atoms, 
     return true;
 }
 
+static bool atom_id_is_symbol_id(const TermUniverse *universe, AtomId atom_id,
+                                 SymbolId sym_id) {
+    return universe && atom_id != CETTA_ATOM_ID_NONE &&
+           tu_kind(universe, atom_id) == ATOM_SYMBOL &&
+           tu_sym(universe, atom_id) == sym_id;
+}
+
+static bool compile_profile_guard_ok_ids(const CettaProfile *profile,
+                                         TermUniverse *universe,
+                                         const AtomId *atom_ids, int n) {
+    if (!universe)
+        return false;
+    if (n <= 0)
+        return true;
+    if (!atom_ids)
+        return false;
+    for (int i = 0; i < n; i++) {
+        AtomId atom_id = atom_ids[i];
+        if (atom_id_is_symbol_id(universe, atom_id, g_builtin_syms.bang)) {
+            i++;
+            continue;
+        }
+        Atom *at = term_universe_get_atom(universe, atom_id);
+        if (!at) {
+            fprintf(stderr, "error: could not decode parsed term for compile guard\n");
+            return false;
+        }
+        const char *blocked = find_profile_blocked_surface(profile, at);
+        if (blocked) {
+            const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
+            fprintf(stderr, "error: surface '%s' is unavailable in profile '%s'",
+                    blocked, profile ? profile->name : "unknown");
+            if (policy && policy->surface_classification) {
+                fprintf(stderr, " (%s)", policy->surface_classification);
+            }
+            fputc('\n', stderr);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool main_try_add_builtin_type_decls_direct(Space *space) {
+    if (!space || !space->universe)
+        return false;
+
+    static const char *arith_ops[] = {"+", "-", "*", "/", "%", NULL};
+    static const char *cmp_ops[] = {"<", ">", "<=", ">=", NULL};
+
+    TermUniverse *universe = space->universe;
+    AtomId decl_ids[11];
+    uint32_t decl_count = 0;
+
+    AtomId colon_id = tu_intern_symbol(universe, g_builtin_syms.colon);
+    AtomId arrow_id = tu_intern_symbol(universe, g_builtin_syms.arrow);
+    AtomId equals_id = tu_intern_symbol(universe, g_builtin_syms.equals);
+    AtomId eqeq_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "=="));
+    AtomId number_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "Number"));
+    AtomId bool_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "Bool"));
+    AtomId undefined_id =
+        tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "%Undefined%"));
+    SymbolId t_spelling = symbol_intern_cstr(g_symbols, "t");
+    VarId t_var = g_var_intern ? var_intern(g_var_intern, t_spelling) : fresh_var_id();
+    AtomId t_var_id = tu_intern_var(universe, t_spelling, t_var);
+    AtomId arrow_nnn_children[4] = {arrow_id, number_id, number_id, number_id};
+    AtomId arrow_nnb_children[4] = {arrow_id, number_id, number_id, bool_id};
+    AtomId arrow_eq_children[4] = {arrow_id, t_var_id, t_var_id, undefined_id};
+    AtomId arrow_eqeq_children[4] = {arrow_id, t_var_id, t_var_id, bool_id};
+
+    if (colon_id == CETTA_ATOM_ID_NONE || arrow_id == CETTA_ATOM_ID_NONE ||
+        equals_id == CETTA_ATOM_ID_NONE || eqeq_id == CETTA_ATOM_ID_NONE ||
+        number_id == CETTA_ATOM_ID_NONE || bool_id == CETTA_ATOM_ID_NONE ||
+        undefined_id == CETTA_ATOM_ID_NONE || t_var_id == CETTA_ATOM_ID_NONE)
+        return false;
+
+    AtomId arrow_nnn_id = tu_expr_from_ids(universe, arrow_nnn_children, 4);
+    AtomId arrow_nnb_id = tu_expr_from_ids(universe, arrow_nnb_children, 4);
+    AtomId arrow_eq_id = tu_expr_from_ids(universe, arrow_eq_children, 4);
+    AtomId arrow_eqeq_id = tu_expr_from_ids(universe, arrow_eqeq_children, 4);
+    if (arrow_nnn_id == CETTA_ATOM_ID_NONE || arrow_nnb_id == CETTA_ATOM_ID_NONE ||
+        arrow_eq_id == CETTA_ATOM_ID_NONE || arrow_eqeq_id == CETTA_ATOM_ID_NONE)
+        return false;
+
+    for (const char **op = arith_ops; *op; op++) {
+        AtomId op_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, *op));
+        AtomId decl_children[3] = {colon_id, op_id, arrow_nnn_id};
+        if (op_id == CETTA_ATOM_ID_NONE)
+            return false;
+        decl_ids[decl_count] = tu_expr_from_ids(universe, decl_children, 3);
+        if (decl_ids[decl_count++] == CETTA_ATOM_ID_NONE)
+            return false;
+    }
+    for (const char **op = cmp_ops; *op; op++) {
+        AtomId op_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, *op));
+        AtomId decl_children[3] = {colon_id, op_id, arrow_nnb_id};
+        if (op_id == CETTA_ATOM_ID_NONE)
+            return false;
+        decl_ids[decl_count] = tu_expr_from_ids(universe, decl_children, 3);
+        if (decl_ids[decl_count++] == CETTA_ATOM_ID_NONE)
+            return false;
+    }
+
+    AtomId eq_decl_children[3] = {colon_id, equals_id, arrow_eq_id};
+    decl_ids[decl_count] = tu_expr_from_ids(universe, eq_decl_children, 3);
+    if (decl_ids[decl_count++] == CETTA_ATOM_ID_NONE)
+        return false;
+
+    AtomId eqeq_decl_children[3] = {colon_id, eqeq_id, arrow_eqeq_id};
+    decl_ids[decl_count] = tu_expr_from_ids(universe, eqeq_decl_children, 3);
+    if (decl_ids[decl_count++] == CETTA_ATOM_ID_NONE)
+        return false;
+
+    for (uint32_t i = 0; i < decl_count; i++)
+        space_add_atom_id(space, decl_ids[i]);
+    return true;
+}
+
+static void main_add_builtin_type_decls(Space *space, Arena *arena) {
+    if (main_try_add_builtin_type_decls_direct(space))
+        return;
+
+    Atom *num = atom_symbol(arena, "Number");
+    Atom *arrow_nnn = atom_expr(arena, (Atom*[]){
+        atom_symbol_id(arena, g_builtin_syms.arrow), num, num, num}, 4);
+    Atom *bool_t = atom_symbol(arena, "Bool");
+    Atom *arrow_nnb = atom_expr(arena, (Atom*[]){
+        atom_symbol_id(arena, g_builtin_syms.arrow), num, num, bool_t}, 4);
+    const char *arith_ops[] = {"+", "-", "*", "/", "%", NULL};
+    const char *cmp_ops[] = {"<", ">", "<=", ">=", NULL};
+    for (const char **op = arith_ops; *op; op++) {
+        Atom *decl = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.colon),
+            atom_symbol(arena, *op), arrow_nnn);
+        if (!space_admit_atom(space, arena, decl))
+            space_add(space, decl);
+    }
+    for (const char **op = cmp_ops; *op; op++) {
+        Atom *decl = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.colon),
+            atom_symbol(arena, *op), arrow_nnb);
+        if (!space_admit_atom(space, arena, decl))
+            space_add(space, decl);
+    }
+    Atom *t_var = atom_var(arena, "t");
+    Atom *arrow_eq = atom_expr(arena, (Atom*[]){
+        atom_symbol_id(arena, g_builtin_syms.arrow), t_var, t_var,
+        atom_undefined_type(arena)}, 4);
+    Atom *eq_decl = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.colon),
+        atom_symbol_id(arena, g_builtin_syms.equals), arrow_eq);
+    if (!space_admit_atom(space, arena, eq_decl))
+        space_add(space, eq_decl);
+    Atom *arrow_eqeq = atom_expr(arena, (Atom*[]){
+        atom_symbol_id(arena, g_builtin_syms.arrow), t_var, t_var, bool_t}, 4);
+    Atom *eqeq_decl = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.colon),
+        atom_symbol(arena, "=="), arrow_eqeq);
+    if (!space_admit_atom(space, arena, eqeq_decl))
+        space_add(space, eqeq_decl);
+}
+
 typedef struct {
     char *inline_buf;
     Atom **atoms;
+    AtomId *atom_ids;
     FILE *output_spool;
     Arena *arena;
     bool arena_initialized;
@@ -674,6 +832,8 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
 
     free(cleanup->atoms);
     cleanup->atoms = NULL;
+    free(cleanup->atom_ids);
+    cleanup->atom_ids = NULL;
 
     if (cleanup->registry_initialized && cleanup->space_initialized) {
         cetta_main_cleanup_registry_spaces(cleanup->registry, cleanup->space);
@@ -968,10 +1128,13 @@ int main(int argc, char **argv) {
     VarInternTable var_intern_table;
     HashConsTable hashcons_table;
     Atom **atoms = NULL;
+    AtomId *atom_ids = NULL;
     CettaLibraryContext libraries;
     Space space;
     Registry registry;
     CettaMainCleanup cleanup = {0};
+    bool lang_is_mm2 = strcmp(lang->canonical, "mm2") == 0;
+    int n = 0;
 
     g_count_only = count_only;
     if (fuel_override > 0) eval_set_default_fuel(fuel_override);
@@ -1007,27 +1170,27 @@ int main(int argc, char **argv) {
     arena_set_hashcons(&arena, &hashcons_table);
     arena_set_hashcons(&eval_arena, &hashcons_table);
 
-    int n = inline_text
-        ? parse_metta_text(inline_text, &arena, &atoms)
-        : parse_metta_file(filename, &arena, &atoms);
-    cleanup.atoms = atoms;
-    if (n < 0) {
-        if (inline_text) {
-            fprintf(stderr, "error: could not parse inline MeTTa text\n");
-        } else {
-            fprintf(stderr, "error: could not read %s\n", filename);
+    if (lang_is_mm2) {
+        n = inline_text
+            ? parse_metta_text(inline_text, &arena, &atoms)
+            : parse_metta_file(filename, &arena, &atoms);
+        cleanup.atoms = atoms;
+        if (n < 0) {
+            if (inline_text) {
+                fprintf(stderr, "error: could not parse inline MeTTa text\n");
+            } else {
+                fprintf(stderr, "error: could not read %s\n", filename);
+            }
+            rc = 1;
+            goto cleanup;
         }
-        rc = 1;
-        goto cleanup;
-    }
-    if (strcmp(lang->canonical, "mm2") == 0) {
         cetta_mm2_lower_atoms(&arena, atoms, n);
     }
     if (emit_runtime_stats) {
         cetta_runtime_stats_reset();
         cetta_runtime_stats_enable();
     }
-    if (strcmp(lang->canonical, "mm2") == 0 &&
+    if (lang_is_mm2 &&
         !cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
         int mm2_rc = run_mm2_program_via_mork(&arena, atoms, n, count_only,
                                               mm2_step_limit);
@@ -1066,51 +1229,59 @@ int main(int argc, char **argv) {
     cleanup.registry_initialized = true;
     registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
 
+    if (!lang_is_mm2) {
+        n = inline_text
+            ? parse_metta_text_ids(inline_text, &libraries.term_universe, &atom_ids)
+            : parse_metta_file_ids(filename, &libraries.term_universe, &atom_ids);
+        cleanup.atom_ids = atom_ids;
+        if (n < 0) {
+            if (inline_text) {
+                fprintf(stderr, "error: could not parse inline MeTTa text\n");
+            } else {
+                fprintf(stderr, "error: could not read %s\n", filename);
+            }
+            rc = 1;
+            goto cleanup;
+        }
+    }
+
     /* Load precompiled stdlib equations into the space */
     stdlib_load(&space, &arena);
 
     /* Add grounded op type declarations (HE stdlib implicit types) */
-    {
-        Atom *num = atom_symbol(&arena, "Number");
-        Atom *arrow_nnn = atom_expr(&arena, (Atom*[]){
-            atom_symbol(&arena, "->"), num, num, num}, 4);
-        Atom *bool_t = atom_symbol(&arena, "Bool");
-        Atom *arrow_nnb = atom_expr(&arena, (Atom*[]){
-            atom_symbol(&arena, "->"), num, num, bool_t}, 4);
-        const char *arith_ops[] = {"+", "-", "*", "/", "%", NULL};
-        const char *cmp_ops[] = {"<", ">", "<=", ">=", NULL};
-        for (const char **op = arith_ops; *op; op++)
-            space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
-                atom_symbol(&arena, *op), arrow_nnn));
-        for (const char **op = cmp_ops; *op; op++)
-            space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
-                atom_symbol(&arena, *op), arrow_nnb));
-        /* (: = (-> $t $t %Undefined%)) — equality requires same type on both sides */
-        Atom *t_var = atom_var(&arena, "t");
-        Atom *arrow_eq = atom_expr(&arena, (Atom*[]){
-            atom_symbol(&arena, "->"), t_var, t_var, atom_undefined_type(&arena)}, 4);
-        space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
-            atom_symbol(&arena, "="), arrow_eq));
-        /* (: == (-> $t $t Bool)) — structural equality */
-        Atom *arrow_eqeq = atom_expr(&arena, (Atom*[]){
-            atom_symbol(&arena, "->"), t_var, t_var, bool_t}, 4);
-        space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
-            atom_symbol(&arena, "=="), arrow_eqeq));
-    }
+    main_add_builtin_type_decls(&space, &arena);
 
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
-        if (!compile_profile_guard_ok(profile, atoms, n)) {
-            rc = 2;
-            goto cleanup;
-        }
-        for (int pi = 0; pi < n; pi++) {
-            Atom *at = atoms[pi];
-            if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
-                pi++;
-                continue;
+        if (lang_is_mm2) {
+            if (!compile_profile_guard_ok(profile, atoms, n)) {
+                rc = 2;
+                goto cleanup;
             }
-            space_add(&space, at);
+            for (int pi = 0; pi < n; pi++) {
+                Atom *at = atoms[pi];
+                if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
+                    pi++;
+                    continue;
+                }
+                /* MM2 stays on the legacy mutable-Atom lane; 1f only makes the
+                   MeTTa/HE persistent ingress born-canonical. */
+                space_add(&space, at);
+            }
+        } else {
+            if (!compile_profile_guard_ok_ids(profile, &libraries.term_universe,
+                                              atom_ids, n)) {
+                rc = 2;
+                goto cleanup;
+            }
+            for (int pi = 0; pi < n; pi++) {
+                if (atom_id_is_symbol_id(&libraries.term_universe, atom_ids[pi],
+                                         g_builtin_syms.bang)) {
+                    pi++;
+                    continue;
+                }
+                space_add_atom_id(&space, atom_ids[pi]);
+            }
         }
         compile_space_to_llvm(&space, &arena, stdout);
         rc = 0;
@@ -1127,12 +1298,56 @@ int main(int argc, char **argv) {
     }
     cleanup.output_spool = output_spool;
     while (i < n) {
-        Atom *at = atoms[i];
+        if (lang_is_mm2) {
+            Atom *at = atoms[i];
+
+            /* ! prefix → evaluate and print */
+            if (atom_is_symbol_id(at, g_builtin_syms.bang) && i + 1 < n) {
+                Atom *expr = atoms[i + 1];
+                ResultSet rs;
+                result_set_init(&rs);
+                eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
+                write_results(output_spool, &rs);
+                if (fflush(output_spool) != 0) {
+                    fprintf(stderr, "error: could not write output spool\n");
+                    free(rs.items);
+                    rc = 1;
+                    goto cleanup;
+                }
+                bool stop_after_error = result_set_has_error(&rs);
+                free(rs.items);
+                eval_release_temporary_spaces();
+                /* Reset ephemeral arena — frees all intermediate eval atoms.
+                   This makes CeTTa safe for unlimited chaining iterations. */
+                arena_free(&eval_arena);
+                arena_init(&eval_arena);
+                arena_set_hashcons(&eval_arena, g_hashcons);
+                if (stop_after_error) break;
+                i += 2;
+                continue;
+            }
+
+            /* Otherwise: add to space */
+            /* MM2 lowering still owns this mutable surface. */
+            space_add(&space, at);
+            i++;
+            continue;
+        }
+
+        AtomId at_id = atom_ids[i];
 
         /* ! prefix → evaluate and print */
-        if (atom_is_symbol_id(at, g_builtin_syms.bang) && i + 1 < n) {
-            Atom *expr = atoms[i + 1];
+        if (atom_id_is_symbol_id(&libraries.term_universe, at_id,
+                                 g_builtin_syms.bang) &&
+            i + 1 < n) {
+            Atom *expr = term_universe_copy_atom(&libraries.term_universe, &arena,
+                                                 atom_ids[i + 1]);
             ResultSet rs;
+            if (!expr) {
+                fprintf(stderr, "error: could not decode top-level eval form\n");
+                rc = 1;
+                goto cleanup;
+            }
             result_set_init(&rs);
             eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
             write_results(output_spool, &rs);
@@ -1145,8 +1360,6 @@ int main(int argc, char **argv) {
             bool stop_after_error = result_set_has_error(&rs);
             free(rs.items);
             eval_release_temporary_spaces();
-            /* Reset ephemeral arena — frees all intermediate eval atoms.
-               This makes CeTTa safe for unlimited chaining iterations. */
             arena_free(&eval_arena);
             arena_init(&eval_arena);
             arena_set_hashcons(&eval_arena, g_hashcons);
@@ -1155,8 +1368,7 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        /* Otherwise: add to space */
-        space_add(&space, at);
+        space_add_atom_id(&space, at_id);
         i++;
     }
 

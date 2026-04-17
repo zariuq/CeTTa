@@ -241,6 +241,8 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
         state->target_reusable = true;
         state->target_stale = false;
     } else if (match.reusable) {
+        /* Stale entries are replacement targets only; lookup still treats them
+           as misses until a fresh query commits a new answer set. */
         state->target_index = match.reusable_index;
         state->target_reusable = true;
         state->target_stale = true;
@@ -515,6 +517,7 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
     TableStoreMatch match = table_store_find_match(store, space, revision,
                                                    goal_key, goal_hash);
     if (!match.exact) {
+        /* A stale variant match is still a semantic miss at lookup time. */
         cetta_var_map_free(&probe_map);
         cetta_var_map_free(&goal_instantiation);
         arena_free(&probe_arena);

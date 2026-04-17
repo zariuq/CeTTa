@@ -3,6 +3,11 @@
 
 #include "atom.h"
 #include <stddef.h>
+#include <stdint.h>
+
+#ifndef CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
+#define CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS 0
+#endif
 
 /*
  * TermUniverse isolates persistent term ownership from evaluator-local
@@ -17,6 +22,16 @@
  *     storage boundary in eval.c and backend code.
  */
 
+typedef struct {
+    uint64_t direct_constructor_leaf_hits;
+    uint64_t direct_constructor_expr_hits;
+    uint64_t legacy_top_down_stable_admissions;
+    uint64_t direct_lookup_hits;
+    uint64_t direct_lookup_misses;
+    uint64_t lazy_decode_count;
+    uint64_t legacy_hash_recompute_count;
+} CettaTermUniverseDiagnostics;
+
 typedef struct TermUniverse {
     Arena *persistent_arena;
     uint8_t *blob_pool;
@@ -29,6 +44,9 @@ typedef struct TermUniverse {
     uint32_t *ptr_slots;
     uint32_t ptr_mask;
     uint32_t ptr_used;
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
+    CettaTermUniverseDiagnostics diagnostics;
+#endif
 } TermUniverse;
 
 typedef uint32_t AtomId;
@@ -67,6 +85,9 @@ void term_universe_init(TermUniverse *universe);
 void term_universe_free(TermUniverse *universe);
 void term_universe_set_persistent_arena(TermUniverse *universe,
                                         Arena *persistent_arena);
+void term_universe_diag_reset(TermUniverse *universe);
+void term_universe_diag_snapshot(const TermUniverse *universe,
+                                 CettaTermUniverseDiagnostics *out);
 Atom *term_universe_canonicalize_atom(Arena *dst, Atom *src);
 AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
                                    Atom *src);

@@ -24,53 +24,23 @@ intended long-term public model.
 
 Primary CeTTa bridge surface:
 
-- cetta_mork_bridge_space_add_indexed_text() mirrors CeTTa row ids into MORK
-  and activates stable row provenance for that bridge-owned space
 - cetta_mork_bridge_space_add_expr_bytes()/remove_expr_bytes() accept one
   stable bridge expr-byte span directly and bypass UTF-8 parsing on the
   mutation path
 - cetta_mork_bridge_space_add_expr_bytes_batch() accepts a packed sequence of
   length-prefixed stable bridge expr-byte spans so bulk mutation stays on the
   same low ABI as singular mutation
-- cetta_mork_bridge_space_logical_size() reports duplicate-aware logical atom
-  count when row metadata is available
 - cetta_mork_bridge_space_unique_size() reports unique structural support
-- cetta_mork_bridge_space_query_candidates_text() is the current UTF-8
-  S-expression candidate transport and returns candidate row slots; direct
-  indexed ingress mirrors CeTTa rows, structural rewrites preserve surviving
-  row ids where possible, and fresh row ids are allocated only for genuinely
-  new support or row-id collision repair
-- cetta_mork_bridge_space_query_candidates_expr_bytes() is the first
-  structured sibling and accepts one already-encoded stable MORK query expr
-  byte span
-- cetta_mork_bridge_space_compile_query_expr_text() keeps MORK expr-byte
-  compilation owned by the bridge instead of generic CeTTa atom code
-- cetta_mork_bridge_space_query_candidates_prefix_expr_bytes() is the first
-  PathMap-style narrowing hook over compiled wrapped query expr bytes and
-  currently picks the most selective safe factor-local prefix internally
+- query results cross back as binding/debug packets, not mirrored row ids
 
-Compatibility names remain for older callers:
+Compatibility names remain only for text aliases:
 
 - cetta_mork_bridge_space_add_sexpr() == cetta_mork_bridge_space_add_text()
-- cetta_mork_bridge_space_add_indexed_sexpr() ==
-  cetta_mork_bridge_space_add_indexed_text()
 - cetta_mork_bridge_space_size() == cetta_mork_bridge_space_unique_size()
-- cetta_mork_bridge_space_query_candidates() ==
-  cetta_mork_bridge_space_query_candidates_text()
-- cetta_mork_bridge_space_query_indices() == cetta_mork_bridge_space_query_candidates()
 
-Current limitation:
-
-- raw add/remove without mirrored row metadata still collapse duplicates to
-  structural support for counting purposes
-- stable provenance is only tracked once row metadata is active; pure
-  structural spaces stay support-only until a row-aware bridge surface such as
-  indexed ingress or candidate-row query activates it
-
-The packet-binding exports below are compatibility/experimental surfaces. The
-preferred query path for CeTTa is candidate rows plus native matching.
-Future structured prefix/skeleton candidate APIs should bypass the `_text`
-helpers rather than overload them.
+The packet-binding exports below are the durable query seams. Future
+structured query entry points should stay semantic and never reintroduce row
+slot provenance.
 */
 
 bool cetta_mork_bridge_is_available(void);
@@ -109,18 +79,6 @@ bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
                                           const uint8_t *text,
                                           size_t len,
                                           uint64_t *out_removed);
-/* Compatibility ingress for CeTTa-native/imported spaces that still rematch by
-   `atom_idx` against the logical host space view. Counted PathMap storage remains the truth;
-   the mirrored indices are only an adapter contract at this seam. */
-bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
-                                              uint32_t atom_idx,
-                                              const char *text);
-bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
-                                               uint32_t atom_idx,
-                                               const uint8_t *text,
-                                               size_t len);
-bool cetta_mork_bridge_space_logical_size(const CettaMorkSpaceHandle *space,
-                                          uint64_t *out_logical_size);
 bool cetta_mork_bridge_space_unique_size(const CettaMorkSpaceHandle *space,
                                          uint64_t *out_unique_size);
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
@@ -366,36 +324,6 @@ bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
                                            const uint8_t *path,
                                            size_t len,
                                            uint64_t *out_loaded);
-bool cetta_mork_bridge_space_query_candidates_text(CettaMorkSpaceHandle *space,
-                                                   const char *pattern_text,
-                                                   uint32_t **out_indices,
-                                                   uint32_t *out_count);
-bool cetta_mork_bridge_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
-                                                     const char *pattern_text,
-                                                     uint8_t **out_expr,
-                                                     size_t *out_len);
-bool cetta_mork_bridge_space_query_candidates_prefix_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count);
-bool cetta_mork_bridge_space_query_candidates_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count);
-bool cetta_mork_bridge_space_query_candidates(CettaMorkSpaceHandle *space,
-                                              const uint8_t *pattern,
-                                              size_t len,
-                                              uint32_t **out_indices,
-                                              uint32_t *out_count);
-bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
-                                           const uint8_t *pattern,
-                                           size_t len,
-                                           uint32_t **out_indices,
-                                           uint32_t *out_count);
 bool cetta_mork_bridge_space_query_bindings(CettaMorkSpaceHandle *space,
                                            const uint8_t *pattern,
                                            size_t len,
