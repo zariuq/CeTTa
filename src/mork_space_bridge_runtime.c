@@ -51,13 +51,6 @@ static void bridge_set_error_bytes(const char *prefix, const uint8_t *bytes, siz
              "%s%.*s", prefix, (int)usable, (const char *)bytes);
 }
 
-static uint32_t read_u32_be(const uint8_t *bytes) {
-    return ((uint32_t)bytes[0] << 24) |
-           ((uint32_t)bytes[1] << 16) |
-           ((uint32_t)bytes[2] << 8) |
-           (uint32_t)bytes[3];
-}
-
 static bool bridge_take_status_value(const char *ctx, CettaMorkStatus st,
                                      uint64_t *out_value,
                                      void (*free_bytes)(uint8_t *, size_t)) {
@@ -139,11 +132,6 @@ extern CettaMorkStatus mork_space_remove_sexpr(CettaMorkSpaceHandle *space,
 extern CettaMorkStatus mork_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                     const uint8_t *expr_bytes,
                                                     size_t len);
-extern CettaMorkStatus mork_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
-                                                    uint32_t atom_idx,
-                                                    const uint8_t *text,
-                                                    size_t len);
-extern CettaMorkStatus mork_space_logical_size(const CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_size(const CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_step(CettaMorkSpaceHandle *space,
                                        uint64_t steps);
@@ -299,22 +287,6 @@ extern CettaMorkStatus mork_overlay_cursor_prev_sibling_byte(
     CettaMorkOverlayCursorHandle *cursor);
 extern CettaMorkStatus mork_overlay_cursor_next_step(
     CettaMorkOverlayCursorHandle *cursor);
-extern CettaMorkBuffer mork_space_query_indices(CettaMorkSpaceHandle *space,
-                                                const uint8_t *pattern,
-                                                size_t len);
-extern CettaMorkBuffer mork_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
-                                                          const uint8_t *pattern,
-                                                          size_t len)
-    __attribute__((weak));
-extern CettaMorkBuffer mork_space_query_candidates_prefix_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len)
-    __attribute__((weak));
-extern CettaMorkBuffer mork_space_query_candidates_expr_bytes(CettaMorkSpaceHandle *space,
-                                                              const uint8_t *pattern_expr,
-                                                              size_t len)
-    __attribute__((weak));
 extern CettaMorkBuffer mork_space_query_bindings(CettaMorkSpaceHandle *space,
                                                  const uint8_t *pattern,
                                                  size_t len);
@@ -523,33 +495,6 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
-                                              uint32_t atom_idx,
-                                              const char *text) {
-    if (!text) {
-        bridge_set_error("cannot add null indexed text to MORK bridge space");
-        return false;
-    }
-    return cetta_mork_bridge_space_add_indexed_sexpr(space,
-                                                     atom_idx,
-                                                     (const uint8_t *)text,
-                                                     strlen(text));
-}
-
-bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
-                                               uint32_t atom_idx,
-                                               const uint8_t *text,
-                                               size_t len) {
-    if (!space) {
-        bridge_set_error("cannot add to null MORK bridge space");
-        return false;
-    }
-    /* Indexed ingress is an adapter seam for CeTTa-native/imported callers that
-       still identify candidates by `atom_idx`. It is not the storage truth. */
-    return bridge_status_ok("mork_space_add_indexed_sexpr failed: ",
-                            mork_space_add_indexed_sexpr(space, atom_idx, text, len));
-}
-
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                   uint64_t *out_size) {
     if (!space) {
@@ -565,18 +510,6 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
 bool cetta_mork_bridge_space_unique_size(const CettaMorkSpaceHandle *space,
                                          uint64_t *out_unique_size) {
     return cetta_mork_bridge_space_size(space, out_unique_size);
-}
-
-bool cetta_mork_bridge_space_logical_size(const CettaMorkSpaceHandle *space,
-                                          uint64_t *out_logical_size) {
-    if (!space) {
-        bridge_set_error("cannot size null MORK bridge space");
-        return false;
-    }
-    return bridge_take_status_value("mork_space_logical_size failed: ",
-                                    mork_space_logical_size(space),
-                                    out_logical_size,
-                                    bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
@@ -1652,196 +1585,6 @@ bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_space_query_candidates_text(CettaMorkSpaceHandle *space,
-                                                   const char *pattern_text,
-                                                   uint32_t **out_indices,
-                                                   uint32_t *out_count) {
-    if (!pattern_text) {
-        bridge_set_error("cannot query null pattern text in MORK bridge space");
-        return false;
-    }
-    return cetta_mork_bridge_space_query_candidates(space,
-                                                    (const uint8_t *)pattern_text,
-                                                    strlen(pattern_text),
-                                                    out_indices,
-                                                    out_count);
-}
-
-bool cetta_mork_bridge_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
-                                                     const char *pattern_text,
-                                                     uint8_t **out_expr,
-                                                     size_t *out_len) {
-    uint32_t ignored = 0;
-    if (!pattern_text) {
-        bridge_set_error("cannot compile null pattern text in MORK bridge space");
-        return false;
-    }
-    if (!space) {
-        bridge_set_error("cannot compile query expr for null MORK bridge space");
-        return false;
-    }
-    if (!mork_space_compile_query_expr_text) {
-        bridge_set_error("mork_space_compile_query_expr_text is unavailable in the linked MORK bridge");
-        return false;
-    }
-    return bridge_take_buffer("mork_space_compile_query_expr_text failed: ",
-                              mork_space_compile_query_expr_text(space,
-                                                                 (const uint8_t *)pattern_text,
-                                                                 strlen(pattern_text)),
-                              out_expr, out_len, &ignored, bridge_free_bytes);
-}
-
-bool cetta_mork_bridge_space_query_candidates_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count) {
-    *out_indices = NULL;
-    *out_count = 0;
-    if (!space) {
-        bridge_set_error("cannot query null MORK bridge space");
-        return false;
-    }
-    if (!mork_space_query_candidates_expr_bytes) {
-        bridge_set_error("mork_space_query_candidates_expr_bytes is unavailable in the linked MORK bridge");
-        return false;
-    }
-
-    CettaMorkBuffer buf = mork_space_query_candidates_expr_bytes(space, pattern_expr, len);
-    if (buf.code != 0) {
-        if (buf.message && buf.message_len > 0)
-            bridge_set_error_bytes("mork_space_query_candidates_expr_bytes failed: ", buf.message, buf.message_len);
-        else
-            bridge_set_error("mork_space_query_candidates_expr_bytes failed with code %d", buf.code);
-        bridge_free_bytes(buf.message, buf.message_len);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    bridge_free_bytes(buf.message, buf.message_len);
-    if (buf.len == 0 || buf.count == 0) {
-        bridge_free_bytes(buf.data, buf.len);
-        return true;
-    }
-    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
-        bridge_set_error("mork_space_query_candidates_expr_bytes returned malformed packet (%zu bytes for %u indices)",
-                         buf.len, buf.count);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
-    for (uint32_t i = 0; i < buf.count; i++)
-        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
-    bridge_free_bytes(buf.data, buf.len);
-    *out_indices = indices;
-    *out_count = buf.count;
-    return true;
-}
-
-bool cetta_mork_bridge_space_query_candidates_prefix_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count) {
-    *out_indices = NULL;
-    *out_count = 0;
-    if (!space) {
-        bridge_set_error("cannot query null MORK bridge space");
-        return false;
-    }
-    if (!mork_space_query_candidates_prefix_expr_bytes) {
-        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes is unavailable in the linked MORK bridge");
-        return false;
-    }
-
-    CettaMorkBuffer buf = mork_space_query_candidates_prefix_expr_bytes(space, pattern_expr, len);
-    if (buf.code != 0) {
-        if (buf.message && buf.message_len > 0)
-            bridge_set_error_bytes("mork_space_query_candidates_prefix_expr_bytes failed: ", buf.message, buf.message_len);
-        else
-            bridge_set_error("mork_space_query_candidates_prefix_expr_bytes failed with code %d", buf.code);
-        bridge_free_bytes(buf.message, buf.message_len);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    bridge_free_bytes(buf.message, buf.message_len);
-    if (buf.len == 0 || buf.count == 0) {
-        bridge_free_bytes(buf.data, buf.len);
-        return true;
-    }
-    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
-        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes returned malformed packet (%zu bytes for %u indices)",
-                         buf.len, buf.count);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
-    for (uint32_t i = 0; i < buf.count; i++)
-        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
-    bridge_free_bytes(buf.data, buf.len);
-    *out_indices = indices;
-    *out_count = buf.count;
-    return true;
-}
-
-bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
-                                           const uint8_t *pattern,
-                                           size_t len,
-                                           uint32_t **out_indices,
-                                           uint32_t *out_count) {
-    *out_indices = NULL;
-    *out_count = 0;
-    if (!space) {
-        bridge_set_error("cannot query null MORK bridge space");
-        return false;
-    }
-
-    CettaMorkBuffer buf = mork_space_query_indices(space, pattern, len);
-    if (buf.code != 0) {
-        if (buf.message && buf.message_len > 0)
-            bridge_set_error_bytes("mork_space_query_indices failed: ", buf.message, buf.message_len);
-        else
-            bridge_set_error("mork_space_query_indices failed with code %d", buf.code);
-        bridge_free_bytes(buf.message, buf.message_len);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    bridge_free_bytes(buf.message, buf.message_len);
-    if (buf.len == 0 || buf.count == 0) {
-        bridge_free_bytes(buf.data, buf.len);
-        return true;
-    }
-    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
-        bridge_set_error("mork_space_query_indices returned malformed packet (%zu bytes for %u indices)",
-                         buf.len, buf.count);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
-    for (uint32_t i = 0; i < buf.count; i++)
-        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
-    bridge_free_bytes(buf.data, buf.len);
-    *out_indices = indices;
-    *out_count = buf.count;
-    return true;
-}
-
-bool cetta_mork_bridge_space_query_candidates(CettaMorkSpaceHandle *space,
-                                              const uint8_t *pattern,
-                                              size_t len,
-                                              uint32_t **out_indices,
-                                              uint32_t *out_count) {
-    return cetta_mork_bridge_space_query_indices(space, pattern, len,
-                                                 out_indices, out_count);
-}
-
 bool cetta_mork_bridge_space_query_bindings_text(CettaMorkSpaceHandle *space,
                                                  const char *pattern_text,
                                                  uint8_t **out_packet,
@@ -1991,11 +1734,6 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_remove_expr_bytes)(CettaMorkSpaceHandle *space,
                                                const uint8_t *expr_bytes,
                                                size_t len);
-    CettaMorkStatus (*space_add_indexed_sexpr)(CettaMorkSpaceHandle *space,
-                                               uint32_t atom_idx,
-                                               const uint8_t *text,
-                                               size_t len);
-    CettaMorkStatus (*space_logical_size)(const CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_size)(const CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_step)(CettaMorkSpaceHandle *space, uint64_t steps);
     CettaMorkStatus (*space_dump_act_file)(CettaMorkSpaceHandle *space,
@@ -2130,18 +1868,6 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*overlay_cursor_next_sibling_byte)(CettaMorkOverlayCursorHandle *cursor);
     CettaMorkStatus (*overlay_cursor_prev_sibling_byte)(CettaMorkOverlayCursorHandle *cursor);
     CettaMorkStatus (*overlay_cursor_next_step)(CettaMorkOverlayCursorHandle *cursor);
-    CettaMorkBuffer (*space_query_indices)(CettaMorkSpaceHandle *space,
-                                           const uint8_t *pattern,
-                                           size_t len);
-    CettaMorkBuffer (*space_compile_query_expr_text)(CettaMorkSpaceHandle *space,
-                                                     const uint8_t *pattern,
-                                                     size_t len);
-    CettaMorkBuffer (*space_query_candidates_prefix_expr_bytes)(CettaMorkSpaceHandle *space,
-                                                                const uint8_t *pattern_expr,
-                                                                size_t len);
-    CettaMorkBuffer (*space_query_candidates_expr_bytes)(CettaMorkSpaceHandle *space,
-                                                         const uint8_t *pattern_expr,
-                                                         size_t len);
     CettaMorkBuffer (*space_query_bindings)(CettaMorkSpaceHandle *space,
                                             const uint8_t *pattern,
                                             size_t len);
@@ -2288,13 +2014,11 @@ static bool bridge_load_api(void) {
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_clear, "mork_space_clear") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_add_sexpr, "mork_space_add_sexpr") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_remove_sexpr, "mork_space_remove_sexpr") ||
-        !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_add_indexed_sexpr, "mork_space_add_indexed_sexpr") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_size, "mork_space_size") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_step, "mork_space_step") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_dump_act_file, "mork_space_dump_act_file") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_load_act_file, "mork_space_load_act_file") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_dump, "mork_space_dump") ||
-        !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_query_indices, "mork_space_query_indices") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.space_query_bindings, "mork_space_query_bindings") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_new, "mork_program_new") ||
         !bridge_resolve_symbol((void **)&g_mork_bridge_api.program_free, "mork_program_free") ||
@@ -2328,9 +2052,6 @@ static bool bridge_load_api(void) {
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_new_pathmap,
         "mork_space_new_pathmap");
-    bridge_resolve_symbol_optional(
-        (void **)&g_mork_bridge_api.space_logical_size,
-        "mork_space_logical_size");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_join_into,
         "mork_space_join_into");
@@ -2578,15 +2299,6 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.overlay_cursor_next_step,
         "mork_overlay_cursor_next_step");
     bridge_resolve_symbol_optional(
-        (void **)&g_mork_bridge_api.space_compile_query_expr_text,
-        "mork_space_compile_query_expr_text");
-    bridge_resolve_symbol_optional(
-        (void **)&g_mork_bridge_api.space_query_candidates_prefix_expr_bytes,
-        "mork_space_query_candidates_prefix_expr_bytes");
-    bridge_resolve_symbol_optional(
-        (void **)&g_mork_bridge_api.space_query_candidates_expr_bytes,
-        "mork_space_query_candidates_expr_bytes");
-    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_query_bindings_query_only_v2,
         "mork_space_query_bindings_query_only_v2");
     bridge_resolve_symbol_optional(
@@ -2772,32 +2484,6 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
-                                              uint32_t atom_idx,
-                                              const char *text) {
-    if (!text) {
-        bridge_set_error("cannot add null indexed text to MORK bridge space");
-        return false;
-    }
-    return cetta_mork_bridge_space_add_indexed_sexpr(space,
-                                                     atom_idx,
-                                                     (const uint8_t *)text,
-                                                     strlen(text));
-}
-
-bool cetta_mork_bridge_space_add_indexed_sexpr(CettaMorkSpaceHandle *space,
-                                               uint32_t atom_idx,
-                                               const uint8_t *text,
-                                               size_t len) {
-    if (!space || !bridge_load_api()) {
-        bridge_set_error("cannot add to null or unavailable MORK bridge space");
-        return false;
-    }
-    return bridge_status_ok("mork_space_add_indexed_sexpr failed: ",
-                            g_mork_bridge_api.space_add_indexed_sexpr(space, atom_idx,
-                                                                      text, len));
-}
-
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                   uint64_t *out_size) {
     if (!space || !bridge_load_api()) {
@@ -2813,22 +2499,6 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
 bool cetta_mork_bridge_space_unique_size(const CettaMorkSpaceHandle *space,
                                          uint64_t *out_unique_size) {
     return cetta_mork_bridge_space_size(space, out_unique_size);
-}
-
-bool cetta_mork_bridge_space_logical_size(const CettaMorkSpaceHandle *space,
-                                          uint64_t *out_logical_size) {
-    if (!space || !bridge_load_api()) {
-        bridge_set_error("cannot size null or unavailable MORK bridge space");
-        return false;
-    }
-    if (!g_mork_bridge_api.space_logical_size) {
-        bridge_set_error("mork_space_logical_size is unavailable in the loaded MORK bridge");
-        return false;
-    }
-    return bridge_take_status_value("mork_space_logical_size failed: ",
-                                    g_mork_bridge_api.space_logical_size(space),
-                                    out_logical_size,
-                                    bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
@@ -4221,199 +3891,6 @@ bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_load_act_file(space, path, len),
                                     out_loaded,
                                     bridge_free_bytes);
-}
-
-bool cetta_mork_bridge_space_query_candidates_text(CettaMorkSpaceHandle *space,
-                                                   const char *pattern_text,
-                                                   uint32_t **out_indices,
-                                                   uint32_t *out_count) {
-    if (!pattern_text) {
-        bridge_set_error("cannot query null pattern text in MORK bridge space");
-        return false;
-    }
-    return cetta_mork_bridge_space_query_candidates(space,
-                                                    (const uint8_t *)pattern_text,
-                                                    strlen(pattern_text),
-                                                    out_indices,
-                                                    out_count);
-}
-
-bool cetta_mork_bridge_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
-                                                     const char *pattern_text,
-                                                     uint8_t **out_expr,
-                                                     size_t *out_len) {
-    uint32_t ignored = 0;
-    if (!pattern_text) {
-        bridge_set_error("cannot compile null pattern text in MORK bridge space");
-        return false;
-    }
-    if (!space || !bridge_load_api()) {
-        bridge_set_error("cannot compile query expr for null or unavailable MORK bridge space");
-        return false;
-    }
-    if (!g_mork_bridge_api.space_compile_query_expr_text) {
-        bridge_set_error("mork_space_compile_query_expr_text is unavailable in the loaded MORK bridge");
-        return false;
-    }
-    return bridge_take_buffer("mork_space_compile_query_expr_text failed: ",
-                              g_mork_bridge_api.space_compile_query_expr_text(
-                                  space,
-                                  (const uint8_t *)pattern_text,
-                                  strlen(pattern_text)),
-                              out_expr, out_len, &ignored, bridge_free_bytes);
-}
-
-bool cetta_mork_bridge_space_query_candidates_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count) {
-    *out_indices = NULL;
-    *out_count = 0;
-    if (!space || !bridge_load_api()) {
-        bridge_set_error("cannot query null or unavailable MORK bridge space");
-        return false;
-    }
-    if (!g_mork_bridge_api.space_query_candidates_expr_bytes) {
-        bridge_set_error("mork_space_query_candidates_expr_bytes is unavailable in the loaded MORK bridge");
-        return false;
-    }
-
-    CettaMorkBuffer buf =
-        g_mork_bridge_api.space_query_candidates_expr_bytes(space, pattern_expr, len);
-    if (buf.code != 0) {
-        if (buf.message && buf.message_len > 0)
-            bridge_set_error_bytes("mork_space_query_candidates_expr_bytes failed: ", buf.message, buf.message_len);
-        else
-            bridge_set_error("mork_space_query_candidates_expr_bytes failed with code %d", buf.code);
-        bridge_free_bytes(buf.message, buf.message_len);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    bridge_free_bytes(buf.message, buf.message_len);
-    if (buf.len == 0 || buf.count == 0) {
-        bridge_free_bytes(buf.data, buf.len);
-        return true;
-    }
-    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
-        bridge_set_error("mork_space_query_candidates_expr_bytes returned malformed packet (%zu bytes for %u indices)",
-                         buf.len, buf.count);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
-    for (uint32_t i = 0; i < buf.count; i++)
-        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
-    bridge_free_bytes(buf.data, buf.len);
-    *out_indices = indices;
-    *out_count = buf.count;
-    return true;
-}
-
-bool cetta_mork_bridge_space_query_candidates_prefix_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count) {
-    *out_indices = NULL;
-    *out_count = 0;
-    if (!space || !bridge_load_api()) {
-        bridge_set_error("cannot query null or unavailable MORK bridge space");
-        return false;
-    }
-    if (!g_mork_bridge_api.space_query_candidates_prefix_expr_bytes) {
-        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes is unavailable in the loaded MORK bridge");
-        return false;
-    }
-
-    CettaMorkBuffer buf =
-        g_mork_bridge_api.space_query_candidates_prefix_expr_bytes(space, pattern_expr, len);
-    if (buf.code != 0) {
-        if (buf.message && buf.message_len > 0)
-            bridge_set_error_bytes("mork_space_query_candidates_prefix_expr_bytes failed: ", buf.message, buf.message_len);
-        else
-            bridge_set_error("mork_space_query_candidates_prefix_expr_bytes failed with code %d", buf.code);
-        bridge_free_bytes(buf.message, buf.message_len);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    bridge_free_bytes(buf.message, buf.message_len);
-    if (buf.len == 0 || buf.count == 0) {
-        bridge_free_bytes(buf.data, buf.len);
-        return true;
-    }
-    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
-        bridge_set_error("mork_space_query_candidates_prefix_expr_bytes returned malformed packet (%zu bytes for %u indices)",
-                         buf.len, buf.count);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
-    for (uint32_t i = 0; i < buf.count; i++)
-        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
-    bridge_free_bytes(buf.data, buf.len);
-    *out_indices = indices;
-    *out_count = buf.count;
-    return true;
-}
-
-bool cetta_mork_bridge_space_query_indices(CettaMorkSpaceHandle *space,
-                                           const uint8_t *pattern,
-                                           size_t len,
-                                           uint32_t **out_indices,
-                                           uint32_t *out_count) {
-    *out_indices = NULL;
-    *out_count = 0;
-    if (!space || !bridge_load_api()) {
-        bridge_set_error("cannot query null or unavailable MORK bridge space");
-        return false;
-    }
-
-    CettaMorkBuffer buf = g_mork_bridge_api.space_query_indices(space, pattern, len);
-    if (buf.code != 0) {
-        if (buf.message && buf.message_len > 0)
-            bridge_set_error_bytes("mork_space_query_indices failed: ", buf.message, buf.message_len);
-        else
-            bridge_set_error("mork_space_query_indices failed with code %d", buf.code);
-        bridge_free_bytes(buf.message, buf.message_len);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    bridge_free_bytes(buf.message, buf.message_len);
-    if (buf.len == 0 || buf.count == 0) {
-        bridge_free_bytes(buf.data, buf.len);
-        return true;
-    }
-    if (buf.len != (size_t)buf.count * 4u || (buf.len % 4u) != 0u) {
-        bridge_set_error("mork_space_query_indices returned malformed packet (%zu bytes for %u indices)",
-                         buf.len, buf.count);
-        bridge_free_bytes(buf.data, buf.len);
-        return false;
-    }
-
-    uint32_t *indices = cetta_malloc(sizeof(uint32_t) * buf.count);
-    for (uint32_t i = 0; i < buf.count; i++)
-        indices[i] = read_u32_be(buf.data + (size_t)i * 4u);
-    bridge_free_bytes(buf.data, buf.len);
-    *out_indices = indices;
-    *out_count = buf.count;
-    return true;
-}
-
-bool cetta_mork_bridge_space_query_candidates(CettaMorkSpaceHandle *space,
-                                              const uint8_t *pattern,
-                                              size_t len,
-                                              uint32_t **out_indices,
-                                              uint32_t *out_count) {
-    return cetta_mork_bridge_space_query_indices(space, pattern, len,
-                                                 out_indices, out_count);
 }
 
 bool cetta_mork_bridge_space_query_bindings_text(CettaMorkSpaceHandle *space,

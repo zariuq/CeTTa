@@ -103,6 +103,12 @@ typedef struct {
 
 typedef bool (*CettaMorkBindingsVisitor)(const Bindings *bindings, void *ctx);
 
+typedef enum {
+    SPACE_BRIDGE_IMPORT_ERROR = 0,
+    SPACE_BRIDGE_IMPORT_OK = 1,
+    SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK = 2,
+} SpaceBridgeImportResult;
+
 void space_match_backend_init(Space *s);
 void space_match_backend_free(Space *s);
 bool space_match_backend_try_set(Space *s, SpaceEngine kind);
@@ -131,6 +137,17 @@ bool space_match_backend_is_attached_compiled(const Space *s);
 bool space_match_backend_bridge_space(Space *s,
                                       CettaMorkSpaceHandle **out_bridge);
 uint32_t space_match_backend_logical_len(const Space *s);
+/*
+ * Structural bridge import contract:
+ *   - Positive example: a ground bridge payload with a live TermUniverse
+ *     materializes directly into canonical AtomIds.
+ *   - Negative example: a var-bearing or no-universe payload pretending the
+ *     structural bridge bytes preserve parser-level spelling semantics.
+ */
+SpaceBridgeImportResult space_match_backend_import_bridge_space(
+    Space *dst,
+    CettaMorkSpaceHandle *bridge,
+    uint64_t *out_loaded);
 bool space_match_backend_mork_query_bindings_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,

@@ -191,6 +191,13 @@
     (@param "Search lane name such as recursive-dependent-proof")))
   (@return "Opaque policy atom consumed by select, fold, fold-by-key, collect, or once"))
 
+(@doc pragma!
+  (@desc "Session-local evaluator/configuration surface. Pragma keys select optional modes or limits for the active evaluation session; they do not redefine the core language/profile semantics of spaces or queries. For example, (pragma! search-table-mode variant) enables the current variant-table memoization mode for repeated search in this session, while other backends or future language surfaces may realize the same user-visible behavior differently.")
+  (@params (
+    (@param "Pragma key as a Symbol")
+    (@param "Requested mode, limit, or payload for that key")))
+  (@return "Unit when the pragma is accepted, or the original pragma form when the active language/profile leaves that key uninterpreted"))
+
 (@doc with-space-snapshot
   (@desc "CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.")
   (@params (
@@ -268,20 +275,20 @@
   (@return "Unit on success"))
 
 (@doc step!
-  (@desc "Low-level stepping surface. The one-argument form performs one step. The two-argument form performs up to the given non-negative step count. Ordinary native/pathmap spaces report NoStepSemantics. Explicit MORK workflows should use mork:step! from lib/mork.metta by default; bare step! on Space mork stays guarded unless you enable (pragma! mork-space-sugar allow).")
+  (@desc "Low-level stepping surface. The one-argument form performs one step. The two-argument form performs up to the given non-negative step count. Ordinary native/pathmap spaces report NoStepSemantics. Explicit MORK workflows should use mork:step! from lib/mork.metta by default; if you enable (pragma! mork-space-sugar allow), overlapping generic space operations elaborate onto explicit MorkSpace helpers instead of introducing a separate generic MORK space kind.")
   (@params (
     (@param "Target space")
     (@param "Optional non-negative step count")))
   (@return "Number of steps actually performed"))
 
 (@doc include
-  (@desc "Loads a module into a space transactionally. The one-argument form (include spec) merges into &self. The two-argument form (include &dst spec) merges into an already-existing named space; on failure the target space is rolled back unchanged. Relative specs may resolve to .metta, .act, or raw .mm2 files. Including a .mm2 file lowers its surface into ordinary atoms; those atoms stay plain data unless the destination space is already an explicit MorkSpace.")
+  (@desc "Loads a module into a space transactionally. The one-argument form (include spec) merges into &self. The two-argument form (include &dst spec) merges into an already-existing named space; on failure the target space is rolled back unchanged. Relative specs may resolve to .metta or .act files through the generic CeTTa loader. Raw .mm2 files stay on the explicit MORK lane for ordinary CeTTa spaces; with (pragma! mork-space-sugar allow), include on an explicit MorkSpace elaborates to the native mork:include! helper instead of lowering through generic CeTTa materialization.")
   (@params (
     (@param "Module spec or path to include, or an explicit destination space reference followed by the module spec")))
   (@return "Unit on success, or an Error value on failure"))
 
 (@doc import!
-  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled PathMap spaces instead of reparsing, and raw .mm2 imports are stored as ordinary atoms unless the destination space is already an explicit MorkSpace. Loader failures can surface ModuleImportCycle or ModuleParseFailed.")
+  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled PathMap spaces instead of reparsing. Raw .mm2 files are not imported through the generic CeTTa surface: import! rejects .mm2 specs, while explicit MorkSpace workflows use include with sugar enabled or the direct mork:include! helper. Loader failures can surface ModuleImportCycle, ModuleParseFailed, or a module-format-specific load error.")
   (@params (
     (@param "Destination space reference: &self or a fresh &name")
     (@param "Module spec or path to import")))

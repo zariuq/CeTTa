@@ -195,6 +195,53 @@ bool cetta_library_pack_mork_expr_batch(Arena *scratch, Atom **items,
     return true;
 }
 
+static bool cetta_library_pack_mork_expr_batch_from_ids(
+    Arena *scratch,
+    const TermUniverse *universe,
+    const AtomId *items,
+    uint32_t item_count,
+    uint8_t **packet_out,
+    size_t *packet_len_out,
+    const char **error_out
+) {
+    CettaStringBuf packet;
+
+    if (!packet_out || !packet_len_out) {
+        if (error_out)
+            *error_out = "missing packet output for MORK expr-byte batch";
+        return false;
+    }
+
+    *packet_out = NULL;
+    *packet_len_out = 0;
+    if (error_out)
+        *error_out = NULL;
+
+    cetta_sb_init(&packet);
+    for (uint32_t i = 0; i < item_count; i++) {
+        uint8_t *expr_bytes = NULL;
+        size_t expr_len = 0;
+        const char *encode_error = NULL;
+        if (!cetta_mm2_atom_id_to_bridge_expr_bytes(
+                scratch, universe, items[i], &expr_bytes, &expr_len, &encode_error)) {
+            free(expr_bytes);
+            cetta_sb_free(&packet);
+            if (error_out) {
+                *error_out = encode_error ? encode_error
+                                          : "MORK expr-byte lowering failed";
+            }
+            return false;
+        }
+        cetta_sb_append_u32_be(&packet, (uint32_t)expr_len);
+        cetta_sb_append_n(&packet, (const char *)expr_bytes, expr_len);
+        free(expr_bytes);
+    }
+
+    *packet_out = (uint8_t *)packet.buf;
+    *packet_len_out = packet.len;
+    return true;
+}
+
 static bool ascii_ieq(const char *lhs, const char *rhs) {
     while (*lhs && *rhs) {
         unsigned char a = (unsigned char)*lhs;
@@ -2431,14 +2478,42 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
         goto fail;
 
     uint32_t n = space_length(space);
-    for (uint32_t i = 0; i < n; i++) {
-        ArenaMark mark = arena_mark(&scratch);
-        char *sexpr = atom_to_parseable_string(&scratch, space_get_at(space, i));
-        bool ok = cetta_mork_bridge_space_add_indexed_text(bridge, i, sexpr);
-        arena_reset(&scratch, mark);
-        if (!ok) {
+    if (space->universe) {
+        AtomId *atom_ids = arena_alloc(&scratch, sizeof(AtomId) * (n ? n : 1u));
+        uint8_t *packet = NULL;
+        size_t packet_len = 0;
+        const char *pack_error = NULL;
+        for (uint32_t i = 0; i < n; i++)
+            atom_ids[i] = space_get_atom_id_at(space, i);
+        if (cetta_library_pack_mork_expr_batch_from_ids(
+                &scratch, space->universe, atom_ids, n,
+                &packet, &packet_len, &pack_error) &&
+            cetta_mork_bridge_space_add_expr_bytes_batch(
+                bridge, packet, packet_len, NULL)) {
+            free(packet);
+        } else {
+            free(packet);
             cetta_mork_bridge_space_free(bridge);
             goto fail;
+        }
+    } else {
+        for (uint32_t i = 0; i < n; i++) {
+            ArenaMark mark = arena_mark(&scratch);
+            uint8_t *expr_bytes = NULL;
+            size_t expr_len = 0;
+            const char *encode_error = NULL;
+            bool ok = cetta_mm2_atom_to_bridge_expr_bytes(
+                &scratch, space_get_at(space, i), &expr_bytes, &expr_len,
+                &encode_error) &&
+                cetta_mork_bridge_space_add_expr_bytes(
+                    bridge, expr_bytes, expr_len, NULL);
+            free(expr_bytes);
+            arena_reset(&scratch, mark);
+            if (!ok) {
+                (void)encode_error;
+                cetta_mork_bridge_space_free(bridge);
+                goto fail;
+            }
         }
     }
 
@@ -2988,6 +3063,9 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
         size_t len = 0;
         uint32_t rows = 0;
 
+        /* Intentional textual inspection/export surface: callers here asked to
+           see the bridge dump as atoms, not to reuse the structural import
+           seam that PATHMAP/MORK materialization uses internally. */
         if (nargs != 1) {
             return library_signature_error(a, head, args, nargs,
                                            "expected MorkSpace");
@@ -3114,6 +3192,10 @@ static Atom *mork_zipper_new_native(CettaLibraryContext *ctx, Arena *a,
     CettaMorkCursorResource *resource = NULL;
     uint64_t id = 0;
 
+    /* The zipper family is an explicit bridge-native inspection seam. It is
+       intentionally cursor/path oriented rather than another AtomId transport
+       path, so future optimizations should not try to fold it into PATHMAP
+       materialization. */
     if (nargs != 1) {
         return library_signature_error(a, head, args, nargs,
                                        "expected MorkSpace");
@@ -4205,6 +4287,9 @@ static Atom *mork_path_of_atom_native(CettaLibraryContext *ctx, Arena *a,
     Atom *result = NULL;
     bool moved = false;
 
+    /* Explicit bridge-byte inspection helper: this answers "what bridge path
+       does this atom lower to?" and is intentionally separate from the
+       structural bridge->AtomId import seam. */
     if (nargs != 1) {
         return library_signature_error(a, head, args, nargs, "expected atom");
     }
@@ -4223,12 +4308,19 @@ static Atom *mork_path_of_atom_native(CettaLibraryContext *ctx, Arena *a,
         return library_mork_bridge_error(a, head, args, nargs,
                                          "MORK path-of-atom bridge allocation failed: ");
     }
-    if (!cetta_mork_bridge_space_add_indexed_text(bridge_space, 0, text)) {
+    uint8_t *expr_bytes = NULL;
+    size_t expr_len = 0;
+    const char *encode_error = NULL;
+    if (!cetta_mm2_atom_to_bridge_expr_bytes(
+            &scratch, args[0], &expr_bytes, &expr_len, &encode_error) ||
+        !cetta_mork_bridge_space_add_expr_bytes(bridge_space, expr_bytes, expr_len, NULL)) {
+        free(expr_bytes);
         cetta_mork_bridge_space_free(bridge_space);
         arena_free(&scratch);
         return library_mork_bridge_error(a, head, args, nargs,
-                                         "MORK path-of-atom parse failed: ");
+                                         "MORK path-of-atom encoding failed: ");
     }
+    free(expr_bytes);
     cursor = cetta_mork_bridge_cursor_new(bridge_space);
     if (!cursor) {
         cetta_mork_bridge_space_free(bridge_space);
@@ -4972,11 +5064,27 @@ static bool load_act_dump_text_into_space(CettaLibraryContext *ctx,
                                           Arena *persistent_arena,
                                           Arena *eval_arena,
                                           Atom **error_out) {
-    Arena *dst = persistent_arena ? persistent_arena : eval_arena;
     char *text = cetta_malloc(len + 1);
     memcpy(text, bytes, len);
     text[len] = '\0';
 
+    if (target && target->universe) {
+        AtomId *atom_ids = NULL;
+        int n = parse_metta_text_ids(text, target->universe, &atom_ids);
+        if (n < 0) {
+            free(text);
+            *error_out = module_reason(ctx, eval_arena, "ModuleCompiledParseFailed", path);
+            return false;
+        }
+        for (int i = 0; i < n; i++) {
+            space_add_atom_id(target, atom_ids[i]);
+        }
+        free(atom_ids);
+        free(text);
+        return true;
+    }
+
+    Arena *dst = persistent_arena ? persistent_arena : eval_arena;
     size_t pos = 0;
     while (text[pos]) {
         size_t before = pos;
@@ -4994,7 +5102,11 @@ static bool load_act_dump_text_into_space(CettaLibraryContext *ctx,
             *error_out = module_reason(ctx, eval_arena, "ModuleCompiledParseStuck", path);
             return false;
         }
-        space_add(target, atom);
+        if (!space_admit_atom(target, dst, atom)) {
+            free(text);
+            *error_out = module_reason(ctx, eval_arena, "ModuleCompiledLoadFailed", path);
+            return false;
+        }
     }
 
     free(text);
@@ -5007,9 +5119,11 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
                                  Arena *persistent_arena,
                                  Atom **error_out) {
     CettaMorkSpaceHandle *bridge = NULL;
+    Space imported;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
     uint32_t rows = 0;
+    bool imported_init = false;
     bool ok = false;
 
     if (space_is_ordered(work_space)) {
@@ -5036,14 +5150,32 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
             atom_string(eval_arena, cetta_mork_bridge_last_error()));
         goto cleanup;
     }
-    if (!cetta_mork_bridge_space_dump(bridge, &packet, &packet_len, &rows)) {
+
+    space_init_with_universe(&imported, work_space ? work_space->universe : NULL);
+    imported_init = true;
+    switch (space_match_backend_import_bridge_space(&imported, bridge, NULL)) {
+    case SPACE_BRIDGE_IMPORT_OK:
+        for (uint32_t i = 0; i < imported.len; i++) {
+            space_add_atom_id(work_space, imported.atom_ids[i]);
+        }
+        break;
+    case SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK:
+        if (!cetta_mork_bridge_space_dump(bridge, &packet, &packet_len, &rows)) {
+            *error_out = module_reason_with_detail(
+                ctx, eval_arena, "ModuleCompiledDumpFailed", path,
+                atom_string(eval_arena, cetta_mork_bridge_last_error()));
+            goto cleanup;
+        }
+        if (!load_act_dump_text_into_space(ctx, path, packet, packet_len, work_space,
+                                           persistent_arena, eval_arena, error_out)) {
+            goto cleanup;
+        }
+        break;
+    case SPACE_BRIDGE_IMPORT_ERROR:
+    default:
         *error_out = module_reason_with_detail(
-            ctx, eval_arena, "ModuleCompiledDumpFailed", path,
-            atom_string(eval_arena, cetta_mork_bridge_last_error()));
-        goto cleanup;
-    }
-    if (!load_act_dump_text_into_space(ctx, path, packet, packet_len, work_space,
-                                       persistent_arena, eval_arena, error_out)) {
+            ctx, eval_arena, "ModuleCompiledImportFailed", path,
+            atom_string(eval_arena, "structural bridge import failed"));
         goto cleanup;
     }
 
@@ -5051,6 +5183,8 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
 
 cleanup:
     cetta_mork_bridge_bytes_free(packet, packet_len);
+    if (imported_init)
+        space_free(&imported);
     cetta_mork_bridge_space_free(bridge);
     (void)rows;
     return ok;
@@ -5062,7 +5196,6 @@ static bool load_module_act_file_pathmap_materialized(CettaLibraryContext *ctx,
                                                       Arena *eval_arena,
                                                       Arena *persistent_arena,
                                                       Atom **error_out) {
-
     if (space_is_ordered(target_space)) {
         *error_out = module_reason(ctx, eval_arena, "ModuleCompiledOrderedSpaceUnsupported", path);
         return false;
@@ -5095,37 +5228,17 @@ static bool load_module_mm2_file(CettaLibraryContext *ctx, const char *path,
                                  Arena *eval_arena,
                                  Arena *persistent_arena,
                                  Atom **error_out) {
-    Arena *parse_arena = persistent_arena ? persistent_arena : eval_arena;
-    Atom **atoms = NULL;
-    int n = 0;
-    bool exec_enabled = space_engine_supports_exec(work_space->match_backend.kind);
+    (void)work_space;
+    (void)persistent_arena;
 
-    if (space_is_ordered(work_space)) {
-        *error_out = module_reason(ctx, eval_arena, "ModuleMm2OrderedSpaceUnsupported", path);
-        return false;
+    if (error_out) {
+        *error_out = module_reason_with_detail(
+            ctx, eval_arena, "ModuleMm2LoadFailed", path,
+            atom_string(eval_arena,
+                        "generic import/include does not accept .mm2; use "
+                        "(mork:include! <MorkSpace> spec)"));
     }
-
-    n = parse_metta_file(path, parse_arena, &atoms);
-    if (n < 0) {
-        *error_out = module_reason(ctx, eval_arena, "ModuleMm2ReadFailed", path);
-        return false;
-    }
-
-    if (cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
-        free(atoms);
-        *error_out = module_reason(ctx, eval_arena, "ModuleMm2LoadFailed", path);
-        return false;
-    }
-    if (!exec_enabled) {
-        cetta_mm2_lower_atoms(parse_arena, atoms, n);
-    }
-
-    for (int i = 0; i < n; i++) {
-        space_add(work_space, atoms[i]);
-    }
-
-    free(atoms);
-    return true;
+    return false;
 }
 
 static void skip_mork_include_whitespace_and_comments(const char *text, size_t *pos) {
@@ -5269,6 +5382,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     }
 
     Atom **atoms = NULL;
+    AtomId *atom_ids = NULL;
     CettaModuleFormat format = {
         .kind = CETTA_MODULE_FORMAT_METTA,
         .foreign_backend = CETTA_FOREIGN_BACKEND_NONE,
@@ -5293,18 +5407,32 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         ok = load_module_mm2_file(ctx, path, work_space, eval_arena,
                                   persistent_arena, error_out);
     } else {
-        int n = parse_metta_file(path, persistent_arena, &atoms);
+        int n = parse_metta_file_ids(path, work_space ? work_space->universe : NULL,
+                                     &atom_ids);
         if (n < 0) {
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
         } else {
             for (int i = 0; i < n; i++) {
-                Atom *at = atoms[i];
-                if (atom_is_symbol_id(at, g_builtin_syms.bang) && i + 1 < n) {
+                AtomId at_id = atom_ids[i];
+                if (tu_kind(work_space->universe, at_id) == ATOM_SYMBOL &&
+                    tu_sym(work_space->universe, at_id) == g_builtin_syms.bang &&
+                    i + 1 < n) {
                     ResultSet rs;
                     result_set_init(&rs);
+                    Atom *eval_form = term_universe_copy_atom(
+                        work_space->universe,
+                        persistent_arena ? persistent_arena : eval_arena,
+                        atom_ids[i + 1]);
+                    if (!eval_form) {
+                        free(rs.items);
+                        ok = false;
+                        *error_out = module_reason(ctx, eval_arena,
+                                                   "ModuleParseFailed", path);
+                        break;
+                    }
                     eval_top_with_registry(work_space, eval_arena, persistent_arena, registry,
-                                           atoms[i + 1], &rs);
+                                           eval_form, &rs);
                     Atom *first_error = result_set_first_error(eval_arena, &rs);
                     bool stop_after_error = first_error != NULL || result_set_has_error(&rs);
                     free(rs.items);
@@ -5318,7 +5446,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                     i++;
                     continue;
                 }
-                space_add(work_space, at);
+                space_add_atom_id(work_space, at_id);
             }
         }
     }
@@ -5330,6 +5458,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     }
     cetta_library_pop_dir(ctx);
     free(atoms);
+    free(atom_ids);
 
     if (!ok) {
         ctx->imported_files[slot].loading = false;
@@ -5508,6 +5637,142 @@ static const char *loaded_module_storage_name(const CettaLoadedModule *module) {
     return "materialized";
 }
 
+static AtomId library_inventory_symbol_id(Space *inventory, const char *name) {
+    if (!inventory || !inventory->universe || !name)
+        return CETTA_ATOM_ID_NONE;
+    return tu_intern_symbol(inventory->universe, symbol_intern_cstr(g_symbols, name));
+}
+
+static AtomId library_inventory_string_id(Space *inventory, const char *value) {
+    if (!inventory || !inventory->universe || !value)
+        return CETTA_ATOM_ID_NONE;
+    return tu_intern_string(inventory->universe, value);
+}
+
+static bool library_inventory_add_ids(Space *inventory, const AtomId *items,
+                                      uint32_t nitems) {
+    if (!inventory || !inventory->universe || !items || nitems == 0)
+        return false;
+    AtomId expr_id = tu_expr_from_ids(inventory->universe, items, nitems);
+    if (expr_id == CETTA_ATOM_ID_NONE)
+        return false;
+    space_add_atom_id(inventory, expr_id);
+    return true;
+}
+
+static bool library_inventory_try_add_symbol_fact2(Space *inventory,
+                                                   const char *head,
+                                                   const char *arg1) {
+    AtomId items[2] = {
+        library_inventory_symbol_id(inventory, head),
+        library_inventory_symbol_id(inventory, arg1),
+    };
+    return items[0] != CETTA_ATOM_ID_NONE &&
+           items[1] != CETTA_ATOM_ID_NONE &&
+           library_inventory_add_ids(inventory, items, 2);
+}
+
+static bool library_inventory_try_add_symbol_fact3(Space *inventory,
+                                                   const char *head,
+                                                   const char *arg1,
+                                                   const char *arg2) {
+    AtomId items[3] = {
+        library_inventory_symbol_id(inventory, head),
+        library_inventory_symbol_id(inventory, arg1),
+        library_inventory_symbol_id(inventory, arg2),
+    };
+    return items[0] != CETTA_ATOM_ID_NONE &&
+           items[1] != CETTA_ATOM_ID_NONE &&
+           items[2] != CETTA_ATOM_ID_NONE &&
+           library_inventory_add_ids(inventory, items, 3);
+}
+
+static bool library_inventory_try_add_string_symbol_fact3(
+    Space *inventory, const char *head, const char *arg1,
+    const char *arg2) {
+    AtomId items[3] = {
+        library_inventory_symbol_id(inventory, head),
+        library_inventory_string_id(inventory, arg1),
+        library_inventory_symbol_id(inventory, arg2),
+    };
+    return items[0] != CETTA_ATOM_ID_NONE &&
+           items[1] != CETTA_ATOM_ID_NONE &&
+           items[2] != CETTA_ATOM_ID_NONE &&
+           library_inventory_add_ids(inventory, items, 3);
+}
+
+static bool library_inventory_try_add_symbol_string_symbol_fact4(
+    Space *inventory, const char *head, const char *arg1,
+    const char *arg2, const char *arg3) {
+    AtomId items[4] = {
+        library_inventory_symbol_id(inventory, head),
+        library_inventory_symbol_id(inventory, arg1),
+        library_inventory_string_id(inventory, arg2),
+        library_inventory_symbol_id(inventory, arg3),
+    };
+    return items[0] != CETTA_ATOM_ID_NONE &&
+           items[1] != CETTA_ATOM_ID_NONE &&
+           items[2] != CETTA_ATOM_ID_NONE &&
+           items[3] != CETTA_ATOM_ID_NONE &&
+           library_inventory_add_ids(inventory, items, 4);
+}
+
+static bool library_inventory_try_add_symbol_symbol_string_fact4(
+    Space *inventory, const char *head, const char *arg1,
+    const char *arg2, const char *arg3) {
+    AtomId items[4] = {
+        library_inventory_symbol_id(inventory, head),
+        library_inventory_symbol_id(inventory, arg1),
+        library_inventory_symbol_id(inventory, arg2),
+        library_inventory_string_id(inventory, arg3),
+    };
+    return items[0] != CETTA_ATOM_ID_NONE &&
+           items[1] != CETTA_ATOM_ID_NONE &&
+           items[2] != CETTA_ATOM_ID_NONE &&
+           items[3] != CETTA_ATOM_ID_NONE &&
+           library_inventory_add_ids(inventory, items, 4);
+}
+
+static bool library_inventory_try_add_string_string_symbol_fact4(
+    Space *inventory, const char *head, const char *arg1,
+    const char *arg2, const char *arg3) {
+    AtomId items[4] = {
+        library_inventory_symbol_id(inventory, head),
+        library_inventory_string_id(inventory, arg1),
+        library_inventory_string_id(inventory, arg2),
+        library_inventory_symbol_id(inventory, arg3),
+    };
+    return items[0] != CETTA_ATOM_ID_NONE &&
+           items[1] != CETTA_ATOM_ID_NONE &&
+           items[2] != CETTA_ATOM_ID_NONE &&
+           items[3] != CETTA_ATOM_ID_NONE &&
+           library_inventory_add_ids(inventory, items, 4);
+}
+
+static bool library_inventory_try_add_string_symbol_symbol_fact4(
+    Space *inventory, const char *head, const char *arg1,
+    const char *arg2, const char *arg3) {
+    AtomId items[4] = {
+        library_inventory_symbol_id(inventory, head),
+        library_inventory_string_id(inventory, arg1),
+        library_inventory_symbol_id(inventory, arg2),
+        library_inventory_symbol_id(inventory, arg3),
+    };
+    return items[0] != CETTA_ATOM_ID_NONE &&
+           items[1] != CETTA_ATOM_ID_NONE &&
+           items[2] != CETTA_ATOM_ID_NONE &&
+           items[3] != CETTA_ATOM_ID_NONE &&
+           library_inventory_add_ids(inventory, items, 4);
+}
+
+static void library_inventory_add_fallback_atom(Space *inventory, Arena *dst,
+                                                Atom *atom) {
+    /* Inventory facts should still cross the normal admission seam even when
+       a direct bottom-up helper bailed out. Keep raw add as the last resort. */
+    if (!space_admit_atom(inventory, dst, atom))
+        space_add(inventory, atom);
+}
+
 Atom *cetta_library_mod_space(CettaLibraryContext *ctx, const char *spec,
                               Arena *eval_arena, Arena *persistent_arena,
                               Registry *registry, int fuel, Atom **error_out) {
@@ -5541,94 +5806,169 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
 
     const char *profile_name = (ctx->session.profile && ctx->session.profile->name) ?
         ctx->session.profile->name : "unknown";
-    space_add(inventory, atom_expr2(dst,
-        atom_symbol(dst, "module-profile"),
-        atom_symbol(dst, profile_name)));
+    if (!library_inventory_try_add_symbol_fact2(inventory, "module-profile",
+                                                profile_name)) {
+        library_inventory_add_fallback_atom(
+            inventory, dst,
+            atom_expr2(dst, atom_symbol(dst, "module-profile"),
+                       atom_symbol(dst, profile_name)));
+    }
 
     for (uint32_t i = 0; i < cetta_module_provider_count(); i++) {
         const CettaModuleProviderDescriptor *desc = cetta_module_provider_at(i);
         if (!desc) continue;
         const char *provider_name = desc->name;
         bool enabled = module_provider_visible(ctx, desc->kind);
-        space_add(inventory, atom_expr3(dst,
-            atom_symbol(dst, "module-provider"),
-            atom_symbol(dst, provider_name),
-            atom_symbol(dst, enabled ? "enabled" : "disabled")));
-        space_add(inventory, atom_expr3(dst,
-            atom_symbol(dst, "module-provider-implementation"),
-            atom_symbol(dst, provider_name),
-            atom_symbol(dst, desc->implemented ? "implemented" : "deferred")));
-        space_add(inventory, atom_expr3(dst,
-            atom_symbol(dst, "module-provider-transport"),
-            atom_symbol(dst, provider_name),
-            atom_symbol(dst, desc->remote_source ? "remote" : "local")));
-        space_add(inventory, atom_expr3(dst,
-            atom_symbol(dst, "module-provider-cache-policy"),
-            atom_symbol(dst, provider_name),
-            atom_symbol(dst, desc->cache_backed ? "cache-backed" : "no-cache")));
-        space_add(inventory, atom_expr3(dst,
-            atom_symbol(dst, "module-provider-locator-kind"),
-            atom_symbol(dst, provider_name),
-            atom_symbol(dst, cetta_module_locator_kind_name(desc->locator_kind))));
-        space_add(inventory, atom_expr3(dst,
-            atom_symbol(dst, "module-provider-update-policy"),
-            atom_symbol(dst, provider_name),
-            atom_symbol(dst, desc->update_policy ? desc->update_policy : "unknown")));
-        space_add(inventory, atom_expr3(dst,
-            atom_symbol(dst, "module-provider-revision-policy"),
-            atom_symbol(dst, provider_name),
-            atom_symbol(dst, cetta_remote_revision_policy_name(desc->revision_policy))));
+        if (!library_inventory_try_add_symbol_fact3(
+                inventory, "module-provider", provider_name,
+                enabled ? "enabled" : "disabled")) {
+            library_inventory_add_fallback_atom(
+                inventory, dst,
+                atom_expr3(dst, atom_symbol(dst, "module-provider"),
+                           atom_symbol(dst, provider_name),
+                           atom_symbol(dst, enabled ? "enabled" : "disabled")));
+        }
+        if (!library_inventory_try_add_symbol_fact3(
+                inventory, "module-provider-implementation", provider_name,
+                desc->implemented ? "implemented" : "deferred")) {
+            library_inventory_add_fallback_atom(
+                inventory, dst,
+                atom_expr3(dst, atom_symbol(dst, "module-provider-implementation"),
+                           atom_symbol(dst, provider_name),
+                           atom_symbol(dst, desc->implemented ? "implemented" : "deferred")));
+        }
+        if (!library_inventory_try_add_symbol_fact3(
+                inventory, "module-provider-transport", provider_name,
+                desc->remote_source ? "remote" : "local")) {
+            library_inventory_add_fallback_atom(
+                inventory, dst,
+                atom_expr3(dst, atom_symbol(dst, "module-provider-transport"),
+                           atom_symbol(dst, provider_name),
+                           atom_symbol(dst, desc->remote_source ? "remote" : "local")));
+        }
+        if (!library_inventory_try_add_symbol_fact3(
+                inventory, "module-provider-cache-policy", provider_name,
+                desc->cache_backed ? "cache-backed" : "no-cache")) {
+            library_inventory_add_fallback_atom(
+                inventory, dst,
+                atom_expr3(dst, atom_symbol(dst, "module-provider-cache-policy"),
+                           atom_symbol(dst, provider_name),
+                           atom_symbol(dst, desc->cache_backed ? "cache-backed" : "no-cache")));
+        }
+        if (!library_inventory_try_add_symbol_fact3(
+                inventory, "module-provider-locator-kind", provider_name,
+                cetta_module_locator_kind_name(desc->locator_kind))) {
+            library_inventory_add_fallback_atom(
+                inventory, dst,
+                atom_expr3(dst, atom_symbol(dst, "module-provider-locator-kind"),
+                           atom_symbol(dst, provider_name),
+                           atom_symbol(dst, cetta_module_locator_kind_name(desc->locator_kind))));
+        }
+        if (!library_inventory_try_add_symbol_fact3(
+                inventory, "module-provider-update-policy", provider_name,
+                desc->update_policy ? desc->update_policy : "unknown")) {
+            library_inventory_add_fallback_atom(
+                inventory, dst,
+                atom_expr3(dst, atom_symbol(dst, "module-provider-update-policy"),
+                           atom_symbol(dst, provider_name),
+                           atom_symbol(dst, desc->update_policy ? desc->update_policy : "unknown")));
+        }
+        if (!library_inventory_try_add_symbol_fact3(
+                inventory, "module-provider-revision-policy", provider_name,
+                cetta_remote_revision_policy_name(desc->revision_policy))) {
+            library_inventory_add_fallback_atom(
+                inventory, dst,
+                atom_expr3(dst, atom_symbol(dst, "module-provider-revision-policy"),
+                           atom_symbol(dst, provider_name),
+                           atom_symbol(dst, cetta_remote_revision_policy_name(desc->revision_policy))));
+        }
     }
 
     for (uint32_t i = 0; i < ctx->module_mount_len; i++) {
         const CettaModuleMount *mount = &ctx->module_mounts[i];
         if (!module_mount_visible(ctx, mount)) continue;
-        Atom *elems[4] = {
-            atom_symbol(dst, "module-mount"),
-            atom_symbol(dst, mount->namespace_name),
-            atom_string(dst, mount->root_path),
-            atom_symbol(dst, cetta_module_provider_name(mount->provider_kind))
-        };
-        space_add(inventory, atom_expr(dst, elems, 4));
-        Atom *source_fact[4] = {
-            atom_symbol(dst, "module-mount-source"),
-            atom_symbol(dst, mount->namespace_name),
-            atom_string(dst, mount->source_locator),
-            atom_symbol(dst, cetta_module_locator_kind_name(mount->locator_kind))
-        };
-        space_add(inventory, atom_expr(dst, source_fact, 4));
-        Atom *revision_fact[4] = {
-            atom_symbol(dst, "module-mount-revision-policy"),
-            atom_symbol(dst, mount->namespace_name),
-            atom_symbol(dst, cetta_remote_revision_policy_name(mount->revision_policy)),
-            atom_string(dst, mount->revision_value[0] ? mount->revision_value : "none")
-        };
-        space_add(inventory, atom_expr(dst, revision_fact, 4));
+        if (!library_inventory_try_add_symbol_string_symbol_fact4(
+                inventory, "module-mount", mount->namespace_name,
+                mount->root_path,
+                cetta_module_provider_name(mount->provider_kind))) {
+            Atom *elems[4] = {
+                atom_symbol(dst, "module-mount"),
+                atom_symbol(dst, mount->namespace_name),
+                atom_string(dst, mount->root_path),
+                atom_symbol(dst, cetta_module_provider_name(mount->provider_kind))
+            };
+            library_inventory_add_fallback_atom(inventory, dst,
+                                                atom_expr(dst, elems, 4));
+        }
+        if (!library_inventory_try_add_symbol_string_symbol_fact4(
+                inventory, "module-mount-source", mount->namespace_name,
+                mount->source_locator,
+                cetta_module_locator_kind_name(mount->locator_kind))) {
+            Atom *source_fact[4] = {
+                atom_symbol(dst, "module-mount-source"),
+                atom_symbol(dst, mount->namespace_name),
+                atom_string(dst, mount->source_locator),
+                atom_symbol(dst, cetta_module_locator_kind_name(mount->locator_kind))
+            };
+            library_inventory_add_fallback_atom(inventory, dst,
+                                                atom_expr(dst, source_fact, 4));
+        }
+        if (!library_inventory_try_add_symbol_symbol_string_fact4(
+                inventory, "module-mount-revision-policy",
+                mount->namespace_name,
+                cetta_remote_revision_policy_name(mount->revision_policy),
+                mount->revision_value[0] ? mount->revision_value : "none")) {
+            Atom *revision_fact[4] = {
+                atom_symbol(dst, "module-mount-revision-policy"),
+                atom_symbol(dst, mount->namespace_name),
+                atom_symbol(dst, cetta_remote_revision_policy_name(mount->revision_policy)),
+                atom_string(dst, mount->revision_value[0] ? mount->revision_value : "none")
+            };
+            library_inventory_add_fallback_atom(inventory, dst,
+                                                atom_expr(dst, revision_fact, 4));
+        }
     }
 
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
         const CettaLoadedModule *module = &ctx->loaded_modules[i];
         if (!loaded_module_visible(ctx, module)) continue;
-        Atom *module_fact[4] = {
-            atom_symbol(dst, "loaded-module"),
-            atom_string(dst, module->display_name),
-            atom_string(dst, module->canonical_path),
-            atom_symbol(dst, cetta_module_provider_name(module->provider_kind))
-        };
-        space_add(inventory, atom_expr(dst, module_fact, 4));
-        Atom *format_fact[4] = {
-            atom_symbol(dst, "loaded-module-format"),
-            atom_string(dst, module->display_name),
-            atom_symbol(dst, cetta_module_format_name(module->format.kind)),
-            atom_symbol(dst, cetta_foreign_backend_name(module->format.foreign_backend))
-        };
-        space_add(inventory, atom_expr(dst, format_fact, 4));
-        Atom *storage_fact[3] = {
-            atom_symbol(dst, "loaded-module-storage"),
-            atom_string(dst, module->display_name),
-            atom_symbol(dst, loaded_module_storage_name(module))
-        };
-        space_add(inventory, atom_expr(dst, storage_fact, 3));
+        if (!library_inventory_try_add_string_string_symbol_fact4(
+                inventory, "loaded-module", module->display_name,
+                module->canonical_path,
+                cetta_module_provider_name(module->provider_kind))) {
+            Atom *module_fact[4] = {
+                atom_symbol(dst, "loaded-module"),
+                atom_string(dst, module->display_name),
+                atom_string(dst, module->canonical_path),
+                atom_symbol(dst, cetta_module_provider_name(module->provider_kind))
+            };
+            library_inventory_add_fallback_atom(inventory, dst,
+                                                atom_expr(dst, module_fact, 4));
+        }
+        if (!library_inventory_try_add_string_symbol_symbol_fact4(
+                inventory, "loaded-module-format", module->display_name,
+                cetta_module_format_name(module->format.kind),
+                cetta_foreign_backend_name(module->format.foreign_backend))) {
+            Atom *format_fact[4] = {
+                atom_symbol(dst, "loaded-module-format"),
+                atom_string(dst, module->display_name),
+                atom_symbol(dst, cetta_module_format_name(module->format.kind)),
+                atom_symbol(dst, cetta_foreign_backend_name(module->format.foreign_backend))
+            };
+            library_inventory_add_fallback_atom(inventory, dst,
+                                                atom_expr(dst, format_fact, 4));
+        }
+        if (!library_inventory_try_add_string_symbol_fact3(
+                inventory, "loaded-module-storage", module->display_name,
+                loaded_module_storage_name(module))) {
+            Atom *storage_fact[3] = {
+                atom_symbol(dst, "loaded-module-storage"),
+                atom_string(dst, module->display_name),
+                atom_symbol(dst, loaded_module_storage_name(module))
+            };
+            library_inventory_add_fallback_atom(inventory, dst,
+                                                atom_expr(dst, storage_fact, 3));
+        }
         if (module->space) {
             Atom *space_fact[4] = {
                 atom_symbol(dst, "loaded-module-space"),
@@ -5636,6 +5976,8 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
                 atom_space(dst, module->space),
                 atom_symbol(dst, cetta_module_provider_name(module->provider_kind))
             };
+            /* atom_space is intentionally unstable and cannot enter the
+               canonical store as a byte-backed term. */
             space_add(inventory, atom_expr(dst, space_fact, 4));
         }
     }

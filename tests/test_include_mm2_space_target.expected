@@ -2,6 +2,7 @@
 [()]
 [()]
 [()]
+[((Error (include &plain mm2_exec_basic.mm2) (ModuleMm2LoadFailed "mm2_exec_basic.mm2" "generic import/include does not accept .mm2; use (mork:include! <MorkSpace> spec)")))]
 [()]
 [()]
 [()]

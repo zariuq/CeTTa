@@ -128,6 +128,8 @@ void space_init(Space *s);
 void space_free(Space *s);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
+void space_add_atom_id(Space *s, AtomId atom_id);
+bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
 void space_linearize(Space *s);
 Space *space_heap_clone_shallow(Space *src);
 void space_replace_contents(Space *dst, Space *src);
@@ -204,6 +206,8 @@ Space *resolve_space(Registry *r, Atom *ref);
 
 /* Remove an atom from a space (by structural equality). Returns true if found. */
 bool space_remove(Space *s, Atom *atom);
+bool space_contains_atom_id(const Space *s, AtomId atom_id);
+bool space_remove_atom_id(Space *s, AtomId atom_id);
 
 /* ── Match Indexing ─────────────────────────────────────────────────────── */
 
