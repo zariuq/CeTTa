@@ -345,15 +345,15 @@ void smset_free(SubstMatchSet *s) {
     s->cap = 0;
 }
 
-static void smset_push(SubstMatchSet *s, uint32_t atom_idx, uint32_t epoch, Bindings *b) {
+static void smset_push_move(SubstMatchSet *s, uint32_t atom_idx, uint32_t epoch,
+                            Bindings *b) {
     if (s->len >= s->cap) {
         s->cap = s->cap ? s->cap * 2 : 8;
         s->items = cetta_realloc(s->items, sizeof(SubstMatch) * s->cap);
     }
     s->items[s->len].atom_idx = atom_idx;
     s->items[s->len].epoch = epoch;
-    if (!bindings_clone(&s->items[s->len].bindings, b))
-        return;
+    bindings_move(&s->items[s->len].bindings, b);
     s->items[s->len].exact = false;
     s->len++;
 }
@@ -387,20 +387,22 @@ typedef struct {
 
 /* Forward declarations for mutual recursion */
 static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
-                         uint32_t idx, Bindings *b, Arena *a,
+                         uint32_t idx, BindingsBuilder *bb, Arena *a,
                          Atom **atoms, SubstMatchSet *out);
 static void st_flat_skip(SubstNode *node, uint32_t remaining,
                          FlatToken *flat, uint32_t nflat, uint32_t resume_idx,
-                         Bindings *b, Arena *a, Atom **atoms,
+                         BindingsBuilder *bb, Arena *a, Atom **atoms,
                          SubstMatchSet *out);
 
 /* Collect leaves: epoch-tag variable names, check occurs, push results */
-static void st_collect(SubstNode *node, Bindings *b, Arena *a,
+static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
                        Atom **atoms, SubstMatchSet *out) {
     (void)atoms;
+    (void)a;
+    const Bindings *current = bindings_builder_bindings(bb);
     for (uint32_t li = 0; li < node->nleaves; li++) {
         Bindings tagged;
-        if (!bindings_clone(&tagged, b))
+        if (!bindings_clone(&tagged, current))
             continue;
         uint32_t epoch = node->leaves[li].epoch;
         /* Epoch-tag indexed-side variable ids */
@@ -408,7 +410,7 @@ static void st_collect(SubstNode *node, Bindings *b, Arena *a,
             tagged.entries[bi].var_id = var_epoch_id(tagged.entries[bi].var_id, epoch);
         }
         if (!bindings_has_loop(&tagged))
-            smset_push(out, node->leaves[li].idx, epoch, &tagged);
+            smset_push_move(out, node->leaves[li].idx, epoch, &tagged);
         bindings_free(&tagged);
     }
 }
@@ -451,11 +453,11 @@ static uint32_t flatten_atom(Atom *a, FlatToken *buf, uint32_t pos) {
 /* Walk flat token sequence through the tree. idx = current position in flat[].
    When idx == nflat, we've matched the full query — collect leaves. */
 static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
-                         uint32_t idx, Bindings *b, Arena *a,
+                         uint32_t idx, BindingsBuilder *bb, Arena *a,
                          Atom **atoms, SubstMatchSet *out) {
     if (!node) return;
     if (idx == nflat) {
-        st_collect(node, b, a, atoms, out);
+        st_collect(node, bb, a, atoms, out);
         return;
     }
 
@@ -466,23 +468,23 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
         if (node->sym_hashed) {
             SubstNode *match = sym_ht_get(&node->sym_ht, tok->sym_id);
             if (match)
-                st_flat_walk(match, flat, nflat, idx+1, b, a, atoms, out);
+                st_flat_walk(match, flat, nflat, idx+1, bb, a, atoms, out);
         } else {
             for (uint32_t i = 0; i < node->nsym; i++)
                 if (node->sym[i].key == tok->sym_id)
                     st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
-                                 b, a, atoms, out);
+                                 bb, a, atoms, out);
         }
         /* Indexed variable matches query symbol */
         for (uint32_t i = 0; i < node->nvars; i++) {
-            Bindings b2;
-            if (!bindings_clone(&b2, b))
-                continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
-                                tok->original))
+            uint32_t mark = bindings_builder_save(bb);
+            if (bindings_builder_add_id_fresh(
+                    bb, node->vars[i].var_id, node->vars[i].spelling,
+                    tok->original)) {
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             &b2, a, atoms, out);
-            bindings_free(&b2);
+                             bb, a, atoms, out);
+            }
+            bindings_builder_rollback(bb, mark);
         }
         break;
 
@@ -495,22 +497,22 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
                 for (uint32_t i = 0; i < cap; i++)
                     if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
                         st_flat_walk(node->sym_ht.entries[i].child, flat, nflat, idx+1,
-                                     b, a, atoms, out);
+                                     bb, a, atoms, out);
             } else {
                 for (uint32_t i = 0; i < node->nsym; i++)
                     st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
-                                 b, a, atoms, out);
+                                 bb, a, atoms, out);
             }
             for (uint32_t i = 0; i < node->nvars; i++)
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             b, a, atoms, out);
+                             bb, a, atoms, out);
             for (uint32_t i = 0; i < node->nints; i++)
                 st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
-                             b, a, atoms, out);
+                             bb, a, atoms, out);
             /* Expression branches: skip arity MORE tokens after arity branch */
             for (uint32_t i = 0; i < node->nexpr; i++)
                 st_flat_skip(node->expr[i].child, node->expr[i].arity,
-                             flat, nflat, idx+1, b, a, atoms, out);
+                             flat, nflat, idx+1, bb, a, atoms, out);
         }
         break;
 
@@ -518,16 +520,16 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
         for (uint32_t i = 0; i < node->nints; i++)
             if (node->ints[i].val == tok->ival)
                 st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
-                             b, a, atoms, out);
+                             bb, a, atoms, out);
         for (uint32_t i = 0; i < node->nvars; i++) {
-            Bindings b2;
-            if (!bindings_clone(&b2, b))
-                continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
-                                tok->original))
+            uint32_t mark = bindings_builder_save(bb);
+            if (bindings_builder_add_id_fresh(
+                    bb, node->vars[i].var_id, node->vars[i].spelling,
+                    tok->original)) {
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             &b2, a, atoms, out);
-            bindings_free(&b2);
+                             bb, a, atoms, out);
+            }
+            bindings_builder_rollback(bb, mark);
         }
         break;
 
@@ -536,14 +538,13 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
         for (uint32_t i = 0; i < node->nexpr; i++)
             if (node->expr[i].arity == tok->arity)
                 st_flat_walk(node->expr[i].child, flat, nflat, idx+1,
-                             b, a, atoms, out);
+                             bb, a, atoms, out);
         /* Indexed variable matches query expression: bind it, skip the expression tokens */
         for (uint32_t i = 0; i < node->nvars; i++) {
-            Bindings b2;
-            if (!bindings_clone(&b2, b))
-                continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
-                                tok->original)) {
+            uint32_t mark = bindings_builder_save(bb);
+            if (bindings_builder_add_id_fresh(
+                    bb, node->vars[i].var_id, node->vars[i].spelling,
+                    tok->original)) {
                 /* Skip past all tokens of this expression */
                 uint32_t skip_end = idx + 1;
                 uint32_t depth = tok->arity;
@@ -553,23 +554,23 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
                     skip_end++;
                 }
                 st_flat_walk(node->vars[i].child, flat, nflat, skip_end,
-                             &b2, a, atoms, out);
+                             bb, a, atoms, out);
             }
-            bindings_free(&b2);
+            bindings_builder_rollback(bb, mark);
         }
         break;
 
     case FT_GROUNDED_OTHER:
         /* Treat as wildcard — match any indexed variable */
         for (uint32_t i = 0; i < node->nvars; i++) {
-            Bindings b2;
-            if (!bindings_clone(&b2, b))
-                continue;
-            if (bindings_add_id(&b2, node->vars[i].var_id, node->vars[i].spelling,
-                                tok->original))
+            uint32_t mark = bindings_builder_save(bb);
+            if (bindings_builder_add_id_fresh(
+                    bb, node->vars[i].var_id, node->vars[i].spelling,
+                    tok->original)) {
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             &b2, a, atoms, out);
-            bindings_free(&b2);
+                             bb, a, atoms, out);
+            }
+            bindings_builder_rollback(bb, mark);
         }
         break;
     }
@@ -578,11 +579,11 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
 /* Skip `remaining` indexed sub-terms in the flat walk, then resume */
 static void st_flat_skip(SubstNode *node, uint32_t remaining,
                          FlatToken *flat, uint32_t nflat, uint32_t resume_idx,
-                         Bindings *b, Arena *a, Atom **atoms,
+                         BindingsBuilder *bb, Arena *a, Atom **atoms,
                          SubstMatchSet *out) {
     if (!node) return;
     if (remaining == 0) {
-        st_flat_walk(node, flat, nflat, resume_idx, b, a, atoms, out);
+        st_flat_walk(node, flat, nflat, resume_idx, bb, a, atoms, out);
         return;
     }
     if (node->sym_hashed) {
@@ -590,21 +591,21 @@ static void st_flat_skip(SubstNode *node, uint32_t remaining,
         for (uint32_t i = 0; i < cap; i++)
             if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
                 st_flat_skip(node->sym_ht.entries[i].child, remaining - 1,
-                             flat, nflat, resume_idx, b, a, atoms, out);
+                             flat, nflat, resume_idx, bb, a, atoms, out);
     } else {
         for (uint32_t i = 0; i < node->nsym; i++)
             st_flat_skip(node->sym[i].child, remaining - 1,
-                         flat, nflat, resume_idx, b, a, atoms, out);
+                         flat, nflat, resume_idx, bb, a, atoms, out);
     }
     for (uint32_t i = 0; i < node->nvars; i++)
         st_flat_skip(node->vars[i].child, remaining - 1,
-                     flat, nflat, resume_idx, b, a, atoms, out);
+                     flat, nflat, resume_idx, bb, a, atoms, out);
     for (uint32_t i = 0; i < node->nints; i++)
         st_flat_skip(node->ints[i].child, remaining - 1,
-                     flat, nflat, resume_idx, b, a, atoms, out);
+                     flat, nflat, resume_idx, bb, a, atoms, out);
     for (uint32_t i = 0; i < node->nexpr; i++)
         st_flat_skip(node->expr[i].child, remaining - 1 + node->expr[i].arity,
-                     flat, nflat, resume_idx, b, a, atoms, out);
+                     flat, nflat, resume_idx, bb, a, atoms, out);
 }
 
 /* ── Bucket-level query ────────────────────────────────────────────────── */
@@ -614,8 +615,9 @@ void stree_query_bucket(SubstBucket *bucket, Arena *a, Atom *query,
     if (!bucket->root || bucket->count == 0) return;
     FlatToken flat[MAX_FLAT];
     uint32_t nflat = flatten_atom(query, flat, 0);
-    Bindings b;
-    bindings_init(&b);
-    st_flat_walk(bucket->root, flat, nflat, 0, &b, a, space_atoms, out);
-    bindings_free(&b);
+    BindingsBuilder bb;
+    if (!bindings_builder_init(&bb, NULL))
+        return;
+    st_flat_walk(bucket->root, flat, nflat, 0, &bb, a, space_atoms, out);
+    bindings_builder_free(&bb);
 }

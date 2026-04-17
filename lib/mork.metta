@@ -159,7 +159,7 @@
   (@return "Unit on success"))
 
 (@doc mork:dump!
-  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current unordered MorkSpace into a PathMap .act artifact at the given path. When mirrored row metadata is available, duplicate indexed copies are preserved through the ACT sidecar metadata; otherwise the export follows structural support.")
+  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current unordered MorkSpace into a PathMap .act artifact at the given path using structural multiplicities only; the old mirrored-row ACT sidecar path is no longer part of the bridge contract.")
   (@params (
     (@param "MorkSpace to compile into a .act artifact")
     (@param "Output ACT filename")))

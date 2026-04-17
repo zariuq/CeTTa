@@ -39,41 +39,28 @@ typedef struct {
 /*
 Primary storage/query surface:
 
-- mork_space_add_text()/mork_space_remove_text() are the current UTF-8
-  S-expression transport helpers.
+- mork_space_add_text()/mork_space_remove_text() are UTF-8 transport helpers.
 - mork_space_add_expr_bytes()/mork_space_remove_expr_bytes() accept one stable
   bridge expr-byte span directly and bypass UTF-8 parsing.
 - mork_space_add_expr_bytes_batch() accepts a packed length-prefixed sequence
   of stable bridge expr-byte spans and keeps bulk mutation on the same low ABI.
-- mork_space_add_indexed_text() mirrors a CeTTa row id for candidate replay.
-- mork_space_logical_size() reports duplicate-aware logical atom count when
-  row metadata is available.
 - mork_space_unique_size() reports unique structural support count.
-- mork_space_query_candidates_text() returns mirrored candidate row ids from
-  the current text transport; CeTTa then performs authoritative native
-  matching locally.
+- query traffic crosses the bridge as binding/debug packets, not mirrored row
+  ids or candidate-slot packets.
 
-Compatibility names are kept for existing callers:
+Compatibility names are kept only for text aliases:
 
 - mork_space_add_sexpr() == mork_space_add_text()
 - mork_space_remove_sexpr() == mork_space_remove_text()
-- mork_space_add_indexed_sexpr() == mork_space_add_indexed_text()
 - mork_space_size() == mork_space_unique_size()
-- mork_space_query_candidates() == mork_space_query_candidates_text()
-- mork_space_query_indices() == mork_space_query_candidates()
 
-Current limitation:
+Long-term direction:
 
-- raw add/remove without mirrored row metadata still collapse duplicates to
-  structural support for counting purposes
+- keep storage structural
+- keep query results semantic
+- add tighter structured query entry points only when they preserve that line
 
-Future direction:
-
-- the long-term public space API should grow structured prefix/skeleton query
-  entry points rather than treating UTF-8 query text as the final boundary
-
-Packet/debug exports below are compatibility or experimental surfaces. The
-preferred CeTTa query path is mork_space_query_candidates() plus native match.
+Packet/debug exports below are the durable public query seams.
 */
 
 /*
@@ -113,13 +100,8 @@ MorkStatus mork_space_add_expr_bytes_batch(MorkSpace *space,
 MorkStatus mork_space_remove_expr_bytes(MorkSpace *space,
                                         const uint8_t *expr_bytes,
                                         size_t len);
-MorkStatus mork_space_add_indexed_text(MorkSpace *space, uint32_t atom_idx,
-                                       const uint8_t *text, size_t len);
 MorkStatus mork_space_add_sexpr(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_remove_sexpr(MorkSpace *space, const uint8_t *text, size_t len);
-MorkStatus mork_space_add_indexed_sexpr(MorkSpace *space, uint32_t atom_idx,
-                                        const uint8_t *text, size_t len);
-MorkStatus mork_space_logical_size(const MorkSpace *space);
 MorkStatus mork_space_unique_size(const MorkSpace *space);
 MorkStatus mork_space_size(const MorkSpace *space);
 MorkStatus mork_space_step(MorkSpace *space, uint64_t steps);
@@ -127,43 +109,8 @@ MorkStatus mork_space_dump_act_file(MorkSpace *space, const uint8_t *path, size_
 MorkStatus mork_space_load_act_file(MorkSpace *space, const uint8_t *path, size_t len);
 MorkBuffer mork_space_dump(MorkSpace *space);
 
-/* Primary CeTTa hookup surface: one query returns a packed big-endian u32 list
-   of candidate atom indices already mirrored into the bridge. CeTTa then
-   re-runs its own authoritative matcher to construct bindings locally. */
-/* `mork_space_compile_query_expr_text()` is the bridge-owned adapter from the
-   current UTF-8 query surface to stable MORK query expr bytes. It exists so
-   CeTTa can exercise the structured candidate path without teaching generic
-   Atom code the MORK tag grammar directly. */
-MorkBuffer mork_space_compile_query_expr_text(MorkSpace *space,
-                                              const uint8_t *pattern,
-                                              size_t len);
-/* `mork_space_query_candidates_expr_bytes()` is the first structured sibling:
-   it accepts one already-encoded stable MORK query expression byte span and
-   bypasses UTF-8 parsing. Callers should pass the same wrapped query shape the
-   text compiler normalizes to today. The next tighter PathMap-facing ABI
-   should hang a prefix/skeleton candidate query off this stable expr-byte
-   vocabulary instead of returning to UTF-8 text packets. */
-/* `mork_space_query_candidates_prefix_expr_bytes()` is the first real
-   PathMap-style narrowing sibling: it expects the same wrapped query expr
-   bytes as the compiled-query path, derives factor-local stable prefixes
-   inside the bridge, and returns mirrored candidate rows from the most
-   selective factor prefix it can prove safely. When a factor has no proper
-   constant prefix, it degrades safely to the full factor span or root scan
-   rather than under-approximating. The current durable query contract remains
-   compiled expr bytes; future handles should only appear if this byte contract
-   becomes measurably too awkward or expensive. */
-MorkBuffer mork_space_query_candidates_prefix_expr_bytes(MorkSpace *space,
-                                                         const uint8_t *pattern_expr,
-                                                         size_t len);
-MorkBuffer mork_space_query_candidates_expr_bytes(MorkSpace *space,
-                                                  const uint8_t *pattern_expr,
-                                                  size_t len);
-MorkBuffer mork_space_query_candidates_text(MorkSpace *space, const uint8_t *pattern, size_t len);
-MorkBuffer mork_space_query_candidates(MorkSpace *space, const uint8_t *pattern, size_t len);
-MorkBuffer mork_space_query_indices(MorkSpace *space, const uint8_t *pattern, size_t len);
-
-/* Compatibility v1 text packet export. Prefer mork_space_query_candidates()
-   plus native matching for new CeTTa integration work. */
+/* Compatibility v1 text packet export. Prefer the v2/v3 raw-byte packet
+   surfaces for new CeTTa integration work. */
 MorkBuffer mork_space_query_bindings(MorkSpace *space, const uint8_t *pattern, size_t len);
 
 /*

@@ -9,16 +9,23 @@
 #include "parser.h"
 #include "space.h"
 #include "stats.h"
+#include "subst_tree.h"
 #include "symbol.h"
 
 static uint64_t g_test_counters[CETTA_RUNTIME_COUNTER_COUNT];
 static uint8_t g_fake_bridge_space_storage;
 static CettaMorkSpaceHandle *const g_fake_bridge_space =
     (CettaMorkSpaceHandle *)&g_fake_bridge_space_storage;
-static bool g_bridge_accept_indexed = false;
+static uint8_t g_fake_bridge_cursor_storage;
+static CettaMorkCursorHandle *const g_fake_bridge_cursor =
+    (CettaMorkCursorHandle *)&g_fake_bridge_cursor_storage;
+static bool g_bridge_accept_expr = false;
 static char *g_bridge_texts[8];
-static uint32_t g_bridge_indices[8];
 static uint32_t g_bridge_text_count = 0;
+static const uint8_t *g_bridge_value_bytes[8];
+static size_t g_bridge_value_lens[8];
+static uint32_t g_bridge_value_count = 0;
+static uint32_t g_bridge_cursor_pos = UINT32_MAX;
 
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
@@ -36,22 +43,29 @@ static uint64_t test_counter(CettaRuntimeCounter counter) {
     return g_test_counters[counter];
 }
 
+static void reset_term_universe_witnesses(TermUniverse *universe) {
+    reset_test_counters();
+    term_universe_diag_reset(universe);
+}
+
+static CettaTermUniverseDiagnostics
+snapshot_term_universe_witnesses(const TermUniverse *universe) {
+    CettaTermUniverseDiagnostics out;
+    term_universe_diag_snapshot(universe, &out);
+    return out;
+}
+
 static void reset_bridge_capture(void) {
     for (uint32_t i = 0; i < g_bridge_text_count; i++) {
         free(g_bridge_texts[i]);
         g_bridge_texts[i] = NULL;
     }
-    memset(g_bridge_indices, 0, sizeof(g_bridge_indices));
     g_bridge_text_count = 0;
-    g_bridge_accept_indexed = false;
-}
-
-static char *copy_cstr(const char *text) {
-    size_t len = strlen(text);
-    char *copy = malloc(len + 1);
-    assert(copy != NULL);
-    memcpy(copy, text, len + 1);
-    return copy;
+    g_bridge_accept_expr = false;
+    memset(g_bridge_value_bytes, 0, sizeof(g_bridge_value_bytes));
+    memset(g_bridge_value_lens, 0, sizeof(g_bridge_value_lens));
+    g_bridge_value_count = 0;
+    g_bridge_cursor_pos = UINT32_MAX;
 }
 
 Arena *eval_current_persistent_arena(void) {
@@ -79,19 +93,139 @@ void cetta_mork_bridge_space_free(CettaMorkSpaceHandle *space) {
 }
 
 bool cetta_mork_bridge_space_clear(CettaMorkSpaceHandle *space) {
-    return space == g_fake_bridge_space;
+    if (space != g_fake_bridge_space)
+        return false;
+    g_bridge_cursor_pos = UINT32_MAX;
+    return true;
 }
 
-bool cetta_mork_bridge_space_add_indexed_text(CettaMorkSpaceHandle *space,
-                                              uint32_t atom_idx,
-                                              const char *text) {
-    if (space != g_fake_bridge_space || !g_bridge_accept_indexed || !text)
+bool cetta_mm2_atom_to_bridge_expr_bytes(Arena *a, Atom *atom,
+                                         uint8_t **out_bytes,
+                                         size_t *out_len,
+                                         const char **out_error) {
+    (void)a;
+    (void)atom;
+    if (out_bytes)
+        *out_bytes = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_error)
+        *out_error = "bridge expr-byte encoder stub disabled in unit test";
+    return false;
+}
+
+bool cetta_mm2_atom_id_to_bridge_expr_bytes(Arena *a,
+                                            const TermUniverse *universe,
+                                            AtomId atom_id,
+                                            uint8_t **out_bytes,
+                                            size_t *out_len,
+                                            const char **out_error) {
+    (void)a;
+    (void)universe;
+    (void)atom_id;
+    if (out_bytes)
+        *out_bytes = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_error)
+        *out_error = "bridge expr-byte encoder stub disabled in unit test";
+    return false;
+}
+
+bool cetta_mork_bridge_space_add_text(CettaMorkSpaceHandle *space,
+                                      const char *text,
+                                      uint64_t *out_added) {
+    (void)space;
+    (void)text;
+    if (out_added)
+        *out_added = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
+                                            const uint8_t *expr_bytes,
+                                            size_t len,
+                                            uint64_t *out_added) {
+    if (out_added)
+        *out_added = 0;
+    if (space != g_fake_bridge_space || !g_bridge_accept_expr || !expr_bytes)
         return false;
     if (g_bridge_text_count < (uint32_t)(sizeof(g_bridge_texts) / sizeof(g_bridge_texts[0]))) {
-        g_bridge_texts[g_bridge_text_count] = copy_cstr(text);
-        g_bridge_indices[g_bridge_text_count] = atom_idx;
+        size_t text_len = len * 2u + 1u;
+        char *copy = malloc(text_len);
+        assert(copy != NULL);
+        for (size_t i = 0; i < len; i++)
+            snprintf(copy + i * 2u, 3u, "%02x", expr_bytes[i]);
+        g_bridge_texts[g_bridge_text_count] = copy;
         g_bridge_text_count++;
     }
+    if (out_added)
+        *out_added = 1;
+    return true;
+}
+
+bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
+                                                  const uint8_t *packet,
+                                                  size_t len,
+                                                  uint64_t *out_added) {
+    (void)space;
+    (void)packet;
+    (void)len;
+    if (out_added)
+        *out_added = 0;
+    return false;
+}
+
+CettaMorkCursorHandle *cetta_mork_bridge_cursor_new(
+    const CettaMorkSpaceHandle *space) {
+    if (space != g_fake_bridge_space)
+        return NULL;
+    g_bridge_cursor_pos = UINT32_MAX;
+    return g_fake_bridge_cursor;
+}
+
+void cetta_mork_bridge_cursor_free(CettaMorkCursorHandle *cursor) {
+    (void)cursor;
+}
+
+bool cetta_mork_bridge_cursor_next_val(CettaMorkCursorHandle *cursor,
+                                       bool *out_moved) {
+    if (out_moved)
+        *out_moved = false;
+    if (cursor != g_fake_bridge_cursor)
+        return false;
+    if (g_bridge_cursor_pos == UINT32_MAX)
+        g_bridge_cursor_pos = 0;
+    else
+        g_bridge_cursor_pos++;
+    if (g_bridge_cursor_pos >= g_bridge_value_count) {
+        if (out_moved)
+            *out_moved = false;
+        return true;
+    }
+    if (out_moved)
+        *out_moved = true;
+    return true;
+}
+
+bool cetta_mork_bridge_cursor_path_bytes(const CettaMorkCursorHandle *cursor,
+                                         uint8_t **out_bytes,
+                                         size_t *out_len) {
+    if (out_bytes)
+        *out_bytes = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (cursor != g_fake_bridge_cursor || g_bridge_cursor_pos >= g_bridge_value_count)
+        return false;
+    size_t len = g_bridge_value_lens[g_bridge_cursor_pos];
+    uint8_t *copy = malloc(len ? len : 1u);
+    assert(copy != NULL);
+    if (len)
+        memcpy(copy, g_bridge_value_bytes[g_bridge_cursor_pos], len);
+    if (out_bytes)
+        *out_bytes = copy;
+    if (out_len)
+        *out_len = len;
     return true;
 }
 
@@ -152,51 +286,6 @@ bool cetta_mork_bridge_space_load_act_file(CettaMorkSpaceHandle *space,
     (void)len;
     if (out_loaded)
         *out_loaded = 0;
-    return false;
-}
-
-bool cetta_mork_bridge_space_compile_query_expr_text(CettaMorkSpaceHandle *space,
-                                                     const char *pattern_text,
-                                                     uint8_t **out_expr,
-                                                     size_t *out_len) {
-    (void)space;
-    (void)pattern_text;
-    if (out_expr)
-        *out_expr = NULL;
-    if (out_len)
-        *out_len = 0;
-    return false;
-}
-
-bool cetta_mork_bridge_space_query_candidates_prefix_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count) {
-    (void)space;
-    (void)pattern_expr;
-    (void)len;
-    if (out_indices)
-        *out_indices = NULL;
-    if (out_count)
-        *out_count = 0;
-    return false;
-}
-
-bool cetta_mork_bridge_space_query_candidates_expr_bytes(
-    CettaMorkSpaceHandle *space,
-    const uint8_t *pattern_expr,
-    size_t len,
-    uint32_t **out_indices,
-    uint32_t *out_count) {
-    (void)space;
-    (void)pattern_expr;
-    (void)len;
-    if (out_indices)
-        *out_indices = NULL;
-    if (out_count)
-        *out_count = 0;
     return false;
 }
 
@@ -417,15 +506,10 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     space_add(&imported_space, say);
 
     reset_bridge_capture();
-    g_bridge_accept_indexed = true;
     reset_test_counters();
-    assert(space_match_backend_bridge_space(&imported_space, &bridge));
-    assert(bridge == g_fake_bridge_space);
-    assert(g_bridge_text_count == 2);
-    assert(g_bridge_indices[0] == 0);
-    assert(g_bridge_indices[1] == 1);
-    assert(strcmp(g_bridge_texts[0], "(:= (I foo) bar)") == 0);
-    assert(strcmp(g_bridge_texts[1], "(say \"line\\nbreak\")") == 0);
+    assert(!space_match_backend_bridge_space(&imported_space, &bridge));
+    assert(bridge == NULL);
+    assert(g_bridge_text_count == 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
 
     Atom *stable_add = expr2(scratch, sym(scratch, "later"), sym(scratch, "ok"));
@@ -434,23 +518,23 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     assert(tu_hdr(universe, stable_id) != NULL);
     assert(!space_match_backend_needs_atom_on_add(&imported_space, stable_id));
     reset_bridge_capture();
-    g_bridge_accept_indexed = true;
     reset_test_counters();
     space_add(&imported_space, stable_add);
-    assert(g_bridge_text_count == 1);
-    assert(g_bridge_indices[0] == 2);
-    assert(strcmp(g_bridge_texts[0], "(later ok)") == 0);
+    assert(g_bridge_text_count == 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
 
     Atom *top_string = atom_string(scratch, "solo");
     reset_bridge_capture();
-    g_bridge_accept_indexed = true;
     reset_test_counters();
     space_add(&imported_space, top_string);
-    assert(g_bridge_text_count == 1);
-    assert(g_bridge_indices[0] == 3);
-    assert(strcmp(g_bridge_texts[0], "\"solo\"") == 0);
+    assert(g_bridge_text_count == 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+
+    SubstMatchSet string_matches;
+    smset_init(&string_matches);
+    space_subst_query(&imported_space, scratch, top_string, &string_matches);
+    assert(string_matches.len == 1);
+    smset_free(&string_matches);
 
     Atom *unstable_add =
         expr2(scratch, sym(scratch, "wrap-space"), atom_space(scratch, &imported_space));
@@ -459,7 +543,79 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     assert(tu_hdr(universe, unstable_id) == NULL);
     assert(space_match_backend_needs_atom_on_add(&imported_space, unstable_id));
 
+    SubstMatchSet rule_matches;
+    smset_init(&rule_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, ":="),
+                            expr2(scratch, sym(scratch, "I"), sym(scratch, "foo")),
+                            var(scratch, "rhs", 7001)),
+                      &rule_matches);
+    assert(rule_matches.len == 1);
+    smset_free(&rule_matches);
+
     reset_bridge_capture();
+    assert(g_bridge_text_count == 0);
+    space_free(&imported_space);
+}
+
+static void test_imported_chunk_remove_direct_id_boundary(TermUniverse *universe,
+                                                          Arena *scratch) {
+    Space imported_space;
+    uint64_t added = 0;
+    uint64_t removed = 0;
+    const char *seed_text = "(keep a) (drop b)";
+    const char *remove_text = "(drop b)";
+
+    (void)scratch;
+    space_init_with_universe(&imported_space, universe);
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
+        printf("SKIP: PATHMAP unavailable in this build\n");
+        space_free(&imported_space);
+        return;
+    }
+
+    reset_term_universe_witnesses(universe);
+    assert(space_match_backend_load_sexpr_chunk(&imported_space, scratch,
+                                                (const uint8_t *)seed_text,
+                                                strlen(seed_text), &added));
+    assert(added == 2);
+    assert(space_length(&imported_space) == 2);
+    CettaTermUniverseDiagnostics add_diag =
+        snapshot_term_universe_witnesses(universe);
+    assert(add_diag.legacy_top_down_stable_admissions == 0);
+    assert(add_diag.lazy_decode_count == 0);
+    assert(add_diag.legacy_hash_recompute_count == 0);
+
+    reset_term_universe_witnesses(universe);
+    assert(space_match_backend_remove_sexpr_chunk(&imported_space, scratch,
+                                                  (const uint8_t *)remove_text,
+                                                  strlen(remove_text), &removed));
+    assert(removed == 1);
+    assert(space_length(&imported_space) == 1);
+    CettaTermUniverseDiagnostics remove_diag =
+        snapshot_term_universe_witnesses(universe);
+    assert(remove_diag.direct_constructor_leaf_hits > 0);
+    assert(remove_diag.direct_constructor_expr_hits > 0);
+    assert(remove_diag.legacy_top_down_stable_admissions == 0);
+    assert(remove_diag.lazy_decode_count == 0);
+    assert(remove_diag.legacy_hash_recompute_count == 0);
+
+    SubstMatchSet keep_matches;
+    smset_init(&keep_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr2(scratch, sym(scratch, "keep"), sym(scratch, "a")),
+                      &keep_matches);
+    assert(keep_matches.len == 1);
+    smset_free(&keep_matches);
+
+    SubstMatchSet drop_matches;
+    smset_init(&drop_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr2(scratch, sym(scratch, "drop"), sym(scratch, "b")),
+                      &drop_matches);
+    assert(drop_matches.len == 0);
+    smset_free(&drop_matches);
+
     space_free(&imported_space);
 }
 
@@ -508,15 +664,60 @@ static void test_byte_backed_rematch_delay(TermUniverse *universe, Arena *scratc
     space_free(&space);
 }
 
+static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
+    SubstBucket bucket;
+    SubstMatchSet matches;
+    Atom *query = expr3(scratch, sym(scratch, "pair"),
+                        sym(scratch, "A"), sym(scratch, "B"));
+
+    stree_bucket_init(&bucket);
+    smset_init(&matches);
+
+    stree_bucket_insert(
+        &bucket,
+        expr3(scratch, sym(scratch, "pair"),
+              var(scratch, "x", 4101), sym(scratch, "B")),
+        0);
+    stree_bucket_insert(
+        &bucket,
+        expr3(scratch, sym(scratch, "pair"),
+              var(scratch, "y", 4102), sym(scratch, "C")),
+        1);
+
+    reset_test_counters();
+    stree_query_bucket(&bucket, scratch, query, NULL, &matches);
+
+    assert(matches.len == 1);
+    assert(matches.items[0].atom_idx == 0);
+    assert(matches.items[0].bindings.len == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_BINDINGS_CLONE) == 1);
+    assert(atom_is_symbol_id(matches.items[0].bindings.entries[0].val,
+                             symbol_intern_cstr(g_symbols, "A")));
+
+    smset_free(&matches);
+    stree_bucket_free(&bucket);
+}
+
 static void test_parser_direct_add_boundary(TermUniverse *universe, Arena *scratch) {
     const char *stable_text = "(pair alpha 17) \"hello\" (ns.foo beta)";
     const char *var_text = "(pair $x $x)";
+    Arena persistent;
+    TermUniverse local_universe;
     AtomId *ids = NULL;
     AtomId *var_ids = NULL;
     Atom **atoms = NULL;
     Space space;
 
+    (void)universe;
+    arena_init(&persistent);
+    term_universe_init(&local_universe);
+    term_universe_set_persistent_arena(&local_universe, &persistent);
+    universe = &local_universe;
+
+    reset_term_universe_witnesses(universe);
     int n = parse_metta_text_ids(stable_text, universe, &ids);
+    CettaTermUniverseDiagnostics direct_diag =
+        snapshot_term_universe_witnesses(universe);
     assert(n == 3);
     assert(ids != NULL);
     assert(tu_kind(universe, ids[0]) == ATOM_EXPR);
@@ -524,24 +725,49 @@ static void test_parser_direct_add_boundary(TermUniverse *universe, Arena *scrat
     assert(tu_kind(universe, ids[2]) == ATOM_EXPR);
     assert(tu_head_sym(universe, ids[2]) ==
            symbol_intern_cstr(g_symbols, "ns:foo"));
+    assert(direct_diag.direct_constructor_leaf_hits > 0);
+    assert(direct_diag.direct_constructor_expr_hits > 0);
+    assert(direct_diag.legacy_top_down_stable_admissions == 0);
+    assert(direct_diag.direct_lookup_misses > 0);
+    assert(direct_diag.lazy_decode_count == 0);
+    assert(direct_diag.legacy_hash_recompute_count == 0);
 
     int legacy_n = parse_metta_text(stable_text, scratch, &atoms);
     assert(legacy_n == n);
+    term_universe_diag_reset(universe);
     for (int i = 0; i < n; i++) {
         assert(term_universe_store_atom_id(universe, NULL, atoms[i]) == ids[i]);
     }
+    CettaTermUniverseDiagnostics legacy_diag =
+        snapshot_term_universe_witnesses(universe);
     free(atoms);
+    assert(legacy_diag.direct_constructor_leaf_hits > 0);
+    assert(legacy_diag.direct_constructor_expr_hits > 0);
+    assert(legacy_diag.legacy_top_down_stable_admissions == 3);
+    assert(legacy_diag.direct_lookup_hits > 0);
+    assert(legacy_diag.direct_lookup_misses == 0);
+    assert(legacy_diag.lazy_decode_count == 0);
+    assert(legacy_diag.legacy_hash_recompute_count == 0);
 
     space_init_with_universe(&space, universe);
-    reset_test_counters();
+    reset_term_universe_witnesses(universe);
     for (int i = 0; i < n; i++) {
         space_add_atom_id(&space, ids[i]);
     }
+    CettaTermUniverseDiagnostics add_diag =
+        snapshot_term_universe_witnesses(universe);
     assert(space_length(&space) == (uint32_t)n);
     assert(space_get_atom_id_at(&space, 0) == ids[0]);
     assert(space_get_atom_id_at(&space, 1) == ids[1]);
     assert(space_get_atom_id_at(&space, 2) == ids[2]);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+    assert(add_diag.direct_constructor_leaf_hits == 0);
+    assert(add_diag.direct_constructor_expr_hits == 0);
+    assert(add_diag.legacy_top_down_stable_admissions == 0);
+    assert(add_diag.direct_lookup_hits == 0);
+    assert(add_diag.direct_lookup_misses == 0);
+    assert(add_diag.lazy_decode_count == 0);
+    assert(add_diag.legacy_hash_recompute_count == 0);
     space_free(&space);
     free(ids);
 
@@ -552,6 +778,156 @@ static void test_parser_direct_add_boundary(TermUniverse *universe, Arena *scrat
     assert(tu_child(universe, var_ids[0], 1) ==
            tu_child(universe, var_ids[0], 2));
     free(var_ids);
+
+    term_universe_free(universe);
+    arena_free(&persistent);
+}
+
+static void test_bridge_structural_import_boundary(TermUniverse *universe,
+                                                   Arena *scratch) {
+    static const uint8_t pair_a_17[] = {
+        3u,
+        0xC4u, 'p', 'a', 'i', 'r',
+        0xC1u, 'A',
+        0xC2u, '1', '7',
+    };
+    static const uint8_t solo_string[] = {
+        0xC6u, '"', 's', 'o', 'l', 'o', '"',
+    };
+    static const uint8_t pair_same_var[] = {
+        3u,
+        0xC4u, 'p', 'a', 'i', 'r',
+        0xC0u,
+        0x80u,
+    };
+    Space imported_space;
+    uint64_t loaded = 0;
+
+    (void)scratch;
+    space_init_with_universe(&imported_space, universe);
+
+    reset_bridge_capture();
+    g_bridge_value_bytes[0] = pair_a_17;
+    g_bridge_value_lens[0] = sizeof(pair_a_17);
+    g_bridge_value_bytes[1] = solo_string;
+    g_bridge_value_lens[1] = sizeof(solo_string);
+    g_bridge_value_count = 2;
+    reset_term_universe_witnesses(universe);
+    assert(space_match_backend_import_bridge_space(
+               &imported_space, g_fake_bridge_space, &loaded) ==
+           SPACE_BRIDGE_IMPORT_OK);
+    assert(loaded == 2);
+    assert(space_length(&imported_space) == 2);
+    CettaTermUniverseDiagnostics import_diag =
+        snapshot_term_universe_witnesses(universe);
+    assert(import_diag.direct_constructor_leaf_hits > 0);
+    assert(import_diag.direct_constructor_expr_hits > 0);
+    assert(import_diag.legacy_top_down_stable_admissions == 0);
+    assert(import_diag.lazy_decode_count == 0);
+    assert(import_diag.legacy_hash_recompute_count == 0);
+
+    SubstMatchSet pair_matches;
+    smset_init(&pair_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, "pair"),
+                            sym(scratch, "A"), atom_int(scratch, 17)),
+                      &pair_matches);
+    assert(pair_matches.len == 1);
+    smset_free(&pair_matches);
+
+    SubstMatchSet string_matches;
+    smset_init(&string_matches);
+    space_subst_query(&imported_space, scratch, atom_string(scratch, "solo"),
+                      &string_matches);
+    assert(string_matches.len == 1);
+    smset_free(&string_matches);
+
+    reset_bridge_capture();
+    g_bridge_value_bytes[0] = pair_same_var;
+    g_bridge_value_lens[0] = sizeof(pair_same_var);
+    g_bridge_value_count = 1;
+    loaded = 1234;
+    assert(space_match_backend_import_bridge_space(
+               &imported_space, g_fake_bridge_space, &loaded) ==
+           SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK);
+    assert(loaded == 0);
+    assert(space_length(&imported_space) == 2);
+
+    space_free(&imported_space);
+}
+
+static void test_pathmap_no_universe_import_boundary(void) {
+    static const uint8_t pair_a_17[] = {
+        3u,
+        0xC4u, 'p', 'a', 'i', 'r',
+        0xC1u, 'A',
+        0xC2u, '1', '7',
+    };
+    Space imported_space;
+    uint64_t loaded = 1234;
+
+    space_init(&imported_space);
+    imported_space.universe = NULL;
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
+        printf("SKIP: PATHMAP unavailable in this build\n");
+        space_free(&imported_space);
+        return;
+    }
+
+    reset_bridge_capture();
+    g_bridge_value_bytes[0] = pair_a_17;
+    g_bridge_value_lens[0] = sizeof(pair_a_17);
+    g_bridge_value_count = 1;
+    assert(space_match_backend_import_bridge_space(
+               &imported_space, g_fake_bridge_space, &loaded) ==
+           SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK);
+    assert(loaded == 0);
+    assert(space_length(&imported_space) == 0);
+
+    space_free(&imported_space);
+}
+
+static void test_space_clone_direct_id_boundary(TermUniverse *universe, Arena *scratch) {
+    Space source;
+    Space *clone = NULL;
+    AtomId before_ids[3];
+
+    space_init_with_universe(&source, universe);
+    reset_term_universe_witnesses(universe);
+    space_add(&source, expr2(scratch, sym(scratch, "clone"), sym(scratch, "alpha")));
+    space_add(&source, atom_string(scratch, "beta"));
+    space_add(&source, expr3(scratch, sym(scratch, "pair"),
+                             sym(scratch, "left"), sym(scratch, "right")));
+    before_ids[0] = space_get_atom_id_at(&source, 0);
+    before_ids[1] = space_get_atom_id_at(&source, 1);
+    before_ids[2] = space_get_atom_id_at(&source, 2);
+    assert(before_ids[0] != CETTA_ATOM_ID_NONE);
+    assert(before_ids[1] != CETTA_ATOM_ID_NONE);
+    assert(before_ids[2] != CETTA_ATOM_ID_NONE);
+
+    reset_term_universe_witnesses(universe);
+    clone = space_heap_clone_shallow(&source);
+    assert(clone != NULL);
+    assert(clone->universe == universe);
+    assert(space_length(clone) == 3);
+    assert(space_get_atom_id_at(clone, 0) == before_ids[0]);
+    assert(space_get_atom_id_at(clone, 1) == before_ids[1]);
+    assert(space_get_atom_id_at(clone, 2) == before_ids[2]);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+
+    CettaTermUniverseDiagnostics diag =
+        snapshot_term_universe_witnesses(universe);
+    assert(diag.direct_constructor_leaf_hits == 0);
+    assert(diag.direct_constructor_expr_hits == 0);
+    assert(diag.legacy_top_down_stable_admissions == 0);
+    assert(diag.direct_lookup_hits == 0);
+    assert(diag.direct_lookup_misses == 0);
+    assert(diag.lazy_decode_count == 0);
+    assert(diag.legacy_hash_recompute_count == 0);
+
+    space_free(clone);
+    free(clone);
+    space_free(&source);
 }
 
 int main(void) {
@@ -569,8 +945,13 @@ int main(void) {
     test_native_add_boundary(&universe, &scratch);
     test_imported_flat_add_boundary(&universe, &scratch);
     test_imported_bridge_add_boundary(&universe, &scratch);
+    test_imported_chunk_remove_direct_id_boundary(&universe, &scratch);
     test_byte_backed_rematch_delay(&universe, &scratch);
+    test_subst_tree_live_branch_builder_witness(&scratch);
     test_parser_direct_add_boundary(&universe, &scratch);
+    test_bridge_structural_import_boundary(&universe, &scratch);
+    test_pathmap_no_universe_import_boundary();
+    test_space_clone_direct_id_boundary(&universe, &scratch);
 
     term_universe_free(&universe);
     reset_bridge_capture();

@@ -29,7 +29,7 @@
   (ok))
 !(assertEqualToResult
   (match &mods
-    (loaded-module-storage "runtime:test_module_inventory_act_registered_root" attached-compiled)
+    (loaded-module-storage "runtime:test_module_inventory_act_registered_root" materialized)
     ok)
   (ok))
 !(assertEqualToResult

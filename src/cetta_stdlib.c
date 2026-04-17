@@ -224,6 +224,54 @@ typedef struct {
     uint32_t strtab_bytes;
 } BlobReader;
 
+typedef struct {
+    SymbolId *spellings;
+    VarId *ids;
+    uint32_t len;
+    uint32_t cap;
+} BlobVarScope;
+
+static void blob_var_scope_init(BlobVarScope *scope) {
+    if (!scope)
+        return;
+    scope->spellings = NULL;
+    scope->ids = NULL;
+    scope->len = 0;
+    scope->cap = 0;
+}
+
+static void blob_var_scope_free(BlobVarScope *scope) {
+    if (!scope)
+        return;
+    free(scope->spellings);
+    free(scope->ids);
+    scope->spellings = NULL;
+    scope->ids = NULL;
+    scope->len = 0;
+    scope->cap = 0;
+}
+
+static VarId blob_var_scope_id(BlobVarScope *scope, SymbolId spelling) {
+    if (!scope)
+        return fresh_var_id();
+    for (uint32_t i = 0; i < scope->len; i++) {
+        if (scope->spellings[i] == spelling)
+            return scope->ids[i];
+    }
+    if (scope->len == scope->cap) {
+        uint32_t next_cap = scope->cap ? scope->cap * 2 : 16;
+        scope->spellings =
+            cetta_realloc(scope->spellings, sizeof(SymbolId) * next_cap);
+        scope->ids = cetta_realloc(scope->ids, sizeof(VarId) * next_cap);
+        scope->cap = next_cap;
+    }
+    VarId id = fresh_var_id();
+    scope->spellings[scope->len] = spelling;
+    scope->ids[scope->len] = id;
+    scope->len++;
+    return id;
+}
+
 static uint8_t  rd_u8(BlobReader *r)  { return (r->pos < r->len) ? r->data[r->pos++] : 0; }
 static uint16_t rd_u16(BlobReader *r) {
     uint16_t v = 0;
@@ -252,11 +300,59 @@ static const char *rd_str(BlobReader *r, uint16_t offset) {
     return "";
 }
 
-static Atom *deserialize_atom(BlobReader *r, Arena *a) {
+static AtomId deserialize_atom_id_scoped(BlobReader *r, TermUniverse *universe,
+                                         BlobVarScope *scope) {
+    if (!r || !universe)
+        return CETTA_ATOM_ID_NONE;
+    uint8_t tag = rd_u8(r);
+    switch (tag) {
+    case BLOB_TAG_SYMBOL: {
+        SymbolId spelling = symbol_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
+        return tu_intern_symbol(universe, spelling);
+    }
+    case BLOB_TAG_VAR: {
+        SymbolId spelling = symbol_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
+        VarId var_id = blob_var_scope_id(scope, spelling);
+        return tu_intern_var(universe, spelling, var_id);
+    }
+    case BLOB_TAG_INT:
+        return tu_intern_int(universe, rd_i64(r));
+    case BLOB_TAG_FLOAT:
+        return tu_intern_float(universe, rd_f64(r));
+    case BLOB_TAG_BOOL:
+        return tu_intern_bool(universe, rd_u8(r) != 0);
+    case BLOB_TAG_STRING:
+        return tu_intern_string(universe, rd_str(r, rd_u16(r)));
+    case BLOB_TAG_EXPR: {
+        uint16_t count = rd_u16(r);
+        AtomId *child_ids = cetta_malloc(sizeof(AtomId) * count);
+        AtomId expr_id = CETTA_ATOM_ID_NONE;
+        for (uint16_t i = 0; i < count; i++) {
+            child_ids[i] = deserialize_atom_id_scoped(r, universe, scope);
+            if (child_ids[i] == CETTA_ATOM_ID_NONE)
+                goto cleanup;
+        }
+        expr_id = tu_expr_from_ids(universe, child_ids, count);
+cleanup:
+        free(child_ids);
+        return expr_id;
+    }
+    default:
+        fprintf(stderr, "stdlib_load: unknown blob tag 0x%02x at offset %u\n", tag, r->pos - 1);
+        return CETTA_ATOM_ID_NONE;
+    }
+}
+
+static Atom *deserialize_atom_scoped(BlobReader *r, Arena *a,
+                                     BlobVarScope *scope) {
     uint8_t tag = rd_u8(r);
     switch (tag) {
     case BLOB_TAG_SYMBOL: return atom_symbol(a, rd_str(r, rd_u16(r)));
-    case BLOB_TAG_VAR:    return atom_var(a, rd_str(r, rd_u16(r)));
+    case BLOB_TAG_VAR: {
+        SymbolId spelling = symbol_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
+        VarId id = blob_var_scope_id(scope, spelling);
+        return atom_var_with_spelling(a, spelling, id);
+    }
     case BLOB_TAG_INT:    return atom_int(a, rd_i64(r));
     case BLOB_TAG_FLOAT:  return atom_float(a, rd_f64(r));
     case BLOB_TAG_BOOL:   return atom_bool(a, rd_u8(r) != 0);
@@ -265,7 +361,7 @@ static Atom *deserialize_atom(BlobReader *r, Arena *a) {
         uint16_t count = rd_u16(r);
         Atom **elems = arena_alloc(a, sizeof(Atom *) * count);
         for (uint16_t i = 0; i < count; i++)
-            elems[i] = deserialize_atom(r, a);
+            elems[i] = deserialize_atom_scoped(r, a, scope);
         return atom_expr(a, elems, count);
     }
     default:
@@ -274,18 +370,24 @@ static Atom *deserialize_atom(BlobReader *r, Arena *a) {
     }
 }
 
-void stdlib_load(Space *s, Arena *a) {
-    if (STDLIB_BLOB_LEN < 12) return;
+static bool stdlib_load_blob_internal(Space *s, Arena *a,
+                                      const unsigned char *blob,
+                                      uint32_t blob_len) {
+    if (!blob || blob_len < 12)
+        return false;
 
-    BlobReader r;
-    r.data = STDLIB_BLOB;
-    r.len = STDLIB_BLOB_LEN;
-    r.pos = 0;
+    BlobReader r = {
+        .data = blob,
+        .len = blob_len,
+        .pos = 0,
+        .strtab = NULL,
+        .strtab_bytes = 0,
+    };
 
     /* Verify magic */
     if (r.data[0] != 'C' || r.data[1] != 'S' || r.data[2] != 'T' || r.data[3] != 'D') {
         fprintf(stderr, "stdlib_load: bad magic\n");
-        return;
+        return false;
     }
     r.pos = 4;
 
@@ -303,10 +405,49 @@ void stdlib_load(Space *s, Arena *a) {
 
     /* Atoms */
     uint16_t num_atoms = rd_u16(&r);
-    for (uint16_t i = 0; i < num_atoms; i++) {
-        Atom *atom = deserialize_atom(&r, a);
-        space_add(s, atom);
+    if (s && s->universe) {
+        BlobReader direct = r;
+        bool direct_ok = true;
+        AtomId *atom_ids = cetta_malloc(sizeof(AtomId) * num_atoms);
+        for (uint16_t i = 0; i < num_atoms; i++) {
+            BlobVarScope scope;
+            blob_var_scope_init(&scope);
+            atom_ids[i] = deserialize_atom_id_scoped(&direct, s->universe,
+                                                     &scope);
+            blob_var_scope_free(&scope);
+            if (atom_ids[i] == CETTA_ATOM_ID_NONE) {
+                direct_ok = false;
+                break;
+            }
+        }
+        if (direct_ok) {
+            for (uint16_t i = 0; i < num_atoms; i++)
+                space_add_atom_id(s, atom_ids[i]);
+            free(atom_ids);
+            return true;
+        }
+        free(atom_ids);
     }
+    for (uint16_t i = 0; i < num_atoms; i++) {
+        BlobVarScope scope;
+        blob_var_scope_init(&scope);
+        Atom *atom = deserialize_atom_scoped(&r, a, &scope);
+        blob_var_scope_free(&scope);
+        if (!space_admit_atom(s, a, atom))
+            space_add(s, atom);
+    }
+    return true;
 }
+
+void stdlib_load(Space *s, Arena *a) {
+    (void)stdlib_load_blob_internal(s, a, STDLIB_BLOB, STDLIB_BLOB_LEN);
+}
+
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
+bool stdlib_load_blob_bytes(Space *s, Arena *a, const unsigned char *data,
+                            uint32_t len) {
+    return stdlib_load_blob_internal(s, a, data, len);
+}
+#endif
 
 #endif /* !CETTA_NO_STDLIB */

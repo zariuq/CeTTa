@@ -151,8 +151,8 @@ static Atom *mork_space_surface_error(Arena *a, Atom *call,
                                       const char *explicit_surface) {
     char buf[256];
     snprintf(buf, sizeof(buf),
-             "deprecated generic MORK-backed spaces require explicit %s; generic %s is disabled unless you enable (pragma! mork-space-sugar allow)",
-             explicit_surface, surface);
+             "generic %s does not operate on MorkSpace unless you enable (pragma! mork-space-sugar allow); use explicit %s",
+             surface, explicit_surface);
     return atom_error(a, call, atom_string(a, buf));
 }
 
@@ -497,8 +497,7 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
     Atom **args = arena_alloc(a, sizeof(Atom *) * nargs);
     for (uint32_t i = 0; i < nargs; i++) {
         Atom *arg = atom->expr.elems[i + 1];
-        if (prefix && prefix->len != 0)
-            arg = bindings_apply((Bindings *)prefix, a, arg);
+        arg = bindings_apply_if_vars(prefix, a, arg);
         Atom *resolved = registry_lookup_atom(arg);
         args[i] = materialize_runtime_token(s, a, resolved ? resolved : arg);
         if (atom_is_empty(args[i]) || atom_is_error(args[i]) ||
@@ -559,8 +558,8 @@ static Atom *outcome_atom_materialize(Arena *a, Outcome *out) {
         } else {
             materialized = variant_instance_materialize(a, materialized, &out->variant);
         }
-    } else if (out->env.len > 0 && atom_contains_vars(materialized)) {
-        materialized = bindings_apply(&out->env, a, materialized);
+    } else if (out->env.len > 0) {
+        materialized = bindings_apply_if_vars(&out->env, a, materialized);
     }
     out->materialized_atom = materialized;
     return materialized;
@@ -733,27 +732,60 @@ static void outcome_set_add_with_variant(OutcomeSet *os, Atom *atom,
     outcome_refresh_materialized_fast_path(slot);
 }
 
+static inline bool bindings_has_value_entries(const Bindings *env) {
+    return env && env->len > 0;
+}
+
+static inline bool bindings_has_any_entries(const Bindings *env) {
+    return env && (env->len > 0 || env->eq_len > 0);
+}
+
+static bool bindings_effective_merge(Bindings *owned,
+                                     const Bindings **effective,
+                                     const Bindings *outer_env,
+                                     const Bindings *inner_env,
+                                     bool include_constraints) {
+    bool outer_nonempty = include_constraints
+        ? bindings_has_any_entries(outer_env)
+        : bindings_has_value_entries(outer_env);
+    bool inner_nonempty = include_constraints
+        ? bindings_has_any_entries(inner_env)
+        : bindings_has_value_entries(inner_env);
+
+    bindings_init(owned);
+    if (!outer_nonempty) {
+        *effective = inner_nonempty ? inner_env : NULL;
+        return true;
+    }
+    if (!inner_nonempty) {
+        *effective = outer_env;
+        return true;
+    }
+    if (!bindings_try_merge_live(owned, outer_env) ||
+        !bindings_try_merge_live(owned, inner_env)) {
+        bindings_free(owned);
+        *effective = NULL;
+        return false;
+    }
+    *effective = owned;
+    return true;
+}
+
 static Atom *outcome_materialize_with_outer_env(Arena *a, const Outcome *src,
                                                 const Bindings *outer_env) {
     Atom *materialized = src->atom;
+    Bindings merged;
+    const Bindings *effective = NULL;
     bindings_assert_no_private_variant_slots(&src->env);
     bindings_assert_no_private_variant_slots(outer_env);
     if (variant_instance_present(&src->variant))
         return NULL;
-    if ((outer_env && outer_env->len > 0) || src->env.len > 0) {
-        if (outer_env && outer_env->len > 0 && src->env.len > 0) {
-            Bindings merged;
-            if (!bindings_clone_merge(&merged, outer_env, &src->env))
-                return NULL;
-            materialized = bindings_apply(&merged, a, materialized);
-            bindings_free(&merged);
-        } else {
-            Bindings *single = (Bindings *)((outer_env && outer_env->len > 0)
-                ? outer_env
-                : &src->env);
-            materialized = bindings_apply(single, a, materialized);
-        }
-    }
+    if (!bindings_effective_merge(&merged, &effective, outer_env, &src->env, false))
+        return NULL;
+    if (effective)
+        materialized = bindings_apply_if_vars(effective, a, materialized);
+    if (effective == &merged)
+        bindings_free(&merged);
     return materialized;
 }
 
@@ -762,24 +794,13 @@ static bool outcome_set_add_compacted_variant(Arena *a, OutcomeSet *os,
                                               const Bindings *outer_env) {
     Outcome *slot;
     Bindings merged;
-    Bindings *effective = NULL;
+    const Bindings *effective = NULL;
 
     if (!variant_instance_present(&src->variant))
         return false;
 
-    bindings_init(&merged);
-    if ((outer_env && (outer_env->len > 0 || outer_env->eq_len > 0)) &&
-        (src->env.len > 0 || src->env.eq_len > 0)) {
-        if (!bindings_clone_merge(&merged, outer_env, &src->env)) {
-            bindings_free(&merged);
-            return false;
-        }
-        effective = &merged;
-    } else if (outer_env && (outer_env->len > 0 || outer_env->eq_len > 0)) {
-        effective = (Bindings *)outer_env;
-    } else if (src->env.len > 0 || src->env.eq_len > 0) {
-        effective = (Bindings *)&src->env;
-    }
+    if (!bindings_effective_merge(&merged, &effective, outer_env, &src->env, true))
+        return false;
 
     slot = outcome_set_push_slot(os);
     outcome_init(slot);
@@ -787,19 +808,22 @@ static bool outcome_set_add_compacted_variant(Arena *a, OutcomeSet *os,
     if (effective) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_PREFIX_COMPACT);
         if (!variant_instance_sink_env(a, &slot->variant, &src->variant, effective)) {
-            bindings_free(&merged);
+            if (effective == &merged)
+                bindings_free(&merged);
             outcome_free_fields(slot);
             os->len--;
             return false;
         }
     } else if (!variant_instance_clone(&slot->variant, &src->variant)) {
-        bindings_free(&merged);
+        if (effective == &merged)
+            bindings_free(&merged);
         outcome_free_fields(slot);
         os->len--;
         return false;
     }
     outcome_refresh_materialized_fast_path(slot);
-    bindings_free(&merged);
+    if (effective == &merged)
+        bindings_free(&merged);
     return true;
 }
 
@@ -822,15 +846,18 @@ static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
         outcome_set_add(os, applied, &empty);
         return;
     }
-    if (!outer_env || outer_env->len == 0) {
+    if (!bindings_has_any_entries(outer_env)) {
         outcome_set_add_existing(os, src);
         return;
     }
     Bindings merged;
-    if (!bindings_clone_merge(&merged, outer_env, &src->env))
+    const Bindings *effective = NULL;
+    if (!bindings_effective_merge(&merged, &effective, outer_env, &src->env, true) ||
+        !effective)
         return;
-    outcome_set_add_existing_with_env(os, src, &merged);
-    bindings_free(&merged);
+    outcome_set_add_existing_with_env(os, src, effective);
+    if (effective == &merged)
+        bindings_free(&merged);
 }
 
 static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
@@ -2320,8 +2347,8 @@ bindings_apply_without_self(Bindings *full, Arena *a,
         break;
     }
     Atom *resolved = removed
-        ? bindings_apply(&reduced, a, value)
-        : bindings_apply(full, a, value);
+        ? bindings_apply_if_vars(&reduced, a, value)
+        : bindings_apply_if_vars(full, a, value);
     bindings_free(&reduced);
     return resolved;
 }
@@ -2338,7 +2365,7 @@ bindings_resolve_body_visible_var(Arena *a, const Bindings *full,
 
     Atom *slot_var =
         atom_var_with_spelling(a, wanted->spelling, wanted->var_id);
-    Atom *resolved = bindings_apply((Bindings *)full, a, slot_var);
+    Atom *resolved = bindings_apply_if_vars(full, a, slot_var);
     if (resolved != slot_var)
         return resolved;
 
@@ -2457,8 +2484,11 @@ bindings_builder_merge_or_clone(BindingsBuilder *builder,
         return true;
     }
     bindings_builder_rollback(builder, attempt->mark);
-    if (!bindings_clone_merge(&attempt->owned, base, extra))
+    if (!bindings_try_merge_live(&attempt->owned, base) ||
+        !bindings_try_merge_live(&attempt->owned, extra)) {
+        bindings_free(&attempt->owned);
         return false;
+    }
     attempt->env = &attempt->owned;
     return true;
 }
@@ -2821,7 +2851,7 @@ static bool direct_outcome_walk_mork_row(const Bindings *bindings, void *ctx) {
 
     Bindings empty;
     bindings_init(&empty);
-    Atom *row = bindings_apply((Bindings *)bindings, mork->arena, mork->templ);
+    Atom *row = bindings_apply_if_vars(bindings, mork->arena, mork->templ);
     OutcomeSet inner;
     outcome_set_init(&inner);
     eval_for_caller(mork->space, mork->arena, NULL, row, mork->fuel,
@@ -3447,7 +3477,7 @@ static bool emit_mork_add_atoms_from_stream_source(Space *s, Arena *a,
         arena_set_hashcons(&ctx.scratch, a->hashcons);
     Atom *applied_stream = (!current_env || current_env->len == 0)
         ? stream_source
-        : bindings_apply((Bindings *)current_env, a, stream_source);
+        : bindings_apply_if_vars(current_env, a, stream_source);
     metta_eval(s, a, NULL, applied_stream, fuel, &stream_items);
     uint64_t eval_finished_ns = ctx.emit_timing ? eval_monotonic_ns() : 0;
     if (ctx.emit_timing && eval_finished_ns >= eval_started_ns) {
@@ -3573,8 +3603,15 @@ static Space *space_persistent_clone(Space *src, Arena *dst) {
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
     for (uint32_t i = 0; i < space_length(src); i++) {
-        Atom *stored = space_store_atom(clone, dst, space_get_at(src, i));
-        space_add(clone, stored);
+        AtomId atom_id = space_get_atom_id_at(src, i);
+        if (atom_id != CETTA_ATOM_ID_NONE) {
+            space_add_atom_id(clone, atom_id);
+            continue;
+        }
+        if (!space_admit_atom(clone, dst, space_get_at(src, i))) {
+            Atom *stored = space_store_atom(clone, dst, space_get_at(src, i));
+            space_add(clone, stored);
+        }
     }
     return clone;
 }
@@ -3777,7 +3814,7 @@ static Space *space_snapshot_clone(Space *src, Arena *a) {
 static Atom *runtime_stats_inventory_atom(Arena *a) {
     Space *inventory = cetta_malloc(sizeof(Space));
     CettaRuntimeStats stats;
-    space_init(inventory);
+    space_init_with_universe(inventory, eval_current_term_universe());
     temp_space_register(inventory);
     cetta_runtime_stats_snapshot(&stats);
     cetta_runtime_stats_populate_space(inventory, a, &stats);
@@ -3834,7 +3871,7 @@ static Atom *function_domain_type(Bindings *env, Arena *a, Atom *domain, Atom **
     Atom *body = domain;
     split_dependent_domain(domain, &binder, &body);
     if (binder_out) *binder_out = binder;
-    return bindings_apply(env, a, body);
+    return bindings_apply_if_vars(env, a, body);
 }
 
 static __attribute__((unused)) bool
@@ -3900,7 +3937,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
         }
 
         ArenaMark scratch_mark = arena_mark(&scratch);
-        Atom *fresh_ft = rename_vars(&scratch, ft, fresh_var_suffix());
+        Atom *fresh_ft = atom_freshen_epoch(&scratch, ft, fresh_var_suffix());
         Atom *fresh_ret = get_function_ret_type(fresh_ft);
         Bindings tb;
         bindings_init(&tb);
@@ -3928,9 +3965,10 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
                 ChoicePoint point = search_context_save(&trial_context);
                 if (match_types_builder(decl, atypes[ti],
                                         search_context_builder(&trial_context))) {
-                    Atom *arg_term = bindings_apply((Bindings *)search_context_bindings(&trial_context),
-                                                    search_context_scratch(&trial_context),
-                                                    atom->expr.elems[ai + 1]);
+                    Atom *arg_term =
+                        bindings_apply_if_vars(search_context_bindings(&trial_context),
+                                               search_context_scratch(&trial_context),
+                                               atom->expr.elems[ai + 1]);
                     if (bind_domain_binder_builder(search_context_builder(&trial_context),
                                                   fresh_ft->expr.elems[ai + 1],
                                                   arg_term)) {
@@ -3953,7 +3991,8 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
 
         if (all_ok) {
             Atom *concrete_ret =
-                normalize_type_expr_profiled(&scratch, bindings_apply(&tb, &scratch, fresh_ret));
+                normalize_type_expr_profiled(&scratch,
+                                             bindings_apply_if_vars(&tb, &scratch, fresh_ret));
             types = types ? cetta_realloc(types, sizeof(Atom *) * (count + 1))
                           : cetta_malloc(sizeof(Atom *));
             types[count++] = atom_deep_copy(a, concrete_ret);
@@ -4056,28 +4095,25 @@ static bool check_function_applicable(
                 function_domain_type(&results[r], a, arg_types[i], NULL);
             if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
                 atom_is_symbol_id(expected, g_builtin_syms.undefined_type)) {
-                if (nnext < 64 && bindings_clone(&next[nnext], &results[r]))
+                if (nnext < 64) {
+                    bindings_move(&next[nnext], &results[r]);
                     nnext++;
+                }
                 continue;
             }
 
             Atom **atypes;
             uint32_t natypes = get_atom_types_profiled(s, a, arg, &atypes);
             if (natypes == 0) {
-                if (nnext < 64 && bindings_clone(&next[nnext], &results[r]))
+                if (nnext < 64) {
+                    bindings_move(&next[nnext], &results[r]);
                     nnext++;
+                }
                 free(atypes);
                 continue;
             }
             SearchContext candidate_context;
-            if (!search_context_init(&candidate_context, &results[r], NULL)) {
-                free(atypes);
-                for (uint32_t rr = 0; rr < 64; rr++) {
-                    bindings_free(&results[rr]);
-                    bindings_free(&next[rr]);
-                }
-                return false;
-            }
+            search_context_init_owned(&candidate_context, &results[r], NULL);
             for (uint32_t t = 0; t < natypes; t++) {
                 ChoicePoint point = search_context_save(&candidate_context);
                 if (match_types_builder(expected, atypes[t],
@@ -4135,7 +4171,7 @@ static bool check_function_applicable(
         search_context_init_owned(&ret_context, &results[r], NULL);
         Atom *inst_ret =
             eval_dependent_telescope_enabled()
-                ? bindings_apply((Bindings *)search_context_bindings(&ret_context), a, retType)
+                ? bindings_apply_if_vars(search_context_bindings(&ret_context), a, retType)
                 : retType;
         if (match_types_builder(expectedType, inst_ret,
                                 search_context_builder(&ret_context))) {
@@ -4445,9 +4481,11 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
         return true;
 
     for (uint32_t i = 0; i < visible->len; i++) {
-        Atom *var = atom_var_with_spelling(a, visible->items[i].spelling,
-                                           visible->items[i].var_id);
-        Atom *resolved = bindings_apply((Bindings *)full, a, var);
+        VisibleVarRef wanted = {
+            .var_id = visible->items[i].var_id,
+            .spelling = visible->items[i].spelling,
+        };
+        Atom *resolved = bindings_resolve_body_visible_var(a, full, &wanted);
         if (resolved->kind == ATOM_VAR &&
             resolved->var_id == visible->items[i].var_id &&
             resolved->sym_id == visible->items[i].spelling) {
@@ -4461,8 +4499,8 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     }
 
     for (uint32_t i = 0; i < full->eq_len; i++) {
-        Atom *lhs = bindings_apply((Bindings *)full, a, full->constraints[i].lhs);
-        Atom *rhs = bindings_apply((Bindings *)full, a, full->constraints[i].rhs);
+        Atom *lhs = bindings_apply_if_vars(full, a, full->constraints[i].lhs);
+        Atom *rhs = bindings_apply_if_vars(full, a, full->constraints[i].rhs);
         if (!atom_refs_only_match_visible_vars(lhs, visible) ||
             !atom_refs_only_match_visible_vars(rhs, visible)) {
             continue;
@@ -4485,33 +4523,32 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
 
     if (!preserve_bindings) {
         Atom *applied = atom;
-        if ((outer_env && outer_env->len > 0) || inner->len > 0) {
-            if (outer_env && outer_env->len > 0 && inner->len > 0) {
-                Bindings merged;
-                if (!bindings_clone_merge(&merged, outer_env, inner))
-                    return;
-                applied = bindings_apply(&merged, a, atom);
-                bindings_free(&merged);
-            } else {
-                Bindings *single = (Bindings *)((outer_env && outer_env->len > 0)
-                    ? outer_env
-                    : inner);
-                applied = bindings_apply(single, a, atom);
-            }
-        }
+        Bindings merged;
+        const Bindings *effective = NULL;
+        if (!bindings_effective_merge(&merged, &effective, outer_env, inner, false))
+            return;
+        if (effective)
+            applied = bindings_apply_if_vars(effective, a, atom);
+        if (effective == &merged)
+            bindings_free(&merged);
         outcome_set_add(os, applied, &empty);
         return;
     }
-    if (!outer_env || outer_env->len == 0) {
+    if (!bindings_has_any_entries(outer_env)) {
         outcome_set_add(os, atom, inner);
         return;
     }
 
     Bindings merged;
-    if (!bindings_clone_merge(&merged, outer_env, inner))
+    const Bindings *effective = NULL;
+    if (!bindings_effective_merge(&merged, &effective, outer_env, inner, true) ||
+        !effective)
         return;
-    outcome_set_add_move(os, atom, &merged);
-    bindings_free(&merged);
+    if (effective == &merged) {
+        outcome_set_add_move(os, atom, &merged);
+    } else {
+        outcome_set_add(os, atom, effective);
+    }
 }
 
 static __attribute__((unused)) void
@@ -4525,24 +4562,18 @@ outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
 
     if (!preserve_bindings) {
         Atom *applied = atom;
-        if ((outer_env && outer_env->len > 0) || inner->len > 0) {
-            if (outer_env && outer_env->len > 0 && inner->len > 0) {
-                Bindings merged;
-                if (!bindings_clone_merge(&merged, outer_env, inner))
-                    return;
-                applied = bindings_apply(&merged, a, atom);
-                bindings_free(&merged);
-            } else {
-                Bindings *single = (Bindings *)((outer_env && outer_env->len > 0)
-                    ? outer_env
-                    : inner);
-                applied = bindings_apply(single, a, atom);
-            }
-        }
+        Bindings merged;
+        const Bindings *effective = NULL;
+        if (!bindings_effective_merge(&merged, &effective, outer_env, inner, false))
+            return;
+        if (effective)
+            applied = bindings_apply_if_vars(effective, a, atom);
+        if (effective == &merged)
+            bindings_free(&merged);
         outcome_set_add(os, applied, &empty);
         return;
     }
-    if (!outer_env || outer_env->len == 0) {
+    if (!bindings_has_any_entries(outer_env)) {
         if (local_env) {
             outcome_set_add_move(os, atom, inner);
         } else {
@@ -4552,16 +4583,23 @@ outcome_set_add_prefixed_move(Arena *a, OutcomeSet *os, Atom *atom,
     }
 
     Bindings merged;
-    if (!bindings_clone_merge(&merged, outer_env, inner))
+    const Bindings *effective = NULL;
+    if (!bindings_effective_merge(&merged, &effective, outer_env, inner, true) ||
+        !effective)
         return;
-    outcome_set_add_move(os, atom, &merged);
-    bindings_free(&merged);
+    if (effective == &merged) {
+        outcome_set_add_move(os, atom, &merged);
+    } else if (effective == inner && local_env) {
+        outcome_set_add_move(os, atom, inner);
+    } else {
+        outcome_set_add(os, atom, effective);
+    }
 }
 
 static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *src,
                                         const Bindings *outer_env,
                                         bool preserve_bindings) {
-    if (preserve_bindings && outer_env && outer_env->len > 0) {
+    if (preserve_bindings && bindings_has_any_entries(outer_env)) {
         BindingsBuilder merged_builder;
         if (!bindings_builder_init(&merged_builder, outer_env))
             return;
@@ -4577,7 +4615,7 @@ static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *s
         return;
     }
     for (uint32_t i = 0; i < src->len; i++) {
-        if (preserve_bindings && (!outer_env || outer_env->len == 0)) {
+        if (preserve_bindings && !bindings_has_any_entries(outer_env)) {
             outcome_set_add_existing(dst, &src->items[i]);
             continue;
         }
@@ -4590,7 +4628,7 @@ static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
                                              OutcomeSet *src,
                                              const Bindings *outer_env,
                                              bool preserve_bindings) {
-    if (preserve_bindings && outer_env && outer_env->len > 0) {
+    if (preserve_bindings && bindings_has_any_entries(outer_env)) {
         BindingsBuilder merged_builder;
         if (!bindings_builder_init(&merged_builder, outer_env))
             return;
@@ -4606,7 +4644,7 @@ static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
         return;
     }
     for (uint32_t i = 0; i < src->len; i++) {
-        if (preserve_bindings && (!outer_env || outer_env->len == 0)) {
+        if (preserve_bindings && !bindings_has_any_entries(outer_env)) {
             outcome_set_add_existing_move(dst, &src->items[i]);
             continue;
         }
@@ -4635,7 +4673,7 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     }
     Atom *applied = (!prefix || prefix->len == 0)
         ? atom
-        : bindings_apply((Bindings *)prefix, a, atom);
+        : bindings_apply_if_vars(prefix, a, atom);
     if (atom_eval_is_immediate_value(applied, fuel)) {
         outcome_set_add(os, applied, &empty);
         return;
@@ -4676,21 +4714,8 @@ static bool branch_outer_env_begin(Bindings *owned,
                                    const Bindings **effective_outer,
                                    const Bindings *outer_env,
                                    const Bindings *branch_env) {
-    bindings_init(owned);
-    if (!branch_env || branch_env->len == 0) {
-        *effective_outer = outer_env;
-        return true;
-    }
-    if (!outer_env || outer_env->len == 0) {
-        *effective_outer = branch_env;
-        return true;
-    }
-    if (!bindings_clone_merge(owned, outer_env, branch_env)) {
-        *effective_outer = NULL;
-        return false;
-    }
-    *effective_outer = owned;
-    return true;
+    return bindings_effective_merge(owned, effective_outer,
+                                    outer_env, branch_env, true);
 }
 
 static void branch_outer_env_finish(Bindings *owned,
@@ -4725,7 +4750,7 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
 
     Atom *orig_arg = orig_args[idx];
     Atom *arg_type = function_domain_type((Bindings *)env, a, arg_types[idx], NULL);
-    Atom *bound_arg = bindings_apply((Bindings *)env, a, orig_arg);
+    Atom *bound_arg = bindings_apply_if_vars(env, a, orig_arg);
     if (atom_is_symbol_id(arg_type, g_builtin_syms.atom) || orig_arg->kind == ATOM_VAR) {
         prefix[idx] = bound_arg;
         if (eval_dependent_telescope_enabled()) {
@@ -5000,7 +5025,7 @@ static void interpret_tuple(Space *s, Arena *a,
         return;
     }
     /* Apply accumulated bindings to this element before evaluating */
-    Atom *elem = bindings_apply(ctx, a, orig_elems[idx]);
+    Atom *elem = bindings_apply_if_vars(ctx, a, orig_elems[idx]);
     ResultBindSet sub;
     rb_set_init(&sub);
     metta_eval_bind(s, a, elem, fuel, &sub);
@@ -5120,7 +5145,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                 &projected)) {
                 continue;
             }
-            Atom *result = bindings_apply(&projected, a, template);
+            Atom *result = bindings_apply_if_vars(&projected, a, template);
             const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
             eval_for_caller(s, a, NULL, result, fuel, forward_env,
                             preserve_bindings, os);
@@ -5167,7 +5192,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                         &projected)) {
                         continue;
                     }
-                    Atom *result = bindings_apply(&projected, a, residual_body);
+                    Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
                     const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                     eval_for_caller(s, a, NULL, result, fuel, forward_env,
                                     preserve_bindings, os);
@@ -5320,7 +5345,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             Bindings *next_binds = NULL;
             uint32_t nnext = 0, cnext = 0;
             for (uint32_t bi = 0; bi < ncur; bi++) {
-                Atom *grounded = bindings_apply(&cur_binds[bi], a, step->pattern);
+                Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, step->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
                 space_subst_query(step->space, a, grounded, &smr);
@@ -5347,7 +5372,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             MatchStep *last = &steps[nsteps - 1];
             static uint64_t g_chain_progress = 0;
             for (uint32_t bi = 0; bi < ncur; bi++) {
-                Atom *grounded = bindings_apply(&cur_binds[bi], a, last->pattern);
+                Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
                 space_subst_query(last->space, a, grounded, &smr);
@@ -5360,7 +5385,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                             bindings_free(&mb);
                             continue;
                         }
-                        Atom *result = bindings_apply(&projected, a, body);
+                        Atom *result = bindings_apply_if_vars(&projected, a, body);
                         const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                         eval_for_caller(s, a, NULL, result, fuel, forward_env,
                                         preserve_bindings, os);
@@ -5383,7 +5408,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                     &projected)) {
                     continue;
                 }
-                Atom *result = bindings_apply(&projected, a, body);
+                Atom *result = bindings_apply_if_vars(&projected, a, body);
                 const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                 eval_for_caller(s, a, NULL, result, fuel, forward_env,
                                 preserve_bindings, os);
@@ -5454,7 +5479,7 @@ static bool direct_mork_emit_row(const Bindings *bindings, void *ctx) {
     DirectMorkEmitCtx *emit = ctx;
     Bindings empty_bindings;
     bindings_init(&empty_bindings);
-    Atom *row = bindings_apply((Bindings *)bindings, emit->arena, emit->templ);
+    Atom *row = bindings_apply_if_vars(bindings, emit->arena, emit->templ);
     eval_for_caller(emit->space, emit->arena, NULL, row, emit->fuel,
                     &empty_bindings, false, emit->outcomes);
     bindings_free(&empty_bindings);
@@ -5647,7 +5672,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             for (uint32_t si = 0; si < 64; si++) bindings_init(&succs[si]);
             uint32_t n_succs = 0;
             Atom *exp_type = etype ? etype : atom_undefined_type(a);
-            Atom *fresh_ft = rename_vars(a, op_types[ti], fresh_var_suffix());
+            Atom *fresh_ft = atom_freshen_epoch(a, op_types[ti], fresh_var_suffix());
         if (check_function_applicable(atom, fresh_ft, exp_type,
                                       s, a, fuel,
                                       errors, &n_errors,
@@ -5682,8 +5707,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                         Bindings *combo_ctx = &call_terms.items[ci].env;
                         Atom *inst_ret_type =
                             eval_dependent_telescope_enabled()
-                                ? bindings_apply(combo_ctx, a, ret_type)
-                                : bindings_apply(head_env, a, ret_type);
+                                ? bindings_apply_if_vars(combo_ctx, a, ret_type)
+                                : bindings_apply_if_vars(head_env, a, ret_type);
 
                         bool dispatched = false;
                         if (!dispatched &&
@@ -6318,7 +6343,7 @@ tail_call: ;
         Bindings b;
         bindings_init(&b);
         if (match_atoms(target, pattern, &b) && !bindings_has_loop(&b)) {
-            Atom *next_atom = bindings_apply(&b, a, then_br);
+            Atom *next_atom = bindings_apply_if_vars(&b, a, then_br);
             if (preserve_bindings &&
                 !bindings_builder_merge_commit(&current_env_builder, &b)) {
                 bindings_free(&b);
@@ -6361,7 +6386,7 @@ tail_call: ;
                     if (simple_match_builder(branch->expr.elems[0], sv, &b)) {
                         const Bindings *bb = bindings_builder_bindings(&b);
                         Atom *next_atom =
-                            bindings_apply((Bindings *)bb, a, branch->expr.elems[1]);
+                            bindings_apply_if_vars(bb, a, branch->expr.elems[1]);
                         if (preserve_bindings &&
                             !bindings_builder_merge_commit(&current_env_builder, bb)) {
                             bindings_builder_free(&b);
@@ -6390,7 +6415,7 @@ tail_call: ;
                         if (simple_match_builder(branch->expr.elems[0], sv, &b)) {
                             const Bindings *bb = bindings_builder_bindings(&b);
                             Atom *result =
-                                bindings_apply((Bindings *)bb, a, branch->expr.elems[1]);
+                                bindings_apply_if_vars(bb, a, branch->expr.elems[1]);
                             eval_for_current_caller(s, a, NULL, result, fuel, bb,
                                                     CURRENT_ENV,
                                                     preserve_bindings, os);
@@ -6427,7 +6452,7 @@ tail_call: ;
                     if (simple_match_builder(branch->expr.elems[0], scrutinee, &b)) {
                         const Bindings *bb = bindings_builder_bindings(&b);
                         Atom *next_atom =
-                            bindings_apply((Bindings *)bb, a, branch->expr.elems[1]);
+                            bindings_apply_if_vars(bb, a, branch->expr.elems[1]);
                         if (preserve_bindings &&
                             !bindings_builder_merge_commit(&current_env_builder, bb)) {
                             bindings_builder_free(&b);
@@ -6472,9 +6497,7 @@ tail_call: ;
         OutcomeSet vals;
         bool body_let_closed = !atom_contains_vars(body_let);
         if (!preserve_bindings) {
-            Atom *applied_val_expr = (!CURRENT_ENV || CURRENT_ENV->len == 0)
-                ? val_expr
-                : bindings_apply((Bindings *)CURRENT_ENV, a, val_expr);
+            Atom *applied_val_expr = bindings_apply_if_vars(CURRENT_ENV, a, val_expr);
             if (direct_outcome_walk_supported(s, a, applied_val_expr, fuel)) {
                 LetDirectVisitCtx visit = {
                     .s = s,
@@ -6548,7 +6571,7 @@ tail_call: ;
                         bindings_builder_free(&b);
                         return;
                     }
-                    Atom *next_atom = bindings_apply(&visible, a, body_let);
+                    Atom *next_atom = bindings_apply_if_vars(&visible, a, body_let);
                     if (preserve_bindings &&
                         !bindings_builder_merge_commit(&current_env_builder, bb)) {
                         bindings_free(&visible);
@@ -6578,7 +6601,7 @@ tail_call: ;
                         bindings_builder_free(&b);
                         return;
                     }
-                    Atom *next_atom = bindings_apply(&visible, a, body_let);
+                    Atom *next_atom = bindings_apply_if_vars(&visible, a, body_let);
                     if (preserve_bindings &&
                         !bindings_builder_merge_commit(&current_env_builder, bb)) {
                         bindings_free(&visible);
@@ -6624,7 +6647,8 @@ tail_call: ;
                     continue;
                 }
                 eval_for_current_caller(s, a, NULL,
-                                        bindings_apply(&visible, a, body_let), fuel, &_empty,
+                                        bindings_apply_if_vars(&visible, a, body_let),
+                                        fuel, &_empty,
                                         branch_outer, preserve_bindings, os);
                 branch_outer_env_finish(&branch_outer_owned, branch_outer);
                 bindings_free(&visible);
@@ -6650,7 +6674,7 @@ tail_call: ;
                         continue;
                     }
                     eval_for_current_caller(s, a, NULL,
-                                            bindings_apply(&visible, a, body_let),
+                                            bindings_apply_if_vars(&visible, a, body_let),
                                             fuel, &_empty,
                                             branch_outer, preserve_bindings, os);
                     branch_outer_env_finish(&branch_outer_owned, branch_outer);
@@ -6719,7 +6743,7 @@ tail_call: ;
                     outcome_set_free(&inner);
                     return;
                 }
-                next_atom = bindings_apply(&visible, a, tmpl_chain);
+                next_atom = bindings_apply_if_vars(&visible, a, tmpl_chain);
                 if (preserve_bindings &&
                     !bindings_builder_merge_commit(&current_env_builder, bb)) {
                     bindings_free(&visible);
@@ -6757,7 +6781,7 @@ tail_call: ;
                     bindings_builder_free(&b);
                     continue;
                 }
-                Atom *subst = bindings_apply(&visible, a, tmpl_chain);
+                Atom *subst = bindings_apply_if_vars(&visible, a, tmpl_chain);
                 Bindings branch_outer_owned;
                 const Bindings *branch_outer = CURRENT_ENV;
                 if (preserve_bindings &&
@@ -7559,7 +7583,7 @@ tail_call: ;
                 return;
             }
             const Bindings *bb = bindings_builder_bindings(&b);
-            Atom *next_atom = bindings_apply((Bindings *)bb, a, body);
+            Atom *next_atom = bindings_apply_if_vars(bb, a, body);
             if (preserve_bindings &&
                 !bindings_builder_merge_commit(&current_env_builder, bb)) {
                 bindings_builder_free(&b);
@@ -7573,7 +7597,7 @@ tail_call: ;
                 return;
             if (simple_match_builder(binder, snapshot_atom, &b)) {
                 const Bindings *bb = bindings_builder_bindings(&b);
-                Atom *next_atom = bindings_apply((Bindings *)bb, a, body);
+                Atom *next_atom = bindings_apply_if_vars(bb, a, body);
                 if (preserve_bindings &&
                     !bindings_builder_merge_commit(&current_env_builder, bb)) {
                     bindings_builder_free(&b);
@@ -7802,8 +7826,7 @@ tail_call: ;
             return;
         }
         Arena *dst = eval_storage_arena(a);
-        Atom *stored = space_store_atom(target, dst, expr_arg(atom, 1));
-        space_add(target, stored);
+        (void)space_admit_atom(target, dst, expr_arg(atom, 1));
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_PUSH);
         outcome_set_add(os, atom_unit(a), &_empty);
         return;
@@ -8004,8 +8027,7 @@ tail_call: ;
             for (uint32_t ti = 0; ti < ntargets; ti++) {
                 for (uint32_t vi = 0; vi < vals.len; vi++) {
                     Atom *stored_val = outcome_atom_materialize(a, &vals.items[vi]);
-                    Atom *stored = space_store_atom(targets[ti], dst, stored_val);
-                    space_add(targets[ti], stored);
+                    (void)space_admit_atom(targets[ti], dst, stored_val);
                     outcome_set_add(os, atom_unit(a), &vals.items[vi].env);
                 }
             }
@@ -8052,8 +8074,7 @@ tail_call: ;
         }
         /* Deep-copy to persistent arena so atom survives eval_arena reset */
         Arena *dst = eval_storage_arena(a);
-        Atom *stored = space_store_atom(target, dst, atom_to_add);
-        space_add(target, stored);
+        (void)space_admit_atom(target, dst, atom_to_add);
         outcome_set_add(os, atom_unit(a), &_empty);
         return;
     }
@@ -8088,15 +8109,20 @@ tail_call: ;
             return;
         }
         Atom *compare_atom = space_compare_atom(target, a, atom_to_add);
-        bool found = space_is_hash(target) ? space_contains_exact(target, compare_atom) : false;
+        AtomId compare_id = (target && target->universe)
+            ? term_universe_lookup_atom_id(target->universe, compare_atom)
+            : CETTA_ATOM_ID_NONE;
+        bool found = compare_id != CETTA_ATOM_ID_NONE &&
+                     space_contains_atom_id(target, compare_id);
+        if (!found && space_is_hash(target))
+            found = space_contains_exact(target, compare_atom);
         if (!found) {
             for (uint32_t i = 0; i < space_length(target) && !found; i++)
                 if (atom_eq(space_get_at(target, i), compare_atom)) found = true;
         }
         if (!found) {
             Arena *dst = eval_storage_arena(a);
-            Atom *stored = space_store_atom(target, dst, atom_to_add);
-            space_add(target, stored);
+            (void)space_admit_atom(target, dst, atom_to_add);
         }
         outcome_set_add(os, atom_unit(a), &_empty);
         return;
@@ -8137,7 +8163,12 @@ tail_call: ;
             return;
         }
         Atom *compare_atom = space_compare_atom(target, a, atom_to_rm);
-        space_remove(target, compare_atom);
+        if (!(target && target->universe &&
+              space_remove_atom_id(target,
+                                   term_universe_lookup_atom_id(target->universe,
+                                                                compare_atom)))) {
+            space_remove(target, compare_atom);
+        }
         outcome_set_add(os, atom_unit(a), &_empty);
         return;
     }
@@ -8357,7 +8388,8 @@ tail_call: ;
 
             ResultBindSet vals;
             rb_set_init(&vals);
-            Atom *bound_val_expr = bindings_apply(&refs.items[i].env, a, expr_arg(atom, 1));
+            Atom *bound_val_expr =
+                bindings_apply_if_vars(&refs.items[i].env, a, expr_arg(atom, 1));
             metta_eval_bind(s, a, bound_val_expr, fuel, &vals);
             BindingsBuilder merged_builder;
             if (!bindings_builder_init(&merged_builder, &refs.items[i].env)) {

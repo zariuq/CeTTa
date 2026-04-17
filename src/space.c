@@ -1122,13 +1122,49 @@ void space_add(Space *s, Atom *atom) {
     space_add_stored_id(s, atom_id, atom);
 }
 
+bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
+    if (!s || !atom)
+        return false;
+
+    if (space_tracks_atom_ids(s)) {
+        AtomId atom_id = term_universe_lookup_atom_id(s->universe, atom);
+        if (atom_id == CETTA_ATOM_ID_NONE)
+            atom_id = term_universe_store_atom_id(s->universe, fallback, atom);
+        if (atom_id != CETTA_ATOM_ID_NONE) {
+            space_add_atom_id(s, atom_id);
+            return true;
+        }
+        Atom *stored = space_store_atom(s, fallback, atom);
+        if (!stored)
+            return false;
+        AtomId stored_id = term_universe_lookup_atom_id(s->universe, stored);
+        if (stored_id == CETTA_ATOM_ID_NONE)
+            return false;
+        space_add_atom_id(s, stored_id);
+        return true;
+    }
+
+    Atom *stored = space_store_atom(s, fallback, atom);
+    if (!stored)
+        return false;
+    uint32_t len_before = s->len;
+    space_add(s, stored);
+    return s->len == len_before + 1;
+}
+
 Space *space_heap_clone_shallow(Space *src) {
     Space *clone = cetta_malloc(sizeof(Space));
     space_init_with_universe(clone, src ? src->universe : NULL);
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
     for (uint32_t i = 0; i < src->len; i++) {
-        space_add(clone, space_get_at(src, i));
+        AtomId atom_id = space_get_atom_id_at(src, i);
+        if (atom_id != CETTA_ATOM_ID_NONE) {
+            space_add_atom_id(clone, atom_id);
+            continue;
+        }
+        if (!space_admit_atom(clone, NULL, space_get_at(src, i)))
+            space_add(clone, space_get_at(src, i));
     }
     return clone;
 }
@@ -1310,7 +1346,7 @@ static Atom *bindings_apply_without_self_id(Bindings *full, Arena *a,
         return value;
     Bindings reduced;
     if (!bindings_clone(&reduced, full))
-        return bindings_apply(full, a, value);
+        return bindings_apply_if_vars(full, a, value);
     bool removed = false;
     for (uint32_t i = 0; i < reduced.len; i++) {
         if (reduced.entries[i].var_id != skip_id)
@@ -1323,8 +1359,8 @@ static Atom *bindings_apply_without_self_id(Bindings *full, Arena *a,
         removed = true;
         break;
     }
-    Atom *resolved = removed ? bindings_apply(&reduced, a, value)
-                             : bindings_apply(full, a, value);
+    Atom *resolved = removed ? bindings_apply_if_vars(&reduced, a, value)
+                             : bindings_apply_if_vars(full, a, value);
     bindings_free(&reduced);
     return resolved;
 }
@@ -1340,7 +1376,7 @@ static Atom *bindings_resolve_query_visible_var(Arena *a, const Bindings *full,
     }
 
     Atom *slot_var = atom_var_with_spelling(a, wanted->spelling, wanted->var_id);
-    Atom *resolved = bindings_apply((Bindings *)full, a, slot_var);
+    Atom *resolved = bindings_apply_if_vars(full, a, slot_var);
     if (resolved != slot_var)
         return resolved;
 
@@ -1387,8 +1423,8 @@ static bool project_query_visible_bindings(Arena *a,
     }
 
     for (uint32_t i = 0; i < full->eq_len; i++) {
-        Atom *lhs = bindings_apply((Bindings *)full, a, full->constraints[i].lhs);
-        Atom *rhs = bindings_apply((Bindings *)full, a, full->constraints[i].rhs);
+        Atom *lhs = bindings_apply_if_vars(full, a, full->constraints[i].lhs);
+        Atom *rhs = bindings_apply_if_vars(full, a, full->constraints[i].rhs);
         if (!atom_refs_only_query_visible_vars(lhs, visible) ||
             !atom_refs_only_query_visible_vars(rhs, visible)) {
             continue;
@@ -1474,6 +1510,40 @@ bool space_remove(Space *s, Atom *atom) {
             space_bump_revision(s);
             return true;
         }
+    }
+    return false;
+}
+
+bool space_contains_atom_id(const Space *s, AtomId atom_id) {
+    if (!s || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    for (uint32_t i = 0; i < s->len; i++) {
+        if (space_get_atom_id_at(s, i) == atom_id)
+            return true;
+    }
+    return false;
+}
+
+bool space_remove_atom_id(Space *s, AtomId atom_id) {
+    if (!s || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    if (space_is_queue(s))
+        space_linearize(s);
+    for (uint32_t i = 0; i < s->len; i++) {
+        if (space_get_atom_id_at(s, i) != atom_id)
+            continue;
+        if (space_is_ordered(s)) {
+            for (uint32_t j = i + 1; j < s->len; j++) {
+                s->atom_ids[j - 1] = s->atom_ids[j];
+            }
+            s->len--;
+        } else {
+            s->atom_ids[i] = s->atom_ids[--s->len];
+        }
+        space_mark_indexes_dirty(s);
+        space_match_backend_note_remove(s);
+        space_bump_revision(s);
+        return true;
     }
     return false;
 }
@@ -1700,7 +1770,8 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
             cap = cap ? cap * 2 : 4;
             types = cetta_realloc(types, sizeof(Atom *) * cap);
         }
-        types[count++] = rename_vars(a, annotation->expr.elems[2], fresh_var_suffix());
+        types[count++] = atom_freshen_epoch(a, annotation->expr.elems[2],
+                                            fresh_var_suffix());
     }
     *out_types = types;
     return count;
@@ -1774,7 +1845,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                     /* Freshen type vars and try to unify args to get concrete ret type */
                     ArenaMark scratch_mark = arena_mark(&scratch);
                     uint32_t tsuf = fresh_var_suffix();
-                    Atom *fresh_ft = rename_vars(&scratch, ft, tsuf);
+                    Atom *fresh_ft = atom_freshen_epoch(&scratch, ft, tsuf);
                     Atom *fresh_ret = fresh_ft->expr.elems[fresh_ft->expr.len - 1];
                     Bindings tb;
                     bindings_init(&tb);
@@ -1782,7 +1853,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                     for (uint32_t ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
                         /* Apply accumulated bindings to resolve type vars from earlier args */
                         Atom *arg_type_decl =
-                            bindings_apply(&tb, &scratch, fresh_ft->expr.elems[ai + 1]);
+                            bindings_apply_if_vars(&tb, &scratch, fresh_ft->expr.elems[ai + 1]);
                         Atom **atypes = NULL;
                         uint32_t nat = get_atom_types(s, a, atom->expr.elems[ai + 1], &atypes);
                         bool found = false;
@@ -1817,7 +1888,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         /* Apply accumulated type bindings to return type,
                            then normalize arithmetic in type expressions */
                         Atom *concrete_ret = normalize_type_expr(
-                            &scratch, bindings_apply(&tb, &scratch, fresh_ret));
+                            &scratch, bindings_apply_if_vars(&tb, &scratch, fresh_ret));
                         if (count >= 1) {
                             types = cetta_realloc(types, sizeof(Atom *) * (count + 1));
                         } else {
@@ -1857,6 +1928,12 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        const QueryVisibleVarSet *visible,
                                        Arena *a, uint32_t epoch,
                                        const Bindings *seed, QueryResults *out);
+static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
+                                              Atom *query,
+                                              const QueryVisibleVarSet *visible,
+                                              Arena *a, uint32_t epoch,
+                                              const Bindings *seed,
+                                              QueryResults *out);
 
 static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
                                 const QueryVisibleVarSet *visible, Arena *a,
@@ -1897,20 +1974,8 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
                 continue;
             }
             considered++;
-            uint32_t suffix = fresh_var_suffix();
-            Atom *rlhs = rename_vars(a, lhs, suffix);
-            Atom *rrhs = rename_vars(a, rhs, suffix);
-            Bindings b;
-            bindings_init(&b);
-            if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
-                Atom *result = bindings_apply(&b, a, rrhs);
-                Bindings projected;
-                if (project_query_visible_bindings(a, visible, &b, &projected)) {
-                    query_results_push_move(out, result, &projected);
-                }
-                bindings_free(&projected);
-            }
-            bindings_free(&b);
+            (void)query_equation_emit_decoded_epoch(
+                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, out);
         }
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
                                 considered);
@@ -1949,20 +2014,8 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
             continue;
         }
         considered++;
-        uint32_t suffix = fresh_var_suffix();
-        Atom *rlhs = rename_vars(a, lhs, suffix);
-        Atom *rrhs = rename_vars(a, rhs, suffix);
-        Bindings b;
-        bindings_init(&b);
-        if (match_atoms(rlhs, query, &b) && !bindings_has_loop(&b)) {
-            Atom *result = bindings_apply(&b, a, rrhs);
-            Bindings projected;
-            if (project_query_visible_bindings(a, visible, &b, &projected)) {
-                query_results_push_move(out, result, &projected);
-            }
-            bindings_free(&projected);
-        }
-        bindings_free(&b);
+        (void)query_equation_emit_decoded_epoch(
+            lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, out);
     }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
                             considered);
@@ -1981,11 +2034,10 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         return false;
     }
     Bindings merged;
-    if (seed) {
-        if (!bindings_clone(&merged, (Bindings *)seed))
-            return false;
-    } else {
-        bindings_init(&merged);
+    bindings_init(&merged);
+    if (seed && !bindings_try_merge_live(&merged, seed)) {
+        bindings_free(&merged);
+        return false;
     }
     bool emitted = false;
     if (match_atoms_atom_id_epoch(query, s->universe, lhs_id,
@@ -1994,13 +2046,42 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         Atom *rhs_copy =
             term_universe_copy_atom_epoch(s->universe, a, rhs_id, epoch);
         if (rhs_copy) {
-            Atom *result = bindings_apply(&merged, a, rhs_copy);
+            Atom *result = bindings_apply_if_vars(&merged, a, rhs_copy);
             Bindings projected;
             if (project_query_visible_bindings(a, visible, &merged, &projected)) {
                 query_results_push_move(out, result, &projected);
                 bindings_free(&projected);
                 emitted = true;
             }
+        }
+    }
+    bindings_free(&merged);
+    return emitted;
+}
+
+static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
+                                              Atom *query,
+                                              const QueryVisibleVarSet *visible,
+                                              Arena *a, uint32_t epoch,
+                                              const Bindings *seed,
+                                              QueryResults *out) {
+    if (!lhs || !rhs || !query || !a || !out)
+        return false;
+    Bindings merged;
+    bindings_init(&merged);
+    if (seed && !bindings_try_merge_live(&merged, seed)) {
+        bindings_free(&merged);
+        return false;
+    }
+    bool emitted = false;
+    if (match_atoms_epoch(query, lhs, &merged, a, epoch) &&
+        !bindings_has_loop(&merged)) {
+        Atom *result = bindings_apply_epoch(&merged, a, rhs, epoch);
+        Bindings projected;
+        if (project_query_visible_bindings(a, visible, &merged, &projected)) {
+            query_results_push_move(out, result, &projected);
+            bindings_free(&projected);
+            emitted = true;
         }
     }
     bindings_free(&merged);
@@ -2060,40 +2141,17 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
             continue;
         }
         considered++;
-        bool emitted = false;
-        Bindings merged;
-        if (!bindings_clone(&merged, &sm->bindings))
-            continue;
-        if (match_atoms_epoch(query, lhs, &merged, a, sm->epoch) &&
-            !bindings_has_loop(&merged)) {
-            Atom *result = bindings_apply_epoch(&merged, a, rhs, sm->epoch);
-            Bindings projected;
-            if (project_query_visible_bindings(a, visible, &merged, &projected)) {
-                query_results_push_move(out, result, &projected);
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
-                emitted = true;
-            }
-            bindings_free(&projected);
+        bool emitted = query_equation_emit_decoded_epoch(
+            lhs, rhs, query, visible, a, sm->epoch, &sm->bindings, out);
+        if (emitted) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
         }
-        bindings_free(&merged);
         if (!emitted) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_CANDIDATE_FALLBACK);
-            uint32_t suffix = fresh_var_suffix();
-            Atom *rlhs = rename_vars(a, lhs, suffix);
-            Atom *rrhs = rename_vars(a, rhs, suffix);
-            Bindings exact;
-            bindings_init(&exact);
-            if (match_atoms(rlhs, query, &exact) && !bindings_has_loop(&exact)) {
-                Atom *result = bindings_apply(&exact, a, rrhs);
-                Bindings projected;
-                if (project_query_visible_bindings(a, visible, &exact, &projected)) {
-                    query_results_push_move(out, result, &projected);
-                }
-                bindings_free(&projected);
-            }
-            bindings_free(&exact);
+            (void)query_equation_emit_decoded_epoch(
+                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, out);
         }
     }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
