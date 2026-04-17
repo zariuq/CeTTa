@@ -16,8 +16,8 @@
   (match &stats (runtime-counter bindings-clone $n) (> $n 0))
   (True))
 !(assertEqualToResult
-  (match &stats (runtime-counter rename-vars $n) (> $n 0))
-  (True))
+  (match &stats (runtime-counter rename-vars $n) $n)
+  (0))
 
 !(reset-runtime-stats!)
 !(add-atom &self (= (dispatch-probe A) one))

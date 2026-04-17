@@ -1,3 +1,4 @@
+!(get-doc pragma!)
 !(get-doc with-space-snapshot)
 !(get-doc include)
 !(get-doc import!)
@@ -7,6 +8,7 @@
 !(get-doc sqrt-math)
 !(get-doc log-math)
 !(get-doc pow-math)
+!(help! pragma!)
 !(help! with-space-snapshot)
 !(help! include)
 !(help! import!)

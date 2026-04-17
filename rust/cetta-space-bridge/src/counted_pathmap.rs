@@ -1,7 +1,12 @@
-use super::{expr_span_bytes, parse_single_expr, validate_expr_bytes};
+use super::{parse_single_expr, validate_expr_bytes};
+#[cfg(feature = "pathmap-space")]
+use super::expr_span_bytes;
 use mork::space::Space;
-use mork_expr::{Expr, ExprEnv, Tag, byte_item, serialize, unify};
+use mork_expr::{Expr, serialize};
 use pathmap::zipper::{Zipper, ZipperAbsolutePath, ZipperIteration, ZipperMoving};
+#[cfg(feature = "pathmap-space")]
+use mork_expr::{ExprEnv, Tag, byte_item, unify};
+#[cfg(feature = "pathmap-space")]
 use std::collections::BTreeMap;
 
 #[cfg(test)]
@@ -18,6 +23,7 @@ pub(crate) struct CountedEntry {
     pub full_key: Vec<u8>,
 }
 
+#[cfg(feature = "pathmap-space")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CountedDetailedRow {
     pub bindings: Vec<(u8, String)>,
@@ -30,6 +36,7 @@ struct DecodedCountedKey<'a> {
     count: u32,
 }
 
+#[cfg(feature = "pathmap-space")]
 fn counted_factor_prefix(factor_expr: Expr) -> Vec<u8> {
     unsafe {
         match byte_item(*factor_expr.ptr) {
@@ -193,6 +200,7 @@ pub(crate) fn counted_logical_size(space: &Space) -> Result<u64, String> {
     Ok(total)
 }
 
+#[cfg(feature = "pathmap-space")]
 pub(crate) fn counted_factor_candidates(
     space: &Space,
     factor_expr: Expr,
@@ -231,6 +239,7 @@ pub(crate) fn counted_factor_candidates(
     Ok(out)
 }
 
+#[cfg(feature = "pathmap-space")]
 fn query_binding_signature(bindings: &BTreeMap<(u8, u8), ExprEnv>) -> Vec<(u8, String)> {
     bindings
         .iter()
@@ -243,6 +252,7 @@ fn query_binding_signature(bindings: &BTreeMap<(u8, u8), ExprEnv>) -> Vec<(u8, S
         .collect()
 }
 
+#[cfg(feature = "pathmap-space")]
 fn accumulate_counted_query_rows_detailed(
     factors: &[ExprEnv],
     candidate_lists: &[Vec<CountedEntry>],
@@ -283,6 +293,7 @@ fn accumulate_counted_query_rows_detailed(
     }
 }
 
+#[cfg(feature = "pathmap-space")]
 pub(crate) fn counted_query_rows_detailed(
     space: &Space,
     pattern_expr_bytes: &[u8],
