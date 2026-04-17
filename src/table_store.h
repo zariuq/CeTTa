@@ -7,13 +7,19 @@
 /*
  * TableStore is the first tabling seam beside SearchContext.
  *
+ * Shared semantic contract across backends:
+ *   - Variant canonicalization defines query equivalence.
+ *   - Revision is the authoritative space snapshot boundary.
+ *   - Only exact-current-revision entries may replay answers.
+ *   - Stale entries are reusable replacement targets, not semantic hits.
+ *
  * Positive example:
- *   - One logical evaluation episode can memoize repeated equation queries
- *     against the same space snapshot under variant canonicalization.
+ *   - A repeated variant query against the same space revision may replay a
+ *     memoized answer set.
  *
  * Negative example:
- *   - Smuggling a global mutable cache into eval.c and silently changing core
- *     language semantics for every call path.
+ *   - Replaying answers from an older revision because the variant shape still
+ *     matches, silently hiding an invalidation boundary.
  *
  * This tranche follows the conservative literature path: NONE or VARIANT
  * only.

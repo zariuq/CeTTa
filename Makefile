@@ -157,6 +157,9 @@ bench-weird-audit: $(BIN)
 perf-runtime-stats: $(BIN)
 	@./scripts/bench_runtime_stats_probe.sh
 
+probe-epoch-runtime-witness: $(BIN)
+	@bash ./scripts/probe_epoch_runtime_witness.sh ./$(BIN)
+
 perf-stable: perf-runtime-stats
 
 test-symbolid-guard:
@@ -180,13 +183,15 @@ runtime/test_space_term_universe_membership: tests/test_space_term_universe_memb
 test-space-term-universe-membership: runtime/test_space_term_universe_membership
 	@./runtime/test_space_term_universe_membership
 
-runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c $(BUILD_CONFIG_HEADER)
+runtime/test_term_universe_store_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
+runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c -lm
 
 test-term-universe-store-abi: runtime/test_term_universe_store_abi
 	@./runtime/test_term_universe_store_abi
 
+runtime/test_term_universe_backend_add_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
 runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c -lm
@@ -1330,7 +1335,7 @@ test-pathmap-conjunction-init: $(BIN)
 
 test-pathmap-bridge-v2: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap bridge v2 regression,$@)
-	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap bridge v2 regression"; \
@@ -1781,7 +1786,7 @@ tail-recursion-check: $(BIN)
 # LLVM IR validation: verify emitted IR compiles through opt/llc.
 compile-test: $(BIN)
 	@pass=0; fail=0; \
-	for f in tests/test_equations.metta tests/test_basic_eval.metta tests/test_disc_trie.metta tests/test_compile_arity.metta; do \
+	for f in tests/test_equations.metta tests/test_basic_eval.metta tests/test_disc_trie.metta tests/test_compile_arity.metta tests/test_compile_hybrid_interop.metta; do \
 		[ -f "$$f" ] || continue; \
 		ir=$$(./$(BIN) --compile "$$f" 2>&1); \
 		if echo "$$ir" | opt -S -o /dev/null 2>/dev/null; then \
@@ -1794,6 +1799,25 @@ compile-test: $(BIN)
 					echo "missing distinct compiled symbols for foo/1 and foo/2"; \
 					fail=$$((fail + 1)); \
 				fi; \
+			elif [ "$$f" = "tests/test_compile_hybrid_interop.metta" ]; then \
+				call_origin_body=$$(printf '%s\n' "$$ir" | awk '/define void @cetta_call_2dorigin__arity_0/{flag=1} flag{print} /^}/&&flag{exit}'); \
+				call_id_body=$$(printf '%s\n' "$$ir" | awk '/define void @cetta_call_2did__arity_1/{flag=1} flag{print} /^}/&&flag{exit}'); \
+				call_plus_body=$$(printf '%s\n' "$$ir" | awk '/define void @cetta_call_2dplus__arity_1/{flag=1} flag{print} /^}/&&flag{exit}'); \
+				if printf '%s\n' "$$call_origin_body" | grep -Fq 'call %ResultSet* @cetta_rs_alloc()' && \
+				   printf '%s\n' "$$call_origin_body" | grep -Fq 'call void @cetta_origin__arity_0' && \
+				   printf '%s\n' "$$call_origin_body" | grep -Fq 'call void @metta_eval' && \
+				   printf '%s\n' "$$call_id_body" | grep -Fq 'call %ResultSet* @cetta_rs_alloc()' && \
+				   printf '%s\n' "$$call_id_body" | grep -Fq 'call void @cetta_id1__arity_1' && \
+				   printf '%s\n' "$$call_id_body" | grep -Fq 'call void @metta_eval' && \
+				   printf '%s\n' "$$call_plus_body" | grep -Fq '@str__2b' && \
+				   printf '%s\n' "$$call_plus_body" | grep -Fq 'call void @metta_eval' && \
+				   ! printf '%s\n' "$$call_plus_body" | grep -Fq 'call %ResultSet* @cetta_rs_alloc()'; then \
+					echo "IR-OK: $$f"; pass=$$((pass + 1)); \
+				else \
+					echo "IR-FAIL: $$f"; \
+					echo "missing hybrid direct-call/metta_eval interop evidence"; \
+					fail=$$((fail + 1)); \
+				fi; \
 			else \
 				echo "IR-OK: $$f"; pass=$$((pass + 1)); \
 			fi; \
@@ -1801,7 +1825,8 @@ compile-test: $(BIN)
 			echo "IR-FAIL: $$f"; fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	echo "---"; echo "$$pass passed, $$fail failed"
+	echo "---"; echo "$$pass passed, $$fail failed"; \
+	test $$fail -eq 0
 
 refresh-he-matrices:
 	@python3 scripts/refresh_he_runtime_matrices.py
@@ -1809,4 +1834,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu
+.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

@@ -88,6 +88,17 @@ static bool atom_is_compile_stable_value(Atom *atom, EqGroupSet *groups) {
     return false;
 }
 
+static bool compile_call_args_are_stable(Atom *call_atom, EqGroupSet *groups) {
+    if (!call_atom) return false;
+    if (call_atom->kind == ATOM_SYMBOL) return true;
+    if (call_atom->kind != ATOM_EXPR || call_atom->expr.len == 0) return false;
+    for (uint32_t i = 1; i < call_atom->expr.len; i++) {
+        if (!atom_is_compile_stable_value(call_atom->expr.elems[i], groups))
+            return false;
+    }
+    return true;
+}
+
 static bool group_has_known_strict_types(Space *s, Arena *a, EqGroup *g) {
     Atom **types = NULL;
     uint32_t ntypes = get_atom_types(s, a, atom_symbol_id(a, g->head_id), &types);
@@ -283,15 +294,17 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
    an Atom* register. This path is only used for groups already proven safe
    for direct singleton calls, so arguments are passed directly as stable
    values instead of being re-evaluated here. */
-static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_expr,
+static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_atom,
                                      CaptureTable *captures, EqGroupSet *all_groups) {
     static char reg[32];
 
-    /* Build already-stable argument atoms (children of the call expr, skipping head symbol). */
-    uint32_t nargs = call_expr->expr.len - 1;
+    /* Build already-stable argument atoms, skipping the head symbol for n-ary calls. */
+    uint32_t nargs = 0;
+    if (call_atom->kind == ATOM_EXPR && call_atom->expr.len > 0)
+        nargs = call_atom->expr.len - 1;
     const char **arg_regs = cetta_malloc(sizeof(const char *) * (nargs ? nargs : 1));
     for (uint32_t i = 0; i < nargs; i++) {
-        arg_regs[i] = strdup(emit_rhs(out, call_expr->expr.elems[i + 1], captures, all_groups));
+        arg_regs[i] = strdup(emit_rhs(out, call_atom->expr.elems[i + 1], captures, all_groups));
     }
 
     /* Allocate temporary ResultSet for the compiled function's results */
@@ -335,6 +348,10 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
         return reg;
     }
     if (rhs->kind == ATOM_SYMBOL) {
+        EqGroup *target = eq_group_lookup(all_groups, rhs->sym_id, 0);
+        if (target && target->direct_call_safe)
+            return emit_direct_call(out, target, rhs, captures, all_groups);
+
         const char *name = atom_name_cstr(rhs);
         int t = g_tmp++;
         snprintf(reg, sizeof(reg), "%%sym%d", t);
@@ -389,7 +406,7 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
             EqGroup *target = eq_group_lookup(all_groups, rhs->expr.elems[0]->sym_id,
                                               rhs->expr.len - 1);
             if (target && target->direct_call_safe &&
-                atom_is_compile_stable_value(rhs, all_groups)) {
+                compile_call_args_are_stable(rhs, all_groups)) {
                 return emit_direct_call(out, target, rhs, captures, all_groups);
             }
         }

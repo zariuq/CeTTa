@@ -14,8 +14,8 @@
 #define BINDINGS_TEMP_STACK_CAP 32
 #define BINDINGS_POOL_CLASS_COUNT 4
 #define BINDINGS_LOOKUP_CACHE_SLOTS 4
-#define BINDINGS_LOOKUP_CACHE_MIN_LEN 8
 #define BINDINGS_MEMO_STACK_CAP 32
+#define BINDINGS_LOOKUP_CACHE_MISS UINT32_MAX
 
 typedef struct BindingPoolBlock {
     struct BindingPoolBlock *next;
@@ -150,16 +150,11 @@ static inline void bindings_lookup_cache_note(Bindings *b, VarId var_id,
 
 static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
-    if (b->len < BINDINGS_LOOKUP_CACHE_MIN_LEN) {
-        for (uint32_t i = b->len; i > 0; i--) {
-            uint32_t idx = i - 1;
-            if (binding_var_eq(b->entries[idx].var_id, var_id))
-                return (int32_t)idx;
-        }
-        return -1;
-    }
     for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
         uint32_t idx = b->lookup_cache_indices[i];
+        if (binding_var_eq(b->lookup_cache_ids[i], var_id) &&
+            idx == BINDINGS_LOOKUP_CACHE_MISS)
+            return -1;
         if (idx < b->len &&
             binding_var_eq(b->lookup_cache_ids[i], var_id) &&
             binding_var_eq(b->entries[idx].var_id, var_id))
@@ -172,6 +167,7 @@ static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
             return (int32_t)idx;
         }
     }
+    bindings_lookup_cache_note(b, var_id, BINDINGS_LOOKUP_CACHE_MISS);
     return -1;
 }
 
@@ -352,7 +348,7 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
                sizeof(BindingConstraint) * src->eq_len);
         dst->eq_len = src->eq_len;
     }
-    if (src->len >= BINDINGS_LOOKUP_CACHE_MIN_LEN) {
+    if (src->lookup_cache_count > 0) {
         dst->lookup_cache_count = src->lookup_cache_count;
         dst->lookup_cache_next = src->lookup_cache_next;
         for (uint32_t i = 0; i < src->lookup_cache_count; i++) {
@@ -462,8 +458,7 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
     b->entries[b->len].spelling = spelling;
     b->entries[b->len].val = val;
     b->entries[b->len].legacy_name_fallback = legacy_name_fallback;
-    if (b->len + 1 >= BINDINGS_LOOKUP_CACHE_MIN_LEN)
-        bindings_lookup_cache_note(b, var_id, b->len);
+    bindings_lookup_cache_note(b, var_id, b->len);
     b->len++;
     if (normalize_constraints && !bindings_normalize_constraints(b))
         return false;
@@ -603,6 +598,14 @@ bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
         return true;
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
+    if (dst && dst->len == 0 && dst->eq_len == 0) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
+        Bindings cloned;
+        if (!bindings_clone(&cloned, src))
+            return false;
+        bindings_replace(dst, &cloned);
+        return true;
+    }
 
     BindingsBuilder builder;
     bindings_builder_init_owned(&builder, dst);
@@ -855,6 +858,12 @@ Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
     return result;
 }
 
+Atom *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch) {
+    Bindings empty;
+    bindings_init(&empty);
+    return bindings_apply_epoch(&empty, a, atom, epoch);
+}
+
 Atom *bindings_to_atom(Arena *a, const Bindings *b) {
     Atom **assigns = NULL;
     if (b->len > 0) {
@@ -1097,8 +1106,7 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
     bb->current.entries[bb->current.len].spelling = spelling;
     bb->current.entries[bb->current.len].val = val;
     bb->current.entries[bb->current.len].legacy_name_fallback = legacy_name_fallback;
-    if (bb->current.len + 1 >= BINDINGS_LOOKUP_CACHE_MIN_LEN)
-        bindings_lookup_cache_note(&bb->current, var_id, bb->current.len);
+    bindings_lookup_cache_note(&bb->current, var_id, bb->current.len);
     bb->current.len++;
     return true;
 }
@@ -1833,8 +1841,9 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
             return bindings_add_var(b, left,
                                     right_original ? epoch_var_atom(a, right, epoch) : right);
         }
-        return bindings_add_var(b, left,
-                                right_original ? rename_vars(a, right, epoch) : right);
+        return bindings_add_var(
+            b, left,
+            right_original ? bindings_apply_epoch(b, a, right, epoch) : right);
     }
     if (right->kind == ATOM_VAR) {
         VarId right_id = right_original ? var_epoch_id(right->var_id, epoch) : right->var_id;
