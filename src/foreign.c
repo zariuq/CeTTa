@@ -906,6 +906,36 @@ static Atom *module_export_lhs(Arena *a, const char *name, long arity, Atom ***v
     return atom_expr(a, elems, nargs + 1);
 }
 
+static bool module_add_export_constant_direct(Space *target_space,
+                                              const char *name,
+                                              Atom *value_atom) {
+    if (!target_space || !target_space->universe || !name || !value_atom)
+        return false;
+
+    TermUniverse *universe = target_space->universe;
+    AtomId lhs_head_id =
+        tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, name));
+    if (lhs_head_id == CETTA_ATOM_ID_NONE)
+        return false;
+
+    AtomId lhs_id = tu_expr_from_ids(universe, &lhs_head_id, 1);
+    if (lhs_id == CETTA_ATOM_ID_NONE)
+        return false;
+
+    AtomId rhs_id = term_universe_store_atom_id(universe, NULL, value_atom);
+    if (rhs_id == CETTA_ATOM_ID_NONE || !tu_hdr(universe, rhs_id))
+        return false;
+
+    AtomId eq_head_id = tu_intern_symbol(universe, g_builtin_syms.equals);
+    AtomId eq_children[3] = {eq_head_id, lhs_id, rhs_id};
+    AtomId eq_id = tu_expr_from_ids(universe, eq_children, 3);
+    if (eq_id == CETTA_ATOM_ID_NONE)
+        return false;
+
+    space_add_atom_id(target_space, eq_id);
+    return true;
+}
+
 static bool module_add_export_constant(CettaForeignRuntime *rt, Space *target_space,
                                        Arena *persistent_arena,
                                        const char *name, PyObject *value_obj,
@@ -915,12 +945,14 @@ static bool module_add_export_constant(CettaForeignRuntime *rt, Space *target_sp
     bool ok = python_emit_single(rt, persistent_arena, value_obj, &rs, error_out) &&
               rs.len == 1;
     if (ok) {
-        Atom *lhs = module_export_lhs(persistent_arena, name, 0, NULL);
-        Atom *eq = atom_expr3(persistent_arena,
-                              atom_symbol(persistent_arena, "="),
-                              lhs,
-                              rs.items[0]);
-        space_add(target_space, space_store_atom(target_space, persistent_arena, eq));
+        if (!module_add_export_constant_direct(target_space, name, rs.items[0])) {
+            Atom *lhs = module_export_lhs(persistent_arena, name, 0, NULL);
+            Atom *eq = atom_expr3(persistent_arena,
+                                  atom_symbol(persistent_arena, "="),
+                                  lhs,
+                                  rs.items[0]);
+            (void)space_admit_atom(target_space, persistent_arena, eq);
+        }
     }
     result_set_free(&rs);
     return ok;
@@ -944,7 +976,7 @@ static bool module_add_export_callable(CettaForeignRuntime *rt, Space *target_sp
                           atom_symbol(persistent_arena, "="),
                           lhs,
                           rhs);
-    space_add(target_space, space_store_atom(target_space, persistent_arena, eq));
+    (void)space_admit_atom(target_space, persistent_arena, eq);
     return true;
 }
 

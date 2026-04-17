@@ -74,10 +74,16 @@ bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
 bool      bindings_contains_private_variant_slots(const Bindings *b);
 void      bindings_assert_no_private_variant_slots(const Bindings *b);
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
+static inline Atom *bindings_apply_if_vars(const Bindings *b, Arena *a, Atom *atom) {
+    if (!b || b->len == 0 || !atom || !atom_has_vars(atom))
+        return atom;
+    return bindings_apply((Bindings *)b, a, atom);
+}
 Atom     *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
                                       BindingsRewriteVarFn rewrite_var,
                                       void *rewrite_ctx);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
+Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);
 void      binding_set_init(BindingSet *bs);

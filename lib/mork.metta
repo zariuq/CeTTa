@@ -152,14 +152,14 @@
   (@return "Number of executed steps"))
 
 (@doc mork:include!
-  (@desc "Loads a module into an existing MorkSpace. This is the explicit MORK analogue of generic include: use it when the destination is a MorkSpace rather than an ordinary SpaceType.")
+  (@desc "Loads a module into an existing MorkSpace. This is the explicit native MORK lane for direct .mm2 and compiled .act modules; generic include/import reject raw .mm2 specs and leave them to mork:include! instead of lowering them through ordinary CeTTa space materialization.")
   (@params (
     (@param "Destination MorkSpace handle")
     (@param "Module spec or path to include")))
   (@return "Unit on success"))
 
 (@doc mork:dump!
-  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current unordered MorkSpace into a PathMap .act artifact at the given path. When mirrored row metadata is available, duplicate indexed copies are preserved through the ACT sidecar metadata; otherwise the export follows structural support.")
+  (@desc "Canonical MORK umbrella helper for ACT export. Compiles the current unordered MorkSpace into a PathMap .act artifact at the given path using structural multiplicities only; the old mirrored-row ACT sidecar path is no longer part of the bridge contract.")
   (@params (
     (@param "MorkSpace to compile into a .act artifact")
     (@param "Output ACT filename")))
