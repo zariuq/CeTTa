@@ -165,9 +165,9 @@ perf-stable: perf-runtime-stats
 test-symbolid-guard:
 	@./scripts/check_symbolid_guards.sh
 
-runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c $(BUILD_CONFIG_HEADER)
+runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c -lm
 
 test-variant-shape-roundtrip: runtime/test_variant_shape_roundtrip
 	@./runtime/test_variant_shape_roundtrip
@@ -1566,7 +1566,7 @@ oracle-refresh:
 	echo "done — .expected files updated"
 
 # Benchmark: forward chaining depth 3. Uses --count-only to avoid giant stdout.
-# Checks theorem count matches frozen regression number.
+# Checks theorem count matches the current pinned regression number.
 bench-d3: $(BIN)
 	@count=$$(./$(BIN) --count-only tests/nil_pc_fc_d3.metta 2>&1 | tail -1); \
 	echo "depth-3 total: $$count theorems"; \
