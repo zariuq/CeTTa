@@ -191,6 +191,13 @@
     (@param "Search lane name such as recursive-dependent-proof")))
   (@return "Opaque policy atom consumed by select, fold, fold-by-key, collect, or once"))
 
+(@doc pragma!
+  (@desc "Session-local evaluator/configuration surface. Pragma keys select optional modes or limits for the active evaluation session; they do not redefine the core language/profile semantics of spaces or queries. For example, (pragma! search-table-mode variant) enables the current variant-table memoization mode for repeated search in this session, while other backends or future language surfaces may realize the same user-visible behavior differently.")
+  (@params (
+    (@param "Pragma key as a Symbol")
+    (@param "Requested mode, limit, or payload for that key")))
+  (@return "Unit when the pragma is accepted, or the original pragma form when the active language/profile leaves that key uninterpreted"))
+
 (@doc with-space-snapshot
   (@desc "CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.")
   (@params (

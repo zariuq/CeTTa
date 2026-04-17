@@ -1,10 +1,13 @@
 {
   "title": "CeTTa <-> MORK PathMap Bridge ABI (VarId/Symbol-Aware)",
-  "status": "draft_for_lane_split",
+  "status": "historical_draft_for_lane_split",
   "version": "v2-proposed",
   "date": "2026-03-27",
-  "goal": "Eliminate local rematch for trusted bridge rows while preserving exact CeTTa match semantics.",
+  "scope": "Lane-local historical draft for one possible trusted direct-packet bridge. This file is not the authoritative statement of CeTTa space semantics, backend semantics, or future --lang contracts.",
+  "authoritative_contract_note": "Authoritative user-visible semantics come from the language/profile surface and the public Space API. Public bridge contracts live in the current bridge headers and runtime surfaces; this draft records one optional low-level packet idea only.",
+  "goal": "Explore one low-level packet design that could eliminate local rematch for trusted bridge packets while preserving exact CeTTa match semantics.",
   "design_principles": [
+    "Do not override the higher-level Space semantics or public language/profile contracts.",
     "Kernel comparisons are on ids, not strings.",
     "Bindings are query-side semantic outputs, not candidate-side implementation leaks.",
     "Packets must be self-describing and rejectable on contract mismatch.",

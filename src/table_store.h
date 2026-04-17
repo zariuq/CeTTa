@@ -5,24 +5,34 @@
 #include "variant_instance.h"
 
 /*
- * TableStore is the first tabling seam beside SearchContext.
+ * TableStore is one optional memoization substrate beside SearchContext.
  *
- * Shared semantic contract across backends:
- *   - Variant canonicalization defines query equivalence.
- *   - Revision is the authoritative space snapshot boundary.
- *   - Only exact-current-revision entries may replay answers.
- *   - Stale entries are reusable replacement targets, not semantic hits.
+ * The authoritative user-visible semantics remain the active language/profile
+ * surface plus the public Space API (`new-space`, `match`, `add-atom`,
+ * `remove-atom`, revision-observable mutation, and any explicit pragma/mode
+ * selected by the caller). This header does not define a backend-wide or
+ * language-wide law; it only states the current invariants for the explicit
+ * `search-table-mode variant` implementation.
+ *
+ * Current local invariants for CETTA_TABLE_MODE_VARIANT:
+ *   - Variant canonicalization is the lookup key inside this table mode.
+ *   - The supplied revision token is this implementation's invalidation key.
+ *   - This implementation only replays answers from an exact current-revision
+ *     entry.
+ *   - Older entries may be reused as storage slots after invalidation, but
+ *     lookup still treats them as misses.
  *
  * Positive example:
- *   - A repeated variant query against the same space revision may replay a
- *     memoized answer set.
+ *   - A repeated variant query in this mode, against the same revision token,
+ *     may replay a memoized answer set.
  *
  * Negative example:
  *   - Replaying answers from an older revision because the variant shape still
- *     matches, silently hiding an invalidation boundary.
+ *     matches, silently hiding a mutation boundary in this implementation.
  *
- * This tranche follows the conservative literature path: NONE or VARIANT
- * only.
+ * Future backends, future `--lang` surfaces, or future explicit table modes
+ * may use different internal keys, invalidation schemes, or replay machinery
+ * so long as they preserve the higher-level exposed semantics.
  */
 
 typedef enum {
