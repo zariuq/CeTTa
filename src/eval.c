@@ -2931,7 +2931,12 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
     if (bound)
         atom = bound;
     atom = materialize_runtime_token(s, a, atom);
-    if (atom_is_empty(atom) || atom_is_error(atom) || atom_eval_is_immediate_value(atom, fuel)) {
+    if (atom_is_empty(atom)) {
+        /* Match HE's internal sentinel behavior: Empty does not become a
+           user-visible stream item on the native fast path. */
+        return true;
+    }
+    if (atom_is_error(atom) || atom_eval_is_immediate_value(atom, fuel)) {
         (*visited)++;
         return visitor(a, atom, &empty, ctx);
     }
@@ -6203,8 +6208,17 @@ tail_call: ;
         Atom *list = expr_arg(atom, 0);
         if (list->kind == ATOM_EXPR) {
             for (uint32_t i = 0; i < list->expr.len; i++) {
+                OutcomeSet branch;
+                outcome_set_init(&branch);
                 eval_for_current_caller(s, a, etype, list->expr.elems[i], fuel, &_empty,
-                                        CURRENT_ENV, preserve_bindings, os);
+                                        CURRENT_ENV, preserve_bindings, &branch);
+                for (uint32_t j = 0; j < branch.len; j++) {
+                    Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
+                    if (atom_is_empty(branch_atom))
+                        continue;
+                    outcome_set_add_existing(os, &branch.items[j]);
+                }
+                outcome_set_free(&branch);
             }
         }
         return;
@@ -6215,7 +6229,19 @@ tail_call: ;
         ResultSet inner;
         result_set_init(&inner);
         metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, &inner);
-        Atom *collected = atom_expr(a, inner.items, inner.len);
+        /* HE treats Empty as an internal no-result sentinel here: collapse
+           collects only surviving branches, not literal Empty placeholders. */
+        Atom **collected_items = NULL;
+        uint32_t collected_len = 0;
+        if (inner.len > 0) {
+            collected_items = arena_alloc(a, sizeof(Atom *) * inner.len);
+            for (uint32_t i = 0; i < inner.len; i++) {
+                if (atom_is_empty(inner.items[i]))
+                    continue;
+                collected_items[collected_len++] = inner.items[i];
+            }
+        }
+        Atom *collected = atom_expr(a, collected_items, collected_len);
         free(inner.items);
         outcome_set_add(os, collected, &_empty);
         return;
@@ -8251,12 +8277,18 @@ tail_call: ;
         metta_eval_bind(s, a, expr_arg(atom, 0), fuel, &inner);
         /* Spec shape: a single expression whose elements are
            (<atom> <Bindings.toAtom>) pairs. */
-        Atom **pairs = arena_alloc(a, sizeof(Atom *) * inner.len);
+        Atom **pairs = NULL;
+        uint32_t pair_len = 0;
+        if (inner.len > 0)
+            pairs = arena_alloc(a, sizeof(Atom *) * inner.len);
         for (uint32_t i = 0; i < inner.len; i++) {
-            pairs[i] = atom_expr2(a, outcome_atom_materialize(a, &inner.items[i]),
-                                  bindings_to_atom(a, &inner.items[i].env));
+            Atom *result_atom = outcome_atom_materialize(a, &inner.items[i]);
+            if (atom_is_empty(result_atom))
+                continue;
+            pairs[pair_len++] =
+                atom_expr2(a, result_atom, bindings_to_atom(a, &inner.items[i].env));
         }
-        outcome_set_add(os, atom_expr(a, pairs, inner.len), &_empty);
+        outcome_set_add(os, atom_expr(a, pairs, pair_len), &_empty);
         rb_set_free(&inner);
         return;
     }

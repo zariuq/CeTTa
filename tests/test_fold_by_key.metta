@@ -32,6 +32,18 @@
       (eval (+ $acc 1)))
     ())
 
+!(assertEqual
+    (collapse
+      (fold-by-key
+        (superpose ((a 1) Empty (a 2) (b 3)))
+        0
+        $acc
+        $item
+        (let ($key $value) $item $key)
+        (let ($key $value) $item
+          (eval (+ $acc $value)))))
+    ((a 3) (b 3)))
+
 !(fold-by-key
     (superpose (1))
     0
