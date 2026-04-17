@@ -9,3 +9,12 @@
 
 ; match with no matches returns no results
 !(assertEqualToResult (match &self (nonexistent-pattern) found) ())
+
+; collapse also filters the internal Empty sentinel rather than packaging it
+; into the resulting tuple.
+!(assertEqual (collapse Empty) ())
+
+; Empty produced via the stdlib wrapper must be filtered the same way.
+!(assertEqual
+  (collapse (let $x (superpose (a b)) (if (== $x a) (empty) $x)))
+  (b))
