@@ -181,6 +181,12 @@ static bool language_slot_policy_override(const CettaLanguageSpec *spec,
                           : CETTA_FUNCTION_ARG_POLICY_RAW;
         return true;
     }
+    if ((head_id == g_builtin_syms.foldl_atom ||
+         head_id == g_builtin_syms.minimal_foldl_atom ||
+         head_id == g_builtin_syms.foldl_atom_in_space) && arg_index == 4) {
+        *out_policy = CETTA_FUNCTION_ARG_POLICY_RAW;
+        return true;
+    }
     return false;
 }
 

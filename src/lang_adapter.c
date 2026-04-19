@@ -3,12 +3,14 @@
 #include "grounded.h"
 #include "parser.h"
 #include "symbol.h"
+#include "text_source.h"
 
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 typedef struct {
     Arena *arena;
@@ -22,6 +24,12 @@ typedef struct CettaPettaCallableSet {
     uint32_t cap;
 } CettaPettaCallableSet;
 
+typedef struct {
+    char **items;
+    uint32_t len;
+    uint32_t cap;
+} CettaPettaPathSet;
+
 static bool atom_is_symbol_name(Atom *atom, const char *name) {
     const char *spelling = atom_name_cstr(atom);
     return spelling && strcmp(spelling, name) == 0;
@@ -32,6 +40,17 @@ static bool expr_head_is_name(Atom *atom, const char *name) {
            atom->kind == ATOM_EXPR &&
            atom->expr.len > 0 &&
            atom_is_symbol_name(atom->expr.elems[0], name);
+}
+
+static char *petta_owned_strdup(const char *text) {
+    size_t len;
+    char *copy;
+    if (!text) return NULL;
+    len = strlen(text);
+    copy = cetta_malloc(len + 1);
+    if (!copy) return NULL;
+    memcpy(copy, text, len + 1);
+    return copy;
 }
 
 static Atom *petta_fresh_var(CettaPettaLowerContext *ctx, const char *prefix) {
@@ -54,6 +73,8 @@ static Atom *petta_wrap_let(CettaPettaLowerContext *ctx, Atom *pattern,
                                atom_symbol_id(ctx->arena, g_builtin_syms.let),
                                let_args, 3);
 }
+
+static Atom *petta_lower_term(CettaPettaLowerContext *ctx, Atom *term);
 
 static void petta_callable_set_init(CettaPettaCallableSet *set) {
     memset(set, 0, sizeof(*set));
@@ -92,6 +113,45 @@ static bool petta_callable_set_add(CettaPettaCallableSet *set, SymbolId id) {
     return true;
 }
 
+static void petta_path_set_init(CettaPettaPathSet *set) {
+    memset(set, 0, sizeof(*set));
+}
+
+static void petta_path_set_free(CettaPettaPathSet *set) {
+    if (!set) return;
+    for (uint32_t i = 0; i < set->len; i++) {
+        free(set->items[i]);
+    }
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static bool petta_path_set_contains(const CettaPettaPathSet *set,
+                                    const char *path) {
+    if (!set || !path) return false;
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (strcmp(set->items[i], path) == 0) return true;
+    }
+    return false;
+}
+
+static bool petta_path_set_add(CettaPettaPathSet *set, const char *path) {
+    if (!set || !path || petta_path_set_contains(set, path)) return true;
+    if (set->len == set->cap) {
+        uint32_t new_cap = set->cap ? set->cap * 2 : 16;
+        char **new_items = cetta_realloc(set->items, sizeof(char *) * new_cap);
+        if (!new_items) return false;
+        set->items = new_items;
+        set->cap = new_cap;
+    }
+    char *copy = petta_owned_strdup(path);
+    if (!copy) return false;
+    set->items[set->len++] = copy;
+    return true;
+}
+
 static bool petta_declares_callable_head(Atom *term, SymbolId *out_head) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len != 3) return false;
     if (!expr_head_is_name(term, "=")) return false;
@@ -114,11 +174,123 @@ static void petta_collect_program_callable_heads(Atom **atoms, int n,
     }
 }
 
-static Atom *petta_lower_term(CettaPettaLowerContext *ctx, Atom *term);
+static const char *petta_string_like_atom(Atom *atom) {
+    if (!atom) return NULL;
+    if (atom->kind == ATOM_SYMBOL) return atom_name_cstr(atom);
+    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        return atom->ground.sval;
+    }
+    return NULL;
+}
+
+static bool petta_path_is_existing_file(const char *path) {
+    struct stat st;
+    return path && stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static bool petta_try_import_candidate(const char *base_dir, const char *spec,
+                                       char *resolved, size_t resolved_sz) {
+    char candidate[PATH_MAX];
+    if (!cetta_text_path_resolve(base_dir, spec, candidate, sizeof(candidate)))
+        return false;
+    if (petta_path_is_existing_file(candidate)) {
+        return snprintf(resolved, resolved_sz, "%s", candidate) < (int)resolved_sz;
+    }
+    if (snprintf(candidate, sizeof(candidate), "%s.metta", spec) >= (int)sizeof(candidate))
+        return false;
+    if (!cetta_text_path_resolve(base_dir, candidate, resolved, resolved_sz))
+        return false;
+    return petta_path_is_existing_file(resolved);
+}
+
+static bool petta_resolve_static_import(const char *current_path,
+                                        const char *spec,
+                                        char *resolved, size_t resolved_sz) {
+    char base_dir[PATH_MAX];
+
+    if (!current_path || !*current_path || !spec || !*spec) return false;
+    if (strchr(spec, ':')) return false;
+    if (!cetta_text_path_parent_dir(base_dir, sizeof(base_dir), current_path))
+        return false;
+    while (true) {
+        if (petta_try_import_candidate(base_dir, spec, resolved, resolved_sz))
+            return true;
+        char parent[PATH_MAX];
+        if (!cetta_text_path_parent_dir(parent, sizeof(parent), base_dir))
+            break;
+        if (strcmp(parent, base_dir) == 0)
+            break;
+        snprintf(base_dir, sizeof(base_dir), "%s", parent);
+    }
+    return false;
+}
+
+static bool petta_static_import_spec_at(Atom **atoms, int n, int i,
+                                        const char **spec_out) {
+    if (!atoms || i < 0 || i + 1 >= n || !spec_out) return false;
+    if (!atom_is_symbol_name(atoms[i], "!")) return false;
+    Atom *expr = atoms[i + 1];
+    if (!expr || expr->kind != ATOM_EXPR || expr->expr.len != 3)
+        return false;
+    if (!expr_head_is_name(expr, "import!"))
+        return false;
+    Atom *dest = expr->expr.elems[1];
+    if (!dest || !atom_is_symbol_name(dest, "&self"))
+        return false;
+    const char *spec = petta_string_like_atom(expr->expr.elems[2]);
+    if (!spec || !*spec)
+        return false;
+    *spec_out = spec;
+    return true;
+}
+
+static void petta_collect_imported_callable_heads_from_file(
+    const char *path,
+    CettaPettaCallableSet *callables,
+    CettaPettaPathSet *visited
+) {
+    Arena parse_arena;
+    Atom **atoms = NULL;
+    int n = 0;
+
+    if (!path || !callables || !visited || petta_path_set_contains(visited, path))
+        return;
+    if (!petta_path_set_add(visited, path))
+        return;
+
+    arena_init(&parse_arena);
+    arena_set_runtime_kind(&parse_arena, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    n = parse_metta_file(path, &parse_arena, &atoms);
+    if (n < 0) {
+        free(atoms);
+        arena_free(&parse_arena);
+        return;
+    }
+
+    petta_collect_program_callable_heads(atoms, n, callables);
+    for (int i = 0; i + 1 < n; i++) {
+        const char *spec = NULL;
+        if (!petta_static_import_spec_at(atoms, n, i, &spec))
+            continue;
+        char resolved[PATH_MAX];
+        if (petta_resolve_static_import(path, spec, resolved, sizeof(resolved))) {
+            petta_collect_imported_callable_heads_from_file(resolved, callables, visited);
+        }
+        i++;
+    }
+
+    free(atoms);
+    arena_free(&parse_arena);
+}
+
+static bool petta_head_is_core_callable(Atom *head) {
+    return atom_is_symbol_name(head, "empty");
+}
 
 static bool petta_head_is_callable(CettaPettaLowerContext *ctx, Atom *head) {
     if (!head || head->kind != ATOM_SYMBOL) return false;
     return is_grounded_op(head->sym_id) ||
+           petta_head_is_core_callable(head) ||
            petta_callable_set_contains(ctx ? ctx->callables : NULL, head->sym_id);
 }
 
@@ -171,7 +343,9 @@ static Atom *petta_lower_callable_pattern(CettaPettaLowerContext *ctx,
 static Atom *petta_lower_pattern_against(CettaPettaLowerContext *ctx,
                                          Atom *pattern, Atom *actual,
                                          Atom *body) {
-    if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len > 0 &&
+    if (pattern &&
+        pattern->kind == ATOM_EXPR &&
+        pattern->expr.len > 0 &&
         petta_head_is_callable(ctx, pattern->expr.elems[0])) {
         return petta_lower_callable_pattern(ctx, pattern, actual, body);
     }
@@ -482,7 +656,8 @@ static Atom *petta_length_compat_decl(CettaPettaLowerContext *ctx) {
 }
 
 static int petta_parse_atoms_to_ids(Atom **atoms, int n, Arena *arena,
-                                    TermUniverse *universe, AtomId **out_ids) {
+                                    TermUniverse *universe, const char *source_path,
+                                    AtomId **out_ids) {
     if (n < 0) return n;
     bool uses_length = false;
     bool defines_length = false;
@@ -495,8 +670,23 @@ static int petta_parse_atoms_to_ids(Atom **atoms, int n, Arena *arena,
     int out_len = n + extra;
     AtomId *ids = out_len > 0 ? cetta_malloc(sizeof(AtomId) * (size_t)out_len) : NULL;
     CettaPettaCallableSet callables;
+    CettaPettaPathSet visited_imports;
     petta_callable_set_init(&callables);
+    petta_path_set_init(&visited_imports);
     petta_collect_program_callable_heads(atoms, n, &callables);
+    if (source_path && *source_path) {
+        for (int i = 0; i + 1 < n; i++) {
+            const char *spec = NULL;
+            if (!petta_static_import_spec_at(atoms, n, i, &spec))
+                continue;
+            char resolved[PATH_MAX];
+            if (petta_resolve_static_import(source_path, spec, resolved, sizeof(resolved))) {
+                petta_collect_imported_callable_heads_from_file(
+                    resolved, &callables, &visited_imports);
+            }
+            i++;
+        }
+    }
     CettaPettaLowerContext ctx = {
         .arena = arena,
         .fresh_counter = 0,
@@ -513,8 +703,8 @@ static int petta_parse_atoms_to_ids(Atom **atoms, int n, Arena *arena,
             universe, arena, petta_lower_term(&ctx, atoms[i]));
     }
 
+    petta_path_set_free(&visited_imports);
     petta_callable_set_free(&callables);
-
     *out_ids = ids;
     return out_len;
 }
@@ -537,7 +727,8 @@ static int parse_ids_with_adapter(const CettaLanguageSpec *lang, bool is_file,
         free(atoms);
         return n;
     }
-    int out_n = petta_parse_atoms_to_ids(atoms, n, arena, universe, out_ids);
+    int out_n = petta_parse_atoms_to_ids(atoms, n, arena, universe,
+                                         is_file ? source : NULL, out_ids);
     free(atoms);
     return out_n;
 }
