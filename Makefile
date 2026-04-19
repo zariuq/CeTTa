@@ -419,7 +419,9 @@ test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip te
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
-		if { [ "$$f" = "tests/test_pretty_vars_surface.metta" ] || \
+		if { [ "$$f" = "tests/test_closed_stream_fastpath.metta" ] || \
+		     [ "$$f" = "tests/test_closed_stream_runtime_stats.metta" ] || \
+		     [ "$$f" = "tests/test_pretty_vars_surface.metta" ] || \
 		     [ "$$f" = "tests/test_import_act_module_surface.metta" ] || \
 		     [ "$$f" = "tests/test_import_mm2_module_surface.metta" ] || \
 		     [ "$$f" = "tests/test_include_mm2_space_target.metta" ] || \
@@ -1068,7 +1070,7 @@ test-deprecated-space-engine-mork-guard: $(BIN)
 		"error: unknown space engine 'mork'" \
 		"space engines:" \
 		"  native                 standard CeTTa / HE engine" \
-		"  pathmap                PathMap-backed CeTTa engine with fast candidate narrowing (requires BUILD=pathmap or BUILD=full)" \
+		"  pathmap                flattened PathMap-style CeTTa engine without bridge rows (requires BUILD=pathmap or BUILD=full)" \
 		"  native-candidate-exact diagnostic native exact-matcher lane"); \
 	if [ "$$status" -eq 2 ] && [ "$$result" = "$$expected" ]; then \
 		echo "PASS: deprecated space-engine mork guard"; \

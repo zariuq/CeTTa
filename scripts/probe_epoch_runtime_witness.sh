@@ -23,4 +23,4 @@ run_case "conjunction12" \
 
 run_case "bio_1M" \
     --emit-runtime-stats --quiet --lang he --count-only \
-    tests/bench_bio_1M.metta
+    benchmarks/bench_bio_1M.metta

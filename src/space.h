@@ -117,6 +117,8 @@ typedef struct Space {
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
+    uint32_t non_exact_atoms;
+    bool non_exact_atoms_dirty;
     uint64_t revision;
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
@@ -150,6 +152,8 @@ static inline uint64_t space_revision(const Space *s) {
 }
 bool space_contains_exact(Space *s, Atom *atom);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
+bool space_contains_only_exact_atoms(Space *s);
+bool space_atom_is_exact_indexable(Atom *atom);
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 

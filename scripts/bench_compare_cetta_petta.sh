@@ -5,7 +5,24 @@ ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 CETTA_BIN="$ROOT/cetta"
 PETTA_DIR="/home/zar/claude/hyperon/PeTTa"
 PETTA_RUN="$PETTA_DIR/run.sh"
-BACKENDS=(native native-candidate-exact pathmap)
+BACKENDS_STR="${BACKENDS_STR:-native native-candidate-exact pathmap}"
+IFS=' ' read -r -a BACKENDS <<< "$BACKENDS_STR"
+
+extract_numeric_tail() {
+    python3 -c '
+import re
+import sys
+
+lines = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
+for line in reversed(lines):
+    if line.startswith("\"") and line.endswith("\"") and len(line) >= 2:
+        line = line[1:-1].strip()
+    m = re.fullmatch(r"\[?\s*(\d+)\s*\]?", line)
+    if m:
+        print(m.group(1))
+        break
+'
+}
 
 run_cetta() {
     local backend=$1
@@ -26,6 +43,25 @@ run_cetta() {
     printf '  cetta %-22s count=%-4s %s\n' "$backend" "$count" "$timing"
 }
 
+run_cetta_value() {
+    local backend=$1
+    local file=$2
+    local expected=$3
+    local out status value timing
+    out=$(/usr/bin/time -f 'elapsed=%E rss=%MKB' bash -lc \
+        "ulimit -v 6291456; '$CETTA_BIN' --space-engine '$backend' --lang he '$file'" \
+        2>&1) || status=$?
+    status=${status:-0}
+    value=$(printf '%s\n' "$out" | extract_numeric_tail || true)
+    timing=$(printf '%s\n' "$out" | grep 'elapsed=' | tail -1 || true)
+    if [[ $status -ne 0 || -z ${value:-} || $value != "$expected" ]]; then
+        printf '%s\n' "$out" | tail -20 >&2
+        echo "FAIL: CeTTa backend=$backend file=$file expected-value=$expected got=${value:-<none>}" >&2
+        return 1
+    fi
+    printf '  cetta %-22s value=%-4s %s\n' "$backend" "$value" "$timing"
+}
+
 run_petta() {
     local file=$1
     local expected=$2
@@ -44,6 +80,24 @@ run_petta() {
     printf '  petta %-22s count=%-4s %s\n' "$(basename "$file")" "$count" "$timing"
 }
 
+run_petta_value() {
+    local file=$1
+    local expected=$2
+    local out status value timing
+    out=$(/usr/bin/time -f 'elapsed=%E rss=%MKB' bash -lc \
+        "cd '$PETTA_DIR'; ulimit -v 6291456; '$PETTA_RUN' '$file' --silent" \
+        2>&1) || status=$?
+    status=${status:-0}
+    value=$(printf '%s\n' "$out" | extract_numeric_tail || true)
+    timing=$(printf '%s\n' "$out" | grep 'elapsed=' | tail -1 || true)
+    if [[ $status -ne 0 || -z ${value:-} || $value != "$expected" ]]; then
+        printf '%s\n' "$out" | tail -20 >&2
+        echo "FAIL: PeTTa file=$file expected-value=$expected got=${value:-<none>}" >&2
+        return 1
+    fi
+    printf '  petta %-22s value=%-4s %s\n' "$(basename "$file")" "$value" "$timing"
+}
+
 run_pair() {
     local label=$1
     local he_file=$2
@@ -55,6 +109,19 @@ run_pair() {
         run_cetta "$backend" "$he_file" "$he_expected"
     done
     run_petta "$petta_file" "$petta_expected"
+}
+
+run_pair_value() {
+    local label=$1
+    local he_file=$2
+    local he_expected=$3
+    local petta_file=$4
+    local petta_expected=$5
+    echo "== $label =="
+    for backend in "${BACKENDS[@]}"; do
+        run_cetta_value "$backend" "$he_file" "$he_expected"
+    done
+    run_petta_value "$petta_file" "$petta_expected"
 }
 
 if [[ ! -x $CETTA_BIN ]]; then
@@ -82,3 +149,17 @@ run_pair \
   "20" \
   "$ROOT/tests/bench_backchain_petta.metta" \
   "1"
+
+run_pair_value \
+  "foldall-spacecount" \
+  "$ROOT/benchmarks/bench_foldallspacecount_he.metta" \
+  "3" \
+  "$ROOT/benchmarks/bench_foldallspacecount_petta.metta" \
+  "3"
+
+run_pair_value \
+  "foldall-match" \
+  "$ROOT/benchmarks/bench_foldallmatch_he.metta" \
+  "5" \
+  "$ROOT/benchmarks/bench_foldallmatch_petta.metta" \
+  "5"
