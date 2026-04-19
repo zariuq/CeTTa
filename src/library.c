@@ -2460,6 +2460,7 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
 ) {
     Arena scratch;
     arena_init(&scratch);
+    arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
 
     *out_bridge = NULL;
     if (out_unique_count)
@@ -2896,6 +2897,7 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
                                              "MORK bridge unavailable: ");
         }
         arena_init(&scratch);
+        arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         if (emit_stats) {
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_CALL);
         }
@@ -2975,6 +2977,7 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
             started_ns = library_monotonic_ns();
         }
         arena_init(&scratch);
+        arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         if (!cetta_mm2_atom_to_bridge_expr_bytes(
                 &scratch, item, &expr_bytes, &expr_len, &encode_error)) {
             Atom *error = atom_error(
@@ -3037,6 +3040,7 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
                    ? args[1]
                    : library_unquote_atom(args[1]);
         arena_init(&scratch);
+        arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         if (!cetta_mm2_atom_to_bridge_expr_bytes(
                 &scratch, item, &expr_bytes, &expr_len, &encode_error)) {
             Atom *error = atom_error(
@@ -4295,6 +4299,7 @@ static Atom *mork_path_of_atom_native(CettaLibraryContext *ctx, Arena *a,
     }
 
     arena_init(&scratch);
+    arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     text = atom_to_parseable_string(&scratch, args[0]);
     if (!text) {
         arena_free(&scratch);
@@ -4688,6 +4693,7 @@ static Atom *mm2_load_file_native(CettaLibraryContext *ctx, Arena *a,
     }
 
     arena_init(&parse_arena);
+    arena_set_runtime_kind(&parse_arena, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     n = parse_metta_file(resolved, &parse_arena, &atoms);
     if (n < 0) {
         error = atom_error(a, library_call_expr(a, head, args, nargs),

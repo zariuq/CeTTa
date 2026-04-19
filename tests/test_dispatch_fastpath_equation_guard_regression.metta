@@ -14,6 +14,7 @@
 !(add-atom &ss (: ax-1 (P $p $q)))
 !(add-atom &ss (: ax-2 (Q $r $s)))
 
+!(pragma! outcome-variant-sharing on)
 !(assertAlphaEqualToResult
   (pair-via-eq &ss)
   ((Pair (P $a $b) (P $c $d))

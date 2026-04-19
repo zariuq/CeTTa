@@ -6,6 +6,8 @@ bool search_context_init(SearchContext *ctx, const Bindings *base,
     ctx->owns_scratch_arena = false;
     if (!ctx->scratch_arena) {
         arena_init(&ctx->owned_scratch_arena);
+        arena_set_runtime_kind(&ctx->owned_scratch_arena,
+                               CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         ctx->scratch_arena = &ctx->owned_scratch_arena;
         ctx->owns_scratch_arena = true;
     }
@@ -25,6 +27,8 @@ void search_context_init_owned(SearchContext *ctx, Bindings *owned,
     ctx->owns_scratch_arena = false;
     if (!ctx->scratch_arena) {
         arena_init(&ctx->owned_scratch_arena);
+        arena_set_runtime_kind(&ctx->owned_scratch_arena,
+                               CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         ctx->scratch_arena = &ctx->owned_scratch_arena;
         ctx->owns_scratch_arena = true;
     }

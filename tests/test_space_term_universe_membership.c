@@ -6,11 +6,7 @@
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
-
-void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
-    (void)counter;
-    (void)delta;
-}
+#include "tests/test_runtime_stats_stubs.h"
 
 void space_match_backend_init(Space *s) {
     memset(&s->match_backend, 0, sizeof(s->match_backend));

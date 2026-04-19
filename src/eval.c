@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/resource.h>
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static Registry *g_registry = NULL;
@@ -84,6 +85,84 @@ static bool eval_bare_minimal_enabled(void) {
 
 static int current_eval_fuel_limit(void) {
     return cetta_evaluator_options_effective_fuel_limit(active_eval_options_const());
+}
+
+#define CETTA_DEFAULT_EVAL_C_STACK_BUDGET_BYTES (1024u * 1024u)
+#define CETTA_MIN_EVAL_C_STACK_BUDGET_BYTES (1024u * 1024u)
+#define CETTA_MAX_EVAL_C_STACK_BUDGET_BYTES (16u * 1024u * 1024u)
+
+static __thread uint32_t g_eval_c_stack_guard_depth = 0;
+static __thread uintptr_t g_eval_c_stack_anchor = 0;
+static __thread size_t g_eval_c_stack_budget_bytes = 0;
+
+typedef struct {
+    bool active;
+} EvalCStackGuard;
+
+static size_t eval_c_stack_budget_bytes(void) {
+    if (g_eval_c_stack_budget_bytes != 0)
+        return g_eval_c_stack_budget_bytes;
+
+    size_t budget = CETTA_DEFAULT_EVAL_C_STACK_BUDGET_BYTES;
+#ifdef RLIMIT_STACK
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0 &&
+        rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur > 0) {
+        size_t stack_soft_limit = (size_t)rl.rlim_cur;
+        size_t reserve = stack_soft_limit / 4;
+        if (reserve < (1024u * 1024u))
+            reserve = (1024u * 1024u);
+        if (stack_soft_limit > reserve)
+            budget = stack_soft_limit - reserve;
+    }
+#endif
+    if (budget < CETTA_MIN_EVAL_C_STACK_BUDGET_BYTES)
+        budget = CETTA_MIN_EVAL_C_STACK_BUDGET_BYTES;
+    if (budget > CETTA_MAX_EVAL_C_STACK_BUDGET_BYTES)
+        budget = CETTA_MAX_EVAL_C_STACK_BUDGET_BYTES;
+    g_eval_c_stack_budget_bytes = budget;
+    cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_BUDGET_BYTES,
+                            (uint64_t)budget);
+    return budget;
+}
+
+static bool eval_c_stack_guard_enter(int fuel, EvalCStackGuard *guard) {
+    char stack_probe = 0;
+    uintptr_t here = (uintptr_t)&stack_probe;
+    if (guard) guard->active = false;
+    /* Explicit fuel / max-stack-depth already provides a logical recursion cap. */
+    if (fuel >= 0)
+        return true;
+    if (g_eval_c_stack_guard_depth++ == 0)
+        g_eval_c_stack_anchor = here;
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_DEPTH_PEAK,
+        (uint64_t)g_eval_c_stack_guard_depth);
+    uintptr_t delta = here > g_eval_c_stack_anchor
+        ? (here - g_eval_c_stack_anchor)
+        : (g_eval_c_stack_anchor - here);
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_DELTA_BYTES_PEAK,
+        (uint64_t)delta);
+    if (delta > eval_c_stack_budget_bytes()) {
+        if (g_eval_c_stack_guard_depth > 0)
+            g_eval_c_stack_guard_depth--;
+        if (g_eval_c_stack_guard_depth == 0)
+            g_eval_c_stack_anchor = 0;
+        return false;
+    }
+    if (guard) guard->active = true;
+    return true;
+}
+
+static void eval_c_stack_guard_leave(EvalCStackGuard *guard) {
+    if (!guard || !guard->active)
+        return;
+    guard->active = false;
+    if (g_eval_c_stack_guard_depth > 0)
+        g_eval_c_stack_guard_depth--;
+    if (g_eval_c_stack_guard_depth == 0)
+        g_eval_c_stack_anchor = 0;
 }
 
 int eval_current_effective_fuel_limit(void) {
@@ -297,13 +376,16 @@ static void eval_release_episode_table(void) {
 
 static bool outcome_variant_sharing_enabled(void) {
     const CettaEvalOptionEntry *option = active_eval_option("outcome-variant-sharing");
-    if (!option)
-        return true;
-    if (option->kind == CETTA_EVAL_OPTION_VALUE_INT)
-        return option->int_value != 0;
-    return strcmp(option->repr, "off") != 0 &&
-           strcmp(option->repr, "false") != 0 &&
-           strcmp(option->repr, "0") != 0;
+    if (option) {
+        if (option->kind == CETTA_EVAL_OPTION_VALUE_INT)
+            return option->int_value != 0;
+        return strcmp(option->repr, "off") != 0 &&
+               strcmp(option->repr, "false") != 0 &&
+               strcmp(option->repr, "0") != 0;
+    }
+    /* High-confidence auto lane: variant-table mode already commits to
+       canonicalized variant reuse at explicit memo boundaries. */
+    return active_search_table_mode() == CETTA_TABLE_MODE_VARIANT;
 }
 
 static VariantBank *eval_active_outcome_variant_bank(void) {
@@ -522,10 +604,10 @@ static void outcome_try_factor_variant(Outcome *out) {
     if (!out || variant_instance_present(&out->variant) ||
         !out->atom || !atom_contains_vars(out->atom))
         return;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_ATTEMPT);
     VariantBank *bank = eval_active_outcome_variant_bank();
     if (!bank)
         return;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_ATTEMPT);
     VariantShape shape;
     if (!variant_shape_from_bound_atom(bank, &out->env, out->atom, &shape))
         return;
@@ -3273,6 +3355,8 @@ static bool reduce_stream_results(Space *s, Arena *a, Arena *work_a, Atom *call,
         .ok = true,
     };
     arena_init(&reduce.stream_scratch);
+    arena_set_runtime_kind(&reduce.stream_scratch,
+                           CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     if (a->hashcons)
         arena_set_hashcons(&reduce.stream_scratch, a->hashcons);
 
@@ -3374,6 +3458,8 @@ fold_by_key_stream_results(Space *s, Arena *a, Arena *work_a,
         .ok = true,
     };
     arena_init(&ctx.stream_scratch);
+    arena_set_runtime_kind(&ctx.stream_scratch,
+                           CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     if (a->hashcons)
         arena_set_hashcons(&ctx.stream_scratch, a->hashcons);
 
@@ -3429,6 +3515,8 @@ static Atom *resolve_registry_refs_impl(Arena *a, Atom *atom, bool *changed_out)
 }
 
 static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
+    if (!g_registry || !atom_has_registry_refs(atom))
+        return atom;
     bool changed = false;
     Atom *resolved = resolve_registry_refs_impl(a, atom, &changed);
     if (!changed) {
@@ -3478,6 +3566,7 @@ static bool emit_mork_add_atoms_from_stream_source(Space *s, Arena *a,
     uint64_t eval_started_ns = ctx.emit_timing ? eval_monotonic_ns() : 0;
     uint64_t insert_started_ns = 0;
     arena_init(&ctx.scratch);
+    arena_set_runtime_kind(&ctx.scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     if (a->hashcons)
         arena_set_hashcons(&ctx.scratch, a->hashcons);
     Atom *applied_stream = (!current_env || current_env->len == 0)
@@ -3929,6 +4018,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
     bool tried_func_type = false;
     Arena scratch;
     arena_init(&scratch);
+    arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     arena_set_hashcons(&scratch, NULL);
 
     for (uint32_t oi = 0; oi < nop; oi++) {
@@ -4209,6 +4299,13 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
 /* ── metta_eval: full recursive evaluation (metta.md lines 240-272) ────── */
 
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard stack_guard = {0};
+    if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_EVAL);
+        result_set_add(rs, atom_error(a, atom, atom_symbol(a, "StackOverflow")));
+        return;
+    }
     if (fuel == 0) {
         /* Fuel exhausted — return empty result set (matches HE behavior:
            infinite recursion produces no output, not an error atom) */
@@ -4225,7 +4322,7 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
     }
     atom = materialize_runtime_token(s, a, atom);
 
-    /* Empty/Error: return as-is (spec line 253) */
+    /* Empty/Error: return as-is (control forms filter Empty where needed). */
     if (atom_is_empty(atom) || atom_is_error(atom)) {
         result_set_add(rs, atom);
         return;
@@ -4275,6 +4372,16 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
    contain variable assignments from bidirectional matching. */
 
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard stack_guard = {0};
+    if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND);
+        Bindings overflow_empty;
+        bindings_init(&overflow_empty);
+        outcome_set_add(os, atom_error(a, atom, atom_symbol(a, "StackOverflow")),
+                        &overflow_empty);
+        return;
+    }
     Bindings empty;
     bindings_init(&empty);
 
@@ -4294,6 +4401,17 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
 }
 
 static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, OutcomeSet *os) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard stack_guard = {0};
+    if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND_TYPED);
+        Bindings overflow_empty;
+        bindings_init(&overflow_empty);
+        outcome_set_add(os, atom_error(a, atom, atom_symbol(a, "StackOverflow")),
+                        &overflow_empty);
+        return;
+    }
     Bindings empty;
     bindings_init(&empty);
 
@@ -4387,6 +4505,18 @@ typedef struct {
     uint32_t cap;
 } MatchVisibleVarSet;
 
+typedef struct {
+    VarId hidden_var_id;
+    VarId visible_var_id;
+    SymbolId spelling;
+} MatchVisibleAliasRef;
+
+typedef struct {
+    MatchVisibleAliasRef *items;
+    uint32_t len;
+    uint32_t cap;
+} MatchVisibleAliasSet;
+
 static __attribute__((unused)) void match_visible_var_set_init(MatchVisibleVarSet *set) {
     set->items = NULL;
     set->len = 0;
@@ -4437,6 +4567,62 @@ static bool match_visible_var_set_contains(const MatchVisibleVarSet *set,
     return false;
 }
 
+static void match_visible_alias_set_init(MatchVisibleAliasSet *set) {
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static void match_visible_alias_set_free(MatchVisibleAliasSet *set) {
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static bool match_visible_alias_set_reserve(MatchVisibleAliasSet *set,
+                                            uint32_t needed) {
+    if (needed <= set->cap)
+        return true;
+    uint32_t next_cap = set->cap ? set->cap * 2 : 8;
+    while (next_cap < needed)
+        next_cap *= 2;
+    set->items = set->items
+        ? cetta_realloc(set->items, sizeof(MatchVisibleAliasRef) * next_cap)
+        : cetta_malloc(sizeof(MatchVisibleAliasRef) * next_cap);
+    set->cap = next_cap;
+    return true;
+}
+
+static bool match_visible_alias_set_add(MatchVisibleAliasSet *set,
+                                        VarId hidden_var_id,
+                                        VarId visible_var_id,
+                                        SymbolId spelling) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].hidden_var_id == hidden_var_id) {
+            set->items[i].visible_var_id = visible_var_id;
+            set->items[i].spelling = spelling;
+            return true;
+        }
+    }
+    if (!match_visible_alias_set_reserve(set, set->len + 1))
+        return false;
+    set->items[set->len].hidden_var_id = hidden_var_id;
+    set->items[set->len].visible_var_id = visible_var_id;
+    set->items[set->len].spelling = spelling;
+    set->len++;
+    return true;
+}
+
+static const MatchVisibleAliasRef *match_visible_alias_set_lookup(
+    const MatchVisibleAliasSet *set, VarId hidden_var_id) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].hidden_var_id == hidden_var_id)
+            return &set->items[i];
+    }
+    return NULL;
+}
+
 static bool collect_match_visible_vars_rec(Atom *atom,
                                            MatchVisibleVarSet *set) {
     if (!atom || !atom_has_vars(atom))
@@ -4477,6 +4663,35 @@ static bool atom_refs_only_match_visible_vars(Atom *atom,
     return true;
 }
 
+static Atom *rewrite_match_visible_aliases(Arena *a, Atom *atom,
+                                           const MatchVisibleAliasSet *aliases) {
+    if (!atom || !aliases || aliases->len == 0 || !atom_has_vars(atom))
+        return atom;
+    if (atom->kind == ATOM_VAR) {
+        const MatchVisibleAliasRef *alias =
+            match_visible_alias_set_lookup(aliases, atom->var_id);
+        if (!alias || alias->spelling != atom->sym_id)
+            return atom;
+        return atom_var_with_spelling(a, alias->spelling, alias->visible_var_id);
+    }
+    if (atom->kind != ATOM_EXPR)
+        return atom;
+
+    Atom **rewritten = NULL;
+    for (uint32_t i = 0; i < atom->expr.len; i++) {
+        Atom *child = atom->expr.elems[i];
+        Atom *next = rewrite_match_visible_aliases(a, child, aliases);
+        if (!rewritten && next != child) {
+            rewritten = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+            for (uint32_t j = 0; j < i; j++)
+                rewritten[j] = atom->expr.elems[j];
+        }
+        if (rewritten)
+            rewritten[i] = next;
+    }
+    return rewritten ? atom_expr(a, rewritten, atom->expr.len) : atom;
+}
+
 static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
                                            const MatchVisibleVarSet *visible,
                                            const Bindings *full,
@@ -4485,12 +4700,31 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     if (!full || visible->len == 0)
         return true;
 
+    Atom **resolved_values = arena_alloc(a, sizeof(Atom *) * visible->len);
+    MatchVisibleAliasSet aliases;
+    match_visible_alias_set_init(&aliases);
+
     for (uint32_t i = 0; i < visible->len; i++) {
         VisibleVarRef wanted = {
             .var_id = visible->items[i].var_id,
             .spelling = visible->items[i].spelling,
         };
         Atom *resolved = bindings_resolve_body_visible_var(a, full, &wanted);
+        resolved_values[i] = resolved;
+        if (resolved->kind == ATOM_VAR &&
+            resolved->sym_id == visible->items[i].spelling &&
+            resolved->var_id != visible->items[i].var_id &&
+            !match_visible_alias_set_add(&aliases, resolved->var_id,
+                                         visible->items[i].var_id,
+                                         visible->items[i].spelling)) {
+            match_visible_alias_set_free(&aliases);
+            bindings_free(projected);
+            return false;
+        }
+    }
+
+    for (uint32_t i = 0; i < visible->len; i++) {
+        Atom *resolved = rewrite_match_visible_aliases(a, resolved_values[i], &aliases);
         if (resolved->kind == ATOM_VAR &&
             resolved->var_id == visible->items[i].var_id &&
             resolved->sym_id == visible->items[i].spelling) {
@@ -4506,15 +4740,19 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     for (uint32_t i = 0; i < full->eq_len; i++) {
         Atom *lhs = bindings_apply_if_vars(full, a, full->constraints[i].lhs);
         Atom *rhs = bindings_apply_if_vars(full, a, full->constraints[i].rhs);
+        lhs = rewrite_match_visible_aliases(a, lhs, &aliases);
+        rhs = rewrite_match_visible_aliases(a, rhs, &aliases);
         if (!atom_refs_only_match_visible_vars(lhs, visible) ||
             !atom_refs_only_match_visible_vars(rhs, visible)) {
             continue;
         }
         if (!bindings_add_constraint(projected, lhs, rhs)) {
+            match_visible_alias_set_free(&aliases);
             bindings_free(projected);
             return false;
         }
     }
+    match_visible_alias_set_free(&aliases);
     return true;
 }
 
@@ -5150,6 +5388,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                 &projected)) {
                 continue;
             }
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
             Atom *result = bindings_apply_if_vars(&projected, a, template);
             const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
             eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -5197,6 +5436,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                         &projected)) {
                         continue;
                     }
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
                     Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
                     const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                     eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -5350,6 +5590,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             Bindings *next_binds = NULL;
             uint32_t nnext = 0, cnext = 0;
             for (uint32_t bi = 0; bi < ncur; bi++) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_STEP);
                 Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, step->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
@@ -5377,6 +5618,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             MatchStep *last = &steps[nsteps - 1];
             static uint64_t g_chain_progress = 0;
             for (uint32_t bi = 0; bi < ncur; bi++) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
                 Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
@@ -5386,10 +5628,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
                                                     &cur_binds[bi], a, &mb)) {
                         Bindings projected;
-                        if (!project_match_visible_bindings(a, &visible, &mb, &projected)) {
+                        if (!project_match_visible_bindings(a, &visible, &mb,
+                                                            &projected)) {
                             bindings_free(&mb);
                             continue;
                         }
+                        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
                         Atom *result = bindings_apply_if_vars(&projected, a, body);
                         const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                         eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -5413,6 +5657,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                     &projected)) {
                     continue;
                 }
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
                 Atom *result = bindings_apply_if_vars(&projected, a, body);
                 const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                 eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -6368,6 +6613,7 @@ tail_call: ;
         Atom *else_br = expr_arg(atom, 3);
         Bindings b;
         bindings_init(&b);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_UNIFY);
         if (match_atoms(target, pattern, &b) && !bindings_has_loop(&b)) {
             Atom *next_atom = bindings_apply_if_vars(&b, a, then_br);
             if (preserve_bindings &&
@@ -6984,6 +7230,8 @@ tail_call: ;
 
             Arena stream_scratch;
             arena_init(&stream_scratch);
+            arena_set_runtime_kind(&stream_scratch,
+                                   CETTA_ARENA_RUNTIME_KIND_SCRATCH);
             if (a->hashcons)
                 arena_set_hashcons(&stream_scratch, a->hashcons);
             reduce_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
@@ -7062,6 +7310,8 @@ tail_call: ;
 
             Arena stream_scratch;
             arena_init(&stream_scratch);
+            arena_set_runtime_kind(&stream_scratch,
+                                   CETTA_ARENA_RUNTIME_KIND_SCRATCH);
             if (a->hashcons)
                 arena_set_hashcons(&stream_scratch, a->hashcons);
             fold_by_key_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
@@ -8135,14 +8385,9 @@ tail_call: ;
             return;
         }
         Atom *compare_atom = space_compare_atom(target, a, atom_to_add);
-        AtomId compare_id = (target && target->universe)
-            ? term_universe_lookup_atom_id(target->universe, compare_atom)
-            : CETTA_ATOM_ID_NONE;
-        bool found = compare_id != CETTA_ATOM_ID_NONE &&
-                     space_contains_atom_id(target, compare_id);
-        if (!found && space_is_hash(target))
-            found = space_contains_exact(target, compare_atom);
+        bool found = space_contains_exact(target, compare_atom);
         if (!found) {
+            /* Fallback linear scan only if exact index didn't work (variables, etc.) */
             for (uint32_t i = 0; i < space_length(target) && !found; i++)
                 if (atom_eq(space_get_at(target, i), compare_atom)) found = true;
         }

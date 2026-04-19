@@ -13,6 +13,69 @@ static void cetta_oom(size_t size) {
     abort();
 }
 
+static bool arena_runtime_counter_lane(CettaArenaRuntimeKind kind,
+                                       CettaRuntimeCounter *alloc_counter,
+                                       CettaRuntimeCounter *live_peak_counter,
+                                       CettaRuntimeCounter *reserved_peak_counter) {
+    switch (kind) {
+    case CETTA_ARENA_RUNTIME_KIND_PERSISTENT:
+        if (alloc_counter)
+            *alloc_counter = CETTA_RUNTIME_COUNTER_PERSISTENT_ARENA_ALLOC_BYTES;
+        if (live_peak_counter)
+            *live_peak_counter = CETTA_RUNTIME_COUNTER_PERSISTENT_ARENA_LIVE_BYTES_PEAK;
+        if (reserved_peak_counter)
+            *reserved_peak_counter = CETTA_RUNTIME_COUNTER_PERSISTENT_ARENA_RESERVED_BYTES_PEAK;
+        return true;
+    case CETTA_ARENA_RUNTIME_KIND_EVAL:
+        if (alloc_counter)
+            *alloc_counter = CETTA_RUNTIME_COUNTER_EVAL_ARENA_ALLOC_BYTES;
+        if (live_peak_counter)
+            *live_peak_counter = CETTA_RUNTIME_COUNTER_EVAL_ARENA_LIVE_BYTES_PEAK;
+        if (reserved_peak_counter)
+            *reserved_peak_counter = CETTA_RUNTIME_COUNTER_EVAL_ARENA_RESERVED_BYTES_PEAK;
+        return true;
+    case CETTA_ARENA_RUNTIME_KIND_SCRATCH:
+        if (alloc_counter)
+            *alloc_counter = CETTA_RUNTIME_COUNTER_SCRATCH_ARENA_ALLOC_BYTES;
+        if (live_peak_counter)
+            *live_peak_counter = CETTA_RUNTIME_COUNTER_SCRATCH_ARENA_LIVE_BYTES_PEAK;
+        if (reserved_peak_counter)
+            *reserved_peak_counter = CETTA_RUNTIME_COUNTER_SCRATCH_ARENA_RESERVED_BYTES_PEAK;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void arena_runtime_note_usage(const Arena *a) {
+    CettaRuntimeCounter live_peak_counter;
+    CettaRuntimeCounter reserved_peak_counter;
+
+    if (!a ||
+        !arena_runtime_counter_lane(a->runtime_kind, NULL, &live_peak_counter,
+                                    &reserved_peak_counter))
+        return;
+    cetta_runtime_stats_update_max(live_peak_counter, (uint64_t)a->live_bytes);
+    cetta_runtime_stats_update_max(reserved_peak_counter,
+                                   (uint64_t)a->reserved_bytes);
+}
+
+static void arena_runtime_note_alloc(const Arena *a, size_t size) {
+    CettaRuntimeCounter alloc_counter;
+    CettaRuntimeCounter live_peak_counter;
+    CettaRuntimeCounter reserved_peak_counter;
+
+    if (!a ||
+        !arena_runtime_counter_lane(a->runtime_kind, &alloc_counter,
+                                    &live_peak_counter,
+                                    &reserved_peak_counter))
+        return;
+    cetta_runtime_stats_add(alloc_counter, (uint64_t)size);
+    cetta_runtime_stats_update_max(live_peak_counter, (uint64_t)a->live_bytes);
+    cetta_runtime_stats_update_max(reserved_peak_counter,
+                                   (uint64_t)a->reserved_bytes);
+}
+
 void *cetta_malloc(size_t size) {
     void *ptr = malloc(size == 0 ? 1 : size);
     if (!ptr) cetta_oom(size);
@@ -28,6 +91,10 @@ void *cetta_realloc(void *ptr, size_t size) {
 void arena_init(Arena *a) {
     a->head = NULL;
     a->hashcons = g_hashcons;
+    a->live_bytes = 0;
+    a->reserved_bytes = 0;
+    a->block_count = 0;
+    a->runtime_kind = CETTA_ARENA_RUNTIME_KIND_OTHER;
 }
 
 void arena_free(Arena *a) {
@@ -38,11 +105,20 @@ void arena_free(Arena *a) {
         b = next;
     }
     a->head = NULL;
+    a->live_bytes = 0;
+    a->reserved_bytes = 0;
+    a->block_count = 0;
 }
 
 void arena_set_hashcons(Arena *a, HashConsTable *hc) {
     if (!a) return;
     a->hashcons = hc;
+}
+
+void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
+    if (!a) return;
+    a->runtime_kind = kind;
+    arena_runtime_note_usage(a);
 }
 
 ArenaMark arena_mark(const Arena *a) {
@@ -52,6 +128,9 @@ ArenaMark arena_mark(const Arena *a) {
     }
     mark.head = a->head;
     mark.used = a->head ? a->head->used : 0;
+    mark.live_bytes = a->live_bytes;
+    mark.reserved_bytes = a->reserved_bytes;
+    mark.block_count = a->block_count;
     return mark;
 }
 
@@ -62,12 +141,13 @@ void arena_reset(Arena *a, ArenaMark mark) {
         free(a->head);
         a->head = next;
     }
-    if (!a->head) {
-        return;
-    }
-    if (a->head->used > mark.used) {
+    if (a->head && a->head->used > mark.used) {
         a->head->used = mark.used;
     }
+    a->live_bytes = mark.live_bytes;
+    a->reserved_bytes = mark.reserved_bytes;
+    a->block_count = mark.block_count;
+    arena_runtime_note_usage(a);
 }
 
 /* ── Hash-Consing ──────────────────────────────────────────────────────── */
@@ -418,6 +498,7 @@ static SymbolId symbol_cached_literal(const char *name) {
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
 void *arena_alloc(Arena *a, size_t size) {
+    size_t block_capacity = 0;
     /* Align to 8 bytes */
     size = (size + 7) & ~(size_t)7;
     if (!a->head || a->head->used + size > ARENA_BLOCK_SIZE) {
@@ -425,12 +506,18 @@ void *arena_alloc(Arena *a, size_t size) {
         if (size > ARENA_BLOCK_SIZE)
             block_size = sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + size;
         ArenaBlock *b = cetta_malloc(block_size);
+        block_capacity = size > ARENA_BLOCK_SIZE ? size : ARENA_BLOCK_SIZE;
+        b->capacity = block_capacity;
         b->used = 0;
         b->next = a->head;
         a->head = b;
+        a->reserved_bytes += block_capacity;
+        a->block_count++;
     }
     void *ptr = a->head->data + a->head->used;
     a->head->used += size;
+    a->live_bytes += size;
+    arena_runtime_note_alloc(a, size);
     return ptr;
 }
 
@@ -453,6 +540,9 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     Atom temp = {0};
     temp.kind = ATOM_SYMBOL;
     temp.flags = 0;
+    const char *bytes = symbol_bytes(g_symbols, sym_id);
+    if (bytes && bytes[0] == '&')
+        temp.flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
     temp.var_id = VAR_ID_NONE;
     temp.sym_id = sym_id;
     temp.hash_cache = 0;
@@ -615,8 +705,12 @@ Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
     for (uint32_t i = 0; i < len; i++) {
         if (atom_has_vars(elems[i])) {
             temp.flags |= ATOM_FLAG_HAS_VARS;
-            break;
         }
+        if (atom_has_registry_refs(elems[i]))
+            temp.flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+        if ((temp.flags & (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS)) ==
+            (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS))
+            break;
     }
     temp.expr.len = len;
     temp.expr.elems = elems;

@@ -733,6 +733,7 @@ static uint32_t exact_atom_hash_id(const Space *s, AtomId atom_id) {
 static void eq_index_rebuild(Space *s);
 static void ty_ann_index_rebuild(Space *s);
 static void exact_index_rebuild(Space *s);
+static void non_exact_atom_recount(Space *s);
 
 static TermUniverse g_space_default_universe = {0};
 static Arena g_space_default_arena = {0};
@@ -741,6 +742,8 @@ static bool g_space_default_universe_ready = false;
 static TermUniverse *space_default_universe(void) {
     if (!g_space_default_universe_ready) {
         arena_init(&g_space_default_arena);
+        arena_set_runtime_kind(&g_space_default_arena,
+                               CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
         term_universe_init(&g_space_default_universe);
         term_universe_set_persistent_arena(&g_space_default_universe,
                                            &g_space_default_arena);
@@ -846,6 +849,7 @@ static void space_mark_indexes_dirty(Space *s) {
     s->eq_idx_dirty = true;
     s->ty_idx_dirty = true;
     s->exact_idx_dirty = true;
+    s->non_exact_atoms_dirty = true;
 }
 
 static void ensure_eq_index(Space *s) {
@@ -863,6 +867,11 @@ static void ensure_exact_index(Space *s) {
         exact_index_rebuild(s);
 }
 
+static void ensure_non_exact_atom_count(Space *s) {
+    if (s && s->non_exact_atoms_dirty)
+        non_exact_atom_recount(s);
+}
+
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
 void space_init_with_universe(Space *s, TermUniverse *universe) {
@@ -878,6 +887,8 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->eq_idx_dirty = false;
     s->ty_idx_dirty = false;
     s->exact_idx_dirty = false;
+    s->non_exact_atoms = 0;
+    s->non_exact_atoms_dirty = false;
     s->revision = 0;
     space_match_backend_init(s);
 }
@@ -898,6 +909,8 @@ void space_free(Space *s) {
     ty_ann_index_free(&s->ty_idx);
     exact_index_free(&s->exact_idx);
     space_match_backend_free(s);
+    s->non_exact_atoms = 0;
+    s->non_exact_atoms_dirty = false;
 }
 
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
@@ -1043,6 +1056,18 @@ static void exact_index_rebuild(Space *s) {
     s->exact_idx_dirty = false;
 }
 
+static void non_exact_atom_recount(Space *s) {
+    if (!s) return;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < s->len; i++) {
+        AtomId atom_id = space_get_atom_id_at(s, i);
+        if (!atom_id_is_exact_indexable(s, atom_id))
+            count++;
+    }
+    s->non_exact_atoms = count;
+    s->non_exact_atoms_dirty = false;
+}
+
 static void space_bump_revision(Space *s) {
     if (!s)
         return;
@@ -1101,6 +1126,8 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     }
     if (!s->exact_idx_dirty && atom_id_is_exact_indexable(s, atom_id))
         exact_atom_bucket_add(&s->exact_idx.buckets[exact_atom_hash_id(s, atom_id)], idx);
+    if (!s->non_exact_atoms_dirty && !atom_id_is_exact_indexable(s, atom_id))
+        s->non_exact_atoms++;
     /* Match backend owns its own incremental indexing policy. */
     space_match_backend_note_add(s, atom_id,
                                  backend_needs_atom ? backend_atom : NULL, idx);
@@ -1189,6 +1216,8 @@ void space_replace_contents(Space *dst, Space *src) {
     src->eq_idx_dirty = false;
     src->ty_idx_dirty = false;
     src->exact_idx_dirty = false;
+    src->non_exact_atoms = 0;
+    src->non_exact_atoms_dirty = false;
     space_match_backend_init(src);
 }
 
@@ -1290,7 +1319,9 @@ static bool query_visible_var_set_reserve(QueryVisibleVarSet *set,
 
 static bool query_visible_var_set_add(QueryVisibleVarSet *set, VarId var_id,
                                       SymbolId spelling) {
-    for (uint32_t i = 0; i < set->len; i++) {
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_VISIBLE_DEDUP_SCAN,
+                            set ? set->len : 0);
+    for (uint32_t i = 0; set && i < set->len; i++) {
         if (set->items[i].var_id == var_id)
             return true;
     }
@@ -1304,7 +1335,7 @@ static bool query_visible_var_set_add(QueryVisibleVarSet *set, VarId var_id,
 
 static bool query_visible_var_set_contains(const QueryVisibleVarSet *set,
                                            VarId var_id) {
-    for (uint32_t i = 0; i < set->len; i++) {
+    for (uint32_t i = 0; set && i < set->len; i++) {
         if (set->items[i].var_id == var_id)
             return true;
     }
@@ -1314,6 +1345,7 @@ static bool query_visible_var_set_contains(const QueryVisibleVarSet *set,
 static bool collect_query_visible_vars_rec(Atom *atom, QueryVisibleVarSet *set) {
     if (!atom || !atom_has_vars(atom))
         return true;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_VISIBLE_NODE_VISIT);
     if (atom->kind == ATOM_VAR)
         return query_visible_var_set_add(set, atom->var_id, atom->sym_id);
     if (atom->kind != ATOM_EXPR)
@@ -1338,6 +1370,43 @@ static bool atom_refs_only_query_visible_vars(Atom *atom,
             return false;
     }
     return true;
+}
+
+static Atom *rewrite_query_visible_aliases(Arena *a, Atom *atom,
+                                           const QueryVisibleVarSet *visible) {
+    if (!atom || !visible || visible->len == 0 || !atom_has_vars(atom))
+        return atom;
+    if (atom->kind == ATOM_VAR) {
+        VarId replacement = VAR_ID_NONE;
+        for (uint32_t i = 0; i < visible->len; i++) {
+            if (visible->items[i].spelling != atom->sym_id)
+                continue;
+            if (replacement != VAR_ID_NONE &&
+                replacement != visible->items[i].var_id) {
+                return atom;
+            }
+            replacement = visible->items[i].var_id;
+        }
+        return replacement != VAR_ID_NONE
+            ? atom_var_with_spelling(a, atom->sym_id, replacement)
+            : atom;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return atom;
+
+    Atom **rewritten = NULL;
+    for (uint32_t i = 0; i < atom->expr.len; i++) {
+        Atom *child = atom->expr.elems[i];
+        Atom *next = rewrite_query_visible_aliases(a, child, visible);
+        if (!rewritten && next != child) {
+            rewritten = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+            for (uint32_t j = 0; j < i; j++)
+                rewritten[j] = atom->expr.elems[j];
+        }
+        if (rewritten)
+            rewritten[i] = next;
+    }
+    return rewritten ? atom_expr(a, rewritten, atom->expr.len) : atom;
 }
 
 static Atom *bindings_apply_without_self_id(Bindings *full, Arena *a,
@@ -1410,6 +1479,7 @@ static bool project_query_visible_bindings(Arena *a,
     for (uint32_t i = 0; i < visible->len; i++) {
         Atom *resolved =
             bindings_resolve_query_visible_var(a, full, &visible->items[i]);
+        resolved = rewrite_query_visible_aliases(a, resolved, visible);
         if (resolved->kind == ATOM_VAR &&
             resolved->var_id == visible->items[i].var_id &&
             resolved->sym_id == visible->items[i].spelling) {
@@ -1425,6 +1495,8 @@ static bool project_query_visible_bindings(Arena *a,
     for (uint32_t i = 0; i < full->eq_len; i++) {
         Atom *lhs = bindings_apply_if_vars(full, a, full->constraints[i].lhs);
         Atom *rhs = bindings_apply_if_vars(full, a, full->constraints[i].rhs);
+        lhs = rewrite_query_visible_aliases(a, lhs, visible);
+        rhs = rewrite_query_visible_aliases(a, rhs, visible);
         if (!atom_refs_only_query_visible_vars(lhs, visible) ||
             !atom_refs_only_query_visible_vars(rhs, visible)) {
             continue;
@@ -1600,24 +1672,25 @@ uint32_t space_length(const Space *s) {
 
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
     *out = NULL;
-    if (!space_is_hash(s) || !atom || atom_has_variables(atom) || !atom_is_exact_indexable(atom))
+    /* Exact index is maintained for ALL space kinds - enable for native too */
+    if (!s || !atom || atom_has_variables(atom) || !atom_is_exact_indexable(atom))
         return 0;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP);
     ensure_exact_index(s);
     ExactAtomBucket *bucket = &s->exact_idx.buckets[exact_atom_hash(atom)];
     if (bucket->len == 0)
         return 0;
-    AtomId query_id = term_universe_lookup_atom_id(s ? s->universe : NULL, atom);
     uint32_t *matches = cetta_malloc(sizeof(uint32_t) * bucket->len);
     uint32_t n = 0;
     for (uint32_t i = 0; i < bucket->len; i++) {
         uint32_t idx = bucket->indices[i];
-        if (idx >= s->len) continue;
+        if (idx >= s->len)
+            continue;
         AtomId candidate_id = space_get_atom_id_at(s, idx);
         if (candidate_id == CETTA_ATOM_ID_NONE)
             continue;
-        if ((query_id != CETTA_ATOM_ID_NONE && candidate_id == query_id) ||
-            term_universe_atom_id_eq(s->universe, candidate_id, atom))
+        Atom *candidate = term_universe_get_atom(s->universe, candidate_id);
+        if (candidate && atom_eq(candidate, atom))
             matches[n++] = idx;
     }
     if (n == 0) {
@@ -1634,6 +1707,17 @@ bool space_contains_exact(Space *s, Atom *atom) {
     uint32_t n = space_exact_match_indices(s, atom, &matches);
     free(matches);
     return n > 0;
+}
+
+bool space_contains_only_exact_atoms(Space *s) {
+    if (!s)
+        return false;
+    ensure_non_exact_atom_count(s);
+    return s->non_exact_atoms == 0;
+}
+
+bool space_atom_is_exact_indexable(Atom *atom) {
+    return atom_is_exact_indexable(atom);
 }
 
 /* ── Type Expression Normalization ───────────────────────────────────────── */
@@ -1815,6 +1899,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
             uint32_t nop = get_annotated_types(s, a, op, &op_types);
             Arena scratch;
             arena_init(&scratch);
+            arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
             arena_set_hashcons(&scratch, NULL);
             /* Also try recursively inferred types for the operator */
             if (nop == 0 && op->kind == ATOM_EXPR) {
@@ -2043,10 +2128,13 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
     if (match_atoms_atom_id_epoch(query, s->universe, lhs_id,
                                   &merged, a, epoch) &&
         !bindings_has_loop(&merged)) {
-        Atom *rhs_copy =
-            term_universe_copy_atom_epoch(s->universe, a, rhs_id, epoch);
-        if (rhs_copy) {
-            Atom *result = bindings_apply_if_vars(&merged, a, rhs_copy);
+        Atom *rhs_copy = tu_has_vars(s->universe, rhs_id)
+            ? term_universe_copy_atom_epoch(s->universe, a, rhs_id, epoch)
+            : term_universe_copy_atom(s->universe, a, rhs_id);
+        Atom *result =
+            rhs_copy ? bindings_apply_if_vars(&merged, a, rhs_copy) : NULL;
+        if (result) {
+            result = rewrite_query_visible_aliases(a, result, visible);
             Bindings projected;
             if (project_query_visible_bindings(a, visible, &merged, &projected)) {
                 query_results_push_move(out, result, &projected);
@@ -2074,9 +2162,11 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
         return false;
     }
     bool emitted = false;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_EQ_DECODED);
     if (match_atoms_epoch(query, lhs, &merged, a, epoch) &&
         !bindings_has_loop(&merged)) {
         Atom *result = bindings_apply_epoch(&merged, a, rhs, epoch);
+        result = rewrite_query_visible_aliases(a, result, visible);
         Bindings projected;
         if (project_query_visible_bindings(a, visible, &merged, &projected)) {
             query_results_push_move(out, result, &projected);
