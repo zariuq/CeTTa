@@ -27,6 +27,8 @@ void variant_instance_free(VariantInstance *instance);
 void variant_instance_move(VariantInstance *dst, VariantInstance *src);
 bool variant_instance_present(const VariantInstance *instance);
 bool variant_instance_clone(VariantInstance *dst, const VariantInstance *src);
+bool variant_instance_promote_atoms_to_arena(Arena *dst,
+                                             VariantInstance *instance);
 bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape);
 bool variant_instance_append_rebased(Arena *dst, VariantInstance *instance,
                                      Atom **out_skeleton,
