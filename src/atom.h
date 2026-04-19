@@ -199,6 +199,7 @@ SymbolId atom_head_symbol_id(Atom *a);
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
 bool atom_eq(Atom *a, Atom *b);
+int atom_total_order(Atom *lhs, Atom *rhs);
 
 /* ── Printing ───────────────────────────────────────────────────────────── */
 

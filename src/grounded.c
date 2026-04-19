@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "grounded.h"
+#include "eval.h"
 #include "match.h"
 #include "space.h"
 #include <string.h>
@@ -23,6 +24,12 @@ typedef struct {
     uint32_t len;
     uint32_t cap;
 } FoldVarMap;
+
+static Atom *grounded_bad_arg_type(Arena *a, Atom *head, Atom **args, uint32_t nargs,
+                                   int arg_idx, Atom *expected, Atom *got);
+static Atom *grounded_incorrect_arity(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static Atom *grounded_call_signature_error(Arena *a, Atom *head, Atom **args,
+                                           uint32_t nargs, const char *expected);
 
 static void sb_init(StringBuf *sb) {
     sb->buf = NULL;
@@ -62,6 +69,69 @@ static uint32_t next_pow2_u32(uint32_t n) {
     while (cap < n && cap < (UINT32_MAX >> 1))
         cap <<= 1;
     return cap;
+}
+
+static bool active_unique_atom_uses_alpha_for_open_terms(void) {
+    const CettaLanguageSpec *lang = eval_current_language();
+    return cetta_language_unique_atom_uses_alpha_for_open_terms(lang);
+}
+
+static Atom *grounded_unique_atom_impl(Arena *a, Atom *head, Atom **args,
+                                       uint32_t nargs,
+                                       bool alpha_open_terms) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR) {
+        if (args[0]->kind == ATOM_GROUNDED)
+            return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                         atom_expression_type(a), args[0]);
+        return NULL;
+    }
+    Atom **uniq = arena_alloc(a, sizeof(Atom *) * args[0]->expr.len);
+    uint32_t table_cap = next_pow2_u32(args[0]->expr.len > 0
+        ? args[0]->expr.len * 2
+        : 1);
+    uint32_t *ground_slots = arena_alloc(a, sizeof(uint32_t) * table_cap);
+    for (uint32_t i = 0; i < table_cap; i++)
+        ground_slots[i] = UINT32_MAX;
+    uint32_t out_len = 0;
+    for (uint32_t i = 0; i < args[0]->expr.len; i++) {
+        Atom *candidate = args[0]->expr.elems[i];
+        bool seen = false;
+        bool candidate_has_vars = atom_has_vars(candidate);
+        if (!candidate_has_vars) {
+            uint32_t mask = table_cap - 1;
+            uint32_t slot = atom_hash(candidate) & mask;
+            while (true) {
+                uint32_t existing = ground_slots[slot];
+                if (existing == UINT32_MAX)
+                    break;
+                if (atom_eq(uniq[existing], candidate)) {
+                    seen = true;
+                    break;
+                }
+                slot = (slot + 1) & mask;
+            }
+            if (!seen) {
+                uniq[out_len] = candidate;
+                ground_slots[slot] = out_len;
+                out_len++;
+            }
+            continue;
+        }
+        for (uint32_t j = 0; j < out_len; j++) {
+            bool same = alpha_open_terms
+                ? atom_alpha_eq(uniq[j], candidate)
+                : atom_eq(uniq[j], candidate);
+            if (same) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen)
+            uniq[out_len++] = candidate;
+    }
+    return atom_expr(a, uniq, out_len);
 }
 
 static void fold_var_map_init(FoldVarMap *map) {
@@ -196,6 +266,88 @@ static Atom *grounded_expr_message_error(Arena *a, Atom *head, Atom **args, uint
                       atom_symbol(a, buf));
 }
 
+static Atom *grounded_call_signature_error(Arena *a, Atom *head, Atom **args,
+                                           uint32_t nargs, const char *expected) {
+    char buf[1024];
+    Atom *call = grounded_call_expr(a, head, args, nargs);
+    int pos = snprintf(buf, sizeof(buf), "expected: %s, found: ", expected);
+    if (pos < 0) pos = 0;
+    if ((size_t)pos < sizeof(buf)) {
+        FILE *tmp = fmemopen(buf + pos, sizeof(buf) - (size_t)pos, "w");
+        if (tmp) {
+            atom_print(call, tmp);
+            pos += (int)ftell(tmp);
+            fclose(tmp);
+        }
+    }
+    buf[sizeof(buf) - 1] = '\0';
+    return atom_error(a, call, atom_symbol(a, buf));
+}
+
+static Atom *grounded_cons_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 2)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    Atom *hd = args[0];
+    Atom *tl = args[1];
+    if (tl->kind == ATOM_EXPR) {
+        Atom **elems = arena_alloc(a, sizeof(Atom *) * (tl->expr.len + 1));
+        elems[0] = hd;
+        for (uint32_t i = 0; i < tl->expr.len; i++)
+            elems[i + 1] = tl->expr.elems[i];
+        return atom_expr(a, elems, tl->expr.len + 1);
+    }
+    return atom_expr2(a, hd, tl);
+}
+
+static Atom *grounded_union_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 2)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    Atom *lhs = args[0];
+    Atom *rhs = args[1];
+    if (lhs->kind != ATOM_EXPR || rhs->kind != ATOM_EXPR)
+        return grounded_call_expr(a, head, args, nargs);
+    uint32_t len = lhs->expr.len + rhs->expr.len;
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
+    for (uint32_t i = 0; i < lhs->expr.len; i++)
+        elems[i] = lhs->expr.elems[i];
+    for (uint32_t i = 0; i < rhs->expr.len; i++)
+        elems[lhs->expr.len + i] = rhs->expr.elems[i];
+    return atom_expr(a, elems, len);
+}
+
+static Atom *grounded_decons_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    Atom *expr = args[0];
+    if (expr->kind == ATOM_EXPR && expr->expr.len > 0) {
+        Atom *hd = expr->expr.elems[0];
+        Atom *tl = atom_expr(a, expr->expr.elems + 1, expr->expr.len - 1);
+        return atom_expr2(a, hd, tl);
+    }
+    return grounded_call_signature_error(a, head, args, nargs,
+                                         "(decons-atom (: <expr> Expression))");
+}
+
+static Atom *grounded_car_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    Atom *expr = args[0];
+    if (expr->kind == ATOM_EXPR && expr->expr.len > 0)
+        return expr->expr.elems[0];
+    return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                      atom_string(a, "car-atom expects a non-empty expression as an argument"));
+}
+
+static Atom *grounded_cdr_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    Atom *expr = args[0];
+    if (expr->kind == ATOM_EXPR && expr->expr.len > 0)
+        return atom_expr(a, expr->expr.elems + 1, expr->expr.len - 1);
+    return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                      atom_string(a, "cdr-atom expects a non-empty expression as an argument"));
+}
+
 static int find_unused_alpha_equal_atom(Atom **elems, bool *used, uint32_t len, Atom *candidate) {
     for (uint32_t i = 0; i < len; i++) {
         if (!used[i] && atom_alpha_eq(elems[i], candidate))
@@ -219,7 +371,13 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.op_mod || id == g_builtin_syms.op_lt ||
            id == g_builtin_syms.op_gt || id == g_builtin_syms.op_le ||
            id == g_builtin_syms.op_ge || id == g_builtin_syms.op_eq ||
+           id == g_builtin_syms.op_ne ||
            id == g_builtin_syms.alpha_eq ||
+           id == g_builtin_syms.cons_atom ||
+           id == g_builtin_syms.union_atom ||
+           id == g_builtin_syms.decons_atom ||
+           id == g_builtin_syms.car_atom ||
+           id == g_builtin_syms.cdr_atom ||
            id == g_builtin_syms.if_equal ||
            id == g_builtin_syms.sealed_text ||
            id == g_builtin_syms.minimal_foldl_atom ||
@@ -233,9 +391,12 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.py_atom ||
            id == g_builtin_syms.py_dot ||
            id == g_builtin_syms.py_call ||
+           id == g_builtin_syms.sort_atom ||
+           id == g_builtin_syms.msort ||
            id == g_builtin_syms.sort_strings ||
            id == g_builtin_syms.print_alternatives_bang ||
            id == g_builtin_syms.unique_atom ||
+           id == g_builtin_syms.alpha_unique_atom ||
            id == g_builtin_syms.intersection_atom ||
            id == g_builtin_syms.subtraction_atom ||
            id == g_builtin_syms.max_atom ||
@@ -376,6 +537,12 @@ static int grounded_sort_strings_cmp(const void *lhs, const void *rhs) {
     return strcmp(*a, *b);
 }
 
+static int grounded_sort_atom_cmp(const void *lhs, const void *rhs) {
+    Atom *const *a = lhs;
+    Atom *const *b = rhs;
+    return atom_total_order(*a, *b);
+}
+
 static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 1)
         return grounded_incorrect_arity(a, head, args, nargs);
@@ -398,6 +565,21 @@ static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t n
     qsort(strings, list->expr.len, sizeof(const char *), grounded_sort_strings_cmp);
     for (uint32_t i = 0; i < list->expr.len; i++)
         sorted[i] = atom_string(a, strings[i]);
+    return atom_expr(a, sorted, list->expr.len);
+}
+
+static Atom *grounded_sort_atom(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR)
+        return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                     atom_expression_type(a), args[0]);
+
+    Atom *list = args[0];
+    Atom **sorted = arena_alloc(a, sizeof(Atom *) * list->expr.len);
+    for (uint32_t i = 0; i < list->expr.len; i++)
+        sorted[i] = list->expr.elems[i];
+    qsort(sorted, list->expr.len, sizeof(Atom *), grounded_sort_atom_cmp);
     return atom_expr(a, sorted, list->expr.len);
 }
 
@@ -594,8 +776,27 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.format_args)
         return grounded_format_args(a, head, args, nargs);
 
+    if (head_id == g_builtin_syms.sort_atom ||
+        head_id == g_builtin_syms.msort)
+        return grounded_sort_atom(a, head, args, nargs);
+
     if (head_id == g_builtin_syms.sort_strings)
         return grounded_sort_strings(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.cons_atom)
+        return grounded_cons_atom(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.union_atom)
+        return grounded_union_atom(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.decons_atom)
+        return grounded_decons_atom(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.car_atom)
+        return grounded_car_atom(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.cdr_atom)
+        return grounded_cdr_atom(a, head, args, nargs);
 
     if (head_id == g_builtin_syms.collapse_add_next)
         return grounded_collapse_add_next(a, head, args, nargs);
@@ -853,55 +1054,13 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return args[0]->expr.elems[idx];
     }
 
-    if (head_id == g_builtin_syms.unique_atom && nargs == 1) {
-        if (args[0]->kind != ATOM_EXPR) {
-            if (args[0]->kind == ATOM_GROUNDED)
-                return grounded_bad_arg_type(a, head, args, nargs, 1,
-                                             atom_expression_type(a), args[0]);
-            return NULL;
-        }
-        Atom **uniq = arena_alloc(a, sizeof(Atom *) * args[0]->expr.len);
-        uint32_t table_cap = next_pow2_u32(args[0]->expr.len > 0
-            ? args[0]->expr.len * 2
-            : 1);
-        uint32_t *ground_slots = arena_alloc(a, sizeof(uint32_t) * table_cap);
-        for (uint32_t i = 0; i < table_cap; i++)
-            ground_slots[i] = UINT32_MAX;
-        uint32_t out_len = 0;
-        for (uint32_t i = 0; i < args[0]->expr.len; i++) {
-            Atom *candidate = args[0]->expr.elems[i];
-            bool seen = false;
-            bool candidate_has_vars = atom_has_vars(candidate);
-            if (!candidate_has_vars) {
-                uint32_t mask = table_cap - 1;
-                uint32_t slot = atom_hash(candidate) & mask;
-                while (true) {
-                    uint32_t existing = ground_slots[slot];
-                    if (existing == UINT32_MAX)
-                        break;
-                    if (atom_eq(uniq[existing], candidate)) {
-                        seen = true;
-                        break;
-                    }
-                    slot = (slot + 1) & mask;
-                }
-                if (!seen) {
-                    uniq[out_len] = candidate;
-                    ground_slots[slot] = out_len;
-                    out_len++;
-                }
-                continue;
-            }
-            for (uint32_t j = 0; j < out_len; j++) {
-                if (atom_alpha_eq(uniq[j], candidate)) {
-                    seen = true;
-                    break;
-                }
-            }
-            if (!seen)
-                uniq[out_len++] = candidate;
-        }
-        return atom_expr(a, uniq, out_len);
+    if (head_id == g_builtin_syms.unique_atom) {
+        return grounded_unique_atom_impl(a, head, args, nargs,
+                                         active_unique_atom_uses_alpha_for_open_terms());
+    }
+
+    if (head_id == g_builtin_syms.alpha_unique_atom) {
+        return grounded_unique_atom_impl(a, head, args, nargs, true);
     }
 
     if (head_id == g_builtin_syms.intersection_atom && nargs == 2) {
@@ -960,6 +1119,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     /* ── Structural equality (any atom type) ───────────────────────────── */
     if (head_id == g_builtin_syms.op_eq && nargs == 2) {
         return atom_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+    }
+    if (head_id == g_builtin_syms.op_ne && nargs == 2) {
+        return atom_eq(args[0], args[1]) ? atom_false(a) : atom_true(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */

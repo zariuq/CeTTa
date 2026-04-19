@@ -2,6 +2,7 @@
 #include "atom.h"
 #include "stats.h"
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -754,6 +755,149 @@ bool atom_eq(Atom *a, Atom *b) {
         return true;
     }
     return false;
+}
+
+static int compare_uint64(uint64_t lhs, uint64_t rhs) {
+    if (lhs < rhs) return -1;
+    if (lhs > rhs) return 1;
+    return 0;
+}
+
+static int compare_int64(int64_t lhs, int64_t rhs) {
+    if (lhs < rhs) return -1;
+    if (lhs > rhs) return 1;
+    return 0;
+}
+
+static int compare_bool(bool lhs, bool rhs) {
+    if (lhs == rhs) return 0;
+    return lhs ? 1 : -1;
+}
+
+static int atom_kind_rank(Atom *atom) {
+    switch (atom->kind) {
+    case ATOM_VAR: return 0;
+    case ATOM_GROUNDED: return 1;
+    case ATOM_SYMBOL: return 2;
+    case ATOM_EXPR: return 3;
+    }
+    return 4;
+}
+
+static int grounded_kind_rank(GroundedKind kind) {
+    switch (kind) {
+    case GV_INT: return 0;
+    case GV_FLOAT: return 1;
+    case GV_BOOL: return 2;
+    case GV_STRING: return 3;
+    case GV_SPACE: return 4;
+    case GV_STATE: return 5;
+    case GV_CAPTURE: return 6;
+    case GV_FOREIGN: return 7;
+    }
+    return 8;
+}
+
+static int compare_double_total(double lhs, double rhs) {
+    if (lhs < rhs) return -1;
+    if (lhs > rhs) return 1;
+    if (lhs == rhs) return 0;
+
+    uint64_t lhs_bits = 0;
+    uint64_t rhs_bits = 0;
+    memcpy(&lhs_bits, &lhs, sizeof(lhs_bits));
+    memcpy(&rhs_bits, &rhs, sizeof(rhs_bits));
+    return compare_uint64(lhs_bits, rhs_bits);
+}
+
+static int compare_grounded_atoms(Atom *lhs, Atom *rhs) {
+    int kind_cmp = grounded_kind_rank(lhs->ground.gkind) -
+                   grounded_kind_rank(rhs->ground.gkind);
+    if (kind_cmp != 0) {
+        bool lhs_numeric = lhs->ground.gkind == GV_INT || lhs->ground.gkind == GV_FLOAT;
+        bool rhs_numeric = rhs->ground.gkind == GV_INT || rhs->ground.gkind == GV_FLOAT;
+        if (lhs_numeric && rhs_numeric) {
+            double lhs_num = lhs->ground.gkind == GV_INT
+                                 ? (double)lhs->ground.ival
+                                 : lhs->ground.fval;
+            double rhs_num = rhs->ground.gkind == GV_INT
+                                 ? (double)rhs->ground.ival
+                                 : rhs->ground.fval;
+            int num_cmp = compare_double_total(lhs_num, rhs_num);
+            if (num_cmp != 0) return num_cmp;
+        }
+        return kind_cmp;
+    }
+
+    switch (lhs->ground.gkind) {
+    case GV_INT:
+        return compare_int64(lhs->ground.ival, rhs->ground.ival);
+    case GV_FLOAT:
+        return compare_double_total(lhs->ground.fval, rhs->ground.fval);
+    case GV_BOOL:
+        return compare_bool(lhs->ground.bval, rhs->ground.bval);
+    case GV_STRING: {
+        int cmp = strcmp(lhs->ground.sval, rhs->ground.sval);
+        if (cmp < 0) return -1;
+        if (cmp > 0) return 1;
+        return 0;
+    }
+    case GV_SPACE:
+    case GV_CAPTURE:
+    case GV_FOREIGN:
+        return compare_uint64((uint64_t)(uintptr_t)lhs->ground.ptr,
+                              (uint64_t)(uintptr_t)rhs->ground.ptr);
+    case GV_STATE: {
+        StateCell *lhs_state = (StateCell *)lhs->ground.ptr;
+        StateCell *rhs_state = (StateCell *)rhs->ground.ptr;
+        if (lhs_state == rhs_state) return 0;
+        if (!lhs_state || !rhs_state)
+            return compare_uint64((uint64_t)(uintptr_t)lhs_state,
+                                  (uint64_t)(uintptr_t)rhs_state);
+        int value_cmp = atom_total_order(lhs_state->value, rhs_state->value);
+        if (value_cmp != 0) return value_cmp;
+        return atom_total_order(lhs_state->content_type, rhs_state->content_type);
+    }
+    }
+
+    return 0;
+}
+
+int atom_total_order(Atom *lhs, Atom *rhs) {
+    if (lhs == rhs) return 0;
+    if (!lhs) return -1;
+    if (!rhs) return 1;
+
+    int rank_cmp = atom_kind_rank(lhs) - atom_kind_rank(rhs);
+    if (rank_cmp != 0)
+        return rank_cmp;
+
+    switch (lhs->kind) {
+    case ATOM_VAR:
+        return compare_uint64(lhs->var_id, rhs->var_id);
+    case ATOM_SYMBOL: {
+        const char *lhs_name = symbol_bytes(g_symbols, lhs->sym_id);
+        const char *rhs_name = symbol_bytes(g_symbols, rhs->sym_id);
+        int cmp = strcmp(lhs_name ? lhs_name : "", rhs_name ? rhs_name : "");
+        if (cmp < 0) return -1;
+        if (cmp > 0) return 1;
+        return 0;
+    }
+    case ATOM_GROUNDED:
+        return compare_grounded_atoms(lhs, rhs);
+    case ATOM_EXPR: {
+        uint32_t shared = lhs->expr.len < rhs->expr.len ? lhs->expr.len : rhs->expr.len;
+        for (uint32_t i = 0; i < shared; i++) {
+            int cmp = atom_total_order(lhs->expr.elems[i], rhs->expr.elems[i]);
+            if (cmp != 0) return cmp;
+        }
+        if (lhs->expr.len < rhs->expr.len) return -1;
+        if (lhs->expr.len > rhs->expr.len) return 1;
+        return 0;
+    }
+    }
+
+    return 0;
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */

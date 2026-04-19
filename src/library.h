@@ -60,7 +60,8 @@ typedef struct CettaLibraryContext {
 
 void cetta_library_context_init(CettaLibraryContext *ctx);
 void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
-                                             const CettaProfile *profile);
+                                             const CettaProfile *profile,
+                                             const CettaLanguageSpec *language);
 void cetta_library_context_free(CettaLibraryContext *ctx);
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0);
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename);

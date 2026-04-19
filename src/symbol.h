@@ -159,6 +159,7 @@ typedef struct {
     X(op_le, "<=") \
     X(op_ge, ">=") \
     X(op_eq, "==") \
+    X(op_ne, "!=") \
     X(alpha_eq, "=alpha") \
     X(if_equal, "if-equal") \
     X(sealed_text, "sealed") \
@@ -180,11 +181,15 @@ typedef struct {
     X(map_atom, "map-atom") \
     X(filter_atom, "filter-atom") \
     X(foldl_atom, "foldl-atom") \
+    X(is_member, "is-member") \
     X(unique_atom, "unique-atom") \
+    X(alpha_unique_atom, "alpha-unique-atom") \
     X(intersection_atom, "intersection-atom") \
     X(subtraction_atom, "subtraction-atom") \
     X(max_atom, "max-atom") \
     X(min_atom, "min-atom") \
+    X(sort_atom, "sort-atom") \
+    X(msort, "msort") \
     X(sort_strings, "sort-strings") \
     /* ── Grounded math functions ── */ \
     X(pow_math, "pow-math") \

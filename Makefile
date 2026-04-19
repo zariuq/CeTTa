@@ -96,7 +96,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/lang_adapter.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_ENGINES = native native-candidate-exact
@@ -111,6 +111,15 @@ GIT_TEST_DYNAMIC = $(CURDIR)/runtime/test-git-module-dynamic.metta
 GIT_TEST_COMPAT_DYNAMIC = $(CURDIR)/runtime/test-git-module-compat.metta
 HE_CONTRACT_GENERATED_DIR = tests/generated/he_contract
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
+PETTA_CORE_TEST = tests/lang_petta_core.metta
+PETTA_CORE_EXPECTED = tests/lang_petta_core.expected
+PETTA_SUITE_DIR = $(abspath ../../hyperon/PeTTa/unit/petta_suite_69)
+PETTA_SUITE_SMOKE = \
+	$(PETTA_SUITE_DIR)/01_core_rewrite.metta \
+	$(PETTA_SUITE_DIR)/02_function_head.metta \
+	$(PETTA_SUITE_DIR)/03_arith_control.metta \
+	$(PETTA_SUITE_DIR)/04_superpose_nondet.metta \
+	$(PETTA_SUITE_DIR)/05_atomspace_match.metta
 PATHMAP_REQUIRED_TESTS = \
 	tests/test_space_type.metta \
 	tests/test_space_engine_backend.metta \
@@ -466,6 +475,38 @@ test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip te
 	if [ $$skip -gt 0 ]; then summary="$$summary, $$skip skipped"; fi; \
 	if [ $$no_exp -gt 0 ]; then summary="$$summary, $$no_exp no .expected file"; fi; \
 	echo "$$summary"
+
+test-petta-core: $(BIN)
+	@result=$$(./$(BIN) --lang petta "$(PETTA_CORE_TEST)" 2>&1); \
+	if [ "$$result" = "$$(cat "$(PETTA_CORE_EXPECTED)")" ]; then \
+		echo "PASS: $(PETTA_CORE_TEST)"; \
+	else \
+		echo "FAIL: $(PETTA_CORE_TEST)"; \
+		diff <(cat "$(PETTA_CORE_EXPECTED)") <(printf '%s\n' "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-petta-suite69: test-petta-core $(BIN)
+	@if [ ! -d "$(PETTA_SUITE_DIR)" ]; then \
+		echo "SKIP: test-petta-suite69 (missing $(PETTA_SUITE_DIR))"; \
+		exit 0; \
+	fi; \
+	pass=0; fail=0; \
+	for f in $(PETTA_SUITE_SMOKE); do \
+		out=$$(./$(BIN) --lang petta "$$f" 2>&1); \
+		status=$$?; \
+		if [ $$status -eq 0 ] && ! printf '%s\n' "$$out" | grep -Fq "(Error "; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			printf '%s\n' "$$out" | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 perf-list:
 	@./scripts/run_witness.sh --list
@@ -1867,4 +1908,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full clean test test-petta-core test-petta-suite69 test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
