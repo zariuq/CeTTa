@@ -11,8 +11,7 @@
 #include "stats.h"
 #include "subst_tree.h"
 #include "symbol.h"
-
-static uint64_t g_test_counters[CETTA_RUNTIME_COUNTER_COUNT];
+#include "tests/test_runtime_stats_stubs.h"
 static uint8_t g_fake_bridge_space_storage;
 static CettaMorkSpaceHandle *const g_fake_bridge_space =
     (CettaMorkSpaceHandle *)&g_fake_bridge_space_storage;
@@ -27,20 +26,12 @@ static size_t g_bridge_value_lens[8];
 static uint32_t g_bridge_value_count = 0;
 static uint32_t g_bridge_cursor_pos = UINT32_MAX;
 
-void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
-    if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
-        return;
-    g_test_counters[counter] += delta;
-}
-
 static void reset_test_counters(void) {
-    memset(g_test_counters, 0, sizeof(g_test_counters));
+    test_runtime_stats_reset_counters();
 }
 
 static uint64_t test_counter(CettaRuntimeCounter counter) {
-    if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
-        return 0;
-    return g_test_counters[counter];
+    return test_runtime_stats_counter(counter);
 }
 
 static void reset_term_universe_witnesses(TermUniverse *universe) {

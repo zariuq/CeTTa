@@ -11,6 +11,7 @@
 !(add-atom &ss (: ax-1 (P $p $q)))
 !(add-atom &ss (: ax-2 (Q $r $s)))
 
+!(pragma! outcome-variant-sharing on)
 !(reset-runtime-stats!)
 !(assertAlphaEqualToResult
   (pair-from-space &ss)

@@ -1200,8 +1200,10 @@ int main(int argc, char **argv) {
     cleanup.registry = &registry;
 
     arena_init(&arena);
+    arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     cleanup.arena_initialized = true;
     arena_init(&eval_arena);
+    arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
     cleanup.eval_arena_initialized = true;
 
     /* Global symbol table / builtin ids */
@@ -1218,7 +1220,7 @@ int main(int argc, char **argv) {
     cleanup.hashcons_initialized = true;
     g_hashcons = &hashcons_table;
     arena_set_hashcons(&arena, &hashcons_table);
-    arena_set_hashcons(&eval_arena, &hashcons_table);
+    arena_set_hashcons(&eval_arena, NULL);
 
     if (lang_is_mm2) {
         n = inline_text
@@ -1381,7 +1383,8 @@ int main(int argc, char **argv) {
                    This makes CeTTa safe for unlimited chaining iterations. */
                 arena_free(&eval_arena);
                 arena_init(&eval_arena);
-                arena_set_hashcons(&eval_arena, g_hashcons);
+                arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
+                arena_set_hashcons(&eval_arena, NULL);
                 if (stop_after_error) break;
                 i += 2;
                 continue;
@@ -1422,7 +1425,8 @@ int main(int argc, char **argv) {
             eval_release_temporary_spaces();
             arena_free(&eval_arena);
             arena_init(&eval_arena);
-            arena_set_hashcons(&eval_arena, g_hashcons);
+            arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
+            arena_set_hashcons(&eval_arena, NULL);
             if (stop_after_error) break;
             i += 2;
             continue;

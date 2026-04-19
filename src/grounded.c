@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 #include "grounded.h"
-#include "eval.h"
+#include "lang.h"
 #include "match.h"
 #include "space.h"
 #include <string.h>
@@ -72,7 +72,7 @@ static uint32_t next_pow2_u32(uint32_t n) {
 }
 
 static bool active_unique_atom_uses_alpha_for_open_terms(void) {
-    const CettaLanguageSpec *lang = eval_current_language();
+    const CettaLanguageSpec *lang = cetta_language_current();
     return cetta_language_unique_atom_uses_alpha_for_open_terms(lang);
 }
 
@@ -388,6 +388,17 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.println_bang ||
            id == g_builtin_syms.trace_bang ||
            id == g_builtin_syms.format_args ||
+           id == g_builtin_syms.pl_atom ||
+           id == g_builtin_syms.pl_call ||
+           id == g_builtin_syms.pl_consult ||
+           id == g_builtin_syms.pl_use_module ||
+           id == g_builtin_syms.pl_import ||
+           id == g_builtin_syms.import_prolog_function ||
+           id == g_builtin_syms.predicate_ctor ||
+           id == g_builtin_syms.callPredicate ||
+           id == g_builtin_syms.assertzPredicate ||
+           id == g_builtin_syms.assertaPredicate ||
+           id == g_builtin_syms.retractPredicate ||
            id == g_builtin_syms.py_atom ||
            id == g_builtin_syms.py_dot ||
            id == g_builtin_syms.py_call ||

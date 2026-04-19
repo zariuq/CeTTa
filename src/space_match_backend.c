@@ -406,6 +406,7 @@ static void native_exact_scan_query(Space *s, Arena *a, Atom *query,
         uint32_t epoch = fresh_var_suffix();
         Bindings b;
         bindings_init(&b);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_NATIVE_QUERY);
         if (match_space_atom_epoch(s, i, query, &b, a, epoch) &&
             !bindings_has_loop(&b)) {
             subst_matchset_push(out, i, epoch, &b, false);
@@ -443,7 +444,6 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
         return;
     }
     if (native_query_has_repeated_vars(query)) {
-        fprintf(stderr, "[native-query-repeat-fullscan] len=%u\n", s->len);
         native_exact_scan_query(s, a, query, out);
         return;
     }
@@ -1375,6 +1375,7 @@ bool space_match_backend_mork_visit_bindings_direct(
             }
         }
 
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_DIRECT_ROW);
         if (success && !bindings_has_loop(&row_bindings) &&
             !visitor(&row_bindings, ctx)) {
             success = false;
@@ -1478,6 +1479,7 @@ static bool mork_query_conjunction_iterative(
                     success = false;
                     break;
                 }
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_CONJ_MERGE);
                 if (!bindings_has_loop(&merged))
                     binding_set_push_move(&next, &merged);
                 bindings_free(&merged);
@@ -1680,6 +1682,7 @@ bool space_match_backend_mork_visit_conjunction_direct(
             }
         }
 
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_CONJ_DIRECT);
         if (success && !bindings_has_loop(&merged) && !visitor(&merged, ctx)) {
             success = false;
         }
@@ -2886,6 +2889,7 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
         if (verdict == IMPORTED_COREF_EXACT &&
             qnext == qlen && cnext == entry->len) {
             Bindings b;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_IMPORTED_EXACT);
             if (imported_materialize_bindings(&refs, qtokens, entry->tokens,
                                               candidate_universe, match_epoch, a, &b) &&
                 !bindings_has_loop(&b)) {
@@ -2901,6 +2905,7 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
             bindings_init(&b);
             qnext = 0;
             cnext = 0;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_IMPORTED_LEGACY);
             if (imported_match_subtree_legacy(qtokens, 0, entry->tokens, 0,
                                               candidate_universe, &b, a,
                                               match_epoch, &qnext, &cnext,
@@ -3140,6 +3145,7 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         uint32_t epoch = fresh_var_suffix();
         Bindings b;
         bindings_init(&b);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_NATIVE_CANDIDATE);
         if (match_space_atom_epoch(s, idx, query, &b, a, epoch) &&
             !bindings_has_loop(&b)) {
             subst_matchset_push(out, idx, epoch, &b, false);
@@ -3225,6 +3231,7 @@ static void space_query_conjunction_default(Space *s, Arena *a,
         BindingSet next;
         binding_set_init(&next);
         for (uint32_t bi = 0; bi < cur.len; bi++) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_SPACE_CONJ_DEFAULT);
             Atom *grounded = bindings_apply_if_vars(&cur.items[bi], a, patterns[pi]);
             SubstMatchSet smr;
             smset_init(&smr);
@@ -3286,6 +3293,8 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
     bool direct_multiplicities = false;
 
     for (uint32_t i = 0; i < npatterns; i++) {
+        if (seed)
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_SPACE_CONJ_IMPORTED);
         grounded[i] = seed ? bindings_apply_if_vars(seed, &scratch, order[i].pattern)
                            : order[i].pattern;
         if (!imported_bridge_collect_vars(grounded[i], &query_vars)) {
@@ -3765,6 +3774,12 @@ void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
         return;
     }
     free(exact);
+    /* If query is exact-indexable and space has only exact atoms, no need for full scan */
+    if (query && space_atom_is_exact_indexable(query) &&
+        space_contains_only_exact_atoms(s)) {
+        smset_init(out);
+        return;
+    }
     space_match_backend_query(s, a, query, out);
 }
 

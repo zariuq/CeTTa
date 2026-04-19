@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/resource.h>
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static Registry *g_registry = NULL;
@@ -37,6 +38,12 @@ typedef struct {
 } TempSpaceSet;
 
 static TempSpaceSet g_temp_spaces = {0};
+
+typedef struct {
+    Arena scratch;
+    Arena *survivor_arena;
+    bool active;
+} EvalQueryEpisode;
 
 static Atom *resolve_registry_refs(Arena *a, Atom *atom);
 
@@ -75,8 +82,7 @@ static CettaEvaluatorOptions *active_eval_options(void) {
 }
 
 const CettaLanguageSpec *eval_current_language(void) {
-    CettaEvalSession *session = active_eval_session();
-    return session ? session->language : cetta_language_lookup("he");
+    return cetta_language_current();
 }
 
 static bool eval_type_check_auto_enabled(void) {
@@ -89,6 +95,83 @@ static bool eval_bare_minimal_enabled(void) {
 
 static int current_eval_fuel_limit(void) {
     return cetta_evaluator_options_effective_fuel_limit(active_eval_options_const());
+}
+
+#define CETTA_DEFAULT_EVAL_C_STACK_BUDGET_BYTES (1024u * 1024u)
+#define CETTA_MIN_EVAL_C_STACK_BUDGET_BYTES (1024u * 1024u)
+#define CETTA_MAX_EVAL_C_STACK_BUDGET_BYTES (16u * 1024u * 1024u)
+
+static __thread uint32_t g_eval_c_stack_guard_depth = 0;
+static __thread uintptr_t g_eval_c_stack_anchor = 0;
+static __thread size_t g_eval_c_stack_budget_bytes = 0;
+
+typedef struct {
+    bool active;
+} EvalCStackGuard;
+
+static size_t eval_c_stack_budget_bytes(void) {
+    if (g_eval_c_stack_budget_bytes != 0)
+        return g_eval_c_stack_budget_bytes;
+
+    size_t budget = CETTA_DEFAULT_EVAL_C_STACK_BUDGET_BYTES;
+#ifdef RLIMIT_STACK
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0 &&
+        rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur > 0) {
+        size_t stack_soft_limit = (size_t)rl.rlim_cur;
+        size_t reserve = stack_soft_limit / 4;
+        if (reserve < (1024u * 1024u))
+            reserve = (1024u * 1024u);
+        if (stack_soft_limit > reserve)
+            budget = stack_soft_limit - reserve;
+    }
+#endif
+    if (budget < CETTA_MIN_EVAL_C_STACK_BUDGET_BYTES)
+        budget = CETTA_MIN_EVAL_C_STACK_BUDGET_BYTES;
+    if (budget > CETTA_MAX_EVAL_C_STACK_BUDGET_BYTES)
+        budget = CETTA_MAX_EVAL_C_STACK_BUDGET_BYTES;
+    g_eval_c_stack_budget_bytes = budget;
+    cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_BUDGET_BYTES,
+                            (uint64_t)budget);
+    return budget;
+}
+
+static bool eval_c_stack_guard_enter(int fuel, EvalCStackGuard *guard) {
+    char stack_probe = 0;
+    uintptr_t here = (uintptr_t)&stack_probe;
+    if (guard) guard->active = false;
+    /* Fuel limits logical evaluation, but native recursion can still consume
+       stack before fuel bottoms out, so guard both finite and infinite runs. */
+    if (g_eval_c_stack_guard_depth++ == 0)
+        g_eval_c_stack_anchor = here;
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_DEPTH_PEAK,
+        (uint64_t)g_eval_c_stack_guard_depth);
+    uintptr_t delta = here > g_eval_c_stack_anchor
+        ? (here - g_eval_c_stack_anchor)
+        : (g_eval_c_stack_anchor - here);
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_DELTA_BYTES_PEAK,
+        (uint64_t)delta);
+    if (delta > eval_c_stack_budget_bytes()) {
+        if (g_eval_c_stack_guard_depth > 0)
+            g_eval_c_stack_guard_depth--;
+        if (g_eval_c_stack_guard_depth == 0)
+            g_eval_c_stack_anchor = 0;
+        return false;
+    }
+    if (guard) guard->active = true;
+    return true;
+}
+
+static void eval_c_stack_guard_leave(EvalCStackGuard *guard) {
+    if (!guard || !guard->active)
+        return;
+    guard->active = false;
+    if (g_eval_c_stack_guard_depth > 0)
+        g_eval_c_stack_guard_depth--;
+    if (g_eval_c_stack_guard_depth == 0)
+        g_eval_c_stack_anchor = 0;
 }
 
 int eval_current_effective_fuel_limit(void) {
@@ -116,6 +199,11 @@ static bool generic_mork_space_sugar_allowed(void) {
 static bool language_known_head_query_miss_is_failure(void) {
     const CettaLanguageSpec *lang = eval_current_language();
     return cetta_language_known_head_query_miss_is_failure(lang);
+}
+
+static CettaNamedSpacePolicy language_named_space_policy(void) {
+    const CettaLanguageSpec *lang = eval_current_language();
+    return cetta_language_named_space_policy(lang);
 }
 
 static CettaFunctionArgPolicy language_function_arg_policy(Atom *head,
@@ -324,13 +412,16 @@ static void eval_release_episode_table(void) {
 
 static bool outcome_variant_sharing_enabled(void) {
     const CettaEvalOptionEntry *option = active_eval_option("outcome-variant-sharing");
-    if (!option)
-        return true;
-    if (option->kind == CETTA_EVAL_OPTION_VALUE_INT)
-        return option->int_value != 0;
-    return strcmp(option->repr, "off") != 0 &&
-           strcmp(option->repr, "false") != 0 &&
-           strcmp(option->repr, "0") != 0;
+    if (option) {
+        if (option->kind == CETTA_EVAL_OPTION_VALUE_INT)
+            return option->int_value != 0;
+        return strcmp(option->repr, "off") != 0 &&
+               strcmp(option->repr, "false") != 0 &&
+               strcmp(option->repr, "0") != 0;
+    }
+    /* High-confidence auto lane: variant-table mode already commits to
+       canonicalized variant reuse at explicit memo boundaries. */
+    return active_search_table_mode() == CETTA_TABLE_MODE_VARIANT;
 }
 
 static VariantBank *eval_active_outcome_variant_bank(void) {
@@ -435,6 +526,70 @@ static Arena *eval_storage_arena(Arena *fallback) {
 static bool eval_storage_is_persistent(const Arena *arena) {
     Arena *persistent = eval_persistent_arena();
     return persistent && persistent == arena;
+}
+
+static void eval_query_episode_init(EvalQueryEpisode *episode,
+                                    Arena *survivor_arena) {
+    if (!episode)
+        return;
+    arena_init(&episode->scratch);
+    arena_set_hashcons(&episode->scratch, NULL);
+    arena_set_runtime_kind(&episode->scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    episode->survivor_arena = survivor_arena;
+    episode->active = true;
+}
+
+static void eval_query_episode_free(EvalQueryEpisode *episode) {
+    if (!episode || !episode->active)
+        return;
+    arena_free(&episode->scratch);
+    episode->survivor_arena = NULL;
+    episode->active = false;
+}
+
+static void eval_query_episode_cleanup(EvalQueryEpisode *episode) {
+    eval_query_episode_free(episode);
+}
+
+static Arena *eval_query_episode_scratch(EvalQueryEpisode *episode) {
+    if (!episode || !episode->active)
+        return NULL;
+    return &episode->scratch;
+}
+
+static Atom *eval_query_episode_promote_atom(EvalQueryEpisode *episode,
+                                             Atom *atom) {
+    if (!episode || !episode->active || !episode->survivor_arena || !atom)
+        return atom;
+    return atom_deep_copy(episode->survivor_arena, atom);
+}
+
+static bool eval_query_episode_promote_bindings(EvalQueryEpisode *episode,
+                                                Bindings *bindings) {
+    if (!episode || !episode->active || !episode->survivor_arena || !bindings)
+        return true;
+    for (uint32_t i = 0; i < bindings->len; i++) {
+        Atom *promoted =
+            eval_query_episode_promote_atom(episode, bindings->entries[i].val);
+        if (bindings->entries[i].val && !promoted)
+            return false;
+        bindings->entries[i].val = promoted;
+    }
+    for (uint32_t i = 0; i < bindings->eq_len; i++) {
+        Atom *lhs = eval_query_episode_promote_atom(
+            episode, bindings->constraints[i].lhs);
+        Atom *rhs = eval_query_episode_promote_atom(
+            episode, bindings->constraints[i].rhs);
+        if ((bindings->constraints[i].lhs && !lhs) ||
+            (bindings->constraints[i].rhs && !rhs)) {
+            return false;
+        }
+        bindings->constraints[i].lhs = lhs;
+        bindings->constraints[i].rhs = rhs;
+    }
+    bindings->lookup_cache_count = 0;
+    bindings->lookup_cache_next = 0;
+    return true;
 }
 
 static Atom *eval_store_atom(Arena *dst, Atom *src) {
@@ -549,10 +704,10 @@ static void outcome_try_factor_variant(Outcome *out) {
     if (!out || variant_instance_present(&out->variant) ||
         !out->atom || !atom_contains_vars(out->atom))
         return;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_ATTEMPT);
     VariantBank *bank = eval_active_outcome_variant_bank();
     if (!bank)
         return;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_FACTOR_ATTEMPT);
     VariantShape shape;
     if (!variant_shape_from_bound_atom(bank, &out->env, out->atom, &shape))
         return;
@@ -624,7 +779,8 @@ static bool outcome_skip_call_observation_fast_path(Space *s,
     if (is_grounded_op(head->sym_id))
         return false;
     if (g_library_context && g_library_context->foreign_runtime &&
-        cetta_foreign_is_callable_atom(head)) {
+        cetta_foreign_is_callable_head(g_library_context->foreign_runtime,
+                                       head)) {
         return false;
     }
     if (space_equations_may_match_known_head(s, head->sym_id))
@@ -2120,6 +2276,15 @@ static bool collect_free_vars_case_like_branches(Atom *branches,
     return true;
 }
 
+static bool *alloc_zeroed_bool_array(uint32_t len) {
+    if (len == 0)
+        return NULL;
+    size_t bytes = sizeof(bool) * (size_t)len;
+    bool *used = cetta_malloc(bytes);
+    memset(used, 0, bytes);
+    return used;
+}
+
 static bool collect_free_vars_let_star(Atom *bindings_list, Atom *body,
                                        BoundVarStack *bound,
                                        FreeVarSet *free_vars) {
@@ -2576,6 +2741,7 @@ typedef struct {
     bool preserve_bindings;
     SearchContext *context;
     OutcomeSet *outcomes;
+    EvalQueryEpisode *episode;
 } QueryEvalVisitorCtx;
 
 static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
@@ -2597,7 +2763,8 @@ static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
         !symbol_id_is_builtin_surface(head->sym_id) &&
         !is_grounded_op(head->sym_id) &&
         !(g_library_context && g_library_context->foreign_runtime &&
-          cetta_foreign_is_callable_atom(head)) &&
+          cetta_foreign_is_callable_head(g_library_context->foreign_runtime,
+                                         head)) &&
         !space_equations_may_match_known_head(s, head->sym_id)) {
         outcome_set_add_prefixed_outcome(a, outcomes, seed, NULL, preserve_bindings);
         return;
@@ -2632,6 +2799,31 @@ static bool query_visit_eval_for_caller_common(Atom *result,
         bindings_merge_attempt_finish(search_context_builder(query_eval->context),
                                       &attempt);
         return true;
+    }
+    if (query_eval->episode) {
+        if (variant && variant_instance_present(variant)) {
+            delayed.atom = variant_instance_materialize(query_eval->arena,
+                                                        delayed.atom,
+                                                        &delayed.variant);
+            variant_instance_free(&delayed.variant);
+        } else {
+            delayed.atom = eval_query_episode_promote_atom(query_eval->episode,
+                                                           delayed.atom);
+        }
+        if (!delayed.atom) {
+            outcome_free_fields(&delayed);
+            bindings_merge_attempt_finish(
+                search_context_builder(query_eval->context), &attempt);
+            return true;
+        }
+        if (!eval_query_episode_promote_bindings(query_eval->episode,
+                                                 &delayed.env)) {
+            outcome_free_fields(&delayed);
+            bindings_merge_attempt_finish(
+                search_context_builder(query_eval->context), &attempt);
+            return true;
+        }
+        delayed.materialized_atom = NULL;
     }
 
     eval_delayed_outcome_for_caller(
@@ -2675,10 +2867,12 @@ typedef struct {
     Atom **tail_next;
     Atom **tail_type;
     Bindings *tail_env;
+    EvalQueryEpisode *episode;
     bool ok;
 } QuerySingleTailDelayedCtx;
 
-static bool query_delayed_result_apply_single_tail(SearchContext *context,
+static bool query_delayed_result_apply_single_tail(EvalQueryEpisode *episode,
+                                                   SearchContext *context,
                                                    const Bindings *base_env,
                                                    Arena *a,
                                                    Atom *declared_type,
@@ -2696,10 +2890,13 @@ static bool query_delayed_result_apply_single_tail(SearchContext *context,
                                          &attempt)) {
         return false;
     }
-    variant_applied =
-        (variant && variant_instance_present(variant))
-            ? variant_instance_materialize(a, result, variant)
-            : result;
+    if (variant && variant_instance_present(variant)) {
+        variant_applied = variant_instance_materialize(a, result, variant);
+    } else if (episode) {
+        variant_applied = eval_query_episode_promote_atom(episode, result);
+    } else {
+        variant_applied = result;
+    }
     if (!variant_applied) {
         bindings_merge_attempt_finish(search_context_builder(context), &attempt);
         return false;
@@ -2707,6 +2904,12 @@ static bool query_delayed_result_apply_single_tail(SearchContext *context,
     *tail_next = variant_applied;
     *tail_type = result_eval_type_hint(declared_type, result);
     bindings_copy(tail_env, attempt.env);
+    if (episode && !eval_query_episode_promote_bindings(episode, tail_env)) {
+        bindings_free(tail_env);
+        bindings_init(tail_env);
+        bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+        return false;
+    }
     bindings_merge_attempt_finish(search_context_builder(context), &attempt);
     return true;
 }
@@ -2719,6 +2922,7 @@ static bool query_visit_collect_single_tail_delayed(Atom *result,
     if (!collect->ok || *collect->tail_next != NULL)
         return true;
     collect->ok = query_delayed_result_apply_single_tail(
+        collect->episode,
         collect->context,
         collect->base_env,
         collect->arena,
@@ -2744,7 +2948,8 @@ static bool query_equations_table_hit_visit(Space *s, Atom *query, Arena *a,
 }
 
 static QueryTableTailState
-query_equations_table_hit_single_tail(Space *s, Atom *query, Arena *a,
+query_equations_table_hit_single_tail(Space *s, Atom *query,
+                                      EvalQueryEpisode *episode, Arena *a,
                                       QueryEvalVisitorCtx *query_eval,
                                       Atom **tail_next,
                                       Atom **tail_type,
@@ -2759,6 +2964,7 @@ query_equations_table_hit_single_tail(Space *s, Atom *query, Arena *a,
         .tail_next = tail_next,
         .tail_type = tail_type,
         .tail_env = tail_env,
+        .episode = episode,
         .ok = true,
     };
 
@@ -2779,12 +2985,23 @@ query_equations_table_hit_single_tail(Space *s, Atom *query, Arena *a,
 static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
                                              QueryEvalVisitorCtx *query_eval) {
     uint32_t visited = 0;
-    if (query_equations_table_hit_visit(s, query, a, query_eval, &visited))
+    __attribute__((cleanup(eval_query_episode_cleanup)))
+    EvalQueryEpisode episode = {0};
+    QueryEvalVisitorCtx episode_eval = *query_eval;
+    Arena *query_arena = a;
+
+    eval_query_episode_init(&episode, a);
+    episode_eval.episode = &episode;
+    query_arena = eval_query_episode_scratch(&episode);
+
+    if (query_equations_table_hit_visit(s, query, query_arena, &episode_eval,
+                                        &visited))
         return visited;
     QueryResults results;
     query_results_init(&results);
-    query_equations(s, query, a, &results);
-    visited = query_results_visit(&results, query_visit_eval_for_caller, query_eval);
+    query_equations(s, query, query_arena, &results);
+    visited = query_results_visit(&results, query_visit_eval_for_caller,
+                                  &episode_eval);
     TableStore *table = eval_active_episode_table();
     uint64_t revision = space_revision(s);
     query_equations_cache_store(table, s, revision, query, &results);
@@ -2792,7 +3009,8 @@ static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
     return visited;
 }
 
-static bool query_result_apply_single_tail(SearchContext *context,
+static bool query_result_apply_single_tail(EvalQueryEpisode *episode,
+                                           SearchContext *context,
                                            const Bindings *base_env,
                                            Arena *a,
                                            Atom *declared_type,
@@ -2808,9 +3026,21 @@ static bool query_result_apply_single_tail(SearchContext *context,
                                          &attempt)) {
         return false;
     }
-    *tail_next = result->result;
+    *tail_next = episode
+        ? eval_query_episode_promote_atom(episode, result->result)
+        : result->result;
+    if (!*tail_next) {
+        bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+        return false;
+    }
     *tail_type = result_eval_type_hint(declared_type, result->result);
     bindings_copy(tail_env, attempt.env);
+    if (episode && !eval_query_episode_promote_bindings(episode, tail_env)) {
+        bindings_free(tail_env);
+        bindings_init(tail_env);
+        bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+        return false;
+    }
     bindings_merge_attempt_finish(search_context_builder(context), &attempt);
     return true;
 }
@@ -3300,6 +3530,8 @@ static bool reduce_stream_results(Space *s, Arena *a, Arena *work_a, Atom *call,
         .ok = true,
     };
     arena_init(&reduce.stream_scratch);
+    arena_set_runtime_kind(&reduce.stream_scratch,
+                           CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     if (a->hashcons)
         arena_set_hashcons(&reduce.stream_scratch, a->hashcons);
 
@@ -3401,6 +3633,8 @@ fold_by_key_stream_results(Space *s, Arena *a, Arena *work_a,
         .ok = true,
     };
     arena_init(&ctx.stream_scratch);
+    arena_set_runtime_kind(&ctx.stream_scratch,
+                           CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     if (a->hashcons)
         arena_set_hashcons(&ctx.stream_scratch, a->hashcons);
 
@@ -3456,6 +3690,15 @@ static Atom *resolve_registry_refs_impl(Arena *a, Atom *atom, bool *changed_out)
 }
 
 static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
+    if (!g_registry)
+        return atom;
+    if (!atom_has_registry_refs(atom)) {
+        if (!atom || atom->kind != ATOM_SYMBOL)
+            return atom;
+        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
+        if (!bytes || bytes[0] != '&')
+            return atom;
+    }
     bool changed = false;
     Atom *resolved = resolve_registry_refs_impl(a, atom, &changed);
     if (!changed) {
@@ -3505,6 +3748,7 @@ static bool emit_mork_add_atoms_from_stream_source(Space *s, Arena *a,
     uint64_t eval_started_ns = ctx.emit_timing ? eval_monotonic_ns() : 0;
     uint64_t insert_started_ns = 0;
     arena_init(&ctx.scratch);
+    arena_set_runtime_kind(&ctx.scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     if (a->hashcons)
         arena_set_hashcons(&ctx.scratch, a->hashcons);
     Atom *applied_stream = (!current_env || current_env->len == 0)
@@ -3735,6 +3979,9 @@ static Space *resolve_include_destination(Arena *a, Atom *target, Atom **error_o
     return space;
 }
 
+static Space *resolve_runtime_space_ref(Space *context, Arena *a,
+                                        Atom *space_ref);
+
 static void collect_resolved_spaces(Space *s, Arena *a, Atom *space_expr,
                                     int fuel, Space ***spaces_out,
                                     uint32_t *len_out) {
@@ -3747,7 +3994,7 @@ static void collect_resolved_spaces(Space *s, Arena *a, Atom *space_expr,
     if (rs.len > 0) {
         spaces = cetta_malloc(sizeof(Space *) * rs.len);
         for (uint32_t i = 0; i < rs.len; i++) {
-            Space *sp = resolve_space(g_registry, rs.items[i]);
+            Space *sp = resolve_runtime_space_ref(s, a, rs.items[i]);
             if (sp) spaces[len++] = sp;
         }
     }
@@ -3756,18 +4003,67 @@ static void collect_resolved_spaces(Space *s, Arena *a, Atom *space_expr,
     *len_out = len;
 }
 
+static SpaceEngine default_runtime_space_backend_kind(Space *s) {
+    SpaceEngine backend_kind = s ? s->match_backend.kind : SPACE_ENGINE_NATIVE;
+    if (backend_kind == SPACE_ENGINE_MORK)
+        backend_kind = SPACE_ENGINE_PATHMAP;
+    return backend_kind;
+}
+
+static Space *alloc_runtime_space(Arena *pa, Space *context, SpaceKind kind,
+                                  SpaceEngine backend_kind) {
+    if (!pa)
+        return NULL;
+    Space *ns = arena_alloc(pa, sizeof(Space));
+    if (!ns)
+        return NULL;
+    space_init_with_universe(ns, eval_current_term_universe());
+    ns->kind = kind;
+    if (!space_match_backend_try_set(ns, backend_kind))
+        return NULL;
+    return ns;
+}
+
+static Space *resolve_runtime_space_ref(Space *context, Arena *a,
+                                        Atom *space_ref) {
+    if (!g_registry || !space_ref)
+        return NULL;
+
+    Space *sp = resolve_space(g_registry, space_ref);
+    if (sp)
+        return sp;
+
+    if (language_named_space_policy() != CETTA_NAMED_SPACE_POLICY_AUTO_CREATE ||
+        !atom_is_registry_token(space_ref) ||
+        space_ref->kind != ATOM_SYMBOL) {
+        return NULL;
+    }
+
+    Atom *bound = registry_lookup_id(g_registry, space_ref->sym_id);
+    if (bound)
+        return resolve_space(g_registry, space_ref);
+
+    Arena *pa = eval_storage_arena(a);
+    Space *fresh = alloc_runtime_space(pa, context, SPACE_KIND_ATOM,
+                                       default_runtime_space_backend_kind(context));
+    if (!fresh)
+        return NULL;
+    registry_bind_id(g_registry, space_ref->sym_id, atom_space(pa, fresh));
+    return fresh;
+}
+
 static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int fuel) {
     if (!g_registry) return NULL;
 
     Atom *direct = resolve_registry_refs(a, space_expr);
-    Space *sp = resolve_space(g_registry, direct);
+    Space *sp = resolve_runtime_space_ref(s, a, direct);
     if (sp) return sp;
 
     ResultSet rs;
     result_set_init(&rs);
     metta_eval(s, a, NULL, space_expr, fuel, &rs);
     for (uint32_t i = 0; i < rs.len; i++) {
-        sp = resolve_space(g_registry, rs.items[i]);
+        sp = resolve_runtime_space_ref(s, a, rs.items[i]);
         if (sp) break;
     }
     free(rs.items);
@@ -3956,6 +4252,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
     bool tried_func_type = false;
     Arena scratch;
     arena_init(&scratch);
+    arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     arena_set_hashcons(&scratch, NULL);
 
     for (uint32_t oi = 0; oi < nop; oi++) {
@@ -4236,6 +4533,13 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
 /* ── metta_eval: full recursive evaluation (metta.md lines 240-272) ────── */
 
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard stack_guard = {0};
+    if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_EVAL);
+        result_set_add(rs, atom_error(a, atom, atom_symbol(a, "StackOverflow")));
+        return;
+    }
     if (fuel == 0) {
         /* Fuel exhausted — return empty result set (matches HE behavior:
            infinite recursion produces no output, not an error atom) */
@@ -4252,7 +4556,7 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
     }
     atom = materialize_runtime_token(s, a, atom);
 
-    /* Empty/Error: return as-is (spec line 253) */
+    /* Empty/Error: return as-is (control forms filter Empty where needed). */
     if (atom_is_empty(atom) || atom_is_error(atom)) {
         result_set_add(rs, atom);
         return;
@@ -4302,6 +4606,16 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
    contain variable assignments from bidirectional matching. */
 
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard stack_guard = {0};
+    if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND);
+        Bindings overflow_empty;
+        bindings_init(&overflow_empty);
+        outcome_set_add(os, atom_error(a, atom, atom_symbol(a, "StackOverflow")),
+                        &overflow_empty);
+        return;
+    }
     Bindings empty;
     bindings_init(&empty);
 
@@ -4321,6 +4635,17 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
 }
 
 static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, OutcomeSet *os) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard stack_guard = {0};
+    if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND_TYPED);
+        Bindings overflow_empty;
+        bindings_init(&overflow_empty);
+        outcome_set_add(os, atom_error(a, atom, atom_symbol(a, "StackOverflow")),
+                        &overflow_empty);
+        return;
+    }
     Bindings empty;
     bindings_init(&empty);
 
@@ -4414,6 +4739,18 @@ typedef struct {
     uint32_t cap;
 } MatchVisibleVarSet;
 
+typedef struct {
+    VarId hidden_var_id;
+    VarId visible_var_id;
+    SymbolId spelling;
+} MatchVisibleAliasRef;
+
+typedef struct {
+    MatchVisibleAliasRef *items;
+    uint32_t len;
+    uint32_t cap;
+} MatchVisibleAliasSet;
+
 static __attribute__((unused)) void match_visible_var_set_init(MatchVisibleVarSet *set) {
     set->items = NULL;
     set->len = 0;
@@ -4464,6 +4801,62 @@ static bool match_visible_var_set_contains(const MatchVisibleVarSet *set,
     return false;
 }
 
+static void match_visible_alias_set_init(MatchVisibleAliasSet *set) {
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static void match_visible_alias_set_free(MatchVisibleAliasSet *set) {
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static bool match_visible_alias_set_reserve(MatchVisibleAliasSet *set,
+                                            uint32_t needed) {
+    if (needed <= set->cap)
+        return true;
+    uint32_t next_cap = set->cap ? set->cap * 2 : 8;
+    while (next_cap < needed)
+        next_cap *= 2;
+    set->items = set->items
+        ? cetta_realloc(set->items, sizeof(MatchVisibleAliasRef) * next_cap)
+        : cetta_malloc(sizeof(MatchVisibleAliasRef) * next_cap);
+    set->cap = next_cap;
+    return true;
+}
+
+static bool match_visible_alias_set_add(MatchVisibleAliasSet *set,
+                                        VarId hidden_var_id,
+                                        VarId visible_var_id,
+                                        SymbolId spelling) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].hidden_var_id == hidden_var_id) {
+            set->items[i].visible_var_id = visible_var_id;
+            set->items[i].spelling = spelling;
+            return true;
+        }
+    }
+    if (!match_visible_alias_set_reserve(set, set->len + 1))
+        return false;
+    set->items[set->len].hidden_var_id = hidden_var_id;
+    set->items[set->len].visible_var_id = visible_var_id;
+    set->items[set->len].spelling = spelling;
+    set->len++;
+    return true;
+}
+
+static const MatchVisibleAliasRef *match_visible_alias_set_lookup(
+    const MatchVisibleAliasSet *set, VarId hidden_var_id) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].hidden_var_id == hidden_var_id)
+            return &set->items[i];
+    }
+    return NULL;
+}
+
 static bool collect_match_visible_vars_rec(Atom *atom,
                                            MatchVisibleVarSet *set) {
     if (!atom || !atom_has_vars(atom))
@@ -4504,6 +4897,35 @@ static bool atom_refs_only_match_visible_vars(Atom *atom,
     return true;
 }
 
+static Atom *rewrite_match_visible_aliases(Arena *a, Atom *atom,
+                                           const MatchVisibleAliasSet *aliases) {
+    if (!atom || !aliases || aliases->len == 0 || !atom_has_vars(atom))
+        return atom;
+    if (atom->kind == ATOM_VAR) {
+        const MatchVisibleAliasRef *alias =
+            match_visible_alias_set_lookup(aliases, atom->var_id);
+        if (!alias || alias->spelling != atom->sym_id)
+            return atom;
+        return atom_var_with_spelling(a, alias->spelling, alias->visible_var_id);
+    }
+    if (atom->kind != ATOM_EXPR)
+        return atom;
+
+    Atom **rewritten = NULL;
+    for (uint32_t i = 0; i < atom->expr.len; i++) {
+        Atom *child = atom->expr.elems[i];
+        Atom *next = rewrite_match_visible_aliases(a, child, aliases);
+        if (!rewritten && next != child) {
+            rewritten = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+            for (uint32_t j = 0; j < i; j++)
+                rewritten[j] = atom->expr.elems[j];
+        }
+        if (rewritten)
+            rewritten[i] = next;
+    }
+    return rewritten ? atom_expr(a, rewritten, atom->expr.len) : atom;
+}
+
 static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
                                            const MatchVisibleVarSet *visible,
                                            const Bindings *full,
@@ -4512,12 +4934,31 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     if (!full || visible->len == 0)
         return true;
 
+    Atom **resolved_values = arena_alloc(a, sizeof(Atom *) * visible->len);
+    MatchVisibleAliasSet aliases;
+    match_visible_alias_set_init(&aliases);
+
     for (uint32_t i = 0; i < visible->len; i++) {
         VisibleVarRef wanted = {
             .var_id = visible->items[i].var_id,
             .spelling = visible->items[i].spelling,
         };
         Atom *resolved = bindings_resolve_body_visible_var(a, full, &wanted);
+        resolved_values[i] = resolved;
+        if (resolved->kind == ATOM_VAR &&
+            resolved->sym_id == visible->items[i].spelling &&
+            resolved->var_id != visible->items[i].var_id &&
+            !match_visible_alias_set_add(&aliases, resolved->var_id,
+                                         visible->items[i].var_id,
+                                         visible->items[i].spelling)) {
+            match_visible_alias_set_free(&aliases);
+            bindings_free(projected);
+            return false;
+        }
+    }
+
+    for (uint32_t i = 0; i < visible->len; i++) {
+        Atom *resolved = rewrite_match_visible_aliases(a, resolved_values[i], &aliases);
         if (resolved->kind == ATOM_VAR &&
             resolved->var_id == visible->items[i].var_id &&
             resolved->sym_id == visible->items[i].spelling) {
@@ -4533,15 +4974,19 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     for (uint32_t i = 0; i < full->eq_len; i++) {
         Atom *lhs = bindings_apply_if_vars(full, a, full->constraints[i].lhs);
         Atom *rhs = bindings_apply_if_vars(full, a, full->constraints[i].rhs);
+        lhs = rewrite_match_visible_aliases(a, lhs, &aliases);
+        rhs = rewrite_match_visible_aliases(a, rhs, &aliases);
         if (!atom_refs_only_match_visible_vars(lhs, visible) ||
             !atom_refs_only_match_visible_vars(rhs, visible)) {
             continue;
         }
         if (!bindings_add_constraint(projected, lhs, rhs)) {
+            match_visible_alias_set_free(&aliases);
             bindings_free(projected);
             return false;
         }
     }
+    match_visible_alias_set_free(&aliases);
     return true;
 }
 
@@ -4901,7 +5346,8 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                                       Bindings *tail_env,
                                       OutcomeSet *os) {
     if (!g_library_context || !g_library_context->foreign_runtime ||
-        !cetta_foreign_is_callable_atom(head)) {
+        !cetta_foreign_is_callable_head(g_library_context->foreign_runtime,
+                                        head)) {
         return false;
     }
 
@@ -4932,6 +5378,85 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                         preserve_bindings, os);
     result_set_free(&rs);
     return true;
+}
+
+static bool dispatch_direct_surface_no_type(Space *s, Arena *a,
+                                            Atom *op, Atom *atom,
+                                            int fuel,
+                                            const Bindings *current_env,
+                                            bool preserve_bindings,
+                                            Atom **tail_next,
+                                            Atom **tail_type,
+                                            Bindings *tail_env,
+                                            OutcomeSet *os) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0)
+        return false;
+
+    Atom *resolved_op = (!current_env || current_env->len == 0)
+        ? op
+        : bindings_apply_if_vars(current_env, a, op);
+    resolved_op = resolve_registry_refs(a, resolved_op);
+    resolved_op = materialize_runtime_token(s, a, resolved_op);
+
+    bool native_candidate =
+        resolved_op && resolved_op->kind == ATOM_SYMBOL &&
+        is_grounded_op(resolved_op->sym_id);
+    bool foreign_candidate =
+        g_library_context && g_library_context->foreign_runtime &&
+        cetta_foreign_is_callable_head(g_library_context->foreign_runtime,
+                                       resolved_op);
+    if (!native_candidate && !foreign_candidate && !is_capture_closure(resolved_op))
+        return false;
+
+    uint32_t nargs = atom->expr.len - 1;
+    Atom **arg_types = nargs ? arena_alloc(a, sizeof(Atom *) * nargs) : NULL;
+    for (uint32_t i = 0; i < nargs; i++)
+        arg_types[i] = atom_undefined_type(a);
+
+    OutcomeSet call_terms;
+    outcome_set_init(&call_terms);
+    Atom **prefix = nargs ? arena_alloc(a, sizeof(Atom *) * nargs) : NULL;
+    interpret_function_args(s, a, resolved_op, atom->expr.elems + 1, arg_types,
+                            nargs, 0, prefix, current_env, fuel, &call_terms);
+
+    bool handled = false;
+    for (uint32_t ci = 0; ci < call_terms.len; ci++) {
+        Atom *call_atom = outcome_atom_materialize(a, &call_terms.items[ci]);
+        Bindings *combo_ctx = &call_terms.items[ci].env;
+        if (!call_atom || call_atom->kind != ATOM_EXPR || call_atom->expr.len == 0)
+            continue;
+
+        Atom *h = call_atom->expr.elems[0];
+        if (is_capture_closure(h)) {
+            dispatch_capture_outcomes(s, a, h,
+                                      call_atom->expr.elems + 1,
+                                      call_atom->expr.len - 1,
+                                      fuel, combo_ctx, preserve_bindings, os);
+            handled = true;
+            continue;
+        }
+        if (dispatch_foreign_outcomes(s, a, h,
+                                      call_atom->expr.elems + 1,
+                                      call_atom->expr.len - 1,
+                                      NULL, fuel, combo_ctx, false,
+                                      preserve_bindings,
+                                      tail_next, tail_type, tail_env, os)) {
+            handled = true;
+            continue;
+        }
+        if (h->kind == ATOM_SYMBOL && is_grounded_op(h->sym_id)) {
+            Atom *result = dispatch_native_op(s, a, h,
+                                              call_atom->expr.elems + 1,
+                                              call_atom->expr.len - 1);
+            if (result) {
+                eval_for_caller(s, a, NULL, result, fuel, combo_ctx,
+                                preserve_bindings, os);
+                handled = true;
+            }
+        }
+    }
+    outcome_set_free(&call_terms);
+    return handled;
 }
 
 static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
@@ -5190,6 +5715,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                 &projected)) {
                 continue;
             }
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
             Atom *result = bindings_apply_if_vars(&projected, a, template);
             const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
             eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -5213,7 +5739,9 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                    residual_body->kind == ATOM_EXPR && residual_body->expr.len == 4 &&
                    atom_is_symbol_id(residual_body->expr.elems[0], g_builtin_syms.match)) {
                 Atom *inner_ref = resolve_registry_refs(a, residual_body->expr.elems[1]);
-                Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
+                Space *inner_sp = g_registry
+                                      ? resolve_runtime_space_ref(s, a, inner_ref)
+                                      : NULL;
                 if (!inner_sp) inner_sp = s;
                 if (inner_sp != ms)
                     break;
@@ -5237,6 +5765,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                         &projected)) {
                         continue;
                     }
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
                     Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
                     const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                     eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -5262,7 +5791,9 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             while (scan->kind == ATOM_EXPR && scan->expr.len == 4 &&
                    atom_is_symbol_id(scan->expr.elems[0], g_builtin_syms.match)) {
                 Atom *inner_ref = resolve_registry_refs(a, scan->expr.elems[1]);
-                Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
+                Space *inner_sp = g_registry
+                                      ? resolve_runtime_space_ref(s, a, inner_ref)
+                                      : NULL;
                 if (!inner_sp) inner_sp = s;
                 if (inner_sp && space_engine_uses_pathmap(inner_sp->match_backend.kind)) {
                     /* Imported path still has a nested-match chain regression on the
@@ -5289,7 +5820,9 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match)) {
             Atom *inner_ref = resolve_registry_refs(a, body->expr.elems[1]);
             Atom *inner_pat = resolve_registry_refs(a, body->expr.elems[2]);
-            Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
+            Space *inner_sp = g_registry
+                                  ? resolve_runtime_space_ref(s, a, inner_ref)
+                                  : NULL;
             if (!inner_sp) inner_sp = s;
             steps[nsteps].space = inner_sp;
             steps[nsteps].pattern = inner_pat;
@@ -5390,6 +5923,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             Bindings *next_binds = NULL;
             uint32_t nnext = 0, cnext = 0;
             for (uint32_t bi = 0; bi < ncur; bi++) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_STEP);
                 Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, step->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
@@ -5417,6 +5951,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             MatchStep *last = &steps[nsteps - 1];
             static uint64_t g_chain_progress = 0;
             for (uint32_t bi = 0; bi < ncur; bi++) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
                 Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
                 SubstMatchSet smr;
                 smset_init(&smr);
@@ -5426,10 +5961,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
                                                     &cur_binds[bi], a, &mb)) {
                         Bindings projected;
-                        if (!project_match_visible_bindings(a, &visible, &mb, &projected)) {
+                        if (!project_match_visible_bindings(a, &visible, &mb,
+                                                            &projected)) {
                             bindings_free(&mb);
                             continue;
                         }
+                        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
                         Atom *result = bindings_apply_if_vars(&projected, a, body);
                         const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                         eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -5453,6 +5990,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                                     &projected)) {
                     continue;
                 }
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
                 Atom *result = bindings_apply_if_vars(&projected, a, body);
                 const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
                 eval_for_caller(s, a, NULL, result, fuel, forward_env,
@@ -5691,6 +6229,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             return true;
         }
     }
+    if (dispatch_direct_surface_no_type(s, a, op, atom, fuel, current_env,
+                                        preserve_bindings,
+                                        tail_next, tail_type, tail_env, os)) {
+        return true;
+    }
     Atom **op_types;
     uint32_t n_op_types = get_atom_types_profiled(s, a, op, &op_types);
     bool only_function_types = (n_op_types > 0);
@@ -5845,6 +6388,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             if (!search_context_init(&qr_context, combo_ctx, NULL)) {
                                 continue;
                             }
+                            __attribute__((cleanup(eval_query_episode_cleanup)))
+                            EvalQueryEpisode query_episode = {0};
+                            eval_query_episode_init(&query_episode, a);
+                            Arena *query_arena =
+                                eval_query_episode_scratch(&query_episode);
                             QueryEvalVisitorCtx query_eval = {
                                 .space = s,
                                 .arena = a,
@@ -5854,10 +6402,12 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 .preserve_bindings = preserve_bindings,
                                 .context = &qr_context,
                                 .outcomes = &func_results,
+                                .episode = &query_episode,
                             };
                             QueryTableTailState table_tail =
                                 query_equations_table_hit_single_tail(
-                                    s, call_atom, a, &query_eval,
+                                    s, call_atom, &query_episode, query_arena,
+                                    &query_eval,
                                     tail_next, tail_type, tail_env);
                             if (table_tail != QUERY_TABLE_TAIL_MISS) {
                                 search_context_free(&qr_context);
@@ -5871,20 +6421,23 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     return true;
                                 }
                                 if (table_tail == QUERY_TABLE_TAIL_MULTI) {
-                                    query_equations_table_hit_visit(s, call_atom, a,
-                                                                    &query_eval, NULL);
+                                    query_equations_table_hit_visit(
+                                        s, call_atom, query_arena,
+                                        &query_eval, NULL);
                                     dispatched = true;
                                 }
                                 goto query_done;
                             }
                             QueryResults qr;
                             query_results_init(&qr);
-                            query_equations_cached(s, call_atom, a, &qr);
+                            query_equations_cached(s, call_atom, query_arena, &qr);
                             if (qr.len > 0) {
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && qr.len == 1) {
-                                    if (!query_result_apply_single_tail(&qr_context,
+                                    if (!query_result_apply_single_tail(
+                                                                        &query_episode,
+                                                                        &qr_context,
                                                                         combo_ctx,
                                                                         a,
                                                                         inst_ret_type,
@@ -6031,6 +6584,10 @@ query_done:
                 outcome_set_free(&tuples);
                 return true;
             }
+            __attribute__((cleanup(eval_query_episode_cleanup)))
+            EvalQueryEpisode query_episode = {0};
+            eval_query_episode_init(&query_episode, a);
+            Arena *query_arena = eval_query_episode_scratch(&query_episode);
             QueryEvalVisitorCtx query_eval = {
                 .space = s,
                 .arena = a,
@@ -6040,10 +6597,11 @@ query_done:
                 .preserve_bindings = preserve_bindings,
                 .context = &qr_context,
                 .outcomes = os,
+                .episode = &query_episode,
             };
             QueryTableTailState table_tail =
                 query_equations_table_hit_single_tail(
-                    s, call_atom, a, &query_eval,
+                    s, call_atom, &query_episode, query_arena, &query_eval,
                     tail_next, tail_type, tail_env);
             if (table_tail != QUERY_TABLE_TAIL_MISS) {
                 search_context_free(&qr_context);
@@ -6052,8 +6610,8 @@ query_done:
                     return true;
                 }
                 if (table_tail == QUERY_TABLE_TAIL_MULTI) {
-                    query_equations_table_hit_visit(s, call_atom, a, &query_eval,
-                                                    NULL);
+                    query_equations_table_hit_visit(s, call_atom, query_arena,
+                                                    &query_eval, NULL);
                     outcome_set_free(&tuples);
                     return true;
                 }
@@ -6063,9 +6621,10 @@ query_done:
             }
             QueryResults qr;
             query_results_init(&qr);
-            query_equations_cached(s, call_atom, a, &qr);
+            query_equations_cached(s, call_atom, query_arena, &qr);
             if (qr.len == 1) {
-                if (!query_result_apply_single_tail(&qr_context,
+                if (!query_result_apply_single_tail(&query_episode,
+                                                    &qr_context,
                                                     tuple_bindings,
                                                     a,
                                                     etype,
@@ -6165,6 +6724,7 @@ query_done:
                 .preserve_bindings = preserve_bindings,
                 .context = &qr_context,
                 .outcomes = os,
+                .episode = NULL,
             };
             if (query_equations_cached_visit(s, call_atom, a, &query_eval) > 0) {
                 search_context_free(&qr_context);
@@ -6309,6 +6869,177 @@ tail_call: ;
         return;
     }
 
+    /* ── cons-atom ─────────────────────────────────────────────────────── */
+    if (head_id == g_builtin_syms.cons_atom && nargs == 2) {
+        Atom *arg_types[] = {
+            atom_symbol_id(a, g_builtin_syms.atom),
+            atom_expression_type(a),
+        };
+        OutcomeSet calls;
+        outcome_set_init(&calls);
+        interpret_surface_args_with_policy(s, a, atom->expr.elems[0],
+                                           atom->expr.elems + 1, arg_types, 2,
+                                           CURRENT_ENV, fuel, &calls);
+        for (uint32_t ci = 0; ci < calls.len; ci++) {
+            Atom *call_atom = outcome_atom_materialize(a, &calls.items[ci]);
+            Bindings *combo_env = &calls.items[ci].env;
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                outcome_set_add_existing_move(os, &calls.items[ci]);
+                continue;
+            }
+            Atom *hd = expr_arg(call_atom, 0);
+            Atom *tl = expr_arg(call_atom, 1);
+            if (tl->kind == ATOM_EXPR) {
+                Atom **elems = arena_alloc(a, sizeof(Atom *) * (tl->expr.len + 1));
+                elems[0] = hd;
+                for (uint32_t i = 0; i < tl->expr.len; i++)
+                    elems[i + 1] = tl->expr.elems[i];
+                outcome_set_add(os, atom_expr(a, elems, tl->expr.len + 1),
+                                combo_env);
+            } else {
+                outcome_set_add(os, atom_expr2(a, hd, tl), combo_env);
+            }
+        }
+        outcome_set_free(&calls);
+        return;
+    }
+
+    /* ── union-atom ────────────────────────────────────────────────────── */
+    if (head_id == g_builtin_syms.union_atom && nargs == 2) {
+        Atom *arg_types[] = {
+            atom_expression_type(a),
+            atom_expression_type(a),
+        };
+        OutcomeSet calls;
+        outcome_set_init(&calls);
+        interpret_surface_args_with_policy(s, a, atom->expr.elems[0],
+                                           atom->expr.elems + 1, arg_types, 2,
+                                           CURRENT_ENV, fuel, &calls);
+        for (uint32_t ci = 0; ci < calls.len; ci++) {
+            Atom *call_atom = outcome_atom_materialize(a, &calls.items[ci]);
+            Bindings *combo_env = &calls.items[ci].env;
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                outcome_set_add_existing_move(os, &calls.items[ci]);
+                continue;
+            }
+            Atom *lhs = expr_arg(call_atom, 0);
+            Atom *rhs = expr_arg(call_atom, 1);
+            if (lhs->kind == ATOM_EXPR && rhs->kind == ATOM_EXPR) {
+                uint32_t len = lhs->expr.len + rhs->expr.len;
+                Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
+                for (uint32_t i = 0; i < lhs->expr.len; i++)
+                    elems[i] = lhs->expr.elems[i];
+                for (uint32_t i = 0; i < rhs->expr.len; i++)
+                    elems[lhs->expr.len + i] = rhs->expr.elems[i];
+                outcome_set_add(os, atom_expr(a, elems, len), combo_env);
+            } else {
+                outcome_set_add(os, call_atom, combo_env);
+            }
+        }
+        outcome_set_free(&calls);
+        return;
+    }
+
+    /* ── decons-atom ───────────────────────────────────────────────────── */
+    if (head_id == g_builtin_syms.decons_atom) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Atom *arg_types[] = { atom_expression_type(a) };
+        OutcomeSet calls;
+        outcome_set_init(&calls);
+        interpret_surface_args_with_policy(s, a, atom->expr.elems[0],
+                                           atom->expr.elems + 1, arg_types, 1,
+                                           CURRENT_ENV, fuel, &calls);
+        for (uint32_t ci = 0; ci < calls.len; ci++) {
+            Atom *call_atom = outcome_atom_materialize(a, &calls.items[ci]);
+            Bindings *combo_env = &calls.items[ci].env;
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                outcome_set_add_existing_move(os, &calls.items[ci]);
+                continue;
+            }
+            Atom *e = expr_arg(call_atom, 0);
+            if (e->kind == ATOM_EXPR && e->expr.len > 0) {
+                Atom *hd = e->expr.elems[0];
+                Atom *tl = atom_expr(a, e->expr.elems + 1, e->expr.len - 1);
+                outcome_set_add(os, atom_expr2(a, hd, tl), combo_env);
+            } else {
+                outcome_set_add(os,
+                    call_signature_error(a, call_atom,
+                        "(decons-atom (: <expr> Expression))"),
+                    combo_env);
+            }
+        }
+        outcome_set_free(&calls);
+        return;
+    }
+
+    /* ── car-atom / cdr-atom ─────────────────────────────────────────── */
+    if (head_id == g_builtin_syms.car_atom && nargs == 1) {
+        Atom *arg_types[] = { atom_expression_type(a) };
+        OutcomeSet calls;
+        outcome_set_init(&calls);
+        interpret_surface_args_with_policy(s, a, atom->expr.elems[0],
+                                           atom->expr.elems + 1, arg_types, 1,
+                                           CURRENT_ENV, fuel, &calls);
+        for (uint32_t ci = 0; ci < calls.len; ci++) {
+            Atom *call_atom = outcome_atom_materialize(a, &calls.items[ci]);
+            Bindings *combo_env = &calls.items[ci].env;
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                outcome_set_add_existing_move(os, &calls.items[ci]);
+                continue;
+            }
+            Atom *e = expr_arg(call_atom, 0);
+            if (e->kind == ATOM_EXPR && e->expr.len > 0) {
+                outcome_set_add(os, e->expr.elems[0], combo_env);
+            } else {
+                outcome_set_add(
+                    os,
+                    atom_error(a, call_atom,
+                               atom_string(a,
+                                           "car-atom expects a non-empty expression as an argument")),
+                    combo_env);
+            }
+        }
+        outcome_set_free(&calls);
+        return;
+    }
+    if (head_id == g_builtin_syms.cdr_atom && nargs == 1) {
+        Atom *arg_types[] = { atom_expression_type(a) };
+        OutcomeSet calls;
+        outcome_set_init(&calls);
+        interpret_surface_args_with_policy(s, a, atom->expr.elems[0],
+                                           atom->expr.elems + 1, arg_types, 1,
+                                           CURRENT_ENV, fuel, &calls);
+        for (uint32_t ci = 0; ci < calls.len; ci++) {
+            Atom *call_atom = outcome_atom_materialize(a, &calls.items[ci]);
+            Bindings *combo_env = &calls.items[ci].env;
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                outcome_set_add_existing_move(os, &calls.items[ci]);
+                continue;
+            }
+            Atom *e = expr_arg(call_atom, 0);
+            if (e->kind == ATOM_EXPR && e->expr.len > 0) {
+                outcome_set_add(
+                    os,
+                    atom_expr(a, e->expr.elems + 1, e->expr.len - 1),
+                    combo_env);
+            } else {
+                outcome_set_add(
+                    os,
+                    atom_error(a, call_atom,
+                               atom_string(a,
+                                           "cdr-atom expects a non-empty expression as an argument")),
+                    combo_env);
+            }
+        }
+        outcome_set_free(&calls);
+        return;
+    }
+
     /* ── is-member (PeTTa relational membership) ─────────────────────── */
     if (head_id == g_builtin_syms.is_member) {
         if (nargs != 2) {
@@ -6404,6 +7135,7 @@ tail_call: ;
         Atom *else_br = expr_arg(atom, 3);
         Bindings b;
         bindings_init(&b);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_UNIFY);
         if (match_atoms(target, pattern, &b) && !bindings_has_loop(&b)) {
             Atom *next_atom = bindings_apply_if_vars(&b, a, then_br);
             if (preserve_bindings &&
@@ -7020,6 +7752,8 @@ tail_call: ;
 
             Arena stream_scratch;
             arena_init(&stream_scratch);
+            arena_set_runtime_kind(&stream_scratch,
+                                   CETTA_ARENA_RUNTIME_KIND_SCRATCH);
             if (a->hashcons)
                 arena_set_hashcons(&stream_scratch, a->hashcons);
             reduce_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
@@ -7098,6 +7832,8 @@ tail_call: ;
 
             Arena stream_scratch;
             arena_init(&stream_scratch);
+            arena_set_runtime_kind(&stream_scratch,
+                                   CETTA_ARENA_RUNTIME_KIND_SCRATCH);
             if (a->hashcons)
                 arena_set_hashcons(&stream_scratch, a->hashcons);
             fold_by_key_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
@@ -7325,10 +8061,7 @@ tail_call: ;
             return;
         }
         SpaceKind kind = SPACE_KIND_ATOM;
-        SpaceEngine backend_kind = s->match_backend.kind;
-        if (backend_kind == SPACE_ENGINE_MORK) {
-            backend_kind = SPACE_ENGINE_PATHMAP;
-        }
+        SpaceEngine backend_kind = default_runtime_space_backend_kind(s);
         if (nargs == 1) {
             if (active_profile() &&
                 !cetta_profile_allows_surface(active_profile(), "new-space-kind")) {
@@ -7361,10 +8094,8 @@ tail_call: ;
             }
         }
         Arena *pa = eval_storage_arena(a);
-        Space *ns = arena_alloc(pa, sizeof(Space));
-        space_init_with_universe(ns, eval_current_term_universe());
-        ns->kind = kind;
-        if (!space_match_backend_try_set(ns, backend_kind)) {
+        Space *ns = alloc_runtime_space(pa, s, kind, backend_kind);
+        if (!ns) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
                 &_empty);
@@ -7623,7 +8354,7 @@ tail_call: ;
         Atom *binder = expr_arg(atom, 0);
         Atom *space_ref = resolve_registry_refs(a, expr_arg(atom, 1));
         Atom *body = expr_arg(atom, 2);
-        Space *target = resolve_space(g_registry, space_ref);
+        Space *target = resolve_runtime_space_ref(s, a, space_ref);
         if (!target) {
             outcome_set_add(os, atom, &_empty);
             return;
@@ -8171,14 +8902,9 @@ tail_call: ;
             return;
         }
         Atom *compare_atom = space_compare_atom(target, a, atom_to_add);
-        AtomId compare_id = (target && target->universe)
-            ? term_universe_lookup_atom_id(target->universe, compare_atom)
-            : CETTA_ATOM_ID_NONE;
-        bool found = compare_id != CETTA_ATOM_ID_NONE &&
-                     space_contains_atom_id(target, compare_id);
-        if (!found && space_is_hash(target))
-            found = space_contains_exact(target, compare_atom);
+        bool found = space_contains_exact(target, compare_atom);
         if (!found) {
+            /* Fallback linear scan only if exact index didn't work (variables, etc.) */
             for (uint32_t i = 0; i < space_length(target) && !found; i++)
                 if (atom_eq(space_get_at(target, i), compare_atom)) found = true;
         }
@@ -8362,7 +9088,7 @@ tail_call: ;
         Atom *to_eval = expr_arg(atom, 0);
         Atom *type_arg = expr_arg(atom, 1);
         Atom *space_ref = expr_arg(atom, 2);
-        Space *target = resolve_space(g_registry, space_ref);
+        Space *target = resolve_runtime_space_ref(s, a, space_ref);
         if (!target) target = s;
         Atom *etype = atom_is_symbol_id(type_arg, g_builtin_syms.undefined_type) ? NULL : type_arg;
         eval_direct_outcomes(target, a, etype, to_eval, fuel, os);
@@ -8701,7 +9427,7 @@ tail_call: ;
         result_set_resolve_registry_refs(a, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {
@@ -8819,7 +9545,7 @@ tail_call: ;
         result_set_resolve_registry_refs(a, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {
@@ -8887,7 +9613,7 @@ tail_call: ;
         metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {
@@ -8923,7 +9649,7 @@ tail_call: ;
         metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {
@@ -9110,6 +9836,10 @@ int eval_get_default_fuel(void) {
 
 void eval_set_library_context(CettaLibraryContext *ctx) {
     g_library_context = ctx;
-    if (!ctx) return;
+    if (!ctx) {
+        cetta_language_set_current(fallback_eval_session()->language);
+        return;
+    }
     ctx->session.options.fuel_limit = fallback_eval_session()->options.fuel_limit;
+    cetta_language_set_current(ctx->session.language);
 }

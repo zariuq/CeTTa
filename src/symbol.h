@@ -211,6 +211,18 @@ typedef struct {
     /* ── Grounded internal helpers ── */ \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
+    /* ── Prolog FFI ── */ \
+    X(pl_atom, "pl-atom") \
+    X(pl_call, "pl-call") \
+    X(pl_consult, "pl-consult") \
+    X(pl_use_module, "pl-use-module") \
+    X(pl_import, "pl-import") \
+    X(import_prolog_function, "import_prolog_function") \
+    X(predicate_ctor, "Predicate") \
+    X(callPredicate, "callPredicate") \
+    X(assertzPredicate, "assertzPredicate") \
+    X(assertaPredicate, "assertaPredicate") \
+    X(retractPredicate, "retractPredicate") \
     /* ── Python FFI ── */ \
     X(py_atom, "py-atom") \
     X(py_call, "py-call") \
@@ -372,5 +384,6 @@ const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
+int symbol_lex_compare(const SymbolTable *st, SymbolId lhs, SymbolId rhs);
 
 #endif /* CETTA_SYMBOL_H */

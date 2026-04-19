@@ -13,6 +13,7 @@
 #include "mork_space_bridge_runtime.h"
 #include "stats.h"
 #include "symbol.h"
+#include "tests/test_runtime_stats_stubs.h"
 
 typedef struct {
     uint8_t *data;
@@ -24,11 +25,6 @@ typedef struct {
     size_t len;
     size_t cap;
 } ByteBuf;
-
-void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
-    (void)counter;
-    (void)delta;
-}
 
 static uint64_t monotonic_ns(void) {
     struct timespec ts;
