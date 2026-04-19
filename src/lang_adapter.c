@@ -53,6 +53,36 @@ static char *petta_owned_strdup(const char *text) {
     return copy;
 }
 
+static Atom *petta_rewrite_empty_literals(Arena *arena, Atom *term) {
+    if (!term) return term;
+    if (term->kind == ATOM_SYMBOL) {
+        if (atom_is_symbol_name(term, "Empty")) {
+            return atom_symbol_id(arena, g_builtin_syms.petta_empty_literal);
+        }
+        return term;
+    }
+    if (term->kind != ATOM_EXPR || term->expr.len == 0)
+        return term;
+
+    Atom **rewritten = NULL;
+    for (uint32_t i = 0; i < term->expr.len; i++) {
+        Atom *child = term->expr.elems[i];
+        Atom *next = petta_rewrite_empty_literals(arena, child);
+        if (!rewritten && next != child) {
+            rewritten = arena_alloc(arena, sizeof(Atom *) * term->expr.len);
+            for (uint32_t j = 0; j < i; j++) {
+                rewritten[j] = term->expr.elems[j];
+            }
+        }
+        if (rewritten) {
+            rewritten[i] = next;
+        }
+    }
+    if (!rewritten)
+        return term;
+    return atom_expr(arena, rewritten, term->expr.len);
+}
+
 static Atom *petta_fresh_var(CettaPettaLowerContext *ctx, const char *prefix) {
     char buf[96];
     snprintf(buf, sizeof(buf), "$__petta_%s_%" PRIu64, prefix, ++ctx->fresh_counter);
@@ -203,26 +233,12 @@ static bool petta_try_import_candidate(const char *base_dir, const char *spec,
     return petta_path_is_existing_file(resolved);
 }
 
-static bool petta_resolve_static_import(const char *current_path,
+static bool petta_resolve_static_import(const char *root_dir,
                                         const char *spec,
                                         char *resolved, size_t resolved_sz) {
-    char base_dir[PATH_MAX];
-
-    if (!current_path || !*current_path || !spec || !*spec) return false;
+    if (!root_dir || !*root_dir || !spec || !*spec) return false;
     if (strchr(spec, ':')) return false;
-    if (!cetta_text_path_parent_dir(base_dir, sizeof(base_dir), current_path))
-        return false;
-    while (true) {
-        if (petta_try_import_candidate(base_dir, spec, resolved, resolved_sz))
-            return true;
-        char parent[PATH_MAX];
-        if (!cetta_text_path_parent_dir(parent, sizeof(parent), base_dir))
-            break;
-        if (strcmp(parent, base_dir) == 0)
-            break;
-        snprintf(base_dir, sizeof(base_dir), "%s", parent);
-    }
-    return false;
+    return petta_try_import_candidate(root_dir, spec, resolved, resolved_sz);
 }
 
 static bool petta_static_import_spec_at(Atom **atoms, int n, int i,
@@ -246,6 +262,7 @@ static bool petta_static_import_spec_at(Atom **atoms, int n, int i,
 
 static void petta_collect_imported_callable_heads_from_file(
     const char *path,
+    const char *import_root_dir,
     CettaPettaCallableSet *callables,
     CettaPettaPathSet *visited
 ) {
@@ -253,7 +270,8 @@ static void petta_collect_imported_callable_heads_from_file(
     Atom **atoms = NULL;
     int n = 0;
 
-    if (!path || !callables || !visited || petta_path_set_contains(visited, path))
+    if (!path || !import_root_dir || !callables || !visited ||
+        petta_path_set_contains(visited, path))
         return;
     if (!petta_path_set_add(visited, path))
         return;
@@ -266,6 +284,9 @@ static void petta_collect_imported_callable_heads_from_file(
         arena_free(&parse_arena);
         return;
     }
+    for (int i = 0; i < n; i++) {
+        atoms[i] = petta_rewrite_empty_literals(&parse_arena, atoms[i]);
+    }
 
     petta_collect_program_callable_heads(atoms, n, callables);
     for (int i = 0; i + 1 < n; i++) {
@@ -273,8 +294,10 @@ static void petta_collect_imported_callable_heads_from_file(
         if (!petta_static_import_spec_at(atoms, n, i, &spec))
             continue;
         char resolved[PATH_MAX];
-        if (petta_resolve_static_import(path, spec, resolved, sizeof(resolved))) {
-            petta_collect_imported_callable_heads_from_file(resolved, callables, visited);
+        if (petta_resolve_static_import(import_root_dir, spec, resolved,
+                                        sizeof(resolved))) {
+            petta_collect_imported_callable_heads_from_file(
+                resolved, import_root_dir, callables, visited);
         }
         i++;
     }
@@ -659,6 +682,9 @@ static int petta_parse_atoms_to_ids(Atom **atoms, int n, Arena *arena,
                                     TermUniverse *universe, const char *source_path,
                                     AtomId **out_ids) {
     if (n < 0) return n;
+    for (int i = 0; i < n; i++) {
+        atoms[i] = petta_rewrite_empty_literals(arena, atoms[i]);
+    }
     bool uses_length = false;
     bool defines_length = false;
     for (int i = 0; i < n; i++) {
@@ -671,18 +697,24 @@ static int petta_parse_atoms_to_ids(Atom **atoms, int n, Arena *arena,
     AtomId *ids = out_len > 0 ? cetta_malloc(sizeof(AtomId) * (size_t)out_len) : NULL;
     CettaPettaCallableSet callables;
     CettaPettaPathSet visited_imports;
+    char import_root_dir[PATH_MAX];
     petta_callable_set_init(&callables);
     petta_path_set_init(&visited_imports);
     petta_collect_program_callable_heads(atoms, n, &callables);
     if (source_path && *source_path) {
+        if (!cetta_text_path_parent_dir(import_root_dir, sizeof(import_root_dir),
+                                        source_path)) {
+            snprintf(import_root_dir, sizeof(import_root_dir), ".");
+        }
         for (int i = 0; i + 1 < n; i++) {
             const char *spec = NULL;
             if (!petta_static_import_spec_at(atoms, n, i, &spec))
                 continue;
             char resolved[PATH_MAX];
-            if (petta_resolve_static_import(source_path, spec, resolved, sizeof(resolved))) {
+            if (petta_resolve_static_import(import_root_dir, spec, resolved,
+                                            sizeof(resolved))) {
                 petta_collect_imported_callable_heads_from_file(
-                    resolved, &callables, &visited_imports);
+                    resolved, import_root_dir, &callables, &visited_imports);
             }
             i++;
         }

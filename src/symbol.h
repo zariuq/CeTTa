@@ -34,6 +34,7 @@ typedef struct {
 
 #define CETTA_BUILTIN_SYMBOLS(X) \
     X(empty, "Empty") \
+    X(petta_empty_literal, "__petta_empty_literal__") \
     X(error, "Error") \
     X(equals, "=") \
     X(atom, "Atom") \

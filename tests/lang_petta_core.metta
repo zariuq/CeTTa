@@ -5,7 +5,7 @@
           ($t2 (add-atom &self (petta-u69foo b))))
       (match &self (petta-u69foo $x) (petta-u69bar $x))))
 
-!(import! &self support/petta_import_walk/nested/driver)
+!(import! &self support/petta_import_walk/lib/ancestor_lib)
 
 !(assertEqual (collapse (superpose (petta-foo))) (1 2 3))
 !(assertEqual (car-atom (petta-foo)) 1)
@@ -18,4 +18,4 @@
   (let $a (add-atom &petta_named_space (petta-hit 42))
     (match &petta_named_space (petta-hit $x) $x)))
   (42))
-!(assertEqual (ancestor-import-value) 17)
+!(assertEqual (ancestor-lib-value) 17)

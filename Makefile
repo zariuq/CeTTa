@@ -122,6 +122,7 @@ PETTA_CORE_NATIVE_TESTS = \
 	tests/lang_petta_core.metta \
 	tests/test_minimal_foldl_atom_raw_slot_petta_regression.metta \
 	tests/test_add_atoms_fold_bound_atom_petta_regression.metta \
+	tests/test_empty_literal_petta_regression.metta \
 	tests/test_callable_head_stdlib_petta_regression.metta \
 	tests/test_callable_head_imported_petta_regression.metta
 PETTA_INTEROP_TESTS = tests/lang_petta_core_prolog_interop.metta tests/lang_petta_lib_prolog.metta tests/lang_petta_lib_zar.metta
