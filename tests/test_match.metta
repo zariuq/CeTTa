@@ -7,7 +7,7 @@
 ; match with pattern variable — should find both results
 !(assertEqualToResult (match &self (= (color) $x) $x) (red green))
 
-; match with no matching equation — should return Empty
+; match with no matching equation — should return no user-visible results
 !(assertEqualToResult (match &self (= (missing) $x) $x) ())
 
 ; match with expression pattern

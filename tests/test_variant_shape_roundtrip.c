@@ -6,11 +6,7 @@
 #include "symbol.h"
 #include "variant_instance.h"
 #include "variant_shape.h"
-
-void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
-    (void)counter;
-    (void)delta;
-}
+#include "tests/test_runtime_stats_stubs.h"
 
 static Atom *make_term3(Arena *a, SymbolId head, Atom *x, Atom *y) {
     Atom *elems[3] = {

@@ -1,5 +1,1 @@
-[()]
-[()]
-[()]
-[()]
-[()]
+[(Error (assertEqual (TV (And (Evaluation (Predicate P) (Concept A)) (Evaluation (Predicate P) (Concept B)))) (stv 0.3 0.8)) "\nExpected: [(stv 0.3 0.8)]\nGot: [(stv (min (s-tv (TV (Evaluation (Predicate P) (Concept A)))) (s-tv (TV (Evaluation (Predicate P) (Concept B))))) (min (c-tv (TV (Evaluation (Predicate P) (Concept A)))) (c-tv (TV (Evaluation (Predicate P) (Concept B))))))]\nMissed results: (stv 0.3 0.8)\nExcessive results: (stv (min (s-tv (TV (Evaluation (Predicate P) (Concept A)))) (s-tv (TV (Evaluation (Predicate P) (Concept B))))) (min (c-tv (TV (Evaluation (Predicate P) (Concept A)))) (c-tv (TV (Evaluation (Predicate P) (Concept B))))))")]

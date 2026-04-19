@@ -9,23 +9,14 @@
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
-
-static uint64_t g_test_counters[CETTA_RUNTIME_COUNTER_COUNT];
-
-void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
-    if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
-        return;
-    g_test_counters[counter] += delta;
-}
+#include "tests/test_runtime_stats_stubs.h"
 
 static void reset_test_counters(void) {
-    memset(g_test_counters, 0, sizeof(g_test_counters));
+    test_runtime_stats_reset_counters();
 }
 
 static uint64_t test_counter(CettaRuntimeCounter counter) {
-    if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
-        return 0;
-    return g_test_counters[counter];
+    return test_runtime_stats_counter(counter);
 }
 
 static void reset_term_universe_witnesses(TermUniverse *universe) {
@@ -550,7 +541,7 @@ int main(void) {
 #endif
 
     term_universe_diag_reset(&universe);
-    g_test_counters[CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE] = 0;
+    cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE, 0);
     Atom *sym_load = term_universe_get_atom(&universe, sym_id);
     assert(sym_load == universe.entries[sym_id].decoded_cache);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
@@ -682,7 +673,7 @@ int main(void) {
     stree_free(&stree);
 
     hash_space.exact_idx_dirty = true;
-    g_test_counters[CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE] = 0;
+    cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE, 0);
     uint32_t *matches = NULL;
     uint32_t nmatches = space_exact_match_indices(&hash_space, seen_atom, &matches);
     assert(nmatches == 1);
