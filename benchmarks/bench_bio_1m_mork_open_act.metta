@@ -1,0 +1,10 @@
+!(import! &self mork)
+!(import! &self ../tests/support/bio_1m_mork_query_workload)
+
+!(bind! &eqtl (mork:open-act "../runtime/bench_bio_1m_eqtl.act"))
+!(bind! &refseq (mork:open-act "../runtime/bench_bio_1m_refseq.act"))
+!(bind! &tfbs (mork:open-act "../runtime/bench_bio_1m_tfbs.act"))
+!(bind! &pathway (mork:open-act "../runtime/bench_bio_1m_pathway.act"))
+!(bind! &disease (mork:open-act "../runtime/bench_bio_1m_hetionet.act"))
+!(bind! &pattern (mork:open-act "../runtime/bench_bio_1m_patterns.act"))
+!(run-bio-1m-mork-workload &eqtl &refseq &tfbs &pathway &disease &pattern)
