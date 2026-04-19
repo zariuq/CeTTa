@@ -121,6 +121,21 @@ bool variant_instance_clone(VariantInstance *dst, const VariantInstance *src) {
     return true;
 }
 
+bool variant_instance_promote_atoms_to_arena(Arena *dst,
+                                             VariantInstance *instance) {
+    VariantInstanceStorage *storage = variant_instance_storage(instance);
+    if (!dst || !storage)
+        return true;
+    for (uint32_t i = 0; i < storage->slot_count; i++) {
+        Atom *slot_val = storage->slot_vals[i];
+        Atom *promoted = atom_deep_copy(dst, slot_val);
+        if (slot_val && !promoted)
+            return false;
+        storage->slot_vals[i] = promoted;
+    }
+    return true;
+}
+
 bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape) {
     VariantInstanceStorage *storage;
     if (!out || !shape)

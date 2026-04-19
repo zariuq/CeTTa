@@ -42,6 +42,17 @@ static bool arena_runtime_counter_lane(CettaArenaRuntimeKind kind,
         if (reserved_peak_counter)
             *reserved_peak_counter = CETTA_RUNTIME_COUNTER_SCRATCH_ARENA_RESERVED_BYTES_PEAK;
         return true;
+    case CETTA_ARENA_RUNTIME_KIND_SURVIVOR:
+        if (alloc_counter)
+            *alloc_counter =
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES;
+        if (live_peak_counter)
+            *live_peak_counter =
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_LIVE_BYTES_PEAK;
+        if (reserved_peak_counter)
+            *reserved_peak_counter =
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_RESERVED_BYTES_PEAK;
+        return true;
     default:
         return false;
     }
@@ -536,13 +547,29 @@ static Atom *atom_maybe_hashcons(Arena *a, const Atom *temp) {
     return hashcons_get(a->hashcons, (Atom *)temp);
 }
 
+static uint8_t atom_flags_for_symbol_id(SymbolId sym_id) {
+    uint8_t flags = 0;
+    const char *bytes = symbol_bytes(g_symbols, sym_id);
+    if (bytes && bytes[0] == '&')
+        flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+    return flags;
+}
+
+static uint8_t atom_flags_from_children(Atom **elems, uint32_t len) {
+    uint8_t flags = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        if (atom_has_vars(elems[i]))
+            flags |= ATOM_FLAG_HAS_VARS;
+        if (atom_has_registry_refs(elems[i]))
+            flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+    }
+    return flags;
+}
+
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     Atom temp = {0};
     temp.kind = ATOM_SYMBOL;
-    temp.flags = 0;
-    const char *bytes = symbol_bytes(g_symbols, sym_id);
-    if (bytes && bytes[0] == '&')
-        temp.flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+    temp.flags = atom_flags_for_symbol_id(sym_id);
     temp.var_id = VAR_ID_NONE;
     temp.sym_id = sym_id;
     temp.hash_cache = 0;
@@ -699,19 +726,9 @@ Atom *atom_string(Arena *a, const char *val) {
 Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
     Atom temp = {0};
     temp.kind = ATOM_EXPR;
-    temp.flags = 0;
+    temp.flags = atom_flags_from_children(elems, len);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
-    for (uint32_t i = 0; i < len; i++) {
-        if (atom_has_vars(elems[i])) {
-            temp.flags |= ATOM_FLAG_HAS_VARS;
-        }
-        if (atom_has_registry_refs(elems[i]))
-            temp.flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
-        if ((temp.flags & (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS)) ==
-            (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS))
-            break;
-    }
     temp.expr.len = len;
     temp.expr.elems = elems;
     Atom *shared = atom_maybe_hashcons(a, &temp);
