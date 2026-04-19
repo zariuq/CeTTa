@@ -49,7 +49,7 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
       .unique_atom_alpha_equivalence_for_open_terms = false,
       .inject_builtin_type_decls = false,
       .named_space_policy = CETTA_NAMED_SPACE_POLICY_AUTO_CREATE,
-      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_SCRIPT_DIR_ONLY,
       .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL,
       .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
@@ -281,6 +281,17 @@ const char *cetta_language_prelude_text(const CettaLanguageSpec *spec) {
         return NULL;
     if (strcmp(spec->canonical, "petta") == 0)
         return CETTA_PETTA_PRELUDE;
+    return NULL;
+}
+
+const char *cetta_language_symbol_display_name(const CettaLanguageSpec *spec,
+                                               SymbolId id) {
+    if (!spec)
+        return NULL;
+    if (spec->id == CETTA_LANGUAGE_PETTA &&
+        id == g_builtin_syms.petta_empty_literal) {
+        return "Empty";
+    }
     return NULL;
 }
 

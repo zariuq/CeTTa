@@ -378,6 +378,17 @@ cetta_library_relative_module_policy(CettaLibraryContext *ctx) {
     return cetta_language_relative_module_policy(ctx->session.language);
 }
 
+static const char *cetta_library_relative_base_dir(CettaLibraryContext *ctx) {
+    if (!ctx)
+        return ".";
+    if (cetta_library_relative_module_policy(ctx) ==
+            CETTA_RELATIVE_MODULE_POLICY_SCRIPT_DIR_ONLY &&
+        ctx->script_dir[0] != '\0') {
+        return ctx->script_dir;
+    }
+    return cetta_library_current_dir(ctx);
+}
+
 static TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
                                                   Arena *persistent_arena) {
     if (!ctx || !persistent_arena)
@@ -1243,7 +1254,7 @@ static bool resolve_relative_module_candidate_for_language(
         return resolve_module_candidate_with_format(path, out, out_sz, format_out,
                                                     reason, reason_sz);
     }
-    snprintf(base_dir, sizeof(base_dir), "%s", cetta_library_current_dir(ctx));
+    snprintf(base_dir, sizeof(base_dir), "%s", cetta_library_relative_base_dir(ctx));
     while (true) {
         int n = snprintf(candidate, sizeof(candidate), "%s/%s", base_dir, path);
         if (!(n > 0 && (size_t)n < sizeof(candidate)))
@@ -1705,7 +1716,7 @@ static Atom *library_quote_atom(Arena *a, Atom *atom) {
 
 static bool library_resolve_current_path(CettaLibraryContext *ctx, const char *path,
                                          char *resolved, size_t resolved_sz) {
-    return cetta_text_path_resolve(cetta_library_current_dir(ctx), path,
+    return cetta_text_path_resolve(cetta_library_relative_base_dir(ctx), path,
                                    resolved, resolved_sz);
 }
 

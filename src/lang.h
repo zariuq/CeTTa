@@ -27,6 +27,7 @@ typedef enum {
 typedef enum {
     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY = 0,
     CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK = 1,
+    CETTA_RELATIVE_MODULE_POLICY_SCRIPT_DIR_ONLY = 2,
 } CettaRelativeModulePolicy;
 
 typedef struct {
@@ -71,5 +72,7 @@ CettaFunctionArgPolicy cetta_language_function_arg_policy(const CettaLanguageSpe
 const CettaTypeDeclSignature *cetta_language_stdlib_type_prunes(const CettaLanguageSpec *spec,
                                                                 size_t *count_out);
 const char *cetta_language_prelude_text(const CettaLanguageSpec *spec);
+const char *cetta_language_symbol_display_name(const CettaLanguageSpec *spec,
+                                               SymbolId id);
 
 #endif /* CETTA_LANG_H */

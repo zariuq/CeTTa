@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include "lang.h"
 #include "stats.h"
 #include <math.h>
 #include <stdint.h>
@@ -1057,7 +1058,12 @@ Atom *atom_deep_copy_shared(Arena *dst, Atom *src) {
 void atom_print(Atom *a, FILE *out) {
     switch (a->kind) {
     case ATOM_SYMBOL:
-        fputs(atom_name_cstr(a), out);
+        {
+            const char *display =
+                cetta_language_symbol_display_name(cetta_language_current(),
+                                                   a->sym_id);
+            fputs(display ? display : atom_name_cstr(a), out);
+        }
         break;
     case ATOM_VAR:
         fprintf(out, "$%s", atom_name_cstr(a));

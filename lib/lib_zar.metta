@@ -2,4 +2,4 @@
 ; definitions under lib/lib_petta so we can grow a Petta library lane without
 ; crowding the shared top-level lib namespace.
 
-!(import! &self lib_petta/lib_zar)
+!(import! &self lib/lib_petta/lib_zar)

@@ -54,7 +54,10 @@ def unquote(token: str) -> str:
 
 def legacy_import_basename(spec: str) -> str:
     candidate = spec.replace("\\", "/").rstrip("/")
-    return pathlib.PurePosixPath(candidate).name
+    basename = pathlib.PurePosixPath(candidate).name
+    if basename.endswith(".metta"):
+        return basename[:-len(".metta")]
+    return basename
 
 
 def classify_import(spec: str, known_libs: set[str]) -> ImportDecision:

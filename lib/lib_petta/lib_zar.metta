@@ -2,8 +2,8 @@
 ; surfaces. Keep the core Petta runtime native; use the generic Prolog seam
 ; only for true library-tier predicate imports.
 
-!(import! &self lib_import)
-!(import! &self ../system)
+!(import! &self lib/lib_import)
+!(import! &self lib/system)
 
 (: consult_file (-> Atom (->)))
 (= (consult_file $prologfile)
