@@ -27,6 +27,8 @@ static TableStore g_episode_table;
 static bool g_episode_table_ready = false;
 static VariantBank g_episode_outcome_variant_bank;
 static bool g_episode_outcome_variant_bank_ready = false;
+static Arena g_episode_survivor_arena;
+static bool g_episode_survivor_arena_ready = false;
 /* Active importable library set */
 static CettaLibraryContext *g_library_context = NULL;
 static CettaEvalSession g_fallback_eval_session;
@@ -38,6 +40,13 @@ typedef struct {
 } TempSpaceSet;
 
 static TempSpaceSet g_temp_spaces = {0};
+
+typedef struct {
+    Arena scratch;
+    Arena generated;
+    Arena *survivor_arena;
+    bool active;
+} EvalQueryEpisode;
 
 static Atom *resolve_registry_refs(Arena *a, Atom *atom);
 
@@ -130,9 +139,8 @@ static bool eval_c_stack_guard_enter(int fuel, EvalCStackGuard *guard) {
     char stack_probe = 0;
     uintptr_t here = (uintptr_t)&stack_probe;
     if (guard) guard->active = false;
-    /* Explicit fuel / max-stack-depth already provides a logical recursion cap. */
-    if (fuel >= 0)
-        return true;
+    /* Fuel limits logical evaluation, but native recursion can still consume
+       stack before fuel bottoms out, so guard both finite and infinite runs. */
     if (g_eval_c_stack_guard_depth++ == 0)
         g_eval_c_stack_anchor = here;
     cetta_runtime_stats_update_max(
@@ -492,6 +500,116 @@ static bool eval_storage_is_persistent(const Arena *arena) {
     return persistent && persistent == arena;
 }
 
+static Arena *eval_active_episode_survivor_arena(void) {
+    if (!g_episode_survivor_arena_ready) {
+        arena_init(&g_episode_survivor_arena);
+        arena_set_hashcons(&g_episode_survivor_arena, NULL);
+        arena_set_runtime_kind(&g_episode_survivor_arena,
+                               CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+        g_episode_survivor_arena_ready = true;
+    }
+    return &g_episode_survivor_arena;
+}
+
+static void eval_release_episode_survivor_arena(void) {
+    if (!g_episode_survivor_arena_ready)
+        return;
+    arena_free(&g_episode_survivor_arena);
+    g_episode_survivor_arena_ready = false;
+}
+
+static void eval_query_episode_init(EvalQueryEpisode *episode) {
+    if (!episode)
+        return;
+    arena_init(&episode->scratch);
+    arena_set_hashcons(&episode->scratch, NULL);
+    arena_set_runtime_kind(&episode->scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_init(&episode->generated);
+    arena_set_hashcons(&episode->generated, NULL);
+    arena_set_runtime_kind(&episode->generated, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    episode->survivor_arena = eval_active_episode_survivor_arena();
+    episode->active = true;
+}
+
+static void eval_query_episode_free(EvalQueryEpisode *episode) {
+    if (!episode || !episode->active)
+        return;
+    arena_free(&episode->generated);
+    arena_free(&episode->scratch);
+    episode->survivor_arena = NULL;
+    episode->active = false;
+}
+
+static void eval_query_episode_cleanup(EvalQueryEpisode *episode) {
+    eval_query_episode_free(episode);
+}
+
+static Arena *eval_query_episode_scratch(EvalQueryEpisode *episode) {
+    if (!episode || !episode->active)
+        return NULL;
+    return &episode->scratch;
+}
+
+static Arena *eval_query_episode_generated(EvalQueryEpisode *episode) {
+    if (!episode || !episode->active)
+        return NULL;
+    return &episode->generated;
+}
+
+static Arena *eval_query_episode_result_arena(EvalQueryEpisode *episode,
+                                              Arena *fallback) {
+    if (!episode || !episode->active || !episode->survivor_arena)
+        return fallback;
+    return episode->survivor_arena;
+}
+
+static size_t eval_query_episode_survivor_live_bytes(EvalQueryEpisode *episode) {
+    Arena *survivor = eval_query_episode_result_arena(episode, NULL);
+    return survivor ? survivor->live_bytes : 0;
+}
+
+static void eval_query_episode_note_answer_promotion(Arena *arena,
+                                                     size_t before_bytes) {
+    size_t after_bytes = arena ? arena->live_bytes : before_bytes;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EPISODE_PROMOTED_ANSWER_COUNT);
+    if (after_bytes > before_bytes) {
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_QUERY_EPISODE_PROMOTED_ANSWER_BYTES,
+            (uint64_t)(after_bytes - before_bytes));
+    }
+}
+
+static bool bindings_promote_atoms_to_arena(Arena *dst, Bindings *bindings) {
+    if (!dst || !bindings)
+        return true;
+    for (uint32_t i = 0; i < bindings->len; i++) {
+        Atom *promoted = atom_deep_copy(dst, bindings->entries[i].val);
+        if (bindings->entries[i].val && !promoted)
+            return false;
+        bindings->entries[i].val = promoted;
+    }
+    for (uint32_t i = 0; i < bindings->eq_len; i++) {
+        Atom *lhs = atom_deep_copy(dst, bindings->constraints[i].lhs);
+        Atom *rhs = atom_deep_copy(dst, bindings->constraints[i].rhs);
+        if ((bindings->constraints[i].lhs && !lhs) ||
+            (bindings->constraints[i].rhs && !rhs)) {
+            return false;
+        }
+        bindings->constraints[i].lhs = lhs;
+        bindings->constraints[i].rhs = rhs;
+    }
+    bindings->lookup_cache_count = 0;
+    bindings->lookup_cache_next = 0;
+    return true;
+}
+
+static bool eval_query_episode_promote_bindings(EvalQueryEpisode *episode,
+                                                Bindings *bindings) {
+    if (!episode || !episode->active || !episode->survivor_arena || !bindings)
+        return true;
+    return bindings_promote_atoms_to_arena(episode->survivor_arena, bindings);
+}
+
 static Atom *eval_store_atom(Arena *dst, Atom *src) {
     if (!eval_storage_is_persistent(dst))
         return atom_deep_copy(dst, src);
@@ -812,6 +930,46 @@ static void outcome_set_add_with_variant(OutcomeSet *os, Atom *atom,
         return;
     }
     outcome_refresh_materialized_fast_path(slot);
+}
+
+static bool outcome_set_add_promoted_existing(Arena *a, OutcomeSet *os,
+                                              const Outcome *src,
+                                              bool preserve_bindings) {
+    if (!a || !os || !src)
+        return false;
+    (void)preserve_bindings;
+
+    Outcome *slot = outcome_set_push_slot(os);
+    outcome_init(slot);
+    if (src->atom)
+        slot->atom = atom_deep_copy(a, src->atom);
+    if (src->atom && !slot->atom) {
+        outcome_free_fields(slot);
+        os->len--;
+        return false;
+    }
+    bindings_assert_no_private_variant_slots(&src->env);
+    if (!bindings_clone(&slot->env, &src->env) ||
+        !bindings_promote_atoms_to_arena(a, &slot->env) ||
+        !variant_instance_clone(&slot->variant, &src->variant) ||
+        !variant_instance_promote_atoms_to_arena(a, &slot->variant)) {
+        outcome_free_fields(slot);
+        os->len--;
+        return false;
+    }
+    slot->materialized_atom = NULL;
+    outcome_refresh_materialized_fast_path(slot);
+    return true;
+}
+
+static void outcome_set_append_promoted(Arena *a, OutcomeSet *dst,
+                                        OutcomeSet *src,
+                                        bool preserve_bindings) {
+    if (!a || !dst || !src)
+        return;
+    for (uint32_t i = 0; i < src->len; i++)
+        (void)outcome_set_add_promoted_existing(a, dst, &src->items[i],
+                                                preserve_bindings);
 }
 
 static inline bool bindings_has_value_entries(const Bindings *env) {
@@ -2175,6 +2333,15 @@ static bool collect_free_vars_case_like_branches(Atom *branches,
     return true;
 }
 
+static bool *alloc_zeroed_bool_array(uint32_t len) {
+    if (len == 0)
+        return NULL;
+    size_t bytes = sizeof(bool) * (size_t)len;
+    bool *used = cetta_malloc(bytes);
+    memset(used, 0, bytes);
+    return used;
+}
+
 static bool collect_free_vars_let_star(Atom *bindings_list, Atom *body,
                                        BoundVarStack *bound,
                                        FreeVarSet *free_vars) {
@@ -2631,6 +2798,7 @@ typedef struct {
     bool preserve_bindings;
     SearchContext *context;
     OutcomeSet *outcomes;
+    EvalQueryEpisode *episode;
 } QueryEvalVisitorCtx;
 
 static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
@@ -2688,15 +2856,55 @@ static bool query_visit_eval_for_caller_common(Atom *result,
                                       &attempt);
         return true;
     }
-
-    eval_delayed_outcome_for_caller(
-        query_eval->space,
-        query_eval->arena,
-        result_eval_type_hint(query_eval->declared_type, result),
-        &delayed,
-        query_eval->fuel,
-        query_eval->preserve_bindings,
-        query_eval->outcomes);
+    if (query_eval->episode) {
+        Arena *generated_arena = eval_query_episode_generated(query_eval->episode);
+        OutcomeSet generated;
+        size_t before_bytes = query_eval->arena ? query_eval->arena->live_bytes : 0;
+        outcome_set_init(&generated);
+        if (generated_arena) {
+            ArenaMark generated_mark = arena_mark(generated_arena);
+            eval_delayed_outcome_for_caller(
+                query_eval->space,
+                generated_arena,
+                result_eval_type_hint(query_eval->declared_type, result),
+                &delayed,
+                query_eval->fuel,
+                query_eval->preserve_bindings,
+                &generated);
+            outcome_set_append_promoted(query_eval->arena,
+                                        query_eval->outcomes,
+                                        &generated,
+                                        query_eval->preserve_bindings);
+            if (generated.len > 0) {
+                cetta_runtime_stats_add(
+                    CETTA_RUNTIME_COUNTER_QUERY_EPISODE_DELAYED_OUTCOME_SURVIVOR_COUNT,
+                    generated.len);
+                eval_query_episode_note_answer_promotion(query_eval->arena,
+                                                         before_bytes);
+            }
+            outcome_set_free(&generated);
+            arena_reset(generated_arena, generated_mark);
+        } else {
+            eval_delayed_outcome_for_caller(
+                query_eval->space,
+                query_eval->arena,
+                result_eval_type_hint(query_eval->declared_type, result),
+                &delayed,
+                query_eval->fuel,
+                query_eval->preserve_bindings,
+                query_eval->outcomes);
+            outcome_set_free(&generated);
+        }
+    } else {
+        eval_delayed_outcome_for_caller(
+            query_eval->space,
+            query_eval->arena,
+            result_eval_type_hint(query_eval->declared_type, result),
+            &delayed,
+            query_eval->fuel,
+            query_eval->preserve_bindings,
+            query_eval->outcomes);
+    }
     outcome_free_fields(&delayed);
     bindings_merge_attempt_finish(search_context_builder(query_eval->context),
                                   &attempt);
@@ -2730,10 +2938,12 @@ typedef struct {
     Atom **tail_next;
     Atom **tail_type;
     Bindings *tail_env;
+    EvalQueryEpisode *episode;
     bool ok;
 } QuerySingleTailDelayedCtx;
 
-static bool query_delayed_result_apply_single_tail(SearchContext *context,
+static bool query_delayed_result_apply_single_tail(EvalQueryEpisode *episode,
+                                                   SearchContext *context,
                                                    const Bindings *base_env,
                                                    Arena *a,
                                                    Atom *declared_type,
@@ -2745,16 +2955,21 @@ static bool query_delayed_result_apply_single_tail(SearchContext *context,
                                                    Bindings *tail_env) {
     BindingsMergeAttempt attempt;
     Atom *variant_applied;
+    size_t before_bytes = eval_query_episode_survivor_live_bytes(episode);
+    Arena *result_arena = a;
     if (!bindings_builder_merge_or_clone(search_context_builder(context),
                                          base_env,
                                          bindings,
                                          &attempt)) {
         return false;
     }
-    variant_applied =
-        (variant && variant_instance_present(variant))
-            ? variant_instance_materialize(a, result, variant)
-            : result;
+    if (variant && variant_instance_present(variant)) {
+        variant_applied = variant_instance_materialize(result_arena, result, variant);
+    } else if (episode) {
+        variant_applied = atom_deep_copy(a, result);
+    } else {
+        variant_applied = result;
+    }
     if (!variant_applied) {
         bindings_merge_attempt_finish(search_context_builder(context), &attempt);
         return false;
@@ -2762,7 +2977,16 @@ static bool query_delayed_result_apply_single_tail(SearchContext *context,
     *tail_next = variant_applied;
     *tail_type = result_eval_type_hint(declared_type, result);
     bindings_copy(tail_env, attempt.env);
+    if (episode && !eval_query_episode_promote_bindings(episode, tail_env)) {
+        bindings_free(tail_env);
+        bindings_init(tail_env);
+        bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+        return false;
+    }
     bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+    if (episode)
+        eval_query_episode_note_answer_promotion(
+            eval_query_episode_result_arena(episode, a), before_bytes);
     return true;
 }
 
@@ -2774,6 +2998,7 @@ static bool query_visit_collect_single_tail_delayed(Atom *result,
     if (!collect->ok || *collect->tail_next != NULL)
         return true;
     collect->ok = query_delayed_result_apply_single_tail(
+        collect->episode,
         collect->context,
         collect->base_env,
         collect->arena,
@@ -2799,7 +3024,8 @@ static bool query_equations_table_hit_visit(Space *s, Atom *query, Arena *a,
 }
 
 static QueryTableTailState
-query_equations_table_hit_single_tail(Space *s, Atom *query, Arena *a,
+query_equations_table_hit_single_tail(Space *s, Atom *query,
+                                      EvalQueryEpisode *episode, Arena *a,
                                       QueryEvalVisitorCtx *query_eval,
                                       Atom **tail_next,
                                       Atom **tail_type,
@@ -2814,6 +3040,7 @@ query_equations_table_hit_single_tail(Space *s, Atom *query, Arena *a,
         .tail_next = tail_next,
         .tail_type = tail_type,
         .tail_env = tail_env,
+        .episode = episode,
         .ok = true,
     };
 
@@ -2834,12 +3061,23 @@ query_equations_table_hit_single_tail(Space *s, Atom *query, Arena *a,
 static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
                                              QueryEvalVisitorCtx *query_eval) {
     uint32_t visited = 0;
-    if (query_equations_table_hit_visit(s, query, a, query_eval, &visited))
+    __attribute__((cleanup(eval_query_episode_cleanup)))
+    EvalQueryEpisode episode = {0};
+    QueryEvalVisitorCtx episode_eval = *query_eval;
+    Arena *query_arena = a;
+
+    eval_query_episode_init(&episode);
+    episode_eval.episode = &episode;
+    query_arena = eval_query_episode_scratch(&episode);
+
+    if (query_equations_table_hit_visit(s, query, query_arena, &episode_eval,
+                                        &visited))
         return visited;
     QueryResults results;
     query_results_init(&results);
-    query_equations(s, query, a, &results);
-    visited = query_results_visit(&results, query_visit_eval_for_caller, query_eval);
+    query_equations(s, query, query_arena, &results);
+    visited = query_results_visit(&results, query_visit_eval_for_caller,
+                                  &episode_eval);
     TableStore *table = eval_active_episode_table();
     uint64_t revision = space_revision(s);
     query_equations_cache_store(table, s, revision, query, &results);
@@ -2847,7 +3085,8 @@ static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
     return visited;
 }
 
-static bool query_result_apply_single_tail(SearchContext *context,
+static bool query_result_apply_single_tail(EvalQueryEpisode *episode,
+                                           SearchContext *context,
                                            const Bindings *base_env,
                                            Arena *a,
                                            Atom *declared_type,
@@ -2856,6 +3095,7 @@ static bool query_result_apply_single_tail(SearchContext *context,
                                            Atom **tail_type,
                                            Bindings *tail_env) {
     BindingsMergeAttempt attempt;
+    size_t before_bytes = eval_query_episode_survivor_live_bytes(episode);
     (void)a;
     if (!bindings_builder_merge_or_clone(search_context_builder(context),
                                          base_env,
@@ -2863,10 +3103,25 @@ static bool query_result_apply_single_tail(SearchContext *context,
                                          &attempt)) {
         return false;
     }
-    *tail_next = result->result;
+    *tail_next = episode
+        ? atom_deep_copy(a, result->result)
+        : result->result;
+    if (!*tail_next) {
+        bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+        return false;
+    }
     *tail_type = result_eval_type_hint(declared_type, result->result);
     bindings_copy(tail_env, attempt.env);
+    if (episode && !eval_query_episode_promote_bindings(episode, tail_env)) {
+        bindings_free(tail_env);
+        bindings_init(tail_env);
+        bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+        return false;
+    }
     bindings_merge_attempt_finish(search_context_builder(context), &attempt);
+    if (episode)
+        eval_query_episode_note_answer_promotion(
+            eval_query_episode_result_arena(episode, a), before_bytes);
     return true;
 }
 
@@ -3515,8 +3770,15 @@ static Atom *resolve_registry_refs_impl(Arena *a, Atom *atom, bool *changed_out)
 }
 
 static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
-    if (!g_registry || !atom_has_registry_refs(atom))
+    if (!g_registry)
         return atom;
+    if (!atom_has_registry_refs(atom)) {
+        if (!atom || atom->kind != ATOM_SYMBOL)
+            return atom;
+        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
+        if (!bytes || bytes[0] != '&')
+            return atom;
+    }
     bool changed = false;
     Atom *resolved = resolve_registry_refs_impl(a, atom, &changed);
     if (!changed) {
@@ -3713,6 +3975,7 @@ static Space *space_persistent_clone(Space *src, Arena *dst) {
 void eval_release_temporary_spaces(void) {
     eval_release_episode_table();
     eval_release_outcome_variant_bank();
+    eval_release_episode_survivor_arena();
     for (uint32_t i = 0; i < g_temp_spaces.len; i++) {
         space_free(g_temp_spaces.items[i]);
         free(g_temp_spaces.items[i]);
@@ -6050,6 +6313,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             if (!search_context_init(&qr_context, combo_ctx, NULL)) {
                                 continue;
                             }
+                            __attribute__((cleanup(eval_query_episode_cleanup)))
+                            EvalQueryEpisode query_episode = {0};
+                            eval_query_episode_init(&query_episode);
+                            Arena *query_arena =
+                                eval_query_episode_scratch(&query_episode);
                             QueryEvalVisitorCtx query_eval = {
                                 .space = s,
                                 .arena = a,
@@ -6059,10 +6327,12 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 .preserve_bindings = preserve_bindings,
                                 .context = &qr_context,
                                 .outcomes = &func_results,
+                                .episode = &query_episode,
                             };
                             QueryTableTailState table_tail =
                                 query_equations_table_hit_single_tail(
-                                    s, call_atom, a, &query_eval,
+                                    s, call_atom, &query_episode, query_arena,
+                                    &query_eval,
                                     tail_next, tail_type, tail_env);
                             if (table_tail != QUERY_TABLE_TAIL_MISS) {
                                 search_context_free(&qr_context);
@@ -6076,20 +6346,23 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     return true;
                                 }
                                 if (table_tail == QUERY_TABLE_TAIL_MULTI) {
-                                    query_equations_table_hit_visit(s, call_atom, a,
-                                                                    &query_eval, NULL);
+                                    query_equations_table_hit_visit(
+                                        s, call_atom, query_arena,
+                                        &query_eval, NULL);
                                     dispatched = true;
                                 }
                                 goto query_done;
                             }
                             QueryResults qr;
                             query_results_init(&qr);
-                            query_equations_cached(s, call_atom, a, &qr);
+                            query_equations_cached(s, call_atom, query_arena, &qr);
                             if (qr.len > 0) {
                                 if (only_function_types &&
                                     n_op_types == 1 && heads.len == 1 &&
                                     call_terms.len == 1 && qr.len == 1) {
-                                    if (!query_result_apply_single_tail(&qr_context,
+                                    if (!query_result_apply_single_tail(
+                                                                        &query_episode,
+                                                                        &qr_context,
                                                                         combo_ctx,
                                                                         a,
                                                                         inst_ret_type,
@@ -6236,6 +6509,10 @@ query_done:
                 outcome_set_free(&tuples);
                 return true;
             }
+            __attribute__((cleanup(eval_query_episode_cleanup)))
+            EvalQueryEpisode query_episode = {0};
+            eval_query_episode_init(&query_episode);
+            Arena *query_arena = eval_query_episode_scratch(&query_episode);
             QueryEvalVisitorCtx query_eval = {
                 .space = s,
                 .arena = a,
@@ -6245,10 +6522,11 @@ query_done:
                 .preserve_bindings = preserve_bindings,
                 .context = &qr_context,
                 .outcomes = os,
+                .episode = &query_episode,
             };
             QueryTableTailState table_tail =
                 query_equations_table_hit_single_tail(
-                    s, call_atom, a, &query_eval,
+                    s, call_atom, &query_episode, query_arena, &query_eval,
                     tail_next, tail_type, tail_env);
             if (table_tail != QUERY_TABLE_TAIL_MISS) {
                 search_context_free(&qr_context);
@@ -6257,8 +6535,8 @@ query_done:
                     return true;
                 }
                 if (table_tail == QUERY_TABLE_TAIL_MULTI) {
-                    query_equations_table_hit_visit(s, call_atom, a, &query_eval,
-                                                    NULL);
+                    query_equations_table_hit_visit(s, call_atom, query_arena,
+                                                    &query_eval, NULL);
                     outcome_set_free(&tuples);
                     return true;
                 }
@@ -6268,9 +6546,10 @@ query_done:
             }
             QueryResults qr;
             query_results_init(&qr);
-            query_equations_cached(s, call_atom, a, &qr);
+            query_equations_cached(s, call_atom, query_arena, &qr);
             if (qr.len == 1) {
-                if (!query_result_apply_single_tail(&qr_context,
+                if (!query_result_apply_single_tail(&query_episode,
+                                                    &qr_context,
                                                     tuple_bindings,
                                                     a,
                                                     etype,
@@ -6366,6 +6645,7 @@ query_done:
                 .preserve_bindings = preserve_bindings,
                 .context = &qr_context,
                 .outcomes = os,
+                .episode = NULL,
             };
             if (query_equations_cached_visit(s, call_atom, a, &query_eval) > 0) {
                 search_context_free(&qr_context);
@@ -8910,7 +9190,7 @@ tail_call: ;
         result_set_resolve_registry_refs(a, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {
@@ -9028,7 +9308,7 @@ tail_call: ;
         result_set_resolve_registry_refs(a, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {
@@ -9096,7 +9376,7 @@ tail_call: ;
         metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {
@@ -9132,7 +9412,7 @@ tail_call: ;
         metta_eval(s, a, NULL, expr_arg(atom, 1), fuel, &expected);
         bool ok = (actual.len == expected.len);
         if (ok && actual.len > 0) {
-            bool *used = calloc(expected.len, sizeof(bool));
+            bool *used = alloc_zeroed_bool_array(expected.len);
             for (uint32_t i = 0; i < actual.len && ok; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < expected.len; j++) {

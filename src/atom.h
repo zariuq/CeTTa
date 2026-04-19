@@ -69,6 +69,7 @@ typedef enum {
     CETTA_ARENA_RUNTIME_KIND_PERSISTENT = 1,
     CETTA_ARENA_RUNTIME_KIND_EVAL = 2,
     CETTA_ARENA_RUNTIME_KIND_SCRATCH = 3,
+    CETTA_ARENA_RUNTIME_KIND_SURVIVOR = 4,
 } CettaArenaRuntimeKind;
 
 typedef struct ArenaBlock {
