@@ -92,6 +92,65 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "outcome-variant-materialize-dispatch-call-term",
     "outcome-variant-materialize-let-chain",
     "outcome-variant-materialize-error-filter",
+    "bindings-lookup-cache-hit",
+    "bindings-lookup-cache-miss",
+    "bindings-apply-space-conj-default",
+    "bindings-apply-space-conj-imported",
+    "bindings-apply-eval-chain-step",
+    "bindings-apply-eval-chain-last",
+    "bindings-apply-eval-chain-body",
+    "bindings-apply-match-template",
+    "bindings-lookup-resolve",
+    "bindings-lookup-add-guard",
+    "bindings-lookup-apply",
+    "bindings-lookup-loop-check",
+    "bindings-lookup-match",
+    "bindings-loop-call-parse",
+    "bindings-loop-call-unify",
+    "bindings-loop-call-native-query",
+    "bindings-loop-call-mork-direct-row",
+    "bindings-loop-call-mork-conj-merge",
+    "bindings-loop-call-mork-conj-direct",
+    "bindings-loop-call-imported-exact",
+    "bindings-loop-call-imported-legacy",
+    "bindings-loop-call-native-candidate",
+    "bindings-loop-call-eq-store",
+    "bindings-loop-call-eq-decoded",
+    "bindings-apply-rewrite-node-visit",
+    "bindings-apply-epoch-node-visit",
+    "bindings-loop-node-visit",
+    "query-visible-node-visit",
+    "query-visible-dedup-scan",
+    "bindings-seen-scan",
+    "eval-c-stack-guard-budget-bytes",
+    "eval-c-stack-guard-depth-peak",
+    "eval-c-stack-guard-delta-bytes-peak",
+    "eval-c-stack-guard-trip-eval",
+    "eval-c-stack-guard-trip-bind",
+    "eval-c-stack-guard-trip-bind-typed",
+    "persistent-arena-alloc-bytes",
+    "persistent-arena-live-bytes-peak",
+    "persistent-arena-reserved-bytes-peak",
+    "eval-arena-alloc-bytes",
+    "eval-arena-live-bytes-peak",
+    "eval-arena-reserved-bytes-peak",
+    "scratch-arena-alloc-bytes",
+    "scratch-arena-live-bytes-peak",
+    "scratch-arena-reserved-bytes-peak",
+    "bindings-entry-pool-bytes",
+    "bindings-entry-pool-bytes-peak",
+    "bindings-entry-retained-bytes",
+    "bindings-entry-retained-bytes-peak",
+    "bindings-entry-active-bytes-peak",
+    "bindings-constraint-pool-bytes",
+    "bindings-constraint-pool-bytes-peak",
+    "bindings-constraint-retained-bytes",
+    "bindings-constraint-retained-bytes-peak",
+    "bindings-constraint-active-bytes-peak",
+    "eval-tail-safe-point-count",
+    "eval-tail-reclaimed-bytes",
+    "eval-tail-promoted-binding-entries-peak",
+    "eval-tail-promoted-binding-constraints-peak",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -120,6 +179,23 @@ void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
     g_runtime_counters[counter] += delta;
+}
+
+void cetta_runtime_stats_set(CettaRuntimeCounter counter, uint64_t value) {
+    if (__builtin_expect(!g_runtime_stats_enabled, 1))
+        return;
+    if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
+        return;
+    g_runtime_counters[counter] = value;
+}
+
+void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value) {
+    if (__builtin_expect(!g_runtime_stats_enabled, 1))
+        return;
+    if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
+        return;
+    if (value > g_runtime_counters[counter])
+        g_runtime_counters[counter] = value;
 }
 
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {

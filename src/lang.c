@@ -19,29 +19,37 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "mettahe", "he", true, "Current direct MeTTa/HE evaluator",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_MM2, "mm2", "mm2", true,
      "Direct MM2 lowering plus MORK-backed execution for pure program files",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_PETTA, "petta", "petta", true,
      "PeTTa surface adapter over the shared C kernel",
      {.known_head_query_miss_is_failure = true,
       .unique_atom_alpha_equivalence_for_open_terms = false,
       .inject_builtin_type_decls = false,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_AUTO_CREATE,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK,
       .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL,
       .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
@@ -49,79 +57,128 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "calculator", "calculator", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "imp", "imp", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "lambda", "lambda", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "mettafull-legacy", "mettafull-legacy", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "minskylite", "minskylite", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "mm0lite", "mm0lite", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "pyashcore", "pyashcore", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
     {CETTA_LANGUAGE_HE, "rhocalc", "rhocalc", false, "Planned port from mettail-rust inventory",
      {.known_head_query_miss_is_failure = false,
       .unique_atom_alpha_equivalence_for_open_terms = true,
       .inject_builtin_type_decls = true,
-      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
+      .named_space_policy = CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+      .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW,
-      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
+      .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_TYPED_EVAL}},
 };
+
+static _Thread_local const CettaLanguageSpec *g_cetta_current_language = NULL;
 
 static bool head_matches(SymbolId head_id, const char *name) {
     return g_symbols && symbol_eq_cstr(g_symbols, head_id, name);
 }
 
-static bool petta_slot_policy_override(SymbolId head_id, uint32_t arg_index,
-                                       CettaFunctionArgPolicy *out_policy) {
+static bool language_slot_policy_override(const CettaLanguageSpec *spec,
+                                          SymbolId head_id,
+                                          uint32_t arg_index,
+                                          CettaFunctionArgPolicy *out_policy) {
+    if (head_id == g_builtin_syms.pl_consult ||
+        head_id == g_builtin_syms.pl_use_module ||
+        head_id == g_builtin_syms.pl_atom ||
+        head_id == g_builtin_syms.pl_import ||
+        head_id == g_builtin_syms.import_prolog_function ||
+        head_id == g_builtin_syms.predicate_ctor ||
+        head_id == g_builtin_syms.pl_call ||
+        head_id == g_builtin_syms.callPredicate ||
+        head_id == g_builtin_syms.assertzPredicate ||
+        head_id == g_builtin_syms.assertaPredicate ||
+        head_id == g_builtin_syms.retractPredicate) {
+        (void)arg_index;
+        *out_policy = CETTA_FUNCTION_ARG_POLICY_RAW;
+        return true;
+    }
     if (head_matches(head_id, "if") && (arg_index == 1 || arg_index == 2)) {
         *out_policy = CETTA_FUNCTION_ARG_POLICY_RAW;
         return true;
     }
     if (head_id == g_builtin_syms.superpose && arg_index == 0) {
-        *out_policy = CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL;
+        *out_policy = (spec && spec->id == CETTA_LANGUAGE_PETTA)
+                          ? CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL
+                          : CETTA_FUNCTION_ARG_POLICY_RAW;
+        return true;
+    }
+    if ((head_id == g_builtin_syms.cons_atom && arg_index < 2) ||
+        (head_id == g_builtin_syms.union_atom && arg_index < 2) ||
+        (head_id == g_builtin_syms.decons_atom && arg_index == 0) ||
+        (head_id == g_builtin_syms.car_atom && arg_index == 0) ||
+        (head_id == g_builtin_syms.cdr_atom && arg_index == 0)) {
+        *out_policy = (spec && spec->id == CETTA_LANGUAGE_PETTA)
+                          ? CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL
+                          : CETTA_FUNCTION_ARG_POLICY_RAW;
         return true;
     }
     return false;
@@ -148,6 +205,15 @@ const CettaLanguageSpec *cetta_language_lookup(const char *name) {
     return NULL;
 }
 
+const CettaLanguageSpec *cetta_language_current(void) {
+    return g_cetta_current_language ? g_cetta_current_language
+                                    : cetta_language_lookup("he");
+}
+
+void cetta_language_set_current(const CettaLanguageSpec *spec) {
+    g_cetta_current_language = spec ? spec : cetta_language_lookup("he");
+}
+
 bool cetta_language_known_head_query_miss_is_failure(const CettaLanguageSpec *spec) {
     return spec && spec->semantics.known_head_query_miss_is_failure;
 }
@@ -160,17 +226,27 @@ bool cetta_language_injects_builtin_type_decls(const CettaLanguageSpec *spec) {
     return !spec || spec->semantics.inject_builtin_type_decls;
 }
 
+CettaNamedSpacePolicy cetta_language_named_space_policy(const CettaLanguageSpec *spec) {
+    if (!spec)
+        return CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY;
+    return spec->semantics.named_space_policy;
+}
+
+CettaRelativeModulePolicy cetta_language_relative_module_policy(const CettaLanguageSpec *spec) {
+    if (!spec)
+        return CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+    return spec->semantics.relative_module_policy;
+}
+
 CettaFunctionArgPolicy cetta_language_function_arg_policy(const CettaLanguageSpec *spec,
                                                           SymbolId head_id,
                                                           uint32_t arg_index,
                                                           Atom *domain_type) {
     if (!spec)
         return CETTA_FUNCTION_ARG_POLICY_RAW;
-    if (spec->id == CETTA_LANGUAGE_PETTA) {
-        CettaFunctionArgPolicy override = CETTA_FUNCTION_ARG_POLICY_RAW;
-        if (petta_slot_policy_override(head_id, arg_index, &override))
-            return override;
-    }
+    CettaFunctionArgPolicy override = CETTA_FUNCTION_ARG_POLICY_RAW;
+    if (language_slot_policy_override(spec, head_id, arg_index, &override))
+        return override;
     if (!domain_type || atom_is_symbol_id(domain_type, g_builtin_syms.undefined_type))
         return spec->semantics.undefined_arg_policy;
     if (atom_is_symbol_id(domain_type, g_builtin_syms.atom))

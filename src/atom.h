@@ -37,6 +37,7 @@ typedef enum {
 
 #define ATOM_FLAG_HAS_VARS 0x01u
 #define ATOM_FLAG_HASH_VALID 0x02u
+#define ATOM_FLAG_HAS_REGISTRY_REFS 0x04u
 
 /* ── Atom ───────────────────────────────────────────────────────────────── */
 
@@ -63,8 +64,16 @@ struct Atom {
 
 #define ARENA_BLOCK_SIZE (64 * 1024)
 
+typedef enum {
+    CETTA_ARENA_RUNTIME_KIND_OTHER = 0,
+    CETTA_ARENA_RUNTIME_KIND_PERSISTENT = 1,
+    CETTA_ARENA_RUNTIME_KIND_EVAL = 2,
+    CETTA_ARENA_RUNTIME_KIND_SCRATCH = 3,
+} CettaArenaRuntimeKind;
+
 typedef struct ArenaBlock {
     struct ArenaBlock *next;
+    size_t capacity;
     size_t used;
     char data[ARENA_BLOCK_SIZE];
 } ArenaBlock;
@@ -72,11 +81,18 @@ typedef struct ArenaBlock {
 typedef struct {
     ArenaBlock *head;
     HashConsTable *hashcons;
+    size_t live_bytes;
+    size_t reserved_bytes;
+    uint32_t block_count;
+    CettaArenaRuntimeKind runtime_kind;
 } Arena;
 
 typedef struct {
     ArenaBlock *head;
     size_t used;
+    size_t live_bytes;
+    size_t reserved_bytes;
+    uint32_t block_count;
 } ArenaMark;
 
 void *cetta_malloc(size_t size);
@@ -84,6 +100,7 @@ void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
 void  arena_free(Arena *a);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
+void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
@@ -216,6 +233,10 @@ Atom *atom_deep_copy_shared(Arena *dst, Atom *src);
 
 static inline bool atom_has_vars(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HAS_VARS) != 0;
+}
+
+static inline bool atom_has_registry_refs(const Atom *atom) {
+    return atom && (atom->flags & ATOM_FLAG_HAS_REGISTRY_REFS) != 0;
 }
 
 #endif /* CETTA_ATOM_H */

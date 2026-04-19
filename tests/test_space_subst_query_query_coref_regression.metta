@@ -21,4 +21,4 @@
         ($t18 (add-atom $s (coref z z))))
     (assertEqualToResult
         (match $s (coref $x $x) (hit $x))
-        ((hit z)))))
+        ((hit z))))

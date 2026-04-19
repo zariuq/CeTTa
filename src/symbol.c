@@ -180,6 +180,32 @@ bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {
     return entry->len == len && memcmp(entry->bytes, text, len) == 0;
 }
 
+int symbol_lex_compare(const SymbolTable *st, SymbolId lhs, SymbolId rhs) {
+    if (lhs == rhs)
+        return 0;
+    if (!st || lhs == SYMBOL_ID_NONE || rhs == SYMBOL_ID_NONE)
+        return lhs < rhs ? -1 : 1;
+
+    const SymbolEntry *lhs_entry = lhs < st->entry_len ? &st->entries[lhs] : NULL;
+    const SymbolEntry *rhs_entry = rhs < st->entry_len ? &st->entries[rhs] : NULL;
+    const char *lhs_bytes = (lhs_entry && lhs_entry->bytes) ? lhs_entry->bytes : "";
+    const char *rhs_bytes = (rhs_entry && rhs_entry->bytes) ? rhs_entry->bytes : "";
+    uint32_t lhs_len = lhs_entry ? lhs_entry->len : 0;
+    uint32_t rhs_len = rhs_entry ? rhs_entry->len : 0;
+    uint32_t shared = lhs_len < rhs_len ? lhs_len : rhs_len;
+
+    int cmp = memcmp(lhs_bytes, rhs_bytes, shared);
+    if (cmp < 0)
+        return -1;
+    if (cmp > 0)
+        return 1;
+    if (lhs_len < rhs_len)
+        return -1;
+    if (lhs_len > rhs_len)
+        return 1;
+    return 0;
+}
+
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
     if (!st || !builtins) return;
 #define CETTA_INIT_BUILTIN(field, text) builtins->field = symbol_intern_cstr(st, text);

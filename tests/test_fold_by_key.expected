@@ -1,4 +1,5 @@
 [((a 4) (b 7) (c 4))]
 [((b 7) (c 4) (a 4))]
 [()]
+[()]
 [(Error (fold-by-key (superpose (1)) 0 $acc $item (superpose (a b)) (eval (+ $acc $item))) FoldByKeyKeyMultipleResults)]

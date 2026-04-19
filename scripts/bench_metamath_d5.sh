@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 CETTA_BIN="$ROOT/cetta"
-CASE_FILE="$ROOT/tests/bench_metamath_d5.metta"
+CASE_FILE="$ROOT/benchmarks/bench_metamath_d5.metta"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-180}"
 VM_LIMIT_KB="${VM_LIMIT_KB:-6291456}"
 

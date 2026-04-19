@@ -77,6 +77,7 @@ PY_CFLAGS =
 PY_LDFLAGS =
 PY_RPATH =
 PYTHON_SRC = src/foreign_stub.c
+SWIPL := $(strip $(shell command -v swipl 2>/dev/null))
 ifeq ($(ENABLE_PYTHON),1)
 PYTHON_CONFIG := $(strip $(shell command -v python3-config 2>/dev/null))
 ifeq ($(PYTHON_CONFIG),)
@@ -96,7 +97,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/lang_adapter.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign_prolog.c $(PYTHON_SRC) src/session.c src/lang.c src/lang_adapter.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
 SPACE_ENGINES = native native-candidate-exact
@@ -111,8 +112,8 @@ GIT_TEST_DYNAMIC = $(CURDIR)/runtime/test-git-module-dynamic.metta
 GIT_TEST_COMPAT_DYNAMIC = $(CURDIR)/runtime/test-git-module-compat.metta
 HE_CONTRACT_GENERATED_DIR = tests/generated/he_contract
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
-PETTA_CORE_TEST = tests/lang_petta_core.metta
-PETTA_CORE_EXPECTED = tests/lang_petta_core.expected
+PROLOG_TESTS = tests/test_prolog_ops_surface.metta tests/test_lib_prolog_surface.metta
+PETTA_CORE_TESTS = tests/lang_petta_core.metta tests/lang_petta_lib_prolog.metta tests/lang_petta_lib_zar.metta
 PETTA_SUITE_DIR = $(abspath ../../hyperon/PeTTa/unit/petta_suite_69)
 PETTA_SUITE_SMOKE = \
 	$(PETTA_SUITE_DIR)/01_core_rewrite.metta \
@@ -186,25 +187,25 @@ runtime/bench_mork_bridge_add: tests/bench_mork_bridge_add.c src/symbol.c src/at
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
-runtime/test_space_term_universe_membership: tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c $(BUILD_CONFIG_HEADER)
+runtime/test_space_term_universe_membership: tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/lang.c src/search_machine.c src/space.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/lang.c src/search_machine.c src/space.c -lm
 
 test-space-term-universe-membership: runtime/test_space_term_universe_membership
 	@./runtime/test_space_term_universe_membership
 
 runtime/test_term_universe_store_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
+runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/lang.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/lang.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c -lm
 
 test-term-universe-store-abi: runtime/test_term_universe_store_abi
 	@./runtime/test_term_universe_store_abi
 
 runtime/test_term_universe_backend_add_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
+runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/lang.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/lang.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c -lm
 
 test-term-universe-backend-add-abi: runtime/test_term_universe_backend_add_abi
 	@./runtime/test_term_universe_backend_add_abi
@@ -423,12 +424,19 @@ test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip te
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
+		if [ -z "$(SWIPL)" ] && printf '%s\n' $(PROLOG_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (requires swipl on PATH)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
 		if printf '%s\n' $(PATHMAP_REQUIRED_TESTS) | grep -Fxq "$$f"; then \
 			echo "SKIP: $$f (covered by test-pathmap-lane)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
-		if { [ "$$f" = "tests/test_pretty_vars_surface.metta" ] || \
+		if { [ "$$f" = "tests/test_closed_stream_fastpath.metta" ] || \
+		     [ "$$f" = "tests/test_closed_stream_runtime_stats.metta" ] || \
+		     [ "$$f" = "tests/test_pretty_vars_surface.metta" ] || \
 		     [ "$$f" = "tests/test_import_act_module_surface.metta" ] || \
 		     [ "$$f" = "tests/test_import_mm2_module_surface.metta" ] || \
 		     [ "$$f" = "tests/test_include_mm2_space_target.metta" ] || \
@@ -477,14 +485,17 @@ test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip te
 	echo "$$summary"
 
 test-petta-core: $(BIN)
-	@result=$$(./$(BIN) --lang petta "$(PETTA_CORE_TEST)" 2>&1); \
-	if [ "$$result" = "$$(cat "$(PETTA_CORE_EXPECTED)")" ]; then \
-		echo "PASS: $(PETTA_CORE_TEST)"; \
-	else \
-		echo "FAIL: $(PETTA_CORE_TEST)"; \
-		diff <(cat "$(PETTA_CORE_EXPECTED)") <(printf '%s\n' "$$result") | head -20; \
-		exit 1; \
-	fi
+	@for f in $(PETTA_CORE_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		result=$$(./$(BIN) --lang petta "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(printf '%s\n' "$$result") | head -20; \
+			exit 1; \
+		fi; \
+	done
 
 test-petta-suite69: test-petta-core $(BIN)
 	@if [ ! -d "$(PETTA_SUITE_DIR)" ]; then \
@@ -1022,6 +1033,11 @@ test-backends: $(BIN)
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
+		if [ -z "$(SWIPL)" ] && printf '%s\n' $(PROLOG_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (requires swipl on PATH)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
 		if [ "$$f" = "tests/test_pretty_vars_surface.metta" ]; then \
 			echo "SKIP: $$f (covered by dedicated pretty-vars flag target)"; \
 			skip=$$((skip + 1)); \
@@ -1109,7 +1125,7 @@ test-deprecated-space-engine-mork-guard: $(BIN)
 		"error: unknown space engine 'mork'" \
 		"space engines:" \
 		"  native                 standard CeTTa / HE engine" \
-		"  pathmap                PathMap-backed CeTTa engine with fast candidate narrowing (requires BUILD=pathmap or BUILD=full)" \
+		"  pathmap                flattened PathMap-style CeTTa engine without bridge rows (requires BUILD=pathmap or BUILD=full)" \
 		"  native-candidate-exact diagnostic native exact-matcher lane"); \
 	if [ "$$status" -eq 2 ] && [ "$$result" = "$$expected" ]; then \
 		echo "PASS: deprecated space-engine mork guard"; \
@@ -1629,6 +1645,10 @@ oracle-refresh:
 		     [ "$$f" = "tests/test_import_foreign_pkg_error.metta" ] || \
 		     [ "$$f" = "tests/test_namespace_sugar_guardrails.metta" ]; }; then \
 			echo "SKIP: $$f (requires a Python-enabled build)"; \
+			continue; \
+		fi; \
+		if [ -z "$(SWIPL)" ] && printf '%s\n' $(PROLOG_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (requires swipl on PATH)"; \
 			continue; \
 		fi; \
 		exp="$${f%.metta}.expected"; \

@@ -81,7 +81,8 @@ typedef enum {
 
 typedef enum {
     CETTA_FOREIGN_BACKEND_NONE = 0,
-    CETTA_FOREIGN_BACKEND_PYTHON = 1
+    CETTA_FOREIGN_BACKEND_PYTHON = 1,
+    CETTA_FOREIGN_BACKEND_PROLOG = 2
 } CettaForeignBackendKind;
 
 typedef struct {

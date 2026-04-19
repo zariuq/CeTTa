@@ -19,10 +19,22 @@ typedef enum {
     CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL = 2
 } CettaFunctionArgPolicy;
 
+typedef enum {
+    CETTA_NAMED_SPACE_POLICY_EXISTING_ONLY = 0,
+    CETTA_NAMED_SPACE_POLICY_AUTO_CREATE = 1,
+} CettaNamedSpacePolicy;
+
+typedef enum {
+    CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY = 0,
+    CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK = 1,
+} CettaRelativeModulePolicy;
+
 typedef struct {
     bool known_head_query_miss_is_failure;
     bool unique_atom_alpha_equivalence_for_open_terms;
     bool inject_builtin_type_decls;
+    CettaNamedSpacePolicy named_space_policy;
+    CettaRelativeModulePolicy relative_module_policy;
     CettaFunctionArgPolicy undefined_arg_policy;
     CettaFunctionArgPolicy atom_arg_policy;
     CettaFunctionArgPolicy expression_arg_policy;
@@ -44,10 +56,14 @@ typedef struct {
 } CettaTypeDeclSignature;
 
 const CettaLanguageSpec *cetta_language_lookup(const char *name);
+const CettaLanguageSpec *cetta_language_current(void);
+void cetta_language_set_current(const CettaLanguageSpec *spec);
 void cetta_language_print_inventory(FILE *out);
 bool cetta_language_known_head_query_miss_is_failure(const CettaLanguageSpec *spec);
 bool cetta_language_unique_atom_uses_alpha_for_open_terms(const CettaLanguageSpec *spec);
 bool cetta_language_injects_builtin_type_decls(const CettaLanguageSpec *spec);
+CettaNamedSpacePolicy cetta_language_named_space_policy(const CettaLanguageSpec *spec);
+CettaRelativeModulePolicy cetta_language_relative_module_policy(const CettaLanguageSpec *spec);
 CettaFunctionArgPolicy cetta_language_function_arg_policy(const CettaLanguageSpec *spec,
                                                           SymbolId head_id,
                                                           uint32_t arg_index,

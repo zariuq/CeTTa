@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/cetta"
 BACKEND="${1:-native}"
-PROBE="$ROOT/tests/bench_tilepuzzle_probe.metta"
+PROBE="$ROOT/benchmarks/bench_tilepuzzle_probe.metta"
 
 if [ ! -x "$BIN" ]; then
     echo "error: missing executable $BIN" >&2
