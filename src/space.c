@@ -2008,22 +2008,71 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
+typedef struct QueryResultSink {
+    QueryResults *results;
+    QueryResultVisitor visitor;
+    void *visitor_ctx;
+    uint32_t emitted;
+    bool stop;
+} QueryResultSink;
+
 static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
                                        Arena *a, uint32_t epoch,
-                                       const Bindings *seed, QueryResults *out);
+                                       const Bindings *seed,
+                                       QueryResultSink *sink);
 static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
                                               Atom *query,
                                               const QueryVisibleVarSet *visible,
                                               Arena *a, uint32_t epoch,
                                               const Bindings *seed,
-                                              QueryResults *out);
+                                              QueryResultSink *sink);
+
+static void query_result_sink_init_collect(QueryResultSink *sink,
+                                           QueryResults *results) {
+    sink->results = results;
+    sink->visitor = NULL;
+    sink->visitor_ctx = NULL;
+    sink->emitted = 0;
+    sink->stop = false;
+}
+
+static void query_result_sink_init_visit(QueryResultSink *sink,
+                                         QueryResultVisitor visitor,
+                                         void *ctx) {
+    sink->results = NULL;
+    sink->visitor = visitor;
+    sink->visitor_ctx = ctx;
+    sink->emitted = 0;
+    sink->stop = false;
+}
+
+static bool query_result_sink_emit(QueryResultSink *sink, Atom *result,
+                                   Bindings *bindings) {
+    if (!sink || sink->stop)
+        return false;
+    if (sink->results) {
+        query_results_push_move(sink->results, result, bindings);
+        sink->emitted++;
+        return true;
+    }
+    if (!sink->visitor)
+        return false;
+    sink->emitted++;
+    if (!sink->visitor(result, bindings, sink->visitor_ctx)) {
+        sink->stop = true;
+        return false;
+    }
+    return true;
+}
 
 static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
                                 const QueryVisibleVarSet *visible, Arena *a,
-                                QueryResults *out) {
+                                QueryResultSink *sink) {
     SymbolId query_head = eq_head_symbol(query);
+    if (!sink || sink->stop)
+        return;
     if (bucket->trie && bucket->len > 4) {
         uint32_t *candidates = NULL;
         uint32_t ncand = 0, ccand = 0;
@@ -2047,7 +2096,9 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
                 considered++;
                 (void)query_equation_emit_stored(
                     s, lhs_id, rhs_id, query, visible, a, fresh_var_suffix(),
-                    NULL, out);
+                    NULL, sink);
+                if (sink->stop)
+                    break;
                 continue;
             }
             Atom *lhs = NULL, *rhs = NULL;
@@ -2060,7 +2111,9 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
             }
             considered++;
             (void)query_equation_emit_decoded_epoch(
-                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, out);
+                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
+            if (sink->stop)
+                break;
         }
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
                                 considered);
@@ -2087,7 +2140,9 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
             considered++;
             (void)query_equation_emit_stored(
                 s, lhs_id, rhs_id, query, visible, a, fresh_var_suffix(),
-                NULL, out);
+                NULL, sink);
+            if (sink->stop)
+                break;
             continue;
         }
         Atom *lhs = NULL, *rhs = NULL;
@@ -2100,7 +2155,9 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         }
         considered++;
         (void)query_equation_emit_decoded_epoch(
-            lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, out);
+            lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
+        if (sink->stop)
+            break;
     }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
                             considered);
@@ -2112,10 +2169,11 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
                                        Arena *a, uint32_t epoch,
-                                       const Bindings *seed, QueryResults *out) {
+                                       const Bindings *seed,
+                                       QueryResultSink *sink) {
     if (!s || !s->universe || lhs_id == CETTA_ATOM_ID_NONE ||
         rhs_id == CETTA_ATOM_ID_NONE || !tu_hdr(s->universe, lhs_id) ||
-        !tu_hdr(s->universe, rhs_id)) {
+        !tu_hdr(s->universe, rhs_id) || !sink) {
         return false;
     }
     Bindings merged;
@@ -2137,7 +2195,7 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
             result = rewrite_query_visible_aliases(a, result, visible);
             Bindings projected;
             if (project_query_visible_bindings(a, visible, &merged, &projected)) {
-                query_results_push_move(out, result, &projected);
+                (void)query_result_sink_emit(sink, result, &projected);
                 bindings_free(&projected);
                 emitted = true;
             }
@@ -2152,8 +2210,8 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
                                               const QueryVisibleVarSet *visible,
                                               Arena *a, uint32_t epoch,
                                               const Bindings *seed,
-                                              QueryResults *out) {
-    if (!lhs || !rhs || !query || !a || !out)
+                                              QueryResultSink *sink) {
+    if (!lhs || !rhs || !query || !a || !sink)
         return false;
     Bindings merged;
     bindings_init(&merged);
@@ -2169,7 +2227,7 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
         result = rewrite_query_visible_aliases(a, result, visible);
         Bindings projected;
         if (project_query_visible_bindings(a, visible, &merged, &projected)) {
-            query_results_push_move(out, result, &projected);
+            (void)query_result_sink_emit(sink, result, &projected);
             bindings_free(&projected);
             emitted = true;
         }
@@ -2183,17 +2241,17 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
    rename_vars on both sides of each equation. */
 static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
                          const QueryVisibleVarSet *visible, Arena *a,
-                         QueryResults *out) {
+                         QueryResultSink *sink) {
     SymbolId query_head = eq_head_symbol(query);
-    if (!bucket || bucket->len == 0)
+    uint32_t emitted_before;
+    if (!bucket || bucket->len == 0 || !sink || sink->stop)
         return;
+    emitted_before = sink->emitted;
     if (bucket->subst.count <= 4 || !bucket->subst.root ||
         !bucket->subst_safe || !atom_is_eq_subst_safe(query)) {
-        query_bucket_legacy(s, bucket, query, visible, a, out);
+        query_bucket_legacy(s, bucket, query, visible, a, sink);
         return;
     }
-
-    uint32_t out_before = out->len;
     SubstMatchSet matches;
     uint32_t considered = 0;
     smset_init(&matches);
@@ -2216,10 +2274,12 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
             }
             considered++;
             if (query_equation_emit_stored(s, lhs_id, rhs_id, query, visible, a,
-                                           sm->epoch, &sm->bindings, out)) {
+                                           sm->epoch, &sm->bindings, sink)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
             }
+            if (sink->stop)
+                break;
             continue;
         }
         Atom *lhs = NULL, *rhs = NULL;
@@ -2232,7 +2292,7 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         }
         considered++;
         bool emitted = query_equation_emit_decoded_epoch(
-            lhs, rhs, query, visible, a, sm->epoch, &sm->bindings, out);
+            lhs, rhs, query, visible, a, sm->epoch, &sm->bindings, sink);
         if (emitted) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
@@ -2241,44 +2301,62 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_CANDIDATE_FALLBACK);
             (void)query_equation_emit_decoded_epoch(
-                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, out);
+                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
         }
+        if (sink->stop)
+            break;
     }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
                             considered);
     cetta_runtime_stats_add(
         CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_CANDIDATES, considered);
     smset_free(&matches);
-    if (out->len == out_before) {
+    if (!sink->stop && sink->emitted == emitted_before) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_BUCKET_FALLBACK);
-        query_bucket_legacy(s, bucket, query, visible, a, out);
+        query_bucket_legacy(s, bucket, query, visible, a, sink);
     }
 }
 
-void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
+static uint32_t query_equations_core(Space *s, Atom *query, Arena *a,
+                                     QueryResultSink *sink) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
     ensure_eq_index(s);
     QueryVisibleVarSet visible;
     query_visible_var_set_init(&visible);
     if (!collect_query_visible_vars_rec(query, &visible)) {
         query_visible_var_set_free(&visible);
-        return;
+        return 0;
     }
     /* Use head-symbol index for O(1) lookup instead of O(N) scan.
        This is the key optimization from Vampire's LiteralIndex. */
     SymbolId head = eq_head_symbol(query);
     if (head != SYMBOL_ID_NONE) {
         /* Query has a known head symbol — look up matching bucket */
-        query_bucket(s, &s->eq_idx.buckets[symbol_hash(head)], query, &visible, a, out);
+        query_bucket(s, &s->eq_idx.buckets[symbol_hash(head)], query, &visible, a, sink);
     }
     /* Non-symbol-headed queries may still match wildcard equations whose LHS
        head is itself a variable or complex term, but they must not unlock
        every named equation bucket by unifying the head variable with an
        unrelated function symbol. HE treats ($f x) as data unless a wildcard
        equation explicitly matches it. */
-    query_bucket(s, &s->eq_idx.wildcard, query, &visible, a, out);
+    if (!sink->stop)
+        query_bucket(s, &s->eq_idx.wildcard, query, &visible, a, sink);
     query_visible_var_set_free(&visible);
+    return sink->emitted;
+}
+
+uint32_t query_equations_visit(Space *s, Atom *query, Arena *a,
+                               QueryResultVisitor visitor, void *ctx) {
+    QueryResultSink sink;
+    query_result_sink_init_visit(&sink, visitor, ctx);
+    return query_equations_core(s, query, a, &sink);
+}
+
+void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
+    QueryResultSink sink;
+    query_result_sink_init_collect(&sink, out);
+    (void)query_equations_core(s, query, a, &sink);
 }
 
 bool space_equations_may_match_known_head(Space *s, SymbolId head) {

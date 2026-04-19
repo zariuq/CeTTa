@@ -175,6 +175,8 @@ typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
 void query_results_init(QueryResults *qr);
 void query_results_push(QueryResults *qr, Atom *result, Bindings *b);
 void query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
+uint32_t query_equations_visit(Space *s, Atom *query, Arena *a,
+                               QueryResultVisitor visitor, void *ctx);
 uint32_t query_results_visit(const QueryResults *qr, QueryResultVisitor visitor,
                              void *ctx);
 void query_results_free(QueryResults *qr);

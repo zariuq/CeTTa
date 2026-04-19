@@ -8,13 +8,7 @@
 #include <string.h>
 
 typedef struct {
-    Atom *result;
-    Bindings bindings;
-    VariantInstance variant;
-} TableStoredAnswer;
-
-typedef struct {
-    TableStoredAnswer *items;
+    AnswerRef *items;
     uint32_t len;
     uint32_t cap;
 } TableStoredAnswers;
@@ -40,6 +34,7 @@ typedef struct {
     TableStore *store;
     TableStoreEntry staged;
     CettaVarMap query_map;
+    CettaVarMap goal_instantiation;
     uint32_t target_index;
     bool target_reusable;
     bool target_stale;
@@ -50,22 +45,6 @@ static const CettaVariantShapeOptions kTableStoreVariantOptions = {
     .slot_name = "$T",
     .share_immutable = false,
 };
-
-static void table_stored_answer_init(TableStoredAnswer *answer) {
-    if (!answer)
-        return;
-    answer->result = NULL;
-    bindings_init(&answer->bindings);
-    variant_instance_init(&answer->variant);
-}
-
-static void table_stored_answer_free(TableStoredAnswer *answer) {
-    if (!answer)
-        return;
-    bindings_free(&answer->bindings);
-    variant_instance_free(&answer->variant);
-    answer->result = NULL;
-}
 
 static void table_stored_answers_init(TableStoredAnswers *answers) {
     if (!answers)
@@ -78,8 +57,6 @@ static void table_stored_answers_init(TableStoredAnswers *answers) {
 static void table_stored_answers_free(TableStoredAnswers *answers) {
     if (!answers)
         return;
-    for (uint32_t i = 0; i < answers->len; i++)
-        table_stored_answer_free(&answers->items[i]);
     free(answers->items);
     answers->items = NULL;
     answers->len = 0;
@@ -95,20 +72,19 @@ static bool table_stored_answers_reserve(TableStoredAnswers *answers, uint32_t n
     while (next_cap < needed)
         next_cap *= 2;
     answers->items = answers->items
-        ? cetta_realloc(answers->items, sizeof(TableStoredAnswer) * next_cap)
-        : cetta_malloc(sizeof(TableStoredAnswer) * next_cap);
+        ? cetta_realloc(answers->items, sizeof(AnswerRef) * next_cap)
+        : cetta_malloc(sizeof(AnswerRef) * next_cap);
     answers->cap = next_cap;
     return true;
 }
 
 static bool table_stored_answers_push_move(TableStoredAnswers *answers,
-                                           TableStoredAnswer *answer) {
-    if (!answers || !answer ||
+                                           AnswerRef ref) {
+    if (!answers || ref == CETTA_ANSWER_REF_NONE ||
         !table_stored_answers_reserve(answers, answers->len + 1)) {
         return false;
     }
-    answers->items[answers->len++] = *answer;
-    table_stored_answer_init(answer);
+    answers->items[answers->len++] = ref;
     return true;
 }
 
@@ -136,6 +112,7 @@ static void table_query_state_free(TableQueryState *state, bool free_staged) {
     if (free_staged)
         table_store_entry_free(&state->staged);
     cetta_var_map_free(&state->query_map);
+    cetta_var_map_free(&state->goal_instantiation);
     free(state);
 }
 
@@ -181,13 +158,15 @@ static bool table_store_reserve(TableStore *store, uint32_t needed) {
     return true;
 }
 
-void table_store_init(TableStore *store, CettaTableMode mode) {
+void table_store_init(TableStore *store, CettaTableMode mode,
+                      AnswerBank *answer_bank) {
     if (!store)
         return;
     store->entries = NULL;
     store->len = 0;
     store->cap = 0;
     store->mode = mode;
+    store->answer_bank = answer_bank;
 }
 
 void table_store_free(TableStore *store) {
@@ -199,6 +178,7 @@ void table_store_free(TableStore *store) {
     store->entries = NULL;
     store->len = 0;
     store->cap = 0;
+    store->answer_bank = NULL;
 }
 
 bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
@@ -236,6 +216,7 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
     state->store = store;
     table_store_entry_init(&state->staged);
     cetta_var_map_init(&state->query_map);
+    cetta_var_map_init(&state->goal_instantiation);
     if (match.exact) {
         state->target_index = match.exact_index;
         state->target_reusable = true;
@@ -255,57 +236,88 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
 
     state->staged.space = space;
     state->staged.revision = revision;
+    CettaVarMap goal_instantiation;
+    cetta_var_map_init(&goal_instantiation);
     state->staged.goal_key = variant_shape_canonicalize_atom(&state->staged.arena,
                                                              query,
                                                              &state->query_map,
-                                                             NULL,
+                                                             &goal_instantiation,
                                                              &kTableStoreVariantOptions);
     if (!state->staged.goal_key) {
+        cetta_var_map_free(&goal_instantiation);
         table_query_state_free(state, true);
         return false;
     }
+    if (!cetta_var_map_clone_live(&state->staged.arena,
+                                  &state->goal_instantiation,
+                                  &goal_instantiation)) {
+        cetta_var_map_free(&goal_instantiation);
+        table_query_state_free(state, true);
+        return false;
+    }
+    cetta_var_map_free(&goal_instantiation);
     state->staged.goal_hash = atom_hash(state->staged.goal_key);
     handle->impl = state;
     return true;
 }
 
-static void table_store_factor_answer_result(Arena *dst, Atom *canonical_result,
+bool table_store_query_goal_instantiation(TableQueryHandle *handle,
+                                          Arena *dst,
+                                          CettaVarMap *out) {
+    if (!out)
+        return false;
+    cetta_var_map_init(out);
+    if (!handle || !handle->impl)
+        return false;
+    TableQueryState *state = handle->impl;
+    return cetta_var_map_clone_live(dst, out, &state->goal_instantiation);
+}
+
+static bool table_store_factor_answer_result(Arena *dst, Atom *canonical_result,
                                              const Bindings *canonical_bindings,
-                                             TableStoredAnswer *answer) {
+                                             Atom **factored_result,
+                                             VariantInstance *variant_out) {
     VariantBank bank;
     VariantShape shape;
     bool factored = false;
 
-    if (!dst || !canonical_result || !canonical_bindings || !answer) {
-        if (answer)
-            answer->result = canonical_result;
-        return;
+    if (variant_out)
+        variant_instance_init(variant_out);
+    if (factored_result)
+        *factored_result = canonical_result;
+    if (!dst || !canonical_result || !canonical_bindings ||
+        !factored_result || !variant_out) {
+        return canonical_result != NULL;
     }
 
     variant_bank_init(&bank, kTableStoreVariantOptions);
     variant_shape_init(&shape);
     if (variant_shape_from_bound_atom(&bank, canonical_bindings,
                                       canonical_result, &shape) &&
-        variant_instance_from_shape(&answer->variant, &shape) &&
-        variant_instance_present(&answer->variant)) {
-        answer->result = atom_deep_copy(dst, shape.skeleton);
+        variant_instance_from_shape(variant_out, &shape) &&
+        variant_instance_present(variant_out)) {
+        *factored_result = atom_deep_copy(dst, shape.skeleton);
         factored = true;
     }
     variant_shape_free(&shape);
     variant_bank_free(&bank);
 
     if (!factored) {
-        variant_instance_free(&answer->variant);
-        answer->result = canonical_result;
+        variant_instance_free(variant_out);
+        *factored_result = canonical_result;
     }
+    return *factored_result != NULL;
 }
 
 bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
-                            const Bindings *bindings) {
+                            const Bindings *bindings, AnswerRef *out_ref) {
     if (!handle || !handle->impl || !result)
         return false;
+    if (out_ref)
+        *out_ref = CETTA_ANSWER_REF_NONE;
 
     TableQueryState *state = handle->impl;
+    AnswerBank *bank = state->store ? state->store->answer_bank : NULL;
     CettaVarMap answer_map;
     cetta_var_map_init(&answer_map);
     if (!cetta_var_map_clone(&answer_map, &state->query_map)) {
@@ -325,30 +337,43 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
                                                              &answer_map, NULL,
                                                              &kTableStoreVariantOptions);
     Bindings canonical_bindings;
-    TableStoredAnswer staged_answer;
-    table_stored_answer_init(&staged_answer);
+    Atom *factored_result = NULL;
+    VariantInstance factored_variant;
+    variant_instance_init(&factored_variant);
     if (!canonical_result ||
         !variant_shape_canonicalize_bindings(&state->staged.arena,
                                              source_bindings,
                                              &answer_map,
                                              &kTableStoreVariantOptions,
                                              &canonical_bindings)) {
-        table_stored_answer_free(&staged_answer);
+        variant_instance_free(&factored_variant);
         cetta_var_map_free(&answer_map);
         return false;
     }
 
-    table_store_factor_answer_result(&state->staged.arena, canonical_result,
-                                     &canonical_bindings, &staged_answer);
-    bindings_move(&staged_answer.bindings, &canonical_bindings);
-    if (!table_stored_answers_push_move(&state->staged.results, &staged_answer)) {
-        table_stored_answer_free(&staged_answer);
+    if (!table_store_factor_answer_result(&state->staged.arena, canonical_result,
+                                          &canonical_bindings, &factored_result,
+                                          &factored_variant)) {
+        variant_instance_free(&factored_variant);
         bindings_free(&canonical_bindings);
         cetta_var_map_free(&answer_map);
         return false;
     }
-    table_stored_answer_free(&staged_answer);
+    AnswerRef ref = CETTA_ANSWER_REF_NONE;
+    if (!bank ||
+        !answer_bank_add(bank, factored_result, &canonical_bindings,
+                         &factored_variant, &ref) ||
+        !table_stored_answers_push_move(&state->staged.results, ref)) {
+        variant_instance_free(&factored_variant);
+        bindings_free(&canonical_bindings);
+        cetta_var_map_free(&answer_map);
+        return false;
+    }
+    variant_instance_free(&factored_variant);
+    bindings_free(&canonical_bindings);
     cetta_var_map_free(&answer_map);
+    if (out_ref)
+        *out_ref = ref;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_ANSWER_STAGED);
     return true;
 }
@@ -415,77 +440,126 @@ static bool table_store_materialize_visit(Atom *result,
     return materialize->visitor(materialized, bindings, materialize->ctx);
 }
 
+static bool table_store_build_goal_bindings(Arena *out_arena,
+                                            const CettaVarMap *goal_instantiation,
+                                            Bindings *goal_bindings) {
+    bindings_init(goal_bindings);
+    if (!goal_instantiation)
+        return true;
+    for (uint32_t i = 0; i < goal_instantiation->len; i++) {
+        Atom *goal_key_var =
+            atom_var_with_id(out_arena, "$T", goal_instantiation->items[i].source_id);
+        if (!bindings_add_id(goal_bindings, goal_key_var->var_id,
+                             goal_key_var->sym_id,
+                             goal_instantiation->items[i].mapped_var)) {
+            bindings_free(goal_bindings);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool table_store_materialize_answer_ref(const AnswerBank *answer_bank,
+                                        AnswerRef ref,
+                                        Arena *out_arena,
+                                        const CettaVarMap *goal_instantiation,
+                                        Atom **out_result,
+                                        Bindings *out_bindings,
+                                        VariantInstance *out_variant) {
+    const AnswerRecord *stored = answer_bank_get(answer_bank, ref);
+    CettaVarMap local_map;
+    Bindings goal_bindings;
+    bool ok = false;
+
+    if (out_result)
+        *out_result = NULL;
+    if (out_bindings)
+        bindings_init(out_bindings);
+    if (out_variant)
+        variant_instance_init(out_variant);
+    if (!stored || !out_arena || !out_result || !out_bindings || !out_variant)
+        return false;
+
+    cetta_var_map_init(&local_map);
+    if (!table_store_build_goal_bindings(out_arena, goal_instantiation,
+                                         &goal_bindings)) {
+        cetta_var_map_free(&local_map);
+        return false;
+    }
+
+    Atom *result =
+        variant_shape_materialize_atom(out_arena,
+                                       stored->result,
+                                       goal_instantiation,
+                                       &local_map);
+    if (!result)
+        goto done;
+
+    if (variant_instance_present(&stored->variant)) {
+        if (goal_bindings.len > 0 || goal_bindings.eq_len > 0) {
+            if (!variant_instance_sink_env(out_arena, out_variant,
+                                           &stored->variant,
+                                           &goal_bindings)) {
+                goto done;
+            }
+        } else if (!variant_instance_clone(out_variant, &stored->variant)) {
+            goto done;
+        }
+    }
+
+    if (!variant_shape_materialize_bindings(out_arena,
+                                            &stored->bindings,
+                                            goal_instantiation,
+                                            &local_map,
+                                            out_bindings)) {
+        goto done;
+    }
+    *out_result = result;
+    ok = true;
+
+done:
+    if (!ok) {
+        bindings_free(out_bindings);
+        bindings_init(out_bindings);
+        variant_instance_free(out_variant);
+        variant_instance_init(out_variant);
+        if (out_result)
+            *out_result = NULL;
+    }
+    bindings_free(&goal_bindings);
+    cetta_var_map_free(&local_map);
+    return ok;
+}
+
 static uint32_t table_store_entry_visit_delayed(const TableStoreEntry *entry,
+                                                const AnswerBank *answer_bank,
                                                 Arena *out_arena,
                                                 const CettaVarMap *goal_instantiation,
                                                 TableDelayedResultVisitor visitor,
                                                 void *ctx) {
-    Bindings goal_bindings;
     uint32_t visited = 0;
     if (!entry || !visitor)
         return 0;
-    bindings_init(&goal_bindings);
-    if (goal_instantiation) {
-        for (uint32_t i = 0; i < goal_instantiation->len; i++) {
-            Atom *goal_key_var =
-                atom_var_with_id(out_arena, "$T", goal_instantiation->items[i].source_id);
-            if (!bindings_add_id(&goal_bindings, goal_key_var->var_id,
-                                 goal_key_var->sym_id,
-                                 goal_instantiation->items[i].mapped_var)) {
-                bindings_free(&goal_bindings);
-                return 0;
-            }
-        }
-    }
     for (uint32_t i = 0; i < entry->results.len; i++) {
-        CettaVarMap local_map;
-        cetta_var_map_init(&local_map);
-        Atom *result =
-            variant_shape_materialize_atom(out_arena,
-                                           entry->results.items[i].result,
-                                           goal_instantiation,
-                                           &local_map);
-        if (!result) {
-            cetta_var_map_free(&local_map);
-            continue;
-        }
-        VariantInstance replay_variant;
-        variant_instance_init(&replay_variant);
-        if (variant_instance_present(&entry->results.items[i].variant)) {
-            if (goal_bindings.len > 0 || goal_bindings.eq_len > 0) {
-                if (!variant_instance_sink_env(out_arena, &replay_variant,
-                                               &entry->results.items[i].variant,
-                                               &goal_bindings)) {
-                    variant_instance_free(&replay_variant);
-                    cetta_var_map_free(&local_map);
-                    continue;
-                }
-            } else if (!variant_instance_clone(&replay_variant,
-                                               &entry->results.items[i].variant)) {
-                variant_instance_free(&replay_variant);
-                cetta_var_map_free(&local_map);
-                continue;
-            }
-        }
+        Atom *result = NULL;
         Bindings materialized;
-        if (!variant_shape_materialize_bindings(out_arena,
-                                                &entry->results.items[i].bindings,
+        VariantInstance replay_variant;
+        if (!table_store_materialize_answer_ref(answer_bank,
+                                                entry->results.items[i],
+                                                out_arena,
                                                 goal_instantiation,
-                                                &local_map,
-                                                &materialized)) {
-            variant_instance_free(&replay_variant);
-            cetta_var_map_free(&local_map);
+                                                &result,
+                                                &materialized,
+                                                &replay_variant)) {
             continue;
         }
         visited++;
         bool keep_going = visitor(result, &materialized, &replay_variant, ctx);
         variant_instance_free(&replay_variant);
         bindings_free(&materialized);
-        cetta_var_map_free(&local_map);
         if (!keep_going)
             break;
     }
-    bindings_free(&goal_bindings);
     return visited;
 }
 
@@ -528,10 +602,73 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
         return false;
     }
     TableStoreEntry *entry = match.exact;
-    uint32_t visited = table_store_entry_visit_delayed(entry, out_arena,
+    uint32_t visited = table_store_entry_visit_delayed(entry, store->answer_bank,
+                                                       out_arena,
                                                        &goal_instantiation,
                                                        visitor, ctx);
 
+    cetta_var_map_free(&probe_map);
+    cetta_var_map_free(&goal_instantiation);
+    arena_free(&probe_arena);
+    if (visited_out)
+        *visited_out = visited;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_HIT);
+    return true;
+}
+
+bool table_store_lookup_visit_ref(TableStore *store, Space *space,
+                                  uint64_t revision,
+                                  Atom *query,
+                                  Arena *goal_owner,
+                                  TableAnswerRefVisitor visitor,
+                                  void *ctx,
+                                  uint32_t *visited_out) {
+    if (visited_out)
+        *visited_out = 0;
+    if (!store || store->mode != CETTA_TABLE_MODE_VARIANT || !space || !query ||
+        !goal_owner || !visitor) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_MISS);
+        return false;
+    }
+
+    Arena probe_arena;
+    arena_init(&probe_arena);
+    arena_set_hashcons(&probe_arena, NULL);
+    CettaVarMap probe_map;
+    CettaVarMap goal_instantiation;
+    cetta_var_map_init(&probe_map);
+    cetta_var_map_init(&goal_instantiation);
+    Atom *goal_key = variant_shape_canonicalize_atom(&probe_arena, query,
+                                                     &probe_map,
+                                                     &goal_instantiation,
+                                                     &kTableStoreVariantOptions);
+    uint32_t goal_hash = atom_hash(goal_key);
+    TableStoreMatch match = table_store_find_match(store, space, revision,
+                                                   goal_key, goal_hash);
+    if (!match.exact) {
+        cetta_var_map_free(&probe_map);
+        cetta_var_map_free(&goal_instantiation);
+        arena_free(&probe_arena);
+        cetta_runtime_stats_inc(match.stale ? CETTA_RUNTIME_COUNTER_TABLE_STALE_MISS
+                                      : CETTA_RUNTIME_COUNTER_TABLE_MISS);
+        return false;
+    }
+    CettaVarMap goal_snapshot;
+    if (!cetta_var_map_clone_live(goal_owner, &goal_snapshot, &goal_instantiation)) {
+        cetta_var_map_free(&probe_map);
+        cetta_var_map_free(&goal_instantiation);
+        arena_free(&probe_arena);
+        return false;
+    }
+    uint32_t visited = 0;
+    TableStoreEntry *entry = match.exact;
+    for (uint32_t i = 0; i < entry->results.len; i++) {
+        visited++;
+        if (!visitor(store->answer_bank, entry->results.items[i], &goal_snapshot, ctx))
+            break;
+    }
+
+    cetta_var_map_free(&goal_snapshot);
     cetta_var_map_free(&probe_map);
     cetta_var_map_free(&goal_instantiation);
     arena_free(&probe_arena);
@@ -581,7 +718,7 @@ bool table_store_put(TableStore *store, Space *space, uint64_t revision,
 
     for (uint32_t i = 0; i < results->len; i++) {
         if (!table_store_add_answer(&handle, results->items[i].result,
-                                    &results->items[i].bindings)) {
+                                    &results->items[i].bindings, NULL)) {
             table_store_abort_query(&handle);
             return false;
         }

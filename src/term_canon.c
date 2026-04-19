@@ -68,6 +68,28 @@ bool cetta_var_map_clone(CettaVarMap *dst, const CettaVarMap *src) {
     return true;
 }
 
+bool cetta_var_map_clone_live(Arena *dst, CettaVarMap *out,
+                              const CettaVarMap *src) {
+    cetta_var_map_init(out);
+    if (!src || src->len == 0)
+        return true;
+    if (!dst || !cetta_var_map_reserve(out, src->len))
+        return false;
+    for (uint32_t i = 0; i < src->len; i++) {
+        Atom *mapped = src->items[i].mapped_var
+            ? atom_deep_copy(dst, src->items[i].mapped_var)
+            : NULL;
+        if (src->items[i].mapped_var && !mapped) {
+            cetta_var_map_free(out);
+            return false;
+        }
+        out->items[i].source_id = src->items[i].source_id;
+        out->items[i].mapped_var = mapped;
+    }
+    out->len = src->len;
+    return true;
+}
+
 Atom *cetta_var_map_get_or_add(CettaVarMap *map, Arena *dst, Atom *src_var,
                                CettaVarMapCreateFn create_var, void *ctx) {
     if (!map || !dst || !src_var || src_var->kind != ATOM_VAR || !create_var)
