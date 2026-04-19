@@ -1,8 +1,10 @@
 #ifndef CETTA_EVAL_H
 #define CETTA_EVAL_H
 
+#include "answer_bank.h"
 #include "atom.h"
 #include "space.h"
+#include "term_canon.h"
 #include "variant_instance.h"
 typedef struct CettaLibraryContext CettaLibraryContext;
 
@@ -11,19 +13,35 @@ typedef struct CettaLibraryContext CettaLibraryContext;
    This replaces the former split between ResultSet and ResultBindSet.
    "Plain" evaluation is just projection: outcome.atom. */
 
+typedef enum {
+    CETTA_OUTCOME_INLINE = 0,
+    CETTA_OUTCOME_ANSWER_REF = 1,
+} CettaOutcomeKind;
+
+typedef struct {
+    const AnswerBank *bank;
+    AnswerRef ref;
+    CettaVarMap goal_instantiation;
+} OutcomeAnswerRef;
+
 typedef struct Outcome {
+    CettaOutcomeKind kind;
     Atom *atom;
     Atom *materialized_atom;
     Bindings env;
     VariantInstance variant;
+    OutcomeAnswerRef answer_ref;
 } Outcome;
 
 typedef struct OutcomeSet {
     Outcome *items;
     uint32_t len, cap;
+    Arena *payload_owner;
 } OutcomeSet;
 
 void outcome_set_init(OutcomeSet *os);
+void outcome_set_init_with_owner(OutcomeSet *os, Arena *owner);
+void outcome_set_set_owner(OutcomeSet *os, Arena *owner);
 void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
