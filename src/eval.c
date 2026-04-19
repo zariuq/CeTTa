@@ -5436,6 +5436,66 @@ static void interpret_surface_args_with_policy(Space *s, Arena *a, Atom *head,
                             env, fuel, os);
 }
 
+static bool direct_surface_fill_arg_types(Space *s, Arena *a, Atom *op,
+                                          uint32_t nargs, Atom **arg_types) {
+    if (!arg_types || nargs == 0)
+        return true;
+    for (uint32_t i = 0; i < nargs; i++)
+        arg_types[i] = atom_undefined_type(a);
+    if (nargs > 32)
+        return false;
+
+    Atom **op_types = NULL;
+    uint32_t n_op_types = get_atom_types_profiled(s, a, op, &op_types);
+    Atom *selected_ft = NULL;
+    CettaFunctionArgPolicy selected_policies[32];
+    bool selected_direct_profile = false;
+
+    for (uint32_t ti = 0; ti < n_op_types; ti++) {
+        Atom *ft = op_types[ti];
+        if (!is_function_type(ft))
+            continue;
+        if (ft->kind != ATOM_EXPR || ft->expr.len < 2 ||
+            ft->expr.len - 2 != nargs)
+            continue;
+
+        Atom *fresh_ft = atom_freshen_epoch(a, ft, fresh_var_suffix());
+        Atom *candidate_arg_types[32];
+        if (get_function_arg_types(fresh_ft, candidate_arg_types, 32) != nargs)
+            continue;
+
+        if (!selected_direct_profile) {
+            selected_ft = fresh_ft;
+            for (uint32_t ai = 0; ai < nargs; ai++) {
+                selected_policies[ai] =
+                    language_function_arg_policy(op, ai, candidate_arg_types[ai]);
+            }
+            selected_direct_profile = true;
+            continue;
+        }
+
+        bool compatible = true;
+        for (uint32_t ai = 0; ai < nargs; ai++) {
+            CettaFunctionArgPolicy candidate_policy =
+                language_function_arg_policy(op, ai, candidate_arg_types[ai]);
+            if (candidate_policy != selected_policies[ai]) {
+                compatible = false;
+                break;
+            }
+        }
+        if (!compatible) {
+            selected_direct_profile = false;
+            selected_ft = NULL;
+            break;
+        }
+    }
+
+    if (selected_direct_profile && selected_ft)
+        (void)get_function_arg_types(selected_ft, arg_types, 32);
+    free(op_types);
+    return selected_direct_profile;
+}
+
 static void dispatch_capture_outcomes(Space *s, Arena *a, Atom *head, Atom **args,
                                       uint32_t nargs, int fuel,
                                       const Bindings *prefix,
@@ -5532,8 +5592,8 @@ static bool dispatch_direct_surface_no_type(Space *s, Arena *a,
 
     uint32_t nargs = atom->expr.len - 1;
     Atom **arg_types = nargs ? arena_alloc(a, sizeof(Atom *) * nargs) : NULL;
-    for (uint32_t i = 0; i < nargs; i++)
-        arg_types[i] = atom_undefined_type(a);
+    if (nargs > 0)
+        (void)direct_surface_fill_arg_types(s, a, resolved_op, nargs, arg_types);
 
     OutcomeSet call_terms;
     outcome_set_init(&call_terms);
@@ -5579,6 +5639,13 @@ static bool dispatch_direct_surface_no_type(Space *s, Arena *a,
     }
     outcome_set_free(&call_terms);
     return handled;
+}
+
+static Atom *dispatch_observed_arg(Arena *a, const Bindings *current_env,
+                                   Atom *arg) {
+    if (!arg || !current_env || !bindings_has_any_entries(current_env))
+        return arg;
+    return bindings_apply_if_vars(current_env, a, arg);
 }
 
 static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
@@ -8955,8 +9022,8 @@ tail_call: ;
 
     /* ── add-atom ──────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.add_atom && nargs == 2 && g_registry) {
-        Atom *space_ref = expr_arg(atom, 0);
-        Atom *atom_to_add = expr_arg(atom, 1);
+        Atom *space_ref = dispatch_observed_arg(a, CURRENT_ENV, expr_arg(atom, 0));
+        Atom *atom_to_add = dispatch_observed_arg(a, CURRENT_ENV, expr_arg(atom, 1));
         if (emit_generic_mork_handle_native_surface(
                 s, a, atom, atom->expr.elems + 1, nargs, fuel,
                 g_builtin_syms.mork_add_atom, os)) {
@@ -8996,8 +9063,8 @@ tail_call: ;
 
     /* ── add-atom-nodup (dedup variant for forward chaining) ────────────── */
     if (head_id == g_builtin_syms.add_atom_nodup && nargs == 2 && g_registry) {
-        Atom *space_ref = expr_arg(atom, 0);
-        Atom *atom_to_add = expr_arg(atom, 1);
+        Atom *space_ref = dispatch_observed_arg(a, CURRENT_ENV, expr_arg(atom, 0));
+        Atom *atom_to_add = dispatch_observed_arg(a, CURRENT_ENV, expr_arg(atom, 1));
         Atom *mork_handle_error = guard_mork_handle_surface(
             s, a, atom, space_ref, fuel, "add-atom-nodup", "mork:add-atom");
         if (mork_handle_error) {
