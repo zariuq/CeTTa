@@ -20,3 +20,31 @@
 # Local checkpoints and backups
 /src/*.checkpoint_*
 /src/*.old_backup
+
+# Local tool/session debris
+/.codex
+/.generated/
+/.translator_pln_stage/
+/.oruzhi_*/
+/.oruzhi_*.metta
+/.tmp_*.metta
+/.cetta_*.metta
+/tmp_*.metta
+/tmp_cetta_logs/
+/callgrind.*
+/fc_probe_*.metta
+/bench_mork.metta
+/bench_native.metta
+/bench_pathmap.metta
+
+# Local Python caches
+/scripts/__pycache__/
+/tests/support/__pycache__/
+/tests/support/import_foreign_pkg/plugin/__pycache__/
+
+# Native/Rust build products
+/native/*.o
+/native/*.stage0.o
+/src/*.o
+/src/*.stage0.o
+/rust/target/

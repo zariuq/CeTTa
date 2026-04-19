@@ -151,6 +151,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "eval-tail-reclaimed-bytes",
     "eval-tail-promoted-binding-entries-peak",
     "eval-tail-promoted-binding-constraints-peak",
+    "query-episode-survivor-arena-alloc-bytes",
+    "query-episode-survivor-arena-live-bytes-peak",
+    "query-episode-survivor-arena-reserved-bytes-peak",
+    "query-episode-promoted-answer-count",
+    "query-episode-promoted-answer-bytes",
+    "query-episode-delayed-outcome-survivor-count",
 };
 
 static int64_t clamp_counter(uint64_t value) {

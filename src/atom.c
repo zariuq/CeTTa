@@ -43,6 +43,17 @@ static bool arena_runtime_counter_lane(CettaArenaRuntimeKind kind,
         if (reserved_peak_counter)
             *reserved_peak_counter = CETTA_RUNTIME_COUNTER_SCRATCH_ARENA_RESERVED_BYTES_PEAK;
         return true;
+    case CETTA_ARENA_RUNTIME_KIND_SURVIVOR:
+        if (alloc_counter)
+            *alloc_counter =
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES;
+        if (live_peak_counter)
+            *live_peak_counter =
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_LIVE_BYTES_PEAK;
+        if (reserved_peak_counter)
+            *reserved_peak_counter =
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_RESERVED_BYTES_PEAK;
+        return true;
     default:
         return false;
     }
