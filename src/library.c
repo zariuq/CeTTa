@@ -2,6 +2,7 @@
 #include "library.h"
 
 #include "eval.h"
+#include "lang_adapter.h"
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
@@ -266,12 +267,14 @@ static const CettaLibrarySpec *cetta_library_lookup(const char *name) {
 }
 
 void cetta_library_context_init(CettaLibraryContext *ctx) {
-    cetta_library_context_init_with_profile(ctx, cetta_profile_he_extended());
+    cetta_library_context_init_with_profile(ctx, cetta_profile_he_extended(),
+                                            cetta_language_lookup("he"));
 }
 
 void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
-                                             const CettaProfile *profile) {
-    cetta_eval_session_init(&ctx->session, profile);
+                                             const CettaProfile *profile,
+                                             const CettaLanguageSpec *language) {
+    cetta_eval_session_init(&ctx->session, profile, language);
     term_universe_init(&ctx->term_universe);
     ctx->active_mask = 0;
     ctx->root_dir[0] = '\0';
@@ -5407,8 +5410,9 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         ok = load_module_mm2_file(ctx, path, work_space, eval_arena,
                                   persistent_arena, error_out);
     } else {
-        int n = parse_metta_file_ids(path, work_space ? work_space->universe : NULL,
-                                     &atom_ids);
+        int n = cetta_language_parse_file_ids(ctx->session.language, path, eval_arena,
+                                              work_space ? work_space->universe : NULL,
+                                              &atom_ids);
         if (n < 0) {
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);

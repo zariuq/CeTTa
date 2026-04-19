@@ -6,6 +6,8 @@
 #include <limits.h>
 #include <stdio.h>
 
+#include "lang.h"
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -176,6 +178,7 @@ typedef struct {
 
 typedef struct {
     const CettaProfile *profile;
+    const CettaLanguageSpec *language;
     CettaModuleResolver module_resolver;
     CettaEvaluatorOptions options;
 } CettaEvalSession;
@@ -228,7 +231,8 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
                                                CettaEvalOptionValueKind kind,
                                                const char *repr,
                                                int64_t int_value);
-void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile);
+void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile,
+                             const CettaLanguageSpec *language);
 void cetta_eval_session_init_he_compat(CettaEvalSession *session);
 void cetta_eval_session_init_he_extended(CettaEvalSession *session);
 void cetta_eval_session_init_he_prime(CettaEvalSession *session);

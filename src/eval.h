@@ -2,6 +2,7 @@
 #define CETTA_EVAL_H
 
 #include "atom.h"
+#include "lang.h"
 #include "space.h"
 #include "variant_instance.h"
 typedef struct CettaLibraryContext CettaLibraryContext;
@@ -52,6 +53,7 @@ int eval_current_effective_fuel_limit(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
 Registry *eval_current_registry(void);
 Arena *eval_current_persistent_arena(void);
+const CettaLanguageSpec *eval_current_language(void);
 
 /* Internal: evaluate an atom fully (recursive).
    type is the expected type (NULL means %Undefined%). */

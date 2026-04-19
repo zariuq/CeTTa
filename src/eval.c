@@ -74,6 +74,11 @@ static CettaEvaluatorOptions *active_eval_options(void) {
     return &active_eval_session()->options;
 }
 
+const CettaLanguageSpec *eval_current_language(void) {
+    CettaEvalSession *session = active_eval_session();
+    return session ? session->language : cetta_language_lookup("he");
+}
+
 static bool eval_type_check_auto_enabled(void) {
     return active_eval_options_const()->type_check_auto;
 }
@@ -106,6 +111,28 @@ static bool mork_space_sugar_option_allows(const CettaEvalOptionEntry *option) {
 
 static bool generic_mork_space_sugar_allowed(void) {
     return mork_space_sugar_option_allows(active_eval_option("mork-space-sugar"));
+}
+
+static bool language_known_head_query_miss_is_failure(void) {
+    const CettaLanguageSpec *lang = eval_current_language();
+    return cetta_language_known_head_query_miss_is_failure(lang);
+}
+
+static CettaFunctionArgPolicy language_function_arg_policy(Atom *head,
+                                                           uint32_t arg_index,
+                                                           Atom *domain_type) {
+    return cetta_language_function_arg_policy(eval_current_language(),
+                                              atom_head_symbol_id(head),
+                                              arg_index,
+                                              domain_type);
+}
+
+static bool known_head_query_miss_should_fail(Space *s, Atom *call_atom) {
+    if (!language_known_head_query_miss_is_failure()) return false;
+    if (!call_atom || call_atom->kind != ATOM_EXPR || call_atom->expr.len == 0) return false;
+    Atom *head = call_atom->expr.elems[0];
+    if (!head || head->kind != ATOM_SYMBOL) return false;
+    return space_equations_may_match_known_head(s, head->sym_id);
 }
 
 static bool atom_resolves_to_mork_handle(Space *s, Arena *a, Atom *space_expr,
@@ -4756,7 +4783,8 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
     Atom *orig_arg = orig_args[idx];
     Atom *arg_type = function_domain_type((Bindings *)env, a, arg_types[idx], NULL);
     Atom *bound_arg = bindings_apply_if_vars(env, a, orig_arg);
-    if (atom_is_symbol_id(arg_type, g_builtin_syms.atom) || orig_arg->kind == ATOM_VAR) {
+    CettaFunctionArgPolicy policy = language_function_arg_policy(op, idx, arg_type);
+    if (policy == CETTA_FUNCTION_ARG_POLICY_RAW || orig_arg->kind == ATOM_VAR) {
         prefix[idx] = bound_arg;
         if (eval_dependent_telescope_enabled()) {
             BindingsBuilder merged;
@@ -4780,7 +4808,10 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
 
     OutcomeSet arg_os;
     outcome_set_init(&arg_os);
-    metta_eval_bind_typed(s, a, arg_type, bound_arg, fuel, &arg_os);
+    if (policy == CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL)
+        metta_eval_bind(s, a, bound_arg, fuel, &arg_os);
+    else
+        metta_eval_bind_typed(s, a, arg_type, bound_arg, fuel, &arg_os);
 
     BindingsBuilder merged_builder;
     if (!bindings_builder_init(&merged_builder, env)) {
@@ -4827,6 +4858,15 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
     }
     bindings_builder_free(&merged_builder);
     outcome_set_free(&arg_os);
+}
+
+static void interpret_surface_args_with_policy(Space *s, Arena *a, Atom *head,
+                                               Atom **orig_args, Atom **arg_types,
+                                               uint32_t nargs, const Bindings *env,
+                                               int fuel, OutcomeSet *os) {
+    Atom **prefix = arena_alloc(a, sizeof(Atom *) * nargs);
+    interpret_function_args(s, a, head, orig_args, arg_types, nargs, 0, prefix,
+                            env, fuel, os);
 }
 
 static void dispatch_capture_outcomes(Space *s, Arena *a, Atom *head, Atom **args,
@@ -6052,6 +6092,10 @@ query_done:
             }
             search_context_free(&qr_context);
             query_results_free(&qr);
+            if (known_head_query_miss_should_fail(s, call_atom)) {
+                outcome_set_free(&tuples);
+                return true;
+            }
             outcome_set_add_existing_move(os, &tuples.items[0]);
             outcome_set_free(&tuples);
             return true;
@@ -6128,6 +6172,9 @@ query_done:
             }
             search_context_free(&qr_context);
 
+            if (known_head_query_miss_should_fail(s, call_atom)) {
+                continue;
+            }
             outcome_set_add_existing_move(os, &tuples.items[ti]);
         }
         outcome_set_free(&tuples);
@@ -6205,13 +6252,27 @@ tail_call: ;
                 &_empty);
             return;
         }
-        Atom *list = expr_arg(atom, 0);
-        if (list->kind == ATOM_EXPR) {
+        Atom *arg_types[] = { atom_expression_type(a) };
+        OutcomeSet calls;
+        outcome_set_init(&calls);
+        interpret_surface_args_with_policy(s, a, atom->expr.elems[0],
+                                           atom->expr.elems + 1, arg_types, 1,
+                                           CURRENT_ENV, fuel, &calls);
+        for (uint32_t ci = 0; ci < calls.len; ci++) {
+            Atom *call_atom = outcome_atom_materialize(a, &calls.items[ci]);
+            Bindings *combo_env = &calls.items[ci].env;
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                outcome_set_add_existing_move(os, &calls.items[ci]);
+                continue;
+            }
+            Atom *list = expr_arg(call_atom, 0);
+            if (list->kind != ATOM_EXPR)
+                continue;
             for (uint32_t i = 0; i < list->expr.len; i++) {
                 OutcomeSet branch;
                 outcome_set_init(&branch);
                 eval_for_current_caller(s, a, etype, list->expr.elems[i], fuel, &_empty,
-                                        CURRENT_ENV, preserve_bindings, &branch);
+                                        combo_env, preserve_bindings, &branch);
                 for (uint32_t j = 0; j < branch.len; j++) {
                     Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
                     if (atom_is_empty(branch_atom))
@@ -6221,6 +6282,7 @@ tail_call: ;
                 outcome_set_free(&branch);
             }
         }
+        outcome_set_free(&calls);
         return;
     }
 
@@ -6247,83 +6309,57 @@ tail_call: ;
         return;
     }
 
-    /* ── cons-atom ─────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.cons_atom && nargs == 2) {
-        Atom *hd = expr_arg(atom, 0);
-        Atom *tl = expr_arg(atom, 1);
-        if (tl->kind == ATOM_EXPR) {
-            Atom **elems = arena_alloc(a, sizeof(Atom *) * (tl->expr.len + 1));
-            elems[0] = hd;
-            for (uint32_t i = 0; i < tl->expr.len; i++)
-                elems[i + 1] = tl->expr.elems[i];
-            outcome_set_add(os, atom_expr(a, elems, tl->expr.len + 1), &_empty);
-        } else {
-            outcome_set_add(os, atom_expr2(a, hd, tl), &_empty);
-        }
-        return;
-    }
-
-    /* ── union-atom ────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.union_atom && nargs == 2) {
-        Atom *lhs = expr_arg(atom, 0);
-        Atom *rhs = expr_arg(atom, 1);
-        if (lhs->kind == ATOM_EXPR && rhs->kind == ATOM_EXPR) {
-            uint32_t len = lhs->expr.len + rhs->expr.len;
-            Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
-            for (uint32_t i = 0; i < lhs->expr.len; i++)
-                elems[i] = lhs->expr.elems[i];
-            for (uint32_t i = 0; i < rhs->expr.len; i++)
-                elems[lhs->expr.len + i] = rhs->expr.elems[i];
-            outcome_set_add(os, atom_expr(a, elems, len), &_empty);
-        } else {
-            outcome_set_add(os, atom, &_empty);
-        }
-        return;
-    }
-
-    /* ── decons-atom ───────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.decons_atom) {
-        if (nargs != 1) {
+    /* ── is-member (PeTTa relational membership) ─────────────────────── */
+    if (head_id == g_builtin_syms.is_member) {
+        if (nargs != 2) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
                 &_empty);
             return;
         }
-        Atom *e = expr_arg(atom, 0);
-        if (e->kind == ATOM_EXPR && e->expr.len > 0) {
-            Atom *hd = e->expr.elems[0];
-            Atom *tl = atom_expr(a, e->expr.elems + 1, e->expr.len - 1);
-            outcome_set_add(os, atom_expr2(a, hd, tl), &_empty);
-        } else {
-            outcome_set_add(os,
-                call_signature_error(a, atom,
-                    "(decons-atom (: <expr> Expression))"),
-                &_empty);
-        }
-        return;
-    }
+        Atom *arg_types[] = {
+            atom_symbol_id(a, g_builtin_syms.atom),
+            atom_expression_type(a),
+        };
+        OutcomeSet calls;
+        outcome_set_init(&calls);
+        interpret_surface_args_with_policy(s, a, atom->expr.elems[0],
+                                           atom->expr.elems + 1, arg_types, 2,
+                                           CURRENT_ENV, fuel, &calls);
+        for (uint32_t ci = 0; ci < calls.len; ci++) {
+            Atom *call_atom = outcome_atom_materialize(a, &calls.items[ci]);
+            Bindings *combo_env = &calls.items[ci].env;
+            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+                outcome_set_add_existing_move(os, &calls.items[ci]);
+                continue;
+            }
 
-    /* ── car-atom / cdr-atom ─────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.car_atom && nargs == 1) {
-        Atom *e = expr_arg(atom, 0);
-        if (e->kind == ATOM_EXPR && e->expr.len > 0)
-            outcome_set_add(os, e->expr.elems[0], &_empty);
-        else
-            outcome_set_add(os,
-                atom_error(a, atom,
-                    atom_string(a, "car-atom expects a non-empty expression as an argument")),
-                &_empty);
-        return;
-    }
-    if (head_id == g_builtin_syms.cdr_atom && nargs == 1) {
-        Atom *e = expr_arg(atom, 0);
-        if (e->kind == ATOM_EXPR && e->expr.len > 0)
-            outcome_set_add(os, atom_expr(a, e->expr.elems + 1, e->expr.len - 1), &_empty);
-        else
-            outcome_set_add(os,
-                atom_error(a, atom,
-                atom_string(a, "cdr-atom expects a non-empty expression as an argument")),
-                &_empty);
+            Atom *needle = expr_arg(call_atom, 0);
+            Atom *list = expr_arg(call_atom, 1);
+            bool saw_match = false;
+
+            if (list->kind == ATOM_EXPR) {
+                for (uint32_t i = 0; i < list->expr.len; i++) {
+                    BindingsBuilder b;
+                    if (!bindings_builder_init(&b, combo_env)) {
+                        outcome_set_free(&calls);
+                        return;
+                    }
+                    if (match_atoms_builder(needle, list->expr.elems[i], &b)) {
+                        const Bindings *bb = bindings_builder_bindings(&b);
+                        if (!bindings_has_loop((Bindings *)bb)) {
+                            outcome_set_add(os, atom_true(a), bb);
+                            saw_match = true;
+                        }
+                    }
+                    bindings_builder_free(&b);
+                }
+            }
+
+            if (!saw_match)
+                outcome_set_add(os, atom_false(a), combo_env);
+        }
+        outcome_set_free(&calls);
         return;
     }
 
