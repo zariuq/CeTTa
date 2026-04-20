@@ -1154,9 +1154,7 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
         return false;
 
     if (space_tracks_atom_ids(s)) {
-        AtomId atom_id = term_universe_lookup_atom_id(s->universe, atom);
-        if (atom_id == CETTA_ATOM_ID_NONE)
-            atom_id = term_universe_store_atom_id(s->universe, fallback, atom);
+        AtomId atom_id = term_universe_store_atom_id(s->universe, fallback, atom);
         if (atom_id != CETTA_ATOM_ID_NONE) {
             space_add_atom_id(s, atom_id);
             return true;

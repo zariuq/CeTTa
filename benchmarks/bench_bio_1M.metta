@@ -72,12 +72,12 @@
 ; ============================================================================
 ; Load 1.4M atoms
 ; ============================================================================
-!(import! &self eqtl_for_mining)
-!(import! &self bio_refseq_723k)
-!(import! &self bio_tfbs_415k)
-!(import! &self bio_multirelational_kb_scaled)
-!(import! &self bio_hetionet_kb)
-!(import! &self discovered_patterns_1k)
+!(import! &self ../tests/eqtl_for_mining.metta)
+!(import! &self ../tests/bio_refseq_723k.metta)
+!(import! &self ../tests/bio_tfbs_415k.metta)
+!(import! &self ../tests/bio_multirelational_kb_scaled.metta)
+!(import! &self ../tests/bio_hetionet_kb.metta)
+!(import! &self ../tests/discovered_patterns_1k.metta)
 
 ; ============================================================================
 ; PLN rules (11 rules — 4 evidence sources + pathway + disease + coreg)
