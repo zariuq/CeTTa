@@ -57,6 +57,8 @@
 (: match-types (-> Type Type Atom Atom %Undefined%))
 (: first-from-pair (-> Atom Atom))
 (: match-type-or (-> Bool Type Type Bool))
+(: get-type (-> Atom %Undefined%))
+(: get-metatype (-> Atom Atom))
 (: get-type-space (-> SpaceType Atom Atom))
 (: _minimal-foldl-atom (-> Expression Atom Variable Variable Atom SpaceType %Undefined%))
 (: _collapse-add-next-atom-from-collapse-bind-result (-> Expression Expression Atom))
