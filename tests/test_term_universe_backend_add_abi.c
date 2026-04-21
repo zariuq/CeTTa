@@ -244,6 +244,40 @@ bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
     return false;
 }
 
+bool cetta_mork_bridge_space_remove_text(CettaMorkSpaceHandle *space,
+                                         const char *text,
+                                         uint64_t *out_removed) {
+    (void)space;
+    (void)text;
+    if (out_removed)
+        *out_removed = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
+                                               const uint8_t *expr_bytes,
+                                               size_t len,
+                                               uint64_t *out_removed) {
+    (void)space;
+    (void)expr_bytes;
+    (void)len;
+    if (out_removed)
+        *out_removed = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
+                                                 const uint8_t *expr_bytes,
+                                                 size_t len,
+                                                 bool *out_found) {
+    (void)space;
+    (void)expr_bytes;
+    (void)len;
+    if (out_found)
+        *out_found = false;
+    return false;
+}
+
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                   uint64_t *out_size) {
     if (out_size)
@@ -253,6 +287,12 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
     if (out_size)
         *out_size = g_bridge_value_count;
     return true;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
+    const CettaMorkSpaceHandle *space) {
+    (void)space;
+    return NULL;
 }
 
 bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
@@ -957,11 +997,27 @@ static void test_bridge_structural_import_boundary(TermUniverse *universe,
     g_bridge_value_lens[0] = sizeof(pair_same_var);
     g_bridge_value_count = 1;
     loaded = 1234;
+    reset_term_universe_witnesses(universe);
     assert(space_match_backend_import_bridge_space(
                &imported_space, g_fake_bridge_space, &loaded) ==
-           SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK);
-    assert(loaded == 0);
-    assert(space_length(&imported_space) == 2);
+           SPACE_BRIDGE_IMPORT_OK);
+    assert(loaded == 1);
+    assert(space_length(&imported_space) == 3);
+    import_diag = snapshot_term_universe_witnesses(universe);
+    assert(import_diag.direct_constructor_leaf_hits > 0);
+    assert(import_diag.direct_constructor_expr_hits > 0);
+    assert(import_diag.legacy_top_down_stable_admissions == 0);
+    assert(import_diag.lazy_decode_count == 0);
+
+    SubstMatchSet same_var_matches;
+    smset_init(&same_var_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, "pair"),
+                            var(scratch, "same", 9301),
+                            var(scratch, "same", 9301)),
+                      &same_var_matches);
+    assert(same_var_matches.len == 1);
+    smset_free(&same_var_matches);
 
     space_free(&imported_space);
 }

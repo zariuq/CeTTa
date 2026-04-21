@@ -560,7 +560,11 @@ pub fn counted_expr_row_packet(space: &Space) -> Result<(Vec<u8>, u32), String> 
 
     for entry in counted_entries(space)? {
         for _ in 0..entry.count {
-            append_expr_row_packet(&mut packet, &entry.atom_expr_bytes)?;
+            let expr = Expr {
+                ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
+            };
+            let encoded = stable_bridge_expr_packet_bytes(space, expr)?;
+            append_expr_row_packet(&mut packet, &encoded)?;
             count = count.saturating_add(1);
         }
     }
@@ -1226,9 +1230,17 @@ mod tests {
         }
 
         assert_eq!(decoded.len(), 3);
-        assert_eq!(decoded[0], dup_a);
-        assert_eq!(decoded[1], dup_a);
-        assert_eq!(decoded[2], dup_b);
+        let dup_a_packet = stable_bridge_expr_packet_bytes(&space, Expr {
+            ptr: dup_a.as_ptr().cast_mut(),
+        })
+        .unwrap();
+        let dup_b_packet = stable_bridge_expr_packet_bytes(&space, Expr {
+            ptr: dup_b.as_ptr().cast_mut(),
+        })
+        .unwrap();
+        assert_eq!(decoded[0], dup_a_packet);
+        assert_eq!(decoded[1], dup_a_packet);
+        assert_eq!(decoded[2], dup_b_packet);
     }
 
     #[test]

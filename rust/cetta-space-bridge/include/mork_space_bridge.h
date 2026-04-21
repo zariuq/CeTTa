@@ -116,7 +116,7 @@ Packet format for mork_space_dump_expr_rows():
 
   repeated rows:
     u32 expr_len_be
-    u8[expr_len] stable raw bridge expr bytes
+    u8[expr_len] stable bridge expr packet bytes
 
 count = logical row count with multiplicities expanded.
 */
