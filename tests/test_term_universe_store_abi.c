@@ -210,6 +210,33 @@ bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena)
     return true;
 }
 
+bool space_match_backend_materialize_native_storage(Space *s,
+                                                    Arena *persistent_arena) {
+    (void)s;
+    (void)persistent_arena;
+    return true;
+}
+
+bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
+                                              Atom *atom) {
+    (void)s;
+    (void)atom_id;
+    (void)atom;
+    return false;
+}
+
+bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id) {
+    (void)s;
+    (void)atom_id;
+    return false;
+}
+
+bool space_match_backend_truncate_direct(Space *s, uint32_t new_len) {
+    (void)s;
+    (void)new_len;
+    return false;
+}
+
 bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
                                           const uint8_t *text, size_t len,
                                           uint64_t *out_added) {
@@ -258,6 +285,19 @@ bool space_match_backend_bridge_space(Space *s, CettaMorkSpaceHandle **out_bridg
 
 uint32_t space_match_backend_logical_len(const Space *s) {
     return s ? s->len : 0;
+}
+
+AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
+    if (!s || idx >= s->len || !s->atom_ids)
+        return CETTA_ATOM_ID_NONE;
+    return s->atom_ids[s->start + idx];
+}
+
+Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
+    AtomId atom_id = space_match_backend_get_atom_id_at(s, idx);
+    if (!s || atom_id == CETTA_ATOM_ID_NONE)
+        return NULL;
+    return term_universe_get_atom(s->native.universe, atom_id);
 }
 
 bool space_match_backend_mork_query_bindings_direct(

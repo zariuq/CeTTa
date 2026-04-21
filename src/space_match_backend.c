@@ -660,7 +660,18 @@ static bool imported_bridge_read_u32(const uint8_t *packet, size_t len, size_t *
                                      uint32_t *out);
 static bool imported_bridge_read_u16(const uint8_t *packet, size_t len, size_t *off,
                                      uint16_t *out);
+static Atom *imported_bridge_parse_token_bytes(Arena *a,
+                                               const uint8_t *bytes,
+                                               uint32_t len,
+                                               bool exact_len_reliable,
+                                               bool *ok);
 static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id(
+    TermUniverse *universe,
+    Arena *scratch,
+    const uint8_t *expr,
+    size_t expr_len,
+    AtomId *out_id);
+static ImportedBridgeExprDecodeResult imported_bridge_packet_expr_to_atom_id(
     TermUniverse *universe,
     Arena *scratch,
     const uint8_t *expr,
@@ -690,6 +701,13 @@ static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
 static void imported_bridge_expr_memo_init(ImportedBridgeExprMemo *memo);
 static void imported_bridge_expr_memo_free(ImportedBridgeExprMemo *memo);
 static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id_cached(
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeExprMemo *memo,
+    const uint8_t *expr,
+    size_t expr_len,
+    AtomId *out_id);
+static ImportedBridgeExprDecodeResult imported_bridge_packet_expr_to_atom_id_cached(
     TermUniverse *universe,
     Arena *scratch,
     ImportedBridgeExprMemo *memo,
@@ -1073,6 +1091,38 @@ static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id_cached(
     return result;
 }
 
+static ImportedBridgeExprDecodeResult imported_bridge_packet_expr_to_atom_id_cached(
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeExprMemo *memo,
+    const uint8_t *expr,
+    size_t expr_len,
+    AtomId *out_id) {
+    ImportedBridgeExprDecodeResult result = IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+    AtomId atom_id = CETTA_ATOM_ID_NONE;
+
+    if (memo && imported_bridge_expr_memo_lookup(memo, expr, expr_len,
+                                                 &atom_id, &result)) {
+        if (out_id)
+            *out_id = atom_id;
+        return result;
+    }
+
+    result = imported_bridge_packet_expr_to_atom_id(universe, scratch, expr,
+                                                   expr_len, &atom_id);
+    if (memo && result == IMPORTED_BRIDGE_EXPR_DECODE_OK) {
+        if (!imported_bridge_expr_memo_store(memo, expr, expr_len,
+                                             atom_id, result)) {
+            if (out_id)
+                *out_id = CETTA_ATOM_ID_NONE;
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        }
+    }
+    if (out_id)
+        *out_id = atom_id;
+    return result;
+}
+
 static ImportedBridgeExprDecodeResult imported_bridge_token_to_atom_id(
     TermUniverse *universe,
     Arena *scratch,
@@ -1156,6 +1206,31 @@ static ImportedBridgeExprDecodeResult imported_bridge_token_to_atom_id(
     return IMPORTED_BRIDGE_EXPR_DECODE_OK;
 }
 
+static ImportedBridgeExprVarSlot *imported_bridge_expr_varmap_get_or_add(
+    ImportedBridgeExprVarMap *vars,
+    uint8_t index) {
+    if (!vars)
+        return NULL;
+    for (uint32_t i = 0; i < vars->len; i++) {
+        if (vars->items[i].index == index)
+            return &vars->items[i];
+    }
+    if (vars->len >= vars->cap) {
+        vars->cap = vars->cap ? vars->cap * 2u : 8u;
+        vars->items = cetta_realloc(
+            vars->items, sizeof(ImportedBridgeExprVarSlot) * vars->cap);
+    }
+    char name[32];
+    snprintf(name, sizeof(name), "$__mork_p%u", (unsigned)index);
+    vars->items[vars->len] = (ImportedBridgeExprVarSlot){
+        .index = index,
+        /* Bridge variable numbers are local to one decoded expression. */
+        .var_id = fresh_var_id(),
+        .spelling = symbol_intern_cstr(g_symbols, name),
+    };
+    return &vars->items[vars->len++];
+}
+
 static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id_rec(
     TermUniverse *universe,
     Arena *scratch,
@@ -1164,113 +1239,66 @@ static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id_rec(
     size_t *off,
     ImportedBridgeExprVarMap *vars,
     uint8_t *introduced_vars,
-    Atom **out_atom) {
-    if (!universe || !scratch || !expr || !off || !out_atom ||
+    AtomId *out_id) {
+    if (!universe || !scratch || !expr || !off || !out_id ||
         !vars || !introduced_vars || *off >= expr_len)
         return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+    *out_id = CETTA_ATOM_ID_NONE;
 
     uint8_t tag = expr[*off];
     if (tag == IMPORTED_MORK_TAG_NEWVAR) {
-        ImportedBridgeExprVarSlot *slot = NULL;
-        for (uint32_t i = 0; i < vars->len; i++) {
-            if (vars->items[i].index == *introduced_vars) {
-                slot = &vars->items[i];
-                break;
-            }
-        }
-        if (!slot) {
-            if (vars->len >= vars->cap) {
-                vars->cap = vars->cap ? vars->cap * 2u : 8u;
-                vars->items = cetta_realloc(
-                    vars->items, sizeof(ImportedBridgeExprVarSlot) * vars->cap);
-            }
-            char name[32];
-            snprintf(name, sizeof(name), "$__mork_p%u",
-                     (unsigned)*introduced_vars);
-            SymbolId spelling = symbol_intern_cstr(g_symbols, name);
-            /* Imported bridge vars are local to a decoded expression. Reusing
-               a globally interned VarId here makes unrelated projected atoms
-               accidentally share variable identity just because both bridge
-               payloads start numbering at p0/p1/..., which breaks outer
-               let-star plus match composition on pathmap-backed spaces. */
-            VarId var_id = fresh_var_id();
-            vars->items[vars->len] = (ImportedBridgeExprVarSlot){
-                .index = *introduced_vars,
-                .var_id = var_id,
-                .spelling = spelling,
-            };
-            slot = &vars->items[vars->len++];
-        }
+        ImportedBridgeExprVarSlot *slot =
+            imported_bridge_expr_varmap_get_or_add(vars, *introduced_vars);
+        if (!slot)
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
         (*introduced_vars)++;
         (*off)++;
-        *out_atom = atom_var_with_spelling(scratch, slot->spelling, slot->var_id);
-        return *out_atom ? IMPORTED_BRIDGE_EXPR_DECODE_OK
-                         : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        *out_id = tu_intern_var(universe, slot->spelling, slot->var_id);
+        return *out_id != CETTA_ATOM_ID_NONE ? IMPORTED_BRIDGE_EXPR_DECODE_OK
+                                             : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
     }
     if ((tag & IMPORTED_MORK_TAG_VARREF_MASK) == IMPORTED_MORK_TAG_VARREF_PREFIX) {
         uint8_t ref = (uint8_t)(tag & 0x3Fu);
-        ImportedBridgeExprVarSlot *slot = NULL;
-        for (uint32_t i = 0; i < vars->len; i++) {
-            if (vars->items[i].index == ref) {
-                slot = &vars->items[i];
-                break;
-            }
-        }
-        if (!slot) {
-            if (vars->len >= vars->cap) {
-                vars->cap = vars->cap ? vars->cap * 2u : 8u;
-                vars->items = cetta_realloc(
-                    vars->items, sizeof(ImportedBridgeExprVarSlot) * vars->cap);
-            }
-            char name[32];
-            snprintf(name, sizeof(name), "$__mork_p%u", (unsigned)ref);
-            SymbolId spelling = symbol_intern_cstr(g_symbols, name);
-            VarId var_id = fresh_var_id();
-            vars->items[vars->len] = (ImportedBridgeExprVarSlot){
-                .index = ref,
-                .var_id = var_id,
-                .spelling = spelling,
-            };
-            slot = &vars->items[vars->len++];
-        }
+        ImportedBridgeExprVarSlot *slot =
+            imported_bridge_expr_varmap_get_or_add(vars, ref);
+        if (!slot)
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
         (*off)++;
-        *out_atom = atom_var_with_spelling(scratch, slot->spelling, slot->var_id);
-        return *out_atom ? IMPORTED_BRIDGE_EXPR_DECODE_OK
-                         : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        *out_id = tu_intern_var(universe, slot->spelling, slot->var_id);
+        return *out_id != CETTA_ATOM_ID_NONE ? IMPORTED_BRIDGE_EXPR_DECODE_OK
+                                             : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
     }
 
     if ((tag & IMPORTED_MORK_TAG_VARREF_MASK) == IMPORTED_MORK_TAG_SYMBOL_PREFIX) {
         uint32_t sym_len = (uint32_t)(tag & 0x3Fu);
         if (sym_len == 0 || *off + 1u + sym_len > expr_len)
             return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
-        AtomId atom_id = CETTA_ATOM_ID_NONE;
         ImportedBridgeExprDecodeResult result =
             imported_bridge_token_to_atom_id(universe, scratch, expr + *off + 1u,
-                                             sym_len, &atom_id);
+                                             sym_len, out_id);
         if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK)
             return result;
-        *out_atom = term_universe_get_atom(universe, atom_id);
-        if (!*out_atom)
-            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
         *off += 1u + sym_len;
         return IMPORTED_BRIDGE_EXPR_DECODE_OK;
     }
 
     uint32_t arity = (uint32_t)(tag & 0x3Fu);
     (*off)++;
-    Atom **children = arity ? arena_alloc(scratch, sizeof(Atom *) * arity) : NULL;
+    AtomId *children = arity ? cetta_malloc(sizeof(AtomId) * arity) : NULL;
     for (uint32_t i = 0; i < arity; i++) {
         ImportedBridgeExprDecodeResult child_result =
             imported_bridge_expr_to_atom_id_rec(universe, scratch, expr, expr_len,
                                                 off, vars, introduced_vars,
                                                 &children[i]);
-        if (child_result != IMPORTED_BRIDGE_EXPR_DECODE_OK)
+        if (child_result != IMPORTED_BRIDGE_EXPR_DECODE_OK) {
+            free(children);
             return child_result;
+        }
     }
-    *out_atom = atom_expr(scratch, children, arity);
-    if (!*out_atom)
-        return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
-    return IMPORTED_BRIDGE_EXPR_DECODE_OK;
+    *out_id = tu_expr_from_ids(universe, children, arity);
+    free(children);
+    return *out_id != CETTA_ATOM_ID_NONE ? IMPORTED_BRIDGE_EXPR_DECODE_OK
+                                         : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
 }
 
 static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id(
@@ -1281,12 +1309,112 @@ static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id(
     AtomId *out_id) {
     size_t off = 0;
     uint8_t introduced_vars = 0;
-    Atom *atom = NULL;
     ImportedBridgeExprVarMap vars;
     imported_bridge_expr_varmap_init(&vars);
     ImportedBridgeExprDecodeResult result =
         imported_bridge_expr_to_atom_id_rec(universe, scratch, expr, expr_len,
-                                            &off, &vars, &introduced_vars, &atom);
+                                            &off, &vars, &introduced_vars, out_id);
+    if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK) {
+        imported_bridge_expr_varmap_free(&vars);
+        return result;
+    }
+    if (off != expr_len) {
+        imported_bridge_expr_varmap_free(&vars);
+        return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+    }
+    imported_bridge_expr_varmap_free(&vars);
+    return *out_id != CETTA_ATOM_ID_NONE
+        ? IMPORTED_BRIDGE_EXPR_DECODE_OK
+        : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+}
+
+static ImportedBridgeExprDecodeResult imported_bridge_packet_expr_to_atom_id_rec(
+    Arena *scratch,
+    const uint8_t *expr,
+    size_t expr_len,
+    size_t *off,
+    ImportedBridgeExprVarMap *vars,
+    uint8_t *introduced_vars,
+    Atom **out_atom) {
+    if (!scratch || !expr || !off || !out_atom ||
+        !vars || !introduced_vars || *off >= expr_len)
+        return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+
+    uint8_t tag = expr[(*off)++];
+    switch (tag) {
+    case IMPORTED_MORK_WIDE_TAG_NEWVAR: {
+        ImportedBridgeExprVarSlot *slot =
+            imported_bridge_expr_varmap_get_or_add(vars, *introduced_vars);
+        if (!slot)
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        (*introduced_vars)++;
+        *out_atom = atom_var_with_spelling(scratch, slot->spelling, slot->var_id);
+        return *out_atom ? IMPORTED_BRIDGE_EXPR_DECODE_OK
+                         : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+    }
+    case IMPORTED_MORK_WIDE_TAG_VARREF: {
+        if (*off >= expr_len)
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        ImportedBridgeExprVarSlot *slot =
+            imported_bridge_expr_varmap_get_or_add(vars, expr[(*off)++]);
+        if (!slot)
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        *out_atom = atom_var_with_spelling(scratch, slot->spelling, slot->var_id);
+        return *out_atom ? IMPORTED_BRIDGE_EXPR_DECODE_OK
+                         : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+    }
+    case IMPORTED_MORK_WIDE_TAG_SYMBOL: {
+        uint32_t sym_len = 0;
+        bool ok = true;
+        if (!imported_bridge_read_u32(expr, expr_len, off, &sym_len) ||
+            sym_len == 0 || *off + sym_len > expr_len)
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        *out_atom = imported_bridge_parse_token_bytes(
+            scratch, expr + *off, sym_len, true, &ok);
+        if (!ok || !*out_atom)
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        *off += sym_len;
+        return IMPORTED_BRIDGE_EXPR_DECODE_OK;
+    }
+    case IMPORTED_MORK_WIDE_TAG_ARITY: {
+        uint32_t arity = 0;
+        if (!imported_bridge_read_u32(expr, expr_len, off, &arity))
+            return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+        Atom **children = arity ? arena_alloc(scratch, sizeof(Atom *) * arity) : NULL;
+        for (uint32_t i = 0; i < arity; i++) {
+            ImportedBridgeExprDecodeResult child_result =
+                imported_bridge_packet_expr_to_atom_id_rec(
+                    scratch, expr, expr_len, off, vars, introduced_vars,
+                    &children[i]);
+            if (child_result != IMPORTED_BRIDGE_EXPR_DECODE_OK)
+                return child_result;
+        }
+        *out_atom = atom_expr(scratch, children, arity);
+        return *out_atom ? IMPORTED_BRIDGE_EXPR_DECODE_OK
+                         : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+    }
+    default:
+        return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+    }
+}
+
+static ImportedBridgeExprDecodeResult imported_bridge_packet_expr_to_atom_id(
+    TermUniverse *universe,
+    Arena *scratch,
+    const uint8_t *expr,
+    size_t expr_len,
+    AtomId *out_id) {
+    if (!universe || !scratch || !expr || !out_id || expr_len == 0)
+        return IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+
+    size_t off = 0;
+    uint8_t introduced_vars = 0;
+    Atom *atom = NULL;
+    ImportedBridgeExprVarMap vars;
+    imported_bridge_expr_varmap_init(&vars);
+    ImportedBridgeExprDecodeResult result =
+        imported_bridge_packet_expr_to_atom_id_rec(
+            scratch, expr, expr_len, &off, &vars, &introduced_vars, &atom);
     if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK) {
         imported_bridge_expr_varmap_free(&vars);
         return result;
@@ -1468,6 +1596,8 @@ static bool pathmap_materialize_native_storage(Space *s, Arena *persistent_arena
         : NULL;
     if (!st)
         return false;
+    if (!st->bridge_active)
+        return true;
     return imported_shadow_refresh_from_projection(s);
 }
 
@@ -3234,7 +3364,7 @@ static bool imported_projection_capture_from_bridge(Space *s,
                     break;
                 }
                 ImportedBridgeExprDecodeResult result =
-                    imported_bridge_expr_to_atom_id_cached(
+                    imported_bridge_packet_expr_to_atom_id_cached(
                         s->native.universe, &scratch, &memo, packet + off, expr_len, &atom_id);
                 if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK ||
                     atom_id == CETTA_ATOM_ID_NONE) {
@@ -4144,6 +4274,11 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
         smset_init(out);
         return;
     }
+    if (var_query && !epoch_query && !bridge_query && !st->bridge_active) {
+        imported_ensure_built_flat(s);
+        imported_query_flat(s, a, query, out);
+        return;
+    }
     if (epoch_query || bridge_query || var_query) {
         Arena *persist = eval_current_persistent_arena();
         if (!space_match_backend_materialize_native_storage(s, persist ? persist : a)) {
@@ -4239,12 +4374,24 @@ static bool pathmap_local_apply_text_chunk_direct(Space *s,
 
 static bool pathmap_local_store_atom_id_direct(Space *s, AtomId atom_id, Atom *atom) {
     ImportedBridgeState *st;
+    bool had_live_bridge;
+    bool prior_built;
+    bool prior_dirty;
     if (!s || atom_id == CETTA_ATOM_ID_NONE || !s->native.universe || space_is_ordered(s))
         return false;
     st = &s->match_backend.pathmap.bridge;
+    had_live_bridge = st->bridge_active && st->bridge_space;
+    prior_built = st->built;
+    prior_dirty = st->dirty;
     if (!(st->bridge_active && st->bridge_space) &&
-        !pathmap_local_ensure_bridge_live(s))
+        !pathmap_local_ensure_bridge_live(s)) {
+        if (!had_live_bridge) {
+            st->bridge_active = false;
+            st->built = prior_built;
+            st->dirty = prior_dirty;
+        }
         return false;
+    }
     Arena scratch;
     arena_init(&scratch);
     bool ok = imported_bridge_add_atom_structural(
@@ -4252,9 +4399,15 @@ static bool pathmap_local_store_atom_id_direct(Space *s, AtomId atom_id, Atom *a
         atom_id, atom);
     arena_free(&scratch);
     if (!ok) {
-        st->bridge_active = false;
-        st->built = false;
-        st->dirty = true;
+        if (had_live_bridge) {
+            st->bridge_active = false;
+            st->built = false;
+            st->dirty = true;
+        } else {
+            st->bridge_active = false;
+            st->built = prior_built;
+            st->dirty = prior_dirty;
+        }
         return false;
     }
     pathmap_local_backend_primary_bulk_commit(s, st);
@@ -4371,6 +4524,26 @@ static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
     ImportedBridgeState *st = &s->match_backend.pathmap.bridge;
     (void)atom_idx;
     imported_projection_clear(st);
+    if (!st->bridge_active && st->built && !st->dirty) {
+        if (tu_hdr(s->native.universe, atom_id)) {
+            ImportedFlatBuilder b = {0};
+            if (imported_flatten_atom_id(&b, s->native.universe, atom_id)) {
+                imported_bucket_push_builder(
+                    imported_bucket_for_atom_id(st, s->native.universe, atom_id),
+                    &b, atom_idx, stree_next_epoch());
+                return;
+            }
+            free(b.items);
+        }
+        if (atom) {
+            imported_bucket_add_entry(imported_bucket_for_atom(st, atom), atom, atom_idx,
+                                      stree_next_epoch());
+            return;
+        }
+        st->built = false;
+        st->dirty = true;
+        return;
+    }
     if (st->bridge_active && st->bridge_space) {
         Arena scratch;
         arena_init(&scratch);

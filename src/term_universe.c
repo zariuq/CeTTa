@@ -1474,6 +1474,12 @@ AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
         lookup = term_universe_canonicalize_atom(&canonical_scratch, src);
         have_scratch = true;
     }
+    AtomId existing_ptr = term_universe_lookup_ptr_id(universe, lookup);
+    if (existing_ptr != CETTA_ATOM_ID_NONE) {
+        if (have_scratch)
+            arena_free(&canonical_scratch);
+        return existing_ptr;
+    }
     if (term_universe_atom_is_stable(lookup))
         TU_DIAG_INC(universe, legacy_top_down_stable_admissions);
 

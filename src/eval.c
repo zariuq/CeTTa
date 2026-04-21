@@ -6477,25 +6477,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         #define MAX_VARS_PER_PAT 32
         typedef struct { Space *space; Atom *pattern; } MatchStep;
 
-        bool allow_chain_flatten = !space_engine_uses_pathmap(ms->match_backend.kind);
-        if (allow_chain_flatten) {
-            Atom *scan = template;
-            while (scan->kind == ATOM_EXPR && scan->expr.len == 4 &&
-                   atom_is_symbol_id(scan->expr.elems[0], g_builtin_syms.match)) {
-                Atom *inner_ref = resolve_registry_refs(a, scan->expr.elems[1]);
-                Space *inner_sp = g_registry ? resolve_space(g_registry, inner_ref) : NULL;
-                if (!inner_sp) inner_sp = s;
-                if (inner_sp && space_engine_uses_pathmap(inner_sp->match_backend.kind)) {
-                    /* Imported path still has a nested-match chain regression on the
-                       optimized flattening lane. Fall back to ordinary recursive
-                       match evaluation so semantics stay correct while we refine
-                       the imported chain planner. */
-                    allow_chain_flatten = false;
-                    break;
-                }
-                scan = scan->expr.elems[3];
-            }
-        }
+        bool allow_chain_flatten = true;
 
         MatchStep steps[MAX_CHAIN];
         uint32_t nsteps = 0;
