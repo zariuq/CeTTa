@@ -52,7 +52,7 @@ fn counted_factor_prefix(factor_expr: Expr) -> Vec<u8> {
 }
 
 fn counted_key_for_atom_with_count(
-    space: &mut Space,
+    _space: &mut Space,
     atom_expr_bytes: &[u8],
     count: u32,
 ) -> Result<Vec<u8>, String> {
@@ -63,10 +63,9 @@ fn counted_key_for_atom_with_count(
     if count == 1 {
         return Ok(atom_expr_bytes.to_vec());
     }
-    let count_expr_bytes = parse_single_expr(space, count.to_string().as_bytes())?;
-    let mut key = Vec::with_capacity(atom_expr_bytes.len() + count_expr_bytes.len());
+    let mut key = Vec::with_capacity(atom_expr_bytes.len() + std::mem::size_of::<u32>());
     key.extend_from_slice(atom_expr_bytes);
-    key.extend_from_slice(&count_expr_bytes);
+    key.extend_from_slice(&count.to_be_bytes());
     Ok(key)
 }
 
@@ -94,14 +93,24 @@ fn decode_counted_key(key: &[u8]) -> Result<DecodedCountedKey<'_>, String> {
         return Err("counted PathMap atom payload overran the key".to_string());
     }
 
-    let count_expr_bytes = &key[atom_expr_bytes.len()..];
-    validate_expr_bytes(count_expr_bytes)?;
-    let count_text = serialize(count_expr_bytes);
-    let count = count_text.parse::<u32>().map_err(|_| {
-        format!("counted PathMap key count expr must be a bare u32, got `{count_text}`")
-    })?;
+    let count_suffix = &key[atom_expr_bytes.len()..];
+    if count_suffix.len() != std::mem::size_of::<u32>() {
+        return Err(format!(
+            "counted PathMap key suffix must be exactly {} raw count bytes, got {}",
+            std::mem::size_of::<u32>(),
+            count_suffix.len()
+        ));
+    }
+    let count = u32::from_be_bytes(
+        count_suffix
+            .try_into()
+            .map_err(|_| "counted PathMap count suffix decode failed".to_string())?,
+    );
     if count == 0 {
         return Err("counted PathMap keys must not encode zero multiplicity".to_string());
+    }
+    if count == 1 {
+        return Err("counted PathMap count suffix must not redundantly encode multiplicity one".to_string());
     }
 
     Ok(DecodedCountedKey {
@@ -379,11 +388,11 @@ mod tests {
         let key =
             counted_key_for_atom_with_count(&mut space, &atom, 3).expect("key should encode");
         let decoded = decode_counted_key(&key).expect("key should decode");
-        let count_expr_bytes = &key[decoded.atom_expr_bytes.len()..];
+        let count_bytes = &key[decoded.atom_expr_bytes.len()..];
 
         assert!(key.starts_with(atom.as_slice()));
         assert_eq!(decoded.atom_expr_bytes, atom.as_slice());
-        assert_eq!(serialize(count_expr_bytes), "3");
+        assert_eq!(count_bytes, 3u32.to_be_bytes().as_slice());
         assert_eq!(decoded.count, 3);
     }
 
@@ -400,6 +409,17 @@ mod tests {
         assert_eq!(decoded.atom_expr_bytes, atom.as_slice());
         assert!(count_expr_bytes.is_empty());
         assert_eq!(decoded.count, 1);
+    }
+
+    #[test]
+    fn counted_key_rejects_non_canonical_suffix_length() {
+        let mut space = Space::new();
+        let atom = parse_expr(&mut space, "(edge a b)");
+        let mut malformed = atom.clone();
+        malformed.extend_from_slice(&[0x00, 0x02]);
+        let err = decode_counted_key(&malformed).expect_err("malformed suffix should fail");
+
+        assert!(err.contains("exactly 4 raw count bytes"));
     }
 
     #[test]

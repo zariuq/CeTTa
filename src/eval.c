@@ -497,8 +497,8 @@ static Atom *registry_lookup_atom(Atom *atom) {
 }
 
 static TermUniverse *eval_current_term_universe(void) {
-    if (g_eval_root_space && g_eval_root_space->universe)
-        return g_eval_root_space->universe;
+    if (g_eval_root_space && g_eval_root_space->native.universe)
+        return g_eval_root_space->native.universe;
     if (g_library_context && g_library_context->term_universe.persistent_arena)
         return &g_library_context->term_universe;
     if (g_eval_fallback_universe.persistent_arena)
@@ -633,7 +633,8 @@ static Atom *eval_store_atom(Arena *dst, Atom *src) {
 }
 
 static Atom *space_compare_atom(const Space *space, Arena *dst, Atom *src) {
-    if (space && space->universe && space->universe->persistent_arena)
+    if (space && space->native.universe &&
+        space->native.universe->persistent_arena)
         return term_universe_canonicalize_atom(dst, src);
     return atom_deep_copy(dst, src);
 }
@@ -810,6 +811,7 @@ static bool outcome_init_answer_ref(Arena *owner, Outcome *out, const AnswerBank
         outcome_free_fields(out);
         return false;
     }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ANSWER_REF_EMIT);
     return true;
 }
 
@@ -822,6 +824,7 @@ static bool outcome_inflate_answer_ref(Arena *a, Outcome *out) {
 
     if (!out || out->kind != CETTA_OUTCOME_ANSWER_REF)
         return true;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ANSWER_REF_INFLATE_CALL);
     if (!table_store_materialize_answer_ref(out->answer_ref.bank,
                                             out->answer_ref.ref,
                                             a,
@@ -2880,20 +2883,6 @@ bindings_resolve_body_visible_var(Arena *a, const Bindings *full,
     if (resolved != slot_var)
         return resolved;
 
-    uint32_t wanted_base = var_base_id(wanted->var_id);
-    if (wanted_base == 0)
-        return slot_var;
-    for (uint32_t i = full->len; i > 0; i--) {
-        const Binding *entry = &full->entries[i - 1];
-        if (var_base_id(entry->var_id) != wanted_base)
-            continue;
-        if (entry->spelling != wanted->spelling)
-            continue;
-        if (!atom_contains_vars(entry->val))
-            return entry->val;
-        return bindings_apply_without_self((Bindings *)full, a, entry->var_id,
-                                           entry->val);
-    }
     return slot_var;
 }
 
@@ -3155,9 +3144,14 @@ static bool query_visit_eval_for_caller_answer_ref_common(
     void *ctx) {
     QueryEvalVisitorCtx *query_eval = ctx;
     Outcome delayed;
+    Arena *generated_arena = NULL;
+    Arena *seed_owner = NULL;
     if (!query_eval || !bank || ref == CETTA_ANSWER_REF_NONE)
         return false;
-    if (!outcome_init_answer_ref(query_eval->arena,
+    if (query_eval->episode)
+        generated_arena = eval_query_episode_generated(query_eval->episode);
+    seed_owner = generated_arena ? generated_arena : query_eval->arena;
+    if (!outcome_init_answer_ref(seed_owner,
                                  &delayed,
                                  bank,
                                  ref,
@@ -3167,7 +3161,6 @@ static bool query_visit_eval_for_caller_answer_ref_common(
     }
 
     if (query_eval->episode) {
-        Arena *generated_arena = eval_query_episode_generated(query_eval->episode);
         Arena *payload_arena =
             outcome_set_payload_arena(query_eval->outcomes, query_eval->arena);
         OutcomeSet generated;
@@ -3235,6 +3228,7 @@ typedef struct {
     bool table_ok;
     CettaVarMap goal_instantiation;
     bool goal_ready;
+    Arena *goal_owner;
 } QueryCachedVisitStreamCtx;
 
 static bool query_visit_eval_for_caller_stage(Atom *result,
@@ -3251,7 +3245,9 @@ static bool query_visit_eval_for_caller_stage(Atom *result,
     if (stream->table_ok && ref != CETTA_ANSWER_REF_NONE) {
         if (!stream->goal_ready) {
             if (!table_store_query_goal_instantiation(stream->table_handle,
-                                                      stream->query_eval->arena,
+                                                      stream->goal_owner
+                                                          ? stream->goal_owner
+                                                          : stream->query_eval->arena,
                                                       &stream->goal_instantiation)) {
                 stream->table_ok = false;
             } else {
@@ -3276,18 +3272,6 @@ typedef enum {
     QUERY_TABLE_TAIL_SINGLE,
     QUERY_TABLE_TAIL_MULTI,
 } QueryTableTailState;
-
-typedef struct {
-    SearchContext *context;
-    const Bindings *base_env;
-    Arena *arena;
-    Atom *declared_type;
-    Atom **tail_next;
-    Atom **tail_type;
-    Bindings *tail_env;
-    EvalQueryEpisode *episode;
-    bool ok;
-} QuerySingleTailDelayedCtx;
 
 static bool query_delayed_result_apply_single_tail(EvalQueryEpisode *episode,
                                                    SearchContext *context,
@@ -3337,25 +3321,81 @@ static bool query_delayed_result_apply_single_tail(EvalQueryEpisode *episode,
     return true;
 }
 
-static bool query_visit_collect_single_tail_delayed(Atom *result,
-                                                    const Bindings *bindings,
-                                                    const VariantInstance *variant,
-                                                    void *ctx) {
-    QuerySingleTailDelayedCtx *collect = ctx;
-    if (!collect->ok || *collect->tail_next != NULL)
-        return true;
-    collect->ok = query_delayed_result_apply_single_tail(
-        collect->episode,
-        collect->context,
-        collect->base_env,
-        collect->arena,
-        collect->declared_type,
-        result,
-        bindings,
-        variant,
-        collect->tail_next,
-        collect->tail_type,
-        collect->tail_env);
+static bool query_answer_ref_apply_single_tail(EvalQueryEpisode *episode,
+                                               SearchContext *context,
+                                               const Bindings *base_env,
+                                               Arena *a,
+                                               Atom *declared_type,
+                                               const AnswerBank *bank,
+                                               AnswerRef ref,
+                                               const CettaVarMap *goal_instantiation,
+                                               Atom **tail_next,
+                                               Atom **tail_type,
+                                               Bindings *tail_env) {
+    Atom *result = NULL;
+    Bindings materialized;
+    VariantInstance replay_variant;
+    bool ok = false;
+
+    bindings_init(&materialized);
+    variant_instance_init(&replay_variant);
+    if (!bank || ref == CETTA_ANSWER_REF_NONE || !goal_instantiation)
+        goto done;
+    if (!table_store_materialize_answer_ref(bank, ref, a, goal_instantiation,
+                                            &result, &materialized,
+                                            &replay_variant)) {
+        goto done;
+    }
+    ok = query_delayed_result_apply_single_tail(episode,
+                                                context,
+                                                base_env,
+                                                a,
+                                                declared_type,
+                                                result,
+                                                &materialized,
+                                                &replay_variant,
+                                                tail_next,
+                                                tail_type,
+                                                tail_env);
+
+done:
+    variant_instance_free(&replay_variant);
+    bindings_free(&materialized);
+    return ok;
+}
+
+typedef struct {
+    Arena *goal_owner;
+    const AnswerBank *first_bank;
+    AnswerRef first_ref;
+    CettaVarMap goal_instantiation;
+    bool first_ready;
+    bool ok;
+} QuerySingleTailAnswerRefCtx;
+
+static bool query_visit_collect_single_tail_answer_ref(
+    const AnswerBank *bank,
+    AnswerRef ref,
+    const CettaVarMap *goal_instantiation,
+    void *ctx) {
+    QuerySingleTailAnswerRefCtx *collect = ctx;
+    if (!collect || !collect->ok)
+        return false;
+    if (collect->first_ready)
+        return false;
+    if (!bank || ref == CETTA_ANSWER_REF_NONE || !goal_instantiation) {
+        collect->ok = false;
+        return false;
+    }
+    collect->first_bank = bank;
+    collect->first_ref = ref;
+    if (!cetta_var_map_clone_live(collect->goal_owner,
+                                  &collect->goal_instantiation,
+                                  goal_instantiation)) {
+        collect->ok = false;
+        return false;
+    }
+    collect->first_ready = true;
     return true;
 }
 
@@ -3366,7 +3406,7 @@ static bool query_equations_table_hit_visit(Space *s, Atom *query, Arena *a,
     if (!table)
         return false;
     return table_store_lookup_visit_ref(table, s, space_revision(s), query,
-                                        query_eval->arena,
+                                        a,
                                         query_visit_eval_for_caller_answer_ref,
                                         query_eval, visited_out);
 }
@@ -3380,29 +3420,42 @@ query_equations_table_hit_single_tail(Space *s, Atom *query,
                                       Bindings *tail_env) {
     TableStore *table = eval_active_episode_table();
     uint32_t visited = 0;
-    QuerySingleTailDelayedCtx collect = {
-        .context = query_eval->context,
-        .base_env = query_eval->base_env,
-        .arena = a,
-        .declared_type = query_eval->declared_type,
-        .tail_next = tail_next,
-        .tail_type = tail_type,
-        .tail_env = tail_env,
-        .episode = episode,
+    QuerySingleTailAnswerRefCtx collect = {
+        .goal_owner = a,
+        .first_bank = NULL,
+        .first_ref = CETTA_ANSWER_REF_NONE,
         .ok = true,
     };
+    cetta_var_map_init(&collect.goal_instantiation);
 
     if (!table)
         return QUERY_TABLE_TAIL_MISS;
-    if (!table_store_lookup_visit_delayed(table, s, space_revision(s), query, a,
-                                          query_visit_collect_single_tail_delayed,
-                                          &collect, &visited)) {
+    if (!table_store_lookup_visit_ref(table, s, space_revision(s), query, a,
+                                      query_visit_collect_single_tail_answer_ref,
+                                      &collect, &visited)) {
+        cetta_var_map_free(&collect.goal_instantiation);
         return QUERY_TABLE_TAIL_MISS;
     }
-    if (visited == 0)
+    if (visited == 0) {
+        cetta_var_map_free(&collect.goal_instantiation);
         return QUERY_TABLE_TAIL_EMPTY;
-    if (visited == 1 && collect.ok && *tail_next != NULL)
+    }
+    if (visited == 1 && collect.ok && collect.first_ready &&
+        query_answer_ref_apply_single_tail(episode,
+                                           query_eval->context,
+                                           query_eval->base_env,
+                                           query_eval->arena,
+                                           query_eval->declared_type,
+                                           collect.first_bank,
+                                           collect.first_ref,
+                                           &collect.goal_instantiation,
+                                           tail_next,
+                                           tail_type,
+                                           tail_env)) {
+        cetta_var_map_free(&collect.goal_instantiation);
         return QUERY_TABLE_TAIL_SINGLE;
+    }
+    cetta_var_map_free(&collect.goal_instantiation);
     return QUERY_TABLE_TAIL_MULTI;
 }
 
@@ -3421,12 +3474,14 @@ static uint32_t query_equations_cached_visit(Space *s, Atom *query, Arena *a,
         .table_handle = NULL,
         .table_ok = true,
         .goal_ready = false,
+        .goal_owner = NULL,
     };
     cetta_var_map_init(&stream_ctx.goal_instantiation);
 
     eval_query_episode_init(&episode);
     episode_eval.episode = &episode;
     query_arena = eval_query_episode_scratch(&episode);
+    stream_ctx.goal_owner = query_arena;
     outcome_set_bind_owner_if_missing(
         episode_eval.outcomes,
         eval_query_episode_result_arena(&episode, query_eval->arena));
@@ -3505,8 +3560,14 @@ typedef struct {
     bool preserve_bindings;
     QueryEvalVisitorCtx *query_eval;
     TableQueryHandle *table_handle;
+    const AnswerBank *answer_bank;
+    Arena *goal_owner;
+    CettaVarMap goal_instantiation;
+    bool goal_ready;
     bool table_ok;
     uint32_t count;
+    AnswerRef first_ref;
+    bool first_is_ref;
     Atom *first_result;
     Bindings first_bindings;
     bool first_ready;
@@ -3521,7 +3582,9 @@ static void query_miss_single_tail_stream_ctx_init(
     Atom *declared_type,
     bool preserve_bindings,
     QueryEvalVisitorCtx *query_eval,
-    TableQueryHandle *table_handle) {
+    TableQueryHandle *table_handle,
+    const AnswerBank *answer_bank,
+    Arena *goal_owner) {
     if (!ctx)
         return;
     ctx->episode = episode;
@@ -3532,21 +3595,120 @@ static void query_miss_single_tail_stream_ctx_init(
     ctx->preserve_bindings = preserve_bindings;
     ctx->query_eval = query_eval;
     ctx->table_handle = table_handle;
+    ctx->answer_bank = answer_bank;
+    ctx->goal_owner = goal_owner;
+    cetta_var_map_init(&ctx->goal_instantiation);
+    ctx->goal_ready = false;
     ctx->table_ok = true;
     ctx->count = 0;
+    ctx->first_ref = CETTA_ANSWER_REF_NONE;
+    ctx->first_is_ref = false;
     ctx->first_result = NULL;
     bindings_init(&ctx->first_bindings);
     ctx->first_ready = false;
+}
+
+static bool query_miss_single_tail_goal_ready(QueryMissSingleTailStreamCtx *ctx) {
+    if (!ctx)
+        return false;
+    if (ctx->goal_ready)
+        return true;
+    if (!ctx->table_handle || !ctx->table_handle->impl)
+        return false;
+    if (!table_store_query_goal_instantiation(ctx->table_handle,
+                                              ctx->goal_owner
+                                                  ? ctx->goal_owner
+                                                  : ctx->arena,
+                                              &ctx->goal_instantiation)) {
+        return false;
+    }
+    ctx->goal_ready = true;
+    return true;
+}
+
+static void query_miss_single_tail_release_first(
+    QueryMissSingleTailStreamCtx *ctx) {
+    if (!ctx)
+        return;
+    if (ctx->first_ready && !ctx->first_is_ref)
+        bindings_free(&ctx->first_bindings);
+    if (!ctx->first_is_ref)
+        bindings_init(&ctx->first_bindings);
+    ctx->first_ref = CETTA_ANSWER_REF_NONE;
+    ctx->first_is_ref = false;
+    ctx->first_result = NULL;
+    ctx->first_ready = false;
+}
+
+static bool query_miss_single_tail_store_first(
+    QueryMissSingleTailStreamCtx *ctx,
+    Atom *result,
+    const Bindings *bindings,
+    AnswerRef ref) {
+    if (!ctx)
+        return false;
+    ctx->count = 1;
+    ctx->first_ready = true;
+    if (ref != CETTA_ANSWER_REF_NONE && ctx->answer_bank &&
+        query_miss_single_tail_goal_ready(ctx)) {
+        ctx->first_ref = ref;
+        ctx->first_is_ref = true;
+        return true;
+    }
+    ctx->first_result = result;
+    if (!bindings_clone(&ctx->first_bindings, bindings)) {
+        ctx->first_ready = false;
+        ctx->count = 0;
+        return false;
+    }
+    return true;
+}
+
+static bool query_miss_single_tail_publish_first(
+    QueryMissSingleTailStreamCtx *ctx) {
+    bool ok = true;
+    if (!ctx || !ctx->first_ready)
+        return true;
+    if (ctx->first_is_ref) {
+        ok = query_visit_eval_for_caller_answer_ref_common(
+            ctx->answer_bank,
+            ctx->first_ref,
+            &ctx->goal_instantiation,
+            ctx->query_eval);
+    } else {
+        ok = query_visit_eval_for_caller(ctx->first_result,
+                                         &ctx->first_bindings,
+                                         ctx->query_eval);
+    }
+    query_miss_single_tail_release_first(ctx);
+    return ok;
+}
+
+static bool query_miss_single_tail_publish_current(
+    QueryMissSingleTailStreamCtx *ctx,
+    Atom *result,
+    const Bindings *bindings,
+    AnswerRef ref) {
+    if (!ctx)
+        return false;
+    if (ref != CETTA_ANSWER_REF_NONE && ctx->answer_bank &&
+        query_miss_single_tail_goal_ready(ctx)) {
+        return query_visit_eval_for_caller_answer_ref_common(
+            ctx->answer_bank,
+            ref,
+            &ctx->goal_instantiation,
+            ctx->query_eval);
+    }
+    return query_visit_eval_for_caller(result, bindings, ctx->query_eval);
 }
 
 static void query_miss_single_tail_stream_ctx_free(
     QueryMissSingleTailStreamCtx *ctx) {
     if (!ctx)
         return;
-    if (ctx->first_ready)
-        bindings_free(&ctx->first_bindings);
-    ctx->first_ready = false;
-    ctx->first_result = NULL;
+    query_miss_single_tail_release_first(ctx);
+    cetta_var_map_free(&ctx->goal_instantiation);
+    ctx->goal_ready = false;
     ctx->count = 0;
 }
 
@@ -3554,33 +3716,21 @@ static bool query_visit_stream_single_tail_miss(Atom *result,
                                                 const Bindings *bindings,
                                                 void *ctx) {
     QueryMissSingleTailStreamCtx *stream = ctx;
+    AnswerRef ref = CETTA_ANSWER_REF_NONE;
     if (!stream || !stream->query_eval)
         return false;
     if (stream->table_handle && stream->table_handle->impl && stream->table_ok) {
-        if (!table_store_add_answer(stream->table_handle, result, bindings, NULL))
+        if (!table_store_add_answer(stream->table_handle, result, bindings, &ref))
             stream->table_ok = false;
     }
-    if (stream->count == 0) {
-        stream->first_result = result;
-        if (!bindings_clone(&stream->first_bindings, bindings))
-            return false;
-        stream->first_ready = true;
-        stream->count = 1;
-        return true;
-    }
+    if (stream->count == 0)
+        return query_miss_single_tail_store_first(stream, result, bindings, ref);
     if (stream->count == 1 && stream->first_ready) {
-        if (!query_visit_eval_for_caller(stream->first_result,
-                                         &stream->first_bindings,
-                                         stream->query_eval)) {
+        if (!query_miss_single_tail_publish_first(stream))
             return false;
-        }
-        bindings_free(&stream->first_bindings);
-        bindings_init(&stream->first_bindings);
-        stream->first_ready = false;
-        stream->first_result = NULL;
     }
     stream->count++;
-    return query_visit_eval_for_caller(result, bindings, stream->query_eval);
+    return query_miss_single_tail_publish_current(stream, result, bindings, ref);
 }
 
 static QueryTableTailState
@@ -3605,7 +3755,9 @@ query_equations_miss_single_tail_stream(Space *s, Atom *query,
                                            query_eval->declared_type,
                                            query_eval->preserve_bindings,
                                            query_eval,
-                                           NULL);
+                                           NULL,
+                                           table ? table->answer_bank : NULL,
+                                           query_arena);
     if (table &&
         table_store_begin_query(table, s, space_revision(s), query, &cache_handle)) {
         cache_started = true;
@@ -3631,26 +3783,39 @@ query_equations_miss_single_tail_stream(Space *s, Atom *query,
     }
     if (stream.count == 1 && stream.first_ready) {
         if (!allow_single_tail) {
-            bool keep_going = query_visit_eval_for_caller(stream.first_result,
-                                                          &stream.first_bindings,
-                                                          query_eval);
+            bool keep_going = query_miss_single_tail_publish_first(&stream);
             query_miss_single_tail_stream_ctx_free(&stream);
             return keep_going ? QUERY_TABLE_TAIL_MULTI
                               : QUERY_TABLE_TAIL_EMPTY;
         }
-        QueryResult first = {
-            .result = stream.first_result,
-            .bindings = stream.first_bindings,
-        };
-        bool ok = query_result_apply_single_tail(episode,
-                                                 query_eval->context,
-                                                 query_eval->base_env,
-                                                 query_eval->arena,
-                                                 query_eval->declared_type,
-                                                 &first,
-                                                 tail_next,
-                                                 tail_type,
-                                                 tail_env);
+        bool ok;
+        if (stream.first_is_ref) {
+            ok = query_answer_ref_apply_single_tail(episode,
+                                                    query_eval->context,
+                                                    query_eval->base_env,
+                                                    query_eval->arena,
+                                                    query_eval->declared_type,
+                                                    stream.answer_bank,
+                                                    stream.first_ref,
+                                                    &stream.goal_instantiation,
+                                                    tail_next,
+                                                    tail_type,
+                                                    tail_env);
+        } else {
+            QueryResult first = {
+                .result = stream.first_result,
+                .bindings = stream.first_bindings,
+            };
+            ok = query_result_apply_single_tail(episode,
+                                                query_eval->context,
+                                                query_eval->base_env,
+                                                query_eval->arena,
+                                                query_eval->declared_type,
+                                                &first,
+                                                tail_next,
+                                                tail_type,
+                                                tail_env);
+        }
         query_miss_single_tail_stream_ctx_free(&stream);
         if (!ok)
             return QUERY_TABLE_TAIL_EMPTY;
@@ -4490,7 +4655,7 @@ static Space *space_persistent_clone(Space *src, Arena *dst) {
     if (!space_match_backend_materialize_attached(src, dst))
         return NULL;
     Space *clone = arena_alloc(dst, sizeof(Space));
-    space_init_with_universe(clone, src ? src->universe : NULL);
+    space_init_with_universe(clone, src ? src->native.universe : NULL);
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
     for (uint32_t i = 0; i < space_length(src); i++) {
@@ -4673,29 +4838,39 @@ static void space_snapshot_copy_logical_view(Space *dst, const Space *src) {
     if (n == 0)
         return;
 
-    dst->atom_ids = cetta_malloc(sizeof(AtomId) * n);
-    dst->cap = n;
-    dst->len = n;
-    dst->start = 0;
+    dst->native.atom_ids = cetta_malloc(sizeof(AtomId) * n);
+    dst->native.cap = n;
+    dst->native.len = n;
+    dst->native.start = 0;
     for (uint32_t i = 0; i < n; i++) {
-        dst->atom_ids[i] = space_get_atom_id_at(src, i);
+        dst->native.atom_ids[i] = space_get_atom_id_at(src, i);
     }
 
     /* The clone starts with no rebuilt indexes; they must be derived from the
        frozen logical view on first use. */
-    dst->eq_idx_dirty = true;
-    dst->ty_idx_dirty = true;
-    dst->exact_idx_dirty = true;
+    dst->native.eq_idx_dirty = true;
+    dst->native.ty_idx_dirty = true;
+    dst->native.exact_idx_dirty = true;
 }
 
 static Space *space_snapshot_clone(Space *src, Arena *a) {
+    SpaceEngine snapshot_backend = SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
     if (!space_match_backend_materialize_attached(
             src, eval_storage_arena(a)))
         return NULL;
     Space *clone = cetta_malloc(sizeof(Space));
-    space_init_with_universe(clone, src ? src->universe : NULL);
+    space_init_with_universe(clone, src ? src->native.universe : NULL);
     clone->kind = src->kind;
-    (void)space_match_backend_try_set(clone, src->match_backend.kind);
+    /* Snapshots freeze a logical view for evaluator-side reads/matches.
+       Use a native query backend over that frozen atom-id sequence so the
+       snapshot remains stable even when the live source space is backed by a
+       Rust-primary engine whose bridge state is optimized for mutation. */
+    if (src &&
+        (src->match_backend.kind == SPACE_ENGINE_NATIVE ||
+         src->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
+        snapshot_backend = src->match_backend.kind;
+    }
+    (void)space_match_backend_try_set(clone, snapshot_backend);
     space_snapshot_copy_logical_view(clone, src);
     /* Backend indexes are rebuilt lazily on first match against the snapshot;
        the clone only freezes the logical atom sequence. */
@@ -5775,6 +5950,17 @@ eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
                         int fuel, const Bindings *prefix,
                         const Bindings *outer_env,
                         bool preserve_bindings, OutcomeSet *os) {
+    if (!preserve_bindings) {
+        Bindings merged;
+        const Bindings *effective = NULL;
+        if (!bindings_effective_merge(&merged, &effective, outer_env, prefix, true))
+            return;
+        eval_for_caller(s, a, type, atom, fuel, effective, false, os);
+        if (effective == &merged)
+            bindings_free(&merged);
+        return;
+    }
+
     OutcomeSet inner;
     outcome_set_init(&inner);
     eval_for_caller(s, a, type, atom, fuel, prefix, preserve_bindings, &inner);
@@ -6231,7 +6417,13 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
 
     {
         #define MAX_IMPORTED_SAME_SPACE_CHAIN 32
-        if (space_engine_uses_pathmap(ms->match_backend.kind)) {
+        bool allow_pathmap_same_space_chain = true;
+        /* Recursive evaluation is the semantic baseline for pathmap-backed
+           spaces. The imported same-space conjunction planner is useful only
+           once it preserves non-ground residual bindings as faithfully as the
+           ordinary nested match path. */
+        if (allow_pathmap_same_space_chain &&
+            space_engine_uses_pathmap(ms->match_backend.kind)) {
             Atom *same_space_patterns[MAX_IMPORTED_SAME_SPACE_CHAIN];
             uint32_t nsame = 1;
             Atom *residual_body = template;
@@ -7580,10 +7772,10 @@ tail_call: ;
         Atom *pat = expr_arg(atom, 0);
         Atom *val_expr = expr_arg(atom, 1);
         Atom *body_let = expr_arg(atom, 2);
+        Atom *applied_val_expr = bindings_apply_if_vars(CURRENT_ENV, a, val_expr);
         OutcomeSet vals;
         bool body_let_closed = !atom_contains_vars(body_let);
         if (!preserve_bindings) {
-            Atom *applied_val_expr = bindings_apply_if_vars(CURRENT_ENV, a, val_expr);
             if (direct_outcome_walk_supported(s, a, applied_val_expr, fuel)) {
                 LetDirectVisitCtx visit = {
                     .s = s,
@@ -7611,7 +7803,7 @@ tail_call: ;
             }
         }
         outcome_set_init(&vals);
-        metta_eval_bind(s, a, val_expr, fuel, &vals);
+        metta_eval_bind(s, a, applied_val_expr, fuel, &vals);
         bool all_errors = vals.len > 0;
         for (uint32_t i = 0; i < vals.len; i++) {
             if (!atom_is_error(
@@ -7658,8 +7850,7 @@ tail_call: ;
                         return;
                     }
                     Atom *next_atom = bindings_apply_if_vars(&visible, a, body_let);
-                    if (preserve_bindings &&
-                        !bindings_builder_merge_commit(&current_env_builder, bb)) {
+                    if (!bindings_builder_merge_commit(&current_env_builder, bb)) {
                         bindings_free(&visible);
                         bindings_builder_free(&b);
                         return;
@@ -7688,8 +7879,7 @@ tail_call: ;
                         return;
                     }
                     Atom *next_atom = bindings_apply_if_vars(&visible, a, body_let);
-                    if (preserve_bindings &&
-                        !bindings_builder_merge_commit(&current_env_builder, bb)) {
+                    if (!bindings_builder_merge_commit(&current_env_builder, bb)) {
                         bindings_free(&visible);
                         bindings_builder_free(&b);
                         return;
@@ -7725,8 +7915,7 @@ tail_call: ;
                 }
                 Bindings branch_outer_owned;
                 const Bindings *branch_outer = CURRENT_ENV;
-                if (preserve_bindings &&
-                    !branch_outer_env_begin(&branch_outer_owned, &branch_outer,
+                if (!branch_outer_env_begin(&branch_outer_owned, &branch_outer,
                                             CURRENT_ENV, bb)) {
                     bindings_free(&visible);
                     bindings_builder_free(&b);
@@ -7752,8 +7941,7 @@ tail_call: ;
                     }
                     Bindings branch_outer_owned;
                     const Bindings *branch_outer = CURRENT_ENV;
-                    if (preserve_bindings &&
-                        !branch_outer_env_begin(&branch_outer_owned, &branch_outer,
+                    if (!branch_outer_env_begin(&branch_outer_owned, &branch_outer,
                                                 CURRENT_ENV, bb)) {
                         bindings_free(&visible);
                         bindings_builder_free(&b);
@@ -9199,11 +9387,26 @@ tail_call: ;
             return;
         }
         Atom *compare_atom = space_compare_atom(target, a, atom_to_add);
-        bool found = space_contains_exact(target, compare_atom);
-        if (!found) {
-            /* Fallback linear scan only if exact index didn't work (variables, etc.) */
-            for (uint32_t i = 0; i < space_length(target) && !found; i++)
-                if (atom_eq(space_get_at(target, i), compare_atom)) found = true;
+        bool found = false;
+        bool backend_checked =
+            space_match_backend_contains_atom_structural_direct(
+                target, compare_atom, &found);
+        if (!backend_checked)
+            found = space_contains_exact(target, compare_atom);
+        if (!found && !backend_checked) {
+            /* Non-ground theorem dedup must be alpha-aware: local pathmap
+               projection uses synthetic stable variable spellings, while the
+               evaluator may still hold the same theorem under source spellings. */
+            bool alpha_fallback = atom_has_vars(compare_atom);
+            for (uint32_t i = 0; i < space_length(target) && !found; i++) {
+                Atom *candidate = space_get_at(target, i);
+                if (!candidate)
+                    continue;
+                if (alpha_fallback ? atom_alpha_eq(candidate, compare_atom)
+                                   : atom_eq(candidate, compare_atom)) {
+                    found = true;
+                }
+            }
         }
         if (!found) {
             Arena *dst = eval_storage_arena(a);
@@ -9248,9 +9451,9 @@ tail_call: ;
             return;
         }
         Atom *compare_atom = space_compare_atom(target, a, atom_to_rm);
-        if (!(target && target->universe &&
+        if (!(target && target->native.universe &&
               space_remove_atom_id(target,
-                                   term_universe_lookup_atom_id(target->universe,
+                                   term_universe_lookup_atom_id(target->native.universe,
                                                                 compare_atom)))) {
             space_remove(target, compare_atom);
         }

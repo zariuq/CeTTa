@@ -12,21 +12,25 @@
 //! and lifetime assumptions stay centralized.
 
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
-use mork::space::{ParDataParser, Space};
-use mork_expr::{Expr, ExprEnv, ExprZipper, Tag, item_byte, maybe_byte_item, serialize};
-use mork_frontend::bytestring_parser::{Context, Parser, ParserError};
-use pathmap::PathMap;
+use cetta_space::{
+    bridge_expr_env_text, bridge_expr_text, bridge_parse_expr_chunk, bridge_parse_single_expr,
+    counted_contains_expr, counted_expr_row_packet, counted_insert_expr_batch_cached,
+    counted_insert_expr_cached, counted_query_only_packet_rows,
+    counted_query_rows_detailed_packet_rows, counted_remove_expr_batch_cached,
+    counted_remove_one_expr_cached, counted_sexpr_text, counted_sync_cached_logical_size,
+    counted_unique_size, stable_bridge_expr_packet_bytes,
+};
+use mork::space::Space;
+use mork_expr::{maybe_byte_item, Expr, ExprEnv, Tag};
 use pathmap::ring::AlgebraicStatus;
 use pathmap::zipper::{
-    ProductZipper, Zipper, ZipperIteration, ZipperMoving, ZipperProduct,
+    ProductZipper, Zipper, ZipperAbsolutePath, ZipperIteration, ZipperMoving, ZipperProduct,
     ZipperSubtries, ZipperWriting,
 };
+use pathmap::PathMap;
 use std::collections::{BTreeMap, HashMap};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::{self, slice_from_raw_parts_mut};
-use std::sync::{Mutex, OnceLock};
-
-mod counted_pathmap;
 
 #[repr(C)]
 pub struct MorkSpace {
@@ -61,6 +65,7 @@ pub struct MorkOverlayCursor {
 struct BridgeSpace {
     inner: Space,
     storage_mode: BridgeStorageMode,
+    counted_logical_size: u64,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -101,6 +106,7 @@ const QUERY_ONLY_V2_MAGIC: u32 = 0x4354_4252;
 const QUERY_ONLY_V2_VERSION: u16 = 2;
 const QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
+const QUERY_ONLY_V2_FLAG_WIDE_TOKENS: u16 = 1 << 4;
 #[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_VERSION: u16 = 3;
 #[cfg(feature = "pathmap-space")]
@@ -109,6 +115,8 @@ const MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const MULTI_REF_V3_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
 #[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES: u16 = 1 << 3;
+#[cfg(feature = "pathmap-space")]
+const MULTI_REF_V3_FLAG_WIDE_TOKENS: u16 = 1 << 4;
 #[repr(i32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MorkStatusCode {
@@ -535,13 +543,17 @@ fn build_overlay_zipper<'a>(
     Ok(oz)
 }
 
-fn bridge_space_from_parts(
-    space: Space,
-    storage_mode: BridgeStorageMode,
-) -> *mut MorkSpace {
+fn bridge_space_from_parts(space: Space, storage_mode: BridgeStorageMode) -> *mut MorkSpace {
+    let counted_logical_size = if storage_mode == BridgeStorageMode::CountedPathmap {
+        let mut logical_size = 0u64;
+        counted_sync_cached_logical_size(&space, &mut logical_size).unwrap_or(0)
+    } else {
+        space.btm.val_count() as u64
+    };
     let bridge_space = Box::new(BridgeSpace {
         inner: space,
         storage_mode,
+        counted_logical_size,
     });
     Box::into_raw(bridge_space) as *mut MorkSpace
 }
@@ -561,17 +573,24 @@ fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
         last_merkleize: source.inner.last_merkleize,
         timing: source.inner.timing,
     };
-    bridge_space_from_parts(space, source.storage_mode)
+    let bridge_space = Box::new(BridgeSpace {
+        inner: space,
+        storage_mode: source.storage_mode,
+        counted_logical_size: source.counted_logical_size,
+    });
+    Box::into_raw(bridge_space) as *mut MorkSpace
 }
 
 fn bridge_uses_counted_storage(bridge: &BridgeSpace) -> bool {
     bridge.storage_mode == BridgeStorageMode::CountedPathmap
 }
 
-fn bridge_counted_entries(
-    bridge: &BridgeSpace,
-) -> Result<Vec<counted_pathmap::CountedEntry>, String> {
-    counted_pathmap::counted_entries(&bridge.inner)
+fn bridge_sync_counted_logical_size(bridge: &mut BridgeSpace) {
+    if bridge_uses_counted_storage(bridge) {
+        let _ = counted_sync_cached_logical_size(&bridge.inner, &mut bridge.counted_logical_size);
+    } else {
+        bridge.counted_logical_size = bridge.inner.btm.val_count() as u64;
+    }
 }
 
 // Join keeps the destination support and multiplicities honest without any
@@ -582,6 +601,7 @@ fn bridge_space_join_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> Algebraic
         let mut wz = dst.inner.btm.write_zipper();
         wz.join_into(&rz)
     };
+    bridge_sync_counted_logical_size(dst);
     status
 }
 
@@ -592,6 +612,7 @@ fn bridge_space_meet_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> Algebraic
         let mut wz = dst.inner.btm.write_zipper();
         wz.meet_into(&rz, true)
     };
+    bridge_sync_counted_logical_size(dst);
     status
 }
 
@@ -602,6 +623,7 @@ fn bridge_space_subtract_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> Algeb
         let mut wz = dst.inner.btm.write_zipper();
         wz.subtract_into(&rz, true)
     };
+    bridge_sync_counted_logical_size(dst);
     status
 }
 
@@ -612,6 +634,7 @@ fn bridge_space_restrict_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> Algeb
         let mut wz = dst.inner.btm.write_zipper();
         wz.restrict(&rz)
     };
+    bridge_sync_counted_logical_size(dst);
     status
 }
 
@@ -707,7 +730,7 @@ fn act_copy_sidecar_path(path: &std::path::Path) -> std::path::PathBuf {
 
 fn bridge_stored_atom_count(bridge: &BridgeSpace) -> u64 {
     if bridge_uses_counted_storage(bridge) {
-        return counted_pathmap::counted_logical_size(&bridge.inner).unwrap_or(0);
+        return bridge.counted_logical_size;
     }
     bridge.inner.btm.val_count() as u64
 }
@@ -783,51 +806,11 @@ fn apply_act_copy_sidecar(_bridge: &mut BridgeSpace, data: &[u8]) -> Result<(), 
 }
 
 fn parse_single_expr(space: &mut Space, input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut parse_buffer = vec![0u8; input.len().saturating_mul(4).saturating_add(4096)];
-    let mut parser = ParDataParser::new(&space.sm);
-    let mut context = Context::new(input);
-    let mut ez = ExprZipper::new(Expr {
-        ptr: parse_buffer.as_mut_ptr(),
-    });
-
-    parser
-        .sexpr(&mut context, &mut ez)
-        .map_err(|e| format!("pattern parse failed: {:?}", e))?;
-
-    skip_trailing(&mut context).map_err(|e| format!("pattern trailing parse failed: {:?}", e))?;
-    if context.loc < context.src.len() {
-        return Err("pattern contains trailing non-whitespace input".to_string());
-    }
-
-    parse_buffer.truncate(ez.loc);
-    Ok(parse_buffer)
+    bridge_parse_single_expr(space, input)
 }
 
 fn parse_expr_chunk(space: &mut Space, input: &[u8]) -> Result<Vec<Vec<u8>>, String> {
-    let mut parser = ParDataParser::new(&space.sm);
-    let mut context = Context::new(input);
-    let mut out = Vec::new();
-
-    loop {
-        skip_trailing(&mut context)
-            .map_err(|e| format!("chunk trailing parse failed: {:?}", e))?;
-        if context.loc >= context.src.len() {
-            break;
-        }
-
-        let remaining = &context.src[context.loc..];
-        let mut parse_buffer = vec![0u8; remaining.len().saturating_mul(4).saturating_add(4096)];
-        let mut ez = ExprZipper::new(Expr {
-            ptr: parse_buffer.as_mut_ptr(),
-        });
-        parser
-            .sexpr(&mut context, &mut ez)
-            .map_err(|e| format!("chunk parse failed: {:?}", e))?;
-        parse_buffer.truncate(ez.loc);
-        out.push(parse_buffer);
-    }
-
-    Ok(out)
+    bridge_parse_expr_chunk(space, input)
 }
 
 fn normalize_query_text(input: &[u8]) -> Result<Vec<u8>, String> {
@@ -928,30 +911,6 @@ fn ensure_query_only_v2_shape(pattern_expr: Expr) -> Result<(), String> {
     Ok(())
 }
 
-fn skip_trailing(context: &mut Context<'_>) -> Result<(), ParserError> {
-    while context.loc < context.src.len() {
-        match context.src[context.loc] {
-            b';' => {
-                while context.loc < context.src.len() && context.src[context.loc] != b'\n' {
-                    context.loc += 1;
-                }
-                if context.loc < context.src.len() {
-                    context.loc += 1;
-                }
-            }
-            b' ' | b'\t' | b'\n' => {
-                context.loc += 1;
-            }
-            _ => break,
-        }
-    }
-    Ok(())
-}
-
-fn expr_span_bytes(expr: Expr) -> &'static [u8] {
-    unsafe { expr.span().as_ref().unwrap() }
-}
-
 fn append_u32_be(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_be_bytes());
 }
@@ -961,39 +920,7 @@ fn append_u16_be(out: &mut Vec<u8>, value: u16) {
 }
 
 fn append_bridge_expr_bytes(space: &Space, out: &mut Vec<u8>, expr: Expr) -> Result<(), String> {
-    let sym_table = space.sym_table();
-    let mut encoded = Vec::new();
-    let mut ez = ExprZipper::new(expr);
-
-    loop {
-        match ez.item() {
-            Ok(Tag::NewVar) => encoded.push(item_byte(Tag::NewVar)),
-            Ok(Tag::VarRef(index)) => encoded.push(item_byte(Tag::VarRef(index))),
-            Ok(Tag::Arity(arity)) => encoded.push(item_byte(Tag::Arity(arity))),
-            Ok(Tag::SymbolSize(_)) => unreachable!("ExprZipper::item returns Err for symbol bytes"),
-            Err(symbol) => {
-                let bridge_symbol = if symbol.len() == 8 {
-                    let mut handle = [0u8; 8];
-                    handle.copy_from_slice(symbol);
-                    sym_table.get_bytes(handle).unwrap_or(symbol)
-                } else {
-                    symbol
-                };
-                if bridge_symbol.is_empty() || bridge_symbol.len() >= 64 {
-                    return Err(format!(
-                        "query-only v2 bridge symbol must be 1..63 bytes, got {}",
-                        bridge_symbol.len()
-                    ));
-                }
-                encoded.push(item_byte(Tag::SymbolSize(bridge_symbol.len() as u8)));
-                encoded.extend_from_slice(bridge_symbol);
-            }
-        }
-        if !ez.next() {
-            break;
-        }
-    }
-
+    let encoded = stable_bridge_expr_packet_bytes(space, expr)?;
     append_u32_be(out, encoded.len() as u32);
     out.extend_from_slice(&encoded);
     Ok(())
@@ -1004,7 +931,9 @@ fn append_query_only_v2_header(out: &mut Vec<u8>, row_count: u32) {
     append_u16_be(out, QUERY_ONLY_V2_VERSION);
     append_u16_be(
         out,
-        QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES,
+        QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY
+            | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES
+            | QUERY_ONLY_V2_FLAG_WIDE_TOKENS,
     );
     append_u32_be(out, row_count);
 }
@@ -1018,47 +947,12 @@ fn append_multi_ref_v3_header(out: &mut Vec<u8>, flags: u16, factor_count: u32, 
     append_u32_be(out, row_count);
 }
 
-static BRIDGE_VAR_NAMES: OnceLock<Mutex<HashMap<(u8, u8), &'static str>>> = OnceLock::new();
-
-fn bridge_var_name(side: u8, index: u8) -> &'static str {
-    let cache = BRIDGE_VAR_NAMES.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap();
-    if let Some(existing) = guard.get(&(side, index)) {
-        return existing;
-    }
-    let leaked: &'static str = Box::leak(format!("$__mork_b{}_{}", side, index).into_boxed_str());
-    guard.insert((side, index), leaked);
-    leaked
-}
-
-fn serialize_expr_env_bridge(space: &Space, expr_env: ExprEnv) -> Vec<u8> {
-    let mut out = Vec::new();
-    let sym_table = space.sym_table();
-    expr_env.subsexpr().serialize2(
-        &mut out,
-        |s| {
-            let mapped = if s.len() == 8 {
-                let mut symbol = [0u8; 8];
-                symbol.copy_from_slice(s);
-                sym_table
-                    .get_bytes(symbol)
-                    .map(unsafe { |x| std::str::from_utf8_unchecked(x) })
-            } else {
-                Some(unsafe { std::str::from_utf8_unchecked(s) })
-            };
-            unsafe { std::mem::transmute(mapped.expect("bridge symbol bytes should decode")) }
-        },
-        |index, _is_new| bridge_var_name(expr_env.n, index),
-    );
-    out
-}
-
 fn append_bindings_packet(
     space: &Space,
     out: &mut Vec<u8>,
     bindings: &BTreeMap<(u8, u8), ExprEnv>,
     atom_indices: &[u32],
-) {
+) -> Result<(), String> {
     append_u32_be(out, atom_indices.len() as u32);
     for &idx in atom_indices {
         append_u32_be(out, idx);
@@ -1067,10 +961,11 @@ fn append_bindings_packet(
     for (&(key_a, key_b), expr_env) in bindings.iter() {
         out.push(key_a);
         out.push(key_b);
-        let rendered = serialize_expr_env_bridge(space, *expr_env);
+        let rendered = bridge_expr_env_text(space, *expr_env)?;
         append_u32_be(out, rendered.len() as u32);
         out.extend_from_slice(&rendered);
     }
+    Ok(())
 }
 
 fn expr_env_is_query_only_safe(expr_env: ExprEnv) -> bool {
@@ -1102,24 +997,6 @@ fn append_query_only_binding_entries(
     Ok(())
 }
 
-#[cfg(feature = "pathmap-space")]
-fn append_query_only_binding_signature(
-    space: &mut Space,
-    out: &mut Vec<u8>,
-    bindings: &[(u8, String)],
-) -> Result<(), String> {
-    append_u32_be(out, bindings.len() as u32);
-    for (query_slot, value_text) in bindings {
-        append_u16_be(out, *query_slot as u16);
-        out.push(0);
-        out.push(1);
-        let expr_bytes = parse_single_expr(space, value_text.as_bytes())?;
-        append_u32_be(out, expr_bytes.len() as u32);
-        out.extend_from_slice(&expr_bytes);
-    }
-    Ok(())
-}
-
 fn append_query_only_v2_row(
     space: &Space,
     out: &mut Vec<u8>,
@@ -1127,20 +1004,6 @@ fn append_query_only_v2_row(
 ) -> Result<(), String> {
     append_u32_be(out, 0);
     append_query_only_binding_entries(space, out, bindings)
-}
-
-#[cfg(feature = "pathmap-space")]
-fn append_multi_ref_counted_multiplicities(
-    out: &mut Vec<u8>,
-    factor_counts: &[u32],
-) -> Result<(), String> {
-    for count in factor_counts {
-        if *count == 0 {
-            return Err("counted multi-ref row resolved to zero multiplicity".to_string());
-        }
-        append_u32_be(out, *count);
-    }
-    Ok(())
 }
 
 fn append_empty_binding_row(out: &mut Vec<u8>) {
@@ -1158,16 +1021,32 @@ fn query_bindings_packet(
         ptr: pattern_bytes.as_ptr().cast_mut(),
     };
     let mut rows: Vec<Vec<u8>> = Vec::new();
+    let mut error: Option<String> = None;
 
     Space::query_multi(&space.inner.btm, pattern_expr, |result, _matched_expr| {
         let mut row = Vec::new();
-        match result {
-            Ok(_refs) => append_empty_binding_row(&mut row),
+        let append_result = match result {
+            Ok(_refs) => {
+                append_empty_binding_row(&mut row);
+                Ok(())
+            }
             Err(bindings) => append_bindings_packet(&space.inner, &mut row, &bindings, &[]),
+        };
+        match append_result {
+            Ok(()) => {
+                rows.push(row);
+                true
+            }
+            Err(err) => {
+                error = Some(err);
+                false
+            }
         }
-        rows.push(row);
-        true
     });
+
+    if let Some(err) = error {
+        return Err(err);
+    }
 
     let row_count = rows.len() as u32;
     let mut packet = Vec::new();
@@ -1188,36 +1067,42 @@ fn query_bindings_query_only_v2_packet(
         ptr: pattern_bytes.as_ptr().cast_mut(),
     };
     ensure_query_only_v2_shape(pattern_expr)?;
-    let mut error: Option<String> = None;
-    let mut row_count = 0u32;
     let mut packet = Vec::new();
-    let mut pending_rows: Vec<Vec<u8>> = Vec::new();
+    let (row_count, pending_rows): (u32, Vec<Vec<u8>>) = if bridge_uses_counted_storage(space) {
+        let rows = counted_query_only_packet_rows(&space.inner, &pattern_bytes)?;
+        (rows.len() as u32, rows)
+    } else {
+        let mut error: Option<String> = None;
+        let mut row_count = 0u32;
+        let mut pending_rows: Vec<Vec<u8>> = Vec::new();
 
-    Space::query_multi(&space.inner.btm, pattern_expr, |result, _matched_expr| {
-        let mut row = Vec::new();
-        let append_result = match result {
-            Ok(_refs) => {
-                append_empty_binding_row(&mut row);
-                Ok(())
+        Space::query_multi(&space.inner.btm, pattern_expr, |result, _matched_expr| {
+            let mut row = Vec::new();
+            let append_result = match result {
+                Ok(_refs) => {
+                    append_empty_binding_row(&mut row);
+                    Ok(())
+                }
+                Err(bindings) => append_query_only_v2_row(&space.inner, &mut row, &bindings),
+            };
+            match append_result {
+                Ok(()) => {
+                    row_count += 1;
+                    pending_rows.push(row);
+                    true
+                }
+                Err(err) => {
+                    error = Some(err);
+                    false
+                }
             }
-            Err(bindings) => append_query_only_v2_row(&space.inner, &mut row, &bindings),
-        };
-        match append_result {
-            Ok(()) => {
-                row_count += 1;
-                pending_rows.push(row);
-                true
-            }
-            Err(err) => {
-                error = Some(err);
-                false
-            }
+        });
+
+        if let Some(err) = error {
+            return Err(err);
         }
-    });
-
-    if let Some(err) = error {
-        return Err(err);
-    }
+        (row_count, pending_rows)
+    };
 
     append_query_only_v2_header(&mut packet, row_count);
     for row in pending_rows {
@@ -1233,35 +1118,19 @@ fn query_bindings_multi_ref_v3_packet(
 ) -> Result<(Vec<u8>, u32), String> {
     let normalized = normalize_query_text(pattern)?;
     let pattern_bytes = parse_single_expr(&mut space.inner, &normalized)?;
-    let pattern_expr = Expr {
-        ptr: pattern_bytes.as_ptr().cast_mut(),
-    };
-    let factor_count = query_factor_count(pattern_expr)?
-        .checked_sub(1)
-        .ok_or_else(|| "multi-ref v3 expected a wrapped query".to_string())?;
-    if factor_count == 0 {
-        return Err("multi-ref v3 requires at least one query factor".to_string());
-    }
 
-    let mut row_count = 0u32;
     let mut packet = Vec::new();
-    let mut pending_rows: Vec<Vec<u8>> = Vec::new();
+    let (factor_count, row_count, pending_rows): (u32, u32, Vec<Vec<u8>>);
 
     if bridge_uses_counted_storage(space) {
-        for counted_row in counted_pathmap::counted_query_rows_detailed(&space.inner, &pattern_bytes)?
-        {
-            let mut row = Vec::new();
-            append_multi_ref_counted_multiplicities(&mut row, &counted_row.factor_counts)
-            .and_then(|()| {
-                append_query_only_binding_signature(&mut space.inner, &mut row, &counted_row.bindings)
-            })?;
-            row_count += 1;
-            pending_rows.push(row);
-        }
+        let detailed_packet_rows =
+            counted_query_rows_detailed_packet_rows(&space.inner, &pattern_bytes)?;
+        factor_count = detailed_packet_rows.factor_count;
+        row_count = detailed_packet_rows.rows.len() as u32;
+        pending_rows = detailed_packet_rows.rows;
     } else {
         return Err(
-            "multi-ref v3 packets are only available for counted PathMap bridge spaces"
-                .to_string(),
+            "multi-ref v3 packets are only available for counted PathMap bridge spaces".to_string(),
         );
     }
 
@@ -1269,8 +1138,9 @@ fn query_bindings_multi_ref_v3_packet(
         &mut packet,
         MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY
             | MULTI_REF_V3_FLAG_RAW_EXPR_BYTES
-            | MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES,
-        factor_count as u32,
+            | MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES
+            | MULTI_REF_V3_FLAG_WIDE_TOKENS,
+        factor_count,
         row_count,
     );
     for row in pending_rows {
@@ -1295,69 +1165,94 @@ fn query_debug_text(space: &mut Space, pattern: &[u8]) -> Result<(Vec<u8>, u32),
     };
     let mut lines = Vec::new();
     let mut count = 0u32;
+    let mut error: Option<String> = None;
 
     Space::query_multi(&space.btm, pattern_expr, |result, matched_expr| {
         count += 1;
         let mut line = Vec::new();
-        line.extend_from_slice(b"match=");
-        line.extend_from_slice(serialize(expr_span_bytes(matched_expr)).as_bytes());
-        match result {
-            Ok(refs) => {
-                line.extend_from_slice(b" refs=[");
-                for (i, r) in refs.iter().enumerate() {
-                    if i != 0 {
-                        line.extend_from_slice(b",");
+        let append_result = (|| -> Result<(), String> {
+            line.extend_from_slice(b"match=");
+            line.extend_from_slice(&bridge_expr_text(space, matched_expr)?);
+            match result {
+                Ok(refs) => {
+                    line.extend_from_slice(b" refs=[");
+                    for (i, r) in refs.iter().enumerate() {
+                        if i != 0 {
+                            line.extend_from_slice(b",");
+                        }
+                        line.extend_from_slice(r.to_string().as_bytes());
                     }
-                    line.extend_from_slice(r.to_string().as_bytes());
+                    line.extend_from_slice(b"]");
                 }
-                line.extend_from_slice(b"]");
-            }
-            Err(bindings) => {
-                line.extend_from_slice(b" bindings=[");
-                for (i, (&(key_a, key_b), expr_env)) in bindings.iter().enumerate() {
-                    if i != 0 {
+                Err(bindings) => {
+                    line.extend_from_slice(b" bindings=[");
+                    for (i, (&(key_a, key_b), expr_env)) in bindings.iter().enumerate() {
+                        if i != 0 {
+                            line.extend_from_slice(b",");
+                        }
+                        line.extend_from_slice(b"(");
+                        line.extend_from_slice(key_a.to_string().as_bytes());
                         line.extend_from_slice(b",");
+                        line.extend_from_slice(key_b.to_string().as_bytes());
+                        line.extend_from_slice(b")=");
+                        line.extend_from_slice(&bridge_expr_env_text(space, *expr_env)?);
                     }
-                    line.extend_from_slice(b"(");
-                    line.extend_from_slice(key_a.to_string().as_bytes());
-                    line.extend_from_slice(b",");
-                    line.extend_from_slice(key_b.to_string().as_bytes());
-                    line.extend_from_slice(b")=");
-                    line.extend_from_slice(
-                        serialize(expr_span_bytes(expr_env.subsexpr())).as_bytes(),
-                    );
+                    line.extend_from_slice(b"]");
                 }
-                line.extend_from_slice(b"]");
             }
+            Ok(())
+        })();
+        if let Err(err) = append_result {
+            error = Some(err);
+            return false;
         }
         line.push(b'\n');
         lines.extend_from_slice(&line);
         true
     });
 
+    if let Some(err) = error {
+        return Err(err);
+    }
+
     Ok((lines, count))
 }
 
 fn dump_bridge_space_text(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), String> {
     if bridge_uses_counted_storage(bridge) {
-        let mut text = Vec::new();
-        let mut count = 0u32;
-        for entry in bridge_counted_entries(bridge)? {
-            let mut line = Vec::new();
-            let mut view = Space::new();
-            view.btm.insert(&entry.atom_expr_bytes, ());
-            view.dump_all_sexpr(&mut line)?;
-            for _ in 0..entry.count {
-                text.extend_from_slice(&line);
-                count = count.saturating_add(1);
-            }
-        }
-        return Ok((text, count));
+        return counted_sexpr_text(&bridge.inner);
     }
-    let mut unique_text = Vec::new();
-    bridge.inner.dump_all_sexpr(&mut unique_text)?;
-    let count = bridge.inner.btm.val_count() as u32;
-    Ok((unique_text, count))
+    let mut text = Vec::new();
+    let mut count = 0u32;
+    let mut rz = bridge.inner.btm.read_zipper();
+    while rz.to_next_val() {
+        let expr = Expr {
+            ptr: rz.origin_path().as_ptr().cast_mut(),
+        };
+        text.extend_from_slice(&bridge_expr_text(&bridge.inner, expr)?);
+        text.push(b'\n');
+        count = count.saturating_add(1);
+    }
+    Ok((text, count))
+}
+
+fn dump_bridge_space_expr_rows(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), String> {
+    if bridge_uses_counted_storage(bridge) {
+        return counted_expr_row_packet(&bridge.inner);
+    }
+
+    let mut packet = Vec::new();
+    let mut count = 0u32;
+
+    let mut rz = bridge.inner.btm.read_zipper();
+    while rz.to_next_val() {
+        let len = u32::try_from(rz.origin_path().len())
+            .map_err(|_| "expr row exceeds u32 packet length".to_string())?;
+        append_u32_be(&mut packet, len);
+        packet.extend_from_slice(rz.origin_path());
+        count = count.saturating_add(1);
+    }
+    Ok((packet, count))
 }
 
 // === Space lifecycle, mutation, and algebra FFI ===
@@ -1369,6 +1264,7 @@ pub extern "C" fn mork_space_new() -> *mut MorkSpace {
         let bridge = Box::new(BridgeSpace {
             inner: Space::new(),
             storage_mode: BridgeStorageMode::RawExprs,
+            counted_logical_size: 0,
         });
         Box::into_raw(bridge) as *mut MorkSpace
     })
@@ -1381,6 +1277,7 @@ pub extern "C" fn mork_space_new_pathmap() -> *mut MorkSpace {
         let bridge = Box::new(BridgeSpace {
             inner: Space::new(),
             storage_mode: BridgeStorageMode::CountedPathmap,
+            counted_logical_size: 0,
         });
         Box::into_raw(bridge) as *mut MorkSpace
     })
@@ -1406,6 +1303,7 @@ pub extern "C" fn mork_space_clear(space: *mut MorkSpace) -> MorkStatus {
             Err(err) => return err,
         };
         bridge.inner = Space::new();
+        bridge.counted_logical_size = 0;
         MorkStatus::ok(0)
     })
 }
@@ -1429,23 +1327,24 @@ pub extern "C" fn mork_space_add_text(
         let bytes = std::slice::from_raw_parts(text, len);
         if bridge_uses_counted_storage(bridge) {
             match parse_expr_chunk(&mut bridge.inner, bytes) {
-                Ok(exprs) => {
-                    let mut added = 0u64;
-                    for expr_bytes in exprs {
-                        if let Err(err) =
-                            counted_pathmap::counted_insert_expr(&mut bridge.inner, &expr_bytes)
-                        {
-                            return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
-                        }
-                        added = added.saturating_add(1);
-                    }
-                    MorkStatus::ok(added)
-                }
+                Ok(exprs) => match counted_insert_expr_batch_cached(
+                    &mut bridge.inner,
+                    &exprs,
+                    &mut bridge.counted_logical_size,
+                ) {
+                    Ok(added) => MorkStatus::ok(added),
+                    Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+                },
                 Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
         } else {
-            match bridge.inner.add_all_sexpr(bytes) {
-                Ok(count) => MorkStatus::ok(count as u64),
+            match parse_expr_chunk(&mut bridge.inner, bytes) {
+                Ok(exprs) => {
+                    for expr in &exprs {
+                        bridge.inner.btm.insert(expr, ());
+                    }
+                    MorkStatus::ok(exprs.len() as u64)
+                }
                 Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
         }
@@ -1481,7 +1380,11 @@ pub extern "C" fn mork_space_add_expr_bytes(
             return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
         }
         if bridge_uses_counted_storage(bridge) {
-            match counted_pathmap::counted_insert_expr(&mut bridge.inner, expr_bytes) {
+            match counted_insert_expr_cached(
+                &mut bridge.inner,
+                expr_bytes,
+                &mut bridge.counted_logical_size,
+            ) {
                 Ok(_) => MorkStatus::ok(1),
                 Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
             }
@@ -1520,17 +1423,20 @@ pub extern "C" fn mork_space_add_expr_bytes_batch(
             return MorkStatus::ok(0);
         }
         if bridge_uses_counted_storage(bridge) {
-            for expr in &exprs {
-                if let Err(err) = counted_pathmap::counted_insert_expr(&mut bridge.inner, expr) {
-                    return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
-                }
+            match counted_insert_expr_batch_cached(
+                &mut bridge.inner,
+                &exprs,
+                &mut bridge.counted_logical_size,
+            ) {
+                Ok(added) => MorkStatus::ok(added),
+                Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
             }
         } else {
             for expr in &exprs {
                 bridge.inner.btm.insert(expr, ());
             }
+            MorkStatus::ok(exprs.len() as u64)
         }
-        MorkStatus::ok(exprs.len() as u64)
     })
 }
 
@@ -1551,28 +1457,25 @@ pub extern "C" fn mork_space_remove_text(
         let bytes = std::slice::from_raw_parts(text, len);
         if bridge_uses_counted_storage(bridge) {
             match parse_expr_chunk(&mut bridge.inner, bytes) {
-                Ok(exprs) => {
-                    let mut removed = 0u64;
-                    for expr_bytes in exprs {
-                        match counted_pathmap::counted_remove_one_expr(&mut bridge.inner, &expr_bytes)
-                        {
-                            Ok(Some(_)) => removed = removed.saturating_add(1),
-                            Ok(None) => {}
-                            Err(err) => {
-                                return MorkStatus::err(
-                                    MorkStatusCode::Internal,
-                                    err.into_bytes(),
-                                );
-                            }
-                        }
-                    }
-                    MorkStatus::ok(removed)
-                }
+                Ok(exprs) => match counted_remove_expr_batch_cached(
+                    &mut bridge.inner,
+                    &exprs,
+                    &mut bridge.counted_logical_size,
+                ) {
+                    Ok(removed) => MorkStatus::ok(removed),
+                    Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+                },
                 Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
         } else {
-            match bridge.inner.remove_all_sexpr(bytes) {
-                Ok(count) => MorkStatus::ok(count as u64),
+            match parse_expr_chunk(&mut bridge.inner, bytes) {
+                Ok(exprs) => {
+                    let mut removed = 0u64;
+                    for expr in &exprs {
+                        removed += u64::from(bridge.inner.btm.remove(expr).is_some());
+                    }
+                    MorkStatus::ok(removed)
+                }
                 Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
         }
@@ -1608,7 +1511,11 @@ pub extern "C" fn mork_space_remove_expr_bytes(
             return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
         }
         if bridge_uses_counted_storage(bridge) {
-            match counted_pathmap::counted_remove_one_expr(&mut bridge.inner, expr_bytes) {
+            match counted_remove_one_expr_cached(
+                &mut bridge.inner,
+                expr_bytes,
+                &mut bridge.counted_logical_size,
+            ) {
                 Ok(Some(_)) => MorkStatus::ok(1),
                 Ok(None) => MorkStatus::ok(0),
                 Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
@@ -1621,19 +1528,60 @@ pub extern "C" fn mork_space_remove_expr_bytes(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn mork_space_contains_expr_bytes(
+    space: *const MorkSpace,
+    expr_bytes: *const u8,
+    len: usize,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_ref(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        if expr_bytes.is_null() {
+            return MorkStatus::err(MorkStatusCode::Null, b"null expr bytes".to_vec());
+        }
+        let expr_bytes = std::slice::from_raw_parts(expr_bytes, len);
+        if let Err(err) = validate_expr_bytes(expr_bytes) {
+            return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
+        }
+        let found = if bridge_uses_counted_storage(bridge) {
+            match counted_contains_expr(&bridge.inner, expr_bytes) {
+                Ok(found) => found,
+                Err(err) => return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+            }
+        } else {
+            bridge.inner.btm.read_zipper_at_path(expr_bytes).is_val()
+        };
+        MorkStatus::ok(u64::from(found))
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn mork_space_size(space: *const MorkSpace) -> MorkStatus {
     with_catch_status(|| unsafe {
         let bridge = match bridge_space_ref(space) {
             Ok(space) => space,
             Err(err) => return err,
         };
-        MorkStatus::ok(bridge.inner.btm.val_count() as u64)
+        MorkStatus::ok(bridge_stored_atom_count(bridge))
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn mork_space_unique_size(space: *const MorkSpace) -> MorkStatus {
-    mork_space_size(space)
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_ref(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        let unique = if bridge_uses_counted_storage(bridge) {
+            counted_unique_size(&bridge.inner)
+        } else {
+            bridge.inner.btm.val_count() as u64
+        };
+        MorkStatus::ok(unique)
+    })
 }
 
 /// Advances the raw-expression MORK space for up to `steps` calculus steps.
@@ -1704,13 +1652,21 @@ pub extern "C" fn mork_space_load_act_file(
         };
         let sidecar_path = act_copy_sidecar_path(&path);
         bridge.inner = Space::new();
+        bridge.counted_logical_size = 0;
         match bridge.inner.restore_tree(&path) {
             Ok(()) => match std::fs::read(&sidecar_path) {
                 Ok(data) => match apply_act_copy_sidecar(bridge, &data) {
-                    Ok(()) => MorkStatus::ok(bridge_stored_atom_count(bridge)),
-                    Err(_) => MorkStatus::ok(bridge_stored_atom_count(bridge)),
+                    Ok(()) => {
+                        bridge_sync_counted_logical_size(bridge);
+                        MorkStatus::ok(bridge_stored_atom_count(bridge))
+                    }
+                    Err(_) => {
+                        bridge_sync_counted_logical_size(bridge);
+                        MorkStatus::ok(bridge_stored_atom_count(bridge))
+                    }
                 },
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    bridge_sync_counted_logical_size(bridge);
                     MorkStatus::ok(bridge_stored_atom_count(bridge))
                 }
                 Err(err) => MorkStatus::err(
@@ -1744,6 +1700,38 @@ pub extern "C" fn mork_space_dump(space: *mut MorkSpace) -> MorkBuffer {
         };
         match dump_bridge_space_text(bridge) {
             Ok((text, count)) => MorkBuffer::ok(text, count),
+            Err(err) => MorkBuffer::err(MorkStatusCode::Internal, err.into_bytes()),
+        }
+    })
+}
+
+/// Dumps the current space as repeated stable bridge expr-byte rows.
+///
+/// Packet format:
+///   repeated rows:
+///     u32 expr_len_be
+///     u8[expr_len] expr_bytes
+///
+/// `count` reports the logical row count, so counted PathMap storage expands
+/// multiplicities into repeated rows without requiring a staged textual dump.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_dump_expr_rows(space: *mut MorkSpace) -> MorkBuffer {
+    with_catch_buffer(|| unsafe {
+        let bridge = match bridge_space_ref(space) {
+            Ok(space) => space,
+            Err(err) => {
+                return MorkBuffer::err(
+                    MorkStatusCode::Null,
+                    if err.message.is_null() {
+                        b"null MorkSpace".to_vec()
+                    } else {
+                        Vec::from_raw_parts(err.message, err.message_len, err.message_len)
+                    },
+                );
+            }
+        };
+        match dump_bridge_space_expr_rows(bridge) {
+            Ok((packet, count)) => MorkBuffer::ok(packet, count),
             Err(err) => MorkBuffer::err(MorkStatusCode::Internal, err.into_bytes()),
         }
     })
@@ -3609,7 +3597,17 @@ pub extern "C" fn mork_bytes_free(data: *mut u8, len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_SERIAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn test_guard() -> MutexGuard<'static, ()> {
+        TEST_SERIAL_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn status_ok(status: &MorkStatus) -> bool {
         status.code == MorkStatusCode::Ok as i32
@@ -3629,6 +3627,7 @@ mod tests {
 
     #[test]
     fn add_query_remove_debug_smoke() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
 
@@ -3666,6 +3665,7 @@ mod tests {
 
     #[test]
     fn act_dump_load_round_trips_space_text() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
 
@@ -3701,6 +3701,7 @@ mod tests {
 
     #[test]
     fn add_text_dump_canonicalizes_surface_spacing() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
 
@@ -3737,16 +3738,14 @@ mod tests {
 
     #[test]
     fn expr_bytes_mutation_matches_text_surface_roundtrip() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
 
         let mut scratch = Space::new();
         let edge = parse_single_expr(&mut scratch, b"(edge a b)").unwrap();
-        let nested = parse_single_expr(
-            &mut scratch,
-            b"(nest (pair a (pair b c)) (text \"x y\"))",
-        )
-        .unwrap();
+        let nested =
+            parse_single_expr(&mut scratch, b"(nest (pair a (pair b c)) (text \"x y\"))").unwrap();
 
         let add1 = mork_space_add_expr_bytes(raw, edge.as_ptr(), edge.len());
         let add2 = mork_space_add_expr_bytes(raw, nested.as_ptr(), nested.len());
@@ -3779,16 +3778,14 @@ mod tests {
 
     #[test]
     fn expr_bytes_batch_mutation_matches_individual_adds() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
 
         let mut scratch = Space::new();
         let edge = parse_single_expr(&mut scratch, b"(edge a b)").unwrap();
-        let nested = parse_single_expr(
-            &mut scratch,
-            b"(nest (pair a (pair b c)) (text \"x y\"))",
-        )
-        .unwrap();
+        let nested =
+            parse_single_expr(&mut scratch, b"(nest (pair a (pair b c)) (text \"x y\"))").unwrap();
 
         let mut packet = Vec::new();
         packet.extend_from_slice(&(edge.len() as u32).to_be_bytes());
@@ -3817,6 +3814,7 @@ mod tests {
 
     #[test]
     fn bindings_packet_starts_with_row_count() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let add1 = mork_space_add_sexpr(raw, b"(pair a b)".as_ptr(), 10);
@@ -3835,6 +3833,7 @@ mod tests {
 
     #[test]
     fn bindings_packet_uses_zero_refs_and_bridge_vars() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let add = mork_space_add_sexpr(raw, b"(pair a (wrap $y))".as_ptr(), 18);
@@ -3859,6 +3858,7 @@ mod tests {
 
     #[test]
     fn query_only_v2_packet_has_header_and_ground_value() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let add = mork_space_add_sexpr(raw, b"(pair a b)".as_ptr(), 10);
@@ -3879,7 +3879,9 @@ mod tests {
         );
         assert_eq!(
             u16::from_be_bytes([data[6], data[7]]),
-            QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES
+            QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY
+                | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES
+                | QUERY_ONLY_V2_FLAG_WIDE_TOKENS
         );
         assert_eq!(
             u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
@@ -3897,15 +3899,53 @@ mod tests {
         assert_eq!(data[22], 1);
         assert_eq!(data[23], 1);
         let expr_len = u32::from_be_bytes([data[24], data[25], data[26], data[27]]) as usize;
-        assert_eq!(expr_len, 2);
-        assert_eq!(data[28], item_byte(Tag::SymbolSize(1)));
-        assert_eq!(data[29], b'b');
+        assert_eq!(expr_len, 6);
+        assert_eq!(data[28], 0x01);
+        assert_eq!(
+            u32::from_be_bytes([data[29], data[30], data[31], data[32]]),
+            1
+        );
+        assert_eq!(data[33], b'b');
+        mork_bytes_free(packet.data, packet.len);
+        mork_space_free(raw);
+    }
+
+    #[test]
+    fn query_only_v2_supports_long_string_binding_values() {
+        let _guard = test_guard();
+        let raw = mork_space_new();
+        assert!(!raw.is_null());
+        let fact = b"(row key \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-extra-tail\")";
+        let query = b"(row key $x)";
+        let add = mork_space_add_sexpr(raw, fact.as_ptr(), fact.len());
+        assert!(status_ok(&add));
+
+        let packet = mork_space_query_bindings_query_only_v2(raw, query.as_ptr(), query.len());
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 1);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(
+            u16::from_be_bytes([data[6], data[7]]),
+            QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY
+                | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES
+                | QUERY_ONLY_V2_FLAG_WIDE_TOKENS
+        );
+        let expr_len = u32::from_be_bytes([data[24], data[25], data[26], data[27]]) as usize;
+        assert_eq!(expr_len, 80);
+        assert_eq!(data[28], 0x01);
+        assert_eq!(
+            u32::from_be_bytes([data[29], data[30], data[31], data[32]]),
+            75
+        );
+        assert_eq!(data[33], b'"');
+        assert_eq!(data[107], b'"');
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(raw);
     }
 
     #[test]
     fn query_only_v2_exact_match_has_zero_refs_and_zero_bindings() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let add = mork_space_add_sexpr(raw, b"(dup a)".as_ptr(), 7);
@@ -3919,7 +3959,7 @@ mod tests {
         assert!(buffer_ok(&packet));
         assert_eq!(packet.count, 1);
         let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
-        assert!(data.len() >= 28);
+        assert_eq!(data.len(), 20);
         assert_eq!(
             u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
             QUERY_ONLY_V2_MAGIC
@@ -3946,6 +3986,7 @@ mod tests {
 
     #[test]
     fn query_only_v2_rejects_matched_side_variable_values() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let add = mork_space_add_sexpr(raw, b"(pair a (wrap $y))".as_ptr(), 18);
@@ -3962,6 +4003,7 @@ mod tests {
 
     #[test]
     fn query_debug_surfaces_candidate_variable_match() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let fact = b"(pair $x $x)";
@@ -3982,6 +4024,7 @@ mod tests {
 
     #[test]
     fn query_only_v2_rejects_candidate_side_binding_keys() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let fact = b"(pair $x $x)";
@@ -4000,6 +4043,7 @@ mod tests {
 
     #[test]
     fn query_only_v2_accepts_explicit_unary_wrapper() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let fact = b"(pair a b)";
@@ -4016,6 +4060,7 @@ mod tests {
 
     #[test]
     fn query_only_v2_rejects_multi_factor_conjunctions_until_multi_ref_packet() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let fact1 = b"(pair a b)";
@@ -4039,6 +4084,7 @@ mod tests {
     #[cfg(feature = "pathmap-space")]
     #[test]
     fn multi_ref_v3_packet_is_unavailable_on_raw_bridge() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let query = b"(, (pair $x $y) (pair $y $z))";
@@ -4054,7 +4100,108 @@ mod tests {
 
     #[cfg(feature = "pathmap-space")]
     #[test]
+    fn counted_pathmap_size_tracks_logical_multiplicity() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+
+        let dup = b"(dup a)";
+        for expected in [1u64, 2, 3] {
+            let add = mork_space_add_sexpr(counted, dup.as_ptr(), dup.len());
+            assert!(status_ok(&add));
+            let size = mork_space_size(counted);
+            assert!(status_ok(&size));
+            assert_eq!(size.value, expected);
+        }
+
+        let unique = mork_space_unique_size(counted);
+        assert!(status_ok(&unique));
+        assert_eq!(unique.value, 1);
+
+        let removed = mork_space_remove_sexpr(counted, dup.as_ptr(), dup.len());
+        assert!(status_ok(&removed));
+        assert_eq!(removed.value, 1);
+        let size = mork_space_size(counted);
+        assert!(status_ok(&size));
+        assert_eq!(size.value, 2);
+
+        let cleared = mork_space_clear(counted);
+        assert!(status_ok(&cleared));
+        let size = mork_space_size(counted);
+        assert!(status_ok(&size));
+        assert_eq!(size.value, 0);
+
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn counted_pathmap_contains_expr_bytes_is_alpha_invariant() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+
+        let mut scratch = Space::new();
+        let lhs = parse_single_expr(&mut scratch, b"(edge $x $x)").unwrap();
+        let rhs = parse_single_expr(&mut scratch, b"(edge $y $y)").unwrap();
+        let miss = parse_single_expr(&mut scratch, b"(edge $y $z)").unwrap();
+
+        let add = mork_space_add_expr_bytes(counted, lhs.as_ptr(), lhs.len());
+        assert!(status_ok(&add));
+
+        let hit = mork_space_contains_expr_bytes(counted, rhs.as_ptr(), rhs.len());
+        assert!(status_ok(&hit));
+        assert_eq!(hit.value, 1);
+
+        let absent = mork_space_contains_expr_bytes(counted, miss.as_ptr(), miss.len());
+        assert!(status_ok(&absent));
+        assert_eq!(absent.value, 0);
+
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn counted_pathmap_query_only_v2_supports_non_ground_typed_binding_value() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+
+        let fact = b"(: ax-1 (-> $a (-> $b $a)))";
+        let query = b"(: $x $t)";
+        let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+        assert!(status_ok(&add));
+
+        let packet = mork_space_query_bindings_query_only_v2(counted, query.as_ptr(), query.len());
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 1);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(
+            u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+            QUERY_ONLY_V2_MAGIC
+        );
+        assert_eq!(
+            u16::from_be_bytes([data[4], data[5]]),
+            QUERY_ONLY_V2_VERSION
+        );
+        assert_eq!(
+            u16::from_be_bytes([data[6], data[7]]),
+            QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY
+                | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES
+                | QUERY_ONLY_V2_FLAG_WIDE_TOKENS
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
+            1
+        );
+        mork_bytes_free(packet.data, packet.len);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
     fn multi_ref_v3_packet_reports_direct_factor_multiplicities_and_ground_bindings() {
+        let _guard = test_guard();
         let counted = mork_space_new_pathmap();
         assert!(!counted.is_null());
         let edge_ab = b"(edge a b)";
@@ -4084,6 +4231,7 @@ mod tests {
             MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY
                 | MULTI_REF_V3_FLAG_RAW_EXPR_BYTES
                 | MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES
+                | MULTI_REF_V3_FLAG_WIDE_TOKENS
         );
         assert_eq!(
             u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
@@ -4106,34 +4254,109 @@ mod tests {
             3
         );
         assert_eq!(u16::from_be_bytes([data[28], data[29]]), 0);
-        assert_eq!(data[30], 1);
+        assert_eq!(data[30], 0);
         assert_eq!(data[31], 1);
         assert_eq!(
             u32::from_be_bytes([data[32], data[33], data[34], data[35]]) as usize,
-            2
+            6
         );
-        assert_eq!(data[36], item_byte(Tag::SymbolSize(1)));
-        assert_eq!(data[37], b'a');
-        assert_eq!(u16::from_be_bytes([data[38], data[39]]), 1);
-        assert_eq!(data[41], 1);
+        assert_eq!(data[36], 0x01);
         assert_eq!(
-            u32::from_be_bytes([data[42], data[43], data[44], data[45]]) as usize,
-            2
+            u32::from_be_bytes([data[37], data[38], data[39], data[40]]),
+            1
         );
-        assert_eq!(data[46], item_byte(Tag::SymbolSize(1)));
-        assert_eq!(data[47], b'b');
-        assert_eq!(u16::from_be_bytes([data[48], data[49]]), 2);
-        assert_eq!(data[51], 1);
+        assert_eq!(data[41], b'a');
+        assert_eq!(u16::from_be_bytes([data[42], data[43]]), 1);
+        assert_eq!(data[45], 1);
         assert_eq!(
-            u32::from_be_bytes([data[52], data[53], data[54], data[55]]) as usize,
+            u32::from_be_bytes([data[46], data[47], data[48], data[49]]) as usize,
+            6
+        );
+        assert_eq!(data[50], 0x01);
+        assert_eq!(
+            u32::from_be_bytes([data[51], data[52], data[53], data[54]]),
+            1
+        );
+        assert_eq!(data[55], b'b');
+        assert_eq!(u16::from_be_bytes([data[56], data[57]]), 2);
+        assert_eq!(data[59], 1);
+        assert_eq!(
+            u32::from_be_bytes([data[60], data[61], data[62], data[63]]) as usize,
+            6
+        );
+        assert_eq!(data[64], 0x01);
+        assert_eq!(
+            u32::from_be_bytes([data[65], data[66], data[67], data[68]]),
+            1
+        );
+        assert_eq!(data[69], b'c');
+        assert_eq!(data[44], 0);
+        assert_eq!(data[58], 0);
+        mork_bytes_free(packet.data, packet.len);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn multi_ref_v3_packet_reports_typed_annotation_bindings() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let fact = b"(: ax-1 (-> $a (-> $b $a)))";
+        let query = b"(, (: $x $t))";
+
+        let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+        assert!(status_ok(&add));
+
+        let packet = mork_space_query_bindings_multi_ref_v3(counted, query.as_ptr(), query.len());
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 1);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(
+            u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+            QUERY_ONLY_V2_MAGIC
+        );
+        assert_eq!(u16::from_be_bytes([data[4], data[5]]), MULTI_REF_V3_VERSION);
+        assert_eq!(
+            u16::from_be_bytes([data[6], data[7]]),
+            MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY
+                | MULTI_REF_V3_FLAG_RAW_EXPR_BYTES
+                | MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES
+                | MULTI_REF_V3_FLAG_WIDE_TOKENS
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
+            1
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[12], data[13], data[14], data[15]]),
+            1
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
+            1
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[20], data[21], data[22], data[23]]),
             2
         );
-        assert_eq!(data[56], item_byte(Tag::SymbolSize(1)));
-        assert_eq!(data[57], b'c');
-        assert!(data[30] > 0);
-        assert!(data[40] > 0);
-        assert!(data[50] > 0);
-        assert!(data[30] == 2 || data[40] == 2 || data[50] == 2);
+        assert_eq!(u16::from_be_bytes([data[24], data[25]]), 0);
+        assert_eq!(data[26], 0);
+        assert_eq!(data[27], 1);
+        assert_eq!(
+            u32::from_be_bytes([data[28], data[29], data[30], data[31]]) as usize,
+            9
+        );
+        assert_eq!(data[32], 0x01);
+        assert_eq!(
+            u32::from_be_bytes([data[33], data[34], data[35], data[36]]),
+            4
+        );
+        assert_eq!(&data[37..41], b"ax-1");
+        assert_eq!(u16::from_be_bytes([data[41], data[42]]), 1);
+        assert_eq!(data[43], 0);
+        assert_eq!(data[44], 0);
+
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(counted);
     }
@@ -4141,6 +4364,7 @@ mod tests {
     #[cfg(not(feature = "pathmap-space"))]
     #[test]
     fn multi_ref_v3_packet_reports_unavailable_without_pathmap_feature() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
         let query = b"(, (pair $x $y) (pair $y $z))";
@@ -4156,6 +4380,7 @@ mod tests {
 
     #[test]
     fn program_dump_round_trips_added_chunks() {
+        let _guard = test_guard();
         const EXEC_RULE: &[u8] =
             b"(exec (0 step) (, (edge $x $y) (edge $y $z)) (O (+ (path $x $z))))";
         let raw = mork_program_new();
@@ -4182,6 +4407,7 @@ mod tests {
 
     #[test]
     fn context_load_and_run_preserves_loaded_program_and_facts() {
+        let _guard = test_guard();
         const EXEC_RULE: &[u8] =
             b"(exec (0 step) (, (edge $x $y) (edge $y $z)) (O (+ (path $x $z))))";
         let program = mork_program_new();
@@ -4221,6 +4447,7 @@ mod tests {
 
     #[test]
     fn direct_space_combined_load_executes_var_binding_rule() {
+        let _guard = test_guard();
         const EXEC_RULE: &[u8] =
             b"(exec (0 step) (, (edge $x $y) (edge $y $z)) (O (+ (path $x $z))))";
         let mut space = Space::new();
@@ -4246,6 +4473,7 @@ mod tests {
 
     #[test]
     fn ffi_space_step_executes_one_live_space() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
 
@@ -4273,6 +4501,7 @@ mod tests {
 
     #[test]
     fn overlay_bridge_builder_preserves_current_focus() {
+        let _guard = test_guard();
         let mut base = PathMap::new();
         base.set_val_at([1u8], ());
         let overlay = PathMap::<()>::new();
@@ -4290,6 +4519,7 @@ mod tests {
 
     #[test]
     fn overlay_bridge_builder_does_not_double_descend() {
+        let _guard = test_guard();
         let mut base = PathMap::new();
         base.set_val_at([1u8], ());
         base.set_val_at([1u8, 2u8], ());
@@ -4308,6 +4538,7 @@ mod tests {
 
     #[test]
     fn overlay_cursor_exact_singleton_reports_path_and_value_after_descend_until() {
+        let _guard = test_guard();
         let base = mork_space_new();
         let overlay = mork_space_new();
         assert!(!base.is_null());
@@ -4339,6 +4570,7 @@ mod tests {
 
     #[test]
     fn cursor_snapshot_from_focus_grafts_focus_value_at_root() {
+        let _guard = test_guard();
         let mut snapshot = PathMap::new();
         snapshot.set_val_at([1u8], ());
         snapshot.set_val_at([1u8, 2u8], ());
@@ -4351,6 +4583,7 @@ mod tests {
 
     #[test]
     fn cursor_snapshot_from_focus_does_not_fabricate_focus_value() {
+        let _guard = test_guard();
         let mut snapshot = PathMap::new();
         snapshot.create_path([1u8]);
         snapshot.set_val_at([1u8, 2u8], ());
@@ -4363,6 +4596,7 @@ mod tests {
 
     #[test]
     fn cursor_structural_from_focus_keeps_focus_value_when_it_is_part_of_the_subtrie() {
+        let _guard = test_guard();
         let mut snapshot = PathMap::new();
         snapshot.set_val_at([1u8], ());
         snapshot.set_val_at([1u8, 2u8], ());
@@ -4375,6 +4609,7 @@ mod tests {
 
     #[test]
     fn ffi_cursor_fork_preserves_current_path() {
+        let _guard = test_guard();
         let raw = mork_space_new();
         assert!(!raw.is_null());
 
@@ -4420,9 +4655,7 @@ mod tests {
             unsafe { std::slice::from_raw_parts(child_path.data, child_path.len) }.to_vec();
         assert_eq!(
             child_bytes,
-            vec![
-                3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 98u8
-            ]
+            vec![3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 98u8]
         );
 
         let stepped = mork_cursor_next_step(fork);
@@ -4434,9 +4667,7 @@ mod tests {
             unsafe { std::slice::from_raw_parts(stepped_path.data, stepped_path.len) }.to_vec();
         assert_eq!(
             stepped_bytes,
-            vec![
-                3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 99u8
-            ]
+            vec![3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 99u8]
         );
 
         mork_bytes_free(original_path.data, original_path.len);

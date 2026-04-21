@@ -105,11 +105,10 @@ typedef enum {
 
 #define MATCH_TRIE_THRESHOLD 16
 
-typedef struct Space {
+typedef struct {
     AtomId *atom_ids;
     uint32_t start;
     uint32_t len, cap;
-    SpaceKind kind;
     TermUniverse *universe;
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
@@ -119,6 +118,27 @@ typedef struct Space {
     bool exact_idx_dirty;
     uint32_t non_exact_atoms;
     bool non_exact_atoms_dirty;
+} SpaceNativeStorage;
+
+typedef struct Space {
+    union {
+        SpaceNativeStorage native;
+        struct {
+            AtomId *atom_ids;
+            uint32_t start;
+            uint32_t len, cap;
+            TermUniverse *universe;
+            EqIndex eq_idx;
+            TypeAnnIndex ty_idx;
+            ExactAtomIndex exact_idx;
+            bool eq_idx_dirty;
+            bool ty_idx_dirty;
+            bool exact_idx_dirty;
+            uint32_t non_exact_atoms;
+            bool non_exact_atoms_dirty;
+        };
+    };
+    SpaceKind kind;
     uint64_t revision;
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
