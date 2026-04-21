@@ -1246,10 +1246,10 @@ fn dump_bridge_space_expr_rows(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), S
 
     let mut rz = bridge.inner.btm.read_zipper();
     while rz.to_next_val() {
-        let len = u32::try_from(rz.origin_path().len())
-            .map_err(|_| "expr row exceeds u32 packet length".to_string())?;
-        append_u32_be(&mut packet, len);
-        packet.extend_from_slice(rz.origin_path());
+        let expr = Expr {
+            ptr: rz.origin_path().as_ptr().cast_mut(),
+        };
+        append_bridge_expr_bytes(&bridge.inner, &mut packet, expr)?;
         count = count.saturating_add(1);
     }
     Ok((packet, count))

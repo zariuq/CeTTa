@@ -126,6 +126,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_pathmap_counted_space_surface.metta \
 	tests/test_pathmap_backend_primary_growth_regression.metta \
 	tests/test_pathmap_fc_depth3_count_regression.metta \
+	tests/test_match_chain_cross_space_pathmap_regression.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
 	tests/test_mork_nil_parity_regression.metta \
 	tests/test_mork_recursive_bc_micro_regression.metta \
@@ -238,6 +239,7 @@ runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/s
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c -lm
 
 test-term-universe-store-abi: runtime/test_term_universe_store_abi
+	$(call require_runtime_stats_or_reexec,term universe store ABI,$@)
 	@./runtime/test_term_universe_store_abi
 
 runtime/test_term_universe_backend_add_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
@@ -246,6 +248,7 @@ runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c -lm
 
 test-term-universe-backend-add-abi: runtime/test_term_universe_backend_add_abi
+	$(call require_runtime_stats_or_reexec,term universe backend-add ABI,$@)
 	@./runtime/test_term_universe_backend_add_abi
 
 runtime/test_pathmap_backend_primary_destructive_abi: tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
@@ -1152,11 +1155,16 @@ test-mork-lane: $(BIN)
 test-deprecated-space-engine-mork-guard: $(BIN)
 	@status=0; \
 	result=$$(./$(BIN) --space-engine mork --lang he tests/test_space_type.metta 2>&1) || status=$$?; \
+	if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
+		pathmap_line="  pathmap                flattened PathMap-style CeTTa engine without bridge rows"; \
+	else \
+		pathmap_line="  pathmap                flattened PathMap-style CeTTa engine without bridge rows (requires BUILD=pathmap or BUILD=full)"; \
+	fi; \
 	expected=$$(printf '%s\n' \
 		"error: unknown space engine 'mork'" \
 		"space engines:" \
 		"  native                 standard CeTTa / HE engine" \
-		"  pathmap                flattened PathMap-style CeTTa engine without bridge rows (requires BUILD=pathmap or BUILD=full)" \
+		"$$pathmap_line" \
 		"  native-candidate-exact diagnostic native exact-matcher lane"); \
 	if [ "$$status" -eq 2 ] && [ "$$result" = "$$expected" ]; then \
 		echo "PASS: deprecated space-engine mork guard"; \

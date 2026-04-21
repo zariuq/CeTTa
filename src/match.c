@@ -2115,8 +2115,9 @@ static bool match_atoms_atom_id_epoch_depth(Atom *left,
         }
         Atom *right_value = NULL;
         if (!tu_has_vars(candidate_universe, right_id)) {
-            right_value = term_universe_get_atom((TermUniverse *)candidate_universe,
-                                                 right_id);
+            right_value = a ? term_universe_copy_atom(candidate_universe, a, right_id)
+                            : term_universe_get_atom((TermUniverse *)candidate_universe,
+                                                     right_id);
         } else {
             right_value = term_universe_copy_atom_epoch((TermUniverse *)candidate_universe, a,
                                                         right_id, epoch);
