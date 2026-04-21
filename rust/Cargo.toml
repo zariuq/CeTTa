@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "cetta-space",
     "cetta-space-bridge",
     "cetta-pathmap-adapter",
     "cetta-mork-adapter",
@@ -15,5 +16,7 @@ pathmap = { path = "../../../hyperon/PathMap", features = ["jemalloc", "arena_co
 mork = { path = "../../../hyperon/MORK/kernel" }
 mork-expr = { path = "../../../hyperon/MORK/expr" }
 mork-frontend = { path = "../../../hyperon/MORK/frontend" }
+mork-interning = { path = "../../../hyperon/MORK/interning" }
+cetta-space = { path = "cetta-space" }
 cetta-pathmap-adapter = { path = "cetta-pathmap-adapter" }
 cetta-mork-adapter = { path = "cetta-mork-adapter" }

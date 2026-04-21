@@ -318,9 +318,14 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
 
     TableQueryState *state = handle->impl;
     AnswerBank *bank = state->store ? state->store->answer_bank : NULL;
+    Arena answer_scratch;
+    arena_init(&answer_scratch);
+    arena_set_runtime_kind(&answer_scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_hashcons(&answer_scratch, NULL);
     CettaVarMap answer_map;
     cetta_var_map_init(&answer_map);
     if (!cetta_var_map_clone(&answer_map, &state->query_map)) {
+        arena_free(&answer_scratch);
         cetta_var_map_free(&answer_map);
         return false;
     }
@@ -332,7 +337,7 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
         source_bindings = &empty_bindings;
     }
 
-    Atom *canonical_result = variant_shape_canonicalize_atom(&state->staged.arena,
+    Atom *canonical_result = variant_shape_canonicalize_atom(&answer_scratch,
                                                              result,
                                                              &answer_map, NULL,
                                                              &kTableStoreVariantOptions);
@@ -341,21 +346,23 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
     VariantInstance factored_variant;
     variant_instance_init(&factored_variant);
     if (!canonical_result ||
-        !variant_shape_canonicalize_bindings(&state->staged.arena,
+        !variant_shape_canonicalize_bindings(&answer_scratch,
                                              source_bindings,
                                              &answer_map,
                                              &kTableStoreVariantOptions,
                                              &canonical_bindings)) {
         variant_instance_free(&factored_variant);
+        arena_free(&answer_scratch);
         cetta_var_map_free(&answer_map);
         return false;
     }
 
-    if (!table_store_factor_answer_result(&state->staged.arena, canonical_result,
+    if (!table_store_factor_answer_result(&answer_scratch, canonical_result,
                                           &canonical_bindings, &factored_result,
                                           &factored_variant)) {
         variant_instance_free(&factored_variant);
         bindings_free(&canonical_bindings);
+        arena_free(&answer_scratch);
         cetta_var_map_free(&answer_map);
         return false;
     }
@@ -366,11 +373,13 @@ bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
         !table_stored_answers_push_move(&state->staged.results, ref)) {
         variant_instance_free(&factored_variant);
         bindings_free(&canonical_bindings);
+        arena_free(&answer_scratch);
         cetta_var_map_free(&answer_map);
         return false;
     }
     variant_instance_free(&factored_variant);
     bindings_free(&canonical_bindings);
+    arena_free(&answer_scratch);
     cetta_var_map_free(&answer_map);
     if (out_ref)
         *out_ref = ref;
@@ -469,6 +478,7 @@ bool table_store_materialize_answer_ref(const AnswerBank *answer_bank,
     const AnswerRecord *stored = answer_bank_get(answer_bank, ref);
     CettaVarMap local_map;
     Bindings goal_bindings;
+    size_t live_bytes_before = 0;
     bool ok = false;
 
     if (out_result)
@@ -480,6 +490,8 @@ bool table_store_materialize_answer_ref(const AnswerBank *answer_bank,
     if (!stored || !out_arena || !out_result || !out_bindings || !out_variant)
         return false;
 
+    live_bytes_before = out_arena->live_bytes;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ANSWER_REF_MATERIALIZE_CALL);
     cetta_var_map_init(&local_map);
     if (!table_store_build_goal_bindings(out_arena, goal_instantiation,
                                          &goal_bindings)) {
@@ -515,6 +527,10 @@ bool table_store_materialize_answer_ref(const AnswerBank *answer_bank,
         goto done;
     }
     *out_result = result;
+    if (out_arena->live_bytes > live_bytes_before) {
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ANSWER_REF_MATERIALIZE_BYTES,
+                                (uint64_t)(out_arena->live_bytes - live_bytes_before));
+    }
     ok = true;
 
 done:

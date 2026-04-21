@@ -405,14 +405,14 @@ static bool stdlib_load_blob_internal(Space *s, Arena *a,
 
     /* Atoms */
     uint16_t num_atoms = rd_u16(&r);
-    if (s && s->universe) {
+    if (s && s->native.universe) {
         BlobReader direct = r;
         bool direct_ok = true;
         AtomId *atom_ids = cetta_malloc(sizeof(AtomId) * num_atoms);
         for (uint16_t i = 0; i < num_atoms; i++) {
             BlobVarScope scope;
             blob_var_scope_init(&scope);
-            atom_ids[i] = deserialize_atom_id_scoped(&direct, s->universe,
+            atom_ids[i] = deserialize_atom_id_scoped(&direct, s->native.universe,
                                                      &scope);
             blob_var_scope_free(&scope);
             if (atom_ids[i] == CETTA_ATOM_ID_NONE) {

@@ -42,6 +42,36 @@ fi
 
 IFS=$'\t' read -r witness_name category build_hint timeout_s mem_kib command notes <<< "$row"
 
+ensure_build_from_hint() {
+    local hint="$1"
+    local build_mode=""
+    local enable_runtime_stats=0
+
+    case "$hint" in
+        core|python|mork|main|pathmap|full)
+            build_mode="$hint"
+            ;;
+        profile-core|profile-python|profile-mork|profile-main|profile-pathmap|profile-full)
+            build_mode="${hint#profile-}"
+            enable_runtime_stats=1
+            ;;
+        *)
+            echo "unsupported build_hint: $hint" >&2
+            exit 2
+            ;;
+    esac
+
+    if [[ "$enable_runtime_stats" -eq 1 ]]; then
+        (cd "$repo_root" && ulimit -v "$mem_kib" && \
+            make -j1 BUILD="$build_mode" ENABLE_RUNTIME_STATS=1 cetta >/dev/null)
+    else
+        (cd "$repo_root" && ulimit -v "$mem_kib" && \
+            make -j1 BUILD="$build_mode" ENABLE_RUNTIME_STATS=0 cetta >/dev/null)
+    fi
+}
+
+ensure_build_from_hint "$build_hint"
+
 commit="$(git -C "$repo_root" rev-parse --short HEAD)"
 if git -C "$repo_root" diff --quiet --ignore-submodules HEAD -- &&
    git -C "$repo_root" diff --quiet --ignore-submodules --cached HEAD --; then
