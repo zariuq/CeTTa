@@ -22,7 +22,11 @@ endif
 ENABLE_PYTHON := 0
 ENABLE_MORK_STATIC := 0
 ENABLE_PATHMAP_SPACE := 0
+ENABLE_RUNTIME_STATS ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
+ifeq ($(ENABLE_RUNTIME_TIMING),1)
+ENABLE_RUNTIME_STATS := 1
+endif
 ifeq ($(BUILD_CANON),python)
 ENABLE_PYTHON := 1
 endif
@@ -114,11 +118,14 @@ PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_
 PATHMAP_REQUIRED_TESTS = \
 	tests/test_space_type.metta \
 	tests/test_space_engine_backend.metta \
+	tests/test_add_atom_nodup_pathmap_alpha_regression.metta \
 	tests/test_import_act_module_surface.metta \
 	tests/test_include_mm2_space_target.metta \
 	tests/test_module_inventory_act_registered_root.metta \
 	tests/test_mork_act_roundtrip.metta \
 	tests/test_pathmap_counted_space_surface.metta \
+	tests/test_pathmap_backend_primary_growth_regression.metta \
+	tests/test_pathmap_fc_depth3_count_regression.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
 	tests/test_mork_nil_parity_regression.metta \
 	tests/test_mork_recursive_bc_micro_regression.metta \
@@ -148,6 +155,9 @@ pathmap:
 full:
 	@$(MAKE) BUILD=full $(BIN)
 
+profile:
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_RUNTIME_TIMING=1 $(BIN)
+
 bench-metamath-d5: $(BIN)
 	@./scripts/bench_metamath_d5.sh
 
@@ -155,10 +165,36 @@ bench-weird-audit: $(BIN)
 	$(call require_mork_bridge_or_reexec,weird benchmark audit,$@)
 	@./scripts/bench_weird_audit.sh
 
+bench-answer-ref-demand: $(BIN)
+	$(call require_runtime_stats_or_reexec,answer-ref demand benchmark,$@)
+	@./scripts/bench_answer_ref_demand.sh
+
+bench-pathmap-fc-d3: $(BIN)
+	$(call require_pathmap_bridge_or_reexec,pathmap FC depth-3 benchmark,$@)
+	@./scripts/bench_pathmap_fc_d3.sh
+
+bench-fc-backend-matrix:
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@./scripts/bench_fc_backend_matrix.sh
+
+bench-space-backend-matrix:
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@./scripts/bench_space_backend_matrix.sh
+
+bench-space-transfer-matrix:
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@./scripts/bench_space_transfer_matrix.sh
+
+bench-space-scale-ladder:
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@./scripts/bench_space_scale_ladder.sh
+
 perf-runtime-stats: $(BIN)
+	$(call require_runtime_stats_or_reexec,runtime-stats probe,$@)
 	@./scripts/bench_runtime_stats_probe.sh
 
 probe-epoch-runtime-witness: $(BIN)
+	$(call require_runtime_stats_or_reexec,epoch runtime witness,$@)
 	@bash ./scripts/probe_epoch_runtime_witness.sh ./$(BIN)
 
 perf-stable: perf-runtime-stats
@@ -173,9 +209,21 @@ runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/s
 test-variant-shape-roundtrip: runtime/test_variant_shape_roundtrip
 	@./runtime/test_variant_shape_roundtrip
 
-runtime/bench_mork_bridge_add: tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+runtime/bench_mork_bridge_add: tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+runtime/bench_mork_bridge_query: tests/bench_mork_bridge_query.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/parser.c src/term_universe.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_query.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/parser.c src/term_universe.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+runtime/bench_mork_bridge_scalar_cursor: tests/bench_mork_bridge_scalar_cursor.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_scalar_cursor.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+runtime/bench_mork_bridge_space_ops: tests/bench_mork_bridge_space_ops.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_space_ops.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 runtime/test_space_term_universe_membership: tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -200,6 +248,33 @@ runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add
 test-term-universe-backend-add-abi: runtime/test_term_universe_backend_add_abi
 	@./runtime/test_term_universe_backend_add_abi
 
+runtime/test_pathmap_backend_primary_destructive_abi: tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+test-pathmap-backend-primary-destructive-abi:
+	$(call require_pathmap_bridge_or_reexec,pathmap backend-primary destructive ABI,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_pathmap_backend_primary_destructive_abi
+	@./runtime/test_pathmap_backend_primary_destructive_abi
+
+runtime/test_pathmap_backend_primary_replace_abi: tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+test-pathmap-backend-primary-replace-abi:
+	$(call require_pathmap_bridge_or_reexec,pathmap backend-primary replace ABI,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_pathmap_backend_primary_replace_abi
+	@./runtime/test_pathmap_backend_primary_replace_abi
+
+runtime/test_pathmap_typed_query_abi: tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+test-pathmap-typed-query-abi:
+	$(call require_pathmap_bridge_or_reexec,pathmap typed query ABI,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_pathmap_typed_query_abi
+	@./runtime/test_pathmap_typed_query_abi
+
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.stage0.o)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d)
@@ -217,6 +292,7 @@ $(BUILD_CONFIG_HEADER): FORCE
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
 	if [ -f "$@" ] && cmp -s "$$tmp_cfg" "$@"; then \
 		rm -f "$$tmp_cfg"; \
@@ -400,7 +476,16 @@ define require_pathmap_bridge_or_reexec
 	fi
 endef
 
+define require_runtime_stats_or_reexec
+	@if [ "$(ENABLE_RUNTIME_STATS)" != "1" ]; then \
+		echo "INFO: $(1) requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"; \
+		$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(2); \
+		exit $$?; \
+	fi
+endef
+
 test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-runtime-stats-cli test-help-flags test-he-contract-suite test-mork-lane test-closed-stream-fastpath test-closed-stream-runtime-stats
+	$(call require_runtime_stats_or_reexec,full test suite,$@)
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -1052,6 +1137,7 @@ test-he-contract-suite: $(BIN)
 
 test-mork-lane: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork lane regression suite,$@)
+	$(call require_runtime_stats_or_reexec,mork lane regression suite,$@)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-deprecated-space-engine-mork-guard
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-mork-program-space
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-exec-basic
@@ -1102,6 +1188,7 @@ test-mork-basic-pathmap-guard: $(BIN)
 
 test-pathmap-lane: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap lane regression suite,$@)
+	$(call require_runtime_stats_or_reexec,pathmap lane regression suite,$@)
 	@pass=0; fail=0; no_exp=0; \
 	for f in $(PATHMAP_REQUIRED_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -1231,6 +1318,7 @@ test-mm2-kiss-suite: $(BIN)
 
 test-mork-surface-suite: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork surface suite,$@)
+	$(call require_runtime_stats_or_reexec,mork surface suite,$@)
 	@pass=0; fail=0; \
 	for stem in \
 		test_mork_counterexample_loom_surface \
@@ -1264,6 +1352,7 @@ test-mork-surface-suite: $(BIN)
 
 test-mork-runtime-stats-isolation: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork runtime-stats isolation,$@)
+	$(call require_runtime_stats_or_reexec,mork runtime-stats isolation,$@)
 	@result=$$(./$(BIN) --profile he_extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_runtime_stats_isolation.expected)" ]; then \
 		echo "PASS: test_mork_runtime_stats_isolation"; \
@@ -1284,6 +1373,7 @@ test-closed-stream-fastpath: $(BIN)
 	fi
 
 test-closed-stream-runtime-stats: $(BIN)
+	$(call require_runtime_stats_or_reexec,closed-stream runtime-stats regression,$@)
 	@result=$$(./$(BIN) --quiet --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_closed_stream_runtime_stats.expected)" ]; then \
 		echo "PASS: test_closed_stream_runtime_stats"; \
@@ -1358,6 +1448,7 @@ test-mm2-sink-suite: $(BIN)
 
 test-pathmap-conjunction-init: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap conjunction init regression,$@)
+	$(call require_runtime_stats_or_reexec,pathmap conjunction init regression,$@)
 	@ \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_conjunction_bridge_init_regression.expected)" ]; then \
@@ -1370,6 +1461,7 @@ test-pathmap-conjunction-init: $(BIN)
 
 test-pathmap-bridge-v2: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap bridge v2 regression,$@)
+	$(call require_runtime_stats_or_reexec,pathmap bridge v2 regression,$@)
 	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
@@ -1407,6 +1499,7 @@ test-pathmap-match-chain: $(BIN)
 
 test-pathmap-match-chain-v3: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap nested-match conjunction lowering regression,$@)
+	$(call require_runtime_stats_or_reexec,pathmap nested-match conjunction lowering regression,$@)
 	@ \
 	result=$$(./$(BIN) --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_match_chain_conjunction_lowering.expected)" ]; then \
@@ -1419,6 +1512,7 @@ test-pathmap-match-chain-v3: $(BIN)
 
 test-mork-lib-pathmap: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,mork lib pathmap probe,$@)
+	$(call require_runtime_stats_or_reexec,mork lib pathmap probe,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
@@ -1545,6 +1639,7 @@ test-duplicate-multiplicity-backends: $(BIN)
 	done
 
 test-runtime-stats-cli: $(BIN)
+	$(call require_runtime_stats_or_reexec,runtime stats cli flags,$@)
 	@result=$$(./$(BIN) --emit-runtime-stats --quiet --lang he tests/support/runtime_stats_cli_probe.metta 2>&1 >/dev/null); \
 	if printf '%s\n' "$$result" | grep -Fq 'runtime-counter query-equations ' && \
 	   printf '%s\n' "$$result" | grep -Fq 'runtime-counter rename-vars ' && \
@@ -1805,6 +1900,33 @@ bench-mork-bridge-add:
 		echo; \
 	done
 
+bench-mork-bridge-query:
+	$(call require_mork_bridge_or_reexec,mork low-level bridge query benchmark,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_query
+	@for n in $(or $(BENCH_MORK_BRIDGE_QUERY_SIZES),1000 10000 100000); do \
+		echo "=== bridge-query $$n ==="; \
+		(ulimit -v 10485760; ./runtime/bench_mork_bridge_query "$$n" $(or $(BENCH_MORK_BRIDGE_QUERY_REPEAT),3)); \
+		echo; \
+	done
+
+bench-mork-bridge-scalar-cursor:
+	$(call require_mork_bridge_or_reexec,mork low-level bridge scalar and cursor benchmark,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_scalar_cursor
+	@for n in $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_SIZES),1000 10000 100000); do \
+		echo "=== bridge-scalar-cursor $$n ==="; \
+		(ulimit -v 10485760; ./runtime/bench_mork_bridge_scalar_cursor "$$n" $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_REPEAT),3)); \
+		echo; \
+	done
+
+bench-mork-bridge-space-ops:
+	$(call require_mork_bridge_or_reexec,mork low-level bridge ACT and algebra benchmark,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_space_ops
+	@for n in $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_SIZES),1000 10000 100000); do \
+		echo "=== bridge-space-ops $$n ==="; \
+		(ulimit -v 10485760; ./runtime/bench_mork_bridge_space_ops "$$n" $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_REPEAT),3)); \
+		echo; \
+	done
+
 bench-closed-stream-fastpath: $(BIN)
 	@./scripts/bench_closed_stream_fastpath.sh $(or $(BENCH_CLOSED_STREAM_SIZES),1000 10000 100000) $(or $(BENCH_CLOSED_STREAM_REPEAT),3)
 
@@ -1869,4 +1991,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full clean test test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean test test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

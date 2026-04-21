@@ -100,6 +100,9 @@ MorkStatus mork_space_add_expr_bytes_batch(MorkSpace *space,
 MorkStatus mork_space_remove_expr_bytes(MorkSpace *space,
                                         const uint8_t *expr_bytes,
                                         size_t len);
+MorkStatus mork_space_contains_expr_bytes(const MorkSpace *space,
+                                          const uint8_t *expr_bytes,
+                                          size_t len);
 MorkStatus mork_space_add_sexpr(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_remove_sexpr(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_unique_size(const MorkSpace *space);
@@ -108,6 +111,16 @@ MorkStatus mork_space_step(MorkSpace *space, uint64_t steps);
 MorkStatus mork_space_dump_act_file(MorkSpace *space, const uint8_t *path, size_t len);
 MorkStatus mork_space_load_act_file(MorkSpace *space, const uint8_t *path, size_t len);
 MorkBuffer mork_space_dump(MorkSpace *space);
+/*
+Packet format for mork_space_dump_expr_rows():
+
+  repeated rows:
+    u32 expr_len_be
+    u8[expr_len] stable raw bridge expr bytes
+
+count = logical row count with multiplicities expanded.
+*/
+MorkBuffer mork_space_dump_expr_rows(MorkSpace *space);
 
 /* Compatibility v1 text packet export. Prefer the v2/v3 raw-byte packet
    surfaces for new CeTTa integration work. */
@@ -118,7 +131,8 @@ Packet format for mork_space_query_bindings_query_only_v2():
 
   u32 magic_be      // 0x43544252 = "CTBR"
   u16 version_be    // 2
-  u16 flags_be      // bit0=query-side keys only, bit1=stable raw bridge expr bytes
+  u16 flags_be      // bit0=query-side keys only, bit1=stable bridge expr payload,
+                    // bit4=wide token lengths in the expr payload
   u32 rows_be
   repeated rows:
     u32 ref_count_be
@@ -157,8 +171,9 @@ Packet format for mork_space_query_bindings_multi_ref_v3():
 
   u32 magic_be      // 0x43544252 = "CTBR"
   u16 version_be    // 3
-  u16 flags_be      // bit0=query-side keys only, bit1=stable raw bridge expr bytes,
-                    // bit2=per-factor matched-atom ref groups
+  u16 flags_be      // bit0=query-side keys only, bit1=stable bridge expr payload,
+                    // bit2=per-factor matched-atom ref groups,
+                    // bit4=wide token lengths in the expr payload
   u32 factor_count_be
   u32 rows_be
   repeated rows:

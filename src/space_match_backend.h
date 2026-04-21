@@ -77,13 +77,43 @@ typedef struct {
     bool built;
     bool dirty;
     bool bridge_active;
+    void *bridge_space;
+    AtomId *projected_atom_ids;
+    uint32_t projected_len;
+    bool projection_valid;
+} ImportedBridgeState;
+
+typedef struct {
+    ImportedBridgeState bridge;
+} PathmapLocalState;
+
+typedef struct {
+    ImportedBridgeState bridge;
     bool attached_compiled;
     uint32_t attached_count;
-    void *bridge_space;
-} PathmapImportedState;
+} MorkImportedState;
 
 typedef struct SpaceMatchBackendOps {
     const char *name;
+    /* Primary storage access seam.
+       Positive example: a real backend-owned pathmap space can answer length
+       and projection through its own state instead of pretending the native C
+       shadow is the source of truth.
+       Negative example: every backend inheriting native-C atom_ids as an
+       implicit universal ownership rule. */
+    /* Optional primary mutation seam.
+       Positive example: a local PathMap-backed space can accept one canonical
+       AtomId directly into backend-owned storage and leave native C arrays as
+       lazy projection.
+       Negative example: every special backend being forced to append into the
+       native shadow first just because `Space` historically started there. */
+    bool (*store_atom_id_direct)(Space *s, AtomId atom_id, Atom *atom);
+    bool (*remove_atom_id_direct)(Space *s, AtomId atom_id);
+    bool (*truncate_direct)(Space *s, uint32_t new_len);
+    uint32_t (*logical_len)(const Space *s);
+    AtomId (*get_atom_id_at)(const Space *s, uint32_t idx);
+    Atom *(*get_at)(const Space *s, uint32_t idx);
+    bool (*materialize_native_storage)(Space *s, Arena *persistent_arena);
     bool supports_direct_bindings;
     void (*free)(Space *s);
     void (*note_add)(Space *s, AtomId atom_id, Atom *atom, uint32_t atom_idx);
@@ -98,7 +128,8 @@ typedef struct {
     SpaceEngine kind;
     const SpaceMatchBackendOps *ops;
     SpaceMatchNativeState native;
-    PathmapImportedState imported;
+    PathmapLocalState pathmap;
+    MorkImportedState mork;
 } SpaceMatchBackend;
 
 typedef bool (*CettaMorkBindingsVisitor)(const Bindings *bindings, void *ctx);
@@ -124,6 +155,10 @@ const char *space_match_backend_kind_name(SpaceEngine kind);
 bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out);
 const char *space_match_backend_unavailable_reason(SpaceEngine kind);
 bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *out_loaded);
+bool space_match_backend_materialize_native_storage(Space *s,
+                                                    Arena *persistent_arena);
+/* Compatibility name kept while callers migrate to the generic projection
+   vocabulary above. */
 bool space_match_backend_materialize_attached(Space *s, Arena *persistent_arena);
 bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
                                           const uint8_t *text, size_t len,
@@ -136,7 +171,16 @@ bool space_match_backend_step(Space *s, Arena *persistent_arena,
 bool space_match_backend_is_attached_compiled(const Space *s);
 bool space_match_backend_bridge_space(Space *s,
                                       CettaMorkSpaceHandle **out_bridge);
+bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
+                                              Atom *atom);
+bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id);
+bool space_match_backend_truncate_direct(Space *s, uint32_t new_len);
+bool space_match_backend_contains_atom_structural_direct(Space *s,
+                                                         Atom *atom,
+                                                         bool *out_found);
 uint32_t space_match_backend_logical_len(const Space *s);
+AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx);
+Atom *space_match_backend_get_at(const Space *s, uint32_t idx);
 /*
  * Structural bridge import contract:
  *   - Positive example: a ground bridge payload with a live TermUniverse
