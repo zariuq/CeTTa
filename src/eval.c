@@ -2700,20 +2700,6 @@ bindings_resolve_body_visible_var(Arena *a, const Bindings *full,
     if (resolved != slot_var)
         return resolved;
 
-    uint32_t wanted_base = var_base_id(wanted->var_id);
-    if (wanted_base == 0)
-        return slot_var;
-    for (uint32_t i = full->len; i > 0; i--) {
-        const Binding *entry = &full->entries[i - 1];
-        if (var_base_id(entry->var_id) != wanted_base)
-            continue;
-        if (entry->spelling != wanted->spelling)
-            continue;
-        if (!atom_contains_vars(entry->val))
-            return entry->val;
-        return bindings_apply_without_self((Bindings *)full, a, entry->var_id,
-                                           entry->val);
-    }
     return slot_var;
 }
 
