@@ -556,7 +556,7 @@ static void write_results(FILE *out, ResultSet *rs) {
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
-    fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
+    fputs("       cetta [--profile <he-compat|he-extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: --lang selects the driver/front-end; --profile selects the visible surface policy\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);

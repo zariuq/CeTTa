@@ -1,4 +1,4 @@
-; he_prime recursive proof-search conformance.
+; he-prime recursive proof-search conformance.
 (: Nat Type)
 (: Z Nat)
 (: S (-> Nat Nat))

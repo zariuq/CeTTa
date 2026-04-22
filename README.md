@@ -8,7 +8,7 @@ surface is real, and the branch is still under active development.
 The intended default lane is now:
 
 - `--lang he` for the current HE-style evaluator/driver
-- `--profile he_extended` as the default working surface
+- `--profile he-extended` as the default working surface
 - `make` as the Python-enabled build that is closest to everyday Hyperon usage
 
 ## Build
@@ -172,7 +172,7 @@ builds can still load a bridge dynamically at runtime.
 **Counted PathMap spaces** (MeTTa multiset semantics, `BUILD=pathmap` or `BUILD=full`):
 
 ```bash
-./cetta --profile he_extended --space-engine pathmap \
+./cetta --profile he-extended --space-engine pathmap \
   tests/test_pathmap_imported_bridge_v2.metta
 
 # Or explicitly create a pathmap space:
@@ -275,7 +275,7 @@ hypotheses in 3m 22s across 17 query phases.
 ### 8-puzzle BFS (181K states)
 
 ```
-$ ./cetta --profile he_extended tests/test_tilepuzzle.metta
+$ ./cetta --profile he-extended tests/test_tilepuzzle.metta
 8-puzzle BFS: counting all reachable states from solved position...
 [()]
 [()]
@@ -309,7 +309,7 @@ Optional MORK-facing surface:
 Full tile puzzle:
 
 ```bash
-./cetta --profile he_extended tests/test_tilepuzzle.metta
+./cetta --profile he-extended tests/test_tilepuzzle.metta
 ```
 
 Large genomic benchmark:

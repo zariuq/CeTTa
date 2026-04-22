@@ -1,14 +1,14 @@
 # Native --lang petta upstream frontier classification
 #
 # Scope:
-# - 89 upstream examples are currently in petta_upstream_reasonable_examples.txt.
-# - 43 upstream examples are currently in petta_upstream_current_gaps.txt.
+# - 104 upstream examples are currently in petta_upstream_reasonable_examples.txt.
+# - 28 upstream examples are currently in petta_upstream_current_gaps.txt.
 # - 31 upstream examples are deferred from both lists.
 #
-# The 74 frontier examples below are not a single denominator of semantic
+# The 61 frontier examples below are not a single denominator of semantic
 # defects. They are grouped by the capability layer most likely to retire them.
 # "deferred" means "not in the every-run broad lane yet", not "out of scope".
-# The current 47-file gap queue is also classified in:
+# The current 28-file gap queue is also classified in:
 #   tests/support/petta_upstream_gap_root_causes.txt
 
 P0 import-module parity
@@ -22,7 +22,6 @@ Current root needs:
 - recursive import metadata for callable syntax and relation lowering.
 
 Files:
-- builin_types.metta
 - fibsmartimport.metta [deferred]
 - patrick_iterate_fib.metta
 - patrick_iterate_quad.metta
@@ -39,13 +38,11 @@ Needed because CeTTa `--lang he` already supports much of this surface, and
 
 Current root needs:
 - Load upstream `lib_he.metta` as ordinary source under PeTTa import rules.
-- remaining evaluation-control surfaces and long-running recursive control.
 - HE-style `id`, `pow-math`, `for-each-in-atom`, and remaining recursive helpers.
 - remaining match-template binding through collapse and recursive control.
 - recursive `cons-atom` / `decons-atom` / `size-atom` behavior.
 
 Files:
-- he_minimalmetta.metta
 - test_collapse_size_bug.metta
 - test_process_by_tag.metta [deferred]
 - test_recursive_size_atom.metta
@@ -56,19 +53,15 @@ Needed because these are ordinary PeTTa language behaviors, not advanced
 search architecture.
 
 Current root needs:
-- atom/list primitives and metatype queries.
+- atom/list primitives and remaining metatype queries.
 - math builtin coverage and numeric result normalization.
-- `parse`, comments-in-strings, quote/eval/call/reduce behavior.
+- `parse`, quote/eval/call/reduce behavior.
 - higher-order intrinsic operators that are not covered by the callable
   substrate.
 
 Files:
 - callquoteevalreduce.metta
-- callquoteevalreduce2.metta
-- functiontypes.metta
 - holfunctions.metta [deferred]
-- meta_types.metta
-- test_string_comments.metta
 
 P0 match, binding, and atomspace mutation
 -----------------------------------------
@@ -85,11 +78,8 @@ Current root needs:
 - binding destructuring through nested `let` and `let*`.
 
 Files:
-- letext.metta
-- letlet.metta
 - matchnested.metta
 - matchnested2.metta
-- matchtypes.metta
 - mutex_and_transaction.metta
 - state.metta
 
@@ -106,13 +96,8 @@ Current root needs:
 
 Files:
 - nilbc.metta
-- parametric_types.metta
-- recursive_types.metta
 - specialize.metta
 - specializefunctiontypes.metta
-- types.metta
-- types_dependent.metta
-- types_nondet.metta
 
 P1 search, committed choice, streams, and generation
 ----------------------------------------------------
@@ -135,7 +120,6 @@ Files:
 - peano.metta
 - peanofast.metta
 - streamops.metta
-- superpose_primes.metta
 - tabling_fib.metta
 
 P1 performance and scale witnesses

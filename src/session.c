@@ -5,7 +5,7 @@
 
 static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .id = CETTA_PROFILE_HE_COMPAT,
-    .name = "he_compat",
+    .name = "he-compat",
     .note = "HE-compatible public/runtime surface.",
     .he_compatible_surface = true,
     .enable_cetta_extensions = false,
@@ -14,7 +14,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
 
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_HE_EXTENDED,
-    .name = "he_extended",
+    .name = "he-extended",
     .note = "HE-compatible surface plus labeled CeTTa extensions.",
     .he_compatible_surface = true,
     .enable_cetta_extensions = true,
@@ -23,8 +23,8 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
 
 static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .id = CETTA_PROFILE_HE_PRIME,
-    .name = "he_prime",
-    .note = "Binder-aware dependent telescope elaboration atop he_extended.",
+    .name = "he-prime",
+    .note = "Binder-aware dependent telescope elaboration atop he-extended.",
     .he_compatible_surface = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
@@ -54,6 +54,10 @@ static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
     {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
+    {"atom-arg", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"atom-vars", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"=ₐ", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"alpha-eq?", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"space-set-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},

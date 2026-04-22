@@ -36,6 +36,8 @@ typedef struct {
     X(empty, "Empty") \
     X(petta_empty_literal, "__petta_empty_literal__") \
     X(error, "Error") \
+    X(bad_type, "BadType") \
+    X(bad_arg_type, "BadArgType") \
     X(equals, "=") \
     X(atom, "Atom") \
     X(symbol, "Symbol") \
@@ -45,9 +47,12 @@ typedef struct {
     X(undefined_type, "%Undefined%") \
     X(true_text, "True") \
     X(false_text, "False") \
+    X(petta_true_text, "true") \
+    X(petta_false_text, "false") \
     X(bindings, "Bindings") \
     X(bang, "!") \
     X(quote, "quote") \
+    X(noeval, "noeval") \
     X(parse, "parse") \
     X(catch, "catch") \
     X(capture, "capture") \
@@ -92,6 +97,7 @@ typedef struct {
     X(cut, "cut") \
     X(assert_text, "assert") \
     X(return_text, "return") \
+    X(call_text, "call") \
     X(eval, "eval") \
     X(foldl_atom_in_space, "foldl-atom-in-space") \
     X(new_space, "new-space") \
@@ -165,6 +171,8 @@ typedef struct {
     X(op_eq, "==") \
     X(op_ne, "!=") \
     X(alpha_eq, "=alpha") \
+    X(alpha_eq_unicode, "=ₐ") \
+    X(alpha_eq_ascii, "alpha-eq?") \
     X(if_equal, "if-equal") \
     X(sealed_text, "sealed") \
     X(op_and, "and") \
@@ -180,6 +188,8 @@ typedef struct {
     X(size, "size") \
     X(size_atom, "size-atom") \
     X(index_atom, "index-atom") \
+    X(atom_arg, "atom-arg") \
+    X(atom_vars, "atom-vars") \
     X(range_atom, "range-atom") \
     X(repeat_atom, "repeat-atom") \
     X(id, "id") \

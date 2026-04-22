@@ -174,3 +174,97 @@ Current pressure point:
   inverse oracle probes are now green. Remaining inverse/search gaps should be
   named against concrete residual examples rather than assumed from the old
   invertfunction failure.
+
+11. Tail survivor ownership invariant
+-------------------------------------
+Tail-local evaluation may reclaim scratch evaluation arena storage only after
+the next tail atom, its type hint, and its single-result survivor have been
+made live across the tail jump. Continuation-carrying tail paths must preserve
+the bindings and atoms visible to their dynamic continuation.
+
+The full reclamation boundary for retained tail survivor arenas is the current
+evaluation episode. This keeps structured results safe after tail-local
+reentry while still allowing per-step scratch storage to be recycled.
+
+Positive example:
+- `tests/test_petta_tail_structured_survivor_regression.metta` returns a
+  structured list through tail-local recursion while runtime stats show that
+  tail storage was reclaimed.
+
+12. Definition-time phase invariant
+-----------------------------------
+A declaration body must be elaborated against the callable inventory visible
+when that declaration is admitted. Later runtime mutation may add new
+callables, but it must not retroactively turn data subterms in older
+declarations into implicit calls.
+
+Explicit phase-crossing surfaces such as `call`, `eval`, and one-argument
+`reduce` are allowed to re-enter the current dynamic callable inventory.
+Ordinary constructor-shaped data is not.
+
+Positive example:
+- `callquoteevalreduce2.metta` now runs cleanly because native `call` crosses
+  the dynamic-call boundary in the same way as `eval` and `reduce`.
+
+Current pressure point:
+- `callquoteevalreduce.metta` still exposes retroactive evaluation of an
+  ordinary result template after `(add-atom &self (= (fib ...)))`.
+
+13. Expression-typed callable invariant
+---------------------------------------
+Type declarations may mark callable arguments and results as `Expression`.
+An `Expression` domain argument is a syntax argument for declaration lowering:
+the caller supplies its surface syntax rather than the value obtained by
+evaluating that syntax. An `Expression` return preserves the user-level result
+as syntax after generated pattern-matching scaffolding has run.
+
+Positive example:
+- `functiontypes.metta` now runs cleanly: in `(wu1 (+ 2 4) (+ 4 2))`, the
+  `Number` argument becomes `6`, while the `Expression` argument remains the
+  syntax `(+ 4 2)` in the returned expression.
+
+14. Parametric type value fallback invariant
+--------------------------------------------
+`get-type` first reports the static function-type result when that result is
+fully determined. If a concrete expression's static type result is still made
+only of unresolved type variables, `get-type` may evaluate the expression and
+report the type of the resulting value. This fallback must not invent types
+for the callable head itself.
+
+Callable patterns used in `let` compare the value produced by the pattern
+call with the target pattern by unification, not by rebinding the target
+through an ordinary `let`. This lets output variables in the target pattern
+receive bindings from the produced value.
+
+Positive examples:
+- `parametric_types.metta` now runs cleanly: `(get-type (apply not False))`
+  reports `Bool` even though `(get-type not)` remains `%Undefined%`.
+- `tests/test_petta_parametric_type_value_fallback_regression.metta` keeps
+  both the positive fallback and the negative no-invented-head-type witness.
+
+15. PeTTa pattern/type syntax invariant
+---------------------------------------
+Type syntax is data unless an explicit evaluation surface crosses into
+computation. In particular, an expression headed by `->` must not become a
+higher-order callable prefix simply because it appears in head position.
+
+For user-facing `get-type`, ordinary non-call data expressions receive
+tuple-shaped types by combining the types of their elements. This tuple-type
+synthesis belongs to `get-type` reporting and must not be used as an internal
+argument-checking substitute for evaluating concrete numeric or boolean calls.
+
+PeTTa-lowered pattern checks use unification for the final pattern-versus-value
+comparison. This keeps ordinary patterns symmetric enough to solve variables
+that occur on either side of a `let` witness while still preserving generated
+guard code for callable and structural patterns.
+
+A bare type variable in a PeTTa function domain is parametric. It accepts an
+open argument without forcing evaluation and without freezing the type variable
+to a half-known tuple type.
+
+Positive examples:
+- `recursive_types.metta` now runs cleanly: type tuples such as
+  `((-> Metal Sword) (-> Metal Paperclip))` remain syntax.
+- `types.metta` now runs cleanly: `(get-type $a)` reports an unconstrained
+  type variable, `(get-type (a b))` reports `(A B)`, and `(mid ($a b))`
+  can return `(a b)` through a polymorphic type declaration.

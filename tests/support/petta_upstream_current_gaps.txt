@@ -1,32 +1,22 @@
 # Raw upstream Petta examples that still expose native --lang petta gaps
 # under the current broad sweep. Heavy/external examples were excluded
 # from this queue on purpose.
-builin_types.metta
 callquoteevalreduce.metta
-callquoteevalreduce2.metta
 fib.metta
 fibadd.metta
 fibsmart.metta
-functiontypes.metta
-he_minimalmetta.metta
 hyperpose_primes.metta
-letext.metta
-letlet.metta
 matchnested.metta
 matchnested2.metta
-matchtypes.metta
 matespace.metta
 matespace2.metta
-meta_types.metta
 mutex_and_transaction.metta
 nilbc.metta
-parametric_types.metta
 patrick_iterate_fib.metta
 patrick_iterate_quad.metta
 patrick_test.metta
 peano.metta
 peanofast.metta
-recursive_types.metta
 scale.metta
 spaces_find.metta
 spaces_removeallatoms.metta
@@ -35,12 +25,7 @@ specialize.metta
 specializefunctiontypes.metta
 state.metta
 streamops.metta
-superpose_primes.metta
 tabling_fib.metta
 test_collapse_size_bug.metta
 test_recursive_size_atom.metta
-test_string_comments.metta
 translatepredicate.metta
-types.metta
-types_dependent.metta
-types_nondet.metta

@@ -45,7 +45,9 @@ typedef struct {
     bool needs_relation_lowering;
     bool lhs_needs_relation_lowering;
     bool goal_relation_lowering;
+    bool returns_expression;
     uint32_t syntax_arg_mask;
+    uint32_t expression_arg_mask;
 } CettaPettaCallableInfo;
 
 typedef enum {
@@ -127,6 +129,8 @@ static const PettaHeadProfile PETTA_HEAD_PROFILES[] = {
     { "remove-atom", 2, { PETTA_ARG_VALUE, PETTA_ARG_MUTATION_PAYLOAD },
       PETTA_BUILTIN_REL_NONE, PETTA_HEAD_SPECIAL_REMOVE_ATOM, false, false },
     { "empty", 0, { PETTA_ARG_VALUE },
+      PETTA_BUILTIN_REL_NONE, PETTA_HEAD_SPECIAL_NONE, true, false },
+    { "get-type", 1, { PETTA_ARG_VALUE },
       PETTA_BUILTIN_REL_NONE, PETTA_HEAD_SPECIAL_NONE, true, false },
     { "append", 2, { PETTA_ARG_VALUE, PETTA_ARG_VALUE },
       PETTA_BUILTIN_REL_APPEND, PETTA_HEAD_SPECIAL_NONE, false, false },
@@ -494,9 +498,50 @@ static bool petta_callable_set_add(CettaPettaCallableInventory *set,
         .needs_relation_lowering = false,
         .lhs_needs_relation_lowering = false,
         .goal_relation_lowering = false,
+        .returns_expression = false,
         .syntax_arg_mask = 0,
+        .expression_arg_mask = 0,
     };
     return true;
+}
+
+static void petta_callable_set_note_returns_expression(
+    CettaPettaCallableInventory *set,
+    Arena *arena,
+    SymbolId head_id,
+    uint32_t arity,
+    bool imported
+) {
+    if (!set || head_id == SYMBOL_ID_NONE)
+        return;
+    (void)petta_callable_set_add(set, arena, head_id, arity, imported);
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].head_id == head_id &&
+            set->items[i].arity == arity) {
+            set->items[i].returns_expression = true;
+            return;
+        }
+    }
+}
+
+static void petta_callable_set_note_expression_arg(
+    CettaPettaCallableInventory *set,
+    Arena *arena,
+    SymbolId head_id,
+    uint32_t arity,
+    uint32_t arg_index,
+    bool imported
+) {
+    if (!set || head_id == SYMBOL_ID_NONE || arg_index >= 32)
+        return;
+    (void)petta_callable_set_add(set, arena, head_id, arity, imported);
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i].head_id == head_id &&
+            set->items[i].arity == arity) {
+            set->items[i].expression_arg_mask |= (uint32_t)1u << arg_index;
+            return;
+        }
+    }
 }
 
 static void petta_path_set_init(CettaPettaPathSet *set) {
@@ -551,6 +596,63 @@ static bool petta_declares_callable_head(Atom *term, SymbolId *out_head,
     return true;
 }
 
+static bool petta_declares_expression_return_type(Atom *term,
+                                                 SymbolId *out_head,
+                                                 uint32_t *out_arity) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len != 3)
+        return false;
+    if (!atom_is_symbol_id(term->expr.elems[0], g_builtin_syms.colon))
+        return false;
+    Atom *head = term->expr.elems[1];
+    Atom *type = term->expr.elems[2];
+    if (!head || head->kind != ATOM_SYMBOL ||
+        !type || type->kind != ATOM_EXPR || type->expr.len < 2 ||
+        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow) ||
+        !atom_is_symbol_id(type->expr.elems[type->expr.len - 1],
+                           g_builtin_syms.expression)) {
+        return false;
+    }
+    if (out_head) *out_head = head->sym_id;
+    if (out_arity) *out_arity = type->expr.len - 2;
+    return true;
+}
+
+static bool petta_type_decl_head_and_arrow(Atom *term, Atom **out_head,
+                                           Atom **out_type) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len != 3)
+        return false;
+    if (!atom_is_symbol_id(term->expr.elems[0], g_builtin_syms.colon))
+        return false;
+    Atom *head = term->expr.elems[1];
+    Atom *type = term->expr.elems[2];
+    if (!head || head->kind != ATOM_SYMBOL ||
+        !type || type->kind != ATOM_EXPR || type->expr.len < 2 ||
+        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)) {
+        return false;
+    }
+    if (out_head) *out_head = head;
+    if (out_type) *out_type = type;
+    return true;
+}
+
+static void petta_note_expression_domain_types(Atom *term,
+                                               CettaPettaCallableInventory *set,
+                                               Arena *arena,
+                                               bool imported) {
+    Atom *head = NULL;
+    Atom *type = NULL;
+    if (!petta_type_decl_head_and_arrow(term, &head, &type))
+        return;
+    uint32_t arity = type->expr.len - 2;
+    for (uint32_t i = 0; i < arity && i < 32; i++) {
+        if (atom_is_symbol_id(type->expr.elems[i + 1],
+                              g_builtin_syms.expression)) {
+            petta_callable_set_note_expression_arg(
+                set, arena, head->sym_id, arity, i, imported);
+        }
+    }
+}
+
 static void petta_collect_program_callable_heads(Atom **atoms, int n,
                                                  Arena *arena,
                                                  CettaPettaCallableInventory *set,
@@ -562,6 +664,11 @@ static void petta_collect_program_callable_heads(Atom **atoms, int n,
         if (petta_declares_callable_head(atoms[i], &head, &arity)) {
             petta_callable_set_add(set, arena, head, arity, imported);
         }
+        if (petta_declares_expression_return_type(atoms[i], &head, &arity)) {
+            petta_callable_set_note_returns_expression(set, arena, head,
+                                                       arity, imported);
+        }
+        petta_note_expression_domain_types(atoms[i], set, arena, imported);
     }
 }
 
@@ -575,14 +682,21 @@ static void petta_collect_space_callable_heads(Space *space,
         SymbolId head = SYMBOL_ID_NONE;
         uint32_t arity = 0;
         if (!petta_declares_callable_head(term, &head, &arity))
-            continue;
-        Atom *lhs = term->expr.elems[1];
-        Atom *head_atom = lhs && lhs->kind == ATOM_EXPR && lhs->expr.len > 0
-                              ? lhs->expr.elems[0]
-                              : NULL;
-        if (cetta_petta_relation_symbol_is_hidden(head_atom))
-            continue;
-        petta_callable_set_add(set, arena, head, arity, true);
+            goto maybe_type_decl;
+        {
+            Atom *lhs = term->expr.elems[1];
+            Atom *head_atom = lhs && lhs->kind == ATOM_EXPR && lhs->expr.len > 0
+                                  ? lhs->expr.elems[0]
+                                  : NULL;
+            if (!cetta_petta_relation_symbol_is_hidden(head_atom))
+                petta_callable_set_add(set, arena, head, arity, true);
+        }
+maybe_type_decl:
+        if (petta_declares_expression_return_type(term, &head, &arity)) {
+            petta_callable_set_note_returns_expression(set, arena, head,
+                                                       arity, true);
+        }
+        petta_note_expression_domain_types(term, set, arena, true);
     }
 }
 
@@ -783,8 +897,8 @@ static void petta_collect_imported_callable_heads_from_file(
     arena_free(&parse_arena);
 }
 
-static bool petta_head_is_core_callable(Atom *head) {
-    const PettaHeadProfile *profile = petta_head_profile(head, 0);
+static bool petta_head_is_core_callable(Atom *head, uint32_t arity) {
+    const PettaHeadProfile *profile = petta_head_profile(head, arity);
     return profile && profile->core_callable;
 }
 
@@ -830,7 +944,7 @@ static bool petta_head_is_callable(CettaPettaLowerContext *ctx, Atom *head,
     if (!head || head->kind != ATOM_SYMBOL) return false;
     return is_grounded_op(head->sym_id) ||
            petta_head_has_builtin_relation(head, arity) ||
-           petta_head_is_core_callable(head) ||
+           petta_head_is_core_callable(head, arity) ||
            petta_callable_info(ctx, head, arity) != NULL;
 }
 
@@ -881,7 +995,13 @@ petta_contract_builtin_relation_kind(PettaBuiltinRelationKind kind) {
 typedef enum {
     PETTA_GUARDED_APPLY_FORWARD = 0,
     PETTA_GUARDED_APPLY_RELATION = 1,
+    PETTA_GUARDED_APPLY_RELATION_UNIFY = 2,
 } PettaGuardedApplyMode;
+
+static bool petta_guarded_apply_uses_relation(PettaGuardedApplyMode mode) {
+    return mode == PETTA_GUARDED_APPLY_RELATION ||
+           mode == PETTA_GUARDED_APPLY_RELATION_UNIFY;
+}
 
 static SymbolId petta_builtin_relation_head(CettaPettaLowerContext *ctx,
                                             Atom *head,
@@ -922,6 +1042,17 @@ static bool petta_term_has_relation_form(Atom *term,
             return true;
     }
     return false;
+}
+
+static bool petta_term_has_callable_value_form(CettaPettaLowerContext *ctx,
+                                               Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0)
+        return false;
+    if (expr_head_is_name(term, "quote") && term->expr.len == 2)
+        return false;
+    Atom *head = term->expr.elems[0];
+    return head && head->kind == ATOM_SYMBOL &&
+           petta_head_is_callable(ctx, head, term->expr.len - 1);
 }
 
 static bool petta_collect_pattern_bound_vars(Atom *term, PettaBoundVarSet *bound) {
@@ -1362,6 +1493,23 @@ static Atom *petta_compile_relation_value_goal(CettaPettaLowerContext *ctx,
     return petta_wrap_rel_conj(ctx, call_goal, post_goal);
 }
 
+static Atom *petta_compile_callable_value_goal(CettaPettaLowerContext *ctx,
+                                               Atom *expr,
+                                               Atom *actual) {
+    if (!petta_term_has_callable_value_form(ctx, expr))
+        return NULL;
+    Atom *forward_call = petta_lower_term(ctx, expr);
+    return petta_wrap_rel_call(ctx, forward_call, atom_unit(ctx->arena), actual);
+}
+
+static Atom *petta_compile_goal_value_operand(CettaPettaLowerContext *ctx,
+                                              Atom *expr,
+                                              Atom *actual) {
+    if (petta_term_has_relation_form(expr, ctx->callables))
+        return petta_compile_relation_value_goal(ctx, expr, actual);
+    return petta_compile_callable_value_goal(ctx, expr, actual);
+}
+
 static bool petta_expr_contains_head_name(Atom *expr, const char *name) {
     if (!expr || expr->kind != ATOM_EXPR || expr->expr.len == 0)
         return false;
@@ -1430,15 +1578,19 @@ static Atom *petta_compile_relation_goal_expr(CettaPettaLowerContext *ctx,
         Atom *goal = petta_rel_goal_true(ctx);
         Atom *lhs_value = expr->expr.elems[1];
         Atom *rhs_value = expr->expr.elems[2];
-        bool lhs_is_relation = petta_term_has_relation_form(lhs_value, ctx->callables);
-        bool rhs_is_relation = petta_term_has_relation_form(rhs_value, ctx->callables);
+        bool lhs_is_relation =
+            petta_term_has_relation_form(lhs_value, ctx->callables) ||
+            petta_term_has_callable_value_form(ctx, lhs_value);
+        bool rhs_is_relation =
+            petta_term_has_relation_form(rhs_value, ctx->callables) ||
+            petta_term_has_callable_value_form(ctx, rhs_value);
 
         if (lhs_is_relation && rhs_is_relation) {
             Atom *shared_actual = petta_fresh_var(ctx, "goal_eq_term");
             Atom *lhs_goal =
-                petta_compile_relation_value_goal(ctx, lhs_value, shared_actual);
+                petta_compile_goal_value_operand(ctx, lhs_value, shared_actual);
             Atom *rhs_goal =
-                petta_compile_relation_value_goal(ctx, rhs_value, shared_actual);
+                petta_compile_goal_value_operand(ctx, rhs_value, shared_actual);
             if (!lhs_goal || !rhs_goal)
                 return NULL;
             goal = petta_wrap_rel_conj(ctx, goal, lhs_goal);
@@ -1449,7 +1601,7 @@ static Atom *petta_compile_relation_goal_expr(CettaPettaLowerContext *ctx,
         if (lhs_is_relation) {
             Atom *rhs_actual = petta_lower_term(ctx, rhs_value);
             Atom *lhs_goal =
-                petta_compile_relation_value_goal(ctx, lhs_value, rhs_actual);
+                petta_compile_goal_value_operand(ctx, lhs_value, rhs_actual);
             if (!lhs_goal)
                 return NULL;
             return petta_wrap_rel_conj(ctx, goal, lhs_goal);
@@ -1458,7 +1610,7 @@ static Atom *petta_compile_relation_goal_expr(CettaPettaLowerContext *ctx,
         if (rhs_is_relation) {
             Atom *lhs_actual = petta_lower_term(ctx, lhs_value);
             Atom *rhs_goal =
-                petta_compile_relation_value_goal(ctx, rhs_value, lhs_actual);
+                petta_compile_goal_value_operand(ctx, rhs_value, lhs_actual);
             if (!rhs_goal)
                 return NULL;
             return petta_wrap_rel_conj(ctx, goal, rhs_goal);
@@ -1778,7 +1930,7 @@ static Atom *petta_apply_guarded_pattern(CettaPettaLowerContext *ctx,
 
     Atom *current = body;
     for (uint32_t i = 0; i < guarded->child_count; i++) {
-        if (mode == PETTA_GUARDED_APPLY_RELATION &&
+        if (petta_guarded_apply_uses_relation(mode) &&
             guarded->kind == PETTA_GUARDED_PATTERN_CALLABLE &&
             guarded->children[i].kind == PETTA_GUARDED_PATTERN_CALLABLE &&
             petta_relation_call_expr(ctx, guarded->children[i].guard_term,
@@ -1794,7 +1946,21 @@ static Atom *petta_apply_guarded_pattern(CettaPettaLowerContext *ctx,
 
     if (guarded->kind == PETTA_GUARDED_PATTERN_NONE) {
         if (actual != guarded->skeleton) {
-            current = petta_wrap_let(ctx, guarded->skeleton, actual, current);
+            if (mode == PETTA_GUARDED_APPLY_RELATION_UNIFY) {
+                Atom *miss = petta_miss_expr(ctx);
+                Atom *unify_args[] = {
+                    guarded->skeleton,
+                    actual,
+                    current,
+                    miss,
+                };
+                current = make_expr_with_head(
+                    ctx->arena,
+                    atom_symbol_id(ctx->arena, g_builtin_syms.unify),
+                    unify_args, 4);
+            } else {
+                current = petta_wrap_let(ctx, guarded->skeleton, actual, current);
+            }
         }
     } else if (guarded->kind == PETTA_GUARDED_PATTERN_CONS) {
         Atom *pair_actual = petta_fresh_var(ctx, "cons_pair");
@@ -1838,7 +2004,7 @@ static Atom *petta_apply_guarded_pattern(CettaPettaLowerContext *ctx,
                                       atom_symbol(ctx->arena, "if"),
                                       guard_args, 3);
     } else {
-        if (mode == PETTA_GUARDED_APPLY_RELATION) {
+        if (petta_guarded_apply_uses_relation(mode)) {
             Atom *goal = petta_rel_goal_true(ctx);
             for (uint32_t i = 0; i < guarded->child_count; i++) {
                 const PettaGuardedPattern *child = &guarded->children[i];
@@ -1864,8 +2030,17 @@ static Atom *petta_apply_guarded_pattern(CettaPettaLowerContext *ctx,
                 current = petta_wrap_rel_run(ctx, goal, current);
             } else {
                 Atom *result_var = petta_fresh_var(ctx, "call_result");
-                Atom *guarded_body =
-                    petta_wrap_let(ctx, actual, result_var, current);
+                Atom *miss = petta_miss_expr(ctx);
+                Atom *unify_args[] = {
+                    actual,
+                    result_var,
+                    current,
+                    miss,
+                };
+                Atom *guarded_body = make_expr_with_head(
+                    ctx->arena,
+                    atom_symbol_id(ctx->arena, g_builtin_syms.unify),
+                    unify_args, 4);
                 Atom *chain_args[] = { guarded->guard_term, result_var, guarded_body };
                 current = make_expr_with_head(
                     ctx->arena,
@@ -1874,7 +2049,17 @@ static Atom *petta_apply_guarded_pattern(CettaPettaLowerContext *ctx,
             }
         } else {
             Atom *result_var = petta_fresh_var(ctx, "call_result");
-            Atom *guarded_body = petta_wrap_let(ctx, actual, result_var, current);
+            Atom *miss = petta_miss_expr(ctx);
+            Atom *unify_args[] = {
+                actual,
+                result_var,
+                current,
+                miss,
+            };
+            Atom *guarded_body = make_expr_with_head(
+                ctx->arena,
+                atom_symbol_id(ctx->arena, g_builtin_syms.unify),
+                unify_args, 4);
             Atom *chain_args[] = { guarded->guard_term, result_var, guarded_body };
             current = make_expr_with_head(
                 ctx->arena,
@@ -1901,7 +2086,7 @@ static Atom *petta_lower_pattern_against(CettaPettaLowerContext *ctx,
     PettaGuardedPattern guarded =
         petta_compile_guarded_pattern(ctx, pattern);
     return petta_apply_guarded_pattern(ctx, &guarded, actual, body,
-                                       PETTA_GUARDED_APPLY_RELATION);
+                                       PETTA_GUARDED_APPLY_RELATION_UNIFY);
 }
 
 static Atom *petta_lower_relation_let(CettaPettaLowerContext *ctx,
@@ -2134,6 +2319,14 @@ static Atom *petta_lower_equation_decl(CettaPettaLowerContext *ctx, Atom *lhs,
         ctx->suppressed_recursive_value_arity = 0;
     }
     Atom *lowered_rhs = petta_lower_decl_body(ctx, rhs);
+    const CettaPettaCallableInfo *info = petta_callable_info(ctx, head, nargs);
+    if (info && info->returns_expression &&
+        !expr_head_is_name(lowered_rhs, "quote")) {
+        Atom *quote_args[] = { lowered_rhs };
+        lowered_rhs = make_expr_with_head(
+            ctx->arena, atom_symbol_id(ctx->arena, g_builtin_syms.quote),
+            quote_args, 1);
+    }
     ctx->suppressed_recursive_value_head = saved_suppressed_head;
     ctx->suppressed_recursive_value_arity = saved_suppressed_arity;
     Atom **lowered_args = arena_alloc(ctx->arena, sizeof(Atom *) * nargs);
@@ -2143,11 +2336,16 @@ static Atom *petta_lower_equation_decl(CettaPettaLowerContext *ctx, Atom *lhs,
         Atom *pattern = lhs->expr.elems[i];
         if (pattern &&
             pattern->kind == ATOM_VAR &&
-            petta_bound_var_set_contains(&syntax_params, pattern->var_id)) {
+            (petta_bound_var_set_contains(&syntax_params, pattern->var_id) ||
+             (info && i <= 32 &&
+              (info->expression_arg_mask & ((uint32_t)1u << (i - 1)))))) {
             lowered_args[i - 1] = pattern;
         } else {
             lowered_args[i - 1] = actual;
-            body = petta_lower_pattern_against(ctx, pattern, actual, body);
+            PettaGuardedPattern guarded =
+                petta_compile_guarded_pattern(ctx, pattern);
+            body = petta_apply_guarded_pattern(ctx, &guarded, actual, body,
+                                               PETTA_GUARDED_APPLY_RELATION);
         }
     }
     Atom *lowered_lhs = make_expr_with_head(ctx->arena, head, lowered_args, nargs);
