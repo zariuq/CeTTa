@@ -1,0 +1,11 @@
+!(import! &self mork)
+!(import! &self ../tests/support/bio_1m_mork_query_workload)
+
+!(import! &self ../tests/eqtl_for_mining)
+!(import! &self ../tests/bio_refseq_723k)
+!(import! &self ../tests/bio_tfbs_415k)
+!(import! &self ../tests/bio_multirelational_kb_scaled)
+!(import! &self ../tests/bio_hetionet_kb)
+!(import! &self ../tests/discovered_patterns_1k)
+!(space-set-match-backend! &self pathmap-imported)
+!(run-bio-1m-mork-workload &self)

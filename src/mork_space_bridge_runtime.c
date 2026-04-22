@@ -146,6 +146,8 @@ extern CettaMorkStatus mork_space_load_act_file(CettaMorkSpaceHandle *space,
                                                 size_t len);
 extern CettaMorkBuffer mork_space_dump(CettaMorkSpaceHandle *space);
 extern CettaMorkBuffer mork_space_dump_expr_rows(CettaMorkSpaceHandle *space);
+extern CettaMorkBuffer mork_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space)
+    __attribute__((weak));
 extern CettaMorkStatus mork_space_join_into(CettaMorkSpaceHandle *dst,
                                             const CettaMorkSpaceHandle *src);
 extern CettaMorkSpaceHandle *mork_space_clone(const CettaMorkSpaceHandle *space);
@@ -575,6 +577,24 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
     }
     return bridge_take_buffer("mork_space_dump_expr_rows failed: ",
                               mork_space_dump_expr_rows(space),
+                              out_packet, out_len, out_rows,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
+                                               uint8_t **out_packet,
+                                               size_t *out_len,
+                                               uint32_t *out_rows) {
+    if (!space) {
+        bridge_set_error("cannot dump contextual exact rows from null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_dump_contextual_exact_rows) {
+        bridge_set_error("mork_space_dump_contextual_exact_rows is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_dump_contextual_exact_rows failed: ",
+                              mork_space_dump_contextual_exact_rows(space),
                               out_packet, out_len, out_rows,
                               bridge_free_bytes);
 }
@@ -1787,6 +1807,7 @@ typedef struct CettaMorkBridgeApi {
                                            size_t len);
     CettaMorkBuffer (*space_dump)(CettaMorkSpaceHandle *space);
     CettaMorkBuffer (*space_dump_expr_rows)(CettaMorkSpaceHandle *space);
+    CettaMorkBuffer (*space_dump_contextual_exact_rows)(CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_join_into)(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
     CettaMorkSpaceHandle *(*space_clone)(const CettaMorkSpaceHandle *space);
@@ -2087,6 +2108,9 @@ static bool bridge_load_api(void) {
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_dump_expr_rows,
         "mork_space_dump_expr_rows");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_dump_contextual_exact_rows,
+        "mork_space_dump_contextual_exact_rows");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_add_expr_bytes,
         "mork_space_add_expr_bytes");
@@ -2620,6 +2644,24 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
     }
     return bridge_take_buffer("mork_space_dump_expr_rows failed: ",
                               g_mork_bridge_api.space_dump_expr_rows(space),
+                              out_packet, out_len, out_rows,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
+                                               uint8_t **out_packet,
+                                               size_t *out_len,
+                                               uint32_t *out_rows) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot dump contextual exact rows from null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_dump_contextual_exact_rows) {
+        bridge_set_error("mork_space_dump_contextual_exact_rows is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_dump_contextual_exact_rows failed: ",
+                              g_mork_bridge_api.space_dump_contextual_exact_rows(space),
                               out_packet, out_len, out_rows,
                               bridge_free_bytes);
 }

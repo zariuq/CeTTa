@@ -94,7 +94,7 @@
 
 
 
-;; Consistency Conditions: 
+;; Consistency Conditions:
 ;; PLN book "5.2.2.2 PLN Deduction and Second-Order Probability", page 74:
 ;; borrowed from https://github.com/trueagi-io/hyperon-pln/blob/main/metta/pln/dependent-types/DeductionDTL.metta
 
@@ -135,7 +135,7 @@
    (/safe $w (+ $w 1)))
 
 (: Truth_or (-> Number Number Number))
-(= (Truth_or $a $b) 
+(= (Truth_or $a $b)
    (- 1 (* (- 1 $a) (- 1 $b))))
 
 ; Deduction formula: PLN book "1.4 Truth-value Formulas", page 15:
@@ -180,7 +180,7 @@
         (Truth_w2c (* (* $sAB $cAB) $cCB))))
 
 ;Modus Ponens: PLN book "5.7.1 Modus Ponens", page 111:
-(= (Truth_ModusPonens (stv $Ps $Pc) (stv $PQs $PQc)) 
+(= (Truth_ModusPonens (stv $Ps $Pc) (stv $PQs $PQc))
    (stv (+ (* $Ps $PQs) (* 0.02 (- 1 $Ps)))
         (* (* $Ps $PQs) (* $Pc $PQc))))
 
@@ -267,12 +267,12 @@
 ;; INFERENCE RULES
 
 ;Revision
-(= (|- ($T $T1) 
+(= (|- ($T $T1)
        ($T $T2))
    ($T (Truth_Revision $T1 $T2)))
 
 ;Modus Ponens
-(= (|- ($A $T1) 
+(= (|- ($A $T1)
        ((Implication $A $B) $T2))
    ($B (Truth_ModusPonens $T1 $T2)))
 
@@ -301,7 +301,7 @@
         (Truth_Deduction (STV $A)
                          (STV $B)
                          (STV $C) $T1 $T2)) (empty)))
-      
+
 
 ; Induction rule, see https://github.com/opencog/pln/blob/master/opencog/pln/rules/wip/induction.scm
 (= (|- (($LinkType $C $A) $T1)

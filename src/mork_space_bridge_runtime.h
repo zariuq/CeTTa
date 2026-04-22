@@ -98,6 +98,10 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
                                             uint8_t **out_packet,
                                             size_t *out_len,
                                             uint32_t *out_rows);
+bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
+                                               uint8_t **out_packet,
+                                               size_t *out_len,
+                                               uint32_t *out_rows);
 bool cetta_mork_bridge_space_join_into(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
