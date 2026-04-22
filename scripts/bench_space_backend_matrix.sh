@@ -45,10 +45,31 @@ esac
 
 mkdir -p "$RUNTIME_DIR"
 tmp_dir=$(mktemp -d "$RUNTIME_DIR/.bench_space_backend.XXXXXX")
+preserve_tmp="${BENCH_KEEP_TMP:-0}"
 cleanup() {
+    if [ "$preserve_tmp" = "1" ]; then
+        printf 'preserved_tmp\t%s\n' "$tmp_dir" >&2
+        return
+    fi
     rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
+
+preserve_failure_artifacts() {
+    local mode=$1
+    local scenario=$2
+    local status=$3
+    local file=$4
+    local log=$5
+    preserve_tmp=1
+    printf 'backend_failed\tmode=%s\tscenario=%s\tstatus=%s\tfile=%s\tlog=%s\n' \
+        "$mode" "$scenario" "$status" "$file" "$log" >&2
+    if [ -s "$log" ]; then
+        printf '%s\n' "--- tail $log ---" >&2
+        tail -80 "$log" >&2 || true
+        printf '%s\n' '--- end tail ---' >&2
+    fi
+}
 
 run_cetta_file() {
     local file=$1
@@ -328,7 +349,13 @@ prepare_act() {
     local file="$tmp_dir/prepare.metta"
     local log="$tmp_dir/prepare.log"
     render_prepare_file "$file"
-    run_cetta_file "$file" "$log"
+    if run_cetta_file "$file" "$log"; then
+        :
+    else
+        local status=$?
+        preserve_failure_artifacts "prepare-act" "prepare" "$status" "$file" "$log"
+        exit "$status"
+    fi
     local prepared
     prepared=$(extract_metric prepared_rows "$log")
     expect_value "prepare prepared_rows" "$FACT_COUNT" "$prepared"
@@ -348,7 +375,13 @@ run_mode_scenario() {
     file=$(scenario_program_path "$mode" "$scenario")
     log=$(scenario_log_path "$mode" "$scenario")
     render_program "$mode" "$scenario" "$file"
-    run_cetta_file "$file" "$log"
+    if run_cetta_file "$file" "$log"; then
+        :
+    else
+        local status=$?
+        preserve_failure_artifacts "$mode" "$scenario" "$status" "$file" "$log"
+        exit "$status"
+    fi
 
     initial_size=$(extract_metric initial_size_rows "$log")
     scenario_rows=$(extract_metric scenario_rows "$log")

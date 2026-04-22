@@ -489,14 +489,14 @@ static void test_native_add_boundary(TermUniverse *universe, Arena *scratch) {
 static void test_imported_flat_add_boundary(TermUniverse *universe, Arena *scratch) {
     Space imported_space;
     space_init_with_universe(&imported_space, universe);
-    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
-        printf("SKIP: PATHMAP unavailable in this build\n");
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_MORK)) {
+        printf("SKIP: MORK imported backend unavailable in this build\n");
         space_free(&imported_space);
         return;
     }
-    imported_space.match_backend.pathmap.bridge.built = true;
-    imported_space.match_backend.pathmap.bridge.dirty = false;
-    imported_space.match_backend.pathmap.bridge.bridge_active = false;
+    imported_space.match_backend.mork.bridge.built = true;
+    imported_space.match_backend.mork.bridge.dirty = false;
+    imported_space.match_backend.mork.bridge.bridge_active = false;
 
     Atom *pair_aa = expr3(scratch, sym(scratch, "pair"), sym(scratch, "A"), sym(scratch, "A"));
     AtomId pair_aa_id = term_universe_store_atom_id(universe, NULL, pair_aa);
@@ -573,8 +573,8 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     Space imported_space;
     CettaMorkSpaceHandle *bridge = NULL;
     space_init_with_universe(&imported_space, universe);
-    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
-        printf("SKIP: PATHMAP unavailable in this build\n");
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_MORK)) {
+        printf("SKIP: MORK imported backend unavailable in this build\n");
         space_free(&imported_space);
         return;
     }
@@ -624,7 +624,6 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     AtomId unstable_id = term_universe_store_atom_id(universe, NULL, unstable_add);
     assert(unstable_id != CETTA_ATOM_ID_NONE);
     assert(tu_hdr(universe, unstable_id) == NULL);
-    assert(space_match_backend_needs_atom_on_add(&imported_space, unstable_id));
 
     SubstMatchSet rule_matches;
     smset_init(&rule_matches);
@@ -635,6 +634,7 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
                       &rule_matches);
     assert(rule_matches.len == 1);
     smset_free(&rule_matches);
+    assert(space_match_backend_needs_atom_on_add(&imported_space, unstable_id));
 
     reset_bridge_capture();
     assert(g_bridge_text_count == 0);

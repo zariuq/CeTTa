@@ -77,6 +77,7 @@ typedef struct {
     bool built;
     bool dirty;
     bool bridge_active;
+    bool bridge_unavailable;
     void *bridge_space;
     AtomId *projected_atom_ids;
     uint32_t projected_len;

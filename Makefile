@@ -127,10 +127,74 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_pathmap_backend_primary_growth_regression.metta \
 	tests/test_pathmap_fc_depth3_count_regression.metta \
 	tests/test_match_chain_cross_space_pathmap_regression.metta \
+	tests/test_effect_append_batch_fastpath.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
 	tests/test_mork_nil_parity_regression.metta \
 	tests/test_mork_recursive_bc_micro_regression.metta \
 	tests/test_mork_recursive_bc_regression.metta
+
+BACKEND_DEDICATED_TESTS = \
+	tests/test_closed_stream_fastpath.metta \
+	tests/test_closed_stream_runtime_stats.metta \
+	tests/test_runtime_stats_surface.metta \
+	tests/test_pretty_vars_surface.metta \
+	tests/test_import_act_module_surface.metta \
+	tests/test_import_mm2_module_surface.metta \
+	tests/test_include_mm2_space_target.metta \
+	tests/test_mm2_kiss_add_remove.metta \
+	tests/test_mm2_kiss_fractal_priority.metta \
+	tests/test_mm2_kiss_inline_basic.metta \
+	tests/test_mm2_kiss_priority.metta \
+	tests/test_module_inventory_act_registered_root.metta \
+	tests/test_mork_act_roundtrip.metta \
+	tests/test_mork_attached_exact_match_regression.metta \
+	tests/test_mork_algebra_surface.metta \
+	tests/test_mork_counterexample_loom_surface.metta \
+	tests/test_mork_encoding_boundary_surface.metta \
+	tests/test_mork_full_pipeline_surface.metta \
+	tests/test_mork_handle_errors_surface.metta \
+	tests/test_mork_kiss_examples.metta \
+	tests/test_mork_lib_surface.metta \
+	tests/test_mork_mm2_metta_showcase.metta \
+	tests/test_mork_open_act_surface.metta \
+	tests/test_mork_overlay_zipper_surface.metta \
+	tests/test_mork_product_zipper_surface.metta \
+	tests/test_mork_zipper_surface.metta \
+	tests/test_new_space_mork_surface.metta \
+	tests/test_step_space_surface.metta
+
+BACKEND_HEAVY_TESTS = \
+	tests/test_bio_bc_let_hidden_env_regression.metta \
+	tests/test_bio_depth10_genuine_regression.metta \
+	tests/test_bio_wmpln_checkpoint_regression.metta \
+	tests/test_bio_wmpln_checkpoint_petta_flat.metta \
+	tests/test_bio_wmpln_checkpoint_petta_top.metta \
+	tests/test_bio_wmpln_pathway_route_regression.metta \
+	tests/test_bio_wmpln_revise_stv_tuple_stack_regression.metta \
+	tests/test_bio_wmpln_supported_key_unique_regression.metta \
+	tests/test_checkpoint_disease_route_probe.metta \
+	tests/test_checkpoint_group_extract_cross_form_regression.metta \
+	tests/test_tilepuzzle.metta \
+	tests/test_tilepuzzle_pathmap.metta
+
+BACKEND_DIAGNOSTIC_TESTS = \
+	tests/test_cverify_apply_subst_probe.metta \
+	tests/test_cverify_apply_subst_with_unify_probe.metta \
+	tests/test_mm2_match_order_fragile.metta \
+	tests/test_print_nondet_probe.metta
+
+BACKEND_PENDING_CORRECTNESS_TESTS = \
+	tests/test_match_eager_double_apply_regression.metta \
+	tests/test_pathmap_backend_primary_destructive_regression.metta
+
+BACKEND_PARAMETRIC_TEST_PATTERNS = tests/test_*.metta tests/spec_*.metta tests/he_*.metta
+BACKEND_PARAMETRIC_SKIP_TESTS = $(PATHMAP_REQUIRED_TESTS) $(BACKEND_DEDICATED_TESTS) $(BACKEND_HEAVY_TESTS) $(BACKEND_DIAGNOSTIC_TESTS) $(BACKEND_PENDING_CORRECTNESS_TESTS)
+BACKEND_PARAMETRIC_BACKENDS ?= $(SPACE_ENGINES)
+BACKEND_PARAMETRIC_TIMEOUT ?= 60
+BACKEND_PARAMETRIC_DIFF_LINES ?= 24
+ifneq ($(ENABLE_PYTHON),1)
+BACKEND_PARAMETRIC_SKIP_TESTS += $(PYTHON_TESTS)
+endif
 
 # Two-stage bootstrap: cetta compiles its own stdlib
 STDLIB_SRC = lib/stdlib.metta
@@ -189,6 +253,27 @@ bench-space-transfer-matrix:
 bench-space-scale-ladder:
 	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_space_scale_ladder.sh
+
+bench-ffi-friction-light:
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@./scripts/bench_ffi_friction_suite.sh light $(or $(BENCH_FFI_LIGHT_N),1000) $(or $(BENCH_FFI_LIGHT_ROUNDS),1)
+
+bench-ffi-friction-basic:
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@./scripts/bench_ffi_friction_suite.sh basic $(or $(BENCH_FFI_BASIC_N),10000) $(or $(BENCH_FFI_BASIC_ROUNDS),3)
+
+bench-ffi-friction-stress:
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@./scripts/bench_ffi_friction_suite.sh stress $(or $(BENCH_FFI_STRESS_N),50000) $(or $(BENCH_FFI_STRESS_ROUNDS),3)
+
+bench-ffi-friction-heavy:
+	@if [ "$(BENCH_FFI_ALLOW_HEAVY)" != "1" ]; then \
+		echo "Refusing heavy FFI benchmark without BENCH_FFI_ALLOW_HEAVY=1"; \
+		echo "Try: BENCH_FFI_ALLOW_HEAVY=1 make bench-ffi-friction-heavy"; \
+		exit 2; \
+	fi
+	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@BENCH_FFI_ALLOW_HEAVY=1 ./scripts/bench_ffi_friction_suite.sh heavy $(or $(BENCH_FFI_HEAVY_N),100000) $(or $(BENCH_FFI_HEAVY_ROUNDS),3)
 
 perf-runtime-stats: $(BIN)
 	$(call require_runtime_stats_or_reexec,runtime-stats probe,$@)
@@ -1057,50 +1142,15 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 	[ $$fail -eq 0 ]
 
 test-backends: $(BIN)
-	@for backend in $(SPACE_ENGINES); do \
-		echo "== backend: $$backend =="; \
-		pass=0; fail=0; skip=0; \
-		for f in tests/test_*.metta tests/he_*.metta; do \
-			[ -f "$$f" ] || continue; \
-		if [ "$(ENABLE_PYTHON)" != "1" ] && \
-		   { [ "$$f" = "tests/test_py_ops_surface.metta" ] || \
-		     [ "$$f" = "tests/test_import_foreign_python_file.metta" ] || \
-		     [ "$$f" = "tests/test_import_foreign_pkg_error.metta" ] || \
-		     [ "$$f" = "tests/test_namespace_sugar_guardrails.metta" ]; }; then \
-			echo "SKIP: $$f (requires a Python-enabled build)"; \
-			skip=$$((skip + 1)); \
-			continue; \
-		fi; \
-		if [ "$$f" = "tests/test_pretty_vars_surface.metta" ]; then \
-			echo "SKIP: $$f (covered by dedicated pretty-vars flag target)"; \
-			skip=$$((skip + 1)); \
-			continue; \
-		fi; \
-			if printf '%s\n' $(PATHMAP_REQUIRED_TESTS) | grep -Fxq "$$f"; then \
-				echo "SKIP: $$f (covered by test-pathmap-lane)"; \
-				skip=$$((skip + 1)); \
-				continue; \
-			fi; \
-			exp="$${f%.metta}.expected"; \
-			if [ ! -f "$$exp" ]; then \
-				echo "SKIP: $$f (no .expected file)"; \
-				skip=$$((skip + 1)); \
-				continue; \
-			fi; \
-			result=$$(./$(BIN) --space-engine "$$backend" --lang he "$$f" 2>&1); \
-			if [ "$$result" = "$$(cat $$exp)" ]; then \
-				echo "PASS: $$f"; \
-				pass=$$((pass + 1)); \
-			else \
-				echo "FAIL: $$f"; \
-				diff <(cat "$$exp") <(echo "$$result") | head -10; \
-				fail=$$((fail + 1)); \
-			fi; \
-		done; \
-		echo "---"; \
-		echo "$$pass passed, $$fail failed, $$skip skipped"; \
-		[ $$fail -eq 0 ] || exit 1; \
-	done
+	$(call require_runtime_stats_or_reexec,backend-parametric test suite,$@)
+	@python3 scripts/run_backend_parametric_tests.py \
+		--cetta ./$(BIN) \
+		--lang he \
+		--backends "$(BACKEND_PARAMETRIC_BACKENDS)" \
+		--skip-tests "$(BACKEND_PARAMETRIC_SKIP_TESTS)" \
+		--timeout "$(BACKEND_PARAMETRIC_TIMEOUT)" \
+		--diff-lines "$(BACKEND_PARAMETRIC_DIFF_LINES)" \
+		$(BACKEND_PARAMETRIC_TEST_PATTERNS)
 		@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lane
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-lane
@@ -1999,4 +2049,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean test test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean test test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

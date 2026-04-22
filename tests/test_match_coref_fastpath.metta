@@ -10,9 +10,11 @@
 !(add-atom &kb (pair $z $z))
 !(add-atom &kb (pair $u (f $u)))
 
-!(assertAlphaEqualToResult
+; Match result order is backend-specific here; the contract is the set of
+; alpha-equivalent solutions, including the indexed-side variable witness.
+!(assertAlphaEqual
   (match &kb (pair $x $x) $x)
-  (A $z))
+  (superpose (A $z)))
 
 !(assertAlphaEqualToResult
   (match &kb (pair $x (f $x)) $x)
@@ -29,6 +31,6 @@
 !(add-atom &gb (pair $w A))
 !(add-atom &gb (pair B $u))
 
-!(assertAlphaEqualToResult
+!(assertAlphaEqual
   (match &gb (pair $x $x) $x)
-  (A B))
+  (superpose (A B)))
