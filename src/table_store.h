@@ -1,7 +1,9 @@
 #ifndef CETTA_TABLE_STORE_H
 #define CETTA_TABLE_STORE_H
 
+#include "answer_bank.h"
 #include "space.h"
+#include "term_canon.h"
 #include "variant_instance.h"
 
 /*
@@ -50,21 +52,37 @@ typedef struct {
     uint32_t len;
     uint32_t cap;
     CettaTableMode mode;
+    AnswerBank *answer_bank;
 } TableStore;
 
 typedef bool (*TableDelayedResultVisitor)(Atom *result,
                                           const Bindings *bindings,
                                           const VariantInstance *variant,
                                           void *ctx);
+typedef bool (*TableAnswerRefVisitor)(const AnswerBank *bank,
+                                      AnswerRef ref,
+                                      const CettaVarMap *goal_instantiation,
+                                      void *ctx);
 
-void table_store_init(TableStore *store, CettaTableMode mode);
+void table_store_init(TableStore *store, CettaTableMode mode,
+                      AnswerBank *answer_bank);
 void table_store_free(TableStore *store);
 bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
                              Atom *query, TableQueryHandle *handle);
 bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
-                            const Bindings *bindings);
+                            const Bindings *bindings, AnswerRef *out_ref);
 bool table_store_commit_query(TableQueryHandle *handle);
 void table_store_abort_query(TableQueryHandle *handle);
+bool table_store_query_goal_instantiation(TableQueryHandle *handle,
+                                          Arena *dst,
+                                          CettaVarMap *out);
+bool table_store_materialize_answer_ref(const AnswerBank *answer_bank,
+                                        AnswerRef ref,
+                                        Arena *out_arena,
+                                        const CettaVarMap *goal_instantiation,
+                                        Atom **out_result,
+                                        Bindings *out_bindings,
+                                        VariantInstance *out_variant);
 bool table_store_lookup(TableStore *store, Space *space, uint64_t revision,
                         Atom *query, Arena *out_arena,
                         QueryResults *out);
@@ -78,6 +96,13 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
                                       TableDelayedResultVisitor visitor,
                                       void *ctx,
                                       uint32_t *visited_out);
+bool table_store_lookup_visit_ref(TableStore *store, Space *space,
+                                  uint64_t revision,
+                                  Atom *query,
+                                  Arena *goal_owner,
+                                  TableAnswerRefVisitor visitor,
+                                  void *ctx,
+                                  uint32_t *visited_out);
 bool table_store_put(TableStore *store, Space *space, uint64_t revision,
                      Atom *query, const QueryResults *results);
 

@@ -132,6 +132,9 @@ extern CettaMorkStatus mork_space_remove_sexpr(CettaMorkSpaceHandle *space,
 extern CettaMorkStatus mork_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                     const uint8_t *expr_bytes,
                                                     size_t len);
+extern CettaMorkStatus mork_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
+                                                      const uint8_t *expr_bytes,
+                                                      size_t len);
 extern CettaMorkStatus mork_space_size(const CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_step(CettaMorkSpaceHandle *space,
                                        uint64_t steps);
@@ -142,6 +145,7 @@ extern CettaMorkStatus mork_space_load_act_file(CettaMorkSpaceHandle *space,
                                                 const uint8_t *path,
                                                 size_t len);
 extern CettaMorkBuffer mork_space_dump(CettaMorkSpaceHandle *space);
+extern CettaMorkBuffer mork_space_dump_expr_rows(CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_join_into(CettaMorkSpaceHandle *dst,
                                             const CettaMorkSpaceHandle *src);
 extern CettaMorkSpaceHandle *mork_space_clone(const CettaMorkSpaceHandle *space);
@@ -495,6 +499,28 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
+bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
+                                                 const uint8_t *expr_bytes,
+                                                 size_t len,
+                                                 bool *out_found) {
+    uint64_t found = 0;
+    if (out_found)
+        *out_found = false;
+    if (!space) {
+        bridge_set_error("cannot test expr bytes against null MORK bridge space");
+        return false;
+    }
+    if (!bridge_take_status_value("mork_space_contains_expr_bytes failed: ",
+                                  mork_space_contains_expr_bytes(space, expr_bytes, len),
+                                  &found,
+                                  bridge_free_bytes)) {
+        return false;
+    }
+    if (out_found)
+        *out_found = (found != 0);
+    return true;
+}
+
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                   uint64_t *out_size) {
     if (!space) {
@@ -535,6 +561,20 @@ bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
     }
     return bridge_take_buffer("mork_space_dump failed: ",
                               mork_space_dump(space),
+                              out_packet, out_len, out_rows,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
+                                            uint8_t **out_packet,
+                                            size_t *out_len,
+                                            uint32_t *out_rows) {
+    if (!space) {
+        bridge_set_error("cannot dump expr rows from null MORK bridge space");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_dump_expr_rows failed: ",
+                              mork_space_dump_expr_rows(space),
                               out_packet, out_len, out_rows,
                               bridge_free_bytes);
 }
@@ -1734,6 +1774,9 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_remove_expr_bytes)(CettaMorkSpaceHandle *space,
                                                const uint8_t *expr_bytes,
                                                size_t len);
+    CettaMorkStatus (*space_contains_expr_bytes)(const CettaMorkSpaceHandle *space,
+                                                 const uint8_t *expr_bytes,
+                                                 size_t len);
     CettaMorkStatus (*space_size)(const CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_step)(CettaMorkSpaceHandle *space, uint64_t steps);
     CettaMorkStatus (*space_dump_act_file)(CettaMorkSpaceHandle *space,
@@ -1743,6 +1786,7 @@ typedef struct CettaMorkBridgeApi {
                                            const uint8_t *path,
                                            size_t len);
     CettaMorkBuffer (*space_dump)(CettaMorkSpaceHandle *space);
+    CettaMorkBuffer (*space_dump_expr_rows)(CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_join_into)(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
     CettaMorkSpaceHandle *(*space_clone)(const CettaMorkSpaceHandle *space);
@@ -2041,6 +2085,9 @@ static bool bridge_load_api(void) {
         return false;
     }
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_dump_expr_rows,
+        "mork_space_dump_expr_rows");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_add_expr_bytes,
         "mork_space_add_expr_bytes");
     bridge_resolve_symbol_optional(
@@ -2049,6 +2096,9 @@ static bool bridge_load_api(void) {
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_remove_expr_bytes,
         "mork_space_remove_expr_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_contains_expr_bytes,
+        "mork_space_contains_expr_bytes");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_new_pathmap,
         "mork_space_new_pathmap");
@@ -2484,6 +2534,34 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
+bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
+                                                 const uint8_t *expr_bytes,
+                                                 size_t len,
+                                                 bool *out_found) {
+    uint64_t found = 0;
+    if (out_found)
+        *out_found = false;
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot test expr bytes against null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_contains_expr_bytes) {
+        bridge_set_error("mork_space_contains_expr_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    if (!bridge_take_status_value("mork_space_contains_expr_bytes failed: ",
+                                  g_mork_bridge_api.space_contains_expr_bytes(space,
+                                                                              expr_bytes,
+                                                                              len),
+                                  &found,
+                                  bridge_free_bytes)) {
+        return false;
+    }
+    if (out_found)
+        *out_found = (found != 0);
+    return true;
+}
+
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
                                   uint64_t *out_size) {
     if (!space || !bridge_load_api()) {
@@ -2524,6 +2602,24 @@ bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
     }
     return bridge_take_buffer("mork_space_dump failed: ",
                               g_mork_bridge_api.space_dump(space),
+                              out_packet, out_len, out_rows,
+                              bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
+                                            uint8_t **out_packet,
+                                            size_t *out_len,
+                                            uint32_t *out_rows) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot dump expr rows from null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_dump_expr_rows) {
+        bridge_set_error("mork_space_dump_expr_rows is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer("mork_space_dump_expr_rows failed: ",
+                              g_mork_bridge_api.space_dump_expr_rows(space),
                               out_packet, out_len, out_rows,
                               bridge_free_bytes);
 }

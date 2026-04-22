@@ -244,6 +244,99 @@ bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
     return false;
 }
 
+bool cetta_mork_bridge_space_remove_text(CettaMorkSpaceHandle *space,
+                                         const char *text,
+                                         uint64_t *out_removed) {
+    (void)space;
+    (void)text;
+    if (out_removed)
+        *out_removed = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
+                                               const uint8_t *expr_bytes,
+                                               size_t len,
+                                               uint64_t *out_removed) {
+    (void)space;
+    (void)expr_bytes;
+    (void)len;
+    if (out_removed)
+        *out_removed = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
+                                                 const uint8_t *expr_bytes,
+                                                 size_t len,
+                                                 bool *out_found) {
+    (void)space;
+    (void)expr_bytes;
+    (void)len;
+    if (out_found)
+        *out_found = false;
+    return false;
+}
+
+bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
+                                  uint64_t *out_size) {
+    if (out_size)
+        *out_size = 0;
+    if (space != g_fake_bridge_space)
+        return false;
+    if (out_size)
+        *out_size = g_bridge_value_count;
+    return true;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
+    const CettaMorkSpaceHandle *space) {
+    (void)space;
+    return NULL;
+}
+
+bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
+                                            uint8_t **out_packet,
+                                            size_t *out_len,
+                                            uint32_t *out_rows) {
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_rows)
+        *out_rows = 0;
+    if (space != g_fake_bridge_space)
+        return false;
+
+    size_t packet_len = 0;
+    for (uint32_t i = 0; i < g_bridge_value_count; i++) {
+        packet_len += 4u + g_bridge_value_lens[i];
+    }
+    uint8_t *packet = malloc(packet_len ? packet_len : 1u);
+    assert(packet != NULL);
+
+    size_t off = 0;
+    for (uint32_t i = 0; i < g_bridge_value_count; i++) {
+        uint32_t len32 = (uint32_t)g_bridge_value_lens[i];
+        packet[off++] = (uint8_t)(len32 >> 24);
+        packet[off++] = (uint8_t)(len32 >> 16);
+        packet[off++] = (uint8_t)(len32 >> 8);
+        packet[off++] = (uint8_t)len32;
+        if (len32) {
+            memcpy(packet + off, g_bridge_value_bytes[i], len32);
+            off += len32;
+        }
+    }
+
+    if (out_packet)
+        *out_packet = packet;
+    if (out_len)
+        *out_len = packet_len;
+    if (out_rows)
+        *out_rows = g_bridge_value_count;
+    return true;
+}
+
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,
@@ -380,7 +473,6 @@ static void test_native_add_boundary(TermUniverse *universe, Arena *scratch) {
     AtomId unstable_id = term_universe_store_atom_id(universe, NULL, unstable_atom);
     assert(unstable_id != CETTA_ATOM_ID_NONE);
     assert(tu_hdr(universe, unstable_id) == NULL);
-    assert(space_match_backend_needs_atom_on_add(&native_space, unstable_id));
     reset_test_counters();
     space_add(&native_space, unstable_atom);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
@@ -397,14 +489,14 @@ static void test_native_add_boundary(TermUniverse *universe, Arena *scratch) {
 static void test_imported_flat_add_boundary(TermUniverse *universe, Arena *scratch) {
     Space imported_space;
     space_init_with_universe(&imported_space, universe);
-    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
-        printf("SKIP: PATHMAP unavailable in this build\n");
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_MORK)) {
+        printf("SKIP: MORK imported backend unavailable in this build\n");
         space_free(&imported_space);
         return;
     }
-    imported_space.match_backend.imported.built = true;
-    imported_space.match_backend.imported.dirty = false;
-    imported_space.match_backend.imported.bridge_active = false;
+    imported_space.match_backend.mork.bridge.built = true;
+    imported_space.match_backend.mork.bridge.dirty = false;
+    imported_space.match_backend.mork.bridge.bridge_active = false;
 
     Atom *pair_aa = expr3(scratch, sym(scratch, "pair"), sym(scratch, "A"), sym(scratch, "A"));
     AtomId pair_aa_id = term_universe_store_atom_id(universe, NULL, pair_aa);
@@ -481,8 +573,8 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     Space imported_space;
     CettaMorkSpaceHandle *bridge = NULL;
     space_init_with_universe(&imported_space, universe);
-    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
-        printf("SKIP: PATHMAP unavailable in this build\n");
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_MORK)) {
+        printf("SKIP: MORK imported backend unavailable in this build\n");
         space_free(&imported_space);
         return;
     }
@@ -532,7 +624,6 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     AtomId unstable_id = term_universe_store_atom_id(universe, NULL, unstable_add);
     assert(unstable_id != CETTA_ATOM_ID_NONE);
     assert(tu_hdr(universe, unstable_id) == NULL);
-    assert(space_match_backend_needs_atom_on_add(&imported_space, unstable_id));
 
     SubstMatchSet rule_matches;
     smset_init(&rule_matches);
@@ -543,6 +634,7 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
                       &rule_matches);
     assert(rule_matches.len == 1);
     smset_free(&rule_matches);
+    assert(space_match_backend_needs_atom_on_add(&imported_space, unstable_id));
 
     reset_bridge_capture();
     assert(g_bridge_text_count == 0);
@@ -606,6 +698,74 @@ static void test_imported_chunk_remove_direct_id_boundary(TermUniverse *universe
                       &drop_matches);
     assert(drop_matches.len == 0);
     smset_free(&drop_matches);
+    space_free(&imported_space);
+}
+
+static void test_imported_chunk_switchback_regression(TermUniverse *universe,
+                                                      Arena *scratch) {
+    Space imported_space;
+    uint64_t added = 0;
+    uint64_t removed = 0;
+    const char *seed_text = "(edge a b) (edge b c)";
+    const char *grow_text = "(edge c d)";
+    const char *remove_text = "(edge a b)";
+
+    space_init_with_universe(&imported_space, universe);
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
+        printf("SKIP: PATHMAP unavailable in this build\n");
+        space_free(&imported_space);
+        return;
+    }
+
+    assert(space_match_backend_load_sexpr_chunk(&imported_space, scratch,
+                                                (const uint8_t *)seed_text,
+                                                strlen(seed_text), &added));
+    assert(added == 2);
+    assert(space_length(&imported_space) == 2);
+
+    assert(space_match_backend_load_sexpr_chunk(&imported_space, scratch,
+                                                (const uint8_t *)grow_text,
+                                                strlen(grow_text), &added));
+    assert(added == 1);
+    assert(space_length(&imported_space) == 3);
+
+    assert(space_match_backend_remove_sexpr_chunk(&imported_space, scratch,
+                                                  (const uint8_t *)remove_text,
+                                                  strlen(remove_text), &removed));
+    assert(removed == 1);
+    assert(space_length(&imported_space) == 2);
+
+    SubstMatchSet keep_matches;
+    smset_init(&keep_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, "edge"),
+                            sym(scratch, "b"), sym(scratch, "c")),
+                      &keep_matches);
+    assert(keep_matches.len == 1);
+    smset_free(&keep_matches);
+
+    assert(space_match_backend_try_set(&imported_space,
+                                       SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
+    assert(space_length(&imported_space) == 2);
+
+    SubstMatchSet bc_matches;
+    smset_init(&bc_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, "edge"),
+                            sym(scratch, "b"), sym(scratch, "c")),
+                      &bc_matches);
+    assert(bc_matches.len == 1);
+    smset_free(&bc_matches);
+
+    SubstMatchSet ab_matches;
+    smset_init(&ab_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, "edge"),
+                            sym(scratch, "a"), sym(scratch, "b")),
+                      &ab_matches);
+    assert(ab_matches.len == 0);
+    smset_free(&ab_matches);
+
     space_free(&imported_space);
 }
 
@@ -837,11 +997,27 @@ static void test_bridge_structural_import_boundary(TermUniverse *universe,
     g_bridge_value_lens[0] = sizeof(pair_same_var);
     g_bridge_value_count = 1;
     loaded = 1234;
+    reset_term_universe_witnesses(universe);
     assert(space_match_backend_import_bridge_space(
                &imported_space, g_fake_bridge_space, &loaded) ==
-           SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK);
-    assert(loaded == 0);
-    assert(space_length(&imported_space) == 2);
+           SPACE_BRIDGE_IMPORT_OK);
+    assert(loaded == 1);
+    assert(space_length(&imported_space) == 3);
+    import_diag = snapshot_term_universe_witnesses(universe);
+    assert(import_diag.direct_constructor_leaf_hits > 0);
+    assert(import_diag.direct_constructor_expr_hits > 0);
+    assert(import_diag.legacy_top_down_stable_admissions == 0);
+    assert(import_diag.lazy_decode_count == 0);
+
+    SubstMatchSet same_var_matches;
+    smset_init(&same_var_matches);
+    space_subst_query(&imported_space, scratch,
+                      expr3(scratch, sym(scratch, "pair"),
+                            var(scratch, "same", 9301),
+                            var(scratch, "same", 9301)),
+                      &same_var_matches);
+    assert(same_var_matches.len == 1);
+    smset_free(&same_var_matches);
 
     space_free(&imported_space);
 }
@@ -936,6 +1112,7 @@ int main(void) {
     test_imported_flat_add_boundary(&universe, &scratch);
     test_imported_bridge_add_boundary(&universe, &scratch);
     test_imported_chunk_remove_direct_id_boundary(&universe, &scratch);
+    test_imported_chunk_switchback_regression(&universe, &scratch);
     test_byte_backed_rematch_delay(&universe, &scratch);
     test_subst_tree_live_branch_builder_witness(&scratch);
     test_parser_direct_add_boundary(&universe, &scratch);
