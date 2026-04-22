@@ -3,4 +3,5 @@
 [()]
 [()]
 [()]
-[(Error (assertAlphaEqualToResult (get-atoms &ss) ((: ax-1 (→ $a (→ $b $a))) (: (ax-mp ax-1 ax-1) (→ $u (→ $v (→ $w $v)))))) "mismatch")]
+[()]
+[()]

@@ -2,5 +2,5 @@
 
 !(bind! &bag (new-space))
 !(add-atom &bag doomed)
-!(delete-space &bag)
+!(let $_ (delete-space &bag) delete-space-returned)
 !(get-atoms &bag)

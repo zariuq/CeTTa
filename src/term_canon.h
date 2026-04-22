@@ -32,6 +32,8 @@ bool cetta_var_map_reserve(CettaVarMap *map, uint32_t needed);
 Atom *cetta_var_map_lookup(const CettaVarMap *map, VarId source_id);
 bool cetta_var_map_add(CettaVarMap *map, VarId source_id, Atom *mapped_var);
 bool cetta_var_map_clone(CettaVarMap *dst, const CettaVarMap *src);
+bool cetta_var_map_clone_live(Arena *dst, CettaVarMap *out,
+                              const CettaVarMap *src);
 
 typedef Atom *(*CettaVarMapCreateFn)(Arena *dst, Atom *src_var,
                                      uint32_t ordinal, void *ctx);

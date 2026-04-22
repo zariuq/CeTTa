@@ -75,6 +75,10 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                const uint8_t *expr_bytes,
                                                size_t len,
                                                uint64_t *out_removed);
+bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
+                                                 const uint8_t *expr_bytes,
+                                                 size_t len,
+                                                 bool *out_found);
 bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
                                           const uint8_t *text,
                                           size_t len,
@@ -90,6 +94,10 @@ bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,
                                   uint32_t *out_rows);
+bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
+                                            uint8_t **out_packet,
+                                            size_t *out_len,
+                                            uint32_t *out_rows);
 bool cetta_mork_bridge_space_join_into(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
