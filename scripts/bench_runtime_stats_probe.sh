@@ -56,7 +56,7 @@ run_probe() {
     } > "$tmp_file"
 
     /usr/bin/time -v -o "$time_file" \
-        bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --count-only --profile he_extended --lang he '$tmp_file'" \
+        bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --count-only --profile he-extended --lang he '$tmp_file'" \
         > "$out_file"
 
     mapfile -t lines < "$out_file"

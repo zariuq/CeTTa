@@ -154,10 +154,20 @@ PETTA_CORE_NATIVE_TESTS = \
 	tests/test_parse_syntax_surface_regression.metta \
 	tests/test_petta_catch_error_value_regression.metta \
 	tests/test_petta_unquote_noreduce_regression.metta \
+	tests/test_petta_call_dynamic_regression.metta \
 	tests/test_petta_for_each_in_atom_regression.metta \
 	tests/test_equation_var_hygiene.metta \
 	tests/test_lib_he_assert_petta_regression.metta \
 	tests/test_petta_lib_he_chain_unify_tail_regression.metta \
+	tests/test_petta_tail_runtime_stats_regression.metta \
+	tests/test_petta_tail_structured_survivor_regression.metta \
+	tests/test_petta_builtin_type_metadata_regression.metta \
+	tests/test_petta_expression_return_type_regression.metta \
+	tests/test_petta_dynamic_get_type_extension_regression.metta \
+	tests/test_petta_dependent_get_type_extension_regression.metta \
+	tests/test_petta_parametric_type_value_fallback_regression.metta \
+	tests/test_petta_tuple_type_syntax_regression.metta \
+	tests/test_petta_polymorphic_raw_arg_regression.metta \
 	tests/test_petta_lib_he_atomspace_regression.metta \
 	tests/test_petta_lib_he_types_regression.metta \
 	tests/test_relation_is_member_let_true_petta_regression.metta \
@@ -406,7 +416,7 @@ test-git-module: $(BIN) prepare-git-test-fixture
 		'!(import! &gitdb git_module_fixture)' \
 		'!(assertEqualToResult (match &gitdb (git-root $$x) $$x) (loaded))' \
 		> "$(GIT_TEST_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he_extended --lang he "$(GIT_TEST_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he-extended --lang he "$(GIT_TEST_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: dynamic git-module! fixture"; pass=$$((pass + 1)); \
@@ -426,7 +436,7 @@ test-git-module: $(BIN) prepare-git-test-fixture
 		'!(import! &gitupd git_module_fixture:'"$$update_mod"')' \
 		'!(assertEqualToResult (match &gitupd (git-update $$x) $$x) (fetched))' \
 		> "$(GIT_TEST_COMPAT_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he_extended --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he-extended --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: git-module! cache refresh"; pass=$$((pass + 1)); \
@@ -442,17 +452,17 @@ test-git-module: $(BIN) prepare-git-test-fixture
 test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	@pass=0; fail=0; \
 	printf '%s\n' \
-		'; he_compat should still expose the public HE git-module! surface.' \
+		'; he-compat should still expose the public HE git-module! surface.' \
 		'!(git-module! "$(GIT_TEST_URL)")' \
 		'!(import! &gitdb git_module_fixture)' \
 		'!(assertEqualToResult (match &gitdb (git-root $$x) $$x) (loaded))' \
 		> "$(GIT_TEST_COMPAT_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he_compat --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he-compat --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
-		echo "PASS: he_compat git-module! surface"; pass=$$((pass + 1)); \
+		echo "PASS: he-compat git-module! surface"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_compat git-module! surface"; \
+		echo "FAIL: he-compat git-module! surface"; \
 		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -883,16 +893,16 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$(./$(BIN) --list-profiles 2>&1); \
-	if printf '%s\n' "$$profiles" | grep -Eq '^he_compat[[:space:]]' && \
-	   printf '%s\n' "$$profiles" | grep -Eq '^he_extended[[:space:]]' && \
-	   printf '%s\n' "$$profiles" | grep -Eq '^he_prime[[:space:]]'; then \
+	if printf '%s\n' "$$profiles" | grep -Eq '^he-compat[[:space:]]' && \
+	   printf '%s\n' "$$profiles" | grep -Eq '^he-extended[[:space:]]' && \
+	   printf '%s\n' "$$profiles" | grep -Eq '^he-prime[[:space:]]'; then \
 		echo "PASS: profile inventory"; pass=$$((pass + 1)); \
 	else \
 		echo "FAIL: profile inventory"; \
 		printf '%s\n' "$$profiles"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for profile in he_compat he_extended he_prime; do \
+	for profile in he-compat he-extended he-prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \
 			echo "PASS: $$profile import modules"; pass=$$((pass + 1)); \
@@ -902,372 +912,428 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_count_atoms.metta 2>&1); \
-	if [ "$$result" = "$$(cat tests/spec_profile_count_atoms.expected)" ]; then \
-		echo "PASS: he_extended count-atoms extension"; pass=$$((pass + 1)); \
+	result=$$(./$(BIN) --profile he-extended --lang he tests/test_import_modules.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \
+		echo "PASS: he-extended canonical profile name"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_extended count-atoms extension"; \
+		echo "FAIL: he-extended canonical profile name"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he_extended --lang he tests/test_import_modules.metta 2>&1); \
+	status=$$?; \
+	if [ $$status -ne 0 ] && printf '%s\n' "$$result" | grep -Fq "error: unknown profile 'he_extended'"; then \
+		echo "PASS: underscore profile names rejected"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: underscore profile names rejected"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_count_atoms.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_profile_count_atoms.expected)" ]; then \
+		echo "PASS: he-extended count-atoms extension"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-extended count-atoms extension"; \
 		diff <(cat tests/spec_profile_count_atoms.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_count_atoms.metta 2>&1); \
-	if printf '%s\n' "$$result" | grep -Fq "surface count-atoms is unavailable in profile he_compat"; then \
-		echo "PASS: he_compat count-atoms guard"; pass=$$((pass + 1)); \
+	result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_count_atoms.metta 2>&1); \
+	if printf '%s\n' "$$result" | grep -Fq "surface count-atoms is unavailable in profile he-compat"; then \
+		echo "PASS: he-compat count-atoms guard"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_compat count-atoms guard"; \
+		echo "FAIL: he-compat count-atoms guard"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_size_extension.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_size_extension.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/spec_profile_size_extension.expected)" ]; then \
-		echo "PASS: he_extended size extension"; pass=$$((pass + 1)); \
+		echo "PASS: he-extended size extension"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_extended size extension"; \
+		echo "FAIL: he-extended size extension"; \
 		diff <(cat tests/spec_profile_size_extension.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_size_extension.metta 2>&1); \
-	if printf '%s\n' "$$result" | grep -Fq "surface size is unavailable in profile he_compat"; then \
-		echo "PASS: he_compat size guard"; pass=$$((pass + 1)); \
+	result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_size_extension.metta 2>&1); \
+	if printf '%s\n' "$$result" | grep -Fq "surface size is unavailable in profile he-compat"; then \
+		echo "PASS: he-compat size guard"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_compat size guard"; \
+		echo "FAIL: he-compat size guard"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_size_extension.metta 2>&1 >/dev/null); \
-	if printf '%s\n' "$$compile_output" | grep -Fq "surface 'size' is unavailable in profile 'he_compat'"; then \
-		echo "PASS: he_compat size compile guard"; pass=$$((pass + 1)); \
+	compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_size_extension.metta 2>&1 >/dev/null); \
+	if printf '%s\n' "$$compile_output" | grep -Fq "surface 'size' is unavailable in profile 'he-compat'"; then \
+		echo "PASS: he-compat size compile guard"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_compat size compile guard"; \
+		echo "FAIL: he-compat size compile guard"; \
 		printf '%s\n' "$$compile_output"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
-		echo "PASS: he_extended size compile"; pass=$$((pass + 1)); \
+	if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
+		echo "PASS: he-extended size compile"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_extended size compile"; \
+		echo "FAIL: he-extended size compile"; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_atom_introspection_extension.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_profile_atom_introspection_extension.expected)" ]; then \
+		echo "PASS: he-extended atom introspection extension"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-extended atom introspection extension"; \
+		diff <(cat tests/spec_profile_atom_introspection_extension.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he-prime --lang he tests/spec_profile_atom_introspection_extension.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_profile_atom_introspection_extension.expected)" ]; then \
+		echo "PASS: he-prime inherits atom introspection extension"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime inherits atom introspection extension"; \
+		diff <(cat tests/spec_profile_atom_introspection_extension.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_atom_introspection_extension.metta 2>&1); \
+	if printf '%s\n' "$$result" | grep -Fq "surface atom-arg is unavailable in profile he-compat"; then \
+		echo "PASS: he-compat atom introspection guard"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat atom introspection guard"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_atom_introspection_extension.metta 2>&1 >/dev/null); \
+	status=$$?; \
+	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'atom-arg' is unavailable in profile 'he-compat'"; then \
+		echo "PASS: he-compat compile atom introspection guard"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat compile atom introspection guard"; \
+		printf '%s\n' "$$compile_output"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_atom_introspection_extension.metta >/dev/null 2>&1; then \
+		echo "PASS: he-extended compile atom introspection"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-extended compile atom introspection"; \
+		fail=$$((fail + 1)); \
+	fi; \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_foldl_extension.expected)" ]; then \
-			echo "PASS: he_extended foldl-atom-in-space extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended foldl-atom-in-space extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended foldl-atom-in-space extension"; \
+			echo "FAIL: he-extended foldl-atom-in-space extension"; \
 		diff <(cat tests/spec_profile_foldl_extension.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface foldl-atom-in-space is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat foldl-atom-in-space guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface foldl-atom-in-space is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat foldl-atom-in-space guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat foldl-atom-in-space guard"; \
+			echo "FAIL: he-compat foldl-atom-in-space guard"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_foldl_public.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_foldl_public.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_foldl_public.expected)" ]; then \
-			echo "PASS: he_compat foldl-atom public surface"; pass=$$((pass + 1)); \
+			echo "PASS: he-compat foldl-atom public surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat foldl-atom public surface"; \
+			echo "FAIL: he-compat foldl-atom public surface"; \
 			diff <(cat tests/spec_profile_foldl_public.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_collect_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_collect_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_collect_extension.expected)" ]; then \
-			echo "PASS: he_extended collect extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended collect extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended collect extension"; \
+			echo "FAIL: he-extended collect extension"; \
 			diff <(cat tests/spec_profile_collect_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_collect_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface collect is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat collect guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_collect_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface collect is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat collect guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat collect guard"; \
+			echo "FAIL: he-compat collect guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_select_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_select_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_select_extension.expected)" ]; then \
-			echo "PASS: he_extended select extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended select extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended select extension"; \
+			echo "FAIL: he-extended select extension"; \
 			diff <(cat tests/spec_profile_select_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_select_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface select is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat select guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_select_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface select is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat select guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat select guard"; \
+			echo "FAIL: he-compat select guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_fold_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_fold_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fold_extension.expected)" ]; then \
-			echo "PASS: he_extended fold extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended fold extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended fold extension"; \
+			echo "FAIL: he-extended fold extension"; \
 			diff <(cat tests/spec_profile_fold_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_fold_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface fold is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat fold guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_fold_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface fold is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat fold guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat fold guard"; \
+			echo "FAIL: he-compat fold guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fold_by_key_extension.expected)" ]; then \
-			echo "PASS: he_extended fold-by-key extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended fold-by-key extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended fold-by-key extension"; \
+			echo "FAIL: he-extended fold-by-key extension"; \
 			diff <(cat tests/spec_profile_fold_by_key_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface fold-by-key is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat fold-by-key guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface fold-by-key is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat fold-by-key guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat fold-by-key guard"; \
+			echo "FAIL: he-compat fold-by-key guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_reduce_extension.expected)" ]; then \
-			echo "PASS: he_extended reduce extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended reduce extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended reduce extension"; \
+			echo "FAIL: he-extended reduce extension"; \
 			diff <(cat tests/spec_profile_reduce_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface reduce is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat reduce guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface reduce is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat reduce guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat reduce guard"; \
+			echo "FAIL: he-compat reduce guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_runtime_stats_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_runtime_stats_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_runtime_stats_extension.expected)" ]; then \
-			echo "PASS: he_extended runtime-stats extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended runtime-stats extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended runtime-stats extension"; \
+			echo "FAIL: he-extended runtime-stats extension"; \
 			diff <(cat tests/spec_profile_runtime_stats_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/support/profile_runtime_stats_runtime.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface runtime-stats! is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat runtime-stats guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/support/profile_runtime_stats_runtime.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface runtime-stats! is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat runtime-stats guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat runtime-stats guard"; \
+			echo "FAIL: he-compat runtime-stats guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_once_alias_extension.expected)" ]; then \
-			echo "PASS: he_extended once alias"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended once alias"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended once alias"; \
+			echo "FAIL: he-extended once alias"; \
 			diff <(cat tests/spec_profile_once_alias_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface once is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat once guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface once is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat once guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat once guard"; \
+			echo "FAIL: he-compat once guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_search_policy_extension.expected)" ]; then \
-			echo "PASS: he_extended search-policy capability"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended search-policy capability"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended search-policy capability"; \
+			echo "FAIL: he-extended search-policy capability"; \
 			diff <(cat tests/spec_profile_search_policy_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface search-policy is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat search-policy guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface search-policy is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat search-policy guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat search-policy guard"; \
+			echo "FAIL: he-compat search-policy guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_search_policy_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_search_policy_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'search-policy' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile search-policy guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'search-policy' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile search-policy guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile search-policy guard"; \
+			echo "FAIL: he-compat compile search-policy guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile search-policy"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile search-policy"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile search-policy"; \
+			echo "FAIL: he-extended compile search-policy"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_space_set_match_backend_extension.expected)" ]; then \
-			echo "PASS: he_extended space-set-match-backend! extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended space-set-match-backend! extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended space-set-match-backend! extension"; \
+			echo "FAIL: he-extended space-set-match-backend! extension"; \
 			diff <(cat tests/spec_profile_space_set_match_backend_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_compat --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface space-set-match-backend! is unavailable in profile he_compat"; then \
-			echo "PASS: he_compat space-set-match-backend! guard"; pass=$$((pass + 1)); \
+		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
+		if printf '%s\n' "$$result" | grep -Fq "surface space-set-match-backend! is unavailable in profile he-compat"; then \
+			echo "PASS: he-compat space-set-match-backend! guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat space-set-match-backend! guard"; \
+			echo "FAIL: he-compat space-set-match-backend! guard"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_space_set_match_backend_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_space_set_match_backend_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'space-set-match-backend!' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile space-set-match-backend! guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'space-set-match-backend!' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile space-set-match-backend! guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile space-set-match-backend! guard"; \
+			echo "FAIL: he-compat compile space-set-match-backend! guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile space-set-match-backend!"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile space-set-match-backend!"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile space-set-match-backend!"; \
+			echo "FAIL: he-extended compile space-set-match-backend!"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'count-atoms' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'count-atoms' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile guard"; pass=$$((pass + 1)); \
 		else \
-		echo "FAIL: he_compat compile guard"; \
+		echo "FAIL: he-compat compile guard"; \
 		printf '%s\n' "$$compile_output"; \
 		fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile extension"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile extension"; \
+			echo "FAIL: he-extended compile extension"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_collect_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_collect_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'collect' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile collect guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'collect' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile collect guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile collect guard"; \
+			echo "FAIL: he-compat compile collect guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile collect"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile collect"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile collect"; \
+			echo "FAIL: he-extended compile collect"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_select_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_select_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'select' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile select guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'select' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile select guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile select guard"; \
+			echo "FAIL: he-compat compile select guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile select"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile select"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile select"; \
+			echo "FAIL: he-extended compile select"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_fold_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_fold_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile fold guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile fold guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile fold guard"; \
+			echo "FAIL: he-compat compile fold guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile fold"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile fold"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile fold"; \
+			echo "FAIL: he-extended compile fold"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_fold_by_key_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_fold_by_key_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold-by-key' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile fold-by-key guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold-by-key' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile fold-by-key guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile fold-by-key guard"; \
+			echo "FAIL: he-compat compile fold-by-key guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile fold-by-key"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile fold-by-key"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile fold-by-key"; \
+			echo "FAIL: he-extended compile fold-by-key"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_reduce_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_reduce_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'reduce' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile reduce guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'reduce' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile reduce guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile reduce guard"; \
+			echo "FAIL: he-compat compile reduce guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile reduce"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile reduce"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile reduce"; \
+			echo "FAIL: he-extended compile reduce"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_runtime_stats_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_runtime_stats_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'runtime-stats!' is unavailable in profile 'he_compat'"; then \
-			echo "PASS: he_compat compile runtime-stats guard"; pass=$$((pass + 1)); \
+		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'runtime-stats!' is unavailable in profile 'he-compat'"; then \
+			echo "PASS: he-compat compile runtime-stats guard"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_compat compile runtime-stats guard"; \
+			echo "FAIL: he-compat compile runtime-stats guard"; \
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he_extended compile runtime-stats"; pass=$$((pass + 1)); \
+		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-extended compile runtime-stats"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he_extended compile runtime-stats"; \
+			echo "FAIL: he-extended compile runtime-stats"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he tests/spec_module_inventory.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_module_inventory.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_module_inventory.expected)" ]; then \
-			echo "PASS: he_extended module-inventory extension"; pass=$$((pass + 1)); \
+			echo "PASS: he-extended module-inventory extension"; pass=$$((pass + 1)); \
 		else \
-		echo "FAIL: he_extended module-inventory extension"; \
+		echo "FAIL: he-extended module-inventory extension"; \
 		diff <(cat tests/spec_module_inventory.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he_compat --lang he tests/support/profile_module_inventory_runtime.metta 2>&1); \
-	if printf '%s\n' "$$result" | grep -Fq "surface module-inventory! is unavailable in profile he_compat"; then \
-		echo "PASS: he_compat module-inventory guard"; pass=$$((pass + 1)); \
+	result=$$(./$(BIN) --profile he-compat --lang he tests/support/profile_module_inventory_runtime.metta 2>&1); \
+	if printf '%s\n' "$$result" | grep -Fq "surface module-inventory! is unavailable in profile he-compat"; then \
+		echo "PASS: he-compat module-inventory guard"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_compat module-inventory guard"; \
+		echo "FAIL: he-compat module-inventory guard"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for profile in he_compat he_extended he_prime; do \
+	for profile in he-compat he-extended he-prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_system_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_system_extension.expected)" ]; then \
 			echo "PASS: $$profile system capability"; pass=$$((pass + 1)); \
@@ -1283,7 +1349,7 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	for profile in he_compat he_extended he_prime; do \
+	for profile in he-compat he-extended he-prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_fs_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fs_extension.expected)" ]; then \
 			echo "PASS: $$profile fs capability"; pass=$$((pass + 1)); \
@@ -1299,7 +1365,7 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	for profile in he_compat he_extended he_prime; do \
+	for profile in he-compat he-extended he-prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_str_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_str_extension.expected)" ]; then \
 			echo "PASS: $$profile str capability"; pass=$$((pass + 1)); \
@@ -1315,43 +1381,43 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$(./$(BIN) --profile he_extended --lang he tests/profile_he_prime_dependent_binders_compat.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-extended --lang he tests/profile_he_prime_dependent_binders_compat.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_dependent_binders_compat.expected)" ]; then \
-		echo "PASS: he_extended keeps literal binder-domain behavior"; pass=$$((pass + 1)); \
+		echo "PASS: he-extended keeps literal binder-domain behavior"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_extended keeps literal binder-domain behavior"; \
+		echo "FAIL: he-extended keeps literal binder-domain behavior"; \
 		diff <(cat tests/profile_he_prime_dependent_binders_compat.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he_prime --lang he tests/profile_he_prime_dependent_binders.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-prime --lang he tests/profile_he_prime_dependent_binders.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_dependent_binders.expected)" ]; then \
-		echo "PASS: he_prime dependent binder telescope"; pass=$$((pass + 1)); \
+		echo "PASS: he-prime dependent binder telescope"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_prime dependent binder telescope"; \
+		echo "FAIL: he-prime dependent binder telescope"; \
 		diff <(cat tests/profile_he_prime_dependent_binders.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he_prime --lang he tests/profile_he_prime_recursive_search.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-prime --lang he tests/profile_he_prime_recursive_search.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_recursive_search.expected)" ]; then \
-		echo "PASS: he_prime recursive dependent search"; pass=$$((pass + 1)); \
+		echo "PASS: he-prime recursive dependent search"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_prime recursive dependent search"; \
+		echo "FAIL: he-prime recursive dependent search"; \
 		diff <(cat tests/profile_he_prime_recursive_search.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	compile_output=$$(./$(BIN) --profile he_compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
+	compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
 	status=$$?; \
-	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'module-inventory!' is unavailable in profile 'he_compat'"; then \
-		echo "PASS: he_compat module-inventory compile guard"; pass=$$((pass + 1)); \
+	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'module-inventory!' is unavailable in profile 'he-compat'"; then \
+		echo "PASS: he-compat module-inventory compile guard"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_compat module-inventory compile guard"; \
+		echo "FAIL: he-compat module-inventory compile guard"; \
 		printf '%s\n' "$$compile_output"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	if ./$(BIN) --profile he_extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
-		echo "PASS: he_extended compile module-inventory"; pass=$$((pass + 1)); \
+	if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
+		echo "PASS: he-extended compile module-inventory"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he_extended compile module-inventory"; \
+		echo "FAIL: he-extended compile module-inventory"; \
 		fail=$$((fail + 1)); \
 	fi; \
 	echo "---"; \
@@ -1431,7 +1497,7 @@ test-he-contract-suite: $(BIN)
 			fail=$$((fail + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --profile he_extended --lang he "$$f" 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -1659,7 +1725,7 @@ test-mork-surface-suite: $(BIN)
 
 test-mork-runtime-stats-isolation: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork runtime-stats isolation,$@)
-	@result=$$(./$(BIN) --profile he_extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
+	@result=$$(./$(BIN) --profile he-extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_runtime_stats_isolation.expected)" ]; then \
 		echo "PASS: test_mork_runtime_stats_isolation"; \
 	else \
@@ -1754,7 +1820,7 @@ test-mm2-sink-suite: $(BIN)
 test-pathmap-conjunction-init: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap conjunction init regression,$@)
 	@ \
-	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-extended --space-engine pathmap --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_conjunction_bridge_init_regression.expected)" ]; then \
 		echo "PASS: pathmap conjunction init regression"; \
 	else \
@@ -1766,7 +1832,7 @@ test-pathmap-conjunction-init: $(BIN)
 test-pathmap-bridge-v2: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap bridge v2 regression,$@)
 	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap bridge v2 regression"; \
 	else \
@@ -1816,7 +1882,7 @@ test-mork-lib-pathmap: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,mork lib pathmap probe,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
+	result=$$(./$(BIN) --profile he-extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mork lib pathmap probe"; \
 	else \
@@ -1929,7 +1995,7 @@ test-duplicate-multiplicity-backends: $(BIN)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	for backend in native native-candidate-exact pathmap; do \
-		result=$$(./$(BIN) --profile he_extended --space-engine "$$backend" --lang he tests/support/duplicate_multiplicity_probe.metta 2>&1); \
+		result=$$(./$(BIN) --profile he-extended --space-engine "$$backend" --lang he tests/support/duplicate_multiplicity_probe.metta 2>&1); \
 		if [ "$$result" = "$$expected" ]; then \
 			echo "PASS: $$backend duplicate multiplicity probe"; \
 		else \
@@ -1972,7 +2038,7 @@ test-help-flags: $(BIN)
 probe-imported-conjunction-lanes: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,imported conjunction lane probe,$@)
 	@ \
-	./$(BIN) --profile he_extended --space-engine pathmap --lang he \
+	./$(BIN) --profile he-extended --space-engine pathmap --lang he \
 		tests/support/imported_conjunction_lane_probe.metta
 
 # Slow: regenerate .expected files from HE CLI oracle.

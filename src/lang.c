@@ -16,6 +16,8 @@ static const CettaTypeDeclSignature CETTA_PETTA_STDLIB_TYPE_PRUNES[] = {
     {"cdr-atom", "Expression", "Expression"},
     {"unique-atom", "Expression", "Expression"},
     {"alpha-unique-atom", "Expression", "Expression"},
+    {"min-atom", "%Undefined%", "Number"},
+    {"max-atom", "%Undefined%", "Number"},
 };
 
 static const CettaLanguageSpec CETTA_LANGUAGES[] = {
@@ -185,6 +187,14 @@ static bool language_slot_policy_override(const CettaLanguageSpec *spec,
                           : CETTA_FUNCTION_ARG_POLICY_RAW;
         return true;
     }
+    if ((head_id == g_builtin_syms.atom_arg && arg_index == 1) ||
+        (head_id == g_builtin_syms.atom_vars && arg_index == 0) ||
+        ((head_id == g_builtin_syms.alpha_eq_unicode ||
+          head_id == g_builtin_syms.alpha_eq_ascii) &&
+         arg_index < 2)) {
+        *out_policy = CETTA_FUNCTION_ARG_POLICY_RAW;
+        return true;
+    }
     if ((head_id == g_builtin_syms.foldl_atom ||
          head_id == g_builtin_syms.minimal_foldl_atom ||
          head_id == g_builtin_syms.foldl_atom_in_space) && arg_index == 4) {
@@ -295,6 +305,8 @@ CettaFunctionArgPolicy cetta_language_function_arg_policy(const CettaLanguageSpe
         return override;
     if (!domain_type || atom_is_symbol_id(domain_type, g_builtin_syms.undefined_type))
         return spec->semantics.undefined_arg_policy;
+    if (spec->id == CETTA_LANGUAGE_PETTA && domain_type->kind == ATOM_VAR)
+        return CETTA_FUNCTION_ARG_POLICY_RAW;
     if (atom_is_symbol_id(domain_type, g_builtin_syms.atom))
         return spec->semantics.atom_arg_policy;
     if (atom_is_symbol_id(domain_type, g_builtin_syms.expression))

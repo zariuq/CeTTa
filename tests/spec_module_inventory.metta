@@ -3,7 +3,7 @@
 !(register-module! support/import_pkg)
 !(bind! &m (mod-space! import_pkg:moduleA))
 !(bind! &mods (module-inventory!))
-!(assertEqualToResult (match &mods (module-profile he_extended) ok) (ok))
+!(assertEqualToResult (match &mods (module-profile he-extended) ok) (ok))
 !(assertEqualToResult (match &mods (module-provider registered-root enabled) ok) (ok))
 !(assertEqualToResult (match &mods (module-provider relative-file enabled) ok) (ok))
 !(assertEqualToResult (match &mods (module-provider git-remote enabled) ok) (ok))
