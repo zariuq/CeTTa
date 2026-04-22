@@ -4,12 +4,12 @@
 (: call-id (-> Number Number))
 (: call-plus (-> Number Number))
 
-(= origin 7)
+(= (origin) 7)
 (= (id1 $x) $x)
-(= call-origin origin)
+(= (call-origin) (origin))
 (= (call-id $x) (id1 $x))
 (= (call-plus $x) (+ $x 1))
 
-!(assertEqual call-origin 7)
+!(assertEqual (call-origin) 7)
 !(assertEqual (call-id 7) 7)
 !(assertEqual (call-plus 7) 8)

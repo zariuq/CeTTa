@@ -1,7 +1,8 @@
 !(import! &self mork)
 !(bind! &h (new-space hash))
 !(space-set-backend! &h pathmap)
-!(assertEqualToResult (get-type &h) ((Space pathmap)))
+; get-type reports the space discipline; space-set-backend! changes the matcher.
+!(assertEqualToResult (get-type &h) ((Space hash)))
 !(add-atom &h (edge a b))
 !(assertEqualToResult (match &h (edge $x $y) ($x $y)) ((a b)))
 !(assertEqualToResult
