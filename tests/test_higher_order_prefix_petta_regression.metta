@@ -1,0 +1,20 @@
+(= (foldr2 $f $init ()) $init)
+(= (foldr2 $f $init (cons $x $xs))
+   ($f $x (foldr2 $f $init $xs)))
+
+(= (map-flat2 $f ()) ())
+(= (map-flat2 $f (cons $x $xs))
+   (cons ($f $x) (map-flat2 $f $xs)))
+
+(= (fold-flat2 $f $init ()) $init)
+(= (fold-flat2 $f $init (cons $x $xs))
+   (fold-flat2 $f ($f $init $x) $xs))
+
+!(assertEqual ((+ 1) 2) 3)
+!(assertEqual (let $f = ($f 1 1)) True)
+!(assertEqual (let $f (= 1) ($f 2)) False)
+!(assertEqual (let $f = ($f (1 $x) (1 2))) True)
+!(assertEqual (car-atom ((2 3) 4)) (2 3))
+!(assertEqual (decons-atom ((2 3) 4)) ((2 3) (4)))
+!(assertEqual (foldr2 cons () (1 (2 3) 4)) (1 (2 3) 4))
+!(assertEqual (chain ((= $a) 2) $r ($r $a)) (True 2))

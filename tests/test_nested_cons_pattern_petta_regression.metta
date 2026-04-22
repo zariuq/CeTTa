@@ -1,0 +1,15 @@
+!(assertEqual (let (cons $Head (cons $Head2 $Tail)) (1 2 3 4)
+                   ($Head $Head2 $Tail))
+              (1 2 (3 4)))
+
+(= (double-head (cons $Head (cons $Head2 $Rest)))
+   ($Head $Head2))
+!(assertEqual (double-head (1 2 3 4))
+              (1 2))
+
+(= (two-elems (cons $A (cons $B ())))
+   (pair $A $B))
+!(assertEqual (two-elems (1 2))
+              (pair 1 2))
+!(assertEqual (collapse (two-elems (1 2 3)))
+              ())

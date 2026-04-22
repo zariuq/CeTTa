@@ -1,0 +1,7 @@
+!(assertEqual (catch (+ 40 2)) 42)
+!(assertEqual (let $result (catch (+ 40 a))
+                 (if-error $result Error $result))
+              Error)
+!(assertEqual (if-error (Error 5 BadType) "Error!" "No error") "Error!")
+!(assertEqual (return-on-error (Error 5 BadType) 6) (Error 5 BadType))
+!(assertEqual (return-on-error 5 6) 6)

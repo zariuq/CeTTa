@@ -27,7 +27,7 @@ typedef enum {
 typedef enum {
     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY = 0,
     CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK = 1,
-    CETTA_RELATIVE_MODULE_POLICY_SCRIPT_DIR_ONLY = 2,
+    CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY = 2,
 } CettaRelativeModulePolicy;
 
 typedef struct {
@@ -59,6 +59,9 @@ typedef struct {
 const CettaLanguageSpec *cetta_language_lookup(const char *name);
 const CettaLanguageSpec *cetta_language_current(void);
 void cetta_language_set_current(const CettaLanguageSpec *spec);
+const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy);
+bool cetta_relative_module_policy_from_name(const char *name,
+                                            CettaRelativeModulePolicy *out_policy);
 void cetta_language_print_inventory(FILE *out);
 bool cetta_language_known_head_query_miss_is_failure(const CettaLanguageSpec *spec);
 bool cetta_language_unique_atom_uses_alpha_for_open_terms(const CettaLanguageSpec *spec);

@@ -218,8 +218,6 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
     bindings_note_constraint_pool_metrics();
 }
 
-static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling);
-
 static inline void bindings_lookup_cache_reset(Bindings *b) {
     b->lookup_cache_count = 0;
     b->lookup_cache_next = 0;
@@ -276,7 +274,6 @@ static Atom *bindings_resolve_atom(Bindings *b, Atom *atom, uint32_t depth) {
     while (atom->kind == ATOM_VAR) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_RESOLVE);
         Atom *next = bindings_lookup_id(b, atom->var_id);
-        if (!next) next = bindings_lookup_spelling(b, atom->sym_id);
         if (!next) return atom;
         if (next == atom) return atom;
         if (next->kind == ATOM_VAR &&
@@ -488,16 +485,6 @@ Atom *bindings_lookup_var(Bindings *b, Atom *var) {
     return bindings_lookup_id(b, var->var_id);
 }
 
-static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling) {
-    for (uint32_t i = 0; i < b->len; i++) {
-        if (!b->entries[i].legacy_name_fallback)
-            continue;
-        if (b->entries[i].spelling == spelling)
-            return b->entries[i].val;
-    }
-    return NULL;
-}
-
 char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix) {
     size_t name_len = strlen(name);
     size_t needed = name_len + 1 + 10 + 1;
@@ -585,6 +572,11 @@ static bool bindings_add_internal(Bindings *b, VarId var_id, SymbolId spelling,
 
 bool bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val) {
     return bindings_add_internal(b, var_id, spelling, val, true, false);
+}
+
+bool bindings_add_id_name_fallback(Bindings *b, VarId var_id,
+                                   SymbolId spelling, Atom *val) {
+    return bindings_add_internal(b, var_id, spelling, val, true, true);
 }
 
 bool bindings_add_var(Bindings *b, Atom *var, Atom *val) {
@@ -833,7 +825,6 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
         }
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_APPLY);
         Atom *val = bindings_lookup_id(b, atom->var_id);
-        if (!val) val = bindings_lookup_spelling(b, atom->sym_id);
         if (!val) {
             Atom *result = rewrite_var ? rewrite_var(a, atom, rewrite_ctx) : atom;
             if (result)

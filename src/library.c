@@ -277,6 +277,9 @@ void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
     memset(ctx, 0, sizeof(*ctx));
     cetta_eval_session_init(&ctx->session, profile, language);
     term_universe_init(&ctx->term_universe);
+    if (!getcwd(ctx->working_dir, sizeof(ctx->working_dir))) {
+        snprintf(ctx->working_dir, sizeof(ctx->working_dir), ".");
+    }
     ctx->native_handle_next_id = 1;
     ctx->foreign_runtime = cetta_foreign_runtime_new();
 }
@@ -368,6 +371,9 @@ static const char *cetta_library_current_dir(CettaLibraryContext *ctx) {
     if (ctx->script_dir[0] != '\0') {
         return ctx->script_dir;
     }
+    if (ctx->working_dir[0] != '\0') {
+        return ctx->working_dir;
+    }
     return ".";
 }
 
@@ -375,16 +381,16 @@ static CettaRelativeModulePolicy
 cetta_library_relative_module_policy(CettaLibraryContext *ctx) {
     if (!ctx)
         return CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
-    return cetta_language_relative_module_policy(ctx->session.language);
+    return cetta_eval_session_relative_module_policy(&ctx->session);
 }
 
 static const char *cetta_library_relative_base_dir(CettaLibraryContext *ctx) {
     if (!ctx)
         return ".";
     if (cetta_library_relative_module_policy(ctx) ==
-            CETTA_RELATIVE_MODULE_POLICY_SCRIPT_DIR_ONLY &&
-        ctx->script_dir[0] != '\0') {
-        return ctx->script_dir;
+            CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY &&
+        ctx->working_dir[0] != '\0') {
+        return ctx->working_dir;
     }
     return cetta_library_current_dir(ctx);
 }
@@ -438,6 +444,11 @@ static const char *cetta_library_display_path(CettaLibraryContext *ctx,
     }
     if (ctx && ctx->script_dir[0] != '\0' &&
         cetta_path_strip_prefix(path, ctx->script_dir, &relative)) {
+        snprintf(out, out_sz, "%s", relative);
+        return out;
+    }
+    if (ctx && ctx->working_dir[0] != '\0' &&
+        cetta_path_strip_prefix(path, ctx->working_dir, &relative)) {
         snprintf(out, out_sz, "%s", relative);
         return out;
     }
@@ -5471,9 +5482,9 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         ok = load_module_mm2_file(ctx, path, work_space, eval_arena,
                                   persistent_arena, error_out);
     } else {
-        int n = cetta_language_parse_file_ids(ctx->session.language, path, eval_arena,
-                                              work_space ? work_space->universe : NULL,
-                                              &atom_ids);
+        int n = cetta_language_parse_file_ids_for_session(
+            &ctx->session, path, eval_arena,
+            work_space ? work_space->universe : NULL, &atom_ids);
         if (n < 0) {
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
@@ -6143,7 +6154,7 @@ bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
         n = snprintf(candidate, sizeof(candidate), "%s", path);
     } else {
         n = snprintf(candidate, sizeof(candidate), "%s/%s",
-                     cetta_library_current_dir(ctx), path);
+                     cetta_library_relative_base_dir(ctx), path);
     }
     if (!(n > 0 && (size_t)n < sizeof(candidate))) {
         *error_out = atom_symbol(eval_arena, "module path too long");

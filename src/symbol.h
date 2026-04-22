@@ -48,6 +48,8 @@ typedef struct {
     X(bindings, "Bindings") \
     X(bang, "!") \
     X(quote, "quote") \
+    X(parse, "parse") \
+    X(catch, "catch") \
     X(capture, "capture") \
     X(function, "function") \
     X(colon, ":") \
@@ -87,6 +89,7 @@ typedef struct {
     X(reduce, "reduce") \
     X(select, "select") \
     X(once, "once") \
+    X(cut, "cut") \
     X(assert_text, "assert") \
     X(return_text, "return") \
     X(eval, "eval") \
@@ -179,6 +182,7 @@ typedef struct {
     X(index_atom, "index-atom") \
     X(range_atom, "range-atom") \
     X(repeat_atom, "repeat-atom") \
+    X(id, "id") \
     X(map_atom, "map-atom") \
     X(filter_atom, "filter-atom") \
     X(foldl_atom, "foldl-atom") \
@@ -212,6 +216,10 @@ typedef struct {
     /* ── Grounded internal helpers ── */ \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
+    X(petta_rel_true, "__petta_rel_true") \
+    X(petta_rel_call, "__petta_rel_call") \
+    X(petta_rel_conj, "__petta_rel_conj") \
+    X(petta_rel_run, "__petta_rel_run") \
     /* ── Prolog FFI ── */ \
     X(pl_atom, "pl-atom") \
     X(pl_call, "pl-call") \

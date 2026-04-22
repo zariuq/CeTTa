@@ -14,6 +14,7 @@
 (: if-decons-expr (-> Expression Variable Variable Atom Atom %Undefined%))
 (: if-error (-> Atom Atom Atom %Undefined%))
 (: return-on-error (-> Atom Atom %Undefined%))
+(: catch (-> %Undefined% %Undefined%))
 (: filter-atom (-> Expression Variable Atom Expression))
 (: map-atom (-> Expression Variable Atom Expression))
 (: empty (-> Atom))
@@ -32,6 +33,7 @@
 (: sealed (-> Atom Atom Atom))
 (: capture (-> Atom Atom))
 (: quote (-> Atom Atom))
+(: parse (-> String Atom))
 (: unquote (-> %Undefined% %Undefined%))
 (: switch-internal (-> Atom Expression Atom))
 (: import! (-> Atom Atom (->)))
@@ -58,6 +60,7 @@
 (: type-cast (-> Atom Type SpaceType %Undefined%))
 (: match-types (-> Type Type Atom Atom %Undefined%))
 (: first-from-pair (-> Atom Atom))
+(: second-from-pair (-> Atom Atom))
 (: match-type-or (-> Bool Type Type Bool))
 (: get-type-space (-> SpaceType Atom Atom))
 (: _minimal-foldl-atom (-> Expression Atom Variable Variable Atom SpaceType %Undefined%))
@@ -296,6 +299,25 @@
     (@param "Module spec or path to import")))
   (@return "Unit on success, or an Error value on failure"))
 
+(@doc get-type
+  (@desc "Returns the type notation of the input atom. CeTTa first consults visible type annotations, grounded builtin type surfaces, and operator-driven function-type inference; if no type can be found, the result is %Undefined%.")
+  (@params (
+    (@param "Atom to inspect")))
+  (@return "Type notation for the input atom, or %Undefined% when no type is known"))
+
+(@doc get-type-space
+  (@desc "Returns the type notation of the second argument relative to the specified space given as the first argument. This is the explicit-space version of get-type and lets you query a chosen module or temporary space rather than the ambient &self.")
+  (@params (
+    (@param "Space where type annotations and type-relevant atoms will be searched")
+    (@param "Atom to inspect")))
+  (@return "Type notation for the input atom in the provided space, or %Undefined% when none is known there"))
+
+(@doc get-metatype
+  (@desc "Returns the structural metatype of the input atom. Typical results are Symbol, Variable, Expression, or Grounded.")
+  (@params (
+    (@param "Atom to inspect")))
+  (@return "Metatype of the input atom"))
+
 (@doc MathDomainError
   (@desc "Structured runtime error constructor for invalid real-domain math calls. The first argument is the 1-based argument index, and the second is a symbolic domain constraint tag.")
   (@params (
@@ -452,6 +474,12 @@
     (unify $pair ($first $second)
       (return $first)
       (return (Error (first-from-pair $pair) "incorrect pair format")))))
+
+(= (second-from-pair $pair)
+  (function
+    (unify $pair ($first $second)
+      (return $second)
+      (return (Error (second-from-pair $pair) "incorrect pair format")))))
 
 (= (match-type-or $folded $next $type)
   (function
