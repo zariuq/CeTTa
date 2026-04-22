@@ -173,7 +173,7 @@
         (Truth_w2c (min (Truth_c2w $cAB) (Truth_c2w $cCB)))))
 
 ;Modus Ponens: PLN book "5.7.1 Modus Ponens", page 111:
-(= (Truth_ModusPonens (stv $f1 $c1) (stv $f2 $c2)) 
+(= (Truth_ModusPonens (stv $f1 $c1) (stv $f2 $c2))
    (stv (+ (* $f1 $f2) (* 0.02 (- 1 $f1)))
         (* $c1 $c2))) ;min overestimates here as we do not have access to node probabilities
 
@@ -260,12 +260,12 @@
 ;; INFERENCE RULES
 
 ;Revision
-(= (|- ($T $T1) 
+(= (|- ($T $T1)
        ($T $T2))
    ($T (Truth_Revision $T1 $T2)))
 
 ;Modus Ponens
-(= (|- ($A $T1) 
+(= (|- ($A $T1)
        ((Implication $A $B) $T2))
    ($B (Truth_ModusPonens $T1 $T2)))
 
@@ -294,7 +294,7 @@
         (Truth_Deduction (STV $A)
                          (STV $B)
                          (STV $C) $T1 $T2)) (empty)))
-      
+
 
 ; Induction rule, see https://github.com/opencog/pln/blob/master/opencog/pln/rules/wip/induction.scm
 (= (|- (($LinkType $C $A) $T1)

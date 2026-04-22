@@ -1,0 +1,6 @@
+!(import! &self mork)
+!(import! &kb ../discovered_patterns_1k)
+!(space-set-match-backend! &kb pathmap-imported)
+!(bind! &compiled (mork:new-space))
+!(match &kb $atom (mork:add-atom &compiled $atom))
+!(mork:dump! &compiled "../../runtime/bench_bio_1m_patterns.act")

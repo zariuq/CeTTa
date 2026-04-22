@@ -337,6 +337,20 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
     return true;
 }
 
+bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
+                                               uint8_t **out_packet,
+                                               size_t *out_len,
+                                               uint32_t *out_rows) {
+    (void)space;
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_rows)
+        *out_rows = 0;
+    return false;
+}
+
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,

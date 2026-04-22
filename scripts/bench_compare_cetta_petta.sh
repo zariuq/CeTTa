@@ -2,11 +2,29 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
-CETTA_BIN="$ROOT/cetta"
-PETTA_DIR="/home/zar/claude/hyperon/PeTTa"
-PETTA_RUN="$PETTA_DIR/run.sh"
+CETTA_BIN="${CETTA_BIN:-$ROOT/cetta}"
 BACKENDS_STR="${BACKENDS_STR:-native native-candidate-exact pathmap}"
 IFS=' ' read -r -a BACKENDS <<< "$BACKENDS_STR"
+
+source "$ROOT/scripts/cetta_bench_build.sh"
+
+discover_petta_dir() {
+    local candidate
+    for candidate in \
+        "${PETTA_DIR:-}" \
+        "$ROOT/../PeTTa" \
+        "$ROOT/../../hyperon/PeTTa"
+    do
+        if [[ -n "$candidate" && -x "$candidate/run.sh" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PETTA_DIR="$(discover_petta_dir || true)"
+PETTA_RUN="${PETTA_DIR:+$PETTA_DIR/run.sh}"
 
 extract_numeric_tail() {
     python3 -c '
@@ -125,7 +143,24 @@ run_pair_value() {
 }
 
 if [[ ! -x $CETTA_BIN ]]; then
+    cetta_ensure_build_mode "$ROOT" "$CETTA_BIN" pathmap "CeTTa vs PeTTa comparison benchmarks"
+fi
+
+for backend in "${BACKENDS[@]}"; do
+    if [[ "$backend" == "pathmap" ]]; then
+        cetta_ensure_build_mode "$ROOT" "$CETTA_BIN" pathmap "CeTTa vs PeTTa comparison benchmarks"
+        break
+    fi
+done
+
+if [[ ! -x $CETTA_BIN ]]; then
     echo "error: $CETTA_BIN is missing or not executable" >&2
+    exit 1
+fi
+
+if [[ -z "${PETTA_DIR:-}" || ! -x "${PETTA_RUN:-}" ]]; then
+    echo "error: unable to locate a runnable PeTTa checkout" >&2
+    echo "hint: set PETTA_DIR=/path/to/PeTTa" >&2
     exit 1
 fi
 
