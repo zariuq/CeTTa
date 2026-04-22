@@ -1915,12 +1915,12 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                 space_type = "stack";
             } else if (space_is_queue(space)) {
                 space_type = "queue";
+            } else if (space_is_hash(space)) {
+                space_type = "hash";
             } else if (space->match_backend.kind == SPACE_ENGINE_PATHMAP) {
                 space_type = "pathmap";
             } else if (space->match_backend.kind == SPACE_ENGINE_MORK) {
                 space_type = "pathmap";
-            } else if (space_is_hash(space)) {
-                space_type = "hash";
             }
         }
         return atom_expr2(a, atom_symbol(a, "Space"), atom_symbol(a, space_type));

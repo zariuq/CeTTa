@@ -191,28 +191,21 @@ void cetta_runtime_stats_populate_space(Space *space, Arena *a,
 #define cetta_runtime_stats_is_enabled() false
 #define cetta_runtime_stats_add(counter, delta)                                  \
     do {                                                                         \
-        (void)(counter);                                                         \
-        (void)(delta);                                                           \
     } while (0)
 #define cetta_runtime_stats_set(counter, value)                                  \
     do {                                                                         \
-        (void)(counter);                                                         \
-        (void)(value);                                                           \
     } while (0)
 #define cetta_runtime_stats_update_max(counter, value)                           \
     do {                                                                         \
-        (void)(counter);                                                         \
-        (void)(value);                                                           \
     } while (0)
-#endif
-
-static inline void cetta_runtime_stats_inc(CettaRuntimeCounter counter) {
-#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
-    cetta_runtime_stats_add(counter, 1);
+#define cetta_runtime_stats_inc(counter)                                         \
+    do {                                                                         \
+    } while (0)
 #else
-    (void)counter;
-#endif
+static inline void cetta_runtime_stats_inc(CettaRuntimeCounter counter) {
+    cetta_runtime_stats_add(counter, 1);
 }
+#endif
 
 static inline bool cetta_runtime_timing_is_enabled(void) {
 #if CETTA_BUILD_WITH_RUNTIME_STATS && CETTA_BUILD_WITH_RUNTIME_TIMING

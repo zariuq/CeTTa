@@ -9,4 +9,4 @@
 
 !(assertEqual
    (select (make_assertion &kb ("formula" "A." "x" "ph")))
-   ((DVars ()) (FHyps ()) (EHyps ()) (Statement ("formula" "A." "x" "ph"))))
+   ((DVars ()) (FHyps (("formula" "ph"))) (EHyps ()) (Statement ("formula" "A." "x" "ph"))))

@@ -37,6 +37,7 @@ typedef struct {
     CettaVarMap goal_instantiation;
     uint32_t target_index;
     bool target_reusable;
+    bool target_reserved_new;
     bool target_stale;
 } TableQueryState;
 
@@ -126,6 +127,8 @@ static TableStoreMatch table_store_find_match(TableStore *store,
         return match;
     for (uint32_t i = 0; i < store->len; i++) {
         TableStoreEntry *entry = &store->entries[i];
+        if (!entry->goal_key)
+            continue;
         if (entry->space != space || entry->goal_hash != goal_hash)
             continue;
         if (!atom_eq(entry->goal_key, goal_key))
@@ -213,6 +216,7 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
     }
 
     TableQueryState *state = cetta_malloc(sizeof(TableQueryState));
+    memset(state, 0, sizeof(*state));
     state->store = store;
     table_store_entry_init(&state->staged);
     cetta_var_map_init(&state->query_map);
@@ -231,7 +235,10 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
     } else {
         state->target_index = store->len;
         state->target_reusable = false;
+        state->target_reserved_new = true;
         state->target_stale = false;
+        table_store_entry_init(&store->entries[store->len]);
+        store->len++;
     }
 
     state->staged.space = space;
@@ -393,7 +400,7 @@ bool table_store_commit_query(TableQueryHandle *handle) {
 
     TableQueryState *state = handle->impl;
     TableStoreEntry *target = &state->store->entries[state->target_index];
-    if (state->target_reusable) {
+    if (state->target_reusable || state->target_reserved_new) {
         table_store_entry_free(target);
         if (state->target_stale)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_REUSE);

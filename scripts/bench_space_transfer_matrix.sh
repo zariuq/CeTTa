@@ -40,10 +40,31 @@ esac
 
 mkdir -p "$RUNTIME_DIR"
 tmp_dir=$(mktemp -d "$RUNTIME_DIR/.bench_space_transfer.XXXXXX")
+preserve_tmp="${BENCH_KEEP_TMP:-0}"
 cleanup() {
+    if [ "$preserve_tmp" = "1" ]; then
+        printf 'preserved_tmp\t%s\n' "$tmp_dir" >&2
+        return
+    fi
     rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
+
+preserve_failure_artifacts() {
+    local case_id=$1
+    local scenario=$2
+    local status=$3
+    local file=$4
+    local log=$5
+    preserve_tmp=1
+    printf 'transfer_failed\tcase=%s\tscenario=%s\tstatus=%s\tfile=%s\tlog=%s\n' \
+        "$case_id" "$scenario" "$status" "$file" "$log" >&2
+    if [ -s "$log" ]; then
+        printf '%s\n' "--- tail $log ---" >&2
+        tail -80 "$log" >&2 || true
+        printf '%s\n' '--- end tail ---' >&2
+    fi
+}
 
 run_cetta_file() {
     local file=$1
@@ -343,7 +364,13 @@ run_case_scenario() {
     route_class="$(case_route_class "$case_id")"
 
     render_case_program "$case_id" "$scenario" "$file"
-    run_cetta_file "$file" "$log"
+    if run_cetta_file "$file" "$log"; then
+        :
+    else
+        local status=$?
+        preserve_failure_artifacts "$case_id" "$scenario" "$status" "$file" "$log"
+        exit "$status"
+    fi
 
     source_rows=$(extract_metric source_rows "$log")
     scenario_rows=$(extract_metric scenario_rows "$log")
