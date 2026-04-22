@@ -1,0 +1,6 @@
+=== match &kb ===
+=== match &self (should be empty) ===
+[()]
+[()]
+[a, b, c]
+[()]

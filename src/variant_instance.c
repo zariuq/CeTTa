@@ -128,8 +128,12 @@ bool variant_instance_promote_atoms_to_arena(Arena *dst,
         return true;
     for (uint32_t i = 0; i < storage->slot_count; i++) {
         Atom *slot_val = storage->slot_vals[i];
+        if (!slot_val) {
+            storage->slot_vals[i] = NULL;
+            continue;
+        }
         Atom *promoted = atom_deep_copy(dst, slot_val);
-        if (slot_val && !promoted)
+        if (!promoted)
             return false;
         storage->slot_vals[i] = promoted;
     }

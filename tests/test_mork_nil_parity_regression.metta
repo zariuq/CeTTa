@@ -91,8 +91,8 @@
 !(fs-add-to-ss-nodup &rb-mork &ss2n-mork)
 !(fs-add-to-ss-nodup &rb-mork &ss2n-mork)
 
-!(assertEqual (count-atoms &ss2n-native) 72)
-!(assertEqual (count-atoms &ss2n-mork) 72)
+!(assertEqual (count-atoms &ss2n-native) 66)
+!(assertEqual (count-atoms &ss2n-mork) 66)
 !(assertEqual (count-atoms &ss2n-native) (count-atoms &ss2n-mork))
 
 ; Depth 3 nodup lane

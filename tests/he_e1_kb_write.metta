@@ -29,6 +29,6 @@
   (() ()))
 
 ; Retrieve the inferred Green things: Fritz and Sam.
-!(assertEqualToResult
+!(assertEqual
   (match &kb (Green $x) $x)
-  (Fritz Sam))
+  (superpose (Fritz Sam)))

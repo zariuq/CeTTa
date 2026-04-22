@@ -671,13 +671,13 @@ static bool compile_profile_guard_ok_ids(const CettaProfile *profile,
 }
 
 static bool main_try_add_builtin_type_decls_direct(Space *space) {
-    if (!space || !space->universe)
+    if (!space || !space->native.universe)
         return false;
 
     static const char *arith_ops[] = {"+", "-", "*", "/", "%", NULL};
     static const char *cmp_ops[] = {"<", ">", "<=", ">=", NULL};
 
-    TermUniverse *universe = space->universe;
+    TermUniverse *universe = space->native.universe;
     AtomId decl_ids[11];
     uint32_t decl_count = 0;
 

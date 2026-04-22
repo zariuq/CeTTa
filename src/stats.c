@@ -1,3 +1,4 @@
+#define CETTA_RUNTIME_STATS_IMPL 1
 #include "stats.h"
 #include "space.h"
 #include "symbol.h"
@@ -59,6 +60,10 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "table-stale-miss",
     "table-reuse",
     "table-answer-staged",
+    "answer-ref-emit",
+    "answer-ref-inflate-call",
+    "answer-ref-materialize-call",
+    "answer-ref-materialize-bytes",
     "space-revision-bump",
     "term-universe-lookup",
     "term-universe-hit",
@@ -221,29 +226,30 @@ void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats) {
 void cetta_runtime_stats_populate_space(Space *space, Arena *a,
                                         const CettaRuntimeStats *stats) {
     if (!space || !a || !stats) return;
-    if (space->universe) {
+    if (space->native.universe) {
         AtomId fact_ids[CETTA_RUNTIME_COUNTER_COUNT];
         bool direct_ok = true;
         AtomId fact_head_id =
-            tu_intern_symbol(space->universe,
+            tu_intern_symbol(space->native.universe,
                              symbol_intern_cstr(g_symbols, "runtime-counter"));
         if (fact_head_id != CETTA_ATOM_ID_NONE) {
             for (uint32_t i = 0; i < CETTA_RUNTIME_COUNTER_COUNT; i++) {
                 AtomId counter_name_id =
-                    tu_intern_symbol(space->universe,
+                    tu_intern_symbol(space->native.universe,
                                      symbol_intern_cstr(
                                          g_symbols,
                                          cetta_runtime_counter_name(
                                              (CettaRuntimeCounter)i)));
                 AtomId counter_value_id =
-                    tu_intern_int(space->universe,
+                    tu_intern_int(space->native.universe,
                                   clamp_counter(stats->counters[i]));
                 AtomId fact_children[3] = {
                     fact_head_id,
                     counter_name_id,
                     counter_value_id,
                 };
-                fact_ids[i] = tu_expr_from_ids(space->universe, fact_children, 3);
+                fact_ids[i] =
+                    tu_expr_from_ids(space->native.universe, fact_children, 3);
                 if (fact_ids[i] == CETTA_ATOM_ID_NONE) {
                     direct_ok = false;
                     break;

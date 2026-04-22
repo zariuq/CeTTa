@@ -2373,6 +2373,72 @@ static bool library_mork_space_bridge(CettaMorkSpaceResource *resource,
     return true;
 }
 
+static bool library_mork_expr_bytes_need_text_fallback(const char *encode_error) {
+    return encode_error &&
+           strstr(encode_error, "MORK bridge tokens must be at most 63 bytes") != NULL;
+}
+
+static bool library_mork_space_add_atom_text_fallback(Arena *a,
+                                                      CettaMorkSpaceHandle *bridge,
+                                                      Atom *item) {
+    char *text;
+    if (!a || !bridge || !item)
+        return false;
+    text = atom_to_string(a, item);
+    if (!text)
+        return false;
+    return cetta_mork_bridge_space_add_sexpr(
+        bridge, (const uint8_t *)text, strlen(text), NULL);
+}
+
+static bool library_mork_space_remove_atom_text_fallback(Arena *a,
+                                                         CettaMorkSpaceHandle *bridge,
+                                                         Atom *item) {
+    char *text;
+    if (!a || !bridge || !item)
+        return false;
+    text = atom_to_string(a, item);
+    if (!text)
+        return false;
+    return cetta_mork_bridge_space_remove_sexpr(
+        bridge, (const uint8_t *)text, strlen(text), NULL);
+}
+
+static bool library_mork_space_add_atoms_text_fallback(Arena *a,
+                                                       CettaMorkSpaceHandle *bridge,
+                                                       Atom **items,
+                                                       uint32_t len) {
+    char **texts;
+    char *joined;
+    size_t total = 0;
+    size_t off = 0;
+
+    if (!a || !bridge || (!items && len != 0))
+        return false;
+    texts = arena_alloc(a, sizeof(char *) * (len ? len : 1u));
+    if (!texts)
+        return false;
+    for (uint32_t i = 0; i < len; i++) {
+        texts[i] = atom_to_string(a, items[i]);
+        if (!texts[i])
+            return false;
+        total += strlen(texts[i]) + 1u;
+    }
+    joined = arena_alloc(a, total ? total : 1u);
+    if (!joined)
+        return false;
+    for (uint32_t i = 0; i < len; i++) {
+        size_t n = strlen(texts[i]);
+        memcpy(joined + off, texts[i], n);
+        off += n;
+        joined[off++] = '\n';
+    }
+    if (total == 0)
+        joined[0] = '\0';
+    return cetta_mork_bridge_space_add_sexpr(
+        bridge, (const uint8_t *)joined, off, NULL);
+}
+
 bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
                                                Atom *space_arg,
                                                CettaMorkSpaceHandle **bridge_out) {
@@ -2479,7 +2545,7 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
         goto fail;
 
     uint32_t n = space_length(space);
-    if (space->universe) {
+    if (space->native.universe) {
         AtomId *atom_ids = arena_alloc(&scratch, sizeof(AtomId) * (n ? n : 1u));
         uint8_t *packet = NULL;
         size_t packet_len = 0;
@@ -2487,7 +2553,7 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
         for (uint32_t i = 0; i < n; i++)
             atom_ids[i] = space_get_atom_id_at(space, i);
         if (cetta_library_pack_mork_expr_batch_from_ids(
-                &scratch, space->universe, atom_ids, n,
+                &scratch, space->native.universe, atom_ids, n,
                 &packet, &packet_len, &pack_error) &&
             cetta_mork_bridge_space_add_expr_bytes_batch(
                 bridge, packet, packet_len, NULL)) {
@@ -2908,6 +2974,14 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
                 &scratch, items->expr.elems, items->expr.len,
                 &packet, &packet_len, &packet_bytes,
                 emit_timing ? &pack_ns : NULL, &pack_error)) {
+            if (library_mork_space_bridge(target, &bridge) && bridge &&
+                library_mork_expr_bytes_need_text_fallback(pack_error) &&
+                library_mork_space_add_atoms_text_fallback(
+                    &scratch, bridge, items->expr.elems, items->expr.len)) {
+                free(packet);
+                arena_free(&scratch);
+                return atom_unit(a);
+            }
             Atom *error = atom_error(
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, pack_error ? pack_error
@@ -2980,6 +3054,19 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
         arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         if (!cetta_mm2_atom_to_bridge_expr_bytes(
                 &scratch, item, &expr_bytes, &expr_len, &encode_error)) {
+            if (library_mork_space_bridge(target, &bridge) && bridge &&
+                library_mork_expr_bytes_need_text_fallback(encode_error) &&
+                library_mork_space_add_atom_text_fallback(&scratch, bridge, item)) {
+                if (emit_timing && started_ns) {
+                    lowered_ns = library_monotonic_ns();
+                    if (lowered_ns >= started_ns) {
+                        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_LOWER_NS,
+                                                lowered_ns - started_ns);
+                    }
+                }
+                arena_free(&scratch);
+                return atom_unit(a);
+            }
             Atom *error = atom_error(
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, encode_error ? encode_error
@@ -3043,6 +3130,12 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
         arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         if (!cetta_mm2_atom_to_bridge_expr_bytes(
                 &scratch, item, &expr_bytes, &expr_len, &encode_error)) {
+            if (library_mork_space_bridge(target, &bridge) && bridge &&
+                library_mork_expr_bytes_need_text_fallback(encode_error) &&
+                library_mork_space_remove_atom_text_fallback(&scratch, bridge, item)) {
+                arena_free(&scratch);
+                return atom_unit(a);
+            }
             Atom *error = atom_error(
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, encode_error ? encode_error
@@ -4306,26 +4399,21 @@ static Atom *mork_path_of_atom_native(CettaLibraryContext *ctx, Arena *a,
         return atom_error(a, library_call_expr(a, head, args, nargs),
                           atom_string(a, "mork:path-of-atom could not render atom"));
     }
-
     bridge_space = cetta_mork_bridge_space_new();
     if (!bridge_space) {
         arena_free(&scratch);
         return library_mork_bridge_error(a, head, args, nargs,
                                          "MORK path-of-atom bridge allocation failed: ");
     }
-    uint8_t *expr_bytes = NULL;
-    size_t expr_len = 0;
-    const char *encode_error = NULL;
-    if (!cetta_mm2_atom_to_bridge_expr_bytes(
-            &scratch, args[0], &expr_bytes, &expr_len, &encode_error) ||
-        !cetta_mork_bridge_space_add_expr_bytes(bridge_space, expr_bytes, expr_len, NULL)) {
-        free(expr_bytes);
+    /* This helper should expose the bridge/storage path the live MORK parser
+       would use, not the narrower compact expr-byte lowering shortcut. */
+    if (!cetta_mork_bridge_space_add_sexpr(
+            bridge_space, (const uint8_t *)text, strlen(text), NULL)) {
         cetta_mork_bridge_space_free(bridge_space);
         arena_free(&scratch);
         return library_mork_bridge_error(a, head, args, nargs,
                                          "MORK path-of-atom encoding failed: ");
     }
-    free(expr_bytes);
     cursor = cetta_mork_bridge_cursor_new(bridge_space);
     if (!cursor) {
         cetta_mork_bridge_space_free(bridge_space);
@@ -5074,9 +5162,9 @@ static bool load_act_dump_text_into_space(CettaLibraryContext *ctx,
     memcpy(text, bytes, len);
     text[len] = '\0';
 
-    if (target && target->universe) {
+    if (target && target->native.universe) {
         AtomId *atom_ids = NULL;
-        int n = parse_metta_text_ids(text, target->universe, &atom_ids);
+        int n = parse_metta_text_ids(text, target->native.universe, &atom_ids);
         if (n < 0) {
             free(text);
             *error_out = module_reason(ctx, eval_arena, "ModuleCompiledParseFailed", path);
@@ -5157,12 +5245,13 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
         goto cleanup;
     }
 
-    space_init_with_universe(&imported, work_space ? work_space->universe : NULL);
+    space_init_with_universe(
+        &imported, work_space ? work_space->native.universe : NULL);
     imported_init = true;
     switch (space_match_backend_import_bridge_space(&imported, bridge, NULL)) {
     case SPACE_BRIDGE_IMPORT_OK:
-        for (uint32_t i = 0; i < imported.len; i++) {
-            space_add_atom_id(work_space, imported.atom_ids[i]);
+        for (uint32_t i = 0, n = space_length(&imported); i < n; i++) {
+            space_add_atom_id(work_space, space_get_atom_id_at(&imported, i));
         }
         break;
     case SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK:
@@ -5413,7 +5502,8 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         ok = load_module_mm2_file(ctx, path, work_space, eval_arena,
                                   persistent_arena, error_out);
     } else {
-        int n = parse_metta_file_ids(path, work_space ? work_space->universe : NULL,
+        int n = parse_metta_file_ids(path,
+                                     work_space ? work_space->native.universe : NULL,
                                      &atom_ids);
         if (n < 0) {
             ok = false;
@@ -5421,13 +5511,13 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         } else {
             for (int i = 0; i < n; i++) {
                 AtomId at_id = atom_ids[i];
-                if (tu_kind(work_space->universe, at_id) == ATOM_SYMBOL &&
-                    tu_sym(work_space->universe, at_id) == g_builtin_syms.bang &&
+                if (tu_kind(work_space->native.universe, at_id) == ATOM_SYMBOL &&
+                    tu_sym(work_space->native.universe, at_id) == g_builtin_syms.bang &&
                     i + 1 < n) {
                     ResultSet rs;
                     result_set_init(&rs);
                     Atom *eval_form = term_universe_copy_atom(
-                        work_space->universe,
+                        work_space->native.universe,
                         persistent_arena ? persistent_arena : eval_arena,
                         atom_ids[i + 1]);
                     if (!eval_form) {
@@ -5644,22 +5734,23 @@ static const char *loaded_module_storage_name(const CettaLoadedModule *module) {
 }
 
 static AtomId library_inventory_symbol_id(Space *inventory, const char *name) {
-    if (!inventory || !inventory->universe || !name)
+    if (!inventory || !inventory->native.universe || !name)
         return CETTA_ATOM_ID_NONE;
-    return tu_intern_symbol(inventory->universe, symbol_intern_cstr(g_symbols, name));
+    return tu_intern_symbol(
+        inventory->native.universe, symbol_intern_cstr(g_symbols, name));
 }
 
 static AtomId library_inventory_string_id(Space *inventory, const char *value) {
-    if (!inventory || !inventory->universe || !value)
+    if (!inventory || !inventory->native.universe || !value)
         return CETTA_ATOM_ID_NONE;
-    return tu_intern_string(inventory->universe, value);
+    return tu_intern_string(inventory->native.universe, value);
 }
 
 static bool library_inventory_add_ids(Space *inventory, const AtomId *items,
                                       uint32_t nitems) {
-    if (!inventory || !inventory->universe || !items || nitems == 0)
+    if (!inventory || !inventory->native.universe || !items || nitems == 0)
         return false;
-    AtomId expr_id = tu_expr_from_ids(inventory->universe, items, nitems);
+    AtomId expr_id = tu_expr_from_ids(inventory->native.universe, items, nitems);
     if (expr_id == CETTA_ATOM_ID_NONE)
         return false;
     space_add_atom_id(inventory, expr_id);

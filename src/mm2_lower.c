@@ -336,8 +336,7 @@ typedef struct {
 } BridgeExprBuf;
 
 typedef struct {
-    const uint8_t *token;
-    uint32_t len;
+    VarId var_id;
 } BridgeVarSlot;
 
 typedef struct {
@@ -397,72 +396,6 @@ static bool bridge_expr_buf_push_symbol(BridgeExprBuf *buf,
            bridge_expr_buf_push_bytes(buf, token, len);
 }
 
-static const uint8_t *bridge_var_token(Arena *a, Atom *atom, uint32_t *out_len) {
-    const char *name = atom_name_cstr(atom);
-    uint32_t name_len = (uint32_t)strlen(name);
-    uint32_t epoch = var_epoch_suffix(atom->var_id);
-    if (epoch == 0) {
-        char *token = arena_alloc(a, (size_t)name_len + 2);
-        token[0] = '$';
-        memcpy(token + 1, name, name_len);
-        token[name_len + 1] = '\0';
-        if (out_len)
-            *out_len = name_len + 1;
-        return (const uint8_t *)token;
-    }
-
-    int digits = snprintf(NULL, 0, "#%u", epoch);
-    if (digits < 0)
-        return NULL;
-    char *token = arena_alloc(a, (size_t)name_len + (size_t)digits + 2);
-    token[0] = '$';
-    memcpy(token + 1, name, name_len);
-    snprintf(token + 1 + name_len, (size_t)digits + 1, "#%u", epoch);
-    if (out_len)
-        *out_len = name_len + 1 + (uint32_t)digits;
-    return (const uint8_t *)token;
-}
-
-static const uint8_t *bridge_var_token_id(Arena *a,
-                                          const TermUniverse *universe,
-                                          AtomId atom_id,
-                                          uint32_t *out_len) {
-    SymbolId spelling;
-    const char *name;
-    uint32_t name_len;
-    uint32_t epoch;
-    if (!a || !universe || atom_id == CETTA_ATOM_ID_NONE ||
-        tu_kind(universe, atom_id) != ATOM_VAR) {
-        return NULL;
-    }
-    spelling = tu_sym(universe, atom_id);
-    if (spelling == SYMBOL_ID_NONE)
-        return NULL;
-    name = symbol_bytes(g_symbols, spelling);
-    name_len = symbol_len(g_symbols, spelling);
-    epoch = var_epoch_suffix(tu_var_id(universe, atom_id));
-    if (epoch == 0) {
-        char *token = arena_alloc(a, (size_t)name_len + 2u);
-        token[0] = '$';
-        memcpy(token + 1, name, name_len);
-        token[name_len + 1u] = '\0';
-        if (out_len)
-            *out_len = name_len + 1u;
-        return (const uint8_t *)token;
-    }
-
-    int digits = snprintf(NULL, 0, "#%u", epoch);
-    if (digits < 0)
-        return NULL;
-    char *token = arena_alloc(a, (size_t)name_len + (size_t)digits + 2u);
-    token[0] = '$';
-    memcpy(token + 1, name, name_len);
-    snprintf(token + 1 + name_len, (size_t)digits + 1u, "#%u", epoch);
-    if (out_len)
-        *out_len = name_len + 1u + (uint32_t)digits;
-    return (const uint8_t *)token;
-}
-
 static SymbolId bridge_raise_head_symbol_id(SymbolId head_id,
                                             const Mm2LowerSyms *syms) {
     if (!syms || head_id == SYMBOL_ID_NONE)
@@ -491,13 +424,11 @@ static SymbolId bridge_raise_head_symbol_id(SymbolId head_id,
 }
 
 static bool bridge_var_map_index(BridgeVarMap *vars,
-                                 const uint8_t *token,
-                                 uint32_t len,
+                                 VarId var_id,
                                  uint8_t *out_index,
                                  bool *out_is_new) {
     for (uint8_t i = 0; i < vars->len; i++) {
-        if (vars->slots[i].len == len &&
-            memcmp(vars->slots[i].token, token, len) == 0) {
+        if (vars->slots[i].var_id == var_id) {
             if (out_index)
                 *out_index = i;
             if (out_is_new)
@@ -507,8 +438,7 @@ static bool bridge_var_map_index(BridgeVarMap *vars,
     }
     if (vars->len >= 64)
         return false;
-    vars->slots[vars->len].token = token;
-    vars->slots[vars->len].len = len;
+    vars->slots[vars->len].var_id = var_id;
     if (out_index)
         *out_index = vars->len;
     if (out_is_new)
@@ -581,11 +511,9 @@ static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
         return bridge_expr_buf_push_symbol(buf, sym, len, out_error);
     }
     case ATOM_VAR: {
-        uint32_t token_len = 0;
-        const uint8_t *token = bridge_var_token(a, atom, &token_len);
         uint8_t index = 0;
         bool is_new = false;
-        if (!token || !bridge_var_map_index(vars, token, token_len, &index, &is_new)) {
+        if (!bridge_var_map_index(vars, atom->var_id, &index, &is_new)) {
             if (out_error)
                 *out_error = "MORK bridge expressions support at most 64 distinct variables";
             return false;
@@ -681,11 +609,9 @@ static bool bridge_encode_atom_id_rec(Arena *a,
             symbol_len(g_symbols, sym), out_error);
     }
     case ATOM_VAR: {
-        uint32_t token_len = 0;
-        const uint8_t *token = bridge_var_token_id(a, universe, atom_id, &token_len);
         uint8_t index = 0;
         bool is_new = false;
-        if (!token || !bridge_var_map_index(vars, token, token_len, &index, &is_new)) {
+        if (!bridge_var_map_index(vars, tu_var_id(universe, atom_id), &index, &is_new)) {
             if (out_error)
                 *out_error = "MORK bridge expressions support at most 64 distinct variables";
             return false;
