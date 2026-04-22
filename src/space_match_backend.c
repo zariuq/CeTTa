@@ -15,6 +15,8 @@
 #define IMPORTED_MORK_QUERY_ONLY_V2_MAGIC 0x43544252u
 #define IMPORTED_MORK_QUERY_ONLY_V2_VERSION 2u
 #define IMPORTED_MORK_MULTI_REF_V3_VERSION 3u
+#define IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION 4u
+#define IMPORTED_MORK_CONTEXTUAL_EXACT_ROWS_FLAGS 0x0000u
 #define IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY 0x0001u
 #define IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES 0x0002u
 #define IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS 0x0004u
@@ -1409,6 +1411,139 @@ static ImportedBridgeExprDecodeResult imported_bridge_packet_expr_to_atom_id(
     return *out_id != CETTA_ATOM_ID_NONE
         ? IMPORTED_BRIDGE_EXPR_DECODE_OK
         : IMPORTED_BRIDGE_EXPR_DECODE_ERROR;
+}
+
+static bool imported_bridge_opening_context_exists(const uint32_t *contexts,
+                                                   uint32_t count,
+                                                   uint32_t context_id) {
+    for (uint32_t i = 0; i < count; i++) {
+        if (contexts[i] == context_id)
+            return true;
+    }
+    return false;
+}
+
+static bool imported_bridge_contextual_exact_rows_append_atom(AtomId **items,
+                                                   uint32_t *len,
+                                                   uint32_t *cap,
+                                                   AtomId atom_id,
+                                                   uint32_t multiplicity) {
+    if (!items || !len || !cap || atom_id == CETTA_ATOM_ID_NONE ||
+        multiplicity == 0 || *len > UINT32_MAX - multiplicity)
+        return false;
+    if (*len + multiplicity > *cap) {
+        uint32_t next = *cap ? *cap : 8u;
+        while (next < *len + multiplicity) {
+            if (next > UINT32_MAX / 2u)
+                next = *len + multiplicity;
+            else
+                next *= 2u;
+        }
+        *items = cetta_realloc(*items, sizeof(AtomId) * next);
+        *cap = next;
+    }
+    for (uint32_t i = 0; i < multiplicity; i++)
+        (*items)[(*len)++] = atom_id;
+    return true;
+}
+
+static bool imported_bridge_decode_contextual_exact_rows(
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeExprMemo *memo,
+    const uint8_t *packet,
+    size_t packet_len,
+    AtomId **out_items,
+    uint32_t *out_len) {
+    size_t off = 0;
+    uint32_t magic = 0;
+    uint16_t version = 0;
+    uint16_t flags = 0;
+    uint32_t row_count = 0;
+    uint32_t context_count = 0;
+    uint32_t *contexts = NULL;
+    AtomId *items = NULL;
+    uint32_t len = 0;
+    uint32_t cap = 0;
+    bool ok = false;
+
+    if (out_items)
+        *out_items = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (!universe || !scratch || !memo || !packet || !out_items || !out_len)
+        return false;
+
+    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
+        !imported_bridge_read_u32(packet, packet_len, &off, &row_count) ||
+        !imported_bridge_read_u32(packet, packet_len, &off, &context_count))
+        goto done;
+
+    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
+        version != IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION ||
+        flags != IMPORTED_MORK_CONTEXTUAL_EXACT_ROWS_FLAGS ||
+        (row_count == 0 && context_count != 0) ||
+        (row_count != 0 && context_count == 0))
+        goto done;
+
+    if (context_count) {
+        contexts = cetta_malloc(sizeof(uint32_t) * context_count);
+    }
+    for (uint32_t i = 0; i < context_count; i++) {
+        uint32_t context_id = 0;
+        uint32_t entry_count = 0;
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &context_id) ||
+            !imported_bridge_read_u32(packet, packet_len, &off, &entry_count) ||
+            entry_count != 0 ||
+            imported_bridge_opening_context_exists(contexts, i, context_id))
+            goto done;
+        contexts[i] = context_id;
+    }
+
+    for (uint32_t row = 0; row < row_count; row++) {
+        ArenaMark scratch_mark = arena_mark(scratch);
+        uint32_t context_id = 0;
+        uint32_t multiplicity = 0;
+        uint32_t expr_len = 0;
+        AtomId atom_id = CETTA_ATOM_ID_NONE;
+        ImportedBridgeExprDecodeResult result;
+
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &context_id) ||
+            !imported_bridge_read_u32(packet, packet_len, &off, &multiplicity) ||
+            !imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
+            multiplicity == 0 ||
+            !imported_bridge_opening_context_exists(contexts, context_count, context_id) ||
+            off + (size_t)expr_len > packet_len) {
+            arena_reset(scratch, scratch_mark);
+            goto done;
+        }
+
+        result = imported_bridge_packet_expr_to_atom_id_cached(
+            universe, scratch, memo, packet + off, expr_len, &atom_id);
+        off += expr_len;
+        if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK ||
+            !imported_bridge_contextual_exact_rows_append_atom(&items, &len, &cap,
+                                                    atom_id, multiplicity)) {
+            arena_reset(scratch, scratch_mark);
+            goto done;
+        }
+        arena_reset(scratch, scratch_mark);
+    }
+
+    if (off != packet_len)
+        goto done;
+
+    *out_items = items;
+    *out_len = len;
+    items = NULL;
+    ok = true;
+
+done:
+    free(contexts);
+    free(items);
+    return ok;
 }
 
 SpaceBridgeImportResult space_match_backend_import_bridge_space(
@@ -3341,49 +3476,63 @@ static bool imported_projection_capture_from_bridge(Space *s,
     arena_init(&scratch);
     imported_bridge_expr_memo_init(&memo);
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
-        ok = cetta_mork_bridge_space_dump_expr_rows(
+        ok = cetta_mork_bridge_space_dump_contextual_exact_rows(
             (CettaMorkSpaceHandle *)st->bridge_space, &packet, &packet_len, &rows);
-        if (ok && rows > 0) {
-            snapshot = cetta_malloc(sizeof(AtomId) * rows);
-            size_t off = 0;
-            for (uint32_t i = 0; i < rows; i++) {
-                ArenaMark scratch_mark = arena_mark(&scratch);
-                AtomId atom_id = CETTA_ATOM_ID_NONE;
-                if (off + 4u > packet_len) {
-                    ok = false;
-                    arena_reset(&scratch, scratch_mark);
-                    break;
-                }
-                uint32_t expr_len =
-                    ((uint32_t)packet[off] << 24) |
-                    ((uint32_t)packet[off + 1u] << 16) |
-                    ((uint32_t)packet[off + 2u] << 8) |
-                    (uint32_t)packet[off + 3u];
-                off += 4u;
-                if (off + expr_len > packet_len) {
-                    ok = false;
-                    arena_reset(&scratch, scratch_mark);
-                    break;
-                }
-                ImportedBridgeExprDecodeResult result =
-                    imported_bridge_packet_expr_to_atom_id_cached(
-                        s->native.universe, &scratch, &memo, packet + off, expr_len, &atom_id);
-                if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK ||
-                    atom_id == CETTA_ATOM_ID_NONE) {
-                    ok = false;
-                    arena_reset(&scratch, scratch_mark);
-                    break;
-                }
-                snapshot[i] = atom_id;
-                off += expr_len;
-                arena_reset(&scratch, scratch_mark);
-            }
-            if (ok && off != packet_len)
-                ok = false;
-        } else if (ok && packet_len != 0) {
-            ok = false;
+        if (ok) {
+            ok = imported_bridge_decode_contextual_exact_rows(
+                s->native.universe, &scratch, &memo, packet, packet_len,
+                &snapshot, &rows);
         }
         cetta_mork_bridge_bytes_free(packet, packet_len);
+
+        if (!ok) {
+            packet = NULL;
+            packet_len = 0;
+            rows = 0;
+            ok = cetta_mork_bridge_space_dump_expr_rows(
+                (CettaMorkSpaceHandle *)st->bridge_space, &packet, &packet_len, &rows);
+            if (ok && rows > 0) {
+                snapshot = cetta_malloc(sizeof(AtomId) * rows);
+                size_t off = 0;
+                for (uint32_t i = 0; i < rows; i++) {
+                    ArenaMark scratch_mark = arena_mark(&scratch);
+                    AtomId atom_id = CETTA_ATOM_ID_NONE;
+                    if (off + 4u > packet_len) {
+                        ok = false;
+                        arena_reset(&scratch, scratch_mark);
+                        break;
+                    }
+                    uint32_t expr_len =
+                        ((uint32_t)packet[off] << 24) |
+                        ((uint32_t)packet[off + 1u] << 16) |
+                        ((uint32_t)packet[off + 2u] << 8) |
+                        (uint32_t)packet[off + 3u];
+                    off += 4u;
+                    if (off + expr_len > packet_len) {
+                        ok = false;
+                        arena_reset(&scratch, scratch_mark);
+                        break;
+                    }
+                    ImportedBridgeExprDecodeResult result =
+                        imported_bridge_packet_expr_to_atom_id_cached(
+                            s->native.universe, &scratch, &memo, packet + off, expr_len, &atom_id);
+                    if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK ||
+                        atom_id == CETTA_ATOM_ID_NONE) {
+                        ok = false;
+                        arena_reset(&scratch, scratch_mark);
+                        break;
+                    }
+                    snapshot[i] = atom_id;
+                    off += expr_len;
+                    arena_reset(&scratch, scratch_mark);
+                }
+                if (ok && off != packet_len)
+                    ok = false;
+            } else if (ok && packet_len != 0) {
+                ok = false;
+            }
+            cetta_mork_bridge_bytes_free(packet, packet_len);
+        }
     } else {
         Space staged;
         space_init_with_universe(&staged, s->native.universe);

@@ -122,6 +122,36 @@ count = logical row count with multiplicities expanded.
 */
 MorkBuffer mork_space_dump_expr_rows(MorkSpace *space);
 
+/*
+Contextual exact-row bridge packet (wire version 4):
+
+  u32 magic_be      // 0x43544252 = "CTBR"
+  u16 version_be    // 4
+  u16 flags_be      // 0 for exact-row packets
+  u32 rows_be       // number of row specs, not expanded logical rows
+  u32 contexts_be
+  repeated contexts:
+    u32 context_id_be
+    u32 entry_count_be
+    repeated entries:
+      u16 slot_be
+      u8  ref_kind       // 0 = exact VarId/spelling, 1 = query-slot ref
+      u8  reserved
+      ... ref payload ...
+  repeated rows:
+    u32 context_id_be
+    u32 multiplicity_be
+    u32 expr_len_be
+    u8  expr_bytes[expr_len]
+
+The current implementation emits only ground rows. When rows are present, it
+emits one empty context table entry with context_id 0 so row context references
+are valid. It rejects variable-bearing rows until the caller supplies an
+explicit opening context, preserving the formal contextual coverage contract instead
+of silently synthesizing identities.
+*/
+MorkBuffer mork_space_dump_contextual_exact_rows(MorkSpace *space);
+
 /* Compatibility v1 text packet export. Prefer the v2/v3 raw-byte packet
    surfaces for new CeTTa integration work. */
 MorkBuffer mork_space_query_bindings(MorkSpace *space, const uint8_t *pattern, size_t len);
