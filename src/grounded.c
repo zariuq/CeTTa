@@ -430,7 +430,8 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.isinf_math ||
            id == g_builtin_syms.size ||
            id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom ||
-           id == g_builtin_syms.range_atom || id == g_builtin_syms.repeat_atom;
+           id == g_builtin_syms.range_atom || id == g_builtin_syms.repeat_atom ||
+           id == g_builtin_syms.id;
 }
 
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */
@@ -822,6 +823,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.repeat_atom)
         return grounded_repeat_atom(a, head, args, nargs);
 
+    if (head_id == g_builtin_syms.id) {
+        if (nargs != 1)
+            return grounded_incorrect_arity(a, head, args, nargs);
+        return args[0];
+    }
+
     if (head_id == g_builtin_syms.alpha_eq) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
@@ -886,7 +893,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return grounded_math_domain_error(a, head, args, nargs, 2,
                                               "IntegralExponentWhenBaseNegative");
         double res = pow(base.val, power_val);
-        return atom_float(a, res);
+        return make_numeric(a, res, base.is_float || power.is_float);
     }
 
     if (head_id == g_builtin_syms.log_math) {
@@ -962,22 +969,22 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (head_id == g_builtin_syms.trunc_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
-            return atom_float(a, trunc(input.val));
+            return make_numeric(a, trunc(input.val), false);
         }
         if (head_id == g_builtin_syms.ceil_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
-            return atom_float(a, ceil(input.val));
+            return make_numeric(a, ceil(input.val), false);
         }
         if (head_id == g_builtin_syms.floor_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
-            return atom_float(a, floor(input.val));
+            return make_numeric(a, floor(input.val), false);
         }
         if (head_id == g_builtin_syms.round_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
-            return atom_float(a, round(input.val));
+            return make_numeric(a, round(input.val), false);
         }
         if (head_id == g_builtin_syms.sin_math)
             return atom_float(a, sin(input.val));
@@ -1015,6 +1022,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return grounded_string_error(a, head, args, nargs, "Empty expression");
 
         double acc = want_max ? -INFINITY : INFINITY;
+        bool any_float = false;
         for (uint32_t i = 0; i < args[0]->expr.len; i++) {
             NumArg n;
             if (!get_numeric_arg(args[0]->expr.elems[i], &n))
@@ -1022,9 +1030,10 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                     a, head, args, nargs,
                     "Only numbers are allowed in expression: ",
                     args[0]);
+            any_float = any_float || n.is_float;
             acc = want_max ? fmax(acc, n.val) : fmin(acc, n.val);
         }
-        return atom_float(a, acc);
+        return make_numeric(a, acc, any_float);
     }
 
     /* ── Expression introspection ─────────────────────────────────────── */

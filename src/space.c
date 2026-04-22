@@ -1372,24 +1372,38 @@ static bool atom_refs_only_query_visible_vars(Atom *atom,
     return true;
 }
 
+static const QueryVisibleVar *query_visible_alias_for_var(
+    Atom *atom,
+    const QueryVisibleVarSet *visible,
+    const Bindings *full) {
+    const QueryVisibleVar *found = NULL;
+    if (!atom || atom->kind != ATOM_VAR || !visible || !full)
+        return NULL;
+    for (uint32_t i = 0; i < visible->len; i++) {
+        Atom *exact = bindings_lookup_id((Bindings *)full, visible->items[i].var_id);
+        if (!exact || exact->kind != ATOM_VAR)
+            continue;
+        if (exact->var_id != atom->var_id)
+            continue;
+        if (atom->var_id == visible->items[i].var_id)
+            return NULL;
+        if (found && found->var_id != visible->items[i].var_id)
+            return NULL;
+        found = &visible->items[i];
+    }
+    return found;
+}
+
 static Atom *rewrite_query_visible_aliases(Arena *a, Atom *atom,
-                                           const QueryVisibleVarSet *visible) {
+                                           const QueryVisibleVarSet *visible,
+                                           const Bindings *full) {
     if (!atom || !visible || visible->len == 0 || !atom_has_vars(atom))
         return atom;
     if (atom->kind == ATOM_VAR) {
-        VarId replacement = VAR_ID_NONE;
-        for (uint32_t i = 0; i < visible->len; i++) {
-            if (visible->items[i].spelling != atom->sym_id)
-                continue;
-            if (replacement != VAR_ID_NONE &&
-                replacement != visible->items[i].var_id) {
-                return atom;
-            }
-            replacement = visible->items[i].var_id;
-        }
-        return replacement != VAR_ID_NONE
-            ? atom_var_with_spelling(a, atom->sym_id, replacement)
-            : atom;
+        const QueryVisibleVar *alias =
+            query_visible_alias_for_var(atom, visible, full);
+        return alias ? atom_var_with_spelling(a, alias->spelling, alias->var_id)
+                     : atom;
     }
     if (atom->kind != ATOM_EXPR)
         return atom;
@@ -1397,7 +1411,7 @@ static Atom *rewrite_query_visible_aliases(Arena *a, Atom *atom,
     Atom **rewritten = NULL;
     for (uint32_t i = 0; i < atom->expr.len; i++) {
         Atom *child = atom->expr.elems[i];
-        Atom *next = rewrite_query_visible_aliases(a, child, visible);
+        Atom *next = rewrite_query_visible_aliases(a, child, visible, full);
         if (!rewritten && next != child) {
             rewritten = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
             for (uint32_t j = 0; j < i; j++)
@@ -1449,20 +1463,11 @@ static Atom *bindings_resolve_query_visible_var(Arena *a, const Bindings *full,
     if (resolved != slot_var)
         return resolved;
 
-    uint32_t wanted_base = var_base_id(wanted->var_id);
-    if (wanted_base == 0)
-        return slot_var;
-    for (uint32_t i = full->len; i > 0; i--) {
-        const Binding *entry = &full->entries[i - 1];
-        if (var_base_id(entry->var_id) != wanted_base)
-            continue;
-        if (entry->spelling != wanted->spelling)
-            continue;
-        if (!atom_has_vars(entry->val))
-            return entry->val;
-        return bindings_apply_without_self_id((Bindings *)full, a,
-                                              entry->var_id, entry->val);
-    }
+    /* Do NOT fall back to same-base/same-spelling lookup. That fallback
+       incorrectly captures outer-scope variables that happen to share the same
+       spelling as inner-scope variables during equation evaluation. The exact
+       var_id lookup above and bindings_apply_if_vars are the only correct
+       resolution paths. */
     return slot_var;
 }
 
@@ -1479,7 +1484,7 @@ static bool project_query_visible_bindings(Arena *a,
     for (uint32_t i = 0; i < visible->len; i++) {
         Atom *resolved =
             bindings_resolve_query_visible_var(a, full, &visible->items[i]);
-        resolved = rewrite_query_visible_aliases(a, resolved, visible);
+        resolved = rewrite_query_visible_aliases(a, resolved, visible, full);
         if (resolved->kind == ATOM_VAR &&
             resolved->var_id == visible->items[i].var_id &&
             resolved->sym_id == visible->items[i].spelling) {
@@ -1495,8 +1500,8 @@ static bool project_query_visible_bindings(Arena *a,
     for (uint32_t i = 0; i < full->eq_len; i++) {
         Atom *lhs = bindings_apply_if_vars(full, a, full->constraints[i].lhs);
         Atom *rhs = bindings_apply_if_vars(full, a, full->constraints[i].rhs);
-        lhs = rewrite_query_visible_aliases(a, lhs, visible);
-        rhs = rewrite_query_visible_aliases(a, rhs, visible);
+        lhs = rewrite_query_visible_aliases(a, lhs, visible, full);
+        rhs = rewrite_query_visible_aliases(a, rhs, visible, full);
         if (!atom_refs_only_query_visible_vars(lhs, visible) ||
             !atom_refs_only_query_visible_vars(rhs, visible)) {
             continue;
@@ -1584,6 +1589,37 @@ bool space_remove(Space *s, Atom *atom) {
         }
     }
     return false;
+}
+
+bool space_remove_alpha_eq_all(Space *s, Atom *atom) {
+    if (!s)
+        return false;
+    bool removed_any = false;
+    while (true) {
+        bool removed_one = false;
+        if (space_is_queue(s))
+            space_linearize(s);
+        for (uint32_t i = 0; i < s->len; i++) {
+            if (!atom_alpha_eq(space_get_at(s, i), atom))
+                continue;
+            if (space_is_ordered(s)) {
+                for (uint32_t j = i + 1; j < s->len; j++)
+                    s->atom_ids[j - 1] = s->atom_ids[j];
+                s->len--;
+            } else {
+                s->atom_ids[i] = s->atom_ids[--s->len];
+            }
+            space_mark_indexes_dirty(s);
+            space_match_backend_note_remove(s);
+            space_bump_revision(s);
+            removed_any = true;
+            removed_one = true;
+            break;
+        }
+        if (!removed_one)
+            break;
+    }
+    return removed_any;
 }
 
 bool space_contains_atom_id(const Space *s, AtomId atom_id) {
@@ -2134,7 +2170,7 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         Atom *result =
             rhs_copy ? bindings_apply_if_vars(&merged, a, rhs_copy) : NULL;
         if (result) {
-            result = rewrite_query_visible_aliases(a, result, visible);
+            result = rewrite_query_visible_aliases(a, result, visible, &merged);
             Bindings projected;
             if (project_query_visible_bindings(a, visible, &merged, &projected)) {
                 query_results_push_move(out, result, &projected);
@@ -2166,7 +2202,7 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
     if (match_atoms_epoch(query, lhs, &merged, a, epoch) &&
         !bindings_has_loop(&merged)) {
         Atom *result = bindings_apply_epoch(&merged, a, rhs, epoch);
-        result = rewrite_query_visible_aliases(a, result, visible);
+        result = rewrite_query_visible_aliases(a, result, visible, &merged);
         Bindings projected;
         if (project_query_visible_bindings(a, visible, &merged, &projected)) {
             query_results_push_move(out, result, &projected);
@@ -2305,6 +2341,80 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
         if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
             continue;
         if (eq_head_symbol(lhs) == head)
+            return true;
+    }
+    return false;
+}
+
+bool space_equations_have_head_with_arity(Space *s, SymbolId head,
+                                          uint32_t nargs) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_eq_index(s);
+    EqBucket *bucket = &s->eq_idx.buckets[symbol_hash(head)];
+    for (uint32_t i = 0; i < bucket->len; i++) {
+        uint32_t atom_idx = bucket->atom_indices[i];
+        if (atom_idx >= s->len)
+            continue;
+        AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            if (eq_head_symbol_id(s, lhs_id) != head)
+                continue;
+            uint32_t lhs_arity = tu_arity(s->universe, lhs_id);
+            uint32_t lhs_nargs = lhs_arity > 0 ? lhs_arity - 1 : 0;
+            if (lhs_nargs == nargs)
+                return true;
+            continue;
+        }
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
+            continue;
+        if (eq_head_symbol(lhs) != head)
+            continue;
+        uint32_t lhs_nargs = (lhs->kind == ATOM_EXPR && lhs->expr.len > 0)
+                                 ? lhs->expr.len - 1
+                                 : 0;
+        if (lhs_nargs == nargs)
+            return true;
+    }
+    return false;
+}
+
+bool space_equations_have_head_with_greater_arity(Space *s, SymbolId head,
+                                                  uint32_t nargs) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_eq_index(s);
+    EqBucket *bucket = &s->eq_idx.buckets[symbol_hash(head)];
+    for (uint32_t i = 0; i < bucket->len; i++) {
+        uint32_t atom_idx = bucket->atom_indices[i];
+        if (atom_idx >= s->len)
+            continue;
+        AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            if (eq_head_symbol_id(s, lhs_id) != head)
+                continue;
+            uint32_t lhs_arity = tu_arity(s->universe, lhs_id);
+            uint32_t lhs_nargs = lhs_arity > 0 ? lhs_arity - 1 : 0;
+            if (lhs_nargs > nargs)
+                return true;
+            continue;
+        }
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
+            continue;
+        if (eq_head_symbol(lhs) != head)
+            continue;
+        uint32_t lhs_nargs = (lhs->kind == ATOM_EXPR && lhs->expr.len > 0)
+                                 ? lhs->expr.len - 1
+                                 : 0;
+        if (lhs_nargs > nargs)
             return true;
     }
     return false;

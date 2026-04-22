@@ -557,6 +557,7 @@ static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
+    fputs("       cetta [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: --lang selects the driver/front-end; --profile selects the visible surface policy\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
@@ -957,6 +958,9 @@ int main(int argc, char **argv) {
     size_t inline_cap = 0;
     const char *script_path = NULL;
     int script_arg_start = -1;
+    bool import_mode_override = false;
+    CettaRelativeModulePolicy import_mode =
+        CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
     bool count_only = false;
@@ -1085,6 +1089,18 @@ int main(int argc, char **argv) {
                 cetta_profile_print_inventory(stderr);
                 return 2;
             }
+            continue;
+        }
+        if (strcmp(argv[i], "--import-mode") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!cetta_relative_module_policy_from_name(argv[++i], &import_mode)) {
+                fprintf(stderr, "error: unknown import mode '%s'\n", argv[i]);
+                return 2;
+            }
+            import_mode_override = true;
             continue;
         }
         if (strcmp(argv[i], "-e") == 0) {
@@ -1261,6 +1277,10 @@ int main(int argc, char **argv) {
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
+    if (import_mode_override) {
+        cetta_eval_session_set_relative_module_policy(&libraries.session,
+                                                      import_mode);
+    }
     eval_set_library_context(&libraries);
 
     space_init_with_universe(&space, &libraries.term_universe);
@@ -1283,10 +1303,14 @@ int main(int argc, char **argv) {
 
     if (!lang_is_mm2) {
         n = inline_text
-            ? cetta_language_parse_text_ids(lang, inline_text, &arena,
-                                            &libraries.term_universe, &atom_ids)
-            : cetta_language_parse_file_ids(lang, filename, &arena,
-                                            &libraries.term_universe, &atom_ids);
+            ? cetta_language_parse_text_ids_for_session(&libraries.session,
+                                                        inline_text, &arena,
+                                                        &libraries.term_universe,
+                                                        &atom_ids)
+            : cetta_language_parse_file_ids_for_session(&libraries.session,
+                                                        filename, &arena,
+                                                        &libraries.term_universe,
+                                                        &atom_ids);
         cleanup.atom_ids = atom_ids;
         if (n < 0) {
             if (inline_text) {

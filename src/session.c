@@ -365,6 +365,27 @@ bool cetta_eval_session_set_max_stack_depth(CettaEvalSession *session, int depth
                                    CETTA_EVAL_OPTION_VALUE_INT, repr, depth);
 }
 
+bool cetta_eval_session_set_relative_module_policy(
+    CettaEvalSession *session,
+    CettaRelativeModulePolicy policy) {
+    if (!session)
+        return false;
+    session->relative_module_policy_overridden = true;
+    session->relative_module_policy_override = policy;
+    return cetta_eval_option_store(&session->options, "import-mode",
+                                   CETTA_EVAL_OPTION_VALUE_SYMBOL,
+                                   cetta_relative_module_policy_name(policy), 0);
+}
+
+CettaRelativeModulePolicy
+cetta_eval_session_relative_module_policy(const CettaEvalSession *session) {
+    if (!session)
+        return CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+    if (session->relative_module_policy_overridden)
+        return session->relative_module_policy_override;
+    return cetta_language_relative_module_policy(session->language);
+}
+
 void cetta_eval_session_set_fuel_limit(CettaEvalSession *session, int fuel_limit) {
     if (!session) return;
     session->options.fuel_limit = fuel_limit > 0 ? fuel_limit : -1;
@@ -386,6 +407,9 @@ void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *prof
         language ? language : cetta_language_lookup("he");
     session->profile = resolved;
     session->language = resolved_language;
+    session->relative_module_policy_overridden = false;
+    session->relative_module_policy_override =
+        cetta_language_relative_module_policy(resolved_language);
     cetta_module_resolver_init_for_profile(&session->module_resolver, resolved);
     cetta_evaluator_options_init(&session->options);
 }

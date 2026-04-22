@@ -1,0 +1,256 @@
+# Native --lang petta upstream frontier classification
+#
+# Scope:
+# - 89 upstream examples are currently in petta_upstream_reasonable_examples.txt.
+# - 43 upstream examples are currently in petta_upstream_current_gaps.txt.
+# - 31 upstream examples are deferred from both lists.
+#
+# The 74 frontier examples below are not a single denominator of semantic
+# defects. They are grouped by the capability layer most likely to retire them.
+# "deferred" means "not in the every-run broad lane yet", not "out of scope".
+# The current 47-file gap queue is also classified in:
+#   tests/support/petta_upstream_gap_root_causes.txt
+
+P0 import-module parity
+-----------------------
+Needed because many higher examples fail before their real semantics run.
+
+Current root needs:
+- PeTTa-style relative imports from files run by absolute path.
+- `(library name)` resolution against PeTTa libraries.
+- extensionless local imports such as `!(import! &self fibsmart)`.
+- recursive import metadata for callable syntax and relation lowering.
+
+Files:
+- builin_types.metta
+- fibsmartimport.metta [deferred]
+- patrick_iterate_fib.metta
+- patrick_iterate_quad.metta
+- patrick_test.metta
+- spaces_find.metta
+- spaces_removeallatoms.metta
+- spaces_succeedspredicate.metta
+- tilepuzzle.metta [deferred]
+
+P0 primitive surface coverage for lib_he.metta
+----------------------------------------------
+Needed because CeTTa `--lang he` already supports much of this surface, and
+`--lang petta` should not lose those core host-language conveniences.
+
+Current root needs:
+- Load upstream `lib_he.metta` as ordinary source under PeTTa import rules.
+- remaining evaluation-control surfaces and long-running recursive control.
+- HE-style `id`, `pow-math`, `for-each-in-atom`, and remaining recursive helpers.
+- remaining match-template binding through collapse and recursive control.
+- recursive `cons-atom` / `decons-atom` / `size-atom` behavior.
+
+Files:
+- he_minimalmetta.metta
+- test_collapse_size_bug.metta
+- test_process_by_tag.metta [deferred]
+- test_recursive_size_atom.metta
+
+P0 core value and operator parity
+---------------------------------
+Needed because these are ordinary PeTTa language behaviors, not advanced
+search architecture.
+
+Current root needs:
+- atom/list primitives and metatype queries.
+- math builtin coverage and numeric result normalization.
+- `parse`, comments-in-strings, quote/eval/call/reduce behavior.
+- higher-order intrinsic operators that are not covered by the callable
+  substrate.
+
+Files:
+- callquoteevalreduce.metta
+- callquoteevalreduce2.metta
+- functiontypes.metta
+- holfunctions.metta [deferred]
+- meta_types.metta
+- test_string_comments.metta
+
+P0 match, binding, and atomspace mutation
+-----------------------------------------
+Needed because this is the same semantic layer as the already-fixed `once`,
+imported syntax args, and equation hygiene bugs.
+
+Current root needs:
+- nested `match` bodies preserving bindings through side effects.
+- comma/conjunction match patterns.
+- nested committed-choice behavior beyond the current direct `cut` and
+  `matchsingle` probes.
+- `remove-all-atoms`, state, transactions, and dynamic specialization after
+  mutation.
+- binding destructuring through nested `let` and `let*`.
+
+Files:
+- letext.metta
+- letlet.metta
+- matchnested.metta
+- matchnested2.metta
+- matchtypes.metta
+- mutex_and_transaction.metta
+- state.metta
+
+P1 type and specialization parity
+---------------------------------
+Needed for PeTTa examples, but it should follow the P0 role/import/match
+substrate because many failures are likely secondary.
+
+Current root needs:
+- `get-type` over values, calls, nondeterministic declarations, and type atoms.
+- parametric and dependent type matching.
+- function specialization metadata from typed callable heads.
+- recursive type queries.
+
+Files:
+- nilbc.metta
+- parametric_types.metta
+- recursive_types.metta
+- specialize.metta
+- specializefunctiontypes.metta
+- types.metta
+- types_dependent.metta
+- types_nondet.metta
+
+P1 search, committed choice, streams, and generation
+----------------------------------------------------
+Needed, but should be approached after P0 because it can otherwise disguise
+ordinary role/import bugs as search architecture questions.
+
+Current root needs:
+- stream operations, `unique`/`union`/`intersection`/`subtraction`.
+- fair or bounded generation for open variables and high-branching examples.
+- tabling/memoization.
+- `hyperpose` / concurrency semantics.
+- large recursive arithmetic workloads.
+
+Files:
+- booleansolver.metta [deferred]
+- fib.metta
+- fibadd.metta
+- fibsmart.metta
+- hyperpose_primes.metta
+- peano.metta
+- peanofast.metta
+- streamops.metta
+- superpose_primes.metta
+- tabling_fib.metta
+
+P1 performance and scale witnesses
+----------------------------------
+Needed as capability targets, but not suitable for every broad test pass.
+They should have smoke variants plus opt-in benchmark lanes.
+
+Current root needs:
+- same semantics as P0/P1, but with performance-sensitive atomspace indexing,
+  recursion, and large folds.
+
+Files:
+- _bench_find_space.metta [deferred benchmark]
+- _bench_unify_space.metta [deferred benchmark]
+- holbenchmark.metta [deferred benchmark]
+- matespace.metta
+- matespace2.metta
+- matespacefast.metta [deferred benchmark]
+- scale.metta
+
+P2 PLN and NARS workload lane
+-----------------------------
+Needed. These examples are not merely decorative; they exercise real reasoning
+library workloads and should become a named lane after import/HE/math/atomspace
+substrates are stable.
+
+Current root needs:
+- `lib_pln` / `lib_nars` import parity.
+- truth-value math and floating comparison.
+- higher-order rule compilation via `add-atom`, `reduce`, and `unique-atom`.
+- enough search/binding support for query-style examples.
+
+Files:
+- nars_direct.metta [deferred]
+- nars_tuffy.metta [deferred]
+- pln_bug_demo.metta [deferred]
+- pln_bug_demo_clean.metta [deferred]
+- pln_deduction_demo.metta [deferred]
+- pln_direct.metta [deferred]
+- pln_roman.metta [deferred]
+- pln_tuffy.metta [deferred]
+- plntest.metta [deferred]
+- plntestdirect.metta [deferred]
+
+P2 parser, translator, and metaprogramming lane
+-----------------------------------------------
+Needed for full PeTTa parity, but should follow the P0 runtime and import
+substrate.
+
+Current root needs:
+- translator-rule registration and compile-time rewrite hooks.
+- `translatePredicate`.
+- runtime interpretation via `eval`.
+- self-programming and parser round trips.
+
+Files:
+- translatepredicate.metta
+- translatorrule.metta [deferred]
+- translatorrule_for.metta [deferred]
+
+P2 Python and tensor interop
+----------------------------
+Needed, but belongs in an optional interop lane because it depends on host
+runtime availability.
+
+Current root needs:
+- `py-call` support.
+- Python module import from PeTTa.
+- stable object/value representation between Python and CeTTa.
+
+Files:
+- python.metta [deferred interop]
+- python_import.metta [deferred interop]
+- torch.metta [deferred interop]
+
+P3 external process and repository interop
+------------------------------------------
+Potentially in scope, but not foundational for native PeTTa semantics.
+
+Current root needs:
+- Git/network policy.
+- build hooks.
+- Prolog process/import bridge.
+- external Metamath parser fixture availability.
+
+Files:
+- git_import.metta [deferred external]
+- git_import2.metta [deferred external]
+- prologimport.metta [deferred external]
+- test_process_p_stmt.metta [deferred external]
+- test_prolog_stmts.metta [deferred external]
+
+P3 interactive or API-held examples
+-----------------------------------
+Hold from automated parity until their external requirements are provided.
+
+Files:
+- greedy_chess.metta [deferred interactive]
+- llm_cities.metta [deferred external-api]
+
+Immediate foundation-up work order
+----------------------------------
+1. Import-module parity: keep file-path/library/extensionless imports
+   integrated with PeTTa library roots so tilepuzzle, Roman, PLN/NARS, and
+   spaces examples can exercise their real semantics.
+2. Primitive surface coverage: make upstream `lib_he.metta` load verbatim
+   under `--lang petta`, including catch/error, unquote/eval, HE math/atom
+   utilities, and match-template binding through collapse.
+3. Core operators: atomops, math, parse/string comments, quote/eval/call/
+   reduce, and higher-order intrinsic operators not covered by callable values.
+4. Match/mutation: nested match with side effects, `remove-all-atoms`, state,
+   transactions, and dynamic callable inventory updates.
+5. Types and specialization: get-type, dependent/nondet type dispatch,
+   specialization metadata.
+6. Search/streams/tabling/hyperpose: only after P0 role/import/match layers are
+   trustworthy.
+7. PLN/NARS named lane: after imports, HE, math, and query/search basics.
+8. Optional interop lanes: Python/torch, Prolog/Git, and API-held LLM examples.

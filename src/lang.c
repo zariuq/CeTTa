@@ -5,7 +5,11 @@
 
 static const char *CETTA_PETTA_PRELUDE =
     "(: msort (-> Atom Expression))\n"
-    "(: sort-atom (-> Atom Expression))\n";
+    "(: sort-atom (-> Atom Expression))\n"
+    "(= (is-var $x) (== (get-metatype $x) Variable))\n"
+    "(= (is-expr $x) (== (get-metatype $x) Expression))\n"
+    "(= (append $lhs $rhs)\n"
+    "   (union-atom $lhs $rhs))\n";
 
 static const CettaTypeDeclSignature CETTA_PETTA_STDLIB_TYPE_PRUNES[] = {
     {"car-atom", "Expression", "Atom"},
@@ -49,7 +53,7 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
       .unique_atom_alpha_equivalence_for_open_terms = false,
       .inject_builtin_type_decls = false,
       .named_space_policy = CETTA_NAMED_SPACE_POLICY_AUTO_CREATE,
-      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_SCRIPT_DIR_ONLY,
+      .relative_module_policy = CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK,
       .undefined_arg_policy = CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL,
       .atom_arg_policy = CETTA_FUNCTION_ARG_POLICY_UNTYPED_EVAL,
       .expression_arg_policy = CETTA_FUNCTION_ARG_POLICY_RAW}},
@@ -199,6 +203,42 @@ static bool ascii_ieq(const char *lhs, const char *rhs) {
         rhs++;
     }
     return *lhs == '\0' && *rhs == '\0';
+}
+
+const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy) {
+    switch (policy) {
+    case CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY:
+        return "relative";
+    case CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK:
+        return "ancestor-walk";
+    case CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY:
+        return "upstream";
+    }
+    return "unknown";
+}
+
+bool cetta_relative_module_policy_from_name(const char *name,
+                                            CettaRelativeModulePolicy *out_policy) {
+    if (!name)
+        return false;
+    if (ascii_ieq(name, "relative") || ascii_ieq(name, "current-dir") ||
+        ascii_ieq(name, "script-dir")) {
+        if (out_policy)
+            *out_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+        return true;
+    }
+    if (ascii_ieq(name, "ancestor-walk") || ascii_ieq(name, "walk")) {
+        if (out_policy)
+            *out_policy = CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK;
+        return true;
+    }
+    if (ascii_ieq(name, "upstream") || ascii_ieq(name, "working-dir") ||
+        ascii_ieq(name, "cwd")) {
+        if (out_policy)
+            *out_policy = CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY;
+        return true;
+    }
+    return false;
 }
 
 const CettaLanguageSpec *cetta_language_lookup(const char *name) {

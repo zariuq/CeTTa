@@ -1,0 +1,9 @@
+# Raw-result Petta probes compared against upstream PeTTa-Prolog.
+tests/support/oracle_evalcustom_probe.metta
+tests/support/oracle_factorial_tailcall_probe.metta
+tests/support/oracle_import_syntax_deep_probe.metta
+tests/support/oracle_import_syntax_probe.metta
+tests/support/oracle_invertfunction_returned_head_probe.metta
+tests/support/oracle_invertfunction_returned_head_structural_probe.metta
+tests/support/oracle_logicprogset_probe.metta
+tests/support/oracle_once_match_env_probe.metta

@@ -17,6 +17,7 @@ typedef struct Outcome {
     Atom *materialized_atom;
     Bindings env;
     VariantInstance variant;
+    uint8_t control;
 } Outcome;
 
 typedef struct OutcomeSet {

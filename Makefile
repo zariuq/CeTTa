@@ -1,5 +1,6 @@
 SHELL = /bin/bash
 CC = gcc
+.DEFAULT_GOAL := all
 
 # Build mode:
 #   make                   -> BUILD=python      (default: Python foreign-module support enabled)
@@ -102,9 +103,11 @@ CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign_prolog.c $(PYTHON_SRC) src/session.c src/lang.c src/lang_adapter.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/petta_contract.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/foreign_prolog.c $(PYTHON_SRC) src/session.c src/lang.c src/lang_adapter.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 OBJ = $(SRC:.c=.o)
 BIN = cetta
+ORACLE_DIFF_BIN = cetta-oracle-diff
+ORACLE_DIFF_OBJ = $(filter-out src/main.o,$(OBJ)) src/oracle_diff.o
 SPACE_ENGINES = native native-candidate-exact
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 SPACE_ENGINES += pathmap
@@ -122,18 +125,87 @@ PETTA_CORE_NATIVE_TESTS = \
 	tests/lang_petta_core.metta \
 	tests/test_minimal_foldl_atom_raw_slot_petta_regression.metta \
 	tests/test_add_atoms_fold_bound_atom_petta_regression.metta \
+	tests/test_direct_eq_expr_petta_regression.metta \
+	tests/test_match_raw_pattern_petta_regression.metta \
+	tests/test_once_match_env_petta_regression.metta \
+	tests/test_runtime_add_remove_petta_regression.metta \
+	tests/test_runtime_add_remove_multiplicity_petta_regression.metta \
+	tests/test_runtime_evalcustom_petta_regression.metta \
+	tests/test_runtime_helper_missing_petta_regression.metta \
+	tests/test_factorial_tailrec_minimal_petta_regression.metta \
+	tests/test_factorial_product_minimal_petta_regression.metta \
+	tests/test_if_short_petta_regression.metta \
+	tests/test_case_empty_default_petta_regression.metta \
+	tests/test_cons_pattern_petta_regression.metta \
+	tests/test_cons_pattern_empty_miss_petta_regression.metta \
+	tests/test_nested_cons_pattern_petta_regression.metta \
+	tests/test_let_cons_surface_petta_regression.metta \
+	tests/test_recursive_constructor_rhs_petta_regression.metta \
 	tests/test_empty_literal_petta_regression.metta \
+	tests/test_empty_callable_petta_regression.metta \
+	tests/test_superpose_empty_petta_regression.metta \
 	tests/test_callable_head_stdlib_petta_regression.metta \
-	tests/test_callable_head_imported_petta_regression.metta
+	tests/test_callable_head_imported_petta_regression.metta \
+	tests/test_higher_order_prefix_petta_regression.metta \
+	tests/test_higher_order_user_partial_petta_regression.metta \
+	tests/test_petta_lambda_forward_regression.metta \
+	tests/test_petta_callable_substrate_regression.metta \
+	tests/test_petta_cut_committed_choice.metta \
+	tests/test_parse_syntax_surface_regression.metta \
+	tests/test_petta_catch_error_value_regression.metta \
+	tests/test_petta_unquote_noreduce_regression.metta \
+	tests/test_petta_for_each_in_atom_regression.metta \
+	tests/test_equation_var_hygiene.metta \
+	tests/test_lib_he_assert_petta_regression.metta \
+	tests/test_petta_lib_he_chain_unify_tail_regression.metta \
+	tests/test_petta_lib_he_atomspace_regression.metta \
+	tests/test_petta_lib_he_types_regression.metta \
+	tests/test_relation_is_member_let_true_petta_regression.metta \
+	tests/test_relation_let_gt_export_petta_regression.metta
 PETTA_INTEROP_TESTS = tests/lang_petta_core_prolog_interop.metta tests/lang_petta_lib_prolog.metta tests/lang_petta_lib_zar.metta
 PETTA_CORE_TESTS = $(PETTA_CORE_NATIVE_TESTS) $(PETTA_INTEROP_TESTS)
 PETTA_SUITE_DIR = $(abspath ../../hyperon/PeTTa/unit/petta_suite_69)
+PETTA_EXAMPLES_DIR = $(abspath ../../hyperon/PeTTa/examples)
+PETTA_EXAMPLE_TIMEOUT ?= 20
 PETTA_SUITE_SMOKE = \
 	$(PETTA_SUITE_DIR)/01_core_rewrite.metta \
 	$(PETTA_SUITE_DIR)/02_function_head.metta \
 	$(PETTA_SUITE_DIR)/03_arith_control.metta \
 	$(PETTA_SUITE_DIR)/04_superpose_nondet.metta \
 	$(PETTA_SUITE_DIR)/05_atomspace_match.metta
+PETTA_UPSTREAM_REASONABLE_LIST = tests/support/petta_upstream_reasonable_examples.txt
+PETTA_ORACLE_PROBE_LIST = tests/support/petta_oracle_probes.txt
+PETTA_ORACLE_EXPECTED_SUFFIX = .expected_upstream
+PETTA_ROOT_WITNESSES = \
+	tests/petta_root/test_state_functions_from_petta.metta \
+	tests/petta_root/examples_state_from_petta.metta \
+	tests/petta_root/examples_if_from_petta.metta \
+	tests/petta_root/examples_if2_from_petta.metta \
+	tests/petta_root/examples_if3_from_petta.metta \
+	tests/petta_root/examples_empty_from_petta.metta \
+	tests/petta_root/examples_caseempty_from_petta.metta \
+	tests/petta_root/examples_caseconstrain_from_petta.metta \
+	tests/petta_root/examples_casenew_from_petta.metta \
+	tests/petta_root/examples_listhead_from_petta.metta
+PETTA_ROOT_ADVANCED_WITNESSES = \
+	tests/petta_root/examples_functionhead_from_petta.metta
+PETTA_RELATION_FRONTIER_TESTS = \
+	tests/test_relation_wrapper_export_minimal_petta.metta \
+	tests/test_relation_functionhead_minimal_petta.metta \
+	tests/test_logicprog_minimal_petta_regression.metta \
+	tests/test_logicprogset_short_if_petta_regression.metta \
+	tests/test_relation_goal_enumeration_minimal_petta.metta \
+	tests/test_relation_only_tuple_goal_minimal_petta.metta \
+	tests/test_relation_functionhead2_animal_minimal_petta.metta \
+	tests/test_relation_functionhead2_minimal_petta.metta \
+	tests/test_relation_if_export_minimal_petta.metta \
+	tests/test_relation_hash_eq_minimal_petta.metta \
+	tests/test_relation_hash_cmp_minimal_petta.metta \
+	tests/test_foldall_generator_relation_petta_regression.metta \
+	tests/test_relation_invert_arith_minimal_petta.metta \
+	tests/test_relation_invertfunction_inverse_call_minimal_petta.metta \
+	tests/test_relation_invertfunction_minimal_petta.metta \
+	tests/test_relation_union_atom_suffix_petta_regression.metta
 PATHMAP_REQUIRED_TESTS = \
 	tests/test_space_type.metta \
 	tests/test_space_engine_backend.metta \
@@ -225,7 +297,7 @@ test-term-universe-backend-add-abi: runtime/test_term_universe_backend_add_abi
 
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.stage0.o)
-DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d)
+DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) src/oracle_diff.d
 
 -include $(DEPS)
 
@@ -275,6 +347,13 @@ $(BIN): $(OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
+$(ORACLE_DIFF_BIN): $(ORACLE_DIFF_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-oracle-diff.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
 # stdlib.o depends on the generated blob header
 src/cetta_stdlib.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
@@ -283,7 +362,8 @@ src/cetta_stdlib.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(BUILD
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(STAGE0_OBJ) $(DEPS) $(BIN) cetta-stage0 $(STDLIB_BLOB) \
+	rm -f $(OBJ) $(STAGE0_OBJ) src/oracle_diff.o $(DEPS) $(BIN) \
+		$(ORACLE_DIFF_BIN) cetta-stage0 $(STDLIB_BLOB) \
 		$(BUILD_CONFIG_HEADER) \
 		src/foreign.o src/foreign.d src/foreign.stage0.o src/foreign.stage0.d \
 		src/foreign_stub.o src/foreign_stub.d src/foreign_stub.stage0.o src/foreign_stub.stage0.d
@@ -529,7 +609,233 @@ test-petta-interop: $(BIN)
 
 test-petta-core: test-petta-core-native test-petta-interop
 
-test-petta-review-core: test-petta-core-native test-petta-suite69
+test-petta-review-core: test-petta-core-native test-petta-suite69 test-petta-root-witnesses
+
+test-petta-review-broad: test-petta-review-core test-petta-root-advanced test-petta-relation-frontier test-petta-import-modes test-petta-upstream-reasonable
+
+test-petta-import-modes: $(BIN)
+	@upstream_file=tests/support/petta_import_walk/probe_upstream_mode.metta; \
+	upstream_exp="$${upstream_file%.metta}.expected"; \
+	upstream_result=$$(./$(BIN) --lang petta --import-mode upstream "$$upstream_file" 2>&1); \
+	if [ "$$upstream_result" = "$$(cat "$$upstream_exp")" ]; then \
+		echo "PASS: petta import mode upstream"; \
+	else \
+		echo "FAIL: petta import mode upstream"; \
+		diff <(cat "$$upstream_exp") <(printf '%s\n' "$$upstream_result") | head -20; \
+		exit 1; \
+	fi; \
+	relative_file=tests/support/petta_import_walk/nested/probe_relative_mode.metta; \
+	relative_exp="$${relative_file%.metta}.expected"; \
+	relative_result=$$(./$(BIN) --lang petta --import-mode relative "$$relative_file" 2>&1); \
+	if [ "$$relative_result" = "$$(cat "$$relative_exp")" ]; then \
+		echo "PASS: petta import mode relative"; \
+	else \
+		echo "FAIL: petta import mode relative"; \
+		diff <(cat "$$relative_exp") <(printf '%s\n' "$$relative_result") | head -20; \
+		exit 1; \
+	fi; \
+	ancestor_file=tests/support/petta_import_walk/nested/deeper/probe_ancestor_walk_mode.metta; \
+	ancestor_exp="$${ancestor_file%.metta}.expected"; \
+	ancestor_result=$$(./$(BIN) --lang petta --import-mode ancestor-walk "$$ancestor_file" 2>&1); \
+	if [ "$$ancestor_result" = "$$(cat "$$ancestor_exp")" ]; then \
+		echo "PASS: petta import mode ancestor-walk"; \
+	else \
+		echo "FAIL: petta import mode ancestor-walk"; \
+		diff <(cat "$$ancestor_exp") <(printf '%s\n' "$$ancestor_result") | head -20; \
+		exit 1; \
+	fi; \
+	default_result=$$(./$(BIN) --lang petta "$$ancestor_file" 2>&1); \
+	if [ "$$default_result" = "$$(cat "$$ancestor_exp")" ]; then \
+		echo "PASS: petta import mode default ancestor-walk"; \
+	else \
+		echo "FAIL: petta import mode default ancestor-walk"; \
+		diff <(cat "$$ancestor_exp") <(printf '%s\n' "$$default_result") | head -20; \
+		exit 1; \
+	fi; \
+	library_file=tests/support/petta_import_walk/probe_library_syntax.metta; \
+	library_exp="$${library_file%.metta}.expected"; \
+	library_result=$$(./$(BIN) --lang petta "$$library_file" 2>&1); \
+	if [ "$$library_result" = "$$(cat "$$library_exp")" ]; then \
+		echo "PASS: petta library import syntax"; \
+	else \
+		echo "FAIL: petta library import syntax"; \
+		diff <(cat "$$library_exp") <(printf '%s\n' "$$library_result") | head -20; \
+		exit 1; \
+	fi; \
+	mode_fail=0; \
+	mode_result=$$(./$(BIN) --lang petta --import-mode relative "$$upstream_file" 2>&1) || mode_fail=$$?; \
+	if [ $$mode_fail -ne 0 ] || printf '%s\n' "$$mode_result" | grep -Fq '(Error '; then \
+		echo "PASS: petta import mode upstream fixture rejects relative"; \
+	else \
+		echo "FAIL: petta import mode upstream fixture rejects relative"; \
+		printf '%s\n' "$$mode_result"; \
+		exit 1; \
+	fi; \
+	mode_fail=0; \
+	mode_result=$$(./$(BIN) --lang petta --import-mode upstream "$$relative_file" 2>&1) || mode_fail=$$?; \
+	if [ $$mode_fail -ne 0 ] || printf '%s\n' "$$mode_result" | grep -Fq '(Error '; then \
+		echo "PASS: petta import mode relative fixture rejects upstream"; \
+	else \
+		echo "FAIL: petta import mode relative fixture rejects upstream"; \
+		printf '%s\n' "$$mode_result"; \
+		exit 1; \
+	fi; \
+	mode_fail=0; \
+	mode_result=$$(./$(BIN) --lang petta --import-mode relative "$$ancestor_file" 2>&1) || mode_fail=$$?; \
+	if [ $$mode_fail -ne 0 ] || printf '%s\n' "$$mode_result" | grep -Fq '(Error '; then \
+		echo "PASS: petta import mode ancestor fixture rejects relative"; \
+	else \
+		echo "FAIL: petta import mode ancestor fixture rejects relative"; \
+		printf '%s\n' "$$mode_result"; \
+		exit 1; \
+	fi
+
+test-petta-root-witnesses: $(BIN)
+	@for f in $(PETTA_ROOT_WITNESSES); do \
+		exp="$${f%.metta}.expected"; \
+		result=$$(cd "$(CURDIR)" && ./$(BIN) --lang petta "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(printf '%s\n' "$$result") | head -20; \
+			exit 1; \
+		fi; \
+	done
+
+test-petta-root-advanced: $(BIN)
+	@for f in $(PETTA_ROOT_ADVANCED_WITNESSES); do \
+		exp="$${f%.metta}.expected"; \
+		result=$$(cd "$(CURDIR)" && ./$(BIN) --lang petta "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(printf '%s\n' "$$result") | head -20; \
+			exit 1; \
+		fi; \
+	done
+
+test-petta-relation-frontier: $(BIN)
+	@for f in $(PETTA_RELATION_FRONTIER_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		result=$$(./$(BIN) --lang petta "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(printf '%s\n' "$$result") | head -20; \
+			exit 1; \
+		fi; \
+	done
+
+test-petta-upstream-reasonable: $(BIN)
+	@if [ ! -d "$(PETTA_EXAMPLES_DIR)" ]; then \
+		echo "SKIP: test-petta-upstream-reasonable (missing $(PETTA_EXAMPLES_DIR))"; \
+		exit 0; \
+	fi; \
+	pass=0; fail=0; \
+	while IFS= read -r base || [ -n "$$base" ]; do \
+		case "$$base" in \
+			''|\#*) continue ;; \
+		esac; \
+		f="$(PETTA_EXAMPLES_DIR)/$$base"; \
+		if [ ! -f "$$f" ]; then \
+			echo "FAIL: missing upstream example $$f"; \
+			exit 1; \
+		fi; \
+		result=$$(timeout $(PETTA_EXAMPLE_TIMEOUT) ./$(BIN) --lang petta "$$f" 2>&1); \
+		status=$$?; \
+		if [ $$status -ne 0 ]; then \
+			echo "FAIL: $$base"; \
+			printf 'exit status: %s\n' "$$status"; \
+			printf '%s\n' "$$result" | tail -20; \
+			exit 1; \
+		fi; \
+		if printf '%s\n' "$$result" | grep -Fq "(Error "; then \
+			echo "FAIL: $$base"; \
+			printf '%s\n' "$$result" | tail -20; \
+			exit 1; \
+		fi; \
+		echo "PASS: $$base"; \
+		pass=$$((pass + 1)); \
+	done < "$(PETTA_UPSTREAM_REASONABLE_LIST)"; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"
+
+test-petta-oracle-probes: $(BIN) $(ORACLE_DIFF_BIN)
+	@if [ ! -f "$(abspath ../../hyperon/PeTTa/run.sh)" ]; then \
+		echo "SKIP: test-petta-oracle-probes (missing ../../hyperon/PeTTa/run.sh)"; \
+		exit 0; \
+	fi; \
+	pass=0; \
+	while IFS= read -r f || [ -n "$$f" ]; do \
+		case "$$f" in \
+			''|\#*) continue ;; \
+		esac; \
+		if [ ! -f "$$f" ]; then \
+			echo "FAIL: missing oracle probe $$f"; \
+			exit 1; \
+		fi; \
+		expected="$$f$(PETTA_ORACLE_EXPECTED_SUFFIX)"; \
+		if [ ! -f "$$expected" ]; then \
+			echo "FAIL: missing pinned oracle expected $$expected"; \
+			exit 1; \
+		fi; \
+		cetta_out=$$(ulimit -v 10485760; ./$(BIN) --lang petta --import-mode relative "$$f" 2>&1); \
+		cetta_status=$$?; \
+		petta_out=$$(cd ../../hyperon/PeTTa && ulimit -v 10485760 && sh ./run.sh "$(CURDIR)/$$f" --silent 2>&1); \
+		petta_status=$$?; \
+		if [ $$petta_status -ne 0 ]; then \
+			echo "FAIL: upstream oracle drift for $$f"; \
+			printf '%s\n' '--- upstream status ---'; \
+			printf '%s\n' "$$petta_status"; \
+			printf '%s\n' '--- upstream output ---'; \
+			printf '%s\n' "$$petta_out"; \
+			exit 1; \
+		fi; \
+		if ! ./$(ORACLE_DIFF_BIN) --expected-file "$$expected" --actual-text "$$petta_out" --actual-label upstream; then \
+			echo "FAIL: upstream oracle drift for $$f"; \
+			exit 1; \
+		fi; \
+		if [ $$cetta_status -ne 0 ]; then \
+			echo "FAIL: $$f"; \
+			printf '%s\n' '--- cetta status ---'; \
+			printf '%s\n' "$$cetta_status"; \
+			printf '%s\n' '--- cetta output ---'; \
+			printf '%s\n' "$$cetta_out"; \
+			exit 1; \
+		fi; \
+		if ! ./$(ORACLE_DIFF_BIN) --expected-file "$$expected" --actual-text "$$cetta_out" --actual-label cetta; then \
+			echo "FAIL: $$f"; \
+			exit 1; \
+		fi; \
+		echo "PASS: $$f"; \
+		pass=$$((pass + 1)); \
+	done < "$(PETTA_ORACLE_PROBE_LIST)"; \
+	echo "---"; \
+	echo "$$pass oracle probes passed"
+
+refresh-petta-oracle-probes:
+	@if [ ! -f "$(abspath ../../hyperon/PeTTa/run.sh)" ]; then \
+		echo "FAIL: refresh-petta-oracle-probes (missing ../../hyperon/PeTTa/run.sh)"; \
+		exit 1; \
+	fi; \
+	while IFS= read -r f || [ -n "$$f" ]; do \
+		case "$$f" in \
+			''|\#*) continue ;; \
+		esac; \
+		if [ ! -f "$$f" ]; then \
+			echo "FAIL: missing oracle probe $$f"; \
+			exit 1; \
+		fi; \
+		expected="$$f$(PETTA_ORACLE_EXPECTED_SUFFIX)"; \
+		tmp="$$expected.tmp"; \
+		(cd ../../hyperon/PeTTa && ulimit -v 10485760 && sh ./run.sh "$(CURDIR)/$$f" --silent 2>&1) | \
+			sed '/^MORK init: done$$/d' | sed '/^$$/d' > "$$tmp"; \
+		mv "$$tmp" "$$expected"; \
+		echo "REFRESH: $$expected"; \
+	done < "$(PETTA_ORACLE_PROBE_LIST)"
 
 test-petta-suite69: test-petta-core-native $(BIN)
 	@if [ ! -d "$(PETTA_SUITE_DIR)" ]; then \
@@ -1650,6 +1956,7 @@ test-help-flags: $(BIN)
 	@help_long=$$(./$(BIN) --help 2>&1); \
 	help_short=$$(./$(BIN) -h 2>&1); \
 	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] <file.metta>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta [--import-mode <upstream|relative|ancestor-walk>] <file.metta>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
 	   [ "$$help_long" = "$$help_short" ]; then \
 		echo "PASS: cli help flags"; \
@@ -1962,4 +2269,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full clean test test-petta-core-native test-petta-interop test-petta-core test-petta-review-core test-petta-suite69 test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full clean test test-petta-core-native test-petta-interop test-petta-core test-petta-review-core test-petta-review-broad test-petta-import-modes test-petta-root-witnesses test-petta-root-advanced test-petta-relation-frontier test-petta-upstream-reasonable test-petta-oracle-probes refresh-petta-oracle-probes test-petta-suite69 test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-basic-pathmap-guard test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

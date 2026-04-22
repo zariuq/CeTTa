@@ -1,4 +1,4 @@
-!(import! &self support/petta_callable_heads/lib/a)
+!(import! &self tests/support/petta_callable_heads/lib/a)
 
 (= (myplus (in $X (1 2 3))
            (in $Y (2 3)))

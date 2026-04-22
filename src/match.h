@@ -65,6 +65,8 @@ void      bindings_replace(Bindings *dst, Bindings *src);
 Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
 Atom     *bindings_lookup_var(Bindings *b, Atom *var);
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
+bool      bindings_add_id_name_fallback(Bindings *b, VarId var_id,
+                                        SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);

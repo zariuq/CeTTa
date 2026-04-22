@@ -1,0 +1,176 @@
+PeTTa translator contract
+========================
+
+Purpose
+-------
+This note names the semantic invariants that the native CeTTa `--lang petta`
+lowering must preserve. The C implementation may optimize, but it should be
+judged against these invariants rather than only against local witness files.
+
+1. Lexical scope invariant
+--------------------------
+If a variable is bound by a surface pattern, it must denote the same logical
+value in all lowered body positions that are in that pattern's scope.
+
+This includes:
+- function equation bodies
+- recursive call arguments
+- `match` body positions
+- `let` / `let*` bodies
+- relation-lowered wrappers
+- runtime-added declaration bodies
+
+Positive example:
+- `evalCustom` over a raw `match` body now agrees with upstream PeTTa.
+- `tailcall-decr` in `tests/support/oracle_factorial_tailcall_probe.metta`
+  now agrees with upstream PeTTa. This is a retired regression for
+  pattern-bound variables flowing into recursive-call arguments.
+
+2. Argument-mode invariant
+--------------------------
+Each special-form argument position has one lowering mode:
+- raw pattern
+- value expression
+- relation goal
+- declaration head
+- declaration body
+- template/body expression preserving raw syntax positions
+- mutation payload
+- case branch set
+- import spec
+
+The lowering must not infer these ad hoc from neighboring code paths. A given
+surface head/arity pair should have a stable per-argument classification.
+
+Current pressure points:
+- `match`: raw pattern + lowered space/body
+- `add-atom` / `remove-atom`: lowered space + raw payload
+- `if`: relation goal in condition, value expressions in branches
+
+Implementation status:
+- The native `--lang petta` lowerer has a `PettaHeadProfile` table for the
+  core special heads. Profile metadata now carries argument modes, builtin
+  relation identity, special-head dispatch, core-callable status, and
+  relation-goal-form status.
+
+3. Value / goal / relation-role invariant
+-----------------------------------------
+A surface term may be lowered as:
+- a value expression to evaluate
+- a goal expression to satisfy
+- a relation call that can export bindings
+
+The translator should choose one primary role per occurrence and cross the
+boundaries explicitly. Implicitly switching roles is the main source of "works
+in one form, empties in another" behavior.
+
+Role classification should happen at lowering time. Runtime helpers may still
+perform defensive checks, but they should not be the first place a surface
+occurrence discovers whether it was meant as a value, a goal, or a binding
+recovery relation.
+
+Retired example:
+- upstream `factorial.metta` now agrees with PeTTa after relation-lowered `if`
+  was treated as a value-producing form rather than a structural pattern.
+
+4. Callable-inventory invariant
+-------------------------------
+There must be one authoritative view of:
+- callable head
+- arity
+- imported/local status
+- relation-capable status
+- needs-recursive-relation-lowering status
+
+Runtime spaces, imported files, and the currently adapted program should agree
+on that inventory before lowering decides whether a call is ordinary or
+relation-aware.
+
+5. Elaboration-equivalence invariant
+------------------------------------
+The same surface declaration should elaborate equivalently whether it arrives
+from:
+- file load
+- `import!`
+- runtime `add-atom`
+
+If those paths disagree, the language has no stable semantics.
+
+6. Runtime-helper invariant
+---------------------------
+If runtime elaboration depends on hidden helper declarations, CeTTa must
+either:
+- guarantee they exist in the target space
+- inject them deterministically
+- or fail with a named error
+
+Silent later `Empty` results are not acceptable.
+
+7. Oracle invariant
+-------------------
+Curated CeTTa witnesses are useful, but the reference oracle for Petta surface
+behavior is upstream PeTTa-Prolog via `hyperon/PeTTa/run.sh`.
+
+`test-petta-oracle-probes` compares pinned raw-result probes against that
+oracle structurally. The oracle lane now uses pinned `.expected_upstream` files
+and a structural atom-multiset comparator rather than Makefile string
+normalization.
+The comparator parses outputs as atoms, alpha-normalizes variables, compares
+numeric values structurally, and treats top-level results as an unordered
+multiset.
+
+When CeTTa and upstream disagree, the disagreement should be treated as the bug
+list rather than as a witness-local anomaly. When upstream itself disagrees
+with a pinned expectation, the oracle lane should fail as upstream drift.
+
+8. Search-boundary invariant
+----------------------------
+CeTTa must keep a visible distinction between:
+- bounded practical search/generation
+- open logical generation requiring fairness or residual constraints
+
+Current examples:
+- `logicprogset.metta` and `logicprog.metta` are now in the green upstream
+  reasonable-example lane.
+- The remaining raw gap queue still contains search- and stream-heavy examples
+  such as `cut.metta`, `forall.metta`, `streamops.metta`, `tabling_fib.metta`,
+  `hyperpose_primes.metta`, and `superpose_primes.metta`.
+
+This boundary should be supported by more than one witness before CeTTa commits
+to a broad search architecture such as bounded planning or fair open generation.
+
+9. Refinement-minimality invariant
+----------------------------------
+Hidden relation refinement is a binding-recovery mechanism, not a universal
+law. It should run only when forward evaluation cannot expose bindings the
+caller needs.
+
+Positive example:
+- `factorial.metta` now stays on the forward value path when no export bindings
+  need to be recovered. Over-refining every variable-valued result made valid
+  recursive value composition go empty.
+
+Retired examples:
+- `tests/test_relation_invertfunction_inverse_call_minimal_petta.metta` now
+  passes.
+- `tests/support/oracle_invertfunction_returned_head_probe.metta` and
+  `tests/support/oracle_invertfunction_returned_head_structural_probe.metta`
+  pin returned-head inverse behavior against upstream PeTTa.
+
+10. Inverse-mode completeness invariant
+---------------------------------------
+For each surface declaration, CeTTa should support the forward and inverse
+evaluation modes that upstream PeTTa supports, to the extent the underlying
+constraint system can honestly solve them.
+
+This does not promise general CLP completeness. It does require the translator
+to distinguish:
+- forward value evaluation
+- inverse matching against a returned value
+- export recovery after a successful inverse match
+
+Current pressure point:
+- `invertfunction.metta`, `invertpeanoplus.metta`, and the returned-head
+  inverse oracle probes are now green. Remaining inverse/search gaps should be
+  named against concrete residual examples rather than assumed from the old
+  invertfunction failure.
