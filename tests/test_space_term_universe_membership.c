@@ -138,6 +138,12 @@ bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id) {
     return false;
 }
 
+bool space_match_backend_remove_atom_direct(Space *s, Atom *atom) {
+    (void)s;
+    (void)atom;
+    return false;
+}
+
 bool space_match_backend_truncate_direct(Space *s, uint32_t new_len) {
     (void)s;
     (void)new_len;

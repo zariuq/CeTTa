@@ -639,6 +639,33 @@ static Atom *space_compare_atom(const Space *space, Arena *dst, Atom *src) {
     return atom_deep_copy(dst, src);
 }
 
+/* Match standardization epochs are query-local tags, not stored identity.
+   Removal must recover the stored base VarId instead of alpha-canonicalizing
+   distinct variable-bearing rows into the same structural shape. */
+static Atom *space_remove_compare_rewrite_var(Arena *dst, Atom *src_var,
+                                              void *ctx) {
+    (void)ctx;
+    if (!src_var || src_var->kind != ATOM_VAR)
+        return NULL;
+    if (var_epoch_suffix(src_var->var_id) == 0)
+        return atom_deep_copy(dst, src_var);
+    VarId base_id = (VarId)var_base_id(src_var->var_id);
+    if (base_id == VAR_ID_NONE)
+        return atom_deep_copy(dst, src_var);
+    return atom_var_with_spelling(dst, src_var->sym_id, base_id);
+}
+
+static Atom *space_remove_compare_atom(const Space *space, Arena *dst,
+                                       Atom *src) {
+    if (space && space->native.universe &&
+        space->native.universe->persistent_arena) {
+        return cetta_atom_rewrite_vars(dst, src,
+                                       space_remove_compare_rewrite_var,
+                                       NULL, true);
+    }
+    return atom_deep_copy(dst, src);
+}
+
 /* ── Outcome set (unified result type: atom + bindings) ─────────────────── */
 
 void outcome_set_init_with_owner(OutcomeSet *os, Arena *owner) {
@@ -1768,7 +1795,8 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
     if (mork_error)
         return mork_error;
 
-    if (!space_match_backend_materialize_attached(
+    if (space_match_backend_is_attached_compiled(target) &&
+        !space_match_backend_materialize_attached(
             target, eval_storage_arena(a))) {
         return atom_error(
             a, call,
@@ -1781,7 +1809,7 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
         return atom_unit(a);
     }
 
-    Atom *compare_atom = space_compare_atom(target, a, payload);
+    Atom *compare_atom = space_remove_compare_atom(target, a, payload);
     if (!(target && target->universe &&
           space_remove_atom_id(target,
                                term_universe_lookup_atom_id(target->universe,
@@ -6394,6 +6422,46 @@ static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int
     eval_for_caller(s, a, type, atom, fuel, &empty, false, os);
 }
 
+typedef struct {
+    Atom **items;
+    uint32_t len;
+    uint32_t cap;
+} MatchResultSnapshot;
+
+static bool match_result_snapshot_push(MatchResultSnapshot *snapshot,
+                                       Atom *atom) {
+    if (!snapshot)
+        return false;
+    if (snapshot->len >= snapshot->cap) {
+        uint32_t next_cap = snapshot->cap ? snapshot->cap * 2 : 8;
+        snapshot->items =
+            cetta_realloc(snapshot->items, sizeof(Atom *) * next_cap);
+        snapshot->cap = next_cap;
+    }
+    snapshot->items[snapshot->len++] = atom;
+    return true;
+}
+
+static void match_result_snapshot_eval(Space *s, Arena *a,
+                                       MatchResultSnapshot *snapshot,
+                                       int fuel, OutcomeSet *os) {
+    Bindings empty;
+    bindings_init(&empty);
+    if (!snapshot)
+        return;
+    for (uint32_t i = 0; i < snapshot->len; i++)
+        eval_for_caller(s, a, NULL, snapshot->items[i], fuel, &empty, false, os);
+}
+
+static void match_result_snapshot_free(MatchResultSnapshot *snapshot) {
+    if (!snapshot)
+        return;
+    free(snapshot->items);
+    snapshot->items = NULL;
+    snapshot->len = 0;
+    snapshot->cap = 0;
+}
+
 static __attribute__((unused)) void
 eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
                         int fuel, const Bindings *prefix,
@@ -6846,18 +6914,34 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         }
         space_query_conjunction(ms, a, pattern->expr.elems + 1, n_conjuncts,
                                 NULL, &matches);
-        for (uint32_t bi = 0; bi < matches.len; bi++) {
-            Bindings projected;
-            if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
-                                                &projected)) {
-                continue;
+        if (!preserve_bindings) {
+            MatchResultSnapshot snapshot = {0};
+            for (uint32_t bi = 0; bi < matches.len; bi++) {
+                Bindings projected;
+                if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
+                                                    &projected)) {
+                    continue;
+                }
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
+                Atom *result = bindings_apply_if_vars(&projected, a, template);
+                (void)match_result_snapshot_push(&snapshot, result);
+                bindings_free(&projected);
             }
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
-            Atom *result = bindings_apply_if_vars(&projected, a, template);
-            const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
-            eval_for_caller(s, a, NULL, result, fuel, forward_env,
-                            preserve_bindings, os);
-            bindings_free(&projected);
+            match_result_snapshot_eval(s, a, &snapshot, fuel, os);
+            match_result_snapshot_free(&snapshot);
+        } else {
+            for (uint32_t bi = 0; bi < matches.len; bi++) {
+                Bindings projected;
+                if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
+                                                    &projected)) {
+                    continue;
+                }
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
+                Atom *result = bindings_apply_if_vars(&projected, a, template);
+                eval_for_caller(s, a, NULL, result, fuel, &projected,
+                                preserve_bindings, os);
+                bindings_free(&projected);
+            }
         }
         binding_set_free(&matches);
         match_visible_var_set_free(&visible);
@@ -6900,18 +6984,34 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     return true;
                 }
                 space_query_conjunction(ms, a, same_space_patterns, nsame, NULL, &matches);
-                for (uint32_t bi = 0; bi < matches.len; bi++) {
-                    Bindings projected;
-                    if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
-                                                        &projected)) {
-                        continue;
+                if (!preserve_bindings) {
+                    MatchResultSnapshot snapshot = {0};
+                    for (uint32_t bi = 0; bi < matches.len; bi++) {
+                        Bindings projected;
+                        if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
+                                                            &projected)) {
+                            continue;
+                        }
+                        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
+                        Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
+                        (void)match_result_snapshot_push(&snapshot, result);
+                        bindings_free(&projected);
                     }
-                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
-                    Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
-                    const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
-                    eval_for_caller(s, a, NULL, result, fuel, forward_env,
-                                    preserve_bindings, os);
-                    bindings_free(&projected);
+                    match_result_snapshot_eval(s, a, &snapshot, fuel, os);
+                    match_result_snapshot_free(&snapshot);
+                } else {
+                    for (uint32_t bi = 0; bi < matches.len; bi++) {
+                        Bindings projected;
+                        if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
+                                                            &projected)) {
+                            continue;
+                        }
+                        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
+                        Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
+                        eval_for_caller(s, a, NULL, result, fuel, &projected,
+                                        preserve_bindings, os);
+                        bindings_free(&projected);
+                    }
                 }
                 binding_set_free(&matches);
                 match_visible_var_set_free(&visible);
@@ -7069,52 +7169,104 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         if (nsteps > 1 && ncur > 0) {
             MatchStep *last = &steps[nsteps - 1];
             static uint64_t g_chain_progress = 0;
-            for (uint32_t bi = 0; bi < ncur; bi++) {
-                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
-                Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
-                SubstMatchSet smr;
-                smset_init(&smr);
-                space_subst_query(last->space, a, grounded, &smr);
-                for (uint32_t ci = 0; ci < smr.len; ci++) {
-                    Bindings mb;
-                    if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
-                                                    &cur_binds[bi], a, &mb)) {
-                        Bindings projected;
-                        if (!project_match_visible_bindings(a, &visible, &mb,
-                                                            &projected)) {
+            if (!preserve_bindings) {
+                MatchResultSnapshot snapshot = {0};
+                for (uint32_t bi = 0; bi < ncur; bi++) {
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
+                    Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
+                    SubstMatchSet smr;
+                    smset_init(&smr);
+                    space_subst_query(last->space, a, grounded, &smr);
+                    for (uint32_t ci = 0; ci < smr.len; ci++) {
+                        Bindings mb;
+                        if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
+                                                        &cur_binds[bi], a, &mb)) {
+                            Bindings projected;
+                            if (!project_match_visible_bindings(a, &visible, &mb,
+                                                                &projected)) {
+                                bindings_free(&mb);
+                                continue;
+                            }
+                            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                            Atom *result = bindings_apply_if_vars(&projected, a, body);
+                            (void)match_result_snapshot_push(&snapshot, result);
+                            bindings_free(&projected);
                             bindings_free(&mb);
-                            continue;
-                        }
-                        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                        Atom *result = bindings_apply_if_vars(&projected, a, body);
-                        const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
-                        eval_for_caller(s, a, NULL, result, fuel, forward_env,
-                                        preserve_bindings, os);
-                        bindings_free(&projected);
-                        bindings_free(&mb);
-                        g_chain_progress++;
-                        if ((g_chain_progress % 100000) == 0) {
-                            fprintf(stderr, "[chain] %luk results  (step %u/%u, bi=%u/%u)\n",
-                                (unsigned long)(g_chain_progress / 1000),
-                                nsteps, nsteps, bi, ncur);
+                            g_chain_progress++;
+                            if ((g_chain_progress % 100000) == 0) {
+                                fprintf(stderr, "[chain] %luk results  (step %u/%u, bi=%u/%u)\n",
+                                    (unsigned long)(g_chain_progress / 1000),
+                                    nsteps, nsteps, bi, ncur);
+                            }
                         }
                     }
+                    smset_free(&smr);
                 }
-                smset_free(&smr);
+                match_result_snapshot_eval(s, a, &snapshot, fuel, os);
+                match_result_snapshot_free(&snapshot);
+            } else {
+                for (uint32_t bi = 0; bi < ncur; bi++) {
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
+                    Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
+                    SubstMatchSet smr;
+                    smset_init(&smr);
+                    space_subst_query(last->space, a, grounded, &smr);
+                    for (uint32_t ci = 0; ci < smr.len; ci++) {
+                        Bindings mb;
+                        if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
+                                                        &cur_binds[bi], a, &mb)) {
+                            Bindings projected;
+                            if (!project_match_visible_bindings(a, &visible, &mb,
+                                                                &projected)) {
+                                bindings_free(&mb);
+                                continue;
+                            }
+                            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                            Atom *result = bindings_apply_if_vars(&projected, a, body);
+                            eval_for_caller(s, a, NULL, result, fuel, &projected,
+                                            preserve_bindings, os);
+                            bindings_free(&projected);
+                            bindings_free(&mb);
+                            g_chain_progress++;
+                            if ((g_chain_progress % 100000) == 0) {
+                                fprintf(stderr, "[chain] %luk results  (step %u/%u, bi=%u/%u)\n",
+                                    (unsigned long)(g_chain_progress / 1000),
+                                    nsteps, nsteps, bi, ncur);
+                            }
+                        }
+                    }
+                    smset_free(&smr);
+                }
             }
         } else {
-            for (uint32_t bi = 0; bi < ncur; bi++) {
-                Bindings projected;
-                if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
-                                                    &projected)) {
-                    continue;
+            if (!preserve_bindings) {
+                MatchResultSnapshot snapshot = {0};
+                for (uint32_t bi = 0; bi < ncur; bi++) {
+                    Bindings projected;
+                    if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
+                                                        &projected)) {
+                        continue;
+                    }
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                    Atom *result = bindings_apply_if_vars(&projected, a, body);
+                    (void)match_result_snapshot_push(&snapshot, result);
+                    bindings_free(&projected);
                 }
-                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                Atom *result = bindings_apply_if_vars(&projected, a, body);
-                const Bindings *forward_env = preserve_bindings ? &projected : &_empty;
-                eval_for_caller(s, a, NULL, result, fuel, forward_env,
-                                preserve_bindings, os);
-                bindings_free(&projected);
+                match_result_snapshot_eval(s, a, &snapshot, fuel, os);
+                match_result_snapshot_free(&snapshot);
+            } else {
+                for (uint32_t bi = 0; bi < ncur; bi++) {
+                    Bindings projected;
+                    if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
+                                                        &projected)) {
+                        continue;
+                    }
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                    Atom *result = bindings_apply_if_vars(&projected, a, body);
+                    eval_for_caller(s, a, NULL, result, fuel, &projected,
+                                    preserve_bindings, os);
+                    bindings_free(&projected);
+                }
             }
         }
         match_visible_var_set_free(&visible);
@@ -9794,7 +9946,8 @@ tail_call: ;
                 &_empty);
             return;
         }
-        if (!space_match_backend_materialize_attached(
+        if (space_match_backend_is_attached_compiled(target) &&
+            !space_match_backend_materialize_attached(
                 target, eval_storage_arena(a))) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
@@ -9941,14 +10094,15 @@ tail_call: ;
             outcome_set_add(os, mork_error, &_empty);
             return;
         }
-        if (!space_match_backend_materialize_attached(
+        if (space_match_backend_is_attached_compiled(target) &&
+            !space_match_backend_materialize_attached(
                 target, eval_storage_arena(a))) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
                 &_empty);
             return;
         }
-        Atom *compare_atom = space_compare_atom(target, a, atom_to_rm);
+        Atom *compare_atom = space_remove_compare_atom(target, a, atom_to_rm);
         if (!(target && target->native.universe &&
               space_remove_atom_id(target,
                                    term_universe_lookup_atom_id(target->native.universe,
