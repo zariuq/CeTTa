@@ -453,6 +453,9 @@ bool is_grounded_op(SymbolId id) {
         id == g_builtin_syms.mork_add_atom ||
         id == g_builtin_syms.mork_remove_atom)
         return true;
+    if (id == g_builtin_syms.add_atom ||
+        id == g_builtin_syms.remove_atom)
+        return true;
     return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
            id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
            id == g_builtin_syms.op_mod || id == g_builtin_syms.op_lt ||

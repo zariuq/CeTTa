@@ -227,11 +227,28 @@ bool atom_eq_fast(Atom *a, Atom *b) {
     return atom_eq(a, b);
 }
 
-void hashcons_init(HashConsTable *hc) {
-    hc->size = HASHCONS_TABLE_SIZE;
+static uint32_t hashcons_initial_size(uint32_t requested) {
+    uint32_t size = requested ? requested : HASHCONS_TABLE_SIZE;
+    if (size < 16)
+        size = 16;
+    if ((size & (size - 1)) != 0) {
+        uint32_t rounded = 16;
+        while (rounded < size && rounded < (1u << 31))
+            rounded <<= 1;
+        size = rounded;
+    }
+    return size;
+}
+
+void hashcons_init_sized(HashConsTable *hc, uint32_t initial_size) {
+    hc->size = hashcons_initial_size(initial_size);
     hc->used = 0;
     hc->table = cetta_malloc(sizeof(Atom *) * hc->size);
     memset(hc->table, 0, sizeof(Atom *) * hc->size);
+}
+
+void hashcons_init(HashConsTable *hc) {
+    hashcons_init_sized(hc, HASHCONS_TABLE_SIZE);
 }
 
 void hashcons_free(HashConsTable *hc) {

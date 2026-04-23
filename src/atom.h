@@ -117,6 +117,7 @@ struct HashConsTable {
 };
 
 void hashcons_init(HashConsTable *hc);
+void hashcons_init_sized(HashConsTable *hc, uint32_t initial_size);
 void hashcons_free(HashConsTable *hc);
 /* Return shared atom if identical one exists, otherwise insert and return */
 Atom *hashcons_get(HashConsTable *hc, Atom *atom);

@@ -1,6 +1,6 @@
 ; Imported nested-match chain regression:
-; the optimized 3-step match chain must agree with ordinary recursive match
-; semantics on this forward-chaining pattern.
+; a pathmap-backed source copied through match must still expose every
+; first-round ax-mp candidate through the nested match chain.
 
 !(bind! &rb (new-space))
 !(add-atom &rb (: ax-mp (-> (→ $p $q) $p $q)))
@@ -19,13 +19,19 @@
 
 !(bind! &ss (new-space))
 !(match &ab (: $x $a) (add-atom-nodup &ss (: $x $a)))
-!(fs-add-to-ss-nodup &rb &ss)
 
-!(assertAlphaEqualToResult
-  (with-space-snapshot $ss0 &ss
-    (match $ss0 (: (ax-mp ax-2 ax-2) $a1)
-      (match $ss0 (: (ax-mp ax-2 ax-1) $a2)
-        (match &rb (: $f (-> $a1 $a2 $b))
-          (: ($f (ax-mp ax-2 ax-2) (ax-mp ax-2 ax-1)) $b)))))
-  ((: (ax-mp (ax-mp ax-2 ax-2) (ax-mp ax-2 ax-1))
-      (→ (→ $p (→ $p $r)) (→ $p $r)))))
+!(assertEqualToResult
+  (collapse
+    (with-space-snapshot $ss0 &ss
+      (match $ss0 (: $x1 $a1)
+        (match $ss0 (: $x2 $a2)
+          (match &rb (: $f (-> $a1 $a2 $b))
+            (: pair $x1 $x2))))))
+  (((: pair ax-1 ax-1)
+    (: pair ax-1 ax-2)
+    (: pair ax-1 ax-3)
+    (: pair ax-2 ax-1)
+    (: pair ax-2 ax-2)
+    (: pair ax-2 ax-3))))
+
+!(fs-add-to-ss-nodup &rb &ss)

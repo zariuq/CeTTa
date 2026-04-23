@@ -59,7 +59,7 @@ void variant_bank_init(VariantBank *bank, CettaVariantShapeOptions options) {
     if (!bank)
         return;
     arena_init(&bank->arena);
-    hashcons_init(&bank->hashcons);
+    hashcons_init_sized(&bank->hashcons, options.hashcons_initial_size);
     bank->options = options;
     arena_set_hashcons(&bank->arena, &bank->hashcons);
 }

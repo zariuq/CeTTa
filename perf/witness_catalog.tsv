@@ -1,13 +1,16 @@
 name	category	build_hint	timeout_s	mem_kib	command	notes
 tu_space_term_universe_membership	conformance	core	60	6291456	make -j1 test-space-term-universe-membership	Structural witness for Space to AtomId membership over TermUniverse.
-tu_table_delayed_query_replay	conformance	core	60	6291456	./cetta --quiet tests/test_table_delayed_query_replay_regression.metta	Cached delayed-answer replay should remain alpha-correct.
-tu_table_delayed_single_tail_reenter	conformance	core	60	6291456	./cetta --quiet tests/test_table_delayed_single_tail_reenter_regression.metta	Single-result tail reentry should preserve delayed semantics cleanly.
-tu_observation_seam_regression	conformance	core	60	6291456	./cetta --quiet tests/test_outcome_variant_observation_seam_regression.metta	Observation-seam regression witness for delayed outcome forcing.
+tu_table_delayed_query_replay	conformance	profile-core	60	6291456	./cetta --quiet tests/test_table_delayed_query_replay_regression.metta	Cached delayed-answer replay should remain alpha-correct.
+tu_table_delayed_single_tail_reenter	conformance	profile-core	60	6291456	./cetta --quiet tests/test_table_delayed_single_tail_reenter_regression.metta	Single-result tail reentry should preserve delayed semantics cleanly.
+tu_observation_seam_regression	conformance	profile-core	60	6291456	./cetta --quiet tests/test_outcome_variant_observation_seam_regression.metta	Observation-seam regression witness for delayed outcome forcing.
 core_tail_recursion	conformance	core	60	6291456	./cetta --quiet tests/test_tail_recursion.metta	Basic tail-recursion correctness witness outside the TU-specific regression set.
 core_with_space_snapshot_queue_regression	conformance	core	60	6291456	./cetta --quiet tests/test_with_space_snapshot_queue_regression.metta	Tracked snapshot/queue regression with an expected file in-tree.
-tu_fc_d3_variant	benchmark	core	60	6291456	./cetta --quiet tests/bench_outcome_variant_fc_d3.metta	Hot-path benchmark; current expected shape is 3421 results with zero forced materializations.
+tu_fc_d3_variant	benchmark	profile-core	60	6291456	./cetta --quiet tests/bench_outcome_variant_fc_d3.metta	Hot-path benchmark; current expected shape is 3421 results with zero forced materializations.
+answer_ref_replay_shapes	benchmark	profile-core	120	6291456	./scripts/bench_answer_ref_demand.sh 32	Compare warm multi-answer delayed replay against warm single-tail reentry on the known answer-ref replay lanes.
 core_conjunction12_count	benchmark	core	60	6291456	./cetta --count-only tests/bench_conjunction12_he.metta	Tracked count-only structured-space benchmark suitable for clean commit baselines.
 tu_tail_special_forms	capacity	core	300	10485760	./cetta tests/test_tail_special_forms.metta	Deep special-form tail path envelope; compare runtime budget against commit baselines.
 tu_tilepuzzle	capacity	core	300	10485760	./cetta tests/test_tilepuzzle.metta	8-puzzle BFS capacity envelope; compare completion or timeout against commit baselines.
 tu_tilepuzzle_probe_native	capacity	core	120	10485760	./scripts/bench_tile_runtime_probe.sh native	Bounded native tile/search probe that should fail fast instead of running past the full witness envelope.
 tu_metamath_stream_basic	capacity	core	300	10485760	./cetta tests/test_metamath_stream_basic.metta	Metamath stream capacity envelope; compare runtime budget against commit baselines.
+roman_space_compare_10k	benchmark	core	60	6291456	./scripts/bench_roman_backend_probe.sh compare 10000 3	Refined Roman backend probe comparing native live and MORK live on the decisive trimmed scenario set.
+roman_mork_load_act_100k	capacity	core	120	10485760	./scripts/bench_roman_backend_probe.sh mork-load-act 100000 1	Refined Roman 100k cached-ACT MORK probe without dragging the full native diagnostic matrix.

@@ -3,4 +3,4 @@
 [()]
 [()]
 [()]
-[(Error (assertAlphaEqualToResult (fs &rb &ss) ((: (mp ax1 ax1) (→ $u (→ $a (→ $b $a)))) (: (mp ax1 ax2) (→ $u (→ (→ $a (→ $b $c)) (→ (→ $a $b) (→ $a $c))))) (: (mp ax2 ax1) (→ (→ $x $y) (→ $x $x))) (: (mp ax2 ax2) (→ (→ (→ $x (→ $y $z)) (→ $x $y)) (→ (→ $x (→ $y $z)) (→ $x $z)))))) "mismatch")]
+[()]
