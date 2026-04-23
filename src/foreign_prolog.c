@@ -236,7 +236,7 @@ static CettaForeignValue *foreign_new_prolog_value(CettaForeignRuntime *rt,
 }
 
 static Atom *prolog_error_atom(Arena *a, const char *message) {
-    return atom_symbol(a, message ? message : "prolog foreign error");
+    return atom_string(a, message ? message : "prolog foreign error");
 }
 
 static bool parse_reply_quoted_string(const char *text, size_t *pos, char **out) {
@@ -492,24 +492,103 @@ static bool send_command_and_read_reply(CettaForeignRuntime *rt,
     return ok;
 }
 
-static bool ensure_bridge_path(CettaForeignRuntime *rt) {
-    if (!rt)
+static void prolog_search_path_append(PrologStringBuf *searched,
+                                      const char *label,
+                                      const char *path) {
+    if (!searched)
+        return;
+    if (searched->len > 0)
+        (void)psb_append(searched, "; ");
+    if (label && *label) {
+        (void)psb_append(searched, label);
+        (void)psb_append(searched, "=");
+    }
+    (void)psb_append(searched, path ? path : "");
+}
+
+static bool prolog_path_readable(const char *path) {
+    return path && *path && access(path, R_OK) == 0;
+}
+
+static bool prolog_set_bridge_path(CettaForeignRuntime *rt, const char *path) {
+    if (!rt || !path || !*path)
         return false;
-    if (rt->prolog.bridge_path[0] && access(rt->prolog.bridge_path, R_OK) == 0)
-        return true;
-    if (rt->prolog.exec_root[0]) {
-        int n = snprintf(rt->prolog.bridge_path, sizeof(rt->prolog.bridge_path),
-                         "%s/runtime/foreign_prolog_bridge.pl",
-                         rt->prolog.exec_root);
-        if (n > 0 &&
-            (size_t)n < sizeof(rt->prolog.bridge_path) &&
-            access(rt->prolog.bridge_path, R_OK) == 0) {
-            return true;
+    int n = snprintf(rt->prolog.bridge_path, sizeof(rt->prolog.bridge_path),
+                     "%s", path);
+    return n > 0 && (size_t)n < sizeof(rt->prolog.bridge_path);
+}
+
+static bool prolog_executable_on_path(const char *name) {
+    if (!name || !*name)
+        return false;
+    if (strchr(name, '/'))
+        return access(name, X_OK) == 0;
+    const char *path_env = getenv("PATH");
+    if (!path_env || !*path_env)
+        return false;
+    char *copy = strdup(path_env);
+    if (!copy)
+        return false;
+    bool found = false;
+    char *save = NULL;
+    for (char *dir = strtok_r(copy, ":", &save); dir;
+         dir = strtok_r(NULL, ":", &save)) {
+        if (!*dir)
+            dir = ".";
+        char candidate[PATH_MAX];
+        int n = snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
+        if (n <= 0 || (size_t)n >= sizeof(candidate))
+            continue;
+        if (access(candidate, X_OK) == 0) {
+            found = true;
+            break;
         }
     }
-    snprintf(rt->prolog.bridge_path, sizeof(rt->prolog.bridge_path),
-             "runtime/foreign_prolog_bridge.pl");
-    return access(rt->prolog.bridge_path, R_OK) == 0;
+    free(copy);
+    return found;
+}
+
+static bool ensure_bridge_path(CettaForeignRuntime *rt,
+                               PrologStringBuf *searched) {
+    if (!rt)
+        return false;
+    if (rt->prolog.bridge_path[0] &&
+        prolog_path_readable(rt->prolog.bridge_path))
+        return true;
+
+    rt->prolog.bridge_path[0] = '\0';
+
+    const char *env_bridge = getenv("CETTA_PROLOG_BRIDGE");
+    if (env_bridge && *env_bridge) {
+        prolog_search_path_append(searched, "CETTA_PROLOG_BRIDGE", env_bridge);
+        if (prolog_path_readable(env_bridge))
+            return prolog_set_bridge_path(rt, env_bridge);
+        return false;
+    }
+
+    if (rt->prolog.exec_root[0]) {
+        char candidate[PATH_MAX];
+        int n = snprintf(candidate, sizeof(candidate),
+                         "%s/lib/lib_prolog/foreign_prolog_bridge.pl",
+                         rt->prolog.exec_root);
+        if (n > 0 && (size_t)n < sizeof(candidate)) {
+            prolog_search_path_append(searched, "exec_root", candidate);
+            if (prolog_path_readable(candidate))
+                return prolog_set_bridge_path(rt, candidate);
+        }
+    }
+
+    const char *lib_relative = "lib/lib_prolog/foreign_prolog_bridge.pl";
+    prolog_search_path_append(searched, "cwd", lib_relative);
+    if (prolog_path_readable(lib_relative))
+        return prolog_set_bridge_path(rt, lib_relative);
+
+    const char *runtime_fallback = "runtime/foreign_prolog_bridge.pl";
+    prolog_search_path_append(searched, "compat", runtime_fallback);
+    if (prolog_path_readable(runtime_fallback))
+        return prolog_set_bridge_path(rt, runtime_fallback);
+
+    return false;
 }
 
 static bool ensure_prolog_session(CettaForeignRuntime *rt,
@@ -519,9 +598,27 @@ static bool ensure_prolog_session(CettaForeignRuntime *rt,
         return false;
     if (rt->prolog.started && rt->prolog.to_child && rt->prolog.from_child)
         return true;
-    if (!ensure_bridge_path(rt)) {
+
+    PrologStringBuf searched;
+    psb_init(&searched);
+    bool have_bridge = ensure_bridge_path(rt, &searched);
+    if (!have_bridge) {
+        if (error_out) {
+            PrologStringBuf msg;
+            psb_init(&msg);
+            (void)psb_append(&msg, "missing prolog bridge support file; searched: ");
+            (void)psb_append(&msg, searched.buf ? searched.buf : "(none)");
+            *error_out = prolog_error_atom(a, msg.buf);
+            psb_free(&msg);
+        }
+        psb_free(&searched);
+        return false;
+    }
+    psb_free(&searched);
+
+    if (!prolog_executable_on_path("swipl")) {
         if (error_out)
-            *error_out = prolog_error_atom(a, "missing runtime/foreign_prolog_bridge.pl");
+            *error_out = prolog_error_atom(a, "missing swipl on PATH for prolog bridge");
         return false;
     }
 
@@ -952,16 +1049,22 @@ Atom *cetta_foreign_prolog_dispatch_native(CettaForeignRuntime *rt,
         return prolog_build_predicate_term(a, args, nargs);
     }
     if (strcmp(head_name, "pl-call") == 0 ||
+        strcmp(head_name, "pl-assertz") == 0 ||
+        strcmp(head_name, "pl-asserta") == 0 ||
+        strcmp(head_name, "pl-retract") == 0 ||
         strcmp(head_name, "callPredicate") == 0 ||
         strcmp(head_name, "assertzPredicate") == 0 ||
         strcmp(head_name, "assertaPredicate") == 0 ||
         strcmp(head_name, "retractPredicate") == 0) {
         const char *cmd = "call_goal";
-        if (strcmp(head_name, "assertzPredicate") == 0)
+        if (strcmp(head_name, "pl-assertz") == 0 ||
+            strcmp(head_name, "assertzPredicate") == 0)
             cmd = "assertz_goal";
-        else if (strcmp(head_name, "assertaPredicate") == 0)
+        else if (strcmp(head_name, "pl-asserta") == 0 ||
+                 strcmp(head_name, "assertaPredicate") == 0)
             cmd = "asserta_goal";
-        else if (strcmp(head_name, "retractPredicate") == 0)
+        else if (strcmp(head_name, "pl-retract") == 0 ||
+                 strcmp(head_name, "retractPredicate") == 0)
             cmd = "retract_goal";
         Atom *goal_atom = prolog_goal_from_native_args(a, head, args, nargs);
         if (!goal_atom)

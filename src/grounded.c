@@ -485,6 +485,9 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.pl_consult ||
            id == g_builtin_syms.pl_use_module ||
            id == g_builtin_syms.pl_import ||
+           id == g_builtin_syms.pl_assertz ||
+           id == g_builtin_syms.pl_asserta ||
+           id == g_builtin_syms.pl_retract ||
            id == g_builtin_syms.import_prolog_function ||
            id == g_builtin_syms.predicate_ctor ||
            id == g_builtin_syms.callPredicate ||

@@ -237,6 +237,9 @@ typedef struct {
     X(pl_consult, "pl-consult") \
     X(pl_use_module, "pl-use-module") \
     X(pl_import, "pl-import") \
+    X(pl_assertz, "pl-assertz") \
+    X(pl_asserta, "pl-asserta") \
+    X(pl_retract, "pl-retract") \
     X(import_prolog_function, "import_prolog_function") \
     X(predicate_ctor, "Predicate") \
     X(callPredicate, "callPredicate") \

@@ -2,13 +2,24 @@
 
 !(import-prolog-functions-from-file
   "tests/support/foreign_prolog_simple.pl"
-  (prolog_probe_echo prolog_probe_fact prolog_probe_dyn))
+  (prolog_probe_echo prolog_probe_fact prolog_probe_dyn prolog_probe_compound prolog_probe_choice))
 
 !(assertEqual (prolog_probe_echo hello) hello)
+!(assertEqual (prolog_probe_echo "hello Zar") "hello Zar")
+!(assertEqual (prolog_probe_echo "quote \"inside\"") "quote \"inside\"")
+!(assertEqual (prolog_probe_echo 17) 17)
+!(assertEqual (prolog_probe_echo True) True)
+!(assertEqual (prolog_probe_compound) (wrapper alpha 7))
+!(assertEqualToResult (prolog_probe_choice) (red blue))
+!(let &pair (prolog-atom prolog_probe_pair)
+   (assertEqual (&pair 1 2) (1 2)))
 !(assertEqual (prolog-call (Predicate prolog_probe_fact alpha)) True)
 !(assertEqual (prolog-call (Predicate prolog_probe_fact beta)) False)
 !(assertEqual (prolog-call (Predicate prolog_probe_dyn foo)) False)
-!(assertEqual (prolog-assertz (Predicate prolog_probe_dyn foo)) True)
+!(assertEqual (prolog-assertz! (Predicate prolog_probe_dyn foo)) True)
 !(assertEqual (prolog-call (Predicate prolog_probe_dyn foo)) True)
-!(assertEqual (prolog-retract (Predicate prolog_probe_dyn foo)) True)
+!(assertEqual (prolog-retract! (Predicate prolog_probe_dyn foo)) True)
 !(assertEqual (prolog-call (Predicate prolog_probe_dyn foo)) False)
+!(assertEqual (prolog-asserta! (Predicate prolog_probe_dyn bar)) True)
+!(assertEqual (prolog-call (Predicate prolog_probe_dyn bar)) True)
+!(assertEqual (prolog-retract! (Predicate prolog_probe_dyn bar)) True)
