@@ -1,7 +1,7 @@
 ; Petta-facing compatibility layer over CeTTa's generic Prolog helpers.
 ; Keep this thin so Petta library reuse stays above the core evaluator seam.
 
-!(import! &self lib/lib_prolog)
+!(import! &self lib_prolog)
 
 (= (consult $prologfile)
    (prolog-consult! $prologfile))
