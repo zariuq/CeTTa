@@ -1,9 +1,9 @@
 # Native --lang petta current-gap root-cause classification
 #
 # Scope:
-# - 105 upstream examples are in petta_upstream_reasonable_examples.txt.
-# - 27 upstream examples remain in petta_upstream_current_gaps.txt.
-# - This file classifies those 27 by the capability layer most likely to
+# - 106 upstream examples are in petta_upstream_reasonable_examples.txt.
+# - 26 upstream examples remain in petta_upstream_current_gaps.txt.
+# - This file classifies those 26 by the capability layer most likely to
 #   retire them. A file may move between buckets as lower layers settle.
 #
 # Fresh smoke sweep shape on 2026-04-22:
@@ -16,6 +16,9 @@
 #   types, types_dependent, types_nondet.
 # - 2026-04-23 checkpoint: callquoteevalreduce.metta moved to the
 #   reasonable lane after the scoped phase-control regression fix.
+# - 2026-04-23 checkpoint: translatepredicate.metta moved to the reasonable
+#   lane after deterministic Prolog-shaped predicate goals began preserving
+#   bindings through Petta progn/relation lowering.
 
 P0 match, binding, mutation, spaces, and unify continuation semantics
 --------------------------------------------------------------------
@@ -74,10 +77,12 @@ Root need:
 - Finish translator-rule and backward-chaining surfaces after the P0 runtime
   layers are less noisy.
 - Isolate recursive atom primitive behavior from general search performance.
+- Extend the initial translatePredicate bridge beyond deterministic `is`,
+  unification, and ternary native predicate forms when broader translator-rule
+  support lands.
 
 Files:
 - nilbc.metta
 - patrick_test.metta
 - test_collapse_size_bug.metta
 - test_recursive_size_atom.metta
-- translatepredicate.metta

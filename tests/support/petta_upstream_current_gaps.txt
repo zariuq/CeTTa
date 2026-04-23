@@ -27,4 +27,3 @@ streamops.metta
 tabling_fib.metta
 test_collapse_size_bug.metta
 test_recursive_size_atom.metta
-translatepredicate.metta

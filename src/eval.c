@@ -3056,6 +3056,33 @@ static bool dispatch_petta_equals_native_tail(
     return true;
 }
 
+static bool petta_translate_predicate_arg_value(
+    Space *s,
+    Arena *a,
+    Atom *arg,
+    int fuel,
+    const Bindings *env,
+    Atom **out
+) {
+    Atom *applied = bindings_apply_if_vars((Bindings *)env, a, arg);
+    if (!applied)
+        return false;
+
+    OutcomeSet vals;
+    outcome_set_init(&vals);
+    metta_eval_bind(s, a, applied, fuel, &vals);
+    for (uint32_t i = 0; i < vals.len; i++) {
+        Atom *value = outcome_atom_materialize(a, &vals.items[i]);
+        if (!value || atom_is_empty(value) || atom_is_error(value))
+            continue;
+        *out = value;
+        outcome_set_free(&vals);
+        return true;
+    }
+    outcome_set_free(&vals);
+    return false;
+}
+
 static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
     elems[0] = head;
@@ -13250,6 +13277,69 @@ tail_call: ;
         if (!had_success && !had_error)
             outcome_set_add(os, atom_empty(a), &_empty);
         outcome_set_free(&goal_outcomes);
+        return;
+    }
+
+    /* ── translatePredicate (Petta Prolog-shaped deterministic predicates) ─ */
+    if (language_is_petta() && head_id == g_builtin_syms.translatePredicate) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Atom *goal = bindings_apply_if_vars(CURRENT_ENV, a, expr_arg(atom, 0));
+        if (!goal || goal->kind != ATOM_EXPR || goal->expr.len == 0 ||
+            goal->expr.elems[0]->kind != ATOM_SYMBOL) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "PredicateExpressionExpected")),
+                &_empty);
+            return;
+        }
+        Atom *pred = goal->expr.elems[0];
+        uint32_t pred_nargs = goal->expr.len - 1;
+        const char *pred_name = atom_name_cstr(pred);
+
+        BindingsBuilder bb;
+        if (!bindings_builder_init(&bb, CURRENT_ENV))
+            return;
+        bool ok = false;
+        bool handled = false;
+
+        if (pred_name && strcmp(pred_name, "is") == 0 && pred_nargs == 2) {
+            handled = true;
+            Atom *rhs_value = NULL;
+            if (petta_translate_predicate_arg_value(s, a, goal->expr.elems[2],
+                                                    fuel, CURRENT_ENV, &rhs_value))
+                ok = match_atoms_builder(goal->expr.elems[1], rhs_value, &bb);
+        } else if (pred_name && strcmp(pred_name, "=") == 0 && pred_nargs == 2) {
+            handled = true;
+            ok = match_atoms_builder(goal->expr.elems[1], goal->expr.elems[2], &bb);
+        } else if (pred_nargs == 3 &&
+                   (atom_is_native_dispatch_head(pred) ||
+                    atom_is_symbol_id(pred, g_builtin_syms.equals))) {
+            handled = true;
+            Atom *lhs_value = NULL;
+            Atom *rhs_value = NULL;
+            if (petta_translate_predicate_arg_value(s, a, goal->expr.elems[1],
+                                                    fuel, CURRENT_ENV, &lhs_value) &&
+                petta_translate_predicate_arg_value(s, a, goal->expr.elems[2],
+                                                    fuel, CURRENT_ENV, &rhs_value)) {
+                Atom *native_args[] = { lhs_value, rhs_value };
+                Atom *result = dispatch_native_op(s, a, pred, native_args, 2);
+                if (result && !atom_is_error(result))
+                    ok = match_atoms_builder(goal->expr.elems[3], result, &bb);
+            }
+        }
+
+        if (ok)
+            outcome_set_add(os, atom_true(a), bindings_builder_bindings(&bb));
+        else if (!handled) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "UnsupportedTranslatePredicate")),
+                &_empty);
+        }
+        bindings_builder_free(&bb);
         return;
     }
 

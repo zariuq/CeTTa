@@ -107,6 +107,18 @@ typedef struct {
     bool relation_goal_form;
 } PettaHeadProfile;
 
+typedef struct {
+    bool callable;
+    bool relation_form;
+    bool builtin_relation;
+    bool returns_expression;
+    SymbolId relation_head_id;
+    uint32_t syntax_arg_mask;
+    uint32_t expression_arg_mask;
+    const CettaPettaCallableInfo *inventory_info;
+    const PettaHeadProfile *profile;
+} PettaCallableFacts;
+
 static const PettaHeadProfile PETTA_HEAD_PROFILES[] = {
     { "=", 2, { PETTA_ARG_DECL_HEAD, PETTA_ARG_DECL_BODY },
       PETTA_BUILTIN_REL_NONE, PETTA_HEAD_SPECIAL_NONE, false, true },
@@ -1038,6 +1050,7 @@ static bool petta_head_is_petta_runtime_surface(Atom *head, uint32_t arity) {
         return strcmp(name, "repr") == 0 ||
                strcmp(name, "repra") == 0 ||
                strcmp(name, "is-function") == 0 ||
+               strcmp(name, "translatePredicate") == 0 ||
                strcmp(name, "unquote") == 0;
     }
     if (arity == 2) {
@@ -1175,6 +1188,44 @@ static bool petta_callable_has_relation_form(const CettaPettaCallableInfo *info)
     return info != NULL;
 }
 
+static PettaCallableFacts petta_callable_facts_lookup(
+    CettaPettaLowerContext *ctx,
+    const CettaPettaCallableInventory *callables,
+    Atom *head,
+    uint32_t arity
+) {
+    PettaCallableFacts facts = {0};
+    if (!head || head->kind != ATOM_SYMBOL)
+        return facts;
+
+    const CettaPettaCallableInventory *inventory =
+        callables ? callables : (ctx ? ctx->callables : NULL);
+    const CettaPettaCallableInfo *info =
+        petta_callable_set_find(inventory, head->sym_id, arity);
+    const PettaHeadProfile *profile = petta_head_profile(head, arity);
+    bool builtin_relation = petta_head_has_builtin_relation(head, arity);
+
+    facts.inventory_info = info;
+    facts.profile = profile;
+    facts.builtin_relation = builtin_relation;
+    facts.callable = is_grounded_op(head->sym_id) ||
+                     builtin_relation ||
+                     (profile && profile->core_callable) ||
+                     info != NULL;
+    facts.relation_form = builtin_relation ||
+                          petta_callable_has_relation_form(info);
+    facts.returns_expression = info && info->returns_expression;
+    facts.syntax_arg_mask = info ? info->syntax_arg_mask : 0;
+    facts.expression_arg_mask = info ? info->expression_arg_mask : 0;
+
+    if (ctx && builtin_relation) {
+        facts.relation_head_id = petta_builtin_relation_head(ctx, head, arity);
+    } else if (petta_callable_has_relation_form(info)) {
+        facts.relation_head_id = info->relation_head_id;
+    }
+    return facts;
+}
+
 static bool petta_term_has_relation_form(Atom *term,
                                          const CettaPettaCallableInventory *callables) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len == 0)
@@ -1184,14 +1235,10 @@ static bool petta_term_has_relation_form(Atom *term,
 
     Atom *head = term->expr.elems[0];
     uint32_t nargs = term->expr.len - 1;
-    if (petta_head_has_builtin_relation(head, nargs))
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(NULL, callables, head, nargs);
+    if (facts.relation_form)
         return true;
-    if (head && head->kind == ATOM_SYMBOL && callables) {
-        const CettaPettaCallableInfo *info =
-            petta_callable_set_find(callables, head->sym_id, nargs);
-        if (petta_callable_has_relation_form(info))
-            return true;
-    }
 
     uint32_t child_start = (head && head->kind == ATOM_SYMBOL) ? 1 : 0;
     for (uint32_t i = child_start; i < term->expr.len; i++) {
@@ -1208,8 +1255,9 @@ static bool petta_term_has_callable_value_form(CettaPettaLowerContext *ctx,
     if (expr_head_is_name(term, "quote") && term->expr.len == 2)
         return false;
     Atom *head = term->expr.elems[0];
-    return head && head->kind == ATOM_SYMBOL &&
-           petta_head_is_callable(ctx, head, term->expr.len - 1);
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(ctx, NULL, head, term->expr.len - 1);
+    return facts.callable;
 }
 
 static bool petta_collect_pattern_bound_vars(Atom *term, PettaBoundVarSet *bound) {
@@ -1391,12 +1439,9 @@ static Atom *petta_relation_call_expr(CettaPettaLowerContext *ctx,
         return NULL;
     Atom *head = call_expr->expr.elems[0];
     uint32_t nargs = call_expr->expr.len - 1;
-    SymbolId relation_head = petta_builtin_relation_head(ctx, head, nargs);
-    if (relation_head == SYMBOL_ID_NONE) {
-        const CettaPettaCallableInfo *info = petta_callable_info(ctx, head, nargs);
-        if (petta_callable_has_relation_form(info))
-            relation_head = info->relation_head_id;
-    }
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(ctx, NULL, head, nargs);
+    SymbolId relation_head = facts.relation_head_id;
     if (relation_head == SYMBOL_ID_NONE)
         return NULL;
 
@@ -1463,12 +1508,9 @@ static Atom *petta_relation_call_expr_with_result_guards(
         return NULL;
     Atom *head = call_expr->expr.elems[0];
     uint32_t nargs = call_expr->expr.len - 1;
-    SymbolId relation_head = petta_builtin_relation_head(ctx, head, nargs);
-    if (relation_head == SYMBOL_ID_NONE) {
-        const CettaPettaCallableInfo *info = petta_callable_info(ctx, head, nargs);
-        if (petta_callable_has_relation_form(info))
-            relation_head = info->relation_head_id;
-    }
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(ctx, NULL, head, nargs);
+    SymbolId relation_head = facts.relation_head_id;
     if (relation_head == SYMBOL_ID_NONE)
         return NULL;
 
@@ -1636,8 +1678,9 @@ static Atom *petta_compile_relation_value_goal(CettaPettaLowerContext *ctx,
         return petta_wrap_rel_conj(ctx, constraint_goal, value_goal);
     }
 
-    bool is_callable = petta_head_is_callable(ctx, head, nargs);
-    if (!is_callable)
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(ctx, NULL, head, nargs);
+    if (!facts.callable)
         return NULL;
 
     Atom *post_goal = petta_rel_goal_true(ctx);
@@ -1728,6 +1771,13 @@ static Atom *petta_compile_relation_goal_expr(CettaPettaLowerContext *ctx,
             saw_child_goal = true;
         }
         return saw_child_goal ? goal : NULL;
+    }
+
+    if (expr->expr.len == 2 && atom_is_symbol_name(head, "translatePredicate")) {
+        return petta_wrap_rel_call(ctx,
+                                   petta_lower_term(ctx, expr),
+                                   atom_unit(ctx->arena),
+                                   atom_true(ctx->arena));
     }
 
     if (expr->expr.len == 3 &&
@@ -1954,12 +2004,13 @@ static Atom *petta_compile_relation_goal_expr(CettaPettaLowerContext *ctx,
     }
 
     uint32_t nargs = expr->expr.len - 1;
-    if (!petta_head_is_callable(ctx, head, nargs))
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(ctx, NULL, head, nargs);
+    if (!facts.callable)
         return NULL;
-    const CettaPettaCallableInfo *info = petta_callable_info(ctx, head, nargs);
     if (!petta_relation_expr_prefers_goal_lowering(expr) &&
         !petta_term_needs_relation(expr, ctx->callables) &&
-        !(info && info->goal_relation_lowering))
+        !(facts.inventory_info && facts.inventory_info->goal_relation_lowering))
         return NULL;
 
     Atom *relation_call = petta_relation_call_expr(ctx, expr, atom_true(ctx->arena));
@@ -2476,8 +2527,9 @@ static Atom *petta_lower_equation_decl(CettaPettaLowerContext *ctx, Atom *lhs,
         ctx->suppressed_recursive_value_arity = 0;
     }
     Atom *lowered_rhs = petta_lower_decl_body(ctx, rhs);
-    const CettaPettaCallableInfo *info = petta_callable_info(ctx, head, nargs);
-    if (info && info->returns_expression &&
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(ctx, NULL, head, nargs);
+    if (facts.returns_expression &&
         !expr_head_is_name(lowered_rhs, "quote")) {
         Atom *quote_args[] = { lowered_rhs };
         lowered_rhs = make_expr_with_head(
@@ -2494,8 +2546,8 @@ static Atom *petta_lower_equation_decl(CettaPettaLowerContext *ctx, Atom *lhs,
         if (pattern &&
             pattern->kind == ATOM_VAR &&
             (petta_bound_var_set_contains(&syntax_params, pattern->var_id) ||
-             (info && i <= 32 &&
-              (info->expression_arg_mask & ((uint32_t)1u << (i - 1)))))) {
+             (i <= 32 &&
+              (facts.expression_arg_mask & ((uint32_t)1u << (i - 1)))))) {
             lowered_args[i - 1] = pattern;
         } else {
             lowered_args[i - 1] = actual;
@@ -2521,7 +2573,9 @@ static Atom *petta_lower_relation_equation_decl(CettaPettaLowerContext *ctx,
 
     Atom *head = lhs->expr.elems[0];
     uint32_t nargs = lhs->expr.len - 1;
-    const CettaPettaCallableInfo *info = petta_callable_info(ctx, head, nargs);
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(ctx, NULL, head, nargs);
+    const CettaPettaCallableInfo *info = facts.inventory_info;
     if (!info)
         return NULL;
 
@@ -2650,6 +2704,11 @@ static Atom *petta_lower_progn(CettaPettaLowerContext *ctx, Atom *const *args,
     if (nargs == 0) return atom_unit(ctx->arena);
     Atom *tail = petta_lower_term(ctx, args[nargs - 1]);
     for (uint32_t i = nargs - 1; i > 0; i--) {
+        Atom *goal = petta_compile_relation_goal_expr(ctx, args[i - 1]);
+        if (goal) {
+            tail = petta_wrap_rel_run(ctx, goal, tail);
+            continue;
+        }
         Atom *discard = petta_fresh_var(ctx, "discard");
         Atom *prefix = petta_lower_term(ctx, args[i - 1]);
         Atom *let_args[] = { discard, prefix, tail };
@@ -3186,9 +3245,11 @@ static Atom *petta_lower_value(CettaPettaLowerContext *ctx, Atom *term) {
     Atom *head = term->expr.elems[0];
     uint32_t nargs = term->expr.len - 1;
     Atom *const *args = term->expr.elems + 1;
-    const PettaHeadProfile *profile = petta_head_profile(head, nargs);
+    PettaCallableFacts callable_facts =
+        petta_callable_facts_lookup(ctx, NULL, head, nargs);
+    const PettaHeadProfile *profile = callable_facts.profile;
     const CettaPettaCallableInfo *callable_info =
-        petta_callable_info(ctx, head, nargs);
+        callable_facts.inventory_info;
 
     if (atom_is_symbol_name(head, "quote") && nargs == 1) {
         return term;
@@ -3216,6 +3277,10 @@ static Atom *petta_lower_value(CettaPettaLowerContext *ctx, Atom *term) {
 
     if (atom_is_symbol_name(head, "progn")) {
         return petta_lower_progn(ctx, args, nargs);
+    }
+
+    if (atom_is_symbol_name(head, "translatePredicate") && nargs == 1) {
+        return term;
     }
 
     if (atom_is_symbol_name(head, "prog1")) {
@@ -3263,7 +3328,8 @@ static Atom *petta_lower_value(CettaPettaLowerContext *ctx, Atom *term) {
         args[0]->expr.len > 0 &&
         args[0]->expr.elems[0] &&
         args[0]->expr.elems[0]->kind == ATOM_SYMBOL &&
-        petta_head_is_callable(ctx, args[0]->expr.elems[0], args[0]->expr.len - 1) &&
+        petta_callable_facts_lookup(ctx, NULL, args[0]->expr.elems[0],
+                                    args[0]->expr.len - 1).callable &&
         petta_term_contains_vars(args[0])) {
         Atom *actual = petta_fresh_var(ctx, "collapse_value");
         Atom *goal = petta_compile_relation_value_goal(ctx, args[0], actual);
@@ -3522,14 +3588,12 @@ static bool petta_term_needs_relation(Atom *term,
         return false;
     Atom *head = term->expr.elems[0];
     uint32_t nargs = term->expr.len - 1;
-    if (petta_head_has_builtin_relation(head, nargs))
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(NULL, callables, head, nargs);
+    if (facts.builtin_relation)
         return true;
-    if (head && head->kind == ATOM_SYMBOL && callables) {
-        const CettaPettaCallableInfo *info =
-            petta_callable_set_find(callables, head->sym_id, nargs);
-        if (info && info->needs_relation_lowering)
-            return true;
-    }
+    if (facts.inventory_info && facts.inventory_info->needs_relation_lowering)
+        return true;
     uint32_t child_start = (head && head->kind == ATOM_SYMBOL) ? 1 : 0;
     for (uint32_t i = child_start; i < term->expr.len; i++) {
         if (petta_term_needs_relation(term->expr.elems[i], callables))
@@ -3548,16 +3612,14 @@ static bool petta_term_uses_goal_relation(
         return false;
     Atom *head = term->expr.elems[0];
     uint32_t nargs = term->expr.len - 1;
-    const PettaHeadProfile *profile = petta_head_profile(head, nargs);
-    if (profile && profile->relation_goal_form)
+    PettaCallableFacts facts =
+        petta_callable_facts_lookup(NULL, callables, head, nargs);
+    if (facts.profile && facts.profile->relation_goal_form)
         return true;
-    if (head && head->kind == ATOM_SYMBOL && callables) {
-        const CettaPettaCallableInfo *info =
-            petta_callable_set_find(callables, head->sym_id, nargs);
-        if (info && (info->goal_relation_lowering ||
-                     info->needs_relation_lowering))
-            return true;
-    }
+    if (facts.inventory_info &&
+        (facts.inventory_info->goal_relation_lowering ||
+         facts.inventory_info->needs_relation_lowering))
+        return true;
     uint32_t child_start = (head && head->kind == ATOM_SYMBOL) ? 1 : 0;
     for (uint32_t i = child_start; i < term->expr.len; i++) {
         if (petta_term_uses_goal_relation(term->expr.elems[i], callables))
