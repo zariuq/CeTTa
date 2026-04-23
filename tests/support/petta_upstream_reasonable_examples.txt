@@ -98,6 +98,7 @@ test_match_bug_minimal.metta
 test_string_comments.metta
 test_unify_eval_branches.metta
 tests.metta
+translatepredicate.metta
 translatorrule_fib.metta
 twostage.metta
 types.metta

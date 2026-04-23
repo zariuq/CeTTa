@@ -231,6 +231,7 @@ typedef struct {
     X(petta_rel_call, "__petta_rel_call") \
     X(petta_rel_conj, "__petta_rel_conj") \
     X(petta_rel_run, "__petta_rel_run") \
+    X(translatePredicate, "translatePredicate") \
     /* ── Prolog FFI ── */ \
     X(pl_atom, "pl-atom") \
     X(pl_call, "pl-call") \
