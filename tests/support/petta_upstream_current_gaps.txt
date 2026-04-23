@@ -1,7 +1,6 @@
 # Raw upstream Petta examples that still expose native --lang petta gaps
 # under the current broad sweep. Heavy/external examples were excluded
 # from this queue on purpose.
-callquoteevalreduce.metta
 fib.metta
 fibadd.metta
 fibsmart.metta

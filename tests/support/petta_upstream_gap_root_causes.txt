@@ -1,9 +1,9 @@
 # Native --lang petta current-gap root-cause classification
 #
 # Scope:
-# - 104 upstream examples are in petta_upstream_reasonable_examples.txt.
-# - 28 upstream examples remain in petta_upstream_current_gaps.txt.
-# - This file classifies those 28 by the capability layer most likely to
+# - 105 upstream examples are in petta_upstream_reasonable_examples.txt.
+# - 27 upstream examples remain in petta_upstream_current_gaps.txt.
+# - This file classifies those 27 by the capability layer most likely to
 #   retire them. A file may move between buckets as lower layers settle.
 #
 # Fresh smoke sweep shape on 2026-04-22:
@@ -14,17 +14,8 @@
 #   he_minimalmetta, letext, letlet, matchtypes, meta_types,
 #   parametric_types, recursive_types, superpose_primes, test_string_comments,
 #   types, types_dependent, types_nondet.
-
-P0 evaluation control, quote, parse, and host-owned HE surfaces
---------------------------------------------------------------
-Root need:
-- Own special evaluation surfaces in the runtime instead of letting imported
-  compatibility equations compete with host semantics.
-- Keep quote/noeval/unquote/call/eval/reduce behavior canonical and
-  non-duplicative.
-
-Files:
-- callquoteevalreduce.metta
+# - 2026-04-23 checkpoint: callquoteevalreduce.metta moved to the
+#   reasonable lane after the scoped phase-control regression fix.
 
 P0 match, binding, mutation, spaces, and unify continuation semantics
 --------------------------------------------------------------------

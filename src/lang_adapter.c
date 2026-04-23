@@ -16,11 +16,19 @@
 #include <unistd.h>
 
 typedef struct {
+    SymbolId head_id;
+    uint32_t arity;
+} CettaPettaPhaseFreezeHead;
+
+typedef struct {
     Arena *arena;
     uint64_t fresh_counter;
     struct CettaPettaCallableInventory *callables;
     SymbolId suppressed_recursive_value_head;
     uint32_t suppressed_recursive_value_arity;
+    CettaPettaPhaseFreezeHead *phase_freeze_heads;
+    uint32_t phase_freeze_len;
+    uint32_t phase_freeze_cap;
 } CettaPettaLowerContext;
 
 typedef enum {
@@ -331,6 +339,59 @@ static Atom *petta_wrap_noeval(CettaPettaLowerContext *ctx, Atom *value) {
                                args, 1);
 }
 
+static Atom *petta_wrap_quote(CettaPettaLowerContext *ctx, Atom *value) {
+    Atom *args[] = { value };
+    return make_expr_with_head(ctx->arena,
+                               atom_symbol_id(ctx->arena, g_builtin_syms.quote),
+                               args, 1);
+}
+
+static bool petta_phase_freeze_push(CettaPettaLowerContext *ctx,
+                                    SymbolId head_id,
+                                    uint32_t arity) {
+    if (!ctx || head_id == SYMBOL_ID_NONE)
+        return true;
+    for (uint32_t i = 0; i < ctx->phase_freeze_len; i++) {
+        if (ctx->phase_freeze_heads[i].head_id == head_id &&
+            ctx->phase_freeze_heads[i].arity == arity)
+            return true;
+    }
+    if (ctx->phase_freeze_len == ctx->phase_freeze_cap) {
+        uint32_t new_cap = ctx->phase_freeze_cap ? ctx->phase_freeze_cap * 2 : 4;
+        CettaPettaPhaseFreezeHead *new_items =
+            cetta_realloc(ctx->phase_freeze_heads,
+                          sizeof(CettaPettaPhaseFreezeHead) * new_cap);
+        if (!new_items)
+            return false;
+        ctx->phase_freeze_heads = new_items;
+        ctx->phase_freeze_cap = new_cap;
+    }
+    ctx->phase_freeze_heads[ctx->phase_freeze_len++] =
+        (CettaPettaPhaseFreezeHead){ .head_id = head_id, .arity = arity };
+    return true;
+}
+
+static void petta_phase_freeze_pop_to(CettaPettaLowerContext *ctx,
+                                      uint32_t saved_len) {
+    if (!ctx)
+        return;
+    if (saved_len < ctx->phase_freeze_len)
+        ctx->phase_freeze_len = saved_len;
+}
+
+static bool petta_phase_freeze_contains(CettaPettaLowerContext *ctx,
+                                        Atom *head,
+                                        uint32_t arity) {
+    if (!ctx || !head || head->kind != ATOM_SYMBOL)
+        return false;
+    for (uint32_t i = 0; i < ctx->phase_freeze_len; i++) {
+        if (ctx->phase_freeze_heads[i].head_id == head->sym_id &&
+            ctx->phase_freeze_heads[i].arity == arity)
+            return true;
+    }
+    return false;
+}
+
 static Atom *petta_rel_goal_true(CettaPettaLowerContext *ctx) {
     return atom_symbol_id(ctx->arena, g_builtin_syms.petta_rel_true);
 }
@@ -594,6 +655,20 @@ static bool petta_declares_callable_head(Atom *term, SymbolId *out_head,
     if (out_head) *out_head = head->sym_id;
     if (out_arity) *out_arity = lhs->expr.len - 1;
     return true;
+}
+
+static bool petta_self_mutation_adds_callable_head(Atom *term,
+                                                   SymbolId *out_head,
+                                                   uint32_t *out_arity) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len != 3)
+        return false;
+    Atom *head = term->expr.elems[0];
+    if (!atom_is_symbol_id(head, g_builtin_syms.add_atom) &&
+        !atom_is_symbol_id(head, g_builtin_syms.add_atom_nodup))
+        return false;
+    if (!atom_is_symbol_id(term->expr.elems[1], g_builtin_syms.self))
+        return false;
+    return petta_declares_callable_head(term->expr.elems[2], out_head, out_arity);
 }
 
 static bool petta_declares_expression_return_type(Atom *term,
@@ -946,6 +1021,88 @@ static bool petta_head_is_callable(CettaPettaLowerContext *ctx, Atom *head,
            petta_head_has_builtin_relation(head, arity) ||
            petta_head_is_core_callable(head, arity) ||
            petta_callable_info(ctx, head, arity) != NULL;
+}
+
+static bool petta_head_is_builtin_surface(Atom *head) {
+    return head &&
+           head->kind == ATOM_SYMBOL &&
+           head->sym_id != SYMBOL_ID_NONE &&
+           head->sym_id <= g_builtin_syms.native_handle;
+}
+
+static bool petta_head_is_petta_runtime_surface(Atom *head, uint32_t arity) {
+    const char *name = atom_name_cstr(head);
+    if (!name)
+        return false;
+    if (arity == 1) {
+        return strcmp(name, "repr") == 0 ||
+               strcmp(name, "repra") == 0 ||
+               strcmp(name, "is-function") == 0 ||
+               strcmp(name, "unquote") == 0;
+    }
+    if (arity == 2) {
+        return strcmp(name, "maplist") == 0 ||
+               strcmp(name, "forall") == 0 ||
+               strcmp(name, "test") == 0 ||
+               strcmp(name, "return-on-error") == 0 ||
+               strcmp(name, "noreduce-eq") == 0 ||
+               strcmp(name, "for-each-in-atom") == 0 ||
+               strcmp(name, "|->") == 0;
+    }
+    if (arity == 3) {
+        return strcmp(name, "match-type-or") == 0 ||
+               strcmp(name, "if-error") == 0;
+    }
+    if (arity == 4)
+        return strcmp(name, "match-types") == 0;
+    return false;
+}
+
+static bool petta_head_is_explicit_value_surface(Atom *head, uint32_t arity) {
+    if (arity != 1)
+        return false;
+    return atom_is_symbol_name(head, "quote") ||
+           atom_is_symbol_name(head, "call") ||
+           atom_is_symbol_name(head, "eval") ||
+           atom_is_symbol_name(head, "reduce") ||
+           atom_is_symbol_name(head, "collapse") ||
+           atom_is_symbol_name(head, "superpose");
+}
+
+static bool petta_expr_is_explicit_value_surface(Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0)
+        return false;
+    return petta_head_is_explicit_value_surface(term->expr.elems[0],
+                                               term->expr.len - 1);
+}
+
+static bool petta_expr_should_freeze_as_constructor_arg(
+    CettaPettaLowerContext *ctx,
+    Atom *term
+) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0)
+        return false;
+    if (petta_expr_is_explicit_value_surface(term))
+        return false;
+    Atom *head = term->expr.elems[0];
+    uint32_t nargs = term->expr.len - 1;
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    if (petta_head_is_builtin_surface(head))
+        return false;
+    if (petta_head_is_petta_runtime_surface(head, nargs))
+        return false;
+    if (petta_head_is_explicit_value_surface(head, nargs))
+        return false;
+    if (petta_head_profile(head, nargs))
+        return false;
+    return petta_phase_freeze_contains(ctx, head, nargs);
+}
+
+static Atom *petta_lower_constructor_arg(CettaPettaLowerContext *ctx, Atom *arg) {
+    if (petta_expr_should_freeze_as_constructor_arg(ctx, arg))
+        return petta_wrap_quote(ctx, arg);
+    return petta_lower_term(ctx, arg);
 }
 
 static bool petta_is_suppressed_recursive_value_call(
@@ -2709,7 +2866,13 @@ static Atom *petta_lower_let(CettaPettaLowerContext *ctx,
     Atom *value = args[1];
     Atom *body_expr = args[2];
     Atom *bound_value = petta_fresh_var(ctx, "let_value");
+    uint32_t saved_phase_freeze_len = ctx->phase_freeze_len;
+    SymbolId future_head = SYMBOL_ID_NONE;
+    uint32_t future_arity = 0;
+    if (petta_self_mutation_adds_callable_head(value, &future_head, &future_arity))
+        (void)petta_phase_freeze_push(ctx, future_head, future_arity);
     Atom *body = petta_lower_profile_arg(ctx, profile, 2, body_expr);
+    petta_phase_freeze_pop_to(ctx, saved_phase_freeze_len);
     Atom *goal = NULL;
     if (petta_atom_is_true_literal(pattern) &&
         value &&
@@ -3087,6 +3250,13 @@ static Atom *petta_lower_value(CettaPettaLowerContext *ctx, Atom *term) {
                                    eval_args, 1);
     }
 
+    if (atom_is_symbol_name(head, "call") && nargs == 1) {
+        Atom *call_args[] = { petta_lower_term(ctx, args[0]) };
+        return make_expr_with_head(ctx->arena,
+                                   atom_symbol_id(ctx->arena, g_builtin_syms.call_text),
+                                   call_args, 1);
+    }
+
     if (atom_is_symbol_name(head, "collapse") && nargs == 1 &&
         args[0] &&
         args[0]->kind == ATOM_EXPR &&
@@ -3280,10 +3450,20 @@ static Atom *petta_lower_value(CettaPettaLowerContext *ctx, Atom *term) {
     if (relational != term)
         return relational;
 
+    bool constructor_data_args =
+        head &&
+        head->kind == ATOM_SYMBOL &&
+        !profile &&
+        !petta_head_is_builtin_surface(head) &&
+        !petta_head_is_petta_runtime_surface(head, nargs) &&
+        !petta_head_is_explicit_value_surface(head, nargs) &&
+        !petta_head_is_callable(ctx, head, nargs);
     bool changed = false;
     Atom **lowered_args = arena_alloc(ctx->arena, sizeof(Atom *) * nargs);
     for (uint32_t i = 0; i < nargs; i++) {
-        lowered_args[i] = petta_lower_term(ctx, args[i]);
+        lowered_args[i] = constructor_data_args
+            ? petta_lower_constructor_arg(ctx, args[i])
+            : petta_lower_term(ctx, args[i]);
         changed = changed || lowered_args[i] != args[i];
     }
     if (!changed) return term;
@@ -3623,6 +3803,7 @@ static int petta_adapt_surface_atoms(Atom **atoms, int n, Arena *arena,
 
     petta_path_set_free(&visited_imports);
     petta_callable_set_free(&callables);
+    free(ctx.phase_freeze_heads);
     *out_atoms = adapted;
     return out_len;
 }
