@@ -1,0 +1,46 @@
+surface_id	direction	kind	payload_shape	benchmark	status	notes
+add-singular-lowered	host->rust	mutation	singular expr lowered in C	./runtime/bench_mork_bridge_add	implemented	Measures lowering plus one expr-byte bridge call per atom.
+add-singular-preencoded	host->rust	mutation	singular expr already encoded	./runtime/bench_mork_bridge_add	implemented	Measures low-level bridge call plus PathMap insert without C lowering.
+add-batch-lowered	host->rust	mutation	length-prefixed batch lowered in C	./runtime/bench_mork_bridge_add	implemented	Measures lowered batch packet build plus one batch bridge call.
+add-batch-preencoded	host->rust	mutation	length-prefixed batch already encoded	./runtime/bench_mork_bridge_add	implemented	Measures batch bridge call plus PathMap insert without C lowering.
+query-v1-text-packet-exact	rust->host	query	packet only, 1 returned row	./runtime/bench_mork_bridge_query	implemented	Legacy compatibility packet using text payloads.
+query-v1-text-packet-miss	rust->host	query	packet only, 0 returned rows	./runtime/bench_mork_bridge_query	implemented	Shows fixed miss-side return overhead for the v1 text packet.
+query-v1-text-packet-scan	rust->host	query	packet only, N returned rows	./runtime/bench_mork_bridge_query	implemented	Legacy text packet throughput at full-scan scale.
+query-v1-text-parse	rust->host	query	packet parse plus host text reparse	-	planned	Needed for apples-to-apples comparison with Prolog-style text return paths.
+query-v2-packet-exact	rust->host	query	packet only, 1 returned row	./runtime/bench_mork_bridge_query	implemented	Measures bridge packet construction and return for the current raw-byte query seam.
+query-v2-packet-miss	rust->host	query	packet only, 0 returned rows	./runtime/bench_mork_bridge_query	implemented	Measures fixed miss-side overhead for the current raw-byte query seam.
+query-v2-packet-scan	rust->host	query	packet only, N returned rows	./runtime/bench_mork_bridge_query	implemented	Measures raw-byte packet construction and return at full-scan scale.
+query-v2-scan-exact	rust->host	query	packet parse only, 1 returned row	./runtime/bench_mork_bridge_query	implemented	Measures C-side packet scan cost without value materialization.
+query-v2-scan-miss	rust->host	query	packet parse only, 0 returned rows	./runtime/bench_mork_bridge_query	implemented	Measures zero-row packet validation overhead.
+query-v2-scan-scan	rust->host	query	packet parse only, N returned rows	./runtime/bench_mork_bridge_query	implemented	Measures packet header/ref/binding traversal without value decode.
+query-v2-decode-exact	rust->host	query	packet parse plus value decode, 1 returned row	./runtime/bench_mork_bridge_query	implemented	Measures CeTTa-style raw-byte value decode for the current query seam.
+query-v2-decode-miss	rust->host	query	packet parse plus value decode, 0 returned rows	./runtime/bench_mork_bridge_query	implemented	Measures fixed decode-path overhead when no rows return.
+query-v2-decode-scan	rust->host	query	packet parse plus value decode, N returned rows	./runtime/bench_mork_bridge_query	implemented	Measures raw-byte return plus C decode throughput at full-scan scale.
+remove-singular-lowered	host->rust	mutation	singular expr lowered in C	-	planned	Same seam class as add, but removal should be measured separately.
+remove-singular-preencoded	host->rust	mutation	singular expr already encoded	-	planned	Would isolate remove-side bridge overhead without lowering.
+remove-batch-preencoded	host->rust	mutation	length-prefixed batch already encoded	-	unsure	Only worth adding if a real batch remove seam lands.
+scalar-size-call	host<->rust	scalar	no rows, one u64 reply	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures `space_size` fixed cost directly.
+scalar-unique-size-call	host<->rust	scalar	no rows, one u64 reply	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures `space_unique_size` fixed cost directly.
+cursor-new	host->rust	cursor	cursor handle allocation	./runtime/bench_mork_bridge_scalar_cursor	implemented	Useful fixed overhead for streaming/query plans that reuse cursors.
+cursor-path-exists-root	host<->rust	cursor	root bool probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures the fixed boolean status call on the root cursor.
+cursor-is-val-root	host<->rust	cursor	root bool probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures root value-status latency without cursor movement.
+cursor-child-count-root	host<->rust	cursor	root u64 probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures fixed child-count latency on the root cursor.
+cursor-val-count-root	host<->rust	cursor	root u64 probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures fixed val-count latency on the root cursor.
+cursor-depth-root	host<->rust	cursor	root u64 probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures fixed depth latency on the root cursor.
+cursor-next-val	rust->host	cursor	step to next value	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures row streaming over a shared branch without packet materialization.
+cursor-path-bytes-branch	rust->host	cursor	read branch path bytes	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures byte return cost on a shared branch path.
+cursor-path-bytes-leaf	rust->host	cursor	read leaf path bytes	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures byte return cost on a concrete value path.
+cursor-child-bytes-root	rust->host	cursor	read root child bytes	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures child-label return cost at the root.
+cursor-child-bytes-branch	rust->host	cursor	read branch child bytes	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures child-label return cost one level above streamed values.
+snapshot-dump-packet	rust->host	snapshot	space dump to bridge packet	./runtime/bench_mork_bridge_space_ops	implemented	Separates snapshot packet return from ACT file I/O.
+act-dump	rust->host	snapshot	space dump to ACT bytes/file	./runtime/bench_mork_bridge_space_ops	implemented	Measures ACT snapshot export cost to a stable file path.
+act-open	host->rust	snapshot	open attached ACT handle	-	planned	Not directly exposed on the low-level bridge; measure at the higher-level MORK surface if needed.
+act-load	host->rust	snapshot	load ACT into live space	./runtime/bench_mork_bridge_space_ops	implemented	Measures materialized ACT startup latency into a fresh live bridge space.
+space-join-new	host->rust	algebra	join two bridge spaces into new handle	./runtime/bench_mork_bridge_space_ops	implemented	Measures algebra allocation plus join work without mutating the input handles.
+space-join-into	host->rust	algebra	join rhs into destination handle	./runtime/bench_mork_bridge_space_ops	implemented	Matches the mutating surface CeTTa currently exposes at the language layer.
+space-meet-new	host->rust	algebra	meet two bridge spaces into new handle	./runtime/bench_mork_bridge_space_ops	implemented	Measures algebra allocation plus meet work without mutating the input handles.
+space-meet-into	host->rust	algebra	meet rhs into destination handle	./runtime/bench_mork_bridge_space_ops	implemented	Matches the mutating surface CeTTa currently exposes at the language layer.
+space-subtract-new	host->rust	algebra	subtract one bridge space from another into new handle	./runtime/bench_mork_bridge_space_ops	implemented	Measures algebra allocation plus subtraction work without mutating the input handles.
+space-subtract-into	host->rust	algebra	subtract rhs from destination handle	./runtime/bench_mork_bridge_space_ops	implemented	Matches the mutating surface CeTTa currently exposes at the language layer.
+space-restrict-new	host->rust	algebra	restrict one bridge space by another into new handle	./runtime/bench_mork_bridge_space_ops	implemented	Measures algebra allocation plus prefix restriction without mutating the input handles.
+space-restrict-into	host->rust	algebra	restrict destination by rhs selector	./runtime/bench_mork_bridge_space_ops	implemented	Matches the mutating surface CeTTa currently exposes at the language layer.

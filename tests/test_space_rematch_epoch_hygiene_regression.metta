@@ -22,10 +22,13 @@
 !(add-atom &ss (: ax-1 (→ $𝜑 (→ $𝜓 $𝜑))))
 !(fs-add-to-ss &rb &ss)
 
-!(assertAlphaEqualToResult
+; Space engines do not promise get-atoms order, so assert the stored atom set
+; order-insensitively while still checking alpha-distinct variable structure.
+!(assertAlphaEqual
   (get-atoms &ss)
-  ((: ax-1 (→ $a (→ $b $a)))
-   (: (ax-mp ax-1 ax-1) (→ $u (→ $v (→ $w $v))))))
+  (superpose
+    ((: ax-1 (→ $a (→ $b $a)))
+     (: (ax-mp ax-1 ax-1) (→ $u (→ $v (→ $w $v)))))))
 
 !(assertAlphaEqualToResult
   (match &ss (: (ax-mp ax-1 ax-1) $t) $t)

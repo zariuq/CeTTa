@@ -910,10 +910,10 @@ static Atom *module_export_lhs(Arena *a, const char *name, long arity, Atom ***v
 static bool module_add_export_constant_direct(Space *target_space,
                                               const char *name,
                                               Atom *value_atom) {
-    if (!target_space || !target_space->universe || !name || !value_atom)
+    if (!target_space || !target_space->native.universe || !name || !value_atom)
         return false;
 
-    TermUniverse *universe = target_space->universe;
+    TermUniverse *universe = target_space->native.universe;
     AtomId lhs_head_id =
         tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, name));
     if (lhs_head_id == CETTA_ATOM_ID_NONE)

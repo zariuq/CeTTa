@@ -1,14 +1,8 @@
 ; Top-level PeTTa checkpoint validation for the post-split WM-PLN workload.
-; This keeps all named-space imports at the file top level to avoid PeTTa's
-; nested import-to-space seam.
+; Keep the checkpoint on the shipped flat-loader seam rather than repeating
+; many imports into the same named space.
 
-!(import! &self ./support/bio_wmpln_workload_rules.metta)
-!(import! &bio-wmpln-rb ./support/bio_wmpln_rulebase_1m.metta)
-!(import! &bio-wmpln-kb ./eqtl_for_mining.metta)
-!(import! &bio-wmpln-kb ./bio_refseq_723k.metta)
-!(import! &bio-wmpln-kb ./bio_multirelational_kb_scaled.metta)
-!(import! &bio-wmpln-kb ./bio_hetionet_kb.metta)
-!(import! &bio-wmpln-kb ./discovered_patterns_1k.metta)
+!(import! &self ./support/bio_wmpln_core_1m_petta_flat.metta)
 
 !(let $hits
       (collapse

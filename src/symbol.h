@@ -125,6 +125,7 @@ typedef struct {
     X(bind_bang, "bind!") \
     X(add_reduct, "add-reduct") \
     X(add_atom, "add-atom") \
+    X(add_atoms, "add-atoms") \
     X(add_atom_nodup, "add-atom-nodup") \
     X(mork_add_atoms, "mork:add-atoms") \
     X(mork_add_atom, "mork:add-atom") \

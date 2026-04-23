@@ -3,7 +3,23 @@
 
 #include <string.h>
 
+#ifndef CETTA_RUNTIME_STATS_IMPL
+#define CETTA_RUNTIME_STATS_IMPL 1
+#endif
 #include "stats.h"
+
+#ifdef cetta_runtime_stats_is_enabled
+#undef cetta_runtime_stats_is_enabled
+#endif
+#ifdef cetta_runtime_stats_add
+#undef cetta_runtime_stats_add
+#endif
+#ifdef cetta_runtime_stats_set
+#undef cetta_runtime_stats_set
+#endif
+#ifdef cetta_runtime_stats_update_max
+#undef cetta_runtime_stats_update_max
+#endif
 
 static uint64_t g_test_runtime_stats_counters[CETTA_RUNTIME_COUNTER_COUNT];
 

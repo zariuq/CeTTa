@@ -33,9 +33,11 @@
 !(add-atom &ab (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
 
 !(bind! &ss (new-space))
-!(match &ab (: $x $a) (add-atom &ss (: $x $a)))
-!(if (<= 1 (depth)) (fs-add-to-ss &rb &ss) (empty))
-!(if (<= 2 (depth)) (fs-add-to-ss &rb &ss) (empty))
+; Force the side effects, but keep this regression focused on the semantic
+; witness below rather than incidental unit-result multiplicities.
+!(let $_ (collapse (match &ab (: $x $a) (add-atom &ss (: $x $a)))) ())
+!(let $_ (collapse (if (<= 1 (depth)) (fs-add-to-ss &rb &ss) (empty))) ())
+!(let $_ (collapse (if (<= 2 (depth)) (fs-add-to-ss &rb &ss) (empty))) ())
 
 !(assertEqual
   (> (size-atom
