@@ -1685,6 +1685,37 @@ bool space_remove(Space *s, Atom *atom) {
     return false;
 }
 
+bool space_remove_alpha_eq_all(Space *s, Atom *atom) {
+    if (!s)
+        return false;
+    bool removed_any = false;
+    while (true) {
+        bool removed_one = false;
+        if (space_is_queue(s))
+            space_linearize(s);
+        for (uint32_t i = 0; i < s->len; i++) {
+            if (!atom_alpha_eq(space_get_at(s, i), atom))
+                continue;
+            if (space_is_ordered(s)) {
+                for (uint32_t j = i + 1; j < s->len; j++)
+                    s->atom_ids[j - 1] = s->atom_ids[j];
+                s->len--;
+            } else {
+                s->atom_ids[i] = s->atom_ids[--s->len];
+            }
+            space_mark_indexes_dirty(s);
+            space_match_backend_note_remove(s);
+            space_bump_revision(s);
+            removed_any = true;
+            removed_one = true;
+            break;
+        }
+        if (!removed_one)
+            break;
+    }
+    return removed_any;
+}
+
 bool space_contains_atom_id(const Space *s, AtomId atom_id) {
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
@@ -2494,5 +2525,99 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
     ensure_eq_index(s);
     if (s->native.eq_idx.wildcard.len > 0)
         return true;
-    return s->native.eq_idx.buckets[symbol_hash(head)].len > 0;
+    EqBucket *bucket = &s->native.eq_idx.buckets[symbol_hash(head)];
+    for (uint32_t i = 0; i < bucket->len; i++) {
+        uint32_t atom_idx = bucket->atom_indices[i];
+        if (atom_idx >= s->native.len)
+            continue;
+        AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            if (eq_head_symbol_id(s, lhs_id) == head)
+                return true;
+            continue;
+        }
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
+            continue;
+        if (eq_head_symbol(lhs) == head)
+            return true;
+    }
+    return false;
+}
+
+bool space_equations_have_head_with_arity(Space *s, SymbolId head,
+                                          uint32_t nargs) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_eq_index(s);
+    EqBucket *bucket = &s->native.eq_idx.buckets[symbol_hash(head)];
+    for (uint32_t i = 0; i < bucket->len; i++) {
+        uint32_t atom_idx = bucket->atom_indices[i];
+        if (atom_idx >= s->native.len)
+            continue;
+        AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            if (eq_head_symbol_id(s, lhs_id) != head)
+                continue;
+            uint32_t lhs_arity = tu_arity(s->native.universe, lhs_id);
+            uint32_t lhs_nargs = lhs_arity > 0 ? lhs_arity - 1 : 0;
+            if (lhs_nargs == nargs)
+                return true;
+            continue;
+        }
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
+            continue;
+        if (eq_head_symbol(lhs) != head)
+            continue;
+        uint32_t lhs_nargs = (lhs->kind == ATOM_EXPR && lhs->expr.len > 0)
+                                 ? lhs->expr.len - 1
+                                 : 0;
+        if (lhs_nargs == nargs)
+            return true;
+    }
+    return false;
+}
+
+bool space_equations_have_head_with_greater_arity(Space *s, SymbolId head,
+                                                  uint32_t nargs) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_eq_index(s);
+    EqBucket *bucket = &s->native.eq_idx.buckets[symbol_hash(head)];
+    for (uint32_t i = 0; i < bucket->len; i++) {
+        uint32_t atom_idx = bucket->atom_indices[i];
+        if (atom_idx >= s->native.len)
+            continue;
+        AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            if (eq_head_symbol_id(s, lhs_id) != head)
+                continue;
+            uint32_t lhs_arity = tu_arity(s->native.universe, lhs_id);
+            uint32_t lhs_nargs = lhs_arity > 0 ? lhs_arity - 1 : 0;
+            if (lhs_nargs > nargs)
+                return true;
+            continue;
+        }
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (!space_equation_children_at_id(s, equation_id, &lhs, &rhs))
+            continue;
+        if (eq_head_symbol(lhs) != head)
+            continue;
+        uint32_t lhs_nargs = (lhs->kind == ATOM_EXPR && lhs->expr.len > 0)
+                                 ? lhs->expr.len - 1
+                                 : 0;
+        if (lhs_nargs > nargs)
+            return true;
+    }
+    return false;
 }

@@ -117,6 +117,7 @@ struct HashConsTable {
 };
 
 void hashcons_init(HashConsTable *hc);
+void hashcons_init_sized(HashConsTable *hc, uint32_t initial_size);
 void hashcons_free(HashConsTable *hc);
 /* Return shared atom if identical one exists, otherwise insert and return */
 Atom *hashcons_get(HashConsTable *hc, Atom *atom);
@@ -217,6 +218,7 @@ SymbolId atom_head_symbol_id(Atom *a);
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
 bool atom_eq(Atom *a, Atom *b);
+int atom_total_order(Atom *lhs, Atom *rhs);
 
 /* ── Printing ───────────────────────────────────────────────────────────── */
 

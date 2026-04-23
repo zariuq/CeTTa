@@ -6,6 +6,8 @@
 #include <limits.h>
 #include <stdio.h>
 
+#include "lang.h"
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -79,7 +81,8 @@ typedef enum {
 
 typedef enum {
     CETTA_FOREIGN_BACKEND_NONE = 0,
-    CETTA_FOREIGN_BACKEND_PYTHON = 1
+    CETTA_FOREIGN_BACKEND_PYTHON = 1,
+    CETTA_FOREIGN_BACKEND_PROLOG = 2
 } CettaForeignBackendKind;
 
 typedef struct {
@@ -176,6 +179,9 @@ typedef struct {
 
 typedef struct {
     const CettaProfile *profile;
+    const CettaLanguageSpec *language;
+    bool relative_module_policy_overridden;
+    CettaRelativeModulePolicy relative_module_policy_override;
     CettaModuleResolver module_resolver;
     CettaEvaluatorOptions options;
 } CettaEvalSession;
@@ -222,13 +228,19 @@ bool cetta_eval_session_set_type_check_auto(CettaEvalSession *session, bool enab
 bool cetta_eval_session_set_interpreter_mode(CettaEvalSession *session,
                                              CettaInterpreterMode mode);
 bool cetta_eval_session_set_max_stack_depth(CettaEvalSession *session, int depth);
+bool cetta_eval_session_set_relative_module_policy(
+    CettaEvalSession *session,
+    CettaRelativeModulePolicy policy);
+CettaRelativeModulePolicy
+cetta_eval_session_relative_module_policy(const CettaEvalSession *session);
 void cetta_eval_session_set_fuel_limit(CettaEvalSession *session, int fuel_limit);
 bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
                                                const char *key,
                                                CettaEvalOptionValueKind kind,
                                                const char *repr,
                                                int64_t int_value);
-void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile);
+void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile,
+                             const CettaLanguageSpec *language);
 void cetta_eval_session_init_he_compat(CettaEvalSession *session);
 void cetta_eval_session_init_he_extended(CettaEvalSession *session);
 void cetta_eval_session_init_he_prime(CettaEvalSession *session);

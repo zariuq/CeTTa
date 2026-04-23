@@ -1,0 +1,6 @@
+!(assertEqual (let (cons $Head $Tail) (1 2 3) ($Head $Tail))
+              (1 (2 3)))
+!(assertEqual (cons 42 ())
+              (42))
+!(assertEqual (decons (1 2 3))
+              (1 (2 3)))

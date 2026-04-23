@@ -32,6 +32,7 @@ typedef struct CettaLibraryContext {
     TermUniverse term_universe;
     uint32_t active_mask;
     char root_dir[4096];
+    char working_dir[PATH_MAX];
     char script_dir[PATH_MAX];
     char import_dirs[CETTA_MAX_IMPORT_DIR_DEPTH][PATH_MAX];
     uint32_t import_dir_len;
@@ -60,7 +61,8 @@ typedef struct CettaLibraryContext {
 
 void cetta_library_context_init(CettaLibraryContext *ctx);
 void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
-                                             const CettaProfile *profile);
+                                             const CettaProfile *profile,
+                                             const CettaLanguageSpec *language);
 void cetta_library_context_free(CettaLibraryContext *ctx);
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0);
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename);

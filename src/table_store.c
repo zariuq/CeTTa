@@ -45,6 +45,7 @@ static const CettaVariantShapeOptions kTableStoreVariantOptions = {
     .slot_policy = CETTA_VARIANT_SLOT_ORDINAL_NAME,
     .slot_name = "$T",
     .share_immutable = false,
+    .hashcons_initial_size = 512,
 };
 
 static void table_stored_answers_init(TableStoredAnswers *answers) {

@@ -162,6 +162,16 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "query-episode-promoted-answer-count",
     "query-episode-promoted-answer-bytes",
     "query-episode-delayed-outcome-survivor-count",
+    "eval-tail-reenter-count",
+    "eval-tail-reenter-extra-env-count",
+    "eval-tail-live-binding-entries-peak",
+    "eval-tail-live-binding-constraints-peak",
+    "eval-chain-call-count",
+    "eval-chain-identity-tail-reenter-count",
+    "eval-chain-single-result-fastpath-count",
+    "eval-chain-multi-result-fallback-count",
+    "eval-chain-empty-result-count",
+    "eval-chain-visible-project-count",
 };
 
 static int64_t clamp_counter(uint64_t value) {
