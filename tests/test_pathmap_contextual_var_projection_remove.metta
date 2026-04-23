@@ -1,0 +1,43 @@
+!(bind! &native (new-space))
+!(add-atom &native (schema $x (wrap $x)))
+!(assertAlphaEqualToResult
+  (match &native (schema $q $body) ($q $body))
+  (($a (wrap $a))))
+!(match &native (schema $q $body)
+  (remove-atom &native (schema $q $body)))
+!(assertEqualToResult (count-atoms &native) (0))
+
+!(bind! &native2 (new-space))
+!(add-atom &native2 (schema $x (wrap $x)))
+!(add-atom &native2 (schema $y (wrap $y)))
+!(assertEqualToResult (count-atoms &native2) (2))
+!(remove-atom &native2 (schema $z (wrap $z)))
+!(assertEqualToResult (count-atoms &native2) (2))
+!(assertAlphaEqualToResult
+  (match &native2 (schema $q $body) ($q $body))
+  (($a (wrap $a)) ($b (wrap $b))))
+!(match &native2 (schema $q $body)
+  (remove-atom &native2 (schema $q $body)))
+!(assertEqualToResult (count-atoms &native2) (0))
+
+!(bind! &p (new-space pathmap))
+!(add-atom &p (schema $x (wrap $x)))
+!(assertAlphaEqualToResult
+  (match &p (schema $q $body) ($q $body))
+  (($a (wrap $a))))
+!(match &p (schema $q $body)
+  (remove-atom &p (schema $q $body)))
+!(assertEqualToResult (count-atoms &p) (0))
+
+!(bind! &p2 (new-space pathmap))
+!(add-atom &p2 (schema $x (wrap $x)))
+!(add-atom &p2 (schema $y (wrap $y)))
+!(assertEqualToResult (count-atoms &p2) (2))
+!(remove-atom &p2 (schema $z (wrap $z)))
+!(assertEqualToResult (count-atoms &p2) (2))
+!(assertAlphaEqualToResult
+  (match &p2 (schema $q $body) ($q $body))
+  (($a (wrap $a)) ($b (wrap $b))))
+!(match &p2 (schema $q $body)
+  (remove-atom &p2 (schema $q $body)))
+!(assertEqualToResult (count-atoms &p2) (0))
