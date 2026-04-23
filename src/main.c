@@ -5,6 +5,7 @@
 #include "eval.h"
 #include "library.h"
 #include "lang.h"
+#include "lang_adapter.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
 #include "mm2_lower.h"
@@ -555,7 +556,8 @@ static void write_results(FILE *out, ResultSet *rs) {
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
-    fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
+    fputs("       cetta [--profile <he-compat|he-extended|he-prime>] <file.metta>\n", out);
+    fputs("       cetta [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: --lang selects the driver/front-end; --profile selects the visible surface policy\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
@@ -678,13 +680,14 @@ static bool main_try_add_builtin_type_decls_direct(Space *space) {
     static const char *cmp_ops[] = {"<", ">", "<=", ">=", NULL};
 
     TermUniverse *universe = space->native.universe;
-    AtomId decl_ids[11];
+    AtomId decl_ids[12];
     uint32_t decl_count = 0;
 
     AtomId colon_id = tu_intern_symbol(universe, g_builtin_syms.colon);
     AtomId arrow_id = tu_intern_symbol(universe, g_builtin_syms.arrow);
     AtomId equals_id = tu_intern_symbol(universe, g_builtin_syms.equals);
     AtomId eqeq_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "=="));
+    AtomId neq_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "!="));
     AtomId number_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "Number"));
     AtomId bool_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "Bool"));
     AtomId undefined_id =
@@ -699,6 +702,7 @@ static bool main_try_add_builtin_type_decls_direct(Space *space) {
 
     if (colon_id == CETTA_ATOM_ID_NONE || arrow_id == CETTA_ATOM_ID_NONE ||
         equals_id == CETTA_ATOM_ID_NONE || eqeq_id == CETTA_ATOM_ID_NONE ||
+        neq_id == CETTA_ATOM_ID_NONE ||
         number_id == CETTA_ATOM_ID_NONE || bool_id == CETTA_ATOM_ID_NONE ||
         undefined_id == CETTA_ATOM_ID_NONE || t_var_id == CETTA_ATOM_ID_NONE)
         return false;
@@ -737,6 +741,10 @@ static bool main_try_add_builtin_type_decls_direct(Space *space) {
 
     AtomId eqeq_decl_children[3] = {colon_id, eqeq_id, arrow_eqeq_id};
     decl_ids[decl_count] = tu_expr_from_ids(universe, eqeq_decl_children, 3);
+    if (decl_ids[decl_count++] == CETTA_ATOM_ID_NONE)
+        return false;
+    AtomId neq_decl_children[3] = {colon_id, neq_id, arrow_eqeq_id};
+    decl_ids[decl_count] = tu_expr_from_ids(universe, neq_decl_children, 3);
     if (decl_ids[decl_count++] == CETTA_ATOM_ID_NONE)
         return false;
 
@@ -783,6 +791,49 @@ static void main_add_builtin_type_decls(Space *space, Arena *arena) {
         atom_symbol(arena, "=="), arrow_eqeq);
     if (!space_admit_atom(space, arena, eqeq_decl))
         space_add(space, eqeq_decl);
+    Atom *neq_decl = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.colon),
+        atom_symbol(arena, "!="), arrow_eqeq);
+    if (!space_admit_atom(space, arena, neq_decl))
+        space_add(space, neq_decl);
+}
+
+static void main_apply_language_stdlib_type_prunes(Space *space, Arena *arena,
+                                                   const CettaLanguageSpec *lang) {
+    size_t prune_count = 0;
+    const CettaTypeDeclSignature *prunes =
+        cetta_language_stdlib_type_prunes(lang, &prune_count);
+    if (!prunes || prune_count == 0)
+        return;
+
+    for (size_t i = 0; i < prune_count; i++) {
+        Atom *decl =
+            atom_expr3(arena,
+                       atom_symbol_id(arena, g_builtin_syms.colon),
+                       atom_symbol(arena, prunes[i].head_name),
+                       atom_expr(arena, (Atom *[]){
+                           atom_symbol_id(arena, g_builtin_syms.arrow),
+                           atom_symbol(arena, prunes[i].arg_type_name),
+                           atom_symbol(arena, prunes[i].result_type_name)
+                       }, 3));
+        (void)space_remove(space, decl);
+    }
+}
+
+static bool main_load_language_prelude(Space *space, Arena *arena,
+                                       TermUniverse *universe,
+                                       const CettaLanguageSpec *lang) {
+    const char *prelude = cetta_language_prelude_text(lang);
+    if (!prelude || prelude[0] == '\0')
+        return true;
+
+    AtomId *prelude_ids = NULL;
+    int prelude_count =
+        cetta_language_parse_text_ids(lang, prelude, arena, universe, &prelude_ids);
+    if (prelude_count < 0)
+        return false;
+    for (int i = 0; i < prelude_count; i++)
+        space_add_atom_id(space, prelude_ids[i]);
+    return true;
 }
 
 typedef struct {
@@ -907,6 +958,9 @@ int main(int argc, char **argv) {
     size_t inline_cap = 0;
     const char *script_path = NULL;
     int script_arg_start = -1;
+    bool import_mode_override = false;
+    CettaRelativeModulePolicy import_mode =
+        CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
     bool count_only = false;
@@ -1035,6 +1089,18 @@ int main(int argc, char **argv) {
                 cetta_profile_print_inventory(stderr);
                 return 2;
             }
+            continue;
+        }
+        if (strcmp(argv[i], "--import-mode") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!cetta_relative_module_policy_from_name(argv[++i], &import_mode)) {
+                fprintf(stderr, "error: unknown import mode '%s'\n", argv[i]);
+                return 2;
+            }
+            import_mode_override = true;
             continue;
         }
         if (strcmp(argv[i], "-e") == 0) {
@@ -1205,12 +1271,16 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    cetta_library_context_init_with_profile(&libraries, profile);
+    cetta_library_context_init_with_profile(&libraries, profile, lang);
     cleanup.libraries_initialized = true;
     term_universe_set_persistent_arena(&libraries.term_universe, &arena);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
+    if (import_mode_override) {
+        cetta_eval_session_set_relative_module_policy(&libraries.session,
+                                                      import_mode);
+    }
     eval_set_library_context(&libraries);
 
     space_init_with_universe(&space, &libraries.term_universe);
@@ -1233,8 +1303,14 @@ int main(int argc, char **argv) {
 
     if (!lang_is_mm2) {
         n = inline_text
-            ? parse_metta_text_ids(inline_text, &libraries.term_universe, &atom_ids)
-            : parse_metta_file_ids(filename, &libraries.term_universe, &atom_ids);
+            ? cetta_language_parse_text_ids_for_session(&libraries.session,
+                                                        inline_text, &arena,
+                                                        &libraries.term_universe,
+                                                        &atom_ids)
+            : cetta_language_parse_file_ids_for_session(&libraries.session,
+                                                        filename, &arena,
+                                                        &libraries.term_universe,
+                                                        &atom_ids);
         cleanup.atom_ids = atom_ids;
         if (n < 0) {
             if (inline_text) {
@@ -1249,9 +1325,17 @@ int main(int argc, char **argv) {
 
     /* Load precompiled stdlib equations into the space */
     stdlib_load(&space, &arena);
+    main_apply_language_stdlib_type_prunes(&space, &arena, lang);
 
     /* Add grounded op type declarations (HE stdlib implicit types) */
-    main_add_builtin_type_decls(&space, &arena);
+    if (cetta_language_injects_builtin_type_decls(lang))
+        main_add_builtin_type_decls(&space, &arena);
+    if (!main_load_language_prelude(&space, &arena, &libraries.term_universe, lang)) {
+        fprintf(stderr, "error: could not load language prelude for %s\n",
+                lang ? lang->canonical : "he");
+        rc = 1;
+        goto cleanup;
+    }
 
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {

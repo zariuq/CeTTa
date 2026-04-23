@@ -1,0 +1,270 @@
+PeTTa translator contract
+========================
+
+Purpose
+-------
+This note names the semantic invariants that the native CeTTa `--lang petta`
+lowering must preserve. The C implementation may optimize, but it should be
+judged against these invariants rather than only against local witness files.
+
+1. Lexical scope invariant
+--------------------------
+If a variable is bound by a surface pattern, it must denote the same logical
+value in all lowered body positions that are in that pattern's scope.
+
+This includes:
+- function equation bodies
+- recursive call arguments
+- `match` body positions
+- `let` / `let*` bodies
+- relation-lowered wrappers
+- runtime-added declaration bodies
+
+Positive example:
+- `evalCustom` over a raw `match` body now agrees with upstream PeTTa.
+- `tailcall-decr` in `tests/support/oracle_factorial_tailcall_probe.metta`
+  now agrees with upstream PeTTa. This is a retired regression for
+  pattern-bound variables flowing into recursive-call arguments.
+
+2. Argument-mode invariant
+--------------------------
+Each special-form argument position has one lowering mode:
+- raw pattern
+- value expression
+- relation goal
+- declaration head
+- declaration body
+- template/body expression preserving raw syntax positions
+- mutation payload
+- case branch set
+- import spec
+
+The lowering must not infer these ad hoc from neighboring code paths. A given
+surface head/arity pair should have a stable per-argument classification.
+
+Current pressure points:
+- `match`: raw pattern + lowered space/body
+- `add-atom` / `remove-atom`: lowered space + raw payload
+- `if`: relation goal in condition, value expressions in branches
+
+Implementation status:
+- The native `--lang petta` lowerer has a `PettaHeadProfile` table for the
+  core special heads. Profile metadata now carries argument modes, builtin
+  relation identity, special-head dispatch, core-callable status, and
+  relation-goal-form status.
+
+3. Value / goal / relation-role invariant
+-----------------------------------------
+A surface term may be lowered as:
+- a value expression to evaluate
+- a goal expression to satisfy
+- a relation call that can export bindings
+
+The translator should choose one primary role per occurrence and cross the
+boundaries explicitly. Implicitly switching roles is the main source of "works
+in one form, empties in another" behavior.
+
+Role classification should happen at lowering time. Runtime helpers may still
+perform defensive checks, but they should not be the first place a surface
+occurrence discovers whether it was meant as a value, a goal, or a binding
+recovery relation.
+
+Retired example:
+- upstream `factorial.metta` now agrees with PeTTa after relation-lowered `if`
+  was treated as a value-producing form rather than a structural pattern.
+
+4. Callable-inventory invariant
+-------------------------------
+There must be one authoritative view of:
+- callable head
+- arity
+- imported/local status
+- relation-capable status
+- needs-recursive-relation-lowering status
+
+Runtime spaces, imported files, and the currently adapted program should agree
+on that inventory before lowering decides whether a call is ordinary or
+relation-aware.
+
+5. Elaboration-equivalence invariant
+------------------------------------
+The same surface declaration should elaborate equivalently whether it arrives
+from:
+- file load
+- `import!`
+- runtime `add-atom`
+
+If those paths disagree, the language has no stable semantics.
+
+6. Runtime-helper invariant
+---------------------------
+If runtime elaboration depends on hidden helper declarations, CeTTa must
+either:
+- guarantee they exist in the target space
+- inject them deterministically
+- or fail with a named error
+
+Silent later `Empty` results are not acceptable.
+
+7. Oracle invariant
+-------------------
+Curated CeTTa witnesses are useful, but the reference oracle for Petta surface
+behavior is upstream PeTTa-Prolog via `hyperon/PeTTa/run.sh`.
+
+`test-petta-oracle-probes` compares pinned raw-result probes against that
+oracle structurally. The oracle lane now uses pinned `.expected_upstream` files
+and a structural atom-multiset comparator rather than Makefile string
+normalization.
+The comparator parses outputs as atoms, alpha-normalizes variables, compares
+numeric values structurally, and treats top-level results as an unordered
+multiset.
+
+When CeTTa and upstream disagree, the disagreement should be treated as the bug
+list rather than as a witness-local anomaly. When upstream itself disagrees
+with a pinned expectation, the oracle lane should fail as upstream drift.
+
+8. Search-boundary invariant
+----------------------------
+CeTTa must keep a visible distinction between:
+- bounded practical search/generation
+- open logical generation requiring fairness or residual constraints
+
+Current examples:
+- `logicprogset.metta` and `logicprog.metta` are now in the green upstream
+  reasonable-example lane.
+- The remaining raw gap queue still contains search- and stream-heavy examples
+  such as `cut.metta`, `forall.metta`, `streamops.metta`, `tabling_fib.metta`,
+  `hyperpose_primes.metta`, and `superpose_primes.metta`.
+
+This boundary should be supported by more than one witness before CeTTa commits
+to a broad search architecture such as bounded planning or fair open generation.
+
+9. Refinement-minimality invariant
+----------------------------------
+Hidden relation refinement is a binding-recovery mechanism, not a universal
+law. It should run only when forward evaluation cannot expose bindings the
+caller needs.
+
+Positive example:
+- `factorial.metta` now stays on the forward value path when no export bindings
+  need to be recovered. Over-refining every variable-valued result made valid
+  recursive value composition go empty.
+
+Retired examples:
+- `tests/test_relation_invertfunction_inverse_call_minimal_petta.metta` now
+  passes.
+- `tests/support/oracle_invertfunction_returned_head_probe.metta` and
+  `tests/support/oracle_invertfunction_returned_head_structural_probe.metta`
+  pin returned-head inverse behavior against upstream PeTTa.
+
+10. Inverse-mode completeness invariant
+---------------------------------------
+For each surface declaration, CeTTa should support the forward and inverse
+evaluation modes that upstream PeTTa supports, to the extent the underlying
+constraint system can honestly solve them.
+
+This does not promise general CLP completeness. It does require the translator
+to distinguish:
+- forward value evaluation
+- inverse matching against a returned value
+- export recovery after a successful inverse match
+
+Current pressure point:
+- `invertfunction.metta`, `invertpeanoplus.metta`, and the returned-head
+  inverse oracle probes are now green. Remaining inverse/search gaps should be
+  named against concrete residual examples rather than assumed from the old
+  invertfunction failure.
+
+11. Tail survivor ownership invariant
+-------------------------------------
+Tail-local evaluation may reclaim scratch evaluation arena storage only after
+the next tail atom, its type hint, and its single-result survivor have been
+made live across the tail jump. Continuation-carrying tail paths must preserve
+the bindings and atoms visible to their dynamic continuation.
+
+The full reclamation boundary for retained tail survivor arenas is the current
+evaluation episode. This keeps structured results safe after tail-local
+reentry while still allowing per-step scratch storage to be recycled.
+
+Positive example:
+- `tests/test_petta_tail_structured_survivor_regression.metta` returns a
+  structured list through tail-local recursion while runtime stats show that
+  tail storage was reclaimed.
+
+12. Definition-time phase invariant
+-----------------------------------
+A declaration body must be elaborated against the callable inventory visible
+when that declaration is admitted. Later runtime mutation may add new
+callables, but it must not retroactively turn data subterms in older
+declarations into implicit calls.
+
+Explicit phase-crossing surfaces such as `call`, `eval`, and one-argument
+`reduce` are allowed to re-enter the current dynamic callable inventory.
+Ordinary constructor-shaped data is not.
+
+Positive example:
+- `callquoteevalreduce2.metta` now runs cleanly because native `call` crosses
+  the dynamic-call boundary in the same way as `eval` and `reduce`.
+
+Current pressure point:
+- `callquoteevalreduce.metta` still exposes retroactive evaluation of an
+  ordinary result template after `(add-atom &self (= (fib ...)))`.
+
+13. Expression-typed callable invariant
+---------------------------------------
+Type declarations may mark callable arguments and results as `Expression`.
+An `Expression` domain argument is a syntax argument for declaration lowering:
+the caller supplies its surface syntax rather than the value obtained by
+evaluating that syntax. An `Expression` return preserves the user-level result
+as syntax after generated pattern-matching scaffolding has run.
+
+Positive example:
+- `functiontypes.metta` now runs cleanly: in `(wu1 (+ 2 4) (+ 4 2))`, the
+  `Number` argument becomes `6`, while the `Expression` argument remains the
+  syntax `(+ 4 2)` in the returned expression.
+
+14. Parametric type value fallback invariant
+--------------------------------------------
+`get-type` first reports the static function-type result when that result is
+fully determined. If a concrete expression's static type result is still made
+only of unresolved type variables, `get-type` may evaluate the expression and
+report the type of the resulting value. This fallback must not invent types
+for the callable head itself.
+
+Callable patterns used in `let` compare the value produced by the pattern
+call with the target pattern by unification, not by rebinding the target
+through an ordinary `let`. This lets output variables in the target pattern
+receive bindings from the produced value.
+
+Positive examples:
+- `parametric_types.metta` now runs cleanly: `(get-type (apply not False))`
+  reports `Bool` even though `(get-type not)` remains `%Undefined%`.
+- `tests/test_petta_parametric_type_value_fallback_regression.metta` keeps
+  both the positive fallback and the negative no-invented-head-type witness.
+
+15. PeTTa pattern/type syntax invariant
+---------------------------------------
+Type syntax is data unless an explicit evaluation surface crosses into
+computation. In particular, an expression headed by `->` must not become a
+higher-order callable prefix simply because it appears in head position.
+
+For user-facing `get-type`, ordinary non-call data expressions receive
+tuple-shaped types by combining the types of their elements. This tuple-type
+synthesis belongs to `get-type` reporting and must not be used as an internal
+argument-checking substitute for evaluating concrete numeric or boolean calls.
+
+PeTTa-lowered pattern checks use unification for the final pattern-versus-value
+comparison. This keeps ordinary patterns symmetric enough to solve variables
+that occur on either side of a `let` witness while still preserving generated
+guard code for callable and structural patterns.
+
+A bare type variable in a PeTTa function domain is parametric. It accepts an
+open argument without forcing evaluation and without freezing the type variable
+to a half-known tuple type.
+
+Positive examples:
+- `recursive_types.metta` now runs cleanly: type tuples such as
+  `((-> Metal Sword) (-> Metal Paperclip))` remain syntax.
+- `types.metta` now runs cleanly: `(get-type $a)` reports an unconstrained
+  type variable, `(get-type (a b))` reports `(A B)`, and `(mid ($a b))`
+  can return `(a b)` through a polymorphic type declaration.

@@ -34,7 +34,10 @@ typedef struct {
 
 #define CETTA_BUILTIN_SYMBOLS(X) \
     X(empty, "Empty") \
+    X(petta_empty_literal, "__petta_empty_literal__") \
     X(error, "Error") \
+    X(bad_type, "BadType") \
+    X(bad_arg_type, "BadArgType") \
     X(equals, "=") \
     X(atom, "Atom") \
     X(symbol, "Symbol") \
@@ -44,9 +47,14 @@ typedef struct {
     X(undefined_type, "%Undefined%") \
     X(true_text, "True") \
     X(false_text, "False") \
+    X(petta_true_text, "true") \
+    X(petta_false_text, "false") \
     X(bindings, "Bindings") \
     X(bang, "!") \
     X(quote, "quote") \
+    X(noeval, "noeval") \
+    X(parse, "parse") \
+    X(catch, "catch") \
     X(capture, "capture") \
     X(function, "function") \
     X(colon, ":") \
@@ -86,8 +94,10 @@ typedef struct {
     X(reduce, "reduce") \
     X(select, "select") \
     X(once, "once") \
+    X(cut, "cut") \
     X(assert_text, "assert") \
     X(return_text, "return") \
+    X(call_text, "call") \
     X(eval, "eval") \
     X(foldl_atom_in_space, "foldl-atom-in-space") \
     X(new_space, "new-space") \
@@ -160,7 +170,10 @@ typedef struct {
     X(op_le, "<=") \
     X(op_ge, ">=") \
     X(op_eq, "==") \
+    X(op_ne, "!=") \
     X(alpha_eq, "=alpha") \
+    X(alpha_eq_unicode, "=ₐ") \
+    X(alpha_eq_ascii, "alpha-eq?") \
     X(if_equal, "if-equal") \
     X(sealed_text, "sealed") \
     X(op_and, "and") \
@@ -176,16 +189,23 @@ typedef struct {
     X(size, "size") \
     X(size_atom, "size-atom") \
     X(index_atom, "index-atom") \
+    X(atom_arg, "atom-arg") \
+    X(atom_vars, "atom-vars") \
     X(range_atom, "range-atom") \
     X(repeat_atom, "repeat-atom") \
+    X(id, "id") \
     X(map_atom, "map-atom") \
     X(filter_atom, "filter-atom") \
     X(foldl_atom, "foldl-atom") \
+    X(is_member, "is-member") \
     X(unique_atom, "unique-atom") \
+    X(alpha_unique_atom, "alpha-unique-atom") \
     X(intersection_atom, "intersection-atom") \
     X(subtraction_atom, "subtraction-atom") \
     X(max_atom, "max-atom") \
     X(min_atom, "min-atom") \
+    X(sort_atom, "sort-atom") \
+    X(msort, "msort") \
     X(sort_strings, "sort-strings") \
     /* ── Grounded math functions ── */ \
     X(pow_math, "pow-math") \
@@ -207,6 +227,22 @@ typedef struct {
     /* ── Grounded internal helpers ── */ \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
+    X(petta_rel_true, "__petta_rel_true") \
+    X(petta_rel_call, "__petta_rel_call") \
+    X(petta_rel_conj, "__petta_rel_conj") \
+    X(petta_rel_run, "__petta_rel_run") \
+    /* ── Prolog FFI ── */ \
+    X(pl_atom, "pl-atom") \
+    X(pl_call, "pl-call") \
+    X(pl_consult, "pl-consult") \
+    X(pl_use_module, "pl-use-module") \
+    X(pl_import, "pl-import") \
+    X(import_prolog_function, "import_prolog_function") \
+    X(predicate_ctor, "Predicate") \
+    X(callPredicate, "callPredicate") \
+    X(assertzPredicate, "assertzPredicate") \
+    X(assertaPredicate, "assertaPredicate") \
+    X(retractPredicate, "retractPredicate") \
     /* ── Python FFI ── */ \
     X(py_atom, "py-atom") \
     X(py_call, "py-call") \
@@ -368,5 +404,6 @@ const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
+int symbol_lex_compare(const SymbolTable *st, SymbolId lhs, SymbolId rhs);
 
 #endif /* CETTA_SYMBOL_H */

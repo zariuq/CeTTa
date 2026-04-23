@@ -5,7 +5,7 @@
 
 static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .id = CETTA_PROFILE_HE_COMPAT,
-    .name = "he_compat",
+    .name = "he-compat",
     .note = "HE-compatible public/runtime surface.",
     .he_compatible_surface = true,
     .enable_cetta_extensions = false,
@@ -14,7 +14,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
 
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_HE_EXTENDED,
-    .name = "he_extended",
+    .name = "he-extended",
     .note = "HE-compatible surface plus labeled CeTTa extensions.",
     .he_compatible_surface = true,
     .enable_cetta_extensions = true,
@@ -23,8 +23,8 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
 
 static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .id = CETTA_PROFILE_HE_PRIME,
-    .name = "he_prime",
-    .note = "Binder-aware dependent telescope elaboration atop he_extended.",
+    .name = "he-prime",
+    .note = "Binder-aware dependent telescope elaboration atop he-extended.",
     .he_compatible_surface = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
@@ -54,6 +54,10 @@ static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
     {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
+    {"atom-arg", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"atom-vars", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"=ₐ", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"alpha-eq?", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"space-set-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
@@ -365,6 +369,27 @@ bool cetta_eval_session_set_max_stack_depth(CettaEvalSession *session, int depth
                                    CETTA_EVAL_OPTION_VALUE_INT, repr, depth);
 }
 
+bool cetta_eval_session_set_relative_module_policy(
+    CettaEvalSession *session,
+    CettaRelativeModulePolicy policy) {
+    if (!session)
+        return false;
+    session->relative_module_policy_overridden = true;
+    session->relative_module_policy_override = policy;
+    return cetta_eval_option_store(&session->options, "import-mode",
+                                   CETTA_EVAL_OPTION_VALUE_SYMBOL,
+                                   cetta_relative_module_policy_name(policy), 0);
+}
+
+CettaRelativeModulePolicy
+cetta_eval_session_relative_module_policy(const CettaEvalSession *session) {
+    if (!session)
+        return CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+    if (session->relative_module_policy_overridden)
+        return session->relative_module_policy_override;
+    return cetta_language_relative_module_policy(session->language);
+}
+
 void cetta_eval_session_set_fuel_limit(CettaEvalSession *session, int fuel_limit) {
     if (!session) return;
     session->options.fuel_limit = fuel_limit > 0 ? fuel_limit : -1;
@@ -379,21 +404,31 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
     return cetta_eval_option_store(&session->options, key, kind, repr, int_value);
 }
 
-void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile) {
+void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile,
+                             const CettaLanguageSpec *language) {
     const CettaProfile *resolved = profile ? profile : cetta_profile_he_extended();
+    const CettaLanguageSpec *resolved_language =
+        language ? language : cetta_language_lookup("he");
     session->profile = resolved;
+    session->language = resolved_language;
+    session->relative_module_policy_overridden = false;
+    session->relative_module_policy_override =
+        cetta_language_relative_module_policy(resolved_language);
     cetta_module_resolver_init_for_profile(&session->module_resolver, resolved);
     cetta_evaluator_options_init(&session->options);
 }
 
 void cetta_eval_session_init_he_compat(CettaEvalSession *session) {
-    cetta_eval_session_init(session, cetta_profile_he_compat());
+    cetta_eval_session_init(session, cetta_profile_he_compat(),
+                            cetta_language_lookup("he"));
 }
 
 void cetta_eval_session_init_he_extended(CettaEvalSession *session) {
-    cetta_eval_session_init(session, cetta_profile_he_extended());
+    cetta_eval_session_init(session, cetta_profile_he_extended(),
+                            cetta_language_lookup("he"));
 }
 
 void cetta_eval_session_init_he_prime(CettaEvalSession *session) {
-    cetta_eval_session_init(session, cetta_profile_he_prime());
+    cetta_eval_session_init(session, cetta_profile_he_prime(),
+                            cetta_language_lookup("he"));
 }

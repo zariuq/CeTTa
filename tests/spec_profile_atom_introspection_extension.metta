@@ -1,0 +1,6 @@
+!(atom-arg 0 (foo a b c))
+!(atom-arg 2 (foo a b c))
+!(atom-vars (foo $x (bar $y) $x))
+!(alpha-eq? (R $x (S $x)) (R $y (S $y)))
+!(=ₐ (R $x $x) (R $a $b))
+!(=ₐ (R $x (S $x)) (R $y (S $y)))

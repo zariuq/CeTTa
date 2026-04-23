@@ -1,7 +1,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
-#include "foreign.h"
+#include "foreign_internal.h"
 
 #include "parser.h"
 #include <ctype.h>
@@ -10,18 +10,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-typedef struct CettaForeignValue {
-    CettaForeignBackendKind backend;
-    bool callable;
-    bool unwrap;
-    PyObject *obj;
-    struct CettaForeignValue *next;
-} CettaForeignValue;
-
-struct CettaForeignRuntime {
-    CettaForeignValue *values;
-};
 
 static bool g_python_bootstrap_ready = false;
 static bool g_python_inittab_ready = false;
@@ -302,6 +290,8 @@ const char *cetta_foreign_backend_name(CettaForeignBackendKind kind) {
         return "none";
     case CETTA_FOREIGN_BACKEND_PYTHON:
         return "python";
+    case CETTA_FOREIGN_BACKEND_PROLOG:
+        return "prolog";
     }
     return "unknown";
 }
@@ -398,7 +388,7 @@ static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
     value->backend = CETTA_FOREIGN_BACKEND_PYTHON;
     value->callable = callable;
     value->unwrap = unwrap;
-    value->obj = obj;
+    value->handle.py_obj = obj;
     Py_INCREF(obj);
     value->next = rt->values;
     rt->values = value;
@@ -408,6 +398,7 @@ static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
 static void cetta_foreign_runtime_init(CettaForeignRuntime *rt) {
     if (!rt) return;
     rt->values = NULL;
+    cetta_foreign_prolog_runtime_init(rt);
 }
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void) {
@@ -421,12 +412,22 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
     CettaForeignValue *cur = rt->values;
     while (cur) {
         CettaForeignValue *next = cur->next;
-        Py_XDECREF(cur->obj);
+        if (cur->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
+            Py_XDECREF(cur->handle.py_obj);
+        } else if (cur->backend == CETTA_FOREIGN_BACKEND_PROLOG) {
+            free(cur->handle.prolog_name);
+        }
         free(cur);
         cur = next;
     }
     rt->values = NULL;
+    cetta_foreign_prolog_runtime_cleanup(rt);
     free(rt);
+}
+
+void cetta_foreign_runtime_set_exec_root(CettaForeignRuntime *rt,
+                                         const char *root_dir) {
+    cetta_foreign_prolog_set_exec_root(rt, root_dir);
 }
 
 static PyObject *bridge_run(PyObject *self, PyObject *args) {
@@ -736,8 +737,8 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
         case GV_FOREIGN: {
             CettaForeignValue *value = (CettaForeignValue *)atom->ground.ptr;
             if (value && value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
-                Py_INCREF(value->obj);
-                return value->obj;
+                Py_INCREF(value->handle.py_obj);
+                return value->handle.py_obj;
             }
             break;
         }
@@ -1120,6 +1121,12 @@ bool cetta_foreign_is_callable_atom(Atom *atom) {
            ((CettaForeignValue *)atom->ground.ptr)->callable;
 }
 
+bool cetta_foreign_is_callable_head(CettaForeignRuntime *rt, Atom *head) {
+    if (cetta_foreign_is_callable_atom(head))
+        return true;
+    return cetta_foreign_prolog_is_callable_head(rt, head);
+}
+
 bool cetta_foreign_call(CettaForeignRuntime *rt,
                         Space *space,
                         Arena *a,
@@ -1128,16 +1135,27 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
                         uint32_t nargs,
                         ResultSet *rs,
                         Atom **error_out) {
-    if (!callable || callable->kind != ATOM_GROUNDED || callable->ground.gkind != GV_FOREIGN) {
+    bool handled = false;
+    bool ok = cetta_foreign_prolog_call(rt, space, a, callable, args, nargs, rs,
+                                        error_out, &handled);
+    if (handled)
+        return ok;
+    if (!callable || callable->kind != ATOM_GROUNDED ||
+        callable->ground.gkind != GV_FOREIGN) {
         if (error_out) *error_out = foreign_error_atom(a, "not a foreign callable");
         return false;
     }
     CettaForeignValue *value = (CettaForeignValue *)callable->ground.ptr;
-    if (!value->callable || value->backend != CETTA_FOREIGN_BACKEND_PYTHON) {
+    if (!value->callable) {
         if (error_out) *error_out = foreign_error_atom(a, "unsupported foreign callable backend");
         return false;
     }
-    return python_call_object(rt, space, a, value->obj, value->unwrap, args, nargs, rs, error_out);
+    if (value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
+        return python_call_object(rt, space, a, value->handle.py_obj,
+                                  value->unwrap, args, nargs, rs, error_out);
+    }
+    if (error_out) *error_out = foreign_error_atom(a, "unsupported foreign callable backend");
+    return false;
 }
 
 static Atom *result_set_collapse_for_native(Arena *a, ResultSet *rs) {
@@ -1153,6 +1171,10 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
                                     Atom **args,
                                     uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
+    Atom *prolog = cetta_foreign_prolog_dispatch_native(rt, space, a, head,
+                                                        args, nargs);
+    if (prolog)
+        return prolog;
     if (!ensure_python_bridge(a, NULL)) return NULL;
     const char *head_name = atom_name_cstr(head);
     if (!head_name) return NULL;
@@ -1190,7 +1212,7 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
         if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_FOREIGN) {
             CettaForeignValue *value = (CettaForeignValue *)args[0]->ground.ptr;
             if (value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
-                base = value->obj;
+                base = value->handle.py_obj;
                 Py_INCREF(base);
             }
         } else {

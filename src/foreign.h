@@ -11,6 +11,8 @@ typedef struct CettaForeignRuntime CettaForeignRuntime;
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void);
 void cetta_foreign_runtime_free(CettaForeignRuntime *rt);
+void cetta_foreign_runtime_set_exec_root(CettaForeignRuntime *rt,
+                                         const char *root_dir);
 
 const char *cetta_module_format_name(CettaModuleFormatKind kind);
 const char *cetta_foreign_backend_name(CettaForeignBackendKind kind);
@@ -27,6 +29,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
                                Atom **error_out);
 
 bool cetta_foreign_is_callable_atom(Atom *atom);
+bool cetta_foreign_is_callable_head(CettaForeignRuntime *rt, Atom *head);
 
 bool cetta_foreign_call(CettaForeignRuntime *rt,
                         Space *space,

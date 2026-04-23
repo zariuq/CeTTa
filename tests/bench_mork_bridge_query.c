@@ -13,7 +13,9 @@
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "parser.h"
+#include "stats.h"
 #include "symbol.h"
+#include "tests/test_runtime_stats_stubs.h"
 
 #define IMPORTED_MORK_QUERY_ONLY_V2_MAGIC 0x43544252u
 #define IMPORTED_MORK_QUERY_ONLY_V2_VERSION 2u

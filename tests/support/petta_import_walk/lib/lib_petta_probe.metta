@@ -1,0 +1,1 @@
+(= (petta-library-probe) ok)

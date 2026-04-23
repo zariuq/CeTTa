@@ -14,6 +14,7 @@
 (: if-decons-expr (-> Expression Variable Variable Atom Atom %Undefined%))
 (: if-error (-> Atom Atom Atom %Undefined%))
 (: return-on-error (-> Atom Atom %Undefined%))
+(: catch (-> %Undefined% %Undefined%))
 (: filter-atom (-> Expression Variable Atom Expression))
 (: map-atom (-> Expression Variable Atom Expression))
 (: empty (-> Atom))
@@ -21,7 +22,9 @@
 (: union (-> Atom Atom %Undefined%))
 (: intersection (-> Atom Atom %Undefined%))
 (: subtraction (-> Atom Atom %Undefined%))
+(: is-member (-> Atom Expression Bool))
 (: unique-atom (-> Expression Expression))
+(: alpha-unique-atom (-> Expression Expression))
 (: union-atom (-> Expression Expression Expression))
 (: intersection-atom (-> Expression Expression Expression))
 (: subtraction-atom (-> Expression Expression Expression))
@@ -30,6 +33,7 @@
 (: sealed (-> Atom Atom Atom))
 (: capture (-> Atom Atom))
 (: quote (-> Atom Atom))
+(: parse (-> String Atom))
 (: unquote (-> %Undefined% %Undefined%))
 (: switch-internal (-> Atom Expression Atom))
 (: import! (-> Atom Atom (->)))
@@ -56,6 +60,7 @@
 (: type-cast (-> Atom Type SpaceType %Undefined%))
 (: match-types (-> Type Type Atom Atom %Undefined%))
 (: first-from-pair (-> Atom Atom))
+(: second-from-pair (-> Atom Atom))
 (: match-type-or (-> Bool Type Type Bool))
 (: get-type (-> Atom %Undefined%))
 (: get-metatype (-> Atom Atom))
@@ -121,6 +126,10 @@
 (: size (-> %Undefined% Number))
 (: size-atom (-> Expression Number))
 (: index-atom (-> Expression Number Atom))
+(: atom-arg (-> Number Expression Atom))
+(: atom-vars (-> Atom Expression))
+(: =ₐ (-> Atom Atom Bool))
+(: alpha-eq? (-> Atom Atom Bool))
 (: range-atom (-> Number Expression))
 (: range-atom (-> Number Number Expression))
 (: repeat-atom (-> Number Atom Expression))
@@ -209,7 +218,7 @@
   (@return "Results produced by evaluating the body against the snapshot-bound space"))
 
 (@doc new-space
-  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The he_extended/he_prime form accepts semantic kinds such as stack, queue, or hash, and also explicit engine selectors such as native or pathmap. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms. The MORK lane is no longer constructed through generic new-space: use (mork:new-space) from lib/mork.metta when you want the explicit MORK API.")
+  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The he-extended/he-prime form accepts semantic kinds such as stack, queue, or hash, and also explicit engine selectors such as native or pathmap. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms. The MORK lane is no longer constructed through generic new-space: use (mork:new-space) from lib/mork.metta when you want the explicit MORK API.")
   (@params (
     (@param "Optional selector such as stack, queue, hash, native, or pathmap in extension profiles")))
   (@return "Fresh space value"))
@@ -471,6 +480,12 @@
     (unify $pair ($first $second)
       (return $first)
       (return (Error (first-from-pair $pair) "incorrect pair format")))))
+
+(= (second-from-pair $pair)
+  (function
+    (unify $pair ($first $second)
+      (return $second)
+      (return (Error (second-from-pair $pair) "incorrect pair format")))))
 
 (= (match-type-or $folded $next $type)
   (function

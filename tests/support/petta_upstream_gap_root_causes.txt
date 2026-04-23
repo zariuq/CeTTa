@@ -1,0 +1,92 @@
+# Native --lang petta current-gap root-cause classification
+#
+# Scope:
+# - 104 upstream examples are in petta_upstream_reasonable_examples.txt.
+# - 28 upstream examples remain in petta_upstream_current_gaps.txt.
+# - This file classifies those 28 by the capability layer most likely to
+#   retire them. A file may move between buckets as lower layers settle.
+#
+# Fresh smoke sweep shape on 2026-04-22:
+# - 24 examples exited 0 but emitted an (Error ...) assertion/result.
+# - 6 examples timed out under a 15s smoke cap.
+# - 15 previous current-gap examples now run cleanly and moved to the
+#   reasonable lane: builin_types, callquoteevalreduce2, functiontypes,
+#   he_minimalmetta, letext, letlet, matchtypes, meta_types,
+#   parametric_types, recursive_types, superpose_primes, test_string_comments,
+#   types, types_dependent, types_nondet.
+
+P0 evaluation control, quote, parse, and host-owned HE surfaces
+--------------------------------------------------------------
+Root need:
+- Own special evaluation surfaces in the runtime instead of letting imported
+  compatibility equations compete with host semantics.
+- Keep quote/noeval/unquote/call/eval/reduce behavior canonical and
+  non-duplicative.
+
+Files:
+- callquoteevalreduce.metta
+
+P0 match, binding, mutation, spaces, and unify continuation semantics
+--------------------------------------------------------------------
+Root need:
+- Preserve visible bindings through nested match bodies, side effects, and
+  collapse.
+- Make dynamic atomspace mutation and space predicates share one continuation
+  contract.
+- Keep unify/eval branches from dropping or duplicating errors and bindings.
+
+Files:
+- matchnested.metta
+- matchnested2.metta
+- mutex_and_transaction.metta
+- spaces_find.metta
+- spaces_removeallatoms.metta
+- spaces_succeedspredicate.metta
+- state.metta
+
+P0/P1 type, metatype, specialization, and typed callable surfaces
+-----------------------------------------------------------------
+Root need:
+- Make get-type/get-metatype cover grounded operators, parametric/dependent
+  declarations, nondeterministic type declarations, and callable types.
+- Keep specialization metadata in sync with runtime declaration artifacts.
+
+Files:
+- specialize.metta
+- specializefunctiontypes.metta
+
+P1 search, streams, hyperpose, and scale
+---------------------------------------
+Root need:
+- Separate semantic failures from performance ceilings with small smoke probes.
+- Add fair/bounded generation, stream operators, tabling, and answer-store style
+  scaling only after P0 role/control/match layers are stable.
+
+Files:
+- fib.metta
+- fibadd.metta
+- fibsmart.metta
+- hyperpose_primes.metta
+- matespace.metta
+- matespace2.metta
+- patrick_iterate_fib.metta
+- patrick_iterate_quad.metta
+- peano.metta
+- peanofast.metta
+- scale.metta
+- streamops.metta
+- tabling_fib.metta
+
+P2 translator, backward-chaining, and recursive atom primitive edges
+--------------------------------------------------------------------
+Root need:
+- Finish translator-rule and backward-chaining surfaces after the P0 runtime
+  layers are less noisy.
+- Isolate recursive atom primitive behavior from general search performance.
+
+Files:
+- nilbc.metta
+- patrick_test.metta
+- test_collapse_size_bug.metta
+- test_recursive_size_atom.metta
+- translatepredicate.metta

@@ -47,6 +47,7 @@ typedef struct {
     CettaVariantSlotPolicy slot_policy;
     const char *slot_name;
     bool share_immutable;
+    uint32_t hashcons_initial_size;
 } CettaVariantShapeOptions;
 
 typedef struct {

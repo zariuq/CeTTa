@@ -205,6 +205,10 @@ void query_results_free(QueryResults *qr);
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 bool space_equations_may_match_known_head(Space *s, SymbolId head);
+bool space_equations_have_head_with_arity(Space *s, SymbolId head,
+                                          uint32_t nargs);
+bool space_equations_have_head_with_greater_arity(Space *s, SymbolId head,
+                                                  uint32_t nargs);
 
 /* ── Space Registry (named spaces) ─────────────────────────────────────── */
 
@@ -232,6 +236,7 @@ Space *resolve_space(Registry *r, Atom *ref);
 
 /* Remove an atom from a space (by structural equality). Returns true if found. */
 bool space_remove(Space *s, Atom *atom);
+bool space_remove_alpha_eq_all(Space *s, Atom *atom);
 bool space_contains_atom_id(const Space *s, AtomId atom_id);
 bool space_remove_atom_id(Space *s, AtomId atom_id);
 

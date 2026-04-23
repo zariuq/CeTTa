@@ -139,6 +139,59 @@ static bool native_atom_id_insertable(const TermUniverse *universe,
     return true;
 }
 
+typedef struct {
+    VarId *items;
+    uint32_t len;
+    uint32_t cap;
+    bool repeated;
+} NativeQueryVarSet;
+
+static bool native_query_var_set_add(NativeQueryVarSet *set, VarId var_id) {
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i] == var_id) {
+            set->repeated = true;
+            return true;
+        }
+    }
+    if (set->len >= set->cap) {
+        uint32_t next_cap = set->cap ? set->cap * 2 : 8;
+        VarId *next = cetta_realloc(set->items, sizeof(VarId) * next_cap);
+        if (!next)
+            return false;
+        set->items = next;
+        set->cap = next_cap;
+    }
+    set->items[set->len++] = var_id;
+    return true;
+}
+
+static bool native_query_collect_vars(Atom *atom, NativeQueryVarSet *set) {
+    if (!atom || set->repeated)
+        return true;
+    switch (atom->kind) {
+    case ATOM_VAR:
+        return native_query_var_set_add(set, atom->var_id);
+    case ATOM_EXPR:
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (!native_query_collect_vars(atom->expr.elems[i], set))
+                return false;
+            if (set->repeated)
+                return true;
+        }
+        return true;
+    default:
+        return true;
+    }
+}
+
+static bool native_query_has_repeated_vars(Atom *query) {
+    NativeQueryVarSet set = {0};
+    bool ok = native_query_collect_vars(query, &set);
+    bool repeated = ok ? set.repeated : true;
+    free(set.items);
+    return repeated;
+}
+
 static void native_insert_match_trie_entry(Space *s, uint32_t atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     AtomId atom_id = space_get_atom_id_at(s, atom_idx);
@@ -477,6 +530,24 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
         subst_matchset_push(out, 0, 0, &matches->items[i], true);
 }
 
+static void native_exact_scan_query(Space *s, Arena *a, Atom *query,
+                                    SubstMatchSet *out) {
+    smset_init(out);
+    if (!s || s->len == 0)
+        return;
+    for (uint32_t i = 0; i < s->len; i++) {
+        uint32_t epoch = fresh_var_suffix();
+        Bindings b;
+        bindings_init(&b);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_NATIVE_QUERY);
+        if (match_space_atom_epoch(s, i, query, &b, a, epoch) &&
+            !bindings_has_loop(&b)) {
+            subst_matchset_push(out, i, epoch, &b, false);
+        }
+        bindings_free(&b);
+    }
+}
+
 static uint32_t native_candidates(Space *s, Atom *pattern, uint32_t **out) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (s->native.len <= MATCH_TRIE_THRESHOLD) {
@@ -502,17 +573,11 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     smset_init(out);
     if (s->native.len == 0) return;
     if (s->native.len <= MATCH_TRIE_THRESHOLD) {
-        for (uint32_t i = 0; i < s->native.len; i++) {
-            uint32_t epoch = fresh_var_suffix();
-            Bindings b;
-            bindings_init(&b);
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_NATIVE_QUERY);
-            if (match_space_atom_epoch(s, i, query, &b, a, epoch) &&
-                !bindings_has_loop(&b)) {
-                subst_matchset_push(out, i, epoch, &b, false);
-            }
-            bindings_free(&b);
-        }
+        native_exact_scan_query(s, a, query, out);
+        return;
+    }
+    if (native_query_has_repeated_vars(query)) {
+        native_exact_scan_query(s, a, query, out);
         return;
     }
     native_ensure_stree(s);

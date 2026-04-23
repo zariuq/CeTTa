@@ -1,14 +1,10 @@
-#include "foreign.h"
+#include "foreign_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-struct CettaForeignRuntime {
-    int unavailable;
-};
 
 static const char *CETTA_FOREIGN_DISABLED_MSG =
     "python foreign modules require a Python-enabled build (BUILD=python, BUILD=main, or BUILD=full)";
@@ -70,6 +66,8 @@ const char *cetta_foreign_backend_name(CettaForeignBackendKind kind) {
         return "none";
     case CETTA_FOREIGN_BACKEND_PYTHON:
         return "python";
+    case CETTA_FOREIGN_BACKEND_PROLOG:
+        return "prolog";
     }
     return "unknown";
 }
@@ -100,12 +98,30 @@ bool cetta_foreign_resolve_candidate(const char *candidate,
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void) {
     CettaForeignRuntime *rt = cetta_malloc(sizeof(CettaForeignRuntime));
-    rt->unavailable = 1;
+    rt->values = NULL;
+    cetta_foreign_prolog_runtime_init(rt);
     return rt;
 }
 
 void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
+    if (!rt)
+        return;
+    CettaForeignValue *cur = rt->values;
+    while (cur) {
+        CettaForeignValue *next = cur->next;
+        if (cur->backend == CETTA_FOREIGN_BACKEND_PROLOG) {
+            free(cur->handle.prolog_name);
+        }
+        free(cur);
+        cur = next;
+    }
+    cetta_foreign_prolog_runtime_cleanup(rt);
     free(rt);
+}
+
+void cetta_foreign_runtime_set_exec_root(CettaForeignRuntime *rt,
+                                         const char *root_dir) {
+    cetta_foreign_prolog_set_exec_root(rt, root_dir);
 }
 
 bool cetta_foreign_load_module(CettaForeignRuntime *rt,
@@ -122,8 +138,16 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
 }
 
 bool cetta_foreign_is_callable_atom(Atom *atom) {
-    (void)atom;
-    return false;
+    return atom &&
+           atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_FOREIGN &&
+           ((CettaForeignValue *)atom->ground.ptr)->callable;
+}
+
+bool cetta_foreign_is_callable_head(CettaForeignRuntime *rt, Atom *head) {
+    if (cetta_foreign_is_callable_atom(head))
+        return true;
+    return cetta_foreign_prolog_is_callable_head(rt, head);
 }
 
 bool cetta_foreign_call(CettaForeignRuntime *rt,
@@ -141,6 +165,11 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
     (void)args;
     (void)nargs;
     (void)rs;
+    bool handled = false;
+    bool ok = cetta_foreign_prolog_call(rt, space, a, callable, args, nargs, rs,
+                                        error_out, &handled);
+    if (handled)
+        return ok;
     if (error_out)
         *error_out = atom_symbol(a, CETTA_FOREIGN_DISABLED_MSG);
     return false;
@@ -156,6 +185,10 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
     (void)space;
     if (!head)
         return NULL;
+    Atom *prolog = cetta_foreign_prolog_dispatch_native(rt, space, a, head,
+                                                        args, nargs);
+    if (prolog)
+        return prolog;
     if (atom_is_symbol_id(head, g_builtin_syms.py_atom) ||
         atom_is_symbol_id(head, g_builtin_syms.py_call) ||
         atom_is_symbol_id(head, g_builtin_syms.py_dot)) {
