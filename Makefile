@@ -159,6 +159,7 @@ PETTA_CORE_NATIVE_TESTS = \
 	tests/test_petta_catch_error_value_regression.metta \
 	tests/test_petta_unquote_noreduce_regression.metta \
 	tests/test_petta_call_dynamic_regression.metta \
+	tests/test_petta_callquoteevalreduce_phase_regression.metta \
 	tests/test_petta_for_each_in_atom_regression.metta \
 	tests/test_equation_var_hygiene.metta \
 	tests/test_lib_he_assert_petta_regression.metta \
@@ -168,6 +169,7 @@ PETTA_CORE_NATIVE_TESTS = \
 	tests/test_petta_builtin_type_metadata_regression.metta \
 	tests/test_petta_expression_return_type_regression.metta \
 	tests/test_petta_dynamic_get_type_extension_regression.metta \
+	tests/test_petta_nondet_type_env_tail_regression.metta \
 	tests/test_petta_dependent_get_type_extension_regression.metta \
 	tests/test_petta_parametric_type_value_fallback_regression.metta \
 	tests/test_petta_tuple_type_syntax_regression.metta \

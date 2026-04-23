@@ -3,6 +3,7 @@
 and_or.metta
 atomops.metta
 builin_types.metta
+callquoteevalreduce.metta
 callquoteevalreduce2.metta
 case.metta
 case2.metta

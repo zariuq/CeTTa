@@ -1,14 +1,14 @@
 # Native --lang petta upstream frontier classification
 #
 # Scope:
-# - 104 upstream examples are currently in petta_upstream_reasonable_examples.txt.
-# - 28 upstream examples are currently in petta_upstream_current_gaps.txt.
+# - 105 upstream examples are currently in petta_upstream_reasonable_examples.txt.
+# - 27 upstream examples are currently in petta_upstream_current_gaps.txt.
 # - 31 upstream examples are deferred from both lists.
 #
-# The 61 frontier examples below are not a single denominator of semantic
+# The 60 frontier examples below are not a single denominator of semantic
 # defects. They are grouped by the capability layer most likely to retire them.
 # "deferred" means "not in the every-run broad lane yet", not "out of scope".
-# The current 28-file gap queue is also classified in:
+# The current 27-file gap queue is also classified in:
 #   tests/support/petta_upstream_gap_root_causes.txt
 
 P0 import-module parity
@@ -55,12 +55,11 @@ search architecture.
 Current root needs:
 - atom/list primitives and remaining metatype queries.
 - math builtin coverage and numeric result normalization.
-- `parse`, quote/eval/call/reduce behavior.
+- remaining `parse` and quote/eval/call/reduce behavior.
 - higher-order intrinsic operators that are not covered by the callable
   substrate.
 
 Files:
-- callquoteevalreduce.metta
 - holfunctions.metta [deferred]
 
 P0 match, binding, and atomspace mutation
