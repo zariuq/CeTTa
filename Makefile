@@ -180,7 +180,7 @@ PETTA_RUNTIME_STATS_TESTS = \
 	tests/test_petta_tail_runtime_stats_regression.metta \
 	tests/test_petta_tail_structured_survivor_regression.metta
 PETTA_CORE_NATIVE_NONSTATS_TESTS = $(filter-out $(PETTA_RUNTIME_STATS_TESTS),$(PETTA_CORE_NATIVE_TESTS))
-PETTA_INTEROP_TESTS = tests/lang_petta_core_prolog_interop.metta tests/lang_petta_lib_prolog.metta tests/lang_petta_lib_zar.metta
+PETTA_INTEROP_TESTS = tests/lang_petta_core_prolog_interop.metta tests/lang_petta_lib_prolog.metta tests/lang_petta_lib_prolog_surface.metta tests/lang_petta_lib_zar.metta
 PETTA_CORE_TESTS = $(PETTA_CORE_NATIVE_TESTS) $(PETTA_INTEROP_TESTS)
 PETTA_SUITE_DIR = $(abspath ../../hyperon/PeTTa/unit/petta_suite_69)
 PETTA_EXAMPLES_DIR = $(abspath ../../hyperon/PeTTa/examples)
@@ -932,6 +932,49 @@ test-petta-interop: $(BIN)
 			exit 1; \
 		fi; \
 	done
+
+test_lib_prolog_surface: $(BIN)
+	@pass=0; fail=0; skip=0; \
+	if [ -z "$(SWIPL)" ]; then \
+		echo "SKIP: lib_prolog surface tests (requires swipl on PATH)"; \
+		skip=$$((skip + 3)); \
+	else \
+		for item in \
+			"he:tests/test_prolog_ops_surface.metta" \
+			"he:tests/test_lib_prolog_surface.metta" \
+			"petta:tests/lang_petta_lib_prolog_surface.metta"; do \
+			lang="$${item%%:*}"; \
+			f="$${item#*:}"; \
+			exp="$${f%.metta}.expected"; \
+			result=$$(./$(BIN) --lang "$$lang" "$$f" 2>&1); \
+			if [ "$$result" = "$$(cat "$$exp")" ]; then \
+				echo "PASS: --lang $$lang $$f"; \
+				pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: --lang $$lang $$f"; \
+				diff <(cat "$$exp") <(printf '%s\n' "$$result") | head -20; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done; \
+	fi; \
+	missing_path="$(CURDIR)/runtime/missing-foreign-prolog-bridge.pl"; \
+	result=$$(CETTA_PROLOG_BRIDGE="$$missing_path" ./$(BIN) --lang he -e '!(pl-call (Predicate prolog_probe_fact alpha))' 2>&1); \
+	case "$$result" in \
+		*"missing prolog bridge support file"*"CETTA_PROLOG_BRIDGE=$$missing_path"*) \
+			echo "PASS: missing bridge diagnostic"; pass=$$((pass + 1));; \
+		*) \
+			echo "FAIL: missing bridge diagnostic"; printf '%s\n' "$$result" | head -20; fail=$$((fail + 1));; \
+	esac; \
+	result=$$(CETTA_PROLOG_BRIDGE="$(CURDIR)/lib/lib_prolog/foreign_prolog_bridge.pl" PATH=/nonexistent ./$(BIN) --lang he -e '!(pl-call (Predicate prolog_probe_fact alpha))' 2>&1); \
+	case "$$result" in \
+		*"missing swipl on PATH for prolog bridge"*) \
+			echo "PASS: missing swipl diagnostic"; pass=$$((pass + 1));; \
+		*) \
+			echo "FAIL: missing swipl diagnostic"; printf '%s\n' "$$result" | head -20; fail=$$((fail + 1));; \
+	esac; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed, $$skip skipped"; \
+	[ $$fail -eq 0 ]
 
 test-petta-core: test-petta-core-native test-petta-interop
 
@@ -2722,4 +2765,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean test test-light test-correctness test-heavy test-correctness-all test-runtime-stats-lane test-runtime-stats-lane-body test-runtime-stats-metta-suite test-petta-core-native test-petta-runtime-stats test-petta-interop test-petta-core test-petta-review-core test-petta-review-broad test-petta-import-modes test-petta-root-witnesses test-petta-root-advanced test-petta-relation-frontier test-petta-upstream-reasonable test-petta-oracle-probes refresh-petta-oracle-probes test-petta-suite69 test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-lane-body test-mork-runtime-stats-isolation test-mork-runtime-stats-isolation-body test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi bench bench-light bench-correctness bench-performance-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean test test-light test-correctness test-heavy test-correctness-all test-runtime-stats-lane test-runtime-stats-lane-body test-runtime-stats-metta-suite test-petta-core-native test-petta-runtime-stats test-petta-interop test_lib_prolog_surface test-petta-core test-petta-review-core test-petta-review-broad test-petta-import-modes test-petta-root-witnesses test-petta-root-advanced test-petta-relation-frontier test-petta-upstream-reasonable test-petta-oracle-probes refresh-petta-oracle-probes test-petta-suite69 test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-lane-body test-mork-runtime-stats-isolation test-mork-runtime-stats-isolation-body test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi bench bench-light bench-correctness bench-performance-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-dup-conj-runtime-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

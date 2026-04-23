@@ -9,8 +9,22 @@
 /native/metamath/*.stage0.d
 /src/stdlib_blob.h
 
-# Local runtime snapshots and test scratch space
-/runtime/*
+# Local runtime generated files and test scratch space.
+# Keep real runtime source files trackable by default.
+/runtime/bootstrap/build_config.h
+/runtime/*.d
+/runtime/*.o
+/runtime/_tmp_*
+/runtime/tmp_*
+/runtime/git_module_fixture/
+/runtime/test-git-module-cache/
+/runtime/test-git-module-*.metta
+/runtime/test_*_output.txt
+/runtime/test_*.act
+/runtime/test_space_term_universe_membership
+/runtime/test_term_universe_store_abi
+/runtime/test_variant_shape_roundtrip
+/runtime/repro_*.mm
 
 # Profiling and result artifacts
 /massif.out.*

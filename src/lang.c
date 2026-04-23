@@ -159,6 +159,9 @@ static bool language_slot_policy_override(const CettaLanguageSpec *spec,
         head_id == g_builtin_syms.import_prolog_function ||
         head_id == g_builtin_syms.predicate_ctor ||
         head_id == g_builtin_syms.pl_call ||
+        head_id == g_builtin_syms.pl_assertz ||
+        head_id == g_builtin_syms.pl_asserta ||
+        head_id == g_builtin_syms.pl_retract ||
         head_id == g_builtin_syms.callPredicate ||
         head_id == g_builtin_syms.assertzPredicate ||
         head_id == g_builtin_syms.assertaPredicate ||

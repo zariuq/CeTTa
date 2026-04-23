@@ -22,17 +22,17 @@
 (= (prolog-call $goal)
    (pl-call $goal))
 
-(: prolog-assertz (-> Atom Bool))
-(= (prolog-assertz $goal)
-   (assertzPredicate $goal))
+(: prolog-assertz! (-> Atom Bool))
+(= (prolog-assertz! $goal)
+   (pl-assertz $goal))
 
-(: prolog-asserta (-> Atom Bool))
-(= (prolog-asserta $goal)
-   (assertaPredicate $goal))
+(: prolog-asserta! (-> Atom Bool))
+(= (prolog-asserta! $goal)
+   (pl-asserta $goal))
 
-(: prolog-retract (-> Atom Bool))
-(= (prolog-retract $goal)
-   (retractPredicate $goal))
+(: prolog-retract! (-> Atom Bool))
+(= (prolog-retract! $goal)
+   (pl-retract $goal))
 
 (: import-prolog-functions (-> Expression (->)))
 (= (import-prolog-functions $importfunctions)
