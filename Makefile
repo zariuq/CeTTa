@@ -61,6 +61,13 @@ ifeq ($(ENABLE_PATHMAP_SPACE),0)
 MORK_BRIDGE_CARGO_FEATURE_ARGS += --no-default-features
 endif
 MORK_BRIDGE_STATICLIB := $(MORK_BRIDGE_DIR)/libcetta_space_bridge.a
+MORK_BRIDGE_FEATURE_TAG := default
+ifeq ($(ENABLE_PATHMAP_SPACE),0)
+MORK_BRIDGE_FEATURE_TAG := no-default-features
+endif
+MORK_BRIDGE_SOURCE_DEPS := $(shell find $(CETTA_RUST_DIR) -path '$(CETTA_RUST_DIR)/target' -prune -o -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name '*.h' \) -print)
+MORK_BRIDGE_FEATURE_STATICLIB := runtime/bootstrap/libcetta_space_bridge.$(MORK_BRIDGE_FEATURE_TAG).a
+MORK_BRIDGE_BUILD_STAMP := runtime/bootstrap/mork-bridge.$(MORK_BRIDGE_FEATURE_TAG).stamp
 BRIDGE_DEPS =
 BRIDGE_CFLAGS =
 BRIDGE_LDFLAGS =
@@ -69,17 +76,24 @@ ifeq ($(ENABLE_MORK_STATIC),1)
 ifeq ($(wildcard $(MORK_BRIDGE_MANIFEST)),)
 $(error BUILD=$(BUILD_CANON) requires $(MORK_BRIDGE_MANIFEST))
 endif
-BRIDGE_DEPS += $(MORK_BRIDGE_STATICLIB)
+BRIDGE_DEPS += $(MORK_BRIDGE_BUILD_STAMP) $(MORK_BRIDGE_FEATURE_STATICLIB)
 BRIDGE_CFLAGS += -DCETTA_MORK_BRIDGE_STATIC=1
-BRIDGE_LDFLAGS += $(MORK_BRIDGE_STATICLIB) -lrt
+BRIDGE_LDFLAGS += $(MORK_BRIDGE_FEATURE_STATICLIB) -lrt
 MORK_BUILD_HAS_BRIDGE := 1
 endif
 
-$(MORK_BRIDGE_STATICLIB): $(MORK_BRIDGE_MANIFEST) FORCE
+$(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
 	@cd $(MORK_BRIDGE_WORKDIR) && \
 	(ulimit -v 10485760 2>/dev/null || true) && \
 	RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
 	cargo build -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
+	@test -f "$(MORK_BRIDGE_STATICLIB)"
+	@touch "$@"
+
+$(MORK_BRIDGE_FEATURE_STATICLIB): $(MORK_BRIDGE_BUILD_STAMP)
+	@mkdir -p $(dir $@)
+	@cp "$(MORK_BRIDGE_STATICLIB)" "$@"
 
 PY_CFLAGS =
 PY_LDFLAGS =
@@ -113,10 +127,16 @@ SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_CANON).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
+FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_CANON).runtime-stats.o
+FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)-runtime-stats
 else
 OBJ = $(SRC:.c=.$(BUILD_CANON).o)
 BIN = cetta
+FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_CANON).o
+FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)
 endif
+FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
+FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_CANON).runtime-stats.o src/main.$(BUILD_CANON).o,$(OBJ))
 STAGE0_BIN = cetta-stage0
 SPACE_ENGINES = native native-candidate-exact
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -129,6 +149,7 @@ GIT_TEST_URL = file://$(GIT_TEST_FIXTURE_ROOT)
 GIT_TEST_DYNAMIC = $(CURDIR)/runtime/test-git-module-dynamic.metta
 GIT_TEST_COMPAT_DYNAMIC = $(CURDIR)/runtime/test-git-module-compat.metta
 HE_CONTRACT_GENERATED_DIR = tests/generated/he_contract
+TEST_MANIFEST = tests/test_manifest.tsv
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
 	tests/test_space_type.metta \
@@ -142,8 +163,11 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_pathmap_contextual_var_projection_remove.metta \
 	tests/test_pathmap_backend_primary_growth_regression.metta \
 	tests/test_pathmap_fc_depth3_count_regression.metta \
+	tests/test_pathmap_match_copy_var_identity_regression.metta \
+	tests/test_pathmap_typed_query_surface.metta \
 	tests/test_match_chain_cross_space_pathmap_regression.metta \
 	tests/test_effect_append_batch_fastpath.metta \
+	tests/test_space_batch_copy_surfaces.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
 	tests/test_mork_nil_parity_regression.metta \
 	tests/test_mork_recursive_bc_micro_regression.metta \
@@ -433,7 +457,7 @@ test-pathmap-typed-query-abi:
 
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_CANON).stage0.o)
-DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d)
+DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) $(FALLBACK_EVAL_TEST_OBJ:.o=.d)
 
 -include $(DEPS)
 
@@ -505,6 +529,17 @@ $(BIN): $(OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
+$(FALLBACK_EVAL_TEST_BIN): $(FALLBACK_EVAL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-fallback-eval.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(FALLBACK_EVAL_TEST_OBJ): $(FALLBACK_EVAL_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
 # stdlib objects depend on the generated blob header
 src/cetta_stdlib.$(BUILD_CANON).o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
@@ -521,9 +556,12 @@ src/cetta_stdlib.$(BUILD_CANON).runtime-stats.o: src/cetta_stdlib.c src/cetta_st
 clean:
 	rm -f $(OBJ) $(STAGE0_OBJ) $(DEPS) $(BIN) $(STAGE0_BIN) cetta-stage0 \
 		runtime/cetta-*-runtime-stats runtime/cetta-stage0-*-runtime-stats \
+		runtime/test_fallback_eval_session-* runtime/bootstrap/test_fallback_eval_session.*.o \
+		runtime/bootstrap/test_fallback_eval_session.*.d \
 		src/*.runtime-stats.o src/*.runtime-stats.d \
 		native/*.runtime-stats.o native/*.runtime-stats.d \
-		$(STDLIB_BLOB) \
+		$(STDLIB_BLOB) runtime/bootstrap/mork-bridge.*.stamp \
+		runtime/bootstrap/libcetta_space_bridge.*.a \
 		$(BUILD_CONFIG_HEADER) $(STAGE0_BUILD_CONFIG_HEADER) \
 		src/foreign.o src/foreign.d src/foreign.stage0.o src/foreign.stage0.d \
 		src/foreign_stub.o src/foreign_stub.d src/foreign_stub.stage0.o src/foreign_stub.stage0.d
@@ -671,7 +709,7 @@ define require_runtime_stats_or_reexec
 	fi
 endef
 
-test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-mork-lane-core test-closed-stream-fastpath
+test: $(BIN) test-manifest test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-mork-lane-core test-closed-stream-fastpath
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -703,7 +741,7 @@ test: $(BIN) test-git-module test-symbolid-guard test-variant-shape-roundtrip te
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --lang he "$$f" 2>&1); \
+		result=$$(./$(BIN) --profile he_extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat $$exp)" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -734,7 +772,7 @@ test-heavy: $(BIN)
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --lang he "$$f" 2>&1); \
+		result=$$(./$(BIN) --profile he_extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -785,7 +823,7 @@ test-runtime-stats-metta-suite:
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --lang he "$$f" 2>&1); \
+		result=$$(./$(BIN) --profile he_extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -821,7 +859,20 @@ perf-compare-tu:
 	@./scripts/compare_witness.sh tu_tilepuzzle
 	@./scripts/compare_witness.sh tu_metamath_stream_basic
 
-test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
+test-manifest:
+	@awk -F '\t' 'BEGIN { ok = 1; expected = "path\tlang\tsyntax\tprofile\tbuild\tspace_engine\tlane\texpect\tnotes"; } \
+		NR == 1 { if ($$0 != expected) { print "FAIL: test manifest header"; ok = 0; } next; } \
+		/^#/ || NF == 0 { next; } \
+		NF != 9 { print "FAIL: " FILENAME ":" NR ": expected 9 TSV columns, got " NF; ok = 0; next; } \
+		$$4 == "none" { print "FAIL: " FILENAME ":" NR ": use a blank profile field, not none"; ok = 0; } \
+		$$5 !~ /^(any|main|pathmap|full|runtime-stats)$$/ { print "FAIL: " FILENAME ":" NR ": unknown build " $$5; ok = 0; } \
+		$$8 !~ /^(golden|diagnostic|binary|no_expected)$$/ { print "FAIL: " FILENAME ":" NR ": unknown expect " $$8; ok = 0; } \
+		{ cmd = "[ -f \"" $$1 "\" ]"; if (system(cmd) != 0) { print "FAIL: " FILENAME ":" NR ": missing path " $$1; ok = 0; } } \
+		$$8 == "golden" { expected_path = $$1; sub(/\.[^.]+$$/, ".expected", expected_path); cmd = "[ -f \"" expected_path "\" ]"; if (system(cmd) != 0) { print "FAIL: " FILENAME ":" NR ": missing expected " expected_path; ok = 0; } } \
+		END { exit ok ? 0 : 1; }' $(TEST_MANIFEST)
+	@echo "PASS: test manifest"
+
+test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$(./$(BIN) --list-profiles 2>&1); \
@@ -832,6 +883,30 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 	else \
 		echo "FAIL: profile inventory"; \
 		printf '%s\n' "$$profiles"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	base_result=$$(./$(BIN) --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
+	if printf '%s\n' "$$base_result" | grep -Fq "surface once is unavailable in language he"; then \
+		echo "PASS: he base surface uses compat policy"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he base surface uses compat policy"; \
+		printf '%s\n' "$$base_result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	mm2_profiles=$$(./$(BIN) --lang mm2 --list-profiles 2>&1); \
+	if printf '%s\n' "$$mm2_profiles" | grep -Fq "language 'mm2' has no named profiles"; then \
+		echo "PASS: mm2 has no named profiles"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: mm2 has no named profiles"; \
+		printf '%s\n' "$$mm2_profiles"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	mm2_profile_err=$$(./$(BIN) --lang mm2 --profile he_compat -e '()' 2>&1 || true); \
+	if printf '%s\n' "$$mm2_profile_err" | grep -Fq "error: language 'mm2' has no named profiles"; then \
+		echo "PASS: mm2 rejects foreign profiles"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: mm2 rejects foreign profiles"; \
+		printf '%s\n' "$$mm2_profile_err"; \
 		fail=$$((fail + 1)); \
 	fi; \
 	for profile in he_compat he_extended he_prime; do \
@@ -1300,6 +1375,46 @@ test-profiles: $(BIN) test-git-module-profiles test-symbolid-guard
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
+test-fallback-eval-session: $(FALLBACK_EVAL_TEST_BIN)
+	@result=$$(./$(FALLBACK_EVAL_TEST_BIN) 2>&1); \
+	expected='(Error (once (superpose (1 2))) surface once is unavailable in language he)'; \
+	if [ "$$result" = "$$expected" ]; then \
+		echo "PASS: fallback eval session uses base HE semantics"; \
+	else \
+		echo "FAIL: fallback eval session uses base HE semantics"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
+		exit 1; \
+	fi
+
+test-import-modes: $(BIN)
+	@default_result=$$(./$(BIN) --profile he_extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
+	if printf '%s\n' "$$default_result" | grep -Fq "Failed to resolve module Helper"; then \
+		echo "PASS: default relative import mode stays local"; \
+	else \
+		echo "FAIL: default relative import mode stays local"; \
+		printf '%s\n' "$$default_result"; \
+		exit 1; \
+	fi; \
+	ancestor_result=$$(./$(BIN) --profile he_extended --lang he --import-mode ancestor-walk tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
+	if [ "$$ancestor_result" = "$$(cat tests/support/import_mode/nested/use_parent_helper.expected)" ]; then \
+		echo "PASS: ancestor-walk import mode finds parent helper"; \
+	else \
+		echo "FAIL: ancestor-walk import mode finds parent helper"; \
+		diff <(cat tests/support/import_mode/nested/use_parent_helper.expected) <(printf '%s\n' "$$ancestor_result") | head -20; \
+		exit 1; \
+	fi; \
+	expected_inventory=$$'[()]\n[()]'; \
+	inventory_result=$$(./$(BIN) --profile he_extended --lang he --import-mode ancestor-walk \
+		-e '!(bind! &mods (module-inventory!))' \
+		-e '!(assertEqualToResult (match &mods (module-import-mode ancestor-walk) ok) (ok))' 2>&1); \
+	if [ "$$inventory_result" = "$$expected_inventory" ]; then \
+		echo "PASS: module inventory reports import mode"; \
+	else \
+		echo "FAIL: module inventory reports import mode"; \
+		diff <(printf '%s\n' "$$expected_inventory") <(printf '%s\n' "$$inventory_result") | head -20; \
+		exit 1; \
+	fi
+
 test-backends: $(BIN)
 	@python3 scripts/run_backend_parametric_tests.py \
 		--cetta ./$(BIN) \
@@ -1409,7 +1524,7 @@ test-mork-basic-pathmap-guard: $(BIN)
 	@if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		echo "SKIP: mork/basic pathmap guards (pathmap lane enabled)"; \
 	else \
-		result=$$(./$(BIN) --lang he \
+		result=$$(./$(BIN) --profile he_extended --lang he \
 			-e '!(assertEqualToResult (new-space pathmap) ((Error (new-space pathmap) "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full")))' \
 			-e '!(bind! &h (new-space hash))' \
 			-e '!(assertEqualToResult (space-set-backend! &h pathmap) ((Error (space-set-backend! &h pathmap) "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full")))' \
@@ -1447,7 +1562,7 @@ test-pathmap-lane-body: $(BIN)
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --lang he "$$f" 2>&1); \
+		result=$$(./$(BIN) --profile he_extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat $$exp)" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -1520,7 +1635,7 @@ test-mm2-exec-basic: $(BIN)
 test-import-mm2-mork-session-lowering: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork-space sugar over explicit handles,$@)
 	@ \
-	result=$$(./$(BIN) --lang he \
+	result=$$(./$(BIN) --profile he_extended --lang he \
 		tests/test_import_mm2_mork_session_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_import_mm2_mork_session_lowering.expected)" ]; then \
 		echo "PASS: mork-space sugar over explicit handles"; \
@@ -1533,7 +1648,7 @@ test-import-mm2-mork-session-lowering: $(BIN)
 test-mm2-kiss-suite: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 KISS raw example suite,$@)
 	@ \
-	prep=$$(./$(BIN) --quiet --lang he tests/support/prepare_mm2_kiss_fruit_colors_act.metta 2>&1); \
+	prep=$$(./$(BIN) --quiet --profile he_extended --lang he tests/support/prepare_mm2_kiss_fruit_colors_act.metta 2>&1); \
 	if [ -n "$$prep" ]; then \
 		echo "FAIL: mm2 KISS ACT prepare"; \
 		printf '%s\n' "$$prep"; \
@@ -1561,7 +1676,7 @@ test-mm2-kiss-suite: $(BIN)
 		fail=$$((fail + 1)); \
 	fi; \
 	for stem in test_import_mm2_module_surface; do \
-		result=$$(./$(BIN) --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$(./$(BIN) --profile he_extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -1573,7 +1688,7 @@ test-mm2-kiss-suite: $(BIN)
 	done; \
 	if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		stem=test_include_mm2_space_target; \
-		result=$$(./$(BIN) --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$(./$(BIN) --profile he_extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -1606,7 +1721,7 @@ test-mork-surface-suite: $(BIN)
 		test_mork_zipper_surface \
 		test_new_space_mork_surface \
 		test_step_space_surface; do \
-		result=$$(./$(BIN) --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$(./$(BIN) --profile he_extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -1650,7 +1765,7 @@ test-mork-runtime-stats-isolation-body: $(BIN)
 	fi
 
 test-closed-stream-fastpath: $(BIN)
-	@result=$$(./$(BIN) --quiet --lang he tests/test_closed_stream_fastpath.metta 2>&1); \
+	@result=$$(./$(BIN) --quiet --profile he_extended --lang he tests/test_closed_stream_fastpath.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_closed_stream_fastpath.expected)" ]; then \
 		echo "PASS: test_closed_stream_fastpath"; \
 	else \
@@ -1661,7 +1776,7 @@ test-closed-stream-fastpath: $(BIN)
 
 test-closed-stream-runtime-stats: $(BIN)
 	$(call require_runtime_stats_or_reexec,closed-stream runtime-stats regression,$@)
-	@result=$$(./$(BIN) --quiet --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
+	@result=$$(./$(BIN) --quiet --profile he_extended --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_closed_stream_runtime_stats.expected)" ]; then \
 		echo "PASS: test_closed_stream_runtime_stats"; \
 	else \
@@ -1788,7 +1903,7 @@ test-pathmap-match-chain-v3: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap nested-match conjunction lowering regression,$@)
 	$(call require_runtime_stats_or_reexec,pathmap nested-match conjunction lowering regression,$@)
 	@ \
-	result=$$(./$(BIN) --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
+	result=$$(./$(BIN) --profile he_extended --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_match_chain_conjunction_lowering.expected)" ]; then \
 		echo "PASS: pathmap nested-match conjunction lowering regression"; \
 	else \
@@ -1813,7 +1928,7 @@ test-mork-lib-pathmap: $(BIN)
 test-mork-open-act: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork open-act probe,$@)
 	@ \
-	result=$$(./$(BIN) --lang he tests/test_mork_open_act_surface.metta 2>&1); \
+	result=$$(./$(BIN) --profile he_extended --lang he tests/test_mork_open_act_surface.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_open_act_surface.expected)" ]; then \
 		echo "PASS: mork open-act probe"; \
 	else \
@@ -1823,9 +1938,9 @@ test-mork-open-act: $(BIN)
 	fi
 
 test-pretty-vars-flags: $(BIN)
-	@raw_result=$$(./$(BIN) --raw-vars --lang he tests/test_pretty_vars_surface.metta 2>&1); \
-	default_result=$$(./$(BIN) --lang he tests/test_pretty_vars_surface.metta 2>&1); \
-	pretty_result=$$(./$(BIN) --pretty-vars --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	@raw_result=$$(./$(BIN) --raw-vars --profile he_extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	default_result=$$(./$(BIN) --profile he_extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	pretty_result=$$(./$(BIN) --pretty-vars --profile he_extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
 	if printf '%s\n' "$$raw_result" | grep -Fq '#'; then \
 		:; \
 	else \
@@ -1849,9 +1964,9 @@ test-pretty-vars-flags: $(BIN)
 	fi
 
 test-pretty-namespaces-flags: $(BIN)
-	@raw_result=$$(./$(BIN) --raw-namespaces --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
-	default_result=$$(./$(BIN) --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
-	pretty_result=$$(./$(BIN) --pretty-namespaces --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	@raw_result=$$(./$(BIN) --raw-namespaces --profile he_extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	default_result=$$(./$(BIN) --profile he_extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	pretty_result=$$(./$(BIN) --pretty-namespaces --profile he_extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
 	if printf '%s\n' "$$raw_result" | grep -Fq 'mork:open-act' && \
 	   printf '%s\n' "$$raw_result" | grep -Fq 'runtime:test-module' && \
 	   printf '%s\n' "$$raw_result" | grep -Fq '$mork:space'; then \
@@ -1889,7 +2004,7 @@ bench-bio-eqtl-act-modes: $(BIN)
 prepare-bio-1m-act: $(BIN)
 	$(call require_mork_bridge_or_reexec,bio 1m ACT prepare,$@)
 	@ \
-	result=$$(./$(BIN) --quiet --lang he tests/support/prepare_bio_1m_act.metta 2>&1); \
+	result=$$(./$(BIN) --quiet --profile he_extended --lang he tests/support/prepare_bio_1m_act.metta 2>&1); \
 	if [ -z "$$result" ]; then \
 		echo "PASS: prepared runtime/bench_bio_1m.act"; \
 	else \
@@ -2277,4 +2392,4 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean test test-light test-correctness test-heavy test-correctness-all test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi bench bench-light bench-correctness bench-performance-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean test test-light test-correctness test-heavy test-correctness-all test-manifest test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

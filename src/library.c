@@ -266,15 +266,19 @@ static const CettaLibrarySpec *cetta_library_lookup(const char *name) {
 }
 
 void cetta_library_context_init(CettaLibraryContext *ctx) {
-    cetta_library_context_init_with_profile(ctx, cetta_profile_he_extended());
+    cetta_library_context_init_for_language_profile(ctx, CETTA_LANGUAGE_HE, NULL);
 }
 
-void cetta_library_context_init_with_profile(CettaLibraryContext *ctx,
-                                             const CettaProfile *profile) {
-    cetta_eval_session_init(&ctx->session, profile);
+void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
+                                                     CettaLanguageId language_id,
+                                                     const CettaProfile *profile) {
+    cetta_eval_session_init(&ctx->session, language_id, profile);
     term_universe_init(&ctx->term_universe);
     ctx->active_mask = 0;
     ctx->root_dir[0] = '\0';
+    if (!getcwd(ctx->working_dir, sizeof(ctx->working_dir))) {
+        ctx->working_dir[0] = '\0';
+    }
     ctx->script_dir[0] = '\0';
     ctx->import_dir_len = 0;
     ctx->module_mount_len = 0;
@@ -370,7 +374,22 @@ static const char *cetta_library_current_dir(CettaLibraryContext *ctx) {
     if (ctx->script_dir[0] != '\0') {
         return ctx->script_dir;
     }
+    if (ctx->working_dir[0] != '\0') {
+        return ctx->working_dir;
+    }
     return ".";
+}
+
+static const char *cetta_library_relative_base_dir(CettaLibraryContext *ctx) {
+    if (!ctx) {
+        return ".";
+    }
+    if (cetta_eval_session_relative_module_policy(&ctx->session) ==
+            CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY &&
+        ctx->working_dir[0] != '\0') {
+        return ctx->working_dir;
+    }
+    return cetta_library_current_dir(ctx);
 }
 
 static TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
@@ -427,6 +446,11 @@ static const char *cetta_library_display_path(CettaLibraryContext *ctx,
     }
     if (ctx && ctx->root_dir[0] != '\0' &&
         cetta_path_strip_prefix(path, ctx->root_dir, &relative)) {
+        snprintf(out, out_sz, "%s", relative);
+        return out;
+    }
+    if (ctx && ctx->working_dir[0] != '\0' &&
+        cetta_path_strip_prefix(path, ctx->working_dir, &relative)) {
         snprintf(out, out_sz, "%s", relative);
         return out;
     }
@@ -495,15 +519,19 @@ static bool module_provider_visible(const CettaLibraryContext *ctx,
                                     CettaModuleProviderKind provider_kind) {
     CettaModuleProviderFlags flag = cetta_module_provider_flag(provider_kind);
     return ctx && flag != 0 &&
-           cetta_profile_allows_provider_kind(ctx->session.profile, provider_kind) &&
-           cetta_module_resolver_allows(&ctx->session.module_resolver, flag);
+           cetta_language_allows_provider_kind(ctx->session.language_id,
+                                              ctx->session.profile,
+                                              provider_kind) &&
+           cetta_module_policy_allows(&ctx->session.module_policy, flag);
 }
 
 static bool module_mount_visible(const CettaLibraryContext *ctx,
                                  const CettaModuleMount *mount) {
     return ctx && mount &&
            module_provider_visible(ctx, mount->provider_kind) &&
-           cetta_profile_visible_in(ctx->session.profile, mount->profile_visibility_mask);
+           cetta_language_visible_in(ctx->session.language_id,
+                                     ctx->session.profile,
+                                     mount->profile_visibility_mask);
 }
 
 static bool loaded_module_visible(const CettaLibraryContext *ctx,
@@ -1220,6 +1248,53 @@ static bool resolve_module_candidate_with_format(const char *candidate,
     return false;
 }
 
+static bool resolve_relative_module_candidate_for_language(
+    CettaLibraryContext *ctx,
+    const char *path,
+    char *out, size_t out_sz,
+    CettaModuleFormat *format_out,
+    char *reason, size_t reason_sz
+) {
+    char base_dir[PATH_MAX];
+    char candidate[PATH_MAX];
+
+    if (reason && reason_sz > 0) {
+        reason[0] = '\0';
+    }
+    if (!path || !*path) {
+        return false;
+    }
+    if (path[0] == '/') {
+        return resolve_module_candidate_with_format(path, out, out_sz, format_out,
+                                                    reason, reason_sz);
+    }
+
+    snprintf(base_dir, sizeof(base_dir), "%s", cetta_library_relative_base_dir(ctx));
+    while (true) {
+        int n = snprintf(candidate, sizeof(candidate), "%s/%s", base_dir, path);
+        if (!(n > 0 && (size_t)n < sizeof(candidate))) {
+            return false;
+        }
+        if (resolve_module_candidate_with_format(candidate, out, out_sz, format_out,
+                                                 reason, reason_sz)) {
+            return true;
+        }
+        if (cetta_eval_session_relative_module_policy(&ctx->session) !=
+            CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK) {
+            break;
+        }
+        char parent[PATH_MAX];
+        if (!cetta_text_path_parent_dir(parent, sizeof(parent), base_dir)) {
+            break;
+        }
+        if (strcmp(parent, base_dir) == 0) {
+            break;
+        }
+        snprintf(base_dir, sizeof(base_dir), "%s", parent);
+    }
+    return false;
+}
+
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz);
 
@@ -1275,13 +1350,13 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
     plan->logical_target_space = logical_target_space;
     plan->execution_target_space = execution_target_space;
     plan->target_is_fresh = target_is_fresh;
-    plan->transactional = ctx->session.module_resolver.transactional_imports && !target_is_fresh;
+    plan->transactional = ctx->session.module_policy.transactional_imports && !target_is_fresh;
     plan->format.kind = CETTA_MODULE_FORMAT_METTA;
     plan->format.foreign_backend = CETTA_FOREIGN_BACKEND_NONE;
 
     switch (spec->kind) {
     case CETTA_MODULE_SPEC_REGISTERED_ROOT: {
-        if (!cetta_module_resolver_allows(&ctx->session.module_resolver,
+        if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                           CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
             *error_out = atom_symbol(eval_arena, "registered module roots disabled");
             return false;
@@ -1309,22 +1384,28 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
         break;
     }
     case CETTA_MODULE_SPEC_RELATIVE_FILE: {
-        if (!cetta_module_resolver_allows(&ctx->session.module_resolver,
+        if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                           CETTA_MODULE_PROVIDER_RELATIVE_FILES)) {
             *error_out = atom_symbol(eval_arena, "relative module imports disabled");
             return false;
         }
         plan->provider_kind = CETTA_MODULE_PROVIDER_RELATIVE_FILE;
-        int n = snprintf(candidate, sizeof(candidate), "%s/%s",
-                         cetta_library_current_dir(ctx), spec->path_or_member);
-        if (!(n > 0 && (size_t)n < sizeof(candidate))) {
-            *error_out = atom_symbol(eval_arena, "module path too long");
+        char reason[160];
+        if (!resolve_relative_module_candidate_for_language(
+                ctx, spec->path_or_member,
+                plan->canonical_path, sizeof(plan->canonical_path),
+                &plan->format, reason, sizeof(reason))) {
+            if (reason[0]) {
+                *error_out = atom_symbol(eval_arena, reason);
+            } else {
+                *error_out = atom_symbol(eval_arena, "module file not found");
+            }
             return false;
         }
-        break;
+        return true;
     }
     case CETTA_MODULE_SPEC_MODULE_NAME: {
-        if (cetta_module_resolver_allows(&ctx->session.module_resolver,
+        if (cetta_module_policy_allows(&ctx->session.module_policy,
                                          CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
             const CettaModuleMount *mount = cetta_library_find_module_mount(ctx, spec->path_or_member);
             if (mount) {
@@ -1337,13 +1418,13 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
                 break;
             }
         }
-        if (cetta_module_resolver_allows(&ctx->session.module_resolver,
+        if (cetta_module_policy_allows(&ctx->session.module_policy,
                                          CETTA_MODULE_PROVIDER_STDLIB) &&
             build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate))) {
             plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
             break;
         }
-        if (!cetta_module_resolver_allows(&ctx->session.module_resolver,
+        if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                           CETTA_MODULE_PROVIDER_RELATIVE_FILES)) {
             *error_out = atom_symbol(eval_arena, "relative module imports disabled");
             return false;
@@ -1353,17 +1434,11 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
             *error_out = atom_symbol(eval_arena, "module provider disabled");
             return false;
         }
-        int n = snprintf(candidate, sizeof(candidate), "%s/%s",
-                         cetta_library_current_dir(ctx), spec->path_or_member);
-        if (!(n > 0 && (size_t)n < sizeof(candidate))) {
-            *error_out = atom_symbol(eval_arena, "module path too long");
-            return false;
-        }
         char reason[160];
-        if (!resolve_module_candidate_with_format(candidate, plan->canonical_path,
-                                                  sizeof(plan->canonical_path),
-                                                  &plan->format,
-                                                  reason, sizeof(reason))) {
+        if (!resolve_relative_module_candidate_for_language(
+                ctx, spec->path_or_member,
+                plan->canonical_path, sizeof(plan->canonical_path),
+                &plan->format, reason, sizeof(reason))) {
             char *msg = arena_alloc(eval_arena,
                                     strlen("Failed to resolve module ") +
                                     strlen(spec->path_or_member) +
@@ -1378,7 +1453,7 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
         return true;
     }
     case CETTA_MODULE_SPEC_STDLIB:
-        if (!cetta_module_resolver_allows(&ctx->session.module_resolver,
+        if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                           CETTA_MODULE_PROVIDER_STDLIB)) {
             *error_out = atom_symbol(eval_arena, "stdlib module imports disabled");
             return false;
@@ -1425,8 +1500,8 @@ static int imported_file_lookup(CettaLibraryContext *ctx, Space *space,
 
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz) {
-    if (!cetta_module_resolver_allows(&ctx->session.module_resolver,
-                                      CETTA_MODULE_PROVIDER_STDLIB)) {
+    if (!cetta_module_policy_allows(&ctx->session.module_policy,
+                                    CETTA_MODULE_PROVIDER_STDLIB)) {
         return false;
     }
     if (ctx->root_dir[0] != '\0') {
@@ -1658,7 +1733,7 @@ static Atom *library_quote_atom(Arena *a, Atom *atom) {
 
 static bool library_resolve_current_path(CettaLibraryContext *ctx, const char *path,
                                          char *resolved, size_t resolved_sz) {
-    return cetta_text_path_resolve(cetta_library_current_dir(ctx), path,
+    return cetta_text_path_resolve(cetta_library_relative_base_dir(ctx), path,
                                    resolved, resolved_sz);
 }
 
@@ -5901,14 +5976,33 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
     Space *inventory = arena_alloc(dst, sizeof(Space));
     space_init_with_universe(inventory, cetta_library_space_universe(ctx, dst));
 
-    const char *profile_name = (ctx->session.profile && ctx->session.profile->name) ?
-        ctx->session.profile->name : "unknown";
-    if (!library_inventory_try_add_symbol_fact2(inventory, "module-profile",
-                                                profile_name)) {
+    const char *language_name =
+        cetta_language_canonical_name(ctx->session.language_id);
+    if (!library_inventory_try_add_symbol_fact2(inventory, "module-language",
+                                                language_name)) {
+        library_inventory_add_fallback_atom(
+            inventory, dst,
+            atom_expr2(dst, atom_symbol(dst, "module-language"),
+                       atom_symbol(dst, language_name)));
+    }
+
+    if (ctx->session.profile && ctx->session.profile->name &&
+        !library_inventory_try_add_symbol_fact2(inventory, "module-profile",
+                                                ctx->session.profile->name)) {
         library_inventory_add_fallback_atom(
             inventory, dst,
             atom_expr2(dst, atom_symbol(dst, "module-profile"),
-                       atom_symbol(dst, profile_name)));
+                       atom_symbol(dst, ctx->session.profile->name)));
+    }
+
+    const char *import_mode_name = cetta_relative_module_policy_name(
+        cetta_eval_session_relative_module_policy(&ctx->session));
+    if (!library_inventory_try_add_symbol_fact2(inventory, "module-import-mode",
+                                                import_mode_name)) {
+        library_inventory_add_fallback_atom(
+            inventory, dst,
+            atom_expr2(dst, atom_symbol(dst, "module-import-mode"),
+                       atom_symbol(dst, import_mode_name)));
     }
 
     for (uint32_t i = 0; i < cetta_module_provider_count(); i++) {
@@ -6159,8 +6253,8 @@ bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
     char resolved[PATH_MAX];
     struct stat st;
 
-    if (!cetta_module_resolver_allows(&ctx->session.module_resolver,
-                                      CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
+    if (!cetta_module_policy_allows(&ctx->session.module_policy,
+                                    CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
         *error_out = atom_symbol(eval_arena, "registered module roots disabled");
         return false;
     }
@@ -6175,7 +6269,7 @@ bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
         n = snprintf(candidate, sizeof(candidate), "%s", path);
     } else {
         n = snprintf(candidate, sizeof(candidate), "%s/%s",
-                     cetta_library_current_dir(ctx), path);
+                     cetta_library_relative_base_dir(ctx), path);
     }
     if (!(n > 0 && (size_t)n < sizeof(candidate))) {
         *error_out = atom_symbol(eval_arena, "module path too long");
@@ -6204,8 +6298,8 @@ bool cetta_library_register_git_module(CettaLibraryContext *ctx, const char *url
     char module_name[CETTA_MAX_MODULE_NAMESPACE];
     char cached_root[PATH_MAX];
 
-    if (!cetta_module_resolver_allows(&ctx->session.module_resolver,
-                                      CETTA_MODULE_PROVIDER_GIT)) {
+    if (!cetta_module_policy_allows(&ctx->session.module_policy,
+                                    CETTA_MODULE_PROVIDER_GIT)) {
         *error_out = atom_symbol(eval_arena, "git module provider disabled");
         return false;
     }
