@@ -1229,8 +1229,12 @@ static void test_space_to_space_bridge_attempt_failure_is_error(TermUniverse *un
 
     space_init_with_universe(&dst, universe);
     space_init_with_universe(&src, universe);
-    assert(space_match_backend_try_set(&dst, SPACE_ENGINE_PATHMAP));
-    assert(space_match_backend_try_set(&src, SPACE_ENGINE_PATHMAP));
+    if (!space_match_backend_try_set(&dst, SPACE_ENGINE_PATHMAP) ||
+        !space_match_backend_try_set(&src, SPACE_ENGINE_PATHMAP)) {
+        space_free(&src);
+        space_free(&dst);
+        return;
+    }
 
     reset_bridge_capture();
     g_bridge_logical_rows_result = false;

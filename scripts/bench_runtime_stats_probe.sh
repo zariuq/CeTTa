@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/cetta"
+BIN="${CETTA_BIN:-$ROOT/runtime/cetta-core-runtime-stats}"
 RUNTIME_DIR="$ROOT/runtime"
 LOG_FILE="$RUNTIME_DIR/optimization_log.tsv"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -56,7 +56,7 @@ run_probe() {
     } > "$tmp_file"
 
     /usr/bin/time -v -o "$time_file" \
-        bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --count-only --profile he_extended --lang he '$tmp_file'" \
+        bash -lc "ulimit -v 6291456 && cd '$ROOT' && '$BIN' --count-only --profile he_extended --lang he '$tmp_file'" \
         > "$out_file"
 
     mapfile -t lines < "$out_file"
