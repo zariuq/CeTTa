@@ -219,6 +219,39 @@ static bool atom_resolves_to_mork_handle(Space *s, Arena *a, Atom *space_expr,
     return false;
 }
 
+static bool resolve_explicit_mork_bridge_arg(Space *s, Arena *a,
+                                             Atom *space_expr, int fuel,
+                                             CettaMorkSpaceHandle **out_bridge) {
+    if (out_bridge)
+        *out_bridge = NULL;
+    if (!g_library_context)
+        return false;
+
+    Atom *direct = resolve_registry_refs(a, space_expr);
+    if (cetta_library_lookup_explicit_mork_bridge(g_library_context, direct,
+                                                  out_bridge) &&
+        out_bridge && *out_bridge) {
+        return true;
+    }
+
+    ResultSet rs;
+    result_set_init(&rs);
+    metta_eval(s, a, NULL, space_expr, fuel, &rs);
+    for (uint32_t i = 0; i < rs.len; i++) {
+        if (cetta_library_lookup_explicit_mork_bridge(g_library_context,
+                                                      rs.items[i],
+                                                      out_bridge) &&
+            out_bridge && *out_bridge) {
+            free(rs.items);
+            return true;
+        }
+    }
+    free(rs.items);
+    if (out_bridge)
+        *out_bridge = NULL;
+    return false;
+}
+
 static bool generic_mork_handle_sugar_allowed(Space *s, Arena *a, Atom *space_expr,
                                               int fuel) {
     return generic_mork_space_sugar_allowed() &&
@@ -4635,7 +4668,7 @@ static bool emit_mork_add_atoms_from_stream_source(Space *s, Arena *a,
         total_items++;
     }
 
-    if (!ctx.error_atom && total_items > 0) {
+    if (total_items > 0) {
         uint8_t *packet = NULL;
         size_t packet_len = 0;
         uint64_t packet_bytes = 0;
@@ -4717,6 +4750,357 @@ static bool emit_mork_add_atoms_from_collapse(Space *s, Arena *a, Atom *call_ato
     return emit_mork_add_atoms_from_stream_source(
         s, a, call_atom, space_arg, expr_arg(stream_arg, 0),
         current_env, fuel, os);
+}
+
+typedef struct {
+    SpaceTransferEndpointKind target_kind;
+    SpaceTransferEndpointKind source_kind;
+    Atom *target_ref;
+    Atom *source_ref;
+} CettaAtomsTransferRefs;
+
+static SpaceTransferEndpointKind atoms_source_head_kind(SymbolId head_id) {
+    if (head_id == g_builtin_syms.get_atoms)
+        return SPACE_TRANSFER_ENDPOINT_SPACE;
+    if (head_id == g_builtin_syms.mork_get_atoms_surface ||
+        head_id == g_builtin_syms.lib_mork_space_atoms) {
+        return SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE;
+    }
+    return SPACE_TRANSFER_ENDPOINT_NONE;
+}
+
+static bool add_atoms_source_shape(Atom *items, Atom **out_source_ref,
+                                   bool *out_collapsed,
+                                   SpaceTransferEndpointKind *out_source_kind) {
+    Atom *inner = NULL;
+    SpaceTransferEndpointKind kind = SPACE_TRANSFER_ENDPOINT_NONE;
+
+    if (out_source_ref)
+        *out_source_ref = NULL;
+    if (out_collapsed)
+        *out_collapsed = false;
+    if (out_source_kind)
+        *out_source_kind = SPACE_TRANSFER_ENDPOINT_NONE;
+    if (!items)
+        return false;
+
+    kind = atoms_source_head_kind(atom_head_symbol_id(items));
+    if (kind != SPACE_TRANSFER_ENDPOINT_NONE && expr_nargs(items) == 1) {
+        if (out_source_ref)
+            *out_source_ref = expr_arg(items, 0);
+        if (out_source_kind)
+            *out_source_kind = kind;
+        return true;
+    }
+
+    if (!expr_head_is_id(items, g_builtin_syms.collapse) ||
+        expr_nargs(items) != 1) {
+        return false;
+    }
+    inner = expr_arg(items, 0);
+    kind = atoms_source_head_kind(atom_head_symbol_id(inner));
+    if (kind == SPACE_TRANSFER_ENDPOINT_NONE || expr_nargs(inner) != 1) {
+        return false;
+    }
+
+    if (out_source_ref)
+        *out_source_ref = expr_arg(inner, 0);
+    if (out_collapsed)
+        *out_collapsed = true;
+    if (out_source_kind)
+        *out_source_kind = kind;
+    return true;
+}
+
+static bool atom_is_default_add_atoms_fold_equation(Atom *atom) {
+    if (!expr_head_is_id(atom, g_builtin_syms.equals) || expr_nargs(atom) != 2)
+        return false;
+    Atom *lhs = expr_arg(atom, 0);
+    Atom *rhs = expr_arg(atom, 1);
+    if (!expr_head_is_id(lhs, g_builtin_syms.add_atoms) ||
+        expr_nargs(lhs) != 2 ||
+        !expr_head_is_id(rhs, g_builtin_syms.foldl_atom) ||
+        expr_nargs(rhs) != 5) {
+        return false;
+    }
+    Atom *space_arg = expr_arg(lhs, 0);
+    Atom *tuple_arg = expr_arg(lhs, 1);
+    Atom *unit_arg = expr_arg(rhs, 1);
+    Atom *row_var = expr_arg(rhs, 3);
+    Atom *body = expr_arg(rhs, 4);
+    return atom_eq(expr_arg(rhs, 0), tuple_arg) &&
+           unit_arg->kind == ATOM_EXPR && unit_arg->expr.len == 0 &&
+           row_var->kind == ATOM_VAR &&
+           expr_head_is_id(body, g_builtin_syms.add_atom) &&
+           expr_nargs(body) == 2 &&
+           atom_eq(expr_arg(body, 0), space_arg) &&
+           atom_eq(expr_arg(body, 1), row_var);
+}
+
+static bool atom_is_add_atoms_equation(Atom *atom) {
+    if (!expr_head_is_id(atom, g_builtin_syms.equals) || expr_nargs(atom) != 2)
+        return false;
+    Atom *lhs = expr_arg(atom, 0);
+    return expr_head_is_id(lhs, g_builtin_syms.add_atoms) &&
+           expr_nargs(lhs) == 2;
+}
+
+static bool add_atoms_public_surface_has_only_default(Space *s) {
+    bool found_default = false;
+    uint32_t len = space_length(s);
+    for (uint32_t i = 0; i < len; i++) {
+        Atom *atom = space_get_at(s, i);
+        if (!atom_is_add_atoms_equation(atom))
+            continue;
+        if (!atom_is_default_add_atoms_fold_equation(atom))
+            return false;
+        found_default = true;
+    }
+    return found_default;
+}
+
+static bool resolve_atoms_transfer_endpoint(Space *s, Arena *a, Atom *call_atom,
+                                            SpaceTransferEndpointKind kind,
+                                            Atom *ref,
+                                            bool target_space_guard,
+                                            int fuel,
+                                            SpaceTransferEndpoint *out) {
+    if (!out)
+        return false;
+    *out = (SpaceTransferEndpoint){ .kind = SPACE_TRANSFER_ENDPOINT_NONE };
+    if (!ref || kind == SPACE_TRANSFER_ENDPOINT_NONE)
+        return false;
+
+    if (kind == SPACE_TRANSFER_ENDPOINT_SPACE) {
+        Space *space = resolve_single_space_arg(s, a, ref, fuel);
+        if (!space)
+            return false;
+        if (target_space_guard &&
+            guard_mork_space_surface(a, call_atom, space, "add-atoms",
+                                     "mork:add-atoms")) {
+            return false;
+        }
+        *out = (SpaceTransferEndpoint){
+            .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+            .space = space,
+        };
+        return true;
+    }
+
+    CettaMorkSpaceHandle *bridge = NULL;
+    if (!resolve_explicit_mork_bridge_arg(s, a, ref, fuel, &bridge) ||
+        !bridge) {
+        return false;
+    }
+    *out = (SpaceTransferEndpoint){
+        .kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE,
+        .bridge = bridge,
+    };
+    return true;
+}
+
+static bool emit_atoms_transfer_refs_direct(Space *s, Arena *a, Atom *call_atom,
+                                            const CettaAtomsTransferRefs *refs,
+                                            const Bindings *current_env,
+                                            int fuel, OutcomeSet *os) {
+    Bindings empty;
+    uint64_t added = 0;
+    SpaceTransferResult result = SPACE_TRANSFER_ERROR;
+    SpaceTransferEndpoint target = { .kind = SPACE_TRANSFER_ENDPOINT_NONE };
+    SpaceTransferEndpoint source = { .kind = SPACE_TRANSFER_ENDPOINT_NONE };
+
+    if (!refs || !refs->target_ref || !refs->source_ref ||
+        refs->source_kind == SPACE_TRANSFER_ENDPOINT_NONE) {
+        return false;
+    }
+    bindings_init(&empty);
+
+    Atom *target_ref =
+        (!current_env || current_env->len == 0)
+            ? refs->target_ref
+            : bindings_apply_if_vars(current_env, a, refs->target_ref);
+    Atom *source_ref =
+        (!current_env || current_env->len == 0)
+            ? refs->source_ref
+            : bindings_apply_if_vars(current_env, a, refs->source_ref);
+
+    if (!resolve_atoms_transfer_endpoint(s, a, call_atom, refs->target_kind,
+                                         target_ref, true, fuel, &target) ||
+        !resolve_atoms_transfer_endpoint(s, a, call_atom, refs->source_kind,
+                                         source_ref, false, fuel, &source)) {
+        return false;
+    }
+
+    result = space_match_backend_transfer_resolved_result(
+        target, source, eval_storage_arena(a), &added);
+    if (result == SPACE_TRANSFER_OK) {
+        (void)added;
+        outcome_set_add(os, atom_unit(a), &empty);
+        return true;
+    }
+    if (result == SPACE_TRANSFER_ERROR) {
+        outcome_set_add(os, atom_error(a, call_atom,
+                                       atom_symbol(a, "SpaceTransferFailed")),
+                        &empty);
+        return true;
+    }
+
+    return false;
+}
+
+static bool add_atoms_from_evaluated_source_results(Space *s, Arena *a,
+                                                    Atom *call_atom,
+                                                    Space *target,
+                                                    Atom *items,
+                                                    bool collapsed,
+                                                    int fuel,
+                                                    OutcomeSet *os) {
+    ResultSet rs;
+    Bindings empty;
+    Arena *dst = eval_storage_arena(a);
+
+    bindings_init(&empty);
+    result_set_init(&rs);
+    metta_eval(s, a, NULL, items, fuel, &rs);
+
+    for (uint32_t i = 0; i < rs.len; i++) {
+        Atom *item = rs.items[i];
+        if (atom_is_error(item)) {
+            outcome_set_add(os, item, &empty);
+            result_set_free(&rs);
+            return true;
+        }
+        if (collapsed) {
+            if (!item || item->kind != ATOM_EXPR) {
+                outcome_set_add(os, atom_error(a, call_atom,
+                    atom_symbol(a, "add-atoms source collapse did not produce an expression")),
+                    &empty);
+                result_set_free(&rs);
+                return true;
+            }
+            for (uint32_t j = 0; j < item->expr.len; j++) {
+                if (!space_admit_atom(target, dst, item->expr.elems[j])) {
+                    outcome_set_add(os,
+                        atom_error(a, call_atom, atom_symbol(a, "AddAtomsFailed")),
+                        &empty);
+                    result_set_free(&rs);
+                    return true;
+                }
+            }
+        } else if (!space_admit_atom(target, dst, item)) {
+            outcome_set_add(os,
+                atom_error(a, call_atom, atom_symbol(a, "AddAtomsFailed")),
+                &empty);
+            result_set_free(&rs);
+            return true;
+        }
+    }
+
+    result_set_free(&rs);
+    outcome_set_add(os, atom_unit(a), &empty);
+    return true;
+}
+
+static bool emit_add_atoms_from_source_shape(Space *s, Arena *a,
+                                             Atom *call_atom,
+                                             Space *target,
+                                             Atom *items,
+                                             int fuel, OutcomeSet *os) {
+    Atom *source_ref = NULL;
+    bool collapsed = false;
+    SpaceTransferEndpointKind source_kind = SPACE_TRANSFER_ENDPOINT_NONE;
+
+    if (!add_atoms_source_shape(items, &source_ref, &collapsed, &source_kind))
+        return false;
+
+    CettaAtomsTransferRefs refs = {
+        .target_kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+        .source_kind = source_kind,
+        .target_ref = atom_space(a, target),
+        .source_ref = source_ref,
+    };
+    if (emit_atoms_transfer_refs_direct(s, a, call_atom, &refs, NULL, fuel, os))
+        return true;
+
+    return add_atoms_from_evaluated_source_results(
+        s, a, call_atom, target, items, collapsed, fuel, os);
+}
+
+static bool emit_mork_add_atoms_from_source_shape(Space *s, Arena *a,
+                                                  Atom *call_atom,
+                                                  Atom *space_arg,
+                                                  Atom *items,
+                                                  const Bindings *current_env,
+                                                  int fuel, OutcomeSet *os) {
+    Atom *source_ref = NULL;
+    bool collapsed = false;
+    SpaceTransferEndpointKind source_kind = SPACE_TRANSFER_ENDPOINT_NONE;
+
+    if (!add_atoms_source_shape(items, &source_ref, &collapsed, &source_kind))
+        return false;
+
+    CettaAtomsTransferRefs refs = {
+        .target_kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE,
+        .source_kind = source_kind,
+        .target_ref = space_arg,
+        .source_ref = source_ref,
+    };
+    if (emit_atoms_transfer_refs_direct(s, a, call_atom, &refs, current_env,
+                                        fuel, os)) {
+        return true;
+    }
+
+    Atom *stream_source = collapsed ? expr_arg(items, 0) : items;
+    return emit_mork_add_atoms_from_stream_source(
+        s, a, call_atom, space_arg, stream_source, current_env, fuel, os);
+}
+
+static bool let_add_atoms_source_shape(Atom *pat, Atom *val_expr,
+                                       Atom *body, Atom **out_target_ref,
+                                       Atom **out_source_ref,
+                                       SpaceTransferEndpointKind *out_target_kind,
+                                       SpaceTransferEndpointKind *out_source_kind) {
+    Atom *source_ref = NULL;
+    bool collapsed = false;
+    SpaceTransferEndpointKind source_kind = SPACE_TRANSFER_ENDPOINT_NONE;
+    SpaceTransferEndpointKind target_kind = SPACE_TRANSFER_ENDPOINT_SPACE;
+
+    if (out_target_ref)
+        *out_target_ref = NULL;
+    if (out_source_ref)
+        *out_source_ref = NULL;
+    if (out_target_kind)
+        *out_target_kind = SPACE_TRANSFER_ENDPOINT_SPACE;
+    if (out_source_kind)
+        *out_source_kind = SPACE_TRANSFER_ENDPOINT_NONE;
+    if (!pat || pat->kind != ATOM_VAR || !body ||
+        body->kind != ATOM_EXPR || body->expr.len != 3) {
+        return false;
+    }
+    if (!add_atoms_source_shape(val_expr, &source_ref, &collapsed, &source_kind) ||
+        !collapsed) {
+        return false;
+    }
+    if (expr_head_is_id(body, g_builtin_syms.add_atoms)) {
+        target_kind = SPACE_TRANSFER_ENDPOINT_SPACE;
+    } else if (expr_head_is_id(body, g_builtin_syms.mork_add_atoms) ||
+               expr_head_is_id(body, g_builtin_syms.lib_mork_space_add_atoms)) {
+        target_kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE;
+    } else {
+        return false;
+    }
+    if (expr_nargs(body) != 2 || !atom_eq(expr_arg(body, 1), pat))
+        return false;
+
+    if (out_target_ref)
+        *out_target_ref = expr_arg(body, 0);
+    if (out_source_ref)
+        *out_source_ref = source_ref;
+    if (out_target_kind)
+        *out_target_kind = target_kind;
+    if (out_source_kind)
+        *out_source_kind = source_kind;
+    return true;
 }
 
 static void temp_space_register(Space *space) {
@@ -7442,10 +7826,17 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             return true;
         }
     }
+    /* mork:* add surfaces are explicit bridge-extension entry points; generic
+       add-atoms remains the shadowable stdlib/optimizer surface. */
     if ((head_id == g_builtin_syms.mork_add_atoms ||
          head_id == g_builtin_syms.lib_mork_space_add_atoms) &&
         nargs == 2) {
         Atom *space_arg = resolve_registry_refs(a, atom->expr.elems[1]);
+        if (emit_mork_add_atoms_from_source_shape(
+                s, a, atom, space_arg, atom->expr.elems[2], current_env,
+                fuel, os)) {
+            return true;
+        }
         if (emit_mork_add_atoms_from_collapse(s, a, atom, space_arg,
                                               atom->expr.elems[2], current_env,
                                               fuel, os)) {
@@ -8371,6 +8762,36 @@ tail_call: ;
         Atom *pat = expr_arg(atom, 0);
         Atom *val_expr = expr_arg(atom, 1);
         Atom *body_let = expr_arg(atom, 2);
+        Atom *bulk_target_ref = NULL;
+        Atom *bulk_source_ref = NULL;
+        SpaceTransferEndpointKind bulk_target_kind = SPACE_TRANSFER_ENDPOINT_SPACE;
+        SpaceTransferEndpointKind bulk_source_kind = SPACE_TRANSFER_ENDPOINT_NONE;
+        bool public_add_atoms_body =
+            expr_head_is_id(body_let, g_builtin_syms.add_atoms);
+        if (!preserve_bindings &&
+            CURRENT_ENV->len == 0 && CURRENT_ENV->eq_len == 0 &&
+            let_add_atoms_source_shape(pat, val_expr, body_let,
+                                       &bulk_target_ref, &bulk_source_ref,
+                                       &bulk_target_kind,
+                                       &bulk_source_kind) &&
+            (!public_add_atoms_body ||
+             add_atoms_public_surface_has_only_default(s))) {
+            CettaAtomsTransferRefs transfer_refs = {
+                .target_kind = bulk_target_kind,
+                .source_kind = bulk_source_kind,
+                .target_ref = bulk_target_ref,
+                .source_ref = bulk_source_ref,
+            };
+            if (transfer_refs.target_kind == SPACE_TRANSFER_ENDPOINT_SPACE &&
+                public_add_atoms_body &&
+                generic_mork_handle_sugar_allowed(s, a, bulk_target_ref, fuel)) {
+                transfer_refs.target_kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE;
+            }
+            if (emit_atoms_transfer_refs_direct(s, a, body_let, &transfer_refs,
+                                                CURRENT_ENV, fuel, os)) {
+                return;
+            }
+        }
         Atom *applied_val_expr = bindings_apply_if_vars(CURRENT_ENV, a, val_expr);
         bool body_let_closed = !atom_contains_vars(body_let);
         OutcomeSet vals;
@@ -9911,58 +10332,26 @@ tail_call: ;
         return;
     }
 
-    /* ── add-atoms ─────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.add_atoms && nargs == 2 && g_registry) {
+    /* ── add-atoms bulk-transfer shortcut for the default MeTTa equation ─ */
+    if (head_id == g_builtin_syms.add_atoms && nargs == 2 && g_registry &&
+        add_atoms_public_surface_has_only_default(s)) {
         Atom *space_ref = expr_arg(atom, 0);
         Atom *items = expr_arg(atom, 1);
-        if (emit_generic_mork_handle_native_surface(
-                s, a, atom, atom->expr.elems + 1, nargs, fuel,
-                g_builtin_syms.mork_add_atoms, os)) {
-            return;
-        }
-        Atom *mork_handle_error = guard_mork_handle_surface(
-            s, a, atom, space_ref, fuel, "add-atoms", "mork:add-atoms");
-        if (mork_handle_error) {
-            outcome_set_add(os, mork_handle_error, &_empty);
-            return;
-        }
-        Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
-        if (!target) {
-            outcome_set_add(os, space_arg_error(a, atom,
-                "add-atoms expects a space as the first argument"), &_empty);
-            return;
-        }
-        Atom *mork_error = guard_mork_space_surface(
-            a, atom, target, "add-atoms", "mork:add-atoms");
-        if (mork_error) {
-            outcome_set_add(os, mork_error, &_empty);
-            return;
-        }
-        if (items->kind != ATOM_EXPR) {
-            outcome_set_add(os, atom_error(a, atom,
-                atom_symbol(a, "add-atoms expects an expression of atoms as the second argument")),
-                &_empty);
-            return;
-        }
-        if (space_match_backend_is_attached_compiled(target) &&
-            !space_match_backend_materialize_attached(
-                target, eval_storage_arena(a))) {
-            outcome_set_add(os,
-                atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
-                &_empty);
-            return;
-        }
-        Arena *dst = eval_storage_arena(a);
-        for (uint32_t i = 0; i < items->expr.len; i++) {
-            if (!space_admit_atom(target, dst, items->expr.elems[i])) {
-                outcome_set_add(os,
-                    atom_error(a, atom, atom_symbol(a, "AddAtomsFailed")),
-                    &_empty);
+        if (add_atoms_source_shape(items, NULL, NULL, NULL)) {
+            if (generic_mork_handle_sugar_allowed(s, a, space_ref, fuel) &&
+                emit_mork_add_atoms_from_source_shape(
+                    s, a, atom, space_ref, items, CURRENT_ENV, fuel, os)) {
+                return;
+            }
+            Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
+            if (target &&
+                !guard_mork_space_surface(a, atom, target, "add-atoms",
+                                          "mork:add-atoms") &&
+                emit_add_atoms_from_source_shape(s, a, atom, target, items,
+                                                 fuel, os)) {
                 return;
             }
         }
-        outcome_set_add(os, atom_unit(a), &_empty);
-        return;
     }
 
     /* ── add-atom ──────────────────────────────────────────────────────── */
@@ -10019,7 +10408,7 @@ tail_call: ;
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
-                "add-atom expects a space as the first argument"), &_empty);
+                "add-atom-nodup expects a space as the first argument"), &_empty);
             return;
         }
         Atom *mork_error = guard_mork_space_surface(

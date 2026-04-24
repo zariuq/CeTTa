@@ -107,6 +107,14 @@ int main(void) {
     assert_typed_match_shape(&matches.items[0].bindings, arrow_sym);
     smset_free(&matches);
 
+    assert(space_remove_atom_id(&space, fact_id));
+    assert(space_length(&space) == 0);
+
+    smset_init(&matches);
+    space_subst_query(&space, &arena, query, &matches);
+    assert(matches.len == 0);
+    smset_free(&matches);
+
     space_free(&space);
     arena_free(&arena);
     g_persistent_arena = NULL;

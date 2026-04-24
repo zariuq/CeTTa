@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/cetta"
-BUILD_CFG="$ROOT/runtime/bootstrap/build_config.h"
+BIN="${CETTA_BIN:-$ROOT/runtime/cetta-core-runtime-stats}"
+BUILD_CFG="${CETTA_BUILD_CONFIG:-$ROOT/runtime/bootstrap/build_config.core.runtime-stats.h}"
 RUNTIME_DIR="$ROOT/runtime"
 BENCH_DIR="$RUNTIME_DIR/bench_answer_ref_demand"
 SEED_COUNT="${1:-32}"
@@ -12,14 +12,14 @@ VM_LIMIT_KIB="${VM_LIMIT_KIB:-6291456}"
 
 if [ ! -x "$BIN" ]; then
     echo "error: missing executable $BIN" >&2
-    echo "hint: run 'make BUILD=core ENABLE_RUNTIME_STATS=1 cetta' first" >&2
+    echo "hint: run 'make BUILD=core ENABLE_RUNTIME_STATS=1 runtime/cetta-core-runtime-stats' first or set CETTA_BIN" >&2
     exit 1
 fi
 
 if [ ! -f "$BUILD_CFG" ] || \
    ! grep -Fq '#define CETTA_BUILD_WITH_RUNTIME_STATS 1' "$BUILD_CFG"; then
     echo "error: benchmark requires CETTA_BUILD_WITH_RUNTIME_STATS=1" >&2
-    echo "hint: run 'make BUILD=core ENABLE_RUNTIME_STATS=1 cetta' first" >&2
+    echo "hint: set CETTA_BUILD_CONFIG to the matching runtime-stats build_config header" >&2
     exit 1
 fi
 
@@ -149,7 +149,7 @@ run_case() {
     log_file="$BENCH_DIR/${scenario}_${SEED_COUNT}.log"
 
     /usr/bin/time -f 'ELAPSED=%e\nRSS_KB=%M' \
-        bash -lc "ulimit -v '$VM_LIMIT_KIB' && cd '$ROOT' && ./cetta --emit-runtime-stats --quiet '$program'" \
+        bash -lc "ulimit -v '$VM_LIMIT_KIB' && cd '$ROOT' && '$BIN' --emit-runtime-stats --quiet '$program'" \
         > "$out_file" 2> "$log_file"
 
     table_hit="$(counter_value "$log_file" "table-hit")"

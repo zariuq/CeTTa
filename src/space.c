@@ -1661,6 +1661,10 @@ bool space_remove(Space *s, Atom *atom) {
             return true;
         }
     }
+    if (atom && space_match_backend_remove_atom_direct(s, atom))
+        return true;
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP)
+        return false;
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
     if (space_is_queue(s))

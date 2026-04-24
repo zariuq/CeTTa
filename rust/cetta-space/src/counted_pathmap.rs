@@ -10,9 +10,9 @@ use crate::{
 use mork::space::Space;
 #[cfg(test)]
 use mork_expr::serialize;
-use mork_expr::{apply, Expr, ExprZipper};
+use mork_expr::{Expr, ExprZipper, apply};
 #[cfg(feature = "pathmap-space")]
-use mork_expr::{byte_item, unify, ExprEnv, Tag};
+use mork_expr::{ExprEnv, Tag, byte_item, unify};
 use pathmap::zipper::{
     Zipper, ZipperAbsolutePath, ZipperCreation, ZipperIteration, ZipperMoving, ZipperWriting,
 };
@@ -325,6 +325,33 @@ pub fn counted_insert_expr_cached(
 ) -> Result<u32, String> {
     let next_count = counted_insert_expr(space, atom_expr_bytes)?;
     *cached_logical_size = cached_logical_size.saturating_add(1);
+    Ok(next_count)
+}
+
+pub fn counted_insert_expr_count_cached(
+    space: &mut Space,
+    atom_expr_bytes: &[u8],
+    delta: u32,
+    cached_logical_size: &mut u64,
+) -> Result<u32, String> {
+    validate_expr_bytes(atom_expr_bytes)?;
+    if delta == 0 {
+        return counted_exact_entry(space, atom_expr_bytes)
+            .map(|entry| entry.map(|entry| entry.count).unwrap_or(0));
+    }
+
+    let current = counted_exact_entry(space, atom_expr_bytes)?;
+    let current_count = current.as_ref().map(|entry| entry.count).unwrap_or(0);
+    let next_count = current_count
+        .checked_add(delta)
+        .ok_or_else(|| "counted PathMap multiplicity overflow".to_string())?;
+    counted_update_exact_entry(
+        space,
+        atom_expr_bytes,
+        current.as_ref().map(|entry| entry.count),
+        Some(next_count),
+    )?;
+    *cached_logical_size = cached_logical_size.saturating_add(u64::from(delta));
     Ok(next_count)
 }
 
@@ -1230,13 +1257,19 @@ mod tests {
         }
 
         assert_eq!(decoded.len(), 3);
-        let dup_a_packet = stable_bridge_expr_packet_bytes(&space, Expr {
-            ptr: dup_a.as_ptr().cast_mut(),
-        })
+        let dup_a_packet = stable_bridge_expr_packet_bytes(
+            &space,
+            Expr {
+                ptr: dup_a.as_ptr().cast_mut(),
+            },
+        )
         .unwrap();
-        let dup_b_packet = stable_bridge_expr_packet_bytes(&space, Expr {
-            ptr: dup_b.as_ptr().cast_mut(),
-        })
+        let dup_b_packet = stable_bridge_expr_packet_bytes(
+            &space,
+            Expr {
+                ptr: dup_b.as_ptr().cast_mut(),
+            },
+        )
         .unwrap();
         assert_eq!(decoded[0], dup_a_packet);
         assert_eq!(decoded[1], dup_a_packet);
@@ -1406,12 +1439,16 @@ mod tests {
         assert_ne!(decoded.get(&2).unwrap().2, decoded.get(&3).unwrap().2);
 
         let a1_bytes = &decoded.get(&1).unwrap().2;
-        assert!(a1_bytes
-            .windows(2)
-            .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 0].as_slice()));
-        assert!(a1_bytes
-            .windows(2)
-            .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 1].as_slice()));
+        assert!(
+            a1_bytes
+                .windows(2)
+                .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 0].as_slice())
+        );
+        assert!(
+            a1_bytes
+                .windows(2)
+                .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 1].as_slice())
+        );
     }
 
     #[test]

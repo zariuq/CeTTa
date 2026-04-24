@@ -5323,13 +5323,22 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
     space_init_with_universe(
         &imported, work_space ? work_space->native.universe : NULL);
     imported_init = true;
-    switch (space_match_backend_import_bridge_space(&imported, bridge, NULL)) {
-    case SPACE_BRIDGE_IMPORT_OK:
+    SpaceTransferEndpoint import_dst = {
+        .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+        .space = &imported,
+    };
+    SpaceTransferEndpoint import_src = {
+        .kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE,
+        .bridge = bridge,
+    };
+    switch (space_match_backend_transfer_resolved_result(import_dst, import_src,
+                                                         persistent_arena, NULL)) {
+    case SPACE_TRANSFER_OK:
         for (uint32_t i = 0, n = space_length(&imported); i < n; i++) {
             space_add_atom_id(work_space, space_get_atom_id_at(&imported, i));
         }
         break;
-    case SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK:
+    case SPACE_TRANSFER_NEEDS_TEXT_FALLBACK:
         if (!cetta_mork_bridge_space_dump(bridge, &packet, &packet_len, &rows)) {
             *error_out = module_reason_with_detail(
                 ctx, eval_arena, "ModuleCompiledDumpFailed", path,
@@ -5341,7 +5350,7 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
             goto cleanup;
         }
         break;
-    case SPACE_BRIDGE_IMPORT_ERROR:
+    case SPACE_TRANSFER_ERROR:
     default:
         *error_out = module_reason_with_detail(
             ctx, eval_arena, "ModuleCompiledImportFailed", path,

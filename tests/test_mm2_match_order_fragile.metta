@@ -1,5 +1,5 @@
-; Demonstrates that assertEqualToResult on match over a MORK space
-; is fragile: PathMap's hash-trie order ≠ insertion order.
+; Probe: match over a MORK space has backend-specific result order.
+; The positive contract lives in test_mm2_match_order_is_unordered.metta.
 
 !(import! &self mork)
 
@@ -13,7 +13,8 @@
 
 !(mork:step! &ws 4)
 
-; Asserts insertion order — breaks if PathMap returns hash/trie order
-!(assertEqualToResult
-  (mork:match &ws (out $x) $x)
-  (zebra aardvark mango cherry))
+!(println! (mork-match-observed-order
+  (collapse (mork:match &ws (out $x) $x))))
+
+!(println! (mork-match-insertion-order
+  (zebra aardvark mango cherry)))

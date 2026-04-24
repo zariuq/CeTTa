@@ -42,10 +42,14 @@ fi
 
 IFS=$'\t' read -r witness_name category build_hint timeout_s mem_kib command notes <<< "$row"
 
+witness_bin="./cetta"
+witness_build_config="./runtime/bootstrap/build_config.core.h"
+
 ensure_build_from_hint() {
     local hint="$1"
     local build_mode=""
     local enable_runtime_stats=0
+    local runtime_target=""
 
     case "$hint" in
         core|python|mork|main|pathmap|full)
@@ -62,22 +66,38 @@ ensure_build_from_hint() {
     esac
 
     if [[ "$enable_runtime_stats" -eq 1 ]]; then
+        runtime_target="runtime/cetta-${build_mode}-runtime-stats"
         (cd "$repo_root" && ulimit -v "$mem_kib" && \
-            make -j1 BUILD="$build_mode" ENABLE_RUNTIME_STATS=1 cetta >/dev/null)
+            make -j1 BUILD="$build_mode" ENABLE_RUNTIME_STATS=1 "$runtime_target" >/dev/null)
+        witness_bin="./$runtime_target"
+        witness_build_config="./runtime/bootstrap/build_config.${build_mode}.runtime-stats.h"
     else
         (cd "$repo_root" && ulimit -v "$mem_kib" && \
             make -j1 BUILD="$build_mode" ENABLE_RUNTIME_STATS=0 cetta >/dev/null)
+        witness_bin="./cetta"
+        witness_build_config="./runtime/bootstrap/build_config.${build_mode}.h"
     fi
 }
 
 ensure_build_from_hint "$build_hint"
+run_command="$command"
+if [[ "$witness_bin" != "./cetta" ]]; then
+    run_command="${run_command//.\/cetta/$witness_bin}"
+fi
+export CETTA_BIN="$repo_root/${witness_bin#./}"
+export CETTA_BUILD_CONFIG="$repo_root/${witness_build_config#./}"
 
-commit="$(git -C "$repo_root" rev-parse --short HEAD)"
-if git -C "$repo_root" diff --quiet --ignore-submodules HEAD -- &&
-   git -C "$repo_root" diff --quiet --ignore-submodules --cached HEAD --; then
-    tree_state="clean"
+if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    commit="$(git -C "$repo_root" rev-parse --short HEAD)"
+    if git -C "$repo_root" diff --quiet --ignore-submodules HEAD -- &&
+       git -C "$repo_root" diff --quiet --ignore-submodules --cached HEAD --; then
+        tree_state="clean"
+    else
+        tree_state="dirty"
+    fi
 else
-    tree_state="dirty"
+    commit="unknown"
+    tree_state="nogit"
 fi
 
 logfile="$repo_root/.witness_${witness_name}_$$.log"
@@ -88,7 +108,7 @@ set +e
     cd "$repo_root"
     ulimit -v "$mem_kib"
     /usr/bin/time -f 'ELAPSED=%E\nRSS_KB=%M\nEXIT=%x' \
-        timeout "$timeout_s" bash -lc "$command"
+        timeout "$timeout_s" bash -lc "$run_command"
 ) >"$logfile" 2>&1
 shell_status=$?
 set -e
@@ -140,7 +160,7 @@ printf 'TIMEOUT_S=%s\n' "$timeout_s"
 printf 'MEM_KIB=%s\n' "$mem_kib"
 printf 'ELAPSED=%s\n' "${elapsed:-unknown}"
 printf 'RSS_KB=%s\n' "${rss_kib:-unknown}"
-printf 'COMMAND=%s\n' "$command"
+printf 'COMMAND=%s\n' "$run_command"
 printf 'NOTES=%s\n' "$notes"
 printf 'LAST_PAYLOAD=%s\n' "${last_payload:-}"
 printf 'FIRST_SURFACE_ERROR=%s\n' "${first_surface_error:-}"

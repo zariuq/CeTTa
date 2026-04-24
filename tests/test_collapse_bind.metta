@@ -10,4 +10,4 @@
 ; into the packed collapse-bind payload.
 !(assertEqualToResult
   (collapse-bind (let $x (superpose (a b)) (if (== $x a) (empty) $x)))
-  (((b (Bindings ((x b)) ())))))
+  (((b (Bindings (($x b)) ())))))

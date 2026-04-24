@@ -25,6 +25,9 @@ static const uint8_t *g_bridge_value_bytes[8];
 static size_t g_bridge_value_lens[8];
 static uint32_t g_bridge_value_count = 0;
 static uint32_t g_bridge_cursor_pos = UINT32_MAX;
+static bool g_bridge_logical_rows_result = false;
+static uint64_t g_bridge_logical_rows_added = 0;
+static uint32_t g_bridge_logical_rows_calls = 0;
 
 static void reset_test_counters(void) {
     test_runtime_stats_reset_counters();
@@ -57,6 +60,9 @@ static void reset_bridge_capture(void) {
     memset(g_bridge_value_lens, 0, sizeof(g_bridge_value_lens));
     g_bridge_value_count = 0;
     g_bridge_cursor_pos = UINT32_MAX;
+    g_bridge_logical_rows_result = false;
+    g_bridge_logical_rows_added = 0;
+    g_bridge_logical_rows_calls = 0;
 }
 
 Arena *eval_current_persistent_arena(void) {
@@ -105,6 +111,18 @@ bool cetta_mm2_atom_to_bridge_expr_bytes(Arena *a, Atom *atom,
     return false;
 }
 
+bool cetta_mm2_atom_to_contextual_bridge_expr_bytes(
+    Arena *a, Atom *atom, uint8_t **out_expr_bytes, size_t *out_expr_len,
+    uint8_t **out_context_bytes, size_t *out_context_len,
+    const char **out_error) {
+    if (out_context_bytes)
+        *out_context_bytes = NULL;
+    if (out_context_len)
+        *out_context_len = 0;
+    return cetta_mm2_atom_to_bridge_expr_bytes(
+        a, atom, out_expr_bytes, out_expr_len, out_error);
+}
+
 bool cetta_mm2_atom_id_to_bridge_expr_bytes(Arena *a,
                                             const TermUniverse *universe,
                                             AtomId atom_id,
@@ -121,6 +139,22 @@ bool cetta_mm2_atom_id_to_bridge_expr_bytes(Arena *a,
     if (out_error)
         *out_error = "bridge expr-byte encoder stub disabled in unit test";
     return false;
+}
+
+bool cetta_mm2_atom_id_to_contextual_bridge_expr_bytes(Arena *a,
+                                                       const TermUniverse *universe,
+                                                       AtomId atom_id,
+                                                       uint8_t **out_expr_bytes,
+                                                       size_t *out_expr_len,
+                                                       uint8_t **out_context_bytes,
+                                                       size_t *out_context_len,
+                                                       const char **out_error) {
+    if (out_context_bytes)
+        *out_context_bytes = NULL;
+    if (out_context_len)
+        *out_context_len = 0;
+    return cetta_mm2_atom_id_to_bridge_expr_bytes(
+        a, universe, atom_id, out_expr_bytes, out_expr_len, out_error);
 }
 
 bool cetta_mork_bridge_space_add_text(CettaMorkSpaceHandle *space,
@@ -155,6 +189,19 @@ bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
     return true;
 }
 
+bool cetta_mork_bridge_space_add_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_added) {
+    (void)context_bytes;
+    (void)context_len;
+    return cetta_mork_bridge_space_add_expr_bytes(space, expr_bytes, len,
+                                                  out_added);
+}
+
 bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
                                                   const uint8_t *packet,
                                                   size_t len,
@@ -165,6 +212,17 @@ bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
     if (out_added)
         *out_added = 0;
     return false;
+}
+
+bool cetta_mork_bridge_space_add_logical_rows_from(
+    CettaMorkSpaceHandle *dst, const CettaMorkSpaceHandle *src,
+    uint64_t *out_added) {
+    (void)dst;
+    (void)src;
+    if (out_added)
+        *out_added = g_bridge_logical_rows_added;
+    g_bridge_logical_rows_calls++;
+    return g_bridge_logical_rows_result;
 }
 
 CettaMorkCursorHandle *cetta_mork_bridge_cursor_new(
@@ -266,6 +324,19 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
     return false;
 }
 
+bool cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_removed) {
+    (void)context_bytes;
+    (void)context_len;
+    return cetta_mork_bridge_space_remove_expr_bytes(space, expr_bytes, len,
+                                                     out_removed);
+}
+
 bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
                                                  const uint8_t *expr_bytes,
                                                  size_t len,
@@ -337,6 +408,20 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
     return true;
 }
 
+bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
+                                               uint8_t **out_packet,
+                                               size_t *out_len,
+                                               uint32_t *out_rows) {
+    (void)space;
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_rows)
+        *out_rows = 0;
+    return false;
+}
+
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,
@@ -397,6 +482,24 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
                                                          uint8_t **out_packet,
                                                          size_t *out_len,
                                                          uint32_t *out_rows) {
+    (void)space;
+    (void)pattern;
+    (void)len;
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_rows)
+        *out_rows = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_space_query_contextual_rows(CettaMorkSpaceHandle *space,
+                                                   const uint8_t *pattern,
+                                                   size_t len,
+                                                   uint8_t **out_packet,
+                                                   size_t *out_len,
+                                                   uint32_t *out_rows) {
     (void)space;
     (void)pattern;
     (void)len;
@@ -963,9 +1066,19 @@ static void test_bridge_structural_import_boundary(TermUniverse *universe,
     g_bridge_value_lens[1] = sizeof(solo_string);
     g_bridge_value_count = 2;
     reset_term_universe_witnesses(universe);
-    assert(space_match_backend_import_bridge_space(
-               &imported_space, g_fake_bridge_space, &loaded) ==
-           SPACE_BRIDGE_IMPORT_OK);
+    {
+        SpaceTransferEndpoint dst_endpoint = {
+            .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+            .space = &imported_space,
+        };
+        SpaceTransferEndpoint src_endpoint = {
+            .kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE,
+            .bridge = g_fake_bridge_space,
+        };
+        assert(space_match_backend_transfer_resolved_result(
+                   dst_endpoint, src_endpoint, NULL, &loaded) ==
+               SPACE_TRANSFER_OK);
+    }
     assert(loaded == 2);
     assert(space_length(&imported_space) == 2);
     CettaTermUniverseDiagnostics import_diag =
@@ -998,9 +1111,19 @@ static void test_bridge_structural_import_boundary(TermUniverse *universe,
     g_bridge_value_count = 1;
     loaded = 1234;
     reset_term_universe_witnesses(universe);
-    assert(space_match_backend_import_bridge_space(
-               &imported_space, g_fake_bridge_space, &loaded) ==
-           SPACE_BRIDGE_IMPORT_OK);
+    {
+        SpaceTransferEndpoint dst_endpoint = {
+            .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+            .space = &imported_space,
+        };
+        SpaceTransferEndpoint src_endpoint = {
+            .kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE,
+            .bridge = g_fake_bridge_space,
+        };
+        assert(space_match_backend_transfer_resolved_result(
+                   dst_endpoint, src_endpoint, NULL, &loaded) ==
+               SPACE_TRANSFER_OK);
+    }
     assert(loaded == 1);
     assert(space_length(&imported_space) == 3);
     import_diag = snapshot_term_universe_witnesses(universe);
@@ -1044,13 +1167,97 @@ static void test_pathmap_no_universe_import_boundary(void) {
     g_bridge_value_bytes[0] = pair_a_17;
     g_bridge_value_lens[0] = sizeof(pair_a_17);
     g_bridge_value_count = 1;
-    assert(space_match_backend_import_bridge_space(
-               &imported_space, g_fake_bridge_space, &loaded) ==
-           SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK);
+    {
+        SpaceTransferEndpoint dst_endpoint = {
+            .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+            .space = &imported_space,
+        };
+        SpaceTransferEndpoint src_endpoint = {
+            .kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE,
+            .bridge = g_fake_bridge_space,
+        };
+        assert(space_match_backend_transfer_resolved_result(
+                   dst_endpoint, src_endpoint, NULL, &loaded) ==
+               SPACE_TRANSFER_NEEDS_TEXT_FALLBACK);
+    }
     assert(loaded == 0);
     assert(space_length(&imported_space) == 0);
 
     space_free(&imported_space);
+}
+
+static void test_space_to_space_bridge_unavailable_falls_back(TermUniverse *universe,
+                                                              Arena *scratch) {
+    Space dst;
+    Space src;
+    uint64_t added = 999;
+    SpaceTransferEndpoint dst_endpoint;
+    SpaceTransferEndpoint src_endpoint;
+
+    space_init_with_universe(&dst, universe);
+    space_init_with_universe(&src, universe);
+    space_add(&src, expr2(scratch, sym(scratch, "safe-fallback"),
+                          sym(scratch, "copied")));
+
+    reset_bridge_capture();
+    dst_endpoint = (SpaceTransferEndpoint){
+        .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+        .space = &dst,
+    };
+    src_endpoint = (SpaceTransferEndpoint){
+        .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+        .space = &src,
+    };
+
+    assert(space_match_backend_transfer_resolved_result(
+               dst_endpoint, src_endpoint, NULL, &added) ==
+           SPACE_TRANSFER_OK);
+    assert(g_bridge_logical_rows_calls == 0);
+    assert(added == 1);
+    assert(space_length(&dst) == 1);
+
+    space_free(&src);
+    space_free(&dst);
+}
+
+static void test_space_to_space_bridge_attempt_failure_is_error(TermUniverse *universe) {
+    Space dst;
+    Space src;
+    uint64_t added = 999;
+    SpaceTransferEndpoint dst_endpoint;
+    SpaceTransferEndpoint src_endpoint;
+
+    space_init_with_universe(&dst, universe);
+    space_init_with_universe(&src, universe);
+    if (!space_match_backend_try_set(&dst, SPACE_ENGINE_PATHMAP) ||
+        !space_match_backend_try_set(&src, SPACE_ENGINE_PATHMAP)) {
+        space_free(&src);
+        space_free(&dst);
+        return;
+    }
+
+    reset_bridge_capture();
+    g_bridge_logical_rows_result = false;
+    g_bridge_logical_rows_added = 1;
+
+    dst_endpoint = (SpaceTransferEndpoint){
+        .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+        .space = &dst,
+    };
+    src_endpoint = (SpaceTransferEndpoint){
+        .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
+        .space = &src,
+    };
+
+    assert(space_match_backend_transfer_resolved_result(
+               dst_endpoint, src_endpoint, NULL, &added) ==
+           SPACE_TRANSFER_ERROR);
+    assert(g_bridge_logical_rows_calls == 1);
+    assert(added == 0);
+    assert(space_length(&dst) == 0);
+
+    space_free(&src);
+    space_free(&dst);
 }
 
 static void test_space_clone_direct_id_boundary(TermUniverse *universe, Arena *scratch) {
@@ -1118,6 +1325,8 @@ int main(void) {
     test_parser_direct_add_boundary(&universe, &scratch);
     test_bridge_structural_import_boundary(&universe, &scratch);
     test_pathmap_no_universe_import_boundary();
+    test_space_to_space_bridge_unavailable_falls_back(&universe, &scratch);
+    test_space_to_space_bridge_attempt_failure_is_error(&universe);
     test_space_clone_direct_id_boundary(&universe, &scratch);
 
     term_universe_free(&universe);
