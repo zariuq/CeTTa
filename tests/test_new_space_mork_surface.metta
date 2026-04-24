@@ -33,6 +33,7 @@
 !(assertEqualToResult (mork:size &bulk-direct) (3))
 !(assertEqual (mork:match &bulk-direct (edge $x $y) ($x $y))
   (superpose ((i j) (j k) (k l))))
+!(add-atom-nodup nope (edge bad arg))
 !(assertEqualToResult (select (mork:match &bulk (edge c d) hit)) (hit))
 !(assertEqual (once (mork:match &bulk (edge e f) hit))
   (select (mork:match &bulk (edge e f) hit)))
