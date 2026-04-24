@@ -1,0 +1,26 @@
+path	lang	syntax	profile	build	space_engine	lane	expect	notes
+tests/support/test_fallback_eval_session.c	he	c		main	n/a	test-fallback-eval-session	binary	direct evaluator path uses base HE with no selected profile
+tests/spec_profile_once_alias_extension.metta	he	metta		main	native	test-profiles	diagnostic	base HE rejects an extended surface without a profile
+tests/spec_module_inventory.metta	he	metta	he_extended	main	native	test-profiles	golden	module inventory reports language profile and import mode
+tests/support/import_mode/nested/use_parent_helper.metta	he	metta	he_extended	main	native	test-import-modes	diagnostic	default relative import mode stays local
+tests/support/import_mode/nested/use_parent_helper.metta	he	metta	he_extended	main	native	test-import-modes	golden	ancestor-walk import mode finds a parent helper
+tests/test_space_type.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap-backed space type surface
+tests/test_space_engine_backend.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap backend surface
+tests/test_add_atom_nodup_pathmap_alpha_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	no_expected	pathmap alpha regression probe
+tests/test_import_act_module_surface.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	act module import requires pathmap bridge support
+tests/test_include_mm2_space_target.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	MM2 space target include requires pathmap bridge support
+tests/test_module_inventory_act_registered_root.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	act registered root inventory requires pathmap bridge support
+tests/test_mork_act_roundtrip.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	MORK act roundtrip requires pathmap bridge support
+tests/test_pathmap_counted_space_surface.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap counted space surface
+tests/test_pathmap_contextual_var_projection_remove.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap contextual variable projection removal
+tests/test_pathmap_backend_primary_growth_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap primary growth regression
+tests/test_pathmap_fc_depth3_count_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap depth-3 forward-chain count regression
+tests/test_pathmap_match_copy_var_identity_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap bridge copy preserves variable identity
+tests/test_pathmap_typed_query_surface.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap typed query surface
+tests/test_match_chain_cross_space_pathmap_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	cross-space match-chain pathmap regression
+tests/test_effect_append_batch_fastpath.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap effect append batch fast path
+tests/test_space_batch_copy_surfaces.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	batch copy surfaces across native MORK and pathmap spaces
+tests/test_mork_fc_depth3_witness_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	no_expected	MORK depth-3 witness probe
+tests/test_mork_nil_parity_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	no_expected	MORK nil parity probe
+tests/test_mork_recursive_bc_micro_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	no_expected	MORK recursive backchain micro probe
+tests/test_mork_recursive_bc_regression.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	no_expected	MORK recursive backchain probe

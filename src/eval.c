@@ -63,7 +63,7 @@ static uint64_t eval_monotonic_ns(void) {
 
 static void ensure_fallback_eval_session(void) {
     if (g_fallback_eval_session_ready) return;
-    cetta_eval_session_init_he_extended(&g_fallback_eval_session);
+    cetta_eval_session_init(&g_fallback_eval_session, CETTA_LANGUAGE_HE, NULL);
     g_fallback_eval_session_ready = true;
 }
 
@@ -1474,11 +1474,22 @@ static const CettaProfile *active_profile(void) {
     return g_library_context ? g_library_context->session.profile : NULL;
 }
 
+static CettaLanguageId active_language_id(void) {
+    return g_library_context ? g_library_context->session.language_id : CETTA_LANGUAGE_HE;
+}
+
+static bool active_surface_allowed(const char *surface_name) {
+    return cetta_language_allows_surface(active_language_id(), active_profile(),
+                                         surface_name);
+}
+
 static Atom *profile_surface_error(Arena *a, Atom *call, const char *surface_name) {
     const CettaProfile *profile = active_profile();
     char buf[256];
-    snprintf(buf, sizeof(buf), "surface %s is unavailable in profile %s",
-             surface_name, profile ? profile->name : "unknown");
+    snprintf(buf, sizeof(buf), "surface %s is unavailable in %s %s",
+             surface_name,
+             profile ? "profile" : "language",
+             profile ? profile->name : cetta_language_canonical_name(active_language_id()));
     return atom_error(a, call, atom_symbol(a, buf));
 }
 
@@ -1854,8 +1865,7 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
 
 static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     const char *head_name = head ? atom_name_cstr(head) : NULL;
-    if (head && head_name && active_profile() &&
-        !cetta_profile_allows_surface(active_profile(), head_name)) {
+    if (head && head_name && !active_surface_allowed(head_name)) {
         return profile_surface_error(a, make_call_expr(a, head, args, nargs), head_name);
     }
     if (head && atom_is_symbol_id(head, g_builtin_syms.size) &&
@@ -5775,7 +5785,8 @@ static Atom *get_function_ret_type(Atom *ft) {
 }
 
 static bool eval_dependent_telescope_enabled(void) {
-    return cetta_profile_enables_dependent_telescope(active_eval_session()->profile);
+    return cetta_language_enables_dependent_telescope(active_eval_session()->language_id,
+                                                      active_eval_session()->profile);
 }
 
 static bool split_dependent_domain(Atom *domain, Atom **binder_out, Atom **type_out) {
@@ -9096,8 +9107,7 @@ tail_call: ;
 
     /* ── search-policy ─────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.search_policy) {
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "search-policy")) {
+        if (!active_surface_allowed("search-policy")) {
             outcome_set_add(os, profile_surface_error(a, atom, "search-policy"), &_empty);
             return;
         }
@@ -9134,7 +9144,7 @@ tail_call: ;
                                 (is_once ? "once" : "select")));
         CettaSearchPolicySpec policy = {0};
         policy.order = CETTA_SEARCH_POLICY_ORDER_NATIVE;
-        if (active_profile() && !cetta_profile_allows_surface(active_profile(), surface)) {
+        if (!active_surface_allowed(surface)) {
             outcome_set_add(os, profile_surface_error(a, atom, surface), &_empty);
             return;
         }
@@ -9525,8 +9535,7 @@ tail_call: ;
 
     /* ── foldl-atom-in-space (clean extension surface) ────────────────── */
     if (head_id == g_builtin_syms.foldl_atom_in_space) {
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "foldl-atom-in-space")) {
+        if (!active_surface_allowed("foldl-atom-in-space")) {
             outcome_set_add(os,
                 profile_surface_error(a, atom, "foldl-atom-in-space"), &_empty);
             return;
@@ -9562,8 +9571,7 @@ tail_call: ;
             backend_kind = SPACE_ENGINE_PATHMAP;
         }
         if (nargs == 1) {
-            if (active_profile() &&
-                !cetta_profile_allows_surface(active_profile(), "new-space-kind")) {
+            if (!active_surface_allowed("new-space-kind")) {
                 outcome_set_add(os, profile_surface_error(a, atom, "new-space-kind"), &_empty);
                 return;
             }
@@ -9798,8 +9806,7 @@ tail_call: ;
                 &_empty);
             return;
         }
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "module-inventory!")) {
+        if (!active_surface_allowed("module-inventory!")) {
             outcome_set_add(os, profile_surface_error(a, atom, "module-inventory!"), &_empty);
             return;
         }
@@ -9822,8 +9829,7 @@ tail_call: ;
                 &_empty);
             return;
         }
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "reset-runtime-stats!")) {
+        if (!active_surface_allowed("reset-runtime-stats!")) {
             outcome_set_add(os,
                 profile_surface_error(a, atom, "reset-runtime-stats!"), &_empty);
             return;
@@ -9841,8 +9847,7 @@ tail_call: ;
                 &_empty);
             return;
         }
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "runtime-stats!")) {
+        if (!active_surface_allowed("runtime-stats!")) {
             outcome_set_add(os,
                 profile_surface_error(a, atom, "runtime-stats!"), &_empty);
             return;
@@ -9914,8 +9919,7 @@ tail_call: ;
             (head_id == g_builtin_syms.space_set_backend_bang)
                 ? "space-set-backend!"
                 : "space-set-match-backend!";
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), surface_name)) {
+        if (!active_surface_allowed(surface_name)) {
             outcome_set_add(os,
                 profile_surface_error(a, atom, surface_name), &_empty);
             return;
@@ -9981,8 +9985,7 @@ tail_call: ;
     }
 
     if (head_id == g_builtin_syms.space_len) {
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "space-len")) {
+        if (!active_surface_allowed("space-len")) {
             outcome_set_add(os, profile_surface_error(a, atom, "space-len"), &_empty);
             return;
         }
@@ -10020,8 +10023,7 @@ tail_call: ;
     }
 
     if (head_id == g_builtin_syms.step_bang) {
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "step!")) {
+        if (!active_surface_allowed("step!")) {
             outcome_set_add(os, profile_surface_error(a, atom, "step!"), &_empty);
             return;
         }
@@ -10098,8 +10100,7 @@ tail_call: ;
     }
 
     if (head_id == g_builtin_syms.space_push) {
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "space-push")) {
+        if (!active_surface_allowed("space-push")) {
             outcome_set_add(os, profile_surface_error(a, atom, "space-push"), &_empty);
             return;
         }
@@ -10129,8 +10130,7 @@ tail_call: ;
     }
 
     if (head_id == g_builtin_syms.space_peek) {
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "space-peek")) {
+        if (!active_surface_allowed("space-peek")) {
             outcome_set_add(os, profile_surface_error(a, atom, "space-peek"), &_empty);
             return;
         }
@@ -10164,8 +10164,7 @@ tail_call: ;
     }
 
     if (head_id == g_builtin_syms.space_pop) {
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), "space-pop")) {
+        if (!active_surface_allowed("space-pop")) {
             outcome_set_add(os, profile_surface_error(a, atom, "space-pop"), &_empty);
             return;
         }
@@ -10203,8 +10202,7 @@ tail_call: ;
         head_id == g_builtin_syms.space_truncate) {
         const bool is_get = head_id == g_builtin_syms.space_get;
         const char *surface = is_get ? "space-get" : "space-truncate";
-        if (active_profile() &&
-            !cetta_profile_allows_surface(active_profile(), surface)) {
+        if (!active_surface_allowed(surface)) {
             outcome_set_add(os, profile_surface_error(a, atom, surface), &_empty);
             return;
         }
@@ -10483,7 +10481,8 @@ tail_call: ;
             outcome_set_add(os, mork_error, &_empty);
             return;
         }
-        if (!space_match_backend_materialize_attached(
+        if (space_match_backend_is_attached_compiled(target) &&
+            !space_match_backend_materialize_attached(
                 target, eval_storage_arena(a))) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "AttachedCompiledSpaceMaterializeFailed")),
@@ -10540,7 +10539,7 @@ tail_call: ;
 
     /* ── count-atoms ──────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.count_atoms && nargs == 1 && g_registry) {
-        if (active_profile() && !cetta_profile_allows_surface(active_profile(), "count-atoms")) {
+        if (!active_surface_allowed("count-atoms")) {
             outcome_set_add(os, profile_surface_error(a, atom, "count-atoms"), &_empty);
             return;
         }
