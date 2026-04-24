@@ -180,28 +180,28 @@
   (@return "Fresh MorkSpace handle attached to compiled ACT data"))
 
 (@doc mork:join
-  (@desc "PathMap structural union. Mutates the left destination space in place. Use mork:clone first when you want a persistent branch.")
+  (@desc "PathMap structural union. Mutates the left destination space in place. Exact opening-context metadata is cleared; future value propagation semantics must be modeled explicitly before structural algebra can preserve it. Use mork:clone first when you want a persistent branch.")
   (@params (
     (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
   (@return "Unit on success"))
 
 (@doc mork:meet
-  (@desc "PathMap structural intersection. Mutates the left destination space in place.")
+  (@desc "PathMap structural intersection. Mutates the left destination space in place. Exact opening-context metadata is cleared; the result is structural support, not a promise that CeTTa VarId presentations have been propagated.")
   (@params (
     (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
   (@return "Unit on success"))
 
 (@doc mork:subtract
-  (@desc "PathMap structural subtraction. Mutates the left destination space in place.")
+  (@desc "PathMap structural subtraction. Mutates the left destination space in place. Exact opening-context metadata is cleared, even when some structural rows survive.")
   (@params (
     (@param "Destination MorkSpace to mutate")
     (@param "Right MorkSpace")))
   (@return "Unit on success"))
 
 (@doc mork:prefix-restrict
-  (@desc "Selector-shaped restriction. The right-hand operand acts as a valued-prefix selector over encoded paths, not as a logical query pattern. Mutates the left destination space in place.")
+  (@desc "Selector-shaped restriction. The right-hand operand acts as a valued-prefix selector over encoded paths, not as a logical query pattern. Mutates the left destination space in place. Exact opening-context metadata is cleared; PathMap value/context propagation is intentionally future work.")
   (@params (
     (@param "Destination MorkSpace whose support is being filtered")
     (@param "Right MorkSpace acting as a valued-prefix selector")))

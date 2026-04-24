@@ -123,15 +123,30 @@ extern CettaMorkStatus mork_space_add_sexpr(CettaMorkSpaceHandle *space,
 extern CettaMorkStatus mork_space_add_expr_bytes(CettaMorkSpaceHandle *space,
                                                  const uint8_t *expr_bytes,
                                                  size_t len);
+extern CettaMorkStatus mork_space_add_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len) __attribute__((weak));
 extern CettaMorkStatus mork_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
                                                        const uint8_t *packet,
                                                        size_t len);
+extern CettaMorkStatus mork_space_add_logical_rows_from(
+    CettaMorkSpaceHandle *dst,
+    const CettaMorkSpaceHandle *src) __attribute__((weak));
 extern CettaMorkStatus mork_space_remove_sexpr(CettaMorkSpaceHandle *space,
                                                const uint8_t *text,
                                                size_t len);
 extern CettaMorkStatus mork_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                     const uint8_t *expr_bytes,
                                                     size_t len);
+extern CettaMorkStatus mork_space_remove_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len) __attribute__((weak));
 extern CettaMorkStatus mork_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
                                                       const uint8_t *expr_bytes,
                                                       size_t len);
@@ -304,6 +319,10 @@ extern CettaMorkBuffer mork_space_query_bindings_multi_ref_v3(CettaMorkSpaceHand
                                                               const uint8_t *pattern,
                                                               size_t len)
     __attribute__((weak));
+extern CettaMorkBuffer mork_space_query_contextual_rows(CettaMorkSpaceHandle *space,
+                                                        const uint8_t *pattern,
+                                                        size_t len)
+    __attribute__((weak));
 extern CettaMorkProgramHandle *mork_program_new(void);
 extern void mork_program_free(CettaMorkProgramHandle *program);
 extern CettaMorkStatus mork_program_clear(CettaMorkProgramHandle *program);
@@ -442,6 +461,29 @@ bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
+bool cetta_mork_bridge_space_add_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_added) {
+    if (!space) {
+        bridge_set_error("cannot add contextual exact expr bytes to null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_add_contextual_exact_expr_bytes) {
+        bridge_set_error("mork_space_add_contextual_exact_expr_bytes is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_add_contextual_exact_expr_bytes failed: ",
+        mork_space_add_contextual_exact_expr_bytes(space, expr_bytes, len,
+                                                  context_bytes, context_len),
+        out_added,
+        bridge_free_bytes);
+}
+
 bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
                                                   const uint8_t *packet,
                                                   size_t len,
@@ -456,6 +498,23 @@ bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
     }
     return bridge_take_status_value("mork_space_add_expr_bytes_batch failed: ",
                                     mork_space_add_expr_bytes_batch(space, packet, len),
+                                    out_added,
+                                    bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_add_logical_rows_from(CettaMorkSpaceHandle *dst,
+                                                   const CettaMorkSpaceHandle *src,
+                                                   uint64_t *out_added) {
+    if (!dst || !src) {
+        bridge_set_error("cannot add logical rows between null MORK bridge spaces");
+        return false;
+    }
+    if (!mork_space_add_logical_rows_from) {
+        bridge_set_error("mork_space_add_logical_rows_from is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value("mork_space_add_logical_rows_from failed: ",
+                                    mork_space_add_logical_rows_from(dst, src),
                                     out_added,
                                     bridge_free_bytes);
 }
@@ -499,6 +558,29 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     mork_space_remove_expr_bytes(space, expr_bytes, len),
                                     out_removed,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_removed) {
+    if (!space) {
+        bridge_set_error("cannot remove contextual exact expr bytes from null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_remove_contextual_exact_expr_bytes) {
+        bridge_set_error("mork_space_remove_contextual_exact_expr_bytes is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_remove_contextual_exact_expr_bytes failed: ",
+        mork_space_remove_contextual_exact_expr_bytes(space, expr_bytes, len,
+                                                      context_bytes, context_len),
+        out_removed,
+        bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
@@ -1770,6 +1852,44 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
     return true;
 }
 
+bool cetta_mork_bridge_space_query_contextual_rows(CettaMorkSpaceHandle *space,
+                                                   const uint8_t *pattern,
+                                                   size_t len,
+                                                   uint8_t **out_packet,
+                                                   size_t *out_len,
+                                                   uint32_t *out_rows) {
+    *out_packet = NULL;
+    *out_len = 0;
+    *out_rows = 0;
+    if (!space) {
+        bridge_set_error("cannot query null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_query_contextual_rows) {
+        bridge_set_error("mork_space_query_contextual_rows is unavailable in the linked MORK bridge");
+        return false;
+    }
+
+    CettaMorkBuffer buf = mork_space_query_contextual_rows(space, pattern, len);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_space_query_contextual_rows failed: ",
+                                   buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_space_query_contextual_rows failed with code %d",
+                             buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    bridge_free_bytes(buf.message, buf.message_len);
+    *out_packet = buf.data;
+    *out_len = buf.len;
+    *out_rows = buf.count;
+    return true;
+}
+
 #else
 
 typedef struct CettaMorkBridgeApi {
@@ -1785,15 +1905,29 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_add_expr_bytes)(CettaMorkSpaceHandle *space,
                                             const uint8_t *expr_bytes,
                                             size_t len);
+    CettaMorkStatus (*space_add_contextual_exact_expr_bytes)(
+        CettaMorkSpaceHandle *space,
+        const uint8_t *expr_bytes,
+        size_t len,
+        const uint8_t *context_bytes,
+        size_t context_len);
     CettaMorkStatus (*space_add_expr_bytes_batch)(CettaMorkSpaceHandle *space,
                                                   const uint8_t *packet,
                                                   size_t len);
+    CettaMorkStatus (*space_add_logical_rows_from)(CettaMorkSpaceHandle *dst,
+                                                   const CettaMorkSpaceHandle *src);
     CettaMorkStatus (*space_remove_sexpr)(CettaMorkSpaceHandle *space,
                                           const uint8_t *text,
                                           size_t len);
     CettaMorkStatus (*space_remove_expr_bytes)(CettaMorkSpaceHandle *space,
                                                const uint8_t *expr_bytes,
                                                size_t len);
+    CettaMorkStatus (*space_remove_contextual_exact_expr_bytes)(
+        CettaMorkSpaceHandle *space,
+        const uint8_t *expr_bytes,
+        size_t len,
+        const uint8_t *context_bytes,
+        size_t context_len);
     CettaMorkStatus (*space_contains_expr_bytes)(const CettaMorkSpaceHandle *space,
                                                  const uint8_t *expr_bytes,
                                                  size_t len);
@@ -1942,6 +2076,9 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkBuffer (*space_query_bindings_multi_ref_v3)(CettaMorkSpaceHandle *space,
                                                          const uint8_t *pattern,
                                                          size_t len);
+    CettaMorkBuffer (*space_query_contextual_rows)(CettaMorkSpaceHandle *space,
+                                                   const uint8_t *pattern,
+                                                   size_t len);
     CettaMorkProgramHandle *(*program_new)(void);
     void (*program_free)(CettaMorkProgramHandle *program);
     CettaMorkStatus (*program_clear)(CettaMorkProgramHandle *program);
@@ -2115,11 +2252,20 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.space_add_expr_bytes,
         "mork_space_add_expr_bytes");
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_add_contextual_exact_expr_bytes,
+        "mork_space_add_contextual_exact_expr_bytes");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_add_expr_bytes_batch,
         "mork_space_add_expr_bytes_batch");
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_add_logical_rows_from,
+        "mork_space_add_logical_rows_from");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_remove_expr_bytes,
         "mork_space_remove_expr_bytes");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_remove_contextual_exact_expr_bytes,
+        "mork_space_remove_contextual_exact_expr_bytes");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_contains_expr_bytes,
         "mork_space_contains_expr_bytes");
@@ -2378,6 +2524,9 @@ static bool bridge_load_api(void) {
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_query_bindings_multi_ref_v3,
         "mork_space_query_bindings_multi_ref_v3");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_query_contextual_rows,
+        "mork_space_query_contextual_rows");
 
     g_mork_bridge_error[0] = '\0';
     return true;
@@ -2491,6 +2640,29 @@ bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
                                     bridge_free_bytes);
 }
 
+bool cetta_mork_bridge_space_add_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_added) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot add contextual exact expr bytes to null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_add_contextual_exact_expr_bytes) {
+        bridge_set_error("mork_space_add_contextual_exact_expr_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_add_contextual_exact_expr_bytes failed: ",
+        g_mork_bridge_api.space_add_contextual_exact_expr_bytes(
+            space, expr_bytes, len, context_bytes, context_len),
+        out_added,
+        bridge_free_bytes);
+}
+
 bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
                                                   const uint8_t *packet,
                                                   size_t len,
@@ -2511,6 +2683,24 @@ bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_add_expr_bytes_batch(space, packet, len),
                                     out_added,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_add_logical_rows_from(CettaMorkSpaceHandle *dst,
+                                                   const CettaMorkSpaceHandle *src,
+                                                   uint64_t *out_added) {
+    if (!dst || !src || !bridge_load_api()) {
+        bridge_set_error("cannot add logical rows between null or unavailable MORK bridge spaces");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_add_logical_rows_from) {
+        bridge_set_error("mork_space_add_logical_rows_from is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_add_logical_rows_from failed: ",
+        g_mork_bridge_api.space_add_logical_rows_from(dst, src),
+        out_added,
+        bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_remove_text(CettaMorkSpaceHandle *space,
@@ -2556,6 +2746,29 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_remove_expr_bytes(space, expr_bytes, len),
                                     out_removed,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_removed) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot remove contextual exact expr bytes from null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_remove_contextual_exact_expr_bytes) {
+        bridge_set_error("mork_space_remove_contextual_exact_expr_bytes is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_remove_contextual_exact_expr_bytes failed: ",
+        g_mork_bridge_api.space_remove_contextual_exact_expr_bytes(
+            space, expr_bytes, len, context_bytes, context_len),
+        out_removed,
+        bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
@@ -4145,6 +4358,45 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
                                    buf.message, buf.message_len);
         else
             bridge_set_error("mork_space_query_bindings_multi_ref_v3 failed with code %d",
+                             buf.code);
+        bridge_free_bytes(buf.message, buf.message_len);
+        bridge_free_bytes(buf.data, buf.len);
+        return false;
+    }
+
+    bridge_free_bytes(buf.message, buf.message_len);
+    *out_packet = buf.data;
+    *out_len = buf.len;
+    *out_rows = buf.count;
+    return true;
+}
+
+bool cetta_mork_bridge_space_query_contextual_rows(CettaMorkSpaceHandle *space,
+                                                   const uint8_t *pattern,
+                                                   size_t len,
+                                                   uint8_t **out_packet,
+                                                   size_t *out_len,
+                                                   uint32_t *out_rows) {
+    *out_packet = NULL;
+    *out_len = 0;
+    *out_rows = 0;
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot query null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_query_contextual_rows) {
+        bridge_set_error("mork_space_query_contextual_rows is unavailable in the loaded MORK bridge");
+        return false;
+    }
+
+    CettaMorkBuffer buf =
+        g_mork_bridge_api.space_query_contextual_rows(space, pattern, len);
+    if (buf.code != 0) {
+        if (buf.message && buf.message_len > 0)
+            bridge_set_error_bytes("mork_space_query_contextual_rows failed: ",
+                                   buf.message, buf.message_len);
+        else
+            bridge_set_error("mork_space_query_contextual_rows failed with code %d",
                              buf.code);
         bridge_free_bytes(buf.message, buf.message_len);
         bridge_free_bytes(buf.data, buf.len);

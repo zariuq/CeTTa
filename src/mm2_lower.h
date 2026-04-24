@@ -31,6 +31,17 @@ bool cetta_mm2_atom_to_bridge_expr_bytes(Arena *a, Atom *atom,
                                          size_t *out_len,
                                          const char **out_error);
 
+/* Encode one raw or lowered transient atom as structural bridge expr bytes plus
+   an exact opening context. This is the Atom* sibling of the AtomId encoder,
+   used when a query projection is removed before it has canonical AtomId
+   ownership. */
+bool cetta_mm2_atom_to_contextual_bridge_expr_bytes(Arena *a, Atom *atom,
+                                                    uint8_t **out_expr_bytes,
+                                                    size_t *out_expr_len,
+                                                    uint8_t **out_context_bytes,
+                                                    size_t *out_context_len,
+                                                    const char **out_error);
+
 /* Encode one stored canonical term directly as stable MORK bridge expr bytes.
    This keeps MORK bridge transport on AtomId ownership instead of decoding
    back through transient Atom* trees first. */
@@ -40,5 +51,17 @@ bool cetta_mm2_atom_id_to_bridge_expr_bytes(Arena *a,
                                             uint8_t **out_bytes,
                                             size_t *out_len,
                                             const char **out_error);
+
+/* Encode one stored canonical term as structural bridge expr bytes plus an
+   exact opening context. The context maps each local bridge variable slot back
+   to the canonical CeTTa VarId/spelling carried by the term universe. */
+bool cetta_mm2_atom_id_to_contextual_bridge_expr_bytes(Arena *a,
+                                                       const TermUniverse *universe,
+                                                       AtomId atom_id,
+                                                       uint8_t **out_expr_bytes,
+                                                       size_t *out_expr_len,
+                                                       uint8_t **out_context_bytes,
+                                                       size_t *out_context_len,
+                                                       const char **out_error);
 
 #endif /* CETTA_MM2_LOWER_H */
