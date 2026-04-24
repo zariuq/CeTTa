@@ -114,10 +114,10 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).runtime-stats.h
 BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).runtime-stats.stamp
 else
-BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.h
+BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).h
 BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).stamp
 endif
-STAGE0_BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.stage0.h
+STAGE0_BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.stage0.$(BUILD_CANON).h
 STAGE0_BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.stage0.$(BUILD_CANON).stamp
 VERSION_FILE = VERSION
 CETTA_VERSION := $(strip $(shell cat $(VERSION_FILE) 2>/dev/null))
@@ -132,15 +132,17 @@ OBJ = $(SRC:.c=.$(BUILD_CANON).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_CANON).runtime-stats.o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)-runtime-stats
+BIN_FORCE =
 else
 OBJ = $(SRC:.c=.$(BUILD_CANON).o)
 BIN = cetta
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_CANON).o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)
+BIN_FORCE = FORCE
 endif
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
 FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_CANON).runtime-stats.o src/main.$(BUILD_CANON).o,$(OBJ))
-STAGE0_BIN = cetta-stage0
+STAGE0_BIN = runtime/cetta-stage0-$(BUILD_CANON)
 SPACE_ENGINES = native native-candidate-exact
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 SPACE_ENGINES += pathmap
@@ -173,9 +175,21 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_effect_append_batch_fastpath.metta \
 	tests/test_space_batch_copy_surfaces.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
-	tests/test_mork_nil_parity_regression.metta \
 	tests/test_mork_recursive_bc_micro_regression.metta \
 	tests/test_mork_recursive_bc_regression.metta
+
+PATHMAP_PROBE_TESTS = \
+	tests/test_mork_nil_parity_regression.metta \
+	tests/test_mm2_match_order_fragile.metta \
+	tests/test_pathmap_backend_primary_destructive_regression.metta
+
+CORE_PROBE_TESTS = \
+	tests/test_cverify_apply_subst_probe.metta \
+	tests/test_cverify_apply_subst_with_unify_probe.metta \
+	tests/test_print_nondet_probe.metta
+
+# Empty is intentional; populate only for strict known-failing regressions.
+CORE_XFAIL_TESTS =
 
 RUNTIME_STATS_METTA_TESTS = \
 	tests/spec_profile_runtime_stats_extension.metta \
@@ -249,12 +263,10 @@ BACKEND_DIAGNOSTIC_TESTS = \
 	tests/test_mm2_match_order_fragile.metta \
 	tests/test_print_nondet_probe.metta
 
-BACKEND_PENDING_CORRECTNESS_TESTS = \
-	tests/test_match_eager_double_apply_regression.metta \
-	tests/test_pathmap_backend_primary_destructive_regression.metta
+BACKEND_PENDING_CORRECTNESS_TESTS =
 
 BACKEND_PARAMETRIC_TEST_PATTERNS = tests/test_*.metta tests/spec_*.metta tests/he_*.metta
-BACKEND_PARAMETRIC_SKIP_TESTS = $(PATHMAP_REQUIRED_TESTS) $(BACKEND_DEDICATED_TESTS) $(BACKEND_HEAVY_TESTS) $(BACKEND_DIAGNOSTIC_TESTS) $(BACKEND_PENDING_CORRECTNESS_TESTS)
+BACKEND_PARAMETRIC_SKIP_TESTS = $(PATHMAP_REQUIRED_TESTS) $(PATHMAP_PROBE_TESTS) $(CORE_PROBE_TESTS) $(CORE_XFAIL_TESTS) $(BACKEND_DEDICATED_TESTS) $(BACKEND_HEAVY_TESTS) $(BACKEND_DIAGNOSTIC_TESTS) $(BACKEND_PENDING_CORRECTNESS_TESTS)
 BACKEND_PARAMETRIC_BACKENDS ?= $(SPACE_ENGINES)
 BACKEND_PARAMETRIC_TIMEOUT ?= 60
 BACKEND_PARAMETRIC_DIFF_LINES ?= 24
@@ -342,9 +354,10 @@ bench-ffi-friction-heavy:
 	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
 	@BENCH_FFI_ALLOW_HEAVY=1 ./scripts/bench_ffi_friction_suite.sh heavy $(or $(BENCH_FFI_HEAVY_N),100000) $(or $(BENCH_FFI_HEAVY_ROUNDS),3)
 
-perf-runtime-stats: $(BIN)
+perf-runtime-stats:
 	$(call require_runtime_stats_or_reexec,runtime-stats probe,$@)
-	@./scripts/bench_runtime_stats_probe.sh
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@CETTA_BIN="$(abspath $(BIN))" ./scripts/bench_runtime_stats_probe.sh
 
 probe-epoch-runtime-witness: $(BIN)
 	$(call require_runtime_stats_or_reexec,epoch runtime witness,$@)
@@ -366,8 +379,13 @@ bench-correctness:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-dup-conj-backends
 
 bench-performance-light:
-	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-ffi-friction-light
 	@$(MAKE) -s BUILD=$(BUILD_CANON) perf-bench-tu
+	@if [ "$(AUTO_BUILD_OPTIONAL)" = "1" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) bench-optional-bridge-light; \
+	fi
+
+bench-optional-bridge-light:
+	@$(MAKE) -s BUILD=full bench-ffi-friction-light
 
 bench-capacity:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) perf-capacity-tu
@@ -432,8 +450,9 @@ runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/s
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c -lm
 
-test-term-universe-store-abi: runtime/test_term_universe_store_abi
+test-term-universe-store-abi:
 	$(call require_runtime_stats_or_reexec,term universe store ABI,$@)
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 runtime/test_term_universe_store_abi
 	@./runtime/test_term_universe_store_abi
 
 runtime/test_term_universe_backend_add_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
@@ -441,8 +460,9 @@ runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c -lm
 
-test-term-universe-backend-add-abi: runtime/test_term_universe_backend_add_abi
+test-term-universe-backend-add-abi:
 	$(call require_runtime_stats_or_reexec,term universe backend-add ABI,$@)
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 runtime/test_term_universe_backend_add_abi
 	@./runtime/test_term_universe_backend_add_abi
 
 runtime/test_pathmap_backend_primary_destructive_abi: tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
@@ -550,11 +570,11 @@ $(STDLIB_BLOB_STAMP): $(STAGE0_BIN) $(STDLIB_SRC)
 	touch "$@"
 
 # Stage 2: full binary with precompiled stdlib
-$(BIN): $(OBJ) $(BRIDGE_DEPS)
+$(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $(filter-out FORCE,$^) $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(FALLBACK_EVAL_TEST_BIN): $(FALLBACK_EVAL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
@@ -583,14 +603,14 @@ src/cetta_stdlib.$(BUILD_CANON).runtime-stats.o: src/cetta_stdlib.c src/cetta_st
 
 clean:
 	rm -f $(OBJ) $(STAGE0_OBJ) $(DEPS) $(BIN) $(STAGE0_BIN) cetta-stage0 \
-		runtime/cetta-*-runtime-stats runtime/cetta-stage0-*-runtime-stats \
+		runtime/cetta-*-runtime-stats runtime/cetta-stage0-* \
 		runtime/test_fallback_eval_session-* runtime/bootstrap/test_fallback_eval_session.*.o \
 		runtime/bootstrap/test_fallback_eval_session.*.d \
 		src/*.runtime-stats.o src/*.runtime-stats.d \
 		native/*.runtime-stats.o native/*.runtime-stats.d \
 		$(STDLIB_BLOB) runtime/bootstrap/mork-bridge.*.stamp \
 		runtime/bootstrap/libcetta_space_bridge.*.a \
-		$(BUILD_CONFIG_HEADER) $(STAGE0_BUILD_CONFIG_HEADER) \
+		$(BUILD_CONFIG_HEADER) $(STAGE0_BUILD_CONFIG_HEADER) runtime/bootstrap/build_config.h runtime/bootstrap/build_config.*.h runtime/bootstrap/build_config.stage0.h runtime/bootstrap/build_config.stage0.*.h \
 		$(BUILD_CONFIG_STAMP) $(STAGE0_BUILD_CONFIG_STAMP) $(STDLIB_BLOB_STAMP) \
 		src/foreign.o src/foreign.d src/foreign.stage0.o src/foreign.stage0.d \
 		src/foreign_stub.o src/foreign_stub.d src/foreign_stub.stage0.o src/foreign_stub.stage0.d
@@ -738,7 +758,7 @@ define require_runtime_stats_or_reexec
 	fi
 endef
 
-test: $(BIN) test-manifest test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-mork-lane-core test-closed-stream-fastpath
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-mork-lane-core test-closed-stream-fastpath
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -755,6 +775,28 @@ test: $(BIN) test-manifest test-git-module test-symbolid-guard test-variant-shap
 		if printf '%s\n' $(PATHMAP_REQUIRED_TESTS) | grep -Fxq "$$f"; then \
 			echo "SKIP: $$f (covered by test-pathmap-lane)"; \
 			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if printf '%s\n' $(PATHMAP_PROBE_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (covered by probe-pathmap-lane)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if printf '%s\n' $(CORE_PROBE_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (covered by probe-core-lane)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if printf '%s\n' $(CORE_XFAIL_TESTS) | grep -Fxq "$$f"; then \
+			result=$$(./$(BIN) --profile he_extended --lang he "$$f" 2>&1); \
+			if printf '%s\n' "$$result" | grep -Fq "(Error "; then \
+				echo "XFAIL: $$f"; \
+				skip=$$((skip + 1)); \
+			else \
+				echo "XPASS: $$f"; \
+				printf '%s\n' "$$result" | head -20; \
+				fail=$$((fail + 1)); \
+			fi; \
 			continue; \
 		fi; \
 		if printf '%s\n' $(BACKEND_HEAVY_TESTS) | grep -Fxq "$$f"; then \
@@ -791,6 +833,12 @@ test: $(BIN) test-manifest test-git-module test-symbolid-guard test-variant-shap
 test-light: test
 
 test-correctness: test
+
+probe-core-lane: $(BIN)
+	@for f in $(CORE_PROBE_TESTS); do \
+		echo "PROBE: $$f"; \
+		./$(BIN) --profile he_extended --lang he "$$f"; \
+	done
 
 test-heavy: $(BIN)
 	@pass=0; fail=0; no_exp=0; \
@@ -880,7 +928,10 @@ perf-capacity-tu:
 	@./scripts/run_witness.sh tu_metamath_stream_basic
 
 perf-bench-tu:
-	@./scripts/run_witness.sh tu_fc_d3_variant
+	@out=$$(./scripts/run_witness.sh tu_fc_d3_variant); \
+	printf '%s\n' "$$out"; \
+	status=$$(printf '%s\n' "$$out" | awk -F= '/^STATUS=/{ print $$2; exit }'); \
+	test "$$status" = "pass"
 
 perf-compare-tu:
 	@./scripts/compare_witness.sh tu_fc_d3_variant
@@ -888,18 +939,13 @@ perf-compare-tu:
 	@./scripts/compare_witness.sh tu_tilepuzzle
 	@./scripts/compare_witness.sh tu_metamath_stream_basic
 
-test-manifest:
-	@awk -F '\t' 'BEGIN { ok = 1; expected = "path\tlang\tsyntax\tprofile\tbuild\tspace_engine\tlane\texpect\tnotes"; } \
-		NR == 1 { if ($$0 != expected) { print "FAIL: test manifest header"; ok = 0; } next; } \
-		/^#/ || NF == 0 { next; } \
-		NF != 9 { print "FAIL: " FILENAME ":" NR ": expected 9 TSV columns, got " NF; ok = 0; next; } \
-		$$4 == "none" { print "FAIL: " FILENAME ":" NR ": use a blank profile field, not none"; ok = 0; } \
-		$$5 !~ /^(any|main|pathmap|full|runtime-stats)$$/ { print "FAIL: " FILENAME ":" NR ": unknown build " $$5; ok = 0; } \
-		$$8 !~ /^(golden|diagnostic|binary|no_expected)$$/ { print "FAIL: " FILENAME ":" NR ": unknown expect " $$8; ok = 0; } \
-		{ cmd = "[ -f \"" $$1 "\" ]"; if (system(cmd) != 0) { print "FAIL: " FILENAME ":" NR ": missing path " $$1; ok = 0; } } \
-		$$8 == "golden" { expected_path = $$1; sub(/\.[^.]+$$/, ".expected", expected_path); cmd = "[ -f \"" expected_path "\" ]"; if (system(cmd) != 0) { print "FAIL: " FILENAME ":" NR ": missing expected " expected_path; ok = 0; } } \
-		END { exit ok ? 0 : 1; }' $(TEST_MANIFEST)
-	@echo "PASS: test manifest"
+test-manifest test-manifest-check:
+	@./scripts/sync_test_manifest.py --check
+
+test-manifest-sync:
+	@./scripts/sync_test_manifest.py --write
+
+test-manifest-strict: test-manifest-check
 
 test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes
 	@pass=0; fail=0; \
@@ -1445,9 +1491,11 @@ test-import-modes: $(BIN)
 	fi
 
 test-backends: $(BIN)
-	@python3 scripts/run_backend_parametric_tests.py \
+	@cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; \
+	CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir" python3 scripts/run_backend_parametric_tests.py \
 		--cetta ./$(BIN) \
 		--lang he \
+		--profile he_extended \
 		--backends "$(BACKEND_PARAMETRIC_BACKENDS)" \
 		--skip-tests "$(BACKEND_PARAMETRIC_SKIP_TESTS)" \
 		--timeout "$(BACKEND_PARAMETRIC_TIMEOUT)" \
@@ -1492,8 +1540,21 @@ test-he-contract-suite: $(BIN)
 
 test-mork-lane: test-mork-lane-core
 
-test-mork-lane-core: $(BIN)
-	$(call require_mork_bridge_or_reexec,mork lane regression suite,$@)
+test-mork-lane-core:
+	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lane-core-body; \
+	else \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+			bridge_build=mork; \
+			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
+			echo "INFO: mork lane regression suite requires the MORK bridge; re-running with BUILD=$$bridge_build"; \
+			$(MAKE) BUILD=$$bridge_build test-mork-lane-core-body; \
+		else \
+			echo "SKIP: mork lane regression suite (no MORK bridge manifest configured)"; \
+		fi; \
+	fi
+
+test-mork-lane-core-body: $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-deprecated-space-engine-mork-guard
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-mork-program-space
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-exec-basic
@@ -1611,6 +1672,26 @@ test-pathmap-lane-body: $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-match-chain
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lib-pathmap
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-duplicate-multiplicity-backends
+
+probe-pathmap-lane:
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) probe-pathmap-lane-body
+else
+	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+		bridge_build=pathmap; \
+		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
+		echo "INFO: pathmap probe lane requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
+		$(MAKE) BUILD=$$bridge_build probe-pathmap-lane-body; \
+	else \
+		echo "SKIP: pathmap probe lane (no MORK bridge manifest configured)"; \
+	fi
+endif
+
+probe-pathmap-lane-body: $(BIN)
+	@for f in $(PATHMAP_PROBE_TESTS); do \
+		echo "PROBE: $$f"; \
+		./$(BIN) --profile he_extended --lang he "$$f"; \
+	done
 
 test-pathmap-runtime-stats-lane:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -2422,5 +2503,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean test test-light test-correctness test-heavy test-correctness-all test-manifest test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: test-backends-lanes test-mork-bridge-contextual-exact-rows
+.PHONY: FORCE all core python mork main pathmap full profile clean test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-bridge-contextual-exact-rows probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
