@@ -5,6 +5,7 @@
 
 static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .id = CETTA_PROFILE_HE_COMPAT,
+    .language_id = CETTA_LANGUAGE_HE,
     .name = "he_compat",
     .note = "HE-compatible public/runtime surface.",
     .he_compatible_surface = true,
@@ -14,6 +15,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
 
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_HE_EXTENDED,
+    .language_id = CETTA_LANGUAGE_HE,
     .name = "he_extended",
     .note = "HE-compatible surface plus labeled CeTTa extensions.",
     .he_compatible_surface = true,
@@ -23,6 +25,7 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
 
 static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .id = CETTA_PROFILE_HE_PRIME,
+    .language_id = CETTA_LANGUAGE_HE,
     .name = "he_prime",
     .note = "Binder-aware dependent telescope elaboration atop he_extended.",
     .he_compatible_surface = false,
@@ -125,6 +128,26 @@ static bool cetta_eval_option_store(CettaEvaluatorOptions *options,
     return true;
 }
 
+static uint32_t cetta_language_base_surface_mask(CettaLanguageId language_id) {
+    switch (language_id) {
+    case CETTA_LANGUAGE_HE:
+        return CETTA_PROFILE_MASK_HE_COMPAT;
+    case CETTA_LANGUAGE_MM2:
+    case CETTA_LANGUAGE_PETTA:
+    case CETTA_LANGUAGE_AMBIENT:
+    case CETTA_LANGUAGE_CALCULATOR:
+    case CETTA_LANGUAGE_IMP:
+    case CETTA_LANGUAGE_LAMBDA:
+    case CETTA_LANGUAGE_METTAFULL_LEGACY:
+    case CETTA_LANGUAGE_MINSKYLITE:
+    case CETTA_LANGUAGE_MM0LITE:
+    case CETTA_LANGUAGE_PYASHCORE:
+    case CETTA_LANGUAGE_RHOCALC:
+        return CETTA_PROFILE_MASK_ALL;
+    }
+    return CETTA_PROFILE_MASK_ALL;
+}
+
 const CettaProfile *cetta_profile_he_compat(void) {
     return &CETTA_PROFILE_HE_COMPAT_VALUE;
 }
@@ -137,8 +160,21 @@ const CettaProfile *cetta_profile_he_prime(void) {
     return &CETTA_PROFILE_HE_PRIME_VALUE;
 }
 
-const CettaProfile *cetta_profile_from_name(const char *name) {
+bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
+    return language_id == CETTA_LANGUAGE_HE;
+}
+
+bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
+                                         const CettaProfile *profile) {
+    return !profile || profile->language_id == language_id;
+}
+
+const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId language_id,
+                                                         const char *name) {
     if (!name) return NULL;
+    if (!cetta_language_has_named_profiles(language_id)) {
+        return NULL;
+    }
     if (strcmp(name, CETTA_PROFILE_HE_COMPAT_VALUE.name) == 0) {
         return &CETTA_PROFILE_HE_COMPAT_VALUE;
     }
@@ -152,7 +188,7 @@ const CettaProfile *cetta_profile_from_name(const char *name) {
 }
 
 uint32_t cetta_profile_mask(const CettaProfile *profile) {
-    if (!profile) return CETTA_PROFILE_MASK_ALL;
+    if (!profile) return 0;
     switch (profile->id) {
     case CETTA_PROFILE_HE_COMPAT:
         return CETTA_PROFILE_MASK_HE_COMPAT;
@@ -161,14 +197,31 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_HE_PRIME:
         return CETTA_PROFILE_MASK_HE_PRIME;
     }
-    return CETTA_PROFILE_MASK_ALL;
+    return 0;
 }
 
-bool cetta_profile_visible_in(const CettaProfile *profile, uint32_t visibility_mask) {
-    return (cetta_profile_mask(profile) & visibility_mask) != 0;
+uint32_t cetta_language_surface_mask(CettaLanguageId language_id,
+                                     const CettaProfile *profile) {
+    if (profile && cetta_profile_is_valid_for_language(language_id, profile)) {
+        return cetta_profile_mask(profile);
+    }
+    return cetta_language_base_surface_mask(language_id);
 }
 
-void cetta_profile_print_inventory(FILE *out) {
+bool cetta_language_visible_in(CettaLanguageId language_id,
+                               const CettaProfile *profile,
+                               uint32_t visibility_mask) {
+    return (cetta_language_surface_mask(language_id, profile) & visibility_mask) != 0;
+}
+
+void cetta_profile_print_inventory_for_language(FILE *out,
+                                                CettaLanguageId language_id) {
+    if (!out) return;
+    if (!cetta_language_has_named_profiles(language_id)) {
+        fprintf(out, "language '%s' has no named profiles\n",
+                cetta_language_canonical_name(language_id));
+        return;
+    }
     fprintf(out, "%s\t%s\n",
             CETTA_PROFILE_HE_COMPAT_VALUE.name, CETTA_PROFILE_HE_COMPAT_VALUE.note);
     fprintf(out, "%s\t%s\n",
@@ -188,14 +241,20 @@ const CettaSurfacePolicy *cetta_surface_policy_lookup(const char *name) {
     return NULL;
 }
 
-bool cetta_profile_allows_surface(const CettaProfile *profile, const char *name) {
+bool cetta_language_allows_surface(CettaLanguageId language_id,
+                                   const CettaProfile *profile,
+                                   const char *name) {
     const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(name);
     if (!policy) return true;
-    return cetta_profile_visible_in(profile, policy->visibility_mask);
+    return cetta_language_visible_in(language_id, profile, policy->visibility_mask);
 }
 
-bool cetta_profile_enables_dependent_telescope(const CettaProfile *profile) {
-    return profile && profile->enable_dependent_telescope;
+bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,
+                                                const CettaProfile *profile) {
+    if (!profile || !cetta_profile_is_valid_for_language(language_id, profile)) {
+        return false;
+    }
+    return profile->enable_dependent_telescope;
 }
 
 uint32_t cetta_module_provider_count(void) {
@@ -269,12 +328,14 @@ const char *cetta_module_provider_update_policy(CettaModuleProviderKind kind) {
     return (desc && desc->update_policy) ? desc->update_policy : "unknown";
 }
 
-bool cetta_profile_allows_provider_kind(const CettaProfile *profile,
-                                        CettaModuleProviderKind kind) {
+bool cetta_language_allows_provider_kind(CettaLanguageId language_id,
+                                         const CettaProfile *profile,
+                                         CettaModuleProviderKind kind) {
     const CettaModuleProviderDescriptor *desc = cetta_module_provider_descriptor(kind);
     if (!desc || !desc->implemented) {
         return false;
     }
+    (void)language_id;
     (void)profile;
     switch (kind) {
     case CETTA_MODULE_PROVIDER_REGISTERED_ROOT:
@@ -288,21 +349,38 @@ bool cetta_profile_allows_provider_kind(const CettaProfile *profile,
     return false;
 }
 
-bool cetta_module_resolver_allows(const CettaModuleResolver *resolver,
-                                  CettaModuleProviderFlags provider_flag) {
-    return resolver && (resolver->provider_flags & provider_flag) != 0;
+bool cetta_module_policy_allows(const CettaModulePolicy *policy,
+                                CettaModuleProviderFlags provider_flag) {
+    return policy && (policy->provider_flags & provider_flag) != 0;
 }
 
-void cetta_module_resolver_init_for_profile(CettaModuleResolver *resolver,
-                                            const CettaProfile *profile) {
-    resolver->provider_flags = 0;
+void cetta_module_policy_init_for_language_profile(CettaModulePolicy *policy,
+                                                   CettaLanguageId language_id,
+                                                   const CettaProfile *profile) {
+    if (!policy) {
+        return;
+    }
+    policy->provider_flags = 0;
     for (uint32_t i = 0; i < cetta_module_provider_count(); i++) {
         const CettaModuleProviderDescriptor *desc = cetta_module_provider_at(i);
-        if (desc && cetta_profile_allows_provider_kind(profile, desc->kind)) {
-            resolver->provider_flags |= desc->flag;
+        if (desc &&
+            cetta_language_allows_provider_kind(language_id, profile, desc->kind)) {
+            policy->provider_flags |= desc->flag;
         }
     }
-    resolver->transactional_imports = true;
+    policy->relative_module_policy = cetta_language_relative_module_policy(language_id);
+    policy->transactional_imports = true;
+}
+
+bool cetta_module_resolver_allows(const CettaModuleResolver *resolver,
+                                  CettaModuleProviderFlags provider_flag) {
+    return cetta_module_policy_allows(resolver, provider_flag);
+}
+
+void cetta_module_resolver_init_for_language_profile(CettaModuleResolver *resolver,
+                                                     CettaLanguageId language_id,
+                                                     const CettaProfile *profile) {
+    cetta_module_policy_init_for_language_profile(resolver, language_id, profile);
 }
 
 void cetta_evaluator_options_init(CettaEvaluatorOptions *options) {
@@ -365,6 +443,25 @@ bool cetta_eval_session_set_max_stack_depth(CettaEvalSession *session, int depth
                                    CETTA_EVAL_OPTION_VALUE_INT, repr, depth);
 }
 
+bool cetta_eval_session_set_relative_module_policy(CettaEvalSession *session,
+                                                   CettaRelativeModulePolicy policy) {
+    if (!session) {
+        return false;
+    }
+    session->module_policy.relative_module_policy = policy;
+    return cetta_eval_option_store(&session->options, "import-mode",
+                                   CETTA_EVAL_OPTION_VALUE_SYMBOL,
+                                   cetta_relative_module_policy_name(policy), 0);
+}
+
+CettaRelativeModulePolicy
+cetta_eval_session_relative_module_policy(const CettaEvalSession *session) {
+    if (!session) {
+        return CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+    }
+    return session->module_policy.relative_module_policy;
+}
+
 void cetta_eval_session_set_fuel_limit(CettaEvalSession *session, int fuel_limit) {
     if (!session) return;
     session->options.fuel_limit = fuel_limit > 0 ? fuel_limit : -1;
@@ -379,21 +476,26 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
     return cetta_eval_option_store(&session->options, key, kind, repr, int_value);
 }
 
-void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile) {
-    const CettaProfile *resolved = profile ? profile : cetta_profile_he_extended();
-    session->profile = resolved;
-    cetta_module_resolver_init_for_profile(&session->module_resolver, resolved);
+void cetta_eval_session_init(CettaEvalSession *session,
+                             CettaLanguageId language_id,
+                             const CettaProfile *profile) {
+    session->language_id = language_id;
+    session->profile = cetta_profile_is_valid_for_language(language_id, profile)
+        ? profile
+        : NULL;
+    cetta_module_policy_init_for_language_profile(
+        &session->module_policy, session->language_id, session->profile);
     cetta_evaluator_options_init(&session->options);
 }
 
 void cetta_eval_session_init_he_compat(CettaEvalSession *session) {
-    cetta_eval_session_init(session, cetta_profile_he_compat());
+    cetta_eval_session_init(session, CETTA_LANGUAGE_HE, cetta_profile_he_compat());
 }
 
 void cetta_eval_session_init_he_extended(CettaEvalSession *session) {
-    cetta_eval_session_init(session, cetta_profile_he_extended());
+    cetta_eval_session_init(session, CETTA_LANGUAGE_HE, cetta_profile_he_extended());
 }
 
 void cetta_eval_session_init_he_prime(CettaEvalSession *session) {
-    cetta_eval_session_init(session, cetta_profile_he_prime());
+    cetta_eval_session_init(session, CETTA_LANGUAGE_HE, cetta_profile_he_prime());
 }

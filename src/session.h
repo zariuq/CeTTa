@@ -6,6 +6,8 @@
 #include <limits.h>
 #include <stdio.h>
 
+#include "lang.h"
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -40,6 +42,7 @@ typedef enum {
 
 typedef struct {
     CettaProfileId id;
+    CettaLanguageId language_id;
     const char *name;
     const char *note;
     bool he_compatible_surface;
@@ -144,8 +147,11 @@ typedef struct {
 
 typedef struct {
     uint32_t provider_flags;
+    CettaRelativeModulePolicy relative_module_policy;
     bool transactional_imports;
-} CettaModuleResolver;
+} CettaModulePolicy;
+
+typedef CettaModulePolicy CettaModuleResolver;
 
 typedef enum {
     CETTA_INTERPRETER_DEFAULT = 0,
@@ -175,8 +181,9 @@ typedef struct {
 } CettaEvaluatorOptions;
 
 typedef struct {
+    CettaLanguageId language_id;
     const CettaProfile *profile;
-    CettaModuleResolver module_resolver;
+    CettaModulePolicy module_policy;
     CettaEvaluatorOptions options;
 } CettaEvalSession;
 
@@ -189,13 +196,25 @@ typedef struct {
 const CettaProfile *cetta_profile_he_compat(void);
 const CettaProfile *cetta_profile_he_extended(void);
 const CettaProfile *cetta_profile_he_prime(void);
-const CettaProfile *cetta_profile_from_name(const char *name);
+bool cetta_language_has_named_profiles(CettaLanguageId language_id);
+bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
+                                         const CettaProfile *profile);
+const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId language_id,
+                                                         const char *name);
 uint32_t cetta_profile_mask(const CettaProfile *profile);
-bool cetta_profile_visible_in(const CettaProfile *profile, uint32_t visibility_mask);
-void cetta_profile_print_inventory(FILE *out);
+uint32_t cetta_language_surface_mask(CettaLanguageId language_id,
+                                     const CettaProfile *profile);
+bool cetta_language_visible_in(CettaLanguageId language_id,
+                               const CettaProfile *profile,
+                               uint32_t visibility_mask);
+void cetta_profile_print_inventory_for_language(FILE *out,
+                                                CettaLanguageId language_id);
 const CettaSurfacePolicy *cetta_surface_policy_lookup(const char *name);
-bool cetta_profile_allows_surface(const CettaProfile *profile, const char *name);
-bool cetta_profile_enables_dependent_telescope(const CettaProfile *profile);
+bool cetta_language_allows_surface(CettaLanguageId language_id,
+                                   const CettaProfile *profile,
+                                   const char *name);
+bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,
+                                                const CettaProfile *profile);
 uint32_t cetta_module_provider_count(void);
 const CettaModuleProviderDescriptor *cetta_module_provider_at(uint32_t index);
 const CettaModuleProviderDescriptor *cetta_module_provider_descriptor(CettaModuleProviderKind kind);
@@ -206,13 +225,20 @@ const char *cetta_remote_revision_policy_name(CettaRemoteRevisionPolicy policy);
 bool cetta_module_provider_is_remote(CettaModuleProviderKind kind);
 bool cetta_module_provider_is_cache_backed(CettaModuleProviderKind kind);
 const char *cetta_module_provider_update_policy(CettaModuleProviderKind kind);
-bool cetta_profile_allows_provider_kind(const CettaProfile *profile,
-                                        CettaModuleProviderKind kind);
+bool cetta_language_allows_provider_kind(CettaLanguageId language_id,
+                                         const CettaProfile *profile,
+                                         CettaModuleProviderKind kind);
 
+bool cetta_module_policy_allows(const CettaModulePolicy *policy,
+                                CettaModuleProviderFlags provider_flag);
+void cetta_module_policy_init_for_language_profile(CettaModulePolicy *policy,
+                                                   CettaLanguageId language_id,
+                                                   const CettaProfile *profile);
 bool cetta_module_resolver_allows(const CettaModuleResolver *resolver,
                                   CettaModuleProviderFlags provider_flag);
-void cetta_module_resolver_init_for_profile(CettaModuleResolver *resolver,
-                                            const CettaProfile *profile);
+void cetta_module_resolver_init_for_language_profile(CettaModuleResolver *resolver,
+                                                     CettaLanguageId language_id,
+                                                     const CettaProfile *profile);
 void cetta_evaluator_options_init(CettaEvaluatorOptions *options);
 bool cetta_evaluator_options_is_bare_minimal(const CettaEvaluatorOptions *options);
 int cetta_evaluator_options_effective_fuel_limit(const CettaEvaluatorOptions *options);
@@ -222,13 +248,19 @@ bool cetta_eval_session_set_type_check_auto(CettaEvalSession *session, bool enab
 bool cetta_eval_session_set_interpreter_mode(CettaEvalSession *session,
                                              CettaInterpreterMode mode);
 bool cetta_eval_session_set_max_stack_depth(CettaEvalSession *session, int depth);
+bool cetta_eval_session_set_relative_module_policy(CettaEvalSession *session,
+                                                   CettaRelativeModulePolicy policy);
+CettaRelativeModulePolicy
+cetta_eval_session_relative_module_policy(const CettaEvalSession *session);
 void cetta_eval_session_set_fuel_limit(CettaEvalSession *session, int fuel_limit);
 bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
                                                const char *key,
                                                CettaEvalOptionValueKind kind,
                                                const char *repr,
                                                int64_t int_value);
-void cetta_eval_session_init(CettaEvalSession *session, const CettaProfile *profile);
+void cetta_eval_session_init(CettaEvalSession *session,
+                             CettaLanguageId language_id,
+                             const CettaProfile *profile);
 void cetta_eval_session_init_he_compat(CettaEvalSession *session);
 void cetta_eval_session_init_he_extended(CettaEvalSession *session);
 void cetta_eval_session_init_he_prime(CettaEvalSession *session);
