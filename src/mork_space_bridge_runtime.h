@@ -60,10 +60,20 @@ bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
                                             const uint8_t *expr_bytes,
                                             size_t len,
                                             uint64_t *out_added);
+bool cetta_mork_bridge_space_add_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_added);
 bool cetta_mork_bridge_space_add_expr_bytes_batch(CettaMorkSpaceHandle *space,
                                                   const uint8_t *packet,
                                                   size_t len,
                                                   uint64_t *out_added);
+bool cetta_mork_bridge_space_add_logical_rows_from(CettaMorkSpaceHandle *dst,
+                                                   const CettaMorkSpaceHandle *src,
+                                                   uint64_t *out_added);
 bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len,
@@ -75,6 +85,13 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                const uint8_t *expr_bytes,
                                                size_t len,
                                                uint64_t *out_removed);
+bool cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *expr_bytes,
+    size_t len,
+    const uint8_t *context_bytes,
+    size_t context_len,
+    uint64_t *out_removed);
 bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
                                                  const uint8_t *expr_bytes,
                                                  size_t len,
@@ -98,6 +115,10 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
                                             uint8_t **out_packet,
                                             size_t *out_len,
                                             uint32_t *out_rows);
+bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
+                                               uint8_t **out_packet,
+                                               size_t *out_len,
+                                               uint32_t *out_rows);
 bool cetta_mork_bridge_space_join_into(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
@@ -355,6 +376,12 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
                                                          uint8_t **out_packet,
                                                          size_t *out_len,
                                                          uint32_t *out_rows);
+bool cetta_mork_bridge_space_query_contextual_rows(CettaMorkSpaceHandle *space,
+                                                   const uint8_t *pattern,
+                                                   size_t len,
+                                                   uint8_t **out_packet,
+                                                   size_t *out_len,
+                                                   uint32_t *out_rows);
 
 CettaMorkProgramHandle *cetta_mork_bridge_program_new(void);
 void cetta_mork_bridge_program_free(CettaMorkProgramHandle *program);
