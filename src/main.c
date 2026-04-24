@@ -555,8 +555,9 @@ static void write_results(FILE *out, ResultSet *rs) {
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
-    fputs("       cetta [--profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
-    fputs("       note: --lang selects the driver/front-end; --profile selects the visible surface policy\n", out);
+    fputs("       cetta [--lang he --profile <he_compat|he_extended|he_prime>] <file.metta>\n", out);
+    fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
+    fputs("       note: --lang selects the base language; --profile is an optional language-specific override\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
@@ -571,7 +572,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
-    fputs("       cetta --list-profiles\n", out);
+    fputs("       cetta [--lang <name>] --list-profiles\n", out);
     fputs("       cetta --list-space-engines\n", out);
     fputs("       cetta --list-languages\n", out);
 }
@@ -580,8 +581,20 @@ static void print_version(FILE *out) {
     fprintf(out, "cetta %s (%s)\n", CETTA_VERSION_STRING, CETTA_BUILD_MODE_STRING);
 }
 
-static const char *find_profile_blocked_surface(const CettaProfile *profile, Atom *atom) {
-    if (!profile || !atom) return NULL;
+static const char *active_scope_name(CettaLanguageId language_id,
+                                     const CettaProfile *profile) {
+    if (profile && profile->name) return profile->name;
+    return cetta_language_canonical_name(language_id);
+}
+
+static const char *active_scope_kind(const CettaProfile *profile) {
+    return profile ? "profile" : "language";
+}
+
+static const char *find_profile_blocked_surface(CettaLanguageId language_id,
+                                                const CettaProfile *profile,
+                                                Atom *atom) {
+    if (!atom) return NULL;
     if (atom->kind != ATOM_EXPR || atom->expr.len == 0) return NULL;
 
     Atom *head = atom->expr.elems[0];
@@ -589,35 +602,41 @@ static const char *find_profile_blocked_surface(const CettaProfile *profile, Ato
         if (atom_is_symbol_id(head, g_builtin_syms.quote)) {
             return NULL;
         }
-        if (!cetta_profile_allows_surface(profile, atom_name_cstr(head))) {
+        if (!cetta_language_allows_surface(language_id, profile, atom_name_cstr(head))) {
             return atom_name_cstr(head);
         }
         if (atom_is_symbol_id(head, g_builtin_syms.colon) && atom->expr.len >= 2 &&
             atom->expr.elems[1]->kind == ATOM_SYMBOL &&
-            !cetta_profile_allows_surface(profile, atom_name_cstr(atom->expr.elems[1]))) {
+            !cetta_language_allows_surface(language_id, profile,
+                                           atom_name_cstr(atom->expr.elems[1]))) {
             return atom_name_cstr(atom->expr.elems[1]);
         }
     }
 
     for (uint32_t i = 1; i < atom->expr.len; i++) {
-        const char *blocked = find_profile_blocked_surface(profile, atom->expr.elems[i]);
+        const char *blocked = find_profile_blocked_surface(language_id, profile,
+                                                           atom->expr.elems[i]);
         if (blocked) return blocked;
     }
     return NULL;
 }
 
-static bool compile_profile_guard_ok(const CettaProfile *profile, Atom **atoms, int n) {
+static bool compile_profile_guard_ok(CettaLanguageId language_id,
+                                     const CettaProfile *profile,
+                                     Atom **atoms,
+                                     int n) {
     for (int i = 0; i < n; i++) {
         Atom *at = atoms[i];
         if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
             i++;
             continue;
         }
-        const char *blocked = find_profile_blocked_surface(profile, at);
+        const char *blocked = find_profile_blocked_surface(language_id, profile, at);
         if (blocked) {
             const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
-            fprintf(stderr, "error: surface '%s' is unavailable in profile '%s'",
-                    blocked, profile ? profile->name : "unknown");
+            fprintf(stderr, "error: surface '%s' is unavailable in %s '%s'",
+                    blocked, active_scope_kind(profile),
+                    active_scope_name(language_id, profile));
             if (policy && policy->surface_classification) {
                 fprintf(stderr, " (%s)", policy->surface_classification);
             }
@@ -635,7 +654,8 @@ static bool atom_id_is_symbol_id(const TermUniverse *universe, AtomId atom_id,
            tu_sym(universe, atom_id) == sym_id;
 }
 
-static bool compile_profile_guard_ok_ids(const CettaProfile *profile,
+static bool compile_profile_guard_ok_ids(CettaLanguageId language_id,
+                                         const CettaProfile *profile,
                                          TermUniverse *universe,
                                          const AtomId *atom_ids, int n) {
     if (!universe)
@@ -655,11 +675,12 @@ static bool compile_profile_guard_ok_ids(const CettaProfile *profile,
             fprintf(stderr, "error: could not decode parsed term for compile guard\n");
             return false;
         }
-        const char *blocked = find_profile_blocked_surface(profile, at);
+        const char *blocked = find_profile_blocked_surface(language_id, profile, at);
         if (blocked) {
             const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
-            fprintf(stderr, "error: surface '%s' is unavailable in profile '%s'",
-                    blocked, profile ? profile->name : "unknown");
+            fprintf(stderr, "error: surface '%s' is unavailable in %s '%s'",
+                    blocked, active_scope_kind(profile),
+                    active_scope_name(language_id, profile));
             if (policy && policy->surface_classification) {
                 fprintf(stderr, " (%s)", policy->surface_classification);
             }
@@ -899,7 +920,10 @@ int main(int argc, char **argv) {
     }
 
     const char *lang_name = "he";
-    const CettaProfile *profile = cetta_profile_he_extended();
+    const char *profile_name = NULL;
+    const CettaProfile *profile = NULL;
+    bool import_mode_overridden = false;
+    CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     const char *filename = NULL;
     const char *inline_text = NULL;
     char *inline_buf = NULL;
@@ -911,6 +935,7 @@ int main(int argc, char **argv) {
     bool compile_stdlib_mode = false;
     bool count_only = false;
     bool emit_runtime_stats = false;
+    bool list_profiles = false;
     int fuel_override = -1;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
@@ -934,8 +959,8 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (strcmp(argv[i], "--list-profiles") == 0) {
-            cetta_profile_print_inventory(stdout);
-            return 0;
+            list_profiles = true;
+            continue;
         }
         if (strcmp(argv[i], "--compile") == 0) {
             compile_mode = true;
@@ -1029,12 +1054,19 @@ int main(int argc, char **argv) {
                 print_usage(stderr);
                 return 1;
             }
-            profile = cetta_profile_from_name(argv[++i]);
-            if (!profile) {
-                fprintf(stderr, "error: unknown profile '%s'\n", argv[i]);
-                cetta_profile_print_inventory(stderr);
+            profile_name = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--import-mode") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!cetta_relative_module_policy_from_name(argv[++i], &import_mode)) {
+                fprintf(stderr, "error: unknown import mode '%s'\n", argv[i]);
                 return 2;
             }
+            import_mode_overridden = true;
             continue;
         }
         if (strcmp(argv[i], "-e") == 0) {
@@ -1067,6 +1099,44 @@ int main(int argc, char **argv) {
 
     if (inline_buf)
         inline_text = inline_buf;
+
+    const CettaLanguageSpec *lang = cetta_language_lookup(lang_name);
+    if (!lang) {
+        fprintf(stderr, "error: unknown language '%s'\n", lang_name);
+        cetta_language_print_inventory(stderr);
+        return 2;
+    }
+    if (!lang->implemented) {
+        fprintf(
+            stderr,
+            "error: language '%s' is recognized but not implemented in cetta yet\n",
+            lang_name
+        );
+        fprintf(stderr, "note: %s\n", lang->note);
+        return 2;
+    }
+
+    if (profile_name) {
+        if (!cetta_language_has_named_profiles(lang->id)) {
+            fprintf(stderr, "error: language '%s' has no named profiles\n",
+                    lang->canonical);
+            return 2;
+        }
+        profile = cetta_profile_from_name_for_language(lang->id, profile_name);
+        if (!profile) {
+            fprintf(stderr, "error: unknown profile '%s' for language '%s'\n",
+                    profile_name, lang->canonical);
+            cetta_profile_print_inventory_for_language(stderr, lang->id);
+            return 2;
+        }
+    }
+
+    if (list_profiles) {
+        cetta_profile_print_inventory_for_language(stdout, lang->id);
+        free(inline_buf);
+        return 0;
+    }
+
     if (!filename && !inline_text) {
         print_usage(stderr);
         free(inline_buf);
@@ -1093,21 +1163,6 @@ int main(int argc, char **argv) {
         return rc < 0 ? 1 : 0;
     }
 
-    const CettaLanguageSpec *lang = cetta_language_lookup(lang_name);
-    if (!lang) {
-        fprintf(stderr, "error: unknown language '%s'\n", lang_name);
-        cetta_language_print_inventory(stderr);
-        return 2;
-    }
-    if (!lang->implemented) {
-        fprintf(
-            stderr,
-            "error: language '%s' is recognized but not implemented in cetta yet\n",
-            lang_name
-        );
-        fprintf(stderr, "note: %s\n", lang->note);
-        return 2;
-    }
     if (strcmp(lang->canonical, "mm2") != 0 &&
         mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
         fprintf(stderr, "error: --steps is currently only supported with --lang mm2\n");
@@ -1205,12 +1260,15 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    cetta_library_context_init_with_profile(&libraries, profile);
+    cetta_library_context_init_for_language_profile(&libraries, lang->id, profile);
     cleanup.libraries_initialized = true;
     term_universe_set_persistent_arena(&libraries.term_universe, &arena);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
+    if (import_mode_overridden) {
+        cetta_eval_session_set_relative_module_policy(&libraries.session, import_mode);
+    }
     eval_set_library_context(&libraries);
 
     space_init_with_universe(&space, &libraries.term_universe);
@@ -1256,7 +1314,7 @@ int main(int argc, char **argv) {
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
         if (lang_is_mm2) {
-            if (!compile_profile_guard_ok(profile, atoms, n)) {
+            if (!compile_profile_guard_ok(lang->id, profile, atoms, n)) {
                 rc = 2;
                 goto cleanup;
             }
@@ -1271,7 +1329,7 @@ int main(int argc, char **argv) {
                 space_add(&space, at);
             }
         } else {
-            if (!compile_profile_guard_ok_ids(profile, &libraries.term_universe,
+            if (!compile_profile_guard_ok_ids(lang->id, profile, &libraries.term_universe,
                                               atom_ids, n)) {
                 rc = 2;
                 goto cleanup;
