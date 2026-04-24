@@ -987,8 +987,12 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
     if (b->len > 0) {
         assigns = arena_alloc(a, sizeof(Atom *) * b->len);
         for (uint32_t i = 0; i < b->len; i++) {
+            Atom *key = b->entries[i].legacy_name_fallback
+                ? atom_symbol_id(a, b->entries[i].spelling)
+                : atom_var_with_spelling(a, b->entries[i].spelling,
+                                         b->entries[i].var_id);
             assigns[i] = atom_expr2(a,
-                atom_symbol_id(a, b->entries[i].spelling),
+                key,
                 b->entries[i].val);
         }
     }
@@ -1022,15 +1026,29 @@ bool bindings_from_atom(Atom *atom, Bindings *out) {
 
     for (uint32_t i = 0; i < assigns->expr.len; i++) {
         Atom *assign = assigns->expr.elems[i];
-        if (assign->kind != ATOM_EXPR || assign->expr.len != 2 ||
-            assign->expr.elems[0]->kind != ATOM_SYMBOL) {
+        if (assign->kind != ATOM_EXPR || assign->expr.len != 2) {
             bindings_free(out);
             return false;
         }
-        VarId id = g_var_intern ? var_intern(g_var_intern, assign->expr.elems[0]->sym_id)
-                                : fresh_var_id();
-        if (!bindings_add_inplace_internal(out, id, assign->expr.elems[0]->sym_id,
-                                           assign->expr.elems[1], true, true)) {
+        Atom *key = assign->expr.elems[0];
+        VarId id = VAR_ID_NONE;
+        SymbolId spelling = SYMBOL_ID_NONE;
+        bool legacy_name_fallback = false;
+        if (key->kind == ATOM_VAR) {
+            id = key->var_id;
+            spelling = key->sym_id;
+        } else if (key->kind == ATOM_SYMBOL) {
+            id = g_var_intern ? var_intern(g_var_intern, key->sym_id)
+                              : fresh_var_id();
+            spelling = key->sym_id;
+            legacy_name_fallback = true;
+        } else {
+            bindings_free(out);
+            return false;
+        }
+        if (!bindings_add_inplace_internal(out, id, spelling,
+                                           assign->expr.elems[1], true,
+                                           legacy_name_fallback)) {
             bindings_free(out);
             return false;
         }

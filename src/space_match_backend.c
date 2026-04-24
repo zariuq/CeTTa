@@ -5093,8 +5093,23 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
     bool epoch_query = imported_atom_has_epoch_vars(query);
     bool bridge_query = imported_atom_has_bridge_vars(query);
     bool var_query = atom_has_vars(query);
+    bool indexed_vars = false;
     if (imported_logical_len(s) == 0) {
         smset_init(out);
+        return;
+    }
+    if (var_query && !epoch_query && !bridge_query) {
+        Arena *persist = eval_current_persistent_arena();
+        if (!space_match_backend_materialize_native_storage(s, persist ? persist : a)) {
+            smset_init(out);
+            return;
+        }
+        /* Stored-side variables need CeTTa's bidirectional matcher; the
+           bridge/flat packet paths are only parity-safe for exact rows. */
+        indexed_vars = !space_contains_only_exact_atoms(s);
+    }
+    if (var_query && !epoch_query && !bridge_query && indexed_vars) {
+        native_candidate_exact_query(s, a, query, out);
         return;
     }
     if (var_query && !epoch_query && !bridge_query &&
