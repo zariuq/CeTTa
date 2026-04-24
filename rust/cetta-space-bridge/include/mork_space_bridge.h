@@ -92,14 +92,26 @@ MorkStatus mork_space_clear(MorkSpace *space);
 MorkStatus mork_space_add_text(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_remove_text(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_add_expr_bytes(MorkSpace *space,
-                                     const uint8_t *expr_bytes,
-                                     size_t len);
+                                      const uint8_t *expr_bytes,
+                                      size_t len);
+MorkStatus mork_space_add_contextual_exact_expr_bytes(MorkSpace *space,
+                                                      const uint8_t *expr_bytes,
+                                                      size_t len,
+                                                      const uint8_t *context_bytes,
+                                                      size_t context_len);
 MorkStatus mork_space_add_expr_bytes_batch(MorkSpace *space,
                                            const uint8_t *packet,
                                            size_t len);
+MorkStatus mork_space_add_logical_rows_from(MorkSpace *dst,
+                                            const MorkSpace *src);
 MorkStatus mork_space_remove_expr_bytes(MorkSpace *space,
                                         const uint8_t *expr_bytes,
                                         size_t len);
+MorkStatus mork_space_remove_contextual_exact_expr_bytes(MorkSpace *space,
+                                                         const uint8_t *expr_bytes,
+                                                         size_t len,
+                                                         const uint8_t *context_bytes,
+                                                         size_t context_len);
 MorkStatus mork_space_contains_expr_bytes(const MorkSpace *space,
                                           const uint8_t *expr_bytes,
                                           size_t len);
@@ -121,6 +133,35 @@ Packet format for mork_space_dump_expr_rows():
 count = logical row count with multiplicities expanded.
 */
 MorkBuffer mork_space_dump_expr_rows(MorkSpace *space);
+
+/*
+Contextual exact-row bridge packet (wire version 4):
+
+  u32 magic_be      // 0x43544252 = "CTBR"
+  u16 version_be    // 4
+  u16 flags_be      // 0 for exact-row packets
+  u32 rows_be       // number of row specs, not expanded logical rows
+  u32 contexts_be
+  repeated contexts:
+    u32 context_id_be
+    u32 entry_count_be
+    repeated entries:
+      u16 slot_be
+      u8  ref_kind       // 0 = exact VarId/spelling, 1 = query-slot ref
+      u8  reserved
+      ... ref payload ...
+  repeated rows:
+    u32 context_id_be
+    u32 multiplicity_be
+    u32 expr_len_be
+    u8  expr_bytes[expr_len]
+
+Ground rows use empty opening contexts. Variable-bearing rows are emitted only
+when the bridge has an explicit exact opening context for the row; rows imported
+through structural-only APIs are rejected here instead of silently synthesizing
+identities.
+*/
+MorkBuffer mork_space_dump_contextual_exact_rows(MorkSpace *space);
 
 /* Compatibility v1 text packet export. Prefer the v2/v3 raw-byte packet
    surfaces for new CeTTa integration work. */
@@ -196,6 +237,43 @@ mirrored atom-index group so CeTTa can preserve joined-query multiplicity.
 MorkBuffer mork_space_query_bindings_multi_ref_v3(MorkSpace *space,
                                                   const uint8_t *pattern,
                                                   size_t len);
+/*
+Packet format for mork_space_query_contextual_rows():
+
+  u32 magic_be      // 0x43544252 = "CTBR"
+  u16 version_be    // contextual rows wire version
+  u16 flags_be      // 0 for contextual query packets
+  u32 rows_be
+  u32 contexts_be
+  repeated contexts:
+    u32 context_id_be
+    u32 entry_count_be
+    repeated entries:
+      u16 slot_be
+      u8  ref_kind       // 0 = exact VarId/spelling, 1 = query-slot ref
+      u8  reserved
+      if ref_kind == 0:
+        u64 var_id_be
+        u32 spelling_len_be
+        u8  spelling_bytes[spelling_len]
+      if ref_kind == 1:
+        u16 query_slot_be
+  repeated rows:
+    u32 binding_count_be
+    repeated bindings:
+      u16 query_slot_be
+      u32 value_context_id_be
+      u32 value_flags_be
+      u32 expr_len_be
+      u8  expr_bytes[expr_len]
+
+This is the origin-aware query sibling of contextual exact rows. Values are
+opened with either exact stored identities or references back to the query
+variable context owned by CeTTa.
+*/
+MorkBuffer mork_space_query_contextual_rows(MorkSpace *space,
+                                            const uint8_t *pattern,
+                                            size_t len);
 MorkBuffer mork_space_query_debug(MorkSpace *space, const uint8_t *pattern, size_t len);
 
 /*

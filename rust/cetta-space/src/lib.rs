@@ -10,11 +10,10 @@ mod counted_pathmap;
 
 pub use counted_pathmap::{
     CountedDetailedPacketRows, CountedDetailedRow, CountedEntry, counted_contains_expr,
-    counted_entries,
-    counted_expr_row_packet, counted_insert_expr, counted_insert_expr_batch,
-    counted_insert_expr_batch_cached, counted_insert_expr_cached, counted_logical_size,
-    counted_query_only_packet_rows, counted_query_rows_detailed,
-    counted_query_rows_detailed_packet_rows,
+    counted_entries, counted_expr_row_packet, counted_factor_candidates, counted_insert_expr,
+    counted_insert_expr_batch, counted_insert_expr_batch_cached, counted_insert_expr_cached,
+    counted_insert_expr_count_cached, counted_logical_size, counted_query_only_packet_rows,
+    counted_query_rows_detailed, counted_query_rows_detailed_packet_rows,
     counted_remove_expr_batch, counted_remove_expr_batch_cached, counted_remove_one_expr,
     counted_remove_one_expr_cached, counted_sexpr_text, counted_sync_cached_logical_size,
     counted_unique_size,
@@ -213,8 +212,7 @@ fn bridge_env_var_name(side: u8, index: u8) -> &'static str {
     if let Some(existing) = guard.get(&(side, index)) {
         return existing;
     }
-    let leaked: &'static str =
-        Box::leak(format!("$__mork_b{}_{}", side, index).into_boxed_str());
+    let leaked: &'static str = Box::leak(format!("$__mork_b{}_{}", side, index).into_boxed_str());
     guard.insert((side, index), leaked);
     leaked
 }
@@ -322,19 +320,16 @@ pub fn bridge_expr_text(space: &Space, expr: Expr) -> Result<Vec<u8>, String> {
                 s
             };
             match std::str::from_utf8(resolved) {
-            Ok(text) => unsafe { std::mem::transmute(text) },
-            Err(err) => {
-                *error.borrow_mut() =
-                    Some(format!("bridge expr symbol was not valid utf8: {err}"));
-                ""
+                Ok(text) => unsafe { std::mem::transmute(text) },
+                Err(err) => {
+                    *error.borrow_mut() =
+                        Some(format!("bridge expr symbol was not valid utf8: {err}"));
+                    ""
+                }
             }
-        }},
+        },
         |index, is_new| {
-            if is_new {
-                "$"
-            } else {
-                bridge_ref_name(index)
-            }
+            if is_new { "$" } else { bridge_ref_name(index) }
         },
     );
     if let Some(err) = error.into_inner() {
@@ -358,13 +353,14 @@ pub fn bridge_expr_env_text(space: &Space, expr_env: ExprEnv) -> Result<Vec<u8>,
                 s
             };
             match std::str::from_utf8(resolved) {
-            Ok(text) => unsafe { std::mem::transmute(text) },
-            Err(err) => {
-                *error.borrow_mut() =
-                    Some(format!("bridge env symbol was not valid utf8: {err}"));
-                ""
+                Ok(text) => unsafe { std::mem::transmute(text) },
+                Err(err) => {
+                    *error.borrow_mut() =
+                        Some(format!("bridge env symbol was not valid utf8: {err}"));
+                    ""
+                }
             }
-        }},
+        },
         |index, _is_new| bridge_env_var_name(expr_env.n, index),
     );
     if let Some(err) = error.into_inner() {
@@ -383,7 +379,9 @@ pub fn render_bridge_expr_text(expr_bytes: &[u8], value_env: u8) -> Result<Strin
     expr.serialize2(
         &mut out,
         |s| unsafe { std::mem::transmute(std::str::from_utf8_unchecked(s)) },
-        |index, _is_new| Box::leak(format!("$__mork_b{}_{}", value_env, index + 1).into_boxed_str()),
+        |index, _is_new| {
+            Box::leak(format!("$__mork_b{}_{}", value_env, index + 1).into_boxed_str())
+        },
     );
     String::from_utf8(out).map_err(|err| format!("bridge expr text was not utf8: {err}"))
 }

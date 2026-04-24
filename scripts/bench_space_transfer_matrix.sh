@@ -7,11 +7,16 @@ MODE="${1:-all}"
 FACT_COUNT="${2:-10000}"
 MATCH_ROUNDS="${3:-3}"
 SCENARIOS_STR="${4:-copy_only exact_hit_after_copy full_scan_after_copy suite_total}"
+ROUTE_OVERRIDE="${CETTA_TRANSFER_ROUTE:-${5:-}}"
 RUNTIME_DIR="$ROOT/runtime/bench_space_transfer"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [all|native-to-pathmap|native-to-mork-live|pathmap-to-native|pathmap-to-mork-live|mork-live-to-native|mork-live-to-pathmap|mork-live-to-open-act|mork-live-to-load-act] [FACT_COUNT] [MATCH_ROUNDS] [SCENARIOS]
+Usage: $(basename "$0") [all|native-to-pathmap|native-to-mork-live|pathmap-to-native|pathmap-to-mork-live|mork-live-to-native|mork-live-to-pathmap|mork-live-to-open-act|mork-live-to-load-act] [FACT_COUNT] [MATCH_ROUNDS] [SCENARIOS] [ROUTE]
+
+ROUTE may be materialized-shim, collapse-direct, or get-atoms-direct.
+It may also be supplied with CETTA_TRANSFER_ROUTE. The default suite keeps the
+historical materialized-shim route unless explicitly overridden.
 EOF
 }
 
@@ -37,6 +42,13 @@ esac
 [ "$FACT_COUNT" -gt 42 ] || die "FACT_COUNT must be greater than 42 because the workload queries (friend sam 42)"
 [ "$MATCH_ROUNDS" -gt 0 ] || die "MATCH_ROUNDS must be positive"
 [ -x "$BIN" ] || die "Missing executable $BIN"
+case "$ROUTE_OVERRIDE" in
+    ""|materialized-shim|collapse-direct|get-atoms-direct)
+        ;;
+    *)
+        die "Unknown route: $ROUTE_OVERRIDE"
+        ;;
+esac
 
 mkdir -p "$RUNTIME_DIR"
 tmp_dir=$(mktemp -d "$RUNTIME_DIR/.bench_space_transfer.XXXXXX")
@@ -100,7 +112,7 @@ case_target_kind() {
 case_route_class() {
     case "$1" in
         native-to-pathmap|native-to-mork-live|pathmap-to-native|pathmap-to-mork-live|mork-live-to-native|mork-live-to-pathmap)
-            printf 'materialized-shim\n'
+            printf '%s\n' "${ROUTE_OVERRIDE:-materialized-shim}"
             ;;
         mork-live-to-open-act)
             printf 'act-snapshot-open\n'
@@ -256,6 +268,38 @@ render_case_program() {
                     else
                         printf '!(let $atoms (collapse (get-atoms &src))\n'
                         printf '   (add-atoms &dst $atoms))\n'
+                    fi
+                fi
+                ;;
+            collapse-direct)
+                kind_bind_space '&dst' "$dst_kind"
+                if [ "$src_kind" = "mork-live" ]; then
+                    if [ "$dst_kind" = "mork-live" ]; then
+                        printf '!(mork:add-atoms &dst (collapse (mork:get-atoms &src)))\n'
+                    else
+                        printf '!(add-atoms &dst (collapse (mork:get-atoms &src)))\n'
+                    fi
+                else
+                    if [ "$dst_kind" = "mork-live" ]; then
+                        printf '!(mork:add-atoms &dst (collapse (get-atoms &src)))\n'
+                    else
+                        printf '!(add-atoms &dst (collapse (get-atoms &src)))\n'
+                    fi
+                fi
+                ;;
+            get-atoms-direct)
+                kind_bind_space '&dst' "$dst_kind"
+                if [ "$src_kind" = "mork-live" ]; then
+                    if [ "$dst_kind" = "mork-live" ]; then
+                        printf '!(mork:add-atoms &dst (mork:get-atoms &src))\n'
+                    else
+                        printf '!(add-atoms &dst (mork:get-atoms &src))\n'
+                    fi
+                else
+                    if [ "$dst_kind" = "mork-live" ]; then
+                        printf '!(mork:add-atoms &dst (get-atoms &src))\n'
+                    else
+                        printf '!(add-atoms &dst (get-atoms &src))\n'
                     fi
                 fi
                 ;;

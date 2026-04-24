@@ -14,22 +14,23 @@
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
 use cetta_space::{
     bridge_expr_env_text, bridge_expr_text, bridge_parse_expr_chunk, bridge_parse_single_expr,
-    counted_contains_expr, counted_expr_row_packet, counted_insert_expr_batch_cached,
-    counted_insert_expr_cached, counted_query_only_packet_rows,
-    counted_query_rows_detailed_packet_rows, counted_remove_expr_batch_cached,
-    counted_remove_one_expr_cached, counted_sexpr_text, counted_sync_cached_logical_size,
-    counted_unique_size, stable_bridge_expr_packet_bytes,
+    counted_contains_expr, counted_entries, counted_expr_row_packet, counted_factor_candidates,
+    counted_insert_expr_batch_cached, counted_insert_expr_cached, counted_insert_expr_count_cached,
+    counted_query_only_packet_rows, counted_query_rows_detailed_packet_rows,
+    counted_remove_expr_batch_cached, counted_remove_one_expr_cached, counted_sexpr_text,
+    counted_sync_cached_logical_size, counted_unique_size, stable_bridge_expr_bytes,
+    stable_bridge_expr_packet_bytes,
 };
 use mork::space::Space;
-use mork_expr::{maybe_byte_item, Expr, ExprEnv, Tag};
+use mork_expr::{Expr, ExprEnv, Tag, maybe_byte_item, unify};
+use pathmap::PathMap;
 use pathmap::ring::AlgebraicStatus;
 use pathmap::zipper::{
     ProductZipper, Zipper, ZipperAbsolutePath, ZipperIteration, ZipperMoving, ZipperProduct,
     ZipperSubtries, ZipperWriting,
 };
-use pathmap::PathMap;
 use std::collections::{BTreeMap, HashMap};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{self, slice_from_raw_parts_mut};
 
 #[repr(C)]
@@ -66,6 +67,7 @@ struct BridgeSpace {
     inner: Space,
     storage_mode: BridgeStorageMode,
     counted_logical_size: u64,
+    exact_contexts: HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -107,6 +109,15 @@ const QUERY_ONLY_V2_VERSION: u16 = 2;
 const QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
 const QUERY_ONLY_V2_FLAG_WIDE_TOKENS: u16 = 1 << 4;
+const CONTEXTUAL_ROWS_WIRE_VERSION: u16 = 4;
+const CONTEXTUAL_EXACT_ROWS_FLAGS: u16 = 0;
+const OPEN_VAR_REF_EXACT: u8 = 0;
+const OPEN_VAR_REF_QUERY_SLOT: u8 = 1;
+const CONTEXTUAL_QUERY_ROWS_FLAGS: u16 = 0;
+const BRIDGE_EXPR_TAG_ARITY: u8 = 0x00;
+const BRIDGE_EXPR_TAG_SYMBOL: u8 = 0x01;
+const BRIDGE_EXPR_TAG_NEWVAR: u8 = 0x02;
+const BRIDGE_EXPR_TAG_VARREF: u8 = 0x03;
 #[cfg(feature = "pathmap-space")]
 const MULTI_REF_V3_VERSION: u16 = 3;
 #[cfg(feature = "pathmap-space")]
@@ -554,6 +565,7 @@ fn bridge_space_from_parts(space: Space, storage_mode: BridgeStorageMode) -> *mu
         inner: space,
         storage_mode,
         counted_logical_size,
+        exact_contexts: HashMap::new(),
     });
     Box::into_raw(bridge_space) as *mut MorkSpace
 }
@@ -577,6 +589,7 @@ fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
         inner: space,
         storage_mode: source.storage_mode,
         counted_logical_size: source.counted_logical_size,
+        exact_contexts: source.exact_contexts.clone(),
     });
     Box::into_raw(bridge_space) as *mut MorkSpace
 }
@@ -593,49 +606,167 @@ fn bridge_sync_counted_logical_size(bridge: &mut BridgeSpace) {
     }
 }
 
-// Join keeps the destination support and multiplicities honest without any
-// mirrored row identity bookkeeping.
+// Structural algebra works over PathMap support. Opening contexts describe how
+// to project structural variables back into CeTTa VarIds; after algebra those
+// presentation identities are no longer justified. Future value/context
+// propagation should add explicit composition semantics instead of preserving
+// these maps implicitly.
 fn bridge_space_join_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
     let status = {
         let rz = src.inner.btm.read_zipper();
         let mut wz = dst.inner.btm.write_zipper();
         wz.join_into(&rz)
     };
+    dst.exact_contexts.clear();
     bridge_sync_counted_logical_size(dst);
     status
 }
 
-// Meet keeps only overlapping structural support.
+// Meet keeps only overlapping structural support and invalidates opening context
+// metadata until context composition is modeled explicitly.
 fn bridge_space_meet_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
     let status = {
         let rz = src.inner.btm.read_zipper();
         let mut wz = dst.inner.btm.write_zipper();
         wz.meet_into(&rz, true)
     };
+    dst.exact_contexts.clear();
     bridge_sync_counted_logical_size(dst);
     status
 }
 
-// Subtract removes structural support directly from the destination.
+// Subtract removes structural support directly from the destination and drops
+// exact opening contexts, even when some structural rows remain.
 fn bridge_space_subtract_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
     let status = {
         let rz = src.inner.btm.read_zipper();
         let mut wz = dst.inner.btm.write_zipper();
         wz.subtract_into(&rz, true)
     };
+    dst.exact_contexts.clear();
     bridge_sync_counted_logical_size(dst);
     status
 }
 
-// Restrict performs selector-shaped narrowing over structural support.
+// Restrict performs selector-shaped narrowing over structural support; value
+// propagation for surviving rows is a separate PathMap semantics TODO.
 fn bridge_space_restrict_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
     let status = {
         let rz = src.inner.btm.read_zipper();
         let mut wz = dst.inner.btm.write_zipper();
         wz.restrict(&rz)
     };
+    dst.exact_contexts.clear();
     bridge_sync_counted_logical_size(dst);
     status
+}
+
+struct BridgeLogicalRow {
+    source_expr_bytes: Vec<u8>,
+    transfer_expr_bytes: Vec<u8>,
+    count: u32,
+}
+
+fn bridge_stable_transfer_expr_bytes(space: &Space, expr_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let expr = Expr {
+        ptr: expr_bytes.as_ptr().cast_mut(),
+    };
+    stable_bridge_expr_bytes(space, expr)
+}
+
+fn bridge_source_logical_rows(src: &BridgeSpace) -> Result<Vec<BridgeLogicalRow>, String> {
+    if bridge_uses_counted_storage(src) {
+        return counted_entries(&src.inner).map(|entries| {
+            entries
+                .into_iter()
+                .map(|entry| {
+                    bridge_stable_transfer_expr_bytes(&src.inner, &entry.atom_expr_bytes).map(
+                        |transfer_expr_bytes| BridgeLogicalRow {
+                            source_expr_bytes: entry.atom_expr_bytes,
+                            transfer_expr_bytes,
+                            count: entry.count,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+    }
+
+    let mut rows = Vec::new();
+    let mut rz = src.inner.btm.read_zipper();
+    while rz.to_next_val() {
+        let source_expr_bytes = rz.origin_path().to_vec();
+        let transfer_expr_bytes =
+            bridge_stable_transfer_expr_bytes(&src.inner, &source_expr_bytes)?;
+        rows.push(BridgeLogicalRow {
+            source_expr_bytes,
+            transfer_expr_bytes,
+            count: 1,
+        });
+    }
+    Ok(rows)
+}
+
+fn bridge_context_transfer_expr_map<'a>(
+    rows: &'a [BridgeLogicalRow],
+) -> HashMap<&'a [u8], &'a [u8]> {
+    rows.iter()
+        .map(|row| {
+            (
+                row.source_expr_bytes.as_slice(),
+                row.transfer_expr_bytes.as_slice(),
+            )
+        })
+        .collect()
+}
+
+fn bridge_space_add_logical_rows_from(
+    dst: &mut BridgeSpace,
+    src: &BridgeSpace,
+) -> Result<u64, String> {
+    let rows = bridge_source_logical_rows(src)?;
+    let mut added = 0u64;
+
+    if bridge_uses_counted_storage(dst) {
+        for row in &rows {
+            counted_insert_expr_count_cached(
+                &mut dst.inner,
+                &row.transfer_expr_bytes,
+                row.count,
+                &mut dst.counted_logical_size,
+            )?;
+            added = added.saturating_add(u64::from(row.count));
+        }
+
+        if bridge_uses_counted_storage(src) {
+            let expr_map = bridge_context_transfer_expr_map(&rows);
+            for (source_expr_bytes, per_expr) in &src.exact_contexts {
+                let Some(transfer_expr_bytes) = expr_map.get(source_expr_bytes.as_slice()) else {
+                    continue;
+                };
+                for (context, count) in per_expr {
+                    add_exact_context_count(
+                        &mut dst.exact_contexts,
+                        transfer_expr_bytes,
+                        context,
+                        *count,
+                    )?;
+                }
+            }
+        }
+    } else {
+        // Raw MORK/PathMap destinations store structural support: source
+        // multiplicity is visited logically, but duplicate paths coalesce and
+        // exact opening contexts do not survive the structural boundary.
+        for row in rows {
+            dst.inner.btm.insert(&row.transfer_expr_bytes, ());
+            added = added.saturating_add(u64::from(row.count));
+        }
+        dst.counted_logical_size = dst.inner.btm.val_count() as u64;
+        dst.exact_contexts.clear();
+    }
+
+    Ok(added)
 }
 
 fn clone_then_mutate(
@@ -781,6 +912,53 @@ unsafe fn bridge_space_mutate_from_raw(
     MorkStatus::ok(0)
 }
 
+unsafe fn bridge_space_add_logical_rows_from_raw(
+    dst: *mut MorkSpace,
+    src: *const MorkSpace,
+) -> MorkStatus {
+    if ptr::eq(dst.cast_const(), src) {
+        let cloned = match unsafe { bridge_space_ref(src) } {
+            Ok(space) => clone_bridge_space(space),
+            Err(err) => return err,
+        };
+        let result = {
+            let dst = match unsafe { bridge_space_mut(dst) } {
+                Ok(space) => space,
+                Err(err) => {
+                    mork_space_free(cloned);
+                    return err;
+                }
+            };
+            let src = match unsafe { bridge_space_ref(cloned) } {
+                Ok(space) => space,
+                Err(err) => {
+                    mork_space_free(cloned);
+                    return err;
+                }
+            };
+            match bridge_space_add_logical_rows_from(dst, src) {
+                Ok(added) => MorkStatus::ok(added),
+                Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+            }
+        };
+        mork_space_free(cloned);
+        return result;
+    }
+
+    let dst = match unsafe { bridge_space_mut(dst) } {
+        Ok(space) => space,
+        Err(err) => return err,
+    };
+    let src = match unsafe { bridge_space_ref(src) } {
+        Ok(space) => space,
+        Err(err) => return err,
+    };
+    match bridge_space_add_logical_rows_from(dst, src) {
+        Ok(added) => MorkStatus::ok(added),
+        Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+    }
+}
+
 fn read_u32_be_at(input: &[u8], offset: &mut usize) -> Result<u32, String> {
     if input.len().saturating_sub(*offset) < 4 {
         return Err("ACT copy sidecar truncated while reading u32".to_string());
@@ -792,6 +970,23 @@ fn read_u32_be_at(input: &[u8], offset: &mut usize) -> Result<u32, String> {
         input[*offset + 3],
     ]);
     *offset += 4;
+    Ok(value)
+}
+
+fn read_u16_be_at(input: &[u8], offset: &mut usize) -> Result<u16, String> {
+    if input.len().saturating_sub(*offset) < 2 {
+        return Err("contextual exact context truncated while reading u16".to_string());
+    }
+    let value = u16::from_be_bytes([input[*offset], input[*offset + 1]]);
+    *offset += 2;
+    Ok(value)
+}
+
+fn read_u8_at(input: &[u8], offset: &mut usize) -> Result<u8, String> {
+    let Some(value) = input.get(*offset).copied() else {
+        return Err("contextual exact context truncated while reading u8".to_string());
+    };
+    *offset += 1;
     Ok(value)
 }
 
@@ -926,6 +1121,443 @@ fn append_bridge_expr_bytes(space: &Space, out: &mut Vec<u8>, expr: Expr) -> Res
     Ok(())
 }
 
+fn bridge_expr_packet_var_count(input: &[u8]) -> Result<u16, String> {
+    let mut offset = 0usize;
+    let mut pending = 1usize;
+    let mut introduced_vars = 0u16;
+
+    while pending > 0 {
+        let Some(tag) = input.get(offset).copied() else {
+            return Err("contextual expr packet truncated while reading tag".to_string());
+        };
+        offset += 1;
+        pending -= 1;
+
+        match tag {
+            BRIDGE_EXPR_TAG_ARITY => {
+                let arity = read_u32_be_at(input, &mut offset)? as usize;
+                pending = pending.checked_add(arity).ok_or_else(|| {
+                    "contextual expr packet overflowed expression arity accounting".to_string()
+                })?;
+            }
+            BRIDGE_EXPR_TAG_SYMBOL => {
+                let len = read_u32_be_at(input, &mut offset)? as usize;
+                if input.len().saturating_sub(offset) < len {
+                    return Err(
+                        "contextual expr packet truncated while reading symbol bytes".to_string(),
+                    );
+                }
+                offset += len;
+            }
+            BRIDGE_EXPR_TAG_NEWVAR => {
+                introduced_vars = introduced_vars.checked_add(1).ok_or_else(|| {
+                    "contextual expr packet exceeded u16 variable slots".to_string()
+                })?;
+            }
+            BRIDGE_EXPR_TAG_VARREF => {
+                let Some(slot) = input.get(offset).copied() else {
+                    return Err(
+                        "contextual expr packet truncated while reading var ref".to_string()
+                    );
+                };
+                offset += 1;
+                if u16::from(slot) >= introduced_vars {
+                    return Err(format!(
+                        "contextual expr packet references variable slot {slot} before introduction"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "contextual expr packet contains invalid tag 0x{other:02x}"
+                ));
+            }
+        }
+    }
+
+    if offset != input.len() {
+        return Err("contextual expr packet contains trailing data".to_string());
+    }
+    Ok(introduced_vars)
+}
+
+fn validate_contextual_exact_context(context: &[u8], var_count: u16) -> Result<(), String> {
+    let mut offset = 0usize;
+    let entry_count = read_u32_be_at(context, &mut offset)?;
+    if entry_count != u32::from(var_count) {
+        return Err(format!(
+            "contextual exact context has {entry_count} entries but expression uses {var_count} variable slots"
+        ));
+    }
+
+    let mut seen = vec![false; usize::from(var_count)];
+    for _ in 0..entry_count {
+        let slot = read_u16_be_at(context, &mut offset)?;
+        let kind = read_u8_at(context, &mut offset)?;
+        let reserved = read_u8_at(context, &mut offset)?;
+        if reserved != 0 {
+            return Err("contextual exact context entry has nonzero reserved byte".to_string());
+        }
+        if kind != OPEN_VAR_REF_EXACT {
+            return Err(
+                "contextual exact rows may only use exact variable context entries".to_string(),
+            );
+        }
+        if slot >= var_count {
+            return Err(format!(
+                "contextual exact context slot {slot} is outside expression variable range"
+            ));
+        }
+        let seen_slot = &mut seen[usize::from(slot)];
+        if *seen_slot {
+            return Err(format!("contextual exact context repeats slot {slot}"));
+        }
+        *seen_slot = true;
+
+        if context.len().saturating_sub(offset) < 8 {
+            return Err("contextual exact context truncated while reading VarId".to_string());
+        }
+        offset += 8;
+        let spelling_len = read_u32_be_at(context, &mut offset)? as usize;
+        if spelling_len == 0 {
+            return Err("contextual exact context contains empty variable spelling".to_string());
+        }
+        if context.len().saturating_sub(offset) < spelling_len {
+            return Err("contextual exact context truncated while reading spelling".to_string());
+        }
+        std::str::from_utf8(&context[offset..offset + spelling_len])
+            .map_err(|_| "contextual exact context spelling is not UTF-8".to_string())?;
+        offset += spelling_len;
+    }
+
+    if seen.iter().any(|slot_seen| !*slot_seen) {
+        return Err(
+            "contextual exact context does not cover every expression variable slot".to_string(),
+        );
+    }
+    if offset != context.len() {
+        return Err("contextual exact context contains trailing data".to_string());
+    }
+    Ok(())
+}
+
+fn increment_exact_context_count(
+    contexts: &mut HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
+    expr_bytes: &[u8],
+    context_bytes: &[u8],
+) -> Result<(), String> {
+    add_exact_context_count(contexts, expr_bytes, context_bytes, 1)
+}
+
+fn add_exact_context_count(
+    contexts: &mut HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
+    expr_bytes: &[u8],
+    context_bytes: &[u8],
+    delta: u32,
+) -> Result<(), String> {
+    if delta == 0 {
+        return Ok(());
+    }
+    let per_expr = contexts.entry(expr_bytes.to_vec()).or_default();
+    let count = per_expr.entry(context_bytes.to_vec()).or_insert(0);
+    *count = count
+        .checked_add(delta)
+        .ok_or_else(|| "contextual exact context multiplicity overflow".to_string())?;
+    Ok(())
+}
+
+fn decrement_any_exact_context_count(
+    contexts: &mut HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
+    expr_bytes: &[u8],
+) {
+    let Some(per_expr) = contexts.get_mut(expr_bytes) else {
+        return;
+    };
+    let Some(first_key) = per_expr.keys().next().cloned() else {
+        contexts.remove(expr_bytes);
+        return;
+    };
+    if let Some(count) = per_expr.get_mut(&first_key) {
+        if *count > 1 {
+            *count -= 1;
+        } else {
+            per_expr.remove(&first_key);
+        }
+    }
+    if per_expr.is_empty() {
+        contexts.remove(expr_bytes);
+    }
+}
+
+fn has_exact_context_count(
+    contexts: &HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
+    expr_bytes: &[u8],
+    context_bytes: &[u8],
+) -> bool {
+    contexts
+        .get(expr_bytes)
+        .and_then(|per_expr| per_expr.get(context_bytes))
+        .copied()
+        .unwrap_or(0)
+        != 0
+}
+
+fn decrement_exact_context_count(
+    contexts: &mut HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
+    expr_bytes: &[u8],
+    context_bytes: &[u8],
+) -> bool {
+    let Some(per_expr) = contexts.get_mut(expr_bytes) else {
+        return false;
+    };
+    let Some(count) = per_expr.get_mut(context_bytes) else {
+        return false;
+    };
+    if *count > 1 {
+        *count -= 1;
+    } else {
+        per_expr.remove(context_bytes);
+    }
+    if per_expr.is_empty() {
+        contexts.remove(expr_bytes);
+    }
+    true
+}
+
+fn append_opening_context(out: &mut Vec<u8>, context_id: u32, context_bytes: &[u8]) {
+    append_u32_be(out, context_id);
+    out.extend_from_slice(context_bytes);
+}
+
+fn append_contextual_exact_rows_header(out: &mut Vec<u8>, row_count: u32, context_count: u32) {
+    append_u32_be(out, QUERY_ONLY_V2_MAGIC);
+    append_u16_be(out, CONTEXTUAL_ROWS_WIRE_VERSION);
+    append_u16_be(out, CONTEXTUAL_EXACT_ROWS_FLAGS);
+    append_u32_be(out, row_count);
+    append_u32_be(out, context_count);
+}
+
+fn append_contextual_exact_row(
+    out: &mut Vec<u8>,
+    context_id: u32,
+    multiplicity: u32,
+    expr_packet: &[u8],
+) -> Result<(), String> {
+    if multiplicity == 0 {
+        return Err("contextual exact rows require positive multiplicity".to_string());
+    }
+    let expr_len = u32::try_from(expr_packet.len())
+        .map_err(|_| "contextual exact-row expr packet exceeds u32 length".to_string())?;
+    append_u32_be(out, context_id);
+    append_u32_be(out, multiplicity);
+    append_u32_be(out, expr_len);
+    out.extend_from_slice(expr_packet);
+    Ok(())
+}
+
+#[cfg(feature = "pathmap-space")]
+#[derive(Debug, Clone)]
+struct ContextualQueryBinding {
+    query_slot: u16,
+    value_flags: u32,
+    expr_packet: Vec<u8>,
+    context: Vec<u8>,
+}
+
+#[cfg(feature = "pathmap-space")]
+#[derive(Debug, Clone)]
+struct ContextualQueryCandidate {
+    atom_expr_bytes: Vec<u8>,
+    count: u32,
+    exact_context: Option<Vec<u8>>,
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_contextual_query_rows_header(out: &mut Vec<u8>, row_count: u32, context_count: u32) {
+    append_u32_be(out, QUERY_ONLY_V2_MAGIC);
+    append_u16_be(out, CONTEXTUAL_ROWS_WIRE_VERSION);
+    append_u16_be(out, CONTEXTUAL_QUERY_ROWS_FLAGS);
+    append_u32_be(out, row_count);
+    append_u32_be(out, context_count);
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_query_slot_context_entry(out: &mut Vec<u8>, value_slot: u16, query_slot: u16) {
+    append_u16_be(out, value_slot);
+    out.push(OPEN_VAR_REF_QUERY_SLOT);
+    out.push(0);
+    append_u16_be(out, query_slot);
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_exact_context_entry_remapped(
+    out: &mut Vec<u8>,
+    target_slot: u16,
+    exact_context: &[u8],
+    source_slot: u16,
+) -> Result<(), String> {
+    let mut offset = 0usize;
+    let entry_count = read_u32_be_at(exact_context, &mut offset)?;
+    for _ in 0..entry_count {
+        let slot = read_u16_be_at(exact_context, &mut offset)?;
+        let kind = read_u8_at(exact_context, &mut offset)?;
+        let reserved = read_u8_at(exact_context, &mut offset)?;
+        if reserved != 0 {
+            return Err(
+                "contextual query value context entry has nonzero reserved byte".to_string(),
+            );
+        }
+        if kind != OPEN_VAR_REF_EXACT {
+            return Err("stored exact context contains non-exact ref kind".to_string());
+        }
+        if exact_context.len().saturating_sub(offset) < 8 {
+            return Err("stored exact context truncated while reading VarId".to_string());
+        }
+        let var_id_bytes = &exact_context[offset..offset + 8];
+        offset += 8;
+        let spelling_len = read_u32_be_at(exact_context, &mut offset)? as usize;
+        if exact_context.len().saturating_sub(offset) < spelling_len {
+            return Err("stored exact context truncated while reading spelling".to_string());
+        }
+        let spelling = &exact_context[offset..offset + spelling_len];
+        offset += spelling_len;
+        if slot == source_slot {
+            append_u16_be(out, target_slot);
+            out.push(OPEN_VAR_REF_EXACT);
+            out.push(0);
+            out.extend_from_slice(var_id_bytes);
+            append_u32_be(out, spelling_len as u32);
+            out.extend_from_slice(spelling);
+            return Ok(());
+        }
+    }
+    if offset != exact_context.len() {
+        return Err("stored exact context contains trailing data".to_string());
+    }
+    Err(format!(
+        "stored exact context does not cover matched value slot {source_slot}"
+    ))
+}
+
+#[cfg(feature = "pathmap-space")]
+fn contextual_query_candidates_for_factor(
+    space: &BridgeSpace,
+    factor_expr: Expr,
+) -> Result<Vec<ContextualQueryCandidate>, String> {
+    let structural = counted_factor_candidates(&space.inner, factor_expr)?;
+    let mut out = Vec::new();
+
+    for entry in structural {
+        let expr = Expr {
+            ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
+        };
+        let encoded = stable_bridge_expr_packet_bytes(&space.inner, expr)?;
+        let var_count = bridge_expr_packet_var_count(&encoded)?;
+
+        if let Some(per_expr) = space.exact_contexts.get(&entry.atom_expr_bytes) {
+            let mut covered = 0u32;
+            for (context, count) in per_expr {
+                if *count == 0 {
+                    return Err("contextual query exact context has zero multiplicity".to_string());
+                }
+                validate_contextual_exact_context(context, var_count)?;
+                covered = covered.checked_add(*count).ok_or_else(|| {
+                    "contextual query exact context multiplicity overflow".to_string()
+                })?;
+                out.push(ContextualQueryCandidate {
+                    atom_expr_bytes: entry.atom_expr_bytes.clone(),
+                    count: *count,
+                    exact_context: Some(context.clone()),
+                });
+            }
+            if covered > entry.count {
+                return Err(
+                    "contextual query exact context multiplicity exceeds structural multiplicity"
+                        .to_string(),
+                );
+            }
+            if covered < entry.count {
+                if var_count != 0 {
+                    return Err(
+                        "contextual query rows need exact context for matched variable value"
+                            .to_string(),
+                    );
+                }
+                out.push(ContextualQueryCandidate {
+                    atom_expr_bytes: entry.atom_expr_bytes,
+                    count: entry.count - covered,
+                    exact_context: None,
+                });
+            }
+        } else if var_count != 0 {
+            return Err(
+                "contextual query rows need exact context for matched variable value".to_string(),
+            );
+        } else {
+            out.push(ContextualQueryCandidate {
+                atom_expr_bytes: entry.atom_expr_bytes,
+                count: entry.count,
+                exact_context: None,
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+#[cfg(feature = "pathmap-space")]
+fn build_contextual_query_value_context(
+    origins: &BTreeMap<u8, (u8, u8)>,
+    chosen_entries: &[&ContextualQueryCandidate],
+) -> Result<Vec<u8>, String> {
+    let mut context = Vec::new();
+    let entry_count = u32::try_from(origins.len())
+        .map_err(|_| "contextual query value context exceeded u32 entry count".to_string())?;
+    append_u32_be(&mut context, entry_count);
+    for (&value_slot, &(source_env, source_slot)) in origins.iter() {
+        if source_env == 0 {
+            append_query_slot_context_entry(
+                &mut context,
+                u16::from(value_slot),
+                u16::from(source_slot),
+            );
+            continue;
+        }
+        let factor_idx = usize::from(source_env - 1);
+        let Some(entry) = chosen_entries.get(factor_idx) else {
+            return Err(format!(
+                "contextual query rows reference missing matched factor env {source_env}"
+            ));
+        };
+        let exact_context = entry.exact_context.as_deref().ok_or_else(|| {
+            "contextual query rows need exact context for matched variable value".to_string()
+        })?;
+        append_exact_context_entry_remapped(
+            &mut context,
+            u16::from(value_slot),
+            exact_context,
+            u16::from(source_slot),
+        )?;
+    }
+    Ok(context)
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_contextual_query_binding(
+    out: &mut Vec<u8>,
+    binding: &ContextualQueryBinding,
+    context_id: u32,
+) -> Result<(), String> {
+    let expr_len = u32::try_from(binding.expr_packet.len())
+        .map_err(|_| "contextual query binding expr packet exceeds u32 length".to_string())?;
+    append_u16_be(out, binding.query_slot);
+    append_u32_be(out, context_id);
+    append_u32_be(out, binding.value_flags);
+    append_u32_be(out, expr_len);
+    out.extend_from_slice(&binding.expr_packet);
+    Ok(())
+}
+
 fn append_query_only_v2_header(out: &mut Vec<u8>, row_count: u32) {
     append_u32_be(out, QUERY_ONLY_V2_MAGIC);
     append_u16_be(out, QUERY_ONLY_V2_VERSION);
@@ -1009,6 +1641,144 @@ fn append_query_only_v2_row(
 fn append_empty_binding_row(out: &mut Vec<u8>) {
     append_u32_be(out, 0);
     append_u32_be(out, 0);
+}
+
+#[cfg(feature = "pathmap-space")]
+fn encode_contextual_query_value_rec(
+    space: &Space,
+    expr_env: ExprEnv,
+    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    row_vars: &mut BTreeMap<(u8, u8), u8>,
+    origins: &mut BTreeMap<u8, (u8, u8)>,
+    next_row_var: &mut u8,
+    resolving: &mut Vec<(u8, u8)>,
+    out: &mut Vec<u8>,
+) -> Result<bool, String> {
+    if let Some(var) = expr_env.var_opt() {
+        if let Some(rhs) = bindings.get(&var) {
+            if resolving.contains(&var) {
+                return Err(
+                    "contextual query packet materialization hit a recursive cycle".to_string(),
+                );
+            }
+            resolving.push(var);
+            let is_ground = encode_contextual_query_value_rec(
+                space,
+                *rhs,
+                bindings,
+                row_vars,
+                origins,
+                next_row_var,
+                resolving,
+                out,
+            )?;
+            resolving.pop();
+            return Ok(is_ground);
+        }
+
+        if let Some(existing) = row_vars.get(&var) {
+            out.push(BRIDGE_EXPR_TAG_VARREF);
+            out.push(*existing);
+            return Ok(false);
+        }
+
+        let slot = *next_row_var;
+        *next_row_var = next_row_var
+            .checked_add(1)
+            .ok_or_else(|| "contextual query packet row exhausted u8 variable slots".to_string())?;
+        row_vars.insert(var, slot);
+        origins.insert(slot, var);
+        out.push(BRIDGE_EXPR_TAG_NEWVAR);
+        return Ok(false);
+    }
+
+    let expr = expr_env.subsexpr();
+    if let Some(arity) = expr.arity() {
+        out.push(BRIDGE_EXPR_TAG_ARITY);
+        append_u32_be(out, arity as u32);
+        let mut args = Vec::new();
+        expr_env.args(&mut args);
+        let mut is_ground = true;
+        for arg in args {
+            if !encode_contextual_query_value_rec(
+                space,
+                arg,
+                bindings,
+                row_vars,
+                origins,
+                next_row_var,
+                resolving,
+                out,
+            )? {
+                is_ground = false;
+            }
+        }
+        return Ok(is_ground);
+    }
+
+    out.extend_from_slice(&stable_bridge_expr_packet_bytes(space, expr)?);
+    Ok(true)
+}
+
+#[cfg(feature = "pathmap-space")]
+fn encode_contextual_query_binding(
+    space: &Space,
+    query_slot: u8,
+    expr_env: ExprEnv,
+    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    chosen_entries: &[&ContextualQueryCandidate],
+) -> Result<ContextualQueryBinding, String> {
+    let mut row_vars = BTreeMap::<(u8, u8), u8>::new();
+    let mut origins = BTreeMap::<u8, (u8, u8)>::new();
+    let mut next_row_var = 0u8;
+    let mut resolving = Vec::new();
+    let mut expr_packet = Vec::new();
+    encode_contextual_query_value_rec(
+        space,
+        expr_env,
+        bindings,
+        &mut row_vars,
+        &mut origins,
+        &mut next_row_var,
+        &mut resolving,
+        &mut expr_packet,
+    )?;
+    let var_count = bridge_expr_packet_var_count(&expr_packet)?;
+    if usize::from(var_count) != origins.len() {
+        return Err("contextual query value context does not cover every value slot".to_string());
+    }
+    let context = build_contextual_query_value_context(&origins, chosen_entries)?;
+    Ok(ContextualQueryBinding {
+        query_slot: u16::from(query_slot),
+        value_flags: 0,
+        expr_packet,
+        context,
+    })
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_contextual_query_packet_row(
+    out: &mut Vec<u8>,
+    row: &[ContextualQueryBinding],
+    context_ids: &mut BTreeMap<Vec<u8>, u32>,
+    contexts: &mut Vec<Vec<u8>>,
+) -> Result<(), String> {
+    let binding_count = u32::try_from(row.len())
+        .map_err(|_| "contextual query row exceeded u32 binding count".to_string())?;
+    append_u32_be(out, binding_count);
+    for binding in row {
+        let context_id = if let Some(id) = context_ids.get(&binding.context) {
+            *id
+        } else {
+            let id = u32::try_from(contexts.len())
+                .map_err(|_| "contextual query packet exceeded u32 context count".to_string())?;
+            context_ids.insert(binding.context.clone(), id);
+            contexts.push(binding.context.clone());
+            id
+        };
+        append_contextual_query_binding(out, binding, context_id)?;
+    }
+    Ok(())
 }
 
 fn query_bindings_packet(
@@ -1157,6 +1927,137 @@ fn query_bindings_multi_ref_v3_packet(
     Err("multi-ref v3 packets require the pathmap-space bridge feature".to_string())
 }
 
+#[cfg(feature = "pathmap-space")]
+fn accumulate_contextual_query_rows(
+    space: &BridgeSpace,
+    factors: &[ExprEnv],
+    candidate_lists: &[Vec<ContextualQueryCandidate>],
+    depth: usize,
+    chosen: &mut Vec<usize>,
+    rows: &mut Vec<Vec<ContextualQueryBinding>>,
+) -> Result<(), String> {
+    if depth == factors.len() {
+        let mut stack = Vec::with_capacity(factors.len());
+        let mut multiplicity = 1u64;
+        let mut chosen_entries = Vec::with_capacity(factors.len());
+        for (factor_idx, factor) in factors.iter().enumerate() {
+            let chosen_entry = &candidate_lists[factor_idx][chosen[factor_idx]];
+            let atom_expr = Expr {
+                ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
+            };
+            stack.push((*factor, ExprEnv::new((factor_idx + 1) as u8, atom_expr)));
+            multiplicity = multiplicity.saturating_mul(u64::from(chosen_entry.count));
+            chosen_entries.push(chosen_entry);
+        }
+
+        if let Ok(bindings) = unify(stack) {
+            let mut row = Vec::new();
+            for (&(side, idx), expr_env) in bindings.iter() {
+                if side != 0 {
+                    continue;
+                }
+                row.push(encode_contextual_query_binding(
+                    &space.inner,
+                    idx,
+                    *expr_env,
+                    &bindings,
+                    &chosen_entries,
+                )?);
+            }
+            let repeat = usize::try_from(multiplicity)
+                .map_err(|_| "contextual query row multiplicity exceeds usize".to_string())?;
+            for _ in 0..repeat {
+                rows.push(row.clone());
+            }
+        }
+        return Ok(());
+    }
+
+    for idx in 0..candidate_lists[depth].len() {
+        chosen.push(idx);
+        accumulate_contextual_query_rows(space, factors, candidate_lists, depth + 1, chosen, rows)?;
+        chosen.pop();
+    }
+    Ok(())
+}
+
+#[cfg(feature = "pathmap-space")]
+fn query_contextual_rows_packet(
+    space: &mut BridgeSpace,
+    pattern: &[u8],
+) -> Result<(Vec<u8>, u32), String> {
+    if !bridge_uses_counted_storage(space) {
+        return Err(
+            "contextual query rows are only available for counted PathMap bridge spaces"
+                .to_string(),
+        );
+    }
+
+    let normalized = normalize_query_text(pattern)?;
+    let pattern_bytes = parse_single_expr(&mut space.inner, &normalized)?;
+    let pattern_expr = Expr {
+        ptr: pattern_bytes.as_ptr().cast_mut(),
+    };
+    let factor_count = pattern_expr
+        .arity()
+        .ok_or_else(|| "contextual query rows expected a wrapped query".to_string())?
+        .checked_sub(1)
+        .ok_or_else(|| "contextual query rows expected a wrapped query".to_string())?;
+    if factor_count == 0 {
+        return Err("contextual query rows require at least one query factor".to_string());
+    }
+
+    let mut pat_args = Vec::with_capacity((factor_count as usize) + 1);
+    ExprEnv::new(0, pattern_expr).args(&mut pat_args);
+    let factors = &pat_args[1..];
+    let mut candidate_lists = Vec::with_capacity(factors.len());
+    for factor in factors {
+        let candidates = contextual_query_candidates_for_factor(space, factor.subsexpr())?;
+        if candidates.is_empty() {
+            let mut packet = Vec::new();
+            append_contextual_query_rows_header(&mut packet, 0, 0);
+            return Ok((packet, 0));
+        }
+        candidate_lists.push(candidates);
+    }
+
+    let mut rows = Vec::new();
+    let mut chosen = Vec::with_capacity(factors.len());
+    accumulate_contextual_query_rows(space, factors, &candidate_lists, 0, &mut chosen, &mut rows)?;
+
+    let row_count = u32::try_from(rows.len())
+        .map_err(|_| "contextual query packet exceeded u32 row count".to_string())?;
+    let mut context_ids = BTreeMap::<Vec<u8>, u32>::new();
+    let mut contexts = Vec::<Vec<u8>>::new();
+    let mut row_bytes = Vec::<Vec<u8>>::new();
+    for row in &rows {
+        let mut encoded_row = Vec::new();
+        append_contextual_query_packet_row(&mut encoded_row, row, &mut context_ids, &mut contexts)?;
+        row_bytes.push(encoded_row);
+    }
+    let context_count = u32::try_from(contexts.len())
+        .map_err(|_| "contextual query packet exceeded u32 context count".to_string())?;
+    let mut packet = Vec::new();
+    append_contextual_query_rows_header(&mut packet, row_count, context_count);
+    for (id, context) in contexts.iter().enumerate() {
+        let context_id = u32::try_from(id)
+            .map_err(|_| "contextual query packet exceeded u32 context id".to_string())?;
+        append_opening_context(&mut packet, context_id, context);
+    }
+    for row in row_bytes {
+        packet.extend_from_slice(&row);
+    }
+    Ok((packet, row_count))
+}
+
+#[cfg(not(feature = "pathmap-space"))]
+fn query_contextual_rows_packet(
+    _space: &mut BridgeSpace,
+    _pattern: &[u8],
+) -> Result<(Vec<u8>, u32), String> {
+    Err("contextual query rows require the pathmap-space bridge feature".to_string())
+}
+
 fn query_debug_text(space: &mut Space, pattern: &[u8]) -> Result<(Vec<u8>, u32), String> {
     let normalized = normalize_query_text(pattern)?;
     let pattern_bytes = parse_single_expr(space, &normalized)?;
@@ -1255,6 +2156,100 @@ fn dump_bridge_space_expr_rows(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), S
     Ok((packet, count))
 }
 
+fn dump_bridge_space_contextual_exact_rows(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), String> {
+    let mut rows: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+    let mut context_ids: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
+    let mut contexts: Vec<Vec<u8>> = Vec::new();
+    let empty_context = 0u32.to_be_bytes().to_vec();
+
+    let mut intern_context = |context: &[u8]| -> Result<u32, String> {
+        if let Some(id) = context_ids.get(context) {
+            return Ok(*id);
+        }
+        let id = u32::try_from(contexts.len())
+            .map_err(|_| "contextual exact-row dump exceeded u32 context count".to_string())?;
+        context_ids.insert(context.to_vec(), id);
+        contexts.push(context.to_vec());
+        Ok(id)
+    };
+
+    if bridge_uses_counted_storage(bridge) {
+        for entry in counted_entries(&bridge.inner)? {
+            let expr = Expr {
+                ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
+            };
+            let encoded = stable_bridge_expr_packet_bytes(&bridge.inner, expr)?;
+            let var_count = bridge_expr_packet_var_count(&encoded)?;
+            if let Some(per_expr) = bridge.exact_contexts.get(&entry.atom_expr_bytes) {
+                let mut covered = 0u32;
+                for (context, count) in per_expr {
+                    validate_contextual_exact_context(context, var_count)?;
+                    let context_id = intern_context(context)?;
+                    rows.push((context_id, *count, encoded.clone()));
+                    covered = covered.checked_add(*count).ok_or_else(|| {
+                        "contextual exact-row presentation counts overflowed".to_string()
+                    })?;
+                }
+                if covered > entry.count {
+                    return Err(
+                        "contextual exact-row presentations exceed structural multiplicity"
+                            .to_string(),
+                    );
+                }
+                if covered < entry.count {
+                    if var_count != 0 {
+                        return Err(
+                            "contextual exact-row dump is missing opening context for a variable-bearing row"
+                                .to_string(),
+                        );
+                    }
+                    let context_id = intern_context(&empty_context)?;
+                    rows.push((context_id, entry.count - covered, encoded));
+                }
+            } else if var_count != 0 {
+                return Err(
+                    "contextual exact-row dump needs an opening context for variable-bearing PathMap rows"
+                        .to_string(),
+                );
+            } else {
+                let context_id = intern_context(&empty_context)?;
+                rows.push((context_id, entry.count, encoded));
+            }
+        }
+    } else {
+        let mut rz = bridge.inner.btm.read_zipper();
+        while rz.to_next_val() {
+            let expr = Expr {
+                ptr: rz.origin_path().as_ptr().cast_mut(),
+            };
+            let encoded = stable_bridge_expr_packet_bytes(&bridge.inner, expr)?;
+            let var_count = bridge_expr_packet_var_count(&encoded)?;
+            if var_count != 0 {
+                return Err(
+                    "contextual exact-row dump needs an opening context for variable-bearing MORK rows"
+                        .to_string(),
+                );
+            }
+            let context_id = intern_context(&empty_context)?;
+            rows.push((context_id, 1, encoded));
+        }
+    }
+
+    let row_count = u32::try_from(rows.len())
+        .map_err(|_| "contextual exact-row dump exceeded u32 row count".to_string())?;
+    let mut packet = Vec::new();
+    let context_count = u32::try_from(contexts.len())
+        .map_err(|_| "contextual exact-row dump exceeded u32 context count".to_string())?;
+    append_contextual_exact_rows_header(&mut packet, row_count, context_count);
+    for (id, context) in contexts.iter().enumerate() {
+        append_opening_context(&mut packet, id as u32, context);
+    }
+    for (context_id, multiplicity, encoded) in rows {
+        append_contextual_exact_row(&mut packet, context_id, multiplicity, &encoded)?;
+    }
+    Ok((packet, row_count))
+}
+
 // === Space lifecycle, mutation, and algebra FFI ===
 
 /// Allocates a fresh bridge-owned MORK space and returns it as an opaque C handle.
@@ -1265,6 +2260,7 @@ pub extern "C" fn mork_space_new() -> *mut MorkSpace {
             inner: Space::new(),
             storage_mode: BridgeStorageMode::RawExprs,
             counted_logical_size: 0,
+            exact_contexts: HashMap::new(),
         });
         Box::into_raw(bridge) as *mut MorkSpace
     })
@@ -1278,6 +2274,7 @@ pub extern "C" fn mork_space_new_pathmap() -> *mut MorkSpace {
             inner: Space::new(),
             storage_mode: BridgeStorageMode::CountedPathmap,
             counted_logical_size: 0,
+            exact_contexts: HashMap::new(),
         });
         Box::into_raw(bridge) as *mut MorkSpace
     })
@@ -1304,6 +2301,7 @@ pub extern "C" fn mork_space_clear(space: *mut MorkSpace) -> MorkStatus {
         };
         bridge.inner = Space::new();
         bridge.counted_logical_size = 0;
+        bridge.exact_contexts.clear();
         MorkStatus::ok(0)
     })
 }
@@ -1391,6 +2389,71 @@ pub extern "C" fn mork_space_add_expr_bytes(
         } else {
             bridge.inner.btm.insert(expr_bytes, ());
             MorkStatus::ok(1)
+        }
+    })
+}
+
+/// Adds one encoded expression with an exact opening context for projection.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_add_contextual_exact_expr_bytes(
+    space: *mut MorkSpace,
+    expr_bytes: *const u8,
+    len: usize,
+    context_bytes: *const u8,
+    context_len: usize,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        if !bridge_uses_counted_storage(bridge) {
+            return MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"contextual exact rows require counted PathMap storage".to_vec(),
+            );
+        }
+        if expr_bytes.is_null() {
+            return MorkStatus::err(MorkStatusCode::Null, b"null expr bytes".to_vec());
+        }
+        if context_bytes.is_null() {
+            return MorkStatus::err(MorkStatusCode::Null, b"null opening context".to_vec());
+        }
+        let expr_bytes = std::slice::from_raw_parts(expr_bytes, len);
+        let context_bytes = std::slice::from_raw_parts(context_bytes, context_len);
+        if let Err(err) = validate_expr_bytes(expr_bytes) {
+            return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
+        }
+        let expr = Expr {
+            ptr: expr_bytes.as_ptr().cast_mut(),
+        };
+        let encoded = match stable_bridge_expr_packet_bytes(&bridge.inner, expr) {
+            Ok(encoded) => encoded,
+            Err(err) => return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+        };
+        let var_count = match bridge_expr_packet_var_count(&encoded) {
+            Ok(count) => count,
+            Err(err) => return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+        };
+        if let Err(err) = validate_contextual_exact_context(context_bytes, var_count) {
+            return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
+        }
+        match counted_insert_expr_cached(
+            &mut bridge.inner,
+            expr_bytes,
+            &mut bridge.counted_logical_size,
+        ) {
+            Ok(_) => {
+                if let Err(err) = increment_exact_context_count(
+                    &mut bridge.exact_contexts,
+                    expr_bytes,
+                    context_bytes,
+                ) {
+                    return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+                }
+                MorkStatus::ok(1)
+            }
+            Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
         }
     })
 }
@@ -1516,13 +2579,90 @@ pub extern "C" fn mork_space_remove_expr_bytes(
                 expr_bytes,
                 &mut bridge.counted_logical_size,
             ) {
-                Ok(Some(_)) => MorkStatus::ok(1),
+                Ok(Some(_)) => {
+                    decrement_any_exact_context_count(&mut bridge.exact_contexts, expr_bytes);
+                    MorkStatus::ok(1)
+                }
                 Ok(None) => MorkStatus::ok(0),
                 Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
             }
         } else {
             let removed = bridge.inner.btm.remove(expr_bytes).is_some();
             MorkStatus::ok(u64::from(removed))
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_remove_contextual_exact_expr_bytes(
+    space: *mut MorkSpace,
+    expr_bytes: *const u8,
+    len: usize,
+    context_bytes: *const u8,
+    context_len: usize,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        if !bridge_uses_counted_storage(bridge) {
+            return MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"contextual exact rows require counted PathMap storage".to_vec(),
+            );
+        }
+        if expr_bytes.is_null() {
+            return MorkStatus::err(MorkStatusCode::Null, b"null expr bytes".to_vec());
+        }
+        if context_bytes.is_null() {
+            return MorkStatus::err(MorkStatusCode::Null, b"null opening context".to_vec());
+        }
+        let expr_bytes = std::slice::from_raw_parts(expr_bytes, len);
+        let context_bytes = std::slice::from_raw_parts(context_bytes, context_len);
+        if let Err(err) = validate_expr_bytes(expr_bytes) {
+            return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
+        }
+        let expr = Expr {
+            ptr: expr_bytes.as_ptr().cast_mut(),
+        };
+        let encoded = match stable_bridge_expr_packet_bytes(&bridge.inner, expr) {
+            Ok(encoded) => encoded,
+            Err(err) => return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+        };
+        let var_count = match bridge_expr_packet_var_count(&encoded) {
+            Ok(count) => count,
+            Err(err) => return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
+        };
+        if let Err(err) = validate_contextual_exact_context(context_bytes, var_count) {
+            return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
+        }
+        if !has_exact_context_count(&bridge.exact_contexts, expr_bytes, context_bytes) {
+            return MorkStatus::ok(0);
+        }
+        match counted_remove_one_expr_cached(
+            &mut bridge.inner,
+            expr_bytes,
+            &mut bridge.counted_logical_size,
+        ) {
+            Ok(Some(_)) => {
+                if !decrement_exact_context_count(
+                    &mut bridge.exact_contexts,
+                    expr_bytes,
+                    context_bytes,
+                ) {
+                    return MorkStatus::err(
+                        MorkStatusCode::Internal,
+                        b"contextual exact context disappeared during remove".to_vec(),
+                    );
+                }
+                MorkStatus::ok(1)
+            }
+            Ok(None) => MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"contextual exact context existed without structural row".to_vec(),
+            ),
+            Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
         }
     })
 }
@@ -1653,6 +2793,7 @@ pub extern "C" fn mork_space_load_act_file(
         let sidecar_path = act_copy_sidecar_path(&path);
         bridge.inner = Space::new();
         bridge.counted_logical_size = 0;
+        bridge.exact_contexts.clear();
         match bridge.inner.restore_tree(&path) {
             Ok(()) => match std::fs::read(&sidecar_path) {
                 Ok(data) => match apply_act_copy_sidecar(bridge, &data) {
@@ -1737,6 +2878,35 @@ pub extern "C" fn mork_space_dump_expr_rows(space: *mut MorkSpace) -> MorkBuffer
     })
 }
 
+/// Dumps the current space as the proposed contextual context-table exact-row packet.
+///
+/// Ground rows use empty opening contexts. Variable-bearing rows are emitted
+/// only when they were imported with exact opening-context entries from CeTTa;
+/// structural-only variable rows are rejected instead of being opened with
+/// synthesized identities.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_dump_contextual_exact_rows(space: *mut MorkSpace) -> MorkBuffer {
+    with_catch_buffer(|| unsafe {
+        let bridge = match bridge_space_ref(space) {
+            Ok(space) => space,
+            Err(err) => {
+                return MorkBuffer::err(
+                    MorkStatusCode::Null,
+                    if err.message.is_null() {
+                        b"null MorkSpace".to_vec()
+                    } else {
+                        Vec::from_raw_parts(err.message, err.message_len, err.message_len)
+                    },
+                );
+            }
+        };
+        match dump_bridge_space_contextual_exact_rows(bridge) {
+            Ok((packet, count)) => MorkBuffer::ok(packet, count),
+            Err(err) => MorkBuffer::err(MorkStatusCode::Internal, err.into_bytes()),
+        }
+    })
+}
+
 /// Clones one bridge-owned space while preserving the source encoding universe
 /// and structural multiplicities.
 #[unsafe(no_mangle)]
@@ -1748,6 +2918,16 @@ pub extern "C" fn mork_space_clone(space: *const MorkSpace) -> *mut MorkSpace {
         };
         clone_bridge_space(bridge)
     })
+}
+
+/// Adds each logical source row to the destination using the destination's
+/// storage mode, without materializing through UTF-8 text or CeTTa atoms.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_add_logical_rows_from(
+    dst: *mut MorkSpace,
+    src: *const MorkSpace,
+) -> MorkStatus {
+    with_catch_status(|| unsafe { bridge_space_add_logical_rows_from_raw(dst, src) })
 }
 
 /// Mutates one bridge-owned space with the PathMap join of the destination and source.
@@ -3285,6 +4465,38 @@ pub extern "C" fn mork_space_query_bindings_multi_ref_v3(
     })
 }
 
+/// Returns context-table query rows with exact/query-origin value refs.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_query_contextual_rows(
+    space: *mut MorkSpace,
+    pattern: *const u8,
+    len: usize,
+) -> MorkBuffer {
+    with_catch_buffer(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(err) => {
+                return MorkBuffer::err(
+                    MorkStatusCode::Null,
+                    if err.message.is_null() {
+                        b"null MorkSpace".to_vec()
+                    } else {
+                        Vec::from_raw_parts(err.message, err.message_len, err.message_len)
+                    },
+                );
+            }
+        };
+        if pattern.is_null() {
+            return MorkBuffer::err(MorkStatusCode::Null, b"null query pattern".to_vec());
+        }
+        let pattern = std::slice::from_raw_parts(pattern, len);
+        match query_contextual_rows_packet(bridge, pattern) {
+            Ok((packet, count)) => MorkBuffer::ok(packet, count),
+            Err(err) => MorkBuffer::err(MorkStatusCode::Internal, err.into_bytes()),
+        }
+    })
+}
+
 /// Returns a human-readable debug trace of one query over the current space.
 #[unsafe(no_mangle)]
 pub extern "C" fn mork_space_query_debug(
@@ -3623,6 +4835,22 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("{}_{}_{}.act", name, std::process::id(), nonce))
+    }
+
+    fn read_u32_be(data: &[u8], offset: usize) -> u32 {
+        u32::from_be_bytes(
+            data[offset..offset + 4]
+                .try_into()
+                .expect("test packet has enough bytes for u32"),
+        )
+    }
+
+    fn read_u16_be(data: &[u8], offset: usize) -> u16 {
+        u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .expect("test packet has enough bytes for u16"),
+        )
     }
 
     #[test]
@@ -4162,6 +5390,59 @@ mod tests {
 
     #[cfg(feature = "pathmap-space")]
     #[test]
+    fn contextual_exact_rows_report_counted_ground_multiplicity() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+
+        let dup = b"(dup a)";
+        for _ in 0..3 {
+            let add = mork_space_add_sexpr(counted, dup.as_ptr(), dup.len());
+            assert!(status_ok(&add));
+        }
+
+        let packet = mork_space_dump_contextual_exact_rows(counted);
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 1);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(read_u32_be(data, 0), QUERY_ONLY_V2_MAGIC);
+        assert_eq!(read_u16_be(data, 4), CONTEXTUAL_ROWS_WIRE_VERSION);
+        assert_eq!(read_u16_be(data, 6), CONTEXTUAL_EXACT_ROWS_FLAGS);
+        assert_eq!(read_u32_be(data, 8), 1);
+        assert_eq!(read_u32_be(data, 12), 1);
+        assert_eq!(read_u32_be(data, 16), 0);
+        assert_eq!(read_u32_be(data, 20), 0);
+        assert_eq!(read_u32_be(data, 24), 0);
+        assert_eq!(read_u32_be(data, 28), 3);
+        let expr_len = read_u32_be(data, 32) as usize;
+        assert_eq!(data.len(), 36 + expr_len);
+        assert_eq!(data[36], BRIDGE_EXPR_TAG_ARITY);
+        mork_bytes_free(packet.data, packet.len);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn contextual_exact_rows_reject_variable_rows_without_context() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+
+        let fact = b"(edge $x $x)";
+        let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+        assert!(status_ok(&add));
+
+        let packet = mork_space_dump_contextual_exact_rows(counted);
+        assert_eq!(packet.code, MorkStatusCode::Internal as i32);
+        let text = unsafe { std::slice::from_raw_parts(packet.message, packet.message_len) };
+        let rendered = std::str::from_utf8(text).unwrap();
+        assert!(rendered.contains("opening context"));
+        mork_bytes_free(packet.message, packet.message_len);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
     fn counted_pathmap_query_only_v2_supports_non_ground_typed_binding_value() {
         let _guard = test_guard();
         let counted = mork_space_new_pathmap();
@@ -4357,6 +5638,170 @@ mod tests {
         assert_eq!(data[43], 0);
         assert_eq!(data[44], 0);
 
+        mork_bytes_free(packet.data, packet.len);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn contextual_query_rows_packet_reports_ground_bindings() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let fact = b"(edge a b)";
+        let query = b"(edge $x $y)";
+        let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+        assert!(status_ok(&add));
+
+        let packet = mork_space_query_contextual_rows(counted, query.as_ptr(), query.len());
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 1);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(
+            u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+            QUERY_ONLY_V2_MAGIC
+        );
+        assert_eq!(
+            u16::from_be_bytes([data[4], data[5]]),
+            CONTEXTUAL_ROWS_WIRE_VERSION
+        );
+        assert_eq!(
+            u16::from_be_bytes([data[6], data[7]]),
+            CONTEXTUAL_QUERY_ROWS_FLAGS
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
+            1
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[12], data[13], data[14], data[15]]),
+            1
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
+            0
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[20], data[21], data[22], data[23]]),
+            0
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[24], data[25], data[26], data[27]]),
+            2
+        );
+        assert_eq!(u16::from_be_bytes([data[28], data[29]]), 0);
+        assert_eq!(
+            u32::from_be_bytes([data[30], data[31], data[32], data[33]]),
+            0
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[34], data[35], data[36], data[37]]),
+            0
+        );
+        assert_eq!(
+            u32::from_be_bytes([data[38], data[39], data[40], data[41]]),
+            6
+        );
+        assert_eq!(data[42], BRIDGE_EXPR_TAG_SYMBOL);
+        assert_eq!(data[47], b'a');
+        mork_bytes_free(packet.data, packet.len);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn contextual_query_value_context_uses_query_slot_refs() {
+        let _guard = test_guard();
+        let mut space = Space::new();
+        let expr_bytes = parse_single_expr(&mut space, b"(wrap $x)").unwrap();
+        let expr = Expr {
+            ptr: expr_bytes.as_ptr().cast_mut(),
+        };
+        let binding = encode_contextual_query_binding(
+            &space,
+            1,
+            ExprEnv::new(0, expr),
+            &BTreeMap::new(),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(binding.query_slot, 1);
+        assert_eq!(binding.value_flags, 0);
+        assert_eq!(binding.expr_packet[0], BRIDGE_EXPR_TAG_ARITY);
+        assert!(binding.expr_packet.contains(&BRIDGE_EXPR_TAG_NEWVAR));
+        assert_eq!(
+            u32::from_be_bytes([
+                binding.context[0],
+                binding.context[1],
+                binding.context[2],
+                binding.context[3]
+            ]),
+            1
+        );
+        assert_eq!(
+            u16::from_be_bytes([binding.context[4], binding.context[5]]),
+            0
+        );
+        assert_eq!(binding.context[6], OPEN_VAR_REF_QUERY_SLOT);
+        assert_eq!(binding.context[7], 0);
+        assert_eq!(
+            u16::from_be_bytes([binding.context[8], binding.context[9]]),
+            0
+        );
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn contextual_query_value_context_uses_exact_stored_refs() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let mut scratch = Space::new();
+        let expr_bytes = parse_single_expr(&mut scratch, b"(edge $stored)").unwrap();
+        let mut context = Vec::new();
+        append_u32_be(&mut context, 1);
+        append_u16_be(&mut context, 0);
+        context.push(OPEN_VAR_REF_EXACT);
+        context.push(0);
+        let stored_var_id = 0x0102_0304_0506_0708u64;
+        context.extend_from_slice(&stored_var_id.to_be_bytes());
+        let spelling = b"stored";
+        append_u32_be(&mut context, spelling.len() as u32);
+        context.extend_from_slice(spelling);
+        let add = mork_space_add_contextual_exact_expr_bytes(
+            counted,
+            expr_bytes.as_ptr(),
+            expr_bytes.len(),
+            context.as_ptr(),
+            context.len(),
+        );
+        assert!(status_ok(&add));
+
+        let query = b"(edge $x)";
+        let packet = mork_space_query_contextual_rows(counted, query.as_ptr(), query.len());
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 1);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(read_u32_be(data, 8), 1);
+        assert_eq!(read_u32_be(data, 12), 1);
+        assert_eq!(read_u32_be(data, 16), 0);
+        assert_eq!(read_u32_be(data, 20), 1);
+        assert_eq!(read_u16_be(data, 24), 0);
+        assert_eq!(data[26], OPEN_VAR_REF_EXACT);
+        assert_eq!(data[27], 0);
+        assert_eq!(
+            u64::from_be_bytes(data[28..36].try_into().unwrap()),
+            stored_var_id
+        );
+        assert_eq!(read_u32_be(data, 36), spelling.len() as u32);
+        assert_eq!(&data[40..46], spelling);
+        assert_eq!(read_u32_be(data, 46), 1);
+        assert_eq!(read_u16_be(data, 50), 0);
+        assert_eq!(read_u32_be(data, 52), 0);
+        assert_eq!(read_u32_be(data, 56), 0);
+        assert_eq!(read_u32_be(data, 60), 1);
+        assert_eq!(data[64], BRIDGE_EXPR_TAG_NEWVAR);
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(counted);
     }
@@ -4655,7 +6100,9 @@ mod tests {
             unsafe { std::slice::from_raw_parts(child_path.data, child_path.len) }.to_vec();
         assert_eq!(
             child_bytes,
-            vec![3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 98u8]
+            vec![
+                3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 98u8
+            ]
         );
 
         let stepped = mork_cursor_next_step(fork);
@@ -4667,7 +6114,9 @@ mod tests {
             unsafe { std::slice::from_raw_parts(stepped_path.data, stepped_path.len) }.to_vec();
         assert_eq!(
             stepped_bytes,
-            vec![3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 99u8]
+            vec![
+                3u8, 196u8, 101u8, 100u8, 103u8, 101u8, 193u8, 97u8, 193u8, 99u8
+            ]
         );
 
         mork_bytes_free(original_path.data, original_path.len);
