@@ -110,6 +110,7 @@ typedef struct SpaceMatchBackendOps {
        native shadow first just because `Space` historically started there. */
     bool (*store_atom_id_direct)(Space *s, AtomId atom_id, Atom *atom);
     bool (*remove_atom_id_direct)(Space *s, AtomId atom_id);
+    bool (*remove_atom_direct)(Space *s, Atom *atom);
     bool (*truncate_direct)(Space *s, uint32_t new_len);
     uint32_t (*logical_len)(const Space *s);
     AtomId (*get_atom_id_at)(const Space *s, uint32_t idx);
@@ -140,6 +141,26 @@ typedef enum {
     SPACE_BRIDGE_IMPORT_OK = 1,
     SPACE_BRIDGE_IMPORT_NEEDS_TEXT_FALLBACK = 2,
 } SpaceBridgeImportResult;
+
+typedef enum {
+    SPACE_TRANSFER_ENDPOINT_NONE = 0,
+    SPACE_TRANSFER_ENDPOINT_SPACE = 1,
+    SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE = 2,
+} SpaceTransferEndpointKind;
+
+typedef struct {
+    SpaceTransferEndpointKind kind;
+    union {
+        Space *space;
+        CettaMorkSpaceHandle *bridge;
+    };
+} SpaceTransferEndpoint;
+
+typedef enum {
+    SPACE_TRANSFER_ERROR = 0,
+    SPACE_TRANSFER_OK = 1,
+    SPACE_TRANSFER_NEEDS_TEXT_FALLBACK = 2,
+} SpaceTransferResult;
 
 void space_match_backend_init(Space *s);
 void space_match_backend_free(Space *s);
@@ -175,20 +196,29 @@ bool space_match_backend_bridge_space(Space *s,
 bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
                                               Atom *atom);
 bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id);
+bool space_match_backend_remove_atom_direct(Space *s, Atom *atom);
 bool space_match_backend_truncate_direct(Space *s, uint32_t new_len);
+/* Main backend source/sink transfer seam.
+   Positive example: a resolved PathMap/MORK endpoint pair moving logical rows
+   without forcing an intermediate tuple or shadow copy.
+   Negative example: each caller open-coding its own backend matrix or losing
+   text-fallback information by collapsing everything to bool. */
+SpaceTransferResult space_match_backend_transfer_resolved_result(
+    SpaceTransferEndpoint dst,
+    SpaceTransferEndpoint src,
+    Arena *persistent_arena,
+    uint64_t *out_added);
 bool space_match_backend_contains_atom_structural_direct(Space *s,
                                                          Atom *atom,
                                                          bool *out_found);
 uint32_t space_match_backend_logical_len(const Space *s);
 AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx);
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx);
-/*
- * Structural bridge import contract:
- *   - Positive example: a ground bridge payload with a live TermUniverse
- *     materializes directly into canonical AtomIds.
- *   - Negative example: a var-bearing or no-universe payload pretending the
- *     structural bridge bytes preserve parser-level spelling semantics.
- */
+/* Internal structural decoder used beneath the endpoint transfer seam.
+   Positive example: a ground bridge payload with a live TermUniverse
+   materializes directly into canonical AtomIds.
+   Negative example: ordinary transfer callers bypassing the endpoint API and
+   silently dropping the fallback distinction. */
 SpaceBridgeImportResult space_match_backend_import_bridge_space(
     Space *dst,
     CettaMorkSpaceHandle *bridge,
