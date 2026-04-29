@@ -1,5 +1,6 @@
 SHELL = /bin/bash
 CC = gcc
+.DEFAULT_GOAL := all
 
 # Build mode:
 #   make                   -> BUILD=python      (default: Python foreign-module support enabled)
@@ -47,6 +48,7 @@ ENABLE_MORK_STATIC := 1
 ENABLE_PATHMAP_SPACE := 1
 endif
 
+CETTA_REPO_DIR ?= $(CURDIR)
 CETTA_RUST_DIR ?= $(abspath ./rust)
 MORK_BRIDGE_DIR ?= $(CETTA_RUST_DIR)/target/release
 MORK_BRIDGE_MANIFEST ?= $(CETTA_RUST_DIR)/cetta-space-bridge/Cargo.toml
@@ -65,7 +67,26 @@ MORK_BRIDGE_FEATURE_TAG := default
 ifeq ($(ENABLE_PATHMAP_SPACE),0)
 MORK_BRIDGE_FEATURE_TAG := no-default-features
 endif
-MORK_BRIDGE_SOURCE_DEPS := $(shell find $(CETTA_RUST_DIR) -path '$(CETTA_RUST_DIR)/target' -prune -o -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name '*.h' \) -print)
+PATHMAP_REPO_DIR ?= $(abspath $(CETTA_REPO_DIR)/../PathMap)
+MORK_REPO_DIR ?= $(abspath $(CETTA_REPO_DIR)/../MORK)
+PATHMAP_MANIFEST ?= $(PATHMAP_REPO_DIR)/Cargo.toml
+MORK_KERNEL_MANIFEST ?= $(MORK_REPO_DIR)/kernel/Cargo.toml
+MORK_EXPR_MANIFEST ?= $(MORK_REPO_DIR)/expr/Cargo.toml
+MORK_FRONTEND_MANIFEST ?= $(MORK_REPO_DIR)/frontend/Cargo.toml
+MORK_INTERNING_MANIFEST ?= $(MORK_REPO_DIR)/interning/Cargo.toml
+MORK_BRIDGE_REQUIRED_MANIFESTS := \
+	$(PATHMAP_MANIFEST) \
+	$(MORK_KERNEL_MANIFEST) \
+	$(MORK_EXPR_MANIFEST) \
+	$(MORK_FRONTEND_MANIFEST) \
+	$(MORK_INTERNING_MANIFEST)
+MORK_BRIDGE_MISSING_MANIFESTS := $(strip $(foreach manifest,$(MORK_BRIDGE_REQUIRED_MANIFESTS),$(if $(wildcard $(manifest)),,$(manifest))))
+ifeq ($(MORK_BRIDGE_MISSING_MANIFESTS),)
+MORK_BRIDGE_DEPS_READY := 1
+else
+MORK_BRIDGE_DEPS_READY := 0
+endif
+MORK_BRIDGE_SOURCE_DEPS :=
 MORK_BRIDGE_FEATURE_STATICLIB := runtime/bootstrap/libcetta_space_bridge.$(MORK_BRIDGE_FEATURE_TAG).a
 MORK_BRIDGE_BUILD_STAMP := runtime/bootstrap/mork-bridge.$(MORK_BRIDGE_FEATURE_TAG).stamp
 BRIDGE_DEPS =
@@ -73,8 +94,12 @@ BRIDGE_CFLAGS =
 BRIDGE_LDFLAGS =
 MORK_BUILD_HAS_BRIDGE := 0
 ifeq ($(ENABLE_MORK_STATIC),1)
+MORK_BRIDGE_SOURCE_DEPS := $(shell find $(CETTA_RUST_DIR) -path '$(CETTA_RUST_DIR)/target' -prune -o -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name '*.h' \) -print)
 ifeq ($(wildcard $(MORK_BRIDGE_MANIFEST)),)
 $(error BUILD=$(BUILD_CANON) requires $(MORK_BRIDGE_MANIFEST))
+endif
+ifneq ($(MORK_BRIDGE_DEPS_READY),1)
+$(error BUILD=$(BUILD_CANON) requires Rust bridge dependencies. Missing: $(MORK_BRIDGE_MISSING_MANIFESTS). Expected sibling layout: <parent>/CeTTa plus <parent>/MORK and <parent>/PathMap)
 endif
 BRIDGE_DEPS += $(MORK_BRIDGE_BUILD_STAMP) $(MORK_BRIDGE_FEATURE_STATICLIB)
 BRIDGE_CFLAGS += -DCETTA_MORK_BRIDGE_STATIC=1
@@ -708,30 +733,34 @@ test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-MORK_MM2_TEST3 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test3_var_binding.mm2)
-MORK_MM2_TEST4 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test4_conjunctive.mm2)
-MORK_MM2_TEST5 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test5_equal_pair.mm2)
-MORK_MM2_TEST6 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test6_no_match.mm2)
-MORK_MM2_TEST7 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test7_nested.mm2)
-MORK_MM2_TEST8 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test8_multi_step.mm2)
-MORK_MM2_TEST9 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test9_priority_ordering.mm2)
-MORK_MM2_TEST10 := $(abspath ../../hyperon/MORK/examples/lean_conformance/test10_conjunctive_wq.mm2)
-MORK_MM2_SINK_ADD_CONSTANT := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_add_constant.mm2)
-MORK_MM2_SINK_ADD_SIMPLE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_add_simple.mm2)
-MORK_MM2_SINK_REMOVE_SIMPLE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_remove_simple.mm2)
-MORK_MM2_SINK_BULK_REMOVE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_bulk_remove.mm2)
-MORK_MM2_SINK_COUNT_SIMPLE := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_count_simple.mm2)
-MORK_MM2_SINK_HEAD_LIMIT := $(abspath ../../hyperon/MORK/examples/sinks/archive/test_head_limit.mm2)
+MORK_MM2_TEST3 := $(abspath ../MORK/examples/lean_conformance/test3_var_binding.mm2)
+MORK_MM2_TEST4 := $(abspath ../MORK/examples/lean_conformance/test4_conjunctive.mm2)
+MORK_MM2_TEST5 := $(abspath ../MORK/examples/lean_conformance/test5_equal_pair.mm2)
+MORK_MM2_TEST6 := $(abspath ../MORK/examples/lean_conformance/test6_no_match.mm2)
+MORK_MM2_TEST7 := $(abspath ../MORK/examples/lean_conformance/test7_nested.mm2)
+MORK_MM2_TEST8 := $(abspath ../MORK/examples/lean_conformance/test8_multi_step.mm2)
+MORK_MM2_TEST9 := $(abspath ../MORK/examples/lean_conformance/test9_priority_ordering.mm2)
+MORK_MM2_TEST10 := $(abspath ../MORK/examples/lean_conformance/test10_conjunctive_wq.mm2)
+MORK_MM2_SINK_ADD_CONSTANT := $(abspath ../MORK/examples/sinks/archive/test_add_constant.mm2)
+MORK_MM2_SINK_ADD_SIMPLE := $(abspath ../MORK/examples/sinks/archive/test_add_simple.mm2)
+MORK_MM2_SINK_REMOVE_SIMPLE := $(abspath ../MORK/examples/sinks/archive/test_remove_simple.mm2)
+MORK_MM2_SINK_BULK_REMOVE := $(abspath ../MORK/examples/sinks/archive/test_bulk_remove.mm2)
+MORK_MM2_SINK_COUNT_SIMPLE := $(abspath ../MORK/examples/sinks/archive/test_count_simple.mm2)
+MORK_MM2_SINK_HEAD_LIMIT := $(abspath ../MORK/examples/sinks/archive/test_head_limit.mm2)
 
 define require_mork_bridge_or_reexec
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" != "1" ] && [ -z "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
-		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 			bridge_build=mork; \
 			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 			echo "INFO: $(1) requires the MORK bridge; re-running with BUILD=$$bridge_build"; \
 			$(MAKE) BUILD=$$bridge_build $(2); \
 		else \
-			echo "SKIP: $(1) (no MORK bridge manifest configured)"; \
+			if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+				echo "SKIP: $(1) (no MORK bridge manifest configured)"; \
+			else \
+				echo "SKIP: $(1) (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+			fi; \
 		fi; \
 		exit $$?; \
 	fi
@@ -739,13 +768,17 @@ endef
 
 define require_pathmap_bridge_or_reexec
 	@if [ "$(ENABLE_PATHMAP_SPACE)" != "1" ]; then \
-		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 			bridge_build=pathmap; \
 			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
 			echo "INFO: $(1) requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
 			$(MAKE) BUILD=$$bridge_build $(2); \
 		else \
-			echo "SKIP: $(1) (no MORK bridge manifest configured)"; \
+			if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+				echo "SKIP: $(1) (no MORK bridge manifest configured)"; \
+			else \
+				echo "SKIP: $(1) (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+			fi; \
 		fi; \
 		exit $$?; \
 	fi
@@ -1545,13 +1578,17 @@ test-mork-lane-core:
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
 		$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lane-core-body; \
 	else \
-		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 			bridge_build=mork; \
 			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 			echo "INFO: mork lane regression suite requires the MORK bridge; re-running with BUILD=$$bridge_build"; \
 			$(MAKE) BUILD=$$bridge_build test-mork-lane-core-body; \
 		else \
-			echo "SKIP: mork lane regression suite (no MORK bridge manifest configured)"; \
+			if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+				echo "SKIP: mork lane regression suite (no MORK bridge manifest configured)"; \
+			else \
+				echo "SKIP: mork lane regression suite (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+			fi; \
 		fi; \
 	fi
 
@@ -1574,13 +1611,17 @@ test-mork-runtime-stats-lane:
 			$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-lane-body; \
 		fi; \
 	else \
-		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 			bridge_build=mork; \
 			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 			echo "INFO: mork runtime-stats lane requires the MORK bridge; re-running with BUILD=$$bridge_build and ENABLE_RUNTIME_STATS=1"; \
 			$(MAKE) BUILD=$$bridge_build ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-lane-body; \
 		else \
-			echo "SKIP: mork runtime-stats lane (no MORK bridge manifest configured)"; \
+			if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+				echo "SKIP: mork runtime-stats lane (no MORK bridge manifest configured)"; \
+			else \
+				echo "SKIP: mork runtime-stats lane (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+			fi; \
 		fi; \
 	fi
 
@@ -1645,13 +1686,17 @@ test-pathmap-lane:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-lane-body
 else
-	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 		bridge_build=pathmap; \
 		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
 		echo "INFO: pathmap lane regression suite requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
 		$(MAKE) BUILD=$$bridge_build test-pathmap-lane-body; \
 	else \
-		echo "SKIP: pathmap lane regression suite (no MORK bridge manifest configured)"; \
+		if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+			echo "SKIP: pathmap lane regression suite (no MORK bridge manifest configured)"; \
+		else \
+			echo "SKIP: pathmap lane regression suite (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+		fi; \
 	fi
 endif
 
@@ -1689,13 +1734,17 @@ probe-pathmap-lane:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) probe-pathmap-lane-body
 else
-	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 		bridge_build=pathmap; \
 		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
 		echo "INFO: pathmap probe lane requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
 		$(MAKE) BUILD=$$bridge_build probe-pathmap-lane-body; \
 	else \
-		echo "SKIP: pathmap probe lane (no MORK bridge manifest configured)"; \
+		if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+			echo "SKIP: pathmap probe lane (no MORK bridge manifest configured)"; \
+		else \
+			echo "SKIP: pathmap probe lane (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+		fi; \
 	fi
 endif
 
@@ -1714,13 +1763,17 @@ ifeq ($(ENABLE_PATHMAP_SPACE),1)
 		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-runtime-stats-lane-body; \
 	fi
 else
-	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 		bridge_build=pathmap; \
 		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
 		echo "INFO: pathmap runtime-stats lane requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build and ENABLE_RUNTIME_STATS=1"; \
 		$(MAKE) BUILD=$$bridge_build ENABLE_RUNTIME_STATS=1 test-pathmap-runtime-stats-lane-body; \
 	else \
-		echo "SKIP: pathmap runtime-stats lane (no MORK bridge manifest configured)"; \
+		if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+			echo "SKIP: pathmap runtime-stats lane (no MORK bridge manifest configured)"; \
+		else \
+			echo "SKIP: pathmap runtime-stats lane (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+		fi; \
 	fi
 endif
 
@@ -1867,13 +1920,17 @@ test-mork-runtime-stats-isolation:
 			$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-isolation-body; \
 		fi; \
 	else \
-		if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+		if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 			bridge_build=mork; \
 			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 			echo "INFO: mork runtime-stats isolation requires the MORK bridge; re-running with BUILD=$$bridge_build and ENABLE_RUNTIME_STATS=1"; \
 			$(MAKE) BUILD=$$bridge_build ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-isolation-body; \
 		else \
-			echo "SKIP: mork runtime-stats isolation (no MORK bridge manifest configured)"; \
+			if [ ! -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+				echo "SKIP: mork runtime-stats isolation (no MORK bridge manifest configured)"; \
+			else \
+				echo "SKIP: mork runtime-stats isolation (Rust bridge deps unavailable; missing: $(MORK_BRIDGE_MISSING_MANIFESTS))"; \
+			fi; \
 		fi; \
 	fi
 
@@ -2176,7 +2233,6 @@ test-runtime-stats-cli: $(BIN)
 	fi
 
 test-help-flags: $(BIN)
-	$(call require_mork_bridge_or_reexec,cli help flags,$@)
 	@help_long=$$(./$(BIN) --help 2>&1); \
 	help_short=$$(./$(BIN) -h 2>&1); \
 	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] <file.metta>' && \
