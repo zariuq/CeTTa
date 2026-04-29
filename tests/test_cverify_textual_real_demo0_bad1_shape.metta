@@ -1,17 +1,17 @@
 !(import! &self cverify_textual_parse)
 
 !(assertEqual
-   (let $stmts (parse_mm_file_textual "../../hyperon/metamath/metamath-test/tests/core/small/demo0-bad1.mm")
+   (let $stmts (parse_mm_file_textual "tests/support/metamath/core/small/demo0-bad1.mm")
       (size-atom $stmts))
    19)
 
 !(assertEqual
-   (let $stmts (parse_mm_file_textual "../../hyperon/metamath/metamath-test/tests/core/small/demo0-bad1.mm")
+   (let $stmts (parse_mm_file_textual "tests/support/metamath/core/small/demo0-bad1.mm")
       (car-atom $stmts))
    (c ("0" "mm.+" "mm.=" "mm.->" "(" ")" "term" "wff" "|-")))
 
 !(assertEqual
-   (let $stmts (parse_mm_file_textual "../../hyperon/metamath/metamath-test/tests/core/small/demo0-bad1.mm")
+   (let $stmts (parse_mm_file_textual "tests/support/metamath/core/small/demo0-bad1.mm")
       (index-atom $stmts 18))
    (p "th1" "|-" ("t" "mm.=" "t")
       ("tt" "tze" "tt" "tpl" "weq" "tt" "tt" "weq" "tt" "a2"

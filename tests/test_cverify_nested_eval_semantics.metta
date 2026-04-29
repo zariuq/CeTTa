@@ -30,11 +30,11 @@
   (c ("wff" "|-" "mm.->" "(" ")")))
 
 !(assertEqual
-  (let $stmts (parse_mm_file_textual "../../hyperon/metamath/metamath-test/tests/core/small/demo0.mm")
+  (let $stmts (parse_mm_file_textual "tests/support/metamath/core/small/demo0.mm")
     (size-atom $stmts))
   19)
 
 !(assertEqual
-  (let $stmts (parse_mm_file_textual "../../hyperon/metamath/metamath-test/tests/core/small/demo0.mm")
+  (let $stmts (parse_mm_file_textual "tests/support/metamath/core/small/demo0.mm")
     (car-atom $stmts))
   (c ("0" "mm.+" "mm.=" "mm.->" "(" ")" "term" "wff" "|-")))
