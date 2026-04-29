@@ -2159,9 +2159,7 @@ static uint32_t bridge_append_workspace_candidates(const char **candidates,
 
     const char *suffixes[] = {
         "/rust/target/release/libcetta_space_bridge.so",
-        "/rust/target/debug/libcetta_space_bridge.so",
-        "/../../hyperon/MORK/target/release/libcetta_space_bridge.so",
-        "/../../hyperon/MORK/target/debug/libcetta_space_bridge.so"
+        "/rust/target/debug/libcetta_space_bridge.so"
     };
     const uint32_t nsuffixes = (uint32_t)(sizeof(suffixes) / sizeof(suffixes[0]));
     for (uint32_t i = 0; i < nsuffixes && i < storage_cap; i++) {

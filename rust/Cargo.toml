@@ -12,11 +12,11 @@ edition = "2024"
 
 [workspace.dependencies]
 fast-slice-utils = "0.1"
-pathmap = { path = "../../../hyperon/PathMap", features = ["jemalloc", "arena_compact", "nightly"] }
-mork = { path = "../../../hyperon/MORK/kernel" }
-mork-expr = { path = "../../../hyperon/MORK/expr" }
-mork-frontend = { path = "../../../hyperon/MORK/frontend" }
-mork-interning = { path = "../../../hyperon/MORK/interning" }
+pathmap = { path = "../../PathMap", features = ["jemalloc", "arena_compact", "nightly"] }
+mork = { path = "../../MORK/kernel" }
+mork-expr = { path = "../../MORK/expr" }
+mork-frontend = { path = "../../MORK/frontend" }
+mork-interning = { path = "../../MORK/interning" }
 cetta-space = { path = "cetta-space" }
 cetta-pathmap-adapter = { path = "cetta-pathmap-adapter" }
 cetta-mork-adapter = { path = "cetta-mork-adapter" }

@@ -245,6 +245,7 @@ tests/test_mod_space.metta	he	metta	he_extended	main	native	test	golden	-
 tests/test_mod_space_arity.metta	he	metta	he_extended	main	native	test	golden	-
 tests/test_module_inventory_act_registered_root.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_mork_act_roundtrip.metta	he	metta	he_extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_mork_add_atoms_runtime_stats.metta	he	metta	he_extended	runtime-stats	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_algebra_surface.metta	he	metta	he_extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_attached_exact_match_regression.metta	he	metta	he_extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_counterexample_loom_surface.metta	he	metta	he_extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
