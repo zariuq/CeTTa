@@ -1,0 +1,9 @@
+(left a)
+(right b)
+
+(exec (0 build-pair)
+      (, (left $x)
+         (right $y))
+      (O (+ (pair $x $y))
+         (- (left $x))
+         (- (right $y))))

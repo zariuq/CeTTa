@@ -1,0 +1,6 @@
+(edge a b)
+
+(exec (0 bind-path)
+      (, (edge $x $y))
+      (O (+ (path $x $y))
+         (- (edge $x $y))))

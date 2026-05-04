@@ -1,0 +1,8 @@
+(seed a)
+(seed b)
+(seed c)
+
+(exec (0 finish)
+      (, (seed $x))
+      (O (+ (done $x))
+         (- (seed $x))))

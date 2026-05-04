@@ -1,0 +1,6 @@
+(tree (node a))
+
+(exec (0 nested)
+      (, (tree (node $x)))
+      (O (+ (found $x))
+         (- (tree (node $x)))))

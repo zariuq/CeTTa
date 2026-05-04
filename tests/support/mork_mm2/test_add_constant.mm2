@@ -1,0 +1,6 @@
+START
+
+(exec (0 mark)
+      (, START)
+      (O (+ MATCHED)
+         (- START)))

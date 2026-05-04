@@ -1,0 +1,7 @@
+(remove-me a)
+(remove-me b)
+(keep-this)
+
+(exec (0 prune)
+      (, (remove-me $x))
+      (O (- (remove-me $x))))

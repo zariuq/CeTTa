@@ -1,0 +1,7 @@
+(pair 3 7)
+(same 5 5)
+
+(exec (0 equal-pair)
+      (, (same $x $x))
+      (O (+ (equal-pair $x))
+         (- (same $x $x))))

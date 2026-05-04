@@ -1,0 +1,6 @@
+(color apple red)
+(color grape purple)
+
+(exec (0 drop-red)
+      (, (color $fruit red))
+      (O (- (color $fruit red))))

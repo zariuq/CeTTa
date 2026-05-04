@@ -1,0 +1,8 @@
+(fruit apple red)
+(fruit grape purple)
+(fruit banana yellow)
+
+(exec (0 promote-color)
+      (, (fruit $name $shade))
+      (O (+ (color $name $shade))
+         (- (fruit $name $shade))))
