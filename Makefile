@@ -48,6 +48,7 @@ ENABLE_MORK_STATIC := 1
 ENABLE_PATHMAP_SPACE := 1
 endif
 
+BOOTSTRAP_TMPDIR = runtime/bootstrap
 CETTA_REPO_DIR ?= $(CURDIR)
 CETTA_RUST_DIR ?= $(abspath ./rust)
 MORK_BRIDGE_DIR ?= $(CETTA_RUST_DIR)/target/release
@@ -74,6 +75,15 @@ MORK_KERNEL_MANIFEST ?= $(MORK_REPO_DIR)/kernel/Cargo.toml
 MORK_EXPR_MANIFEST ?= $(MORK_REPO_DIR)/expr/Cargo.toml
 MORK_FRONTEND_MANIFEST ?= $(MORK_REPO_DIR)/frontend/Cargo.toml
 MORK_INTERNING_MANIFEST ?= $(MORK_REPO_DIR)/interning/Cargo.toml
+MORK_BRIDGE_WORKSPACE_MEMBERS := cetta-space cetta-space-bridge cetta-pathmap-adapter cetta-mork-adapter
+PATHMAP_DEP_DIR := $(abspath $(dir $(PATHMAP_MANIFEST)))
+MORK_KERNEL_DIR := $(abspath $(dir $(MORK_KERNEL_MANIFEST)))
+MORK_EXPR_DIR := $(abspath $(dir $(MORK_EXPR_MANIFEST)))
+MORK_FRONTEND_DIR := $(abspath $(dir $(MORK_FRONTEND_MANIFEST)))
+MORK_INTERNING_DIR := $(abspath $(dir $(MORK_INTERNING_MANIFEST)))
+MORK_BRIDGE_PATH_TAG := $(strip $(shell printf '%s\n%s\n%s\n%s\n%s\n' '$(PATHMAP_DEP_DIR)' '$(MORK_KERNEL_DIR)' '$(MORK_EXPR_DIR)' '$(MORK_FRONTEND_DIR)' '$(MORK_INTERNING_DIR)' | sha1sum | cut -c1-12))
+MORK_BRIDGE_WORKSPACE_DIR ?= $(abspath $(BOOTSTRAP_TMPDIR))/bridge-workspace.$(MORK_BRIDGE_PATH_TAG)
+MORK_BRIDGE_WORKSPACE_MANIFEST ?= $(MORK_BRIDGE_WORKSPACE_DIR)/Cargo.toml
 MORK_BRIDGE_REQUIRED_MANIFESTS := \
 	$(PATHMAP_MANIFEST) \
 	$(MORK_KERNEL_MANIFEST) \
@@ -87,8 +97,8 @@ else
 MORK_BRIDGE_DEPS_READY := 0
 endif
 MORK_BRIDGE_SOURCE_DEPS :=
-MORK_BRIDGE_FEATURE_STATICLIB := runtime/bootstrap/libcetta_space_bridge.$(MORK_BRIDGE_FEATURE_TAG).a
-MORK_BRIDGE_BUILD_STAMP := runtime/bootstrap/mork-bridge.$(MORK_BRIDGE_FEATURE_TAG).stamp
+MORK_BRIDGE_FEATURE_STATICLIB := runtime/bootstrap/libcetta_space_bridge.v2.$(MORK_BRIDGE_FEATURE_TAG).$(MORK_BRIDGE_PATH_TAG).a
+MORK_BRIDGE_BUILD_STAMP := runtime/bootstrap/mork-bridge.v2.$(MORK_BRIDGE_FEATURE_TAG).$(MORK_BRIDGE_PATH_TAG).stamp
 BRIDGE_DEPS =
 BRIDGE_CFLAGS =
 BRIDGE_LDFLAGS =
@@ -99,7 +109,7 @@ ifeq ($(wildcard $(MORK_BRIDGE_MANIFEST)),)
 $(error BUILD=$(BUILD_CANON) requires $(MORK_BRIDGE_MANIFEST))
 endif
 ifneq ($(MORK_BRIDGE_DEPS_READY),1)
-$(error BUILD=$(BUILD_CANON) requires Rust bridge dependencies. Missing: $(MORK_BRIDGE_MISSING_MANIFESTS). Expected sibling layout: <parent>/CeTTa plus <parent>/MORK and <parent>/PathMap)
+$(error BUILD=$(BUILD_CANON) requires Rust bridge dependencies. Missing: $(MORK_BRIDGE_MISSING_MANIFESTS). Set PATHMAP_REPO_DIR=/path/to/PathMap and MORK_REPO_DIR=/path/to/MORK (or the *_MANIFEST overrides) to point at your local checkouts)
 endif
 BRIDGE_DEPS += $(MORK_BRIDGE_BUILD_STAMP) $(MORK_BRIDGE_FEATURE_STATICLIB)
 BRIDGE_CFLAGS += -DCETTA_MORK_BRIDGE_STATIC=1
@@ -107,12 +117,35 @@ BRIDGE_LDFLAGS += $(MORK_BRIDGE_FEATURE_STATICLIB) -lrt
 MORK_BUILD_HAS_BRIDGE := 1
 endif
 
-$(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS)
+$(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
+	@mkdir -p "$(MORK_BRIDGE_WORKSPACE_DIR)"
+	@for member in $(MORK_BRIDGE_WORKSPACE_MEMBERS); do \
+		rm -rf "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member.tmp"; \
+		cp -a "$(CETTA_RUST_DIR)/$$member" "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member.tmp"; \
+		rm -rf "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member"; \
+		mv "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member.tmp" "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member"; \
+	done; \
+	tmp="$@.tmp"; \
+	sed \
+		-e "s|path = \"../../PathMap\"|path = \"$(PATHMAP_DEP_DIR)\"|" \
+		-e "s|path = \"../../MORK/kernel\"|path = \"$(MORK_KERNEL_DIR)\"|" \
+		-e "s|path = \"../../MORK/expr\"|path = \"$(MORK_EXPR_DIR)\"|" \
+		-e "s|path = \"../../MORK/frontend\"|path = \"$(MORK_FRONTEND_DIR)\"|" \
+		-e "s|path = \"../../MORK/interning\"|path = \"$(MORK_INTERNING_DIR)\"|" \
+		"$(CETTA_RUST_DIR)/Cargo.toml" > "$$tmp"; \
+	if [ -f "$@" ] && cmp -s "$$tmp" "$@"; then \
+		rm -f "$$tmp"; \
+	else \
+		mv "$$tmp" "$@"; \
+	fi
+
+$(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS) $(MORK_BRIDGE_WORKSPACE_MANIFEST)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
 	@cd $(MORK_BRIDGE_WORKDIR) && \
 	(ulimit -v 10485760 2>/dev/null || true) && \
+	CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
 	RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
-	cargo build -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
+	cargo build --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
 	@test -f "$(MORK_BRIDGE_STATICLIB)"
 	@touch "$@"
 
@@ -134,7 +167,6 @@ PY_LDFLAGS = $(shell python3-config --embed --ldflags)
 PY_RPATH = -Wl,-rpath,$(shell python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')
 PYTHON_SRC = src/foreign.c
 endif
-BOOTSTRAP_TMPDIR = runtime/bootstrap
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).runtime-stats.h
 BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).runtime-stats.stamp
@@ -640,9 +672,46 @@ clean:
 		$(BUILD_CONFIG_STAMP) $(STAGE0_BUILD_CONFIG_STAMP) $(STDLIB_BLOB_STAMP) \
 		src/foreign.o src/foreign.d src/foreign.stage0.o src/foreign.stage0.d \
 		src/foreign_stub.o src/foreign_stub.d src/foreign_stub.stage0.o src/foreign_stub.stage0.d
+	rm -rf $(BOOTSTRAP_TMPDIR)/bridge-workspace.*
 
 promote-runtime: $(BIN)
 	@./scripts/promote_runtime.sh
+
+bridge-setup: $(MORK_BRIDGE_WORKSPACE_MANIFEST)
+	@if [ "$(MORK_BRIDGE_DEPS_READY)" != "1" ]; then \
+		echo "FAIL: missing bridge manifests"; \
+		printf '  %s\n' $(MORK_BRIDGE_MISSING_MANIFESTS); \
+		exit 1; \
+	fi
+	@echo "PASS: bridge workspace manifest ready"
+	@echo "  manifest: $(MORK_BRIDGE_WORKSPACE_MANIFEST)"
+	@echo "  PathMap:  $(PATHMAP_DEP_DIR)"
+	@echo "  MORK:     $(MORK_REPO_DIR)"
+	@echo "  Try: make BUILD=main"
+	@echo "  Try: make BUILD=full"
+
+doctor-bridge:
+	@echo "CeTTa repo: $(CETTA_REPO_DIR)"
+	@echo "Rust dir:   $(CETTA_RUST_DIR)"
+	@echo "PathMap:    $(PATHMAP_DEP_DIR)"
+	@echo "MORK:       $(MORK_REPO_DIR)"
+	@echo "Manifest:   $(MORK_BRIDGE_MANIFEST)"
+	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ]; then \
+		echo "PASS: bridge manifest present"; \
+	else \
+		echo "FAIL: bridge manifest missing"; \
+		exit 1; \
+	fi
+	@if [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
+		echo "PASS: external bridge manifests present"; \
+		echo "INFO: generated bridge workspace will be $(MORK_BRIDGE_WORKSPACE_MANIFEST)"; \
+		echo "INFO: recommended builds are BUILD=main and BUILD=full"; \
+	else \
+		echo "FAIL: missing bridge manifests"; \
+		printf '  %s\n' $(MORK_BRIDGE_MISSING_MANIFESTS); \
+		echo "INFO: set PATHMAP_REPO_DIR=/path/to/PathMap and MORK_REPO_DIR=/path/to/MORK"; \
+		exit 1; \
+	fi
 
 # Fast test: compare CeTTa output against pre-computed .expected files.
 # No oracle invocation — safe and instant.
@@ -733,20 +802,23 @@ test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-MORK_MM2_TEST3 := $(abspath ../MORK/examples/lean_conformance/test3_var_binding.mm2)
-MORK_MM2_TEST4 := $(abspath ../MORK/examples/lean_conformance/test4_conjunctive.mm2)
-MORK_MM2_TEST5 := $(abspath ../MORK/examples/lean_conformance/test5_equal_pair.mm2)
-MORK_MM2_TEST6 := $(abspath ../MORK/examples/lean_conformance/test6_no_match.mm2)
-MORK_MM2_TEST7 := $(abspath ../MORK/examples/lean_conformance/test7_nested.mm2)
-MORK_MM2_TEST8 := $(abspath ../MORK/examples/lean_conformance/test8_multi_step.mm2)
-MORK_MM2_TEST9 := $(abspath ../MORK/examples/lean_conformance/test9_priority_ordering.mm2)
-MORK_MM2_TEST10 := $(abspath ../MORK/examples/lean_conformance/test10_conjunctive_wq.mm2)
-MORK_MM2_SINK_ADD_CONSTANT := $(abspath ../MORK/examples/sinks/archive/test_add_constant.mm2)
-MORK_MM2_SINK_ADD_SIMPLE := $(abspath ../MORK/examples/sinks/archive/test_add_simple.mm2)
-MORK_MM2_SINK_REMOVE_SIMPLE := $(abspath ../MORK/examples/sinks/archive/test_remove_simple.mm2)
-MORK_MM2_SINK_BULK_REMOVE := $(abspath ../MORK/examples/sinks/archive/test_bulk_remove.mm2)
-MORK_MM2_SINK_COUNT_SIMPLE := $(abspath ../MORK/examples/sinks/archive/test_count_simple.mm2)
-MORK_MM2_SINK_HEAD_LIMIT := $(abspath ../MORK/examples/sinks/archive/test_head_limit.mm2)
+# Keep the bridge lane's tiny MM2 fixtures local so it does not depend on
+# sibling-repo example paths that may be reorganized upstream.
+MORK_MM2_FIXTURE_DIR := $(abspath tests/support/mork_mm2)
+MORK_MM2_TEST3 := $(MORK_MM2_FIXTURE_DIR)/test3_var_binding.mm2
+MORK_MM2_TEST4 := $(MORK_MM2_FIXTURE_DIR)/test4_conjunctive.mm2
+MORK_MM2_TEST5 := $(MORK_MM2_FIXTURE_DIR)/test5_equal_pair.mm2
+MORK_MM2_TEST6 := $(MORK_MM2_FIXTURE_DIR)/test6_no_match.mm2
+MORK_MM2_TEST7 := $(MORK_MM2_FIXTURE_DIR)/test7_nested.mm2
+MORK_MM2_TEST8 := $(MORK_MM2_FIXTURE_DIR)/test8_multi_step.mm2
+MORK_MM2_TEST9 := $(MORK_MM2_FIXTURE_DIR)/test9_priority_ordering.mm2
+MORK_MM2_TEST10 := $(MORK_MM2_FIXTURE_DIR)/test10_conjunctive_wq.mm2
+MORK_MM2_SINK_ADD_CONSTANT := $(MORK_MM2_FIXTURE_DIR)/test_add_constant.mm2
+MORK_MM2_SINK_ADD_SIMPLE := $(MORK_MM2_FIXTURE_DIR)/test_add_simple.mm2
+MORK_MM2_SINK_REMOVE_SIMPLE := $(MORK_MM2_FIXTURE_DIR)/test_remove_simple.mm2
+MORK_MM2_SINK_BULK_REMOVE := $(MORK_MM2_FIXTURE_DIR)/test_bulk_remove.mm2
+MORK_MM2_SINK_COUNT_SIMPLE := $(MORK_MM2_FIXTURE_DIR)/test_count_simple.mm2
+MORK_MM2_SINK_HEAD_LIMIT := $(MORK_MM2_FIXTURE_DIR)/test_head_limit.mm2
 
 define require_mork_bridge_or_reexec
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" != "1" ] && [ -z "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
@@ -2571,5 +2643,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
