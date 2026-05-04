@@ -1,0 +1,5 @@
+(foo a)
+
+(exec (0 no-op)
+      (, (bar $x))
+      (O (+ (missing $x))))

@@ -15,7 +15,8 @@ For the default build:
 For the optional bridge builds:
 
 - Rust/Cargo
-- local sibling checkouts of PathMap and MORK in the layout shown below
+- local `MORK` and `PathMap` checkouts; sibling layout works by default, and
+  `PATHMAP_REPO_DIR` / `MORK_REPO_DIR` overrides are supported below
 
 ## Quick Build
 
@@ -39,6 +40,130 @@ If you want the smaller no-Python binary instead:
 
 ```bash
 make BUILD=core
+```
+
+## Build Modes
+
+Default modes:
+
+| Mode | Includes | Python |
+|------|----------|--------|
+| `BUILD=python` or plain `make` | default HE-style evaluator | yes |
+| `BUILD=core` | small standalone binary | no |
+
+Bridge-capable modes:
+
+| Mode | Includes | Python | When to use |
+|------|----------|--------|-------------|
+| `BUILD=main` | `lib_mork` / MM2 bridge | yes | recommended bridge daily-driver |
+| `BUILD=full` | `lib_mork` / MM2 bridge + generic `(new-space pathmap)` | yes | recommended full bridge daily-driver |
+| `BUILD=mork` | `BUILD=main` without Python | no | smaller no-Python bridge binary |
+| `BUILD=pathmap` | `BUILD=full` without Python | no | smaller no-Python full bridge binary |
+
+## Bridge Setup
+
+The bridge-enabled modes build `rust/cetta-space-bridge` and link it
+statically into CeTTa. They are optional; you do not need them for the default
+HE-style build above.
+
+Default checkout layout:
+
+```text
+<parent>/
+├── CeTTa/
+├── MORK/
+└── PathMap/
+```
+
+CeTTa's optional bridge build currently follows the same sibling-repo layout
+that MORK itself expects.
+
+Current bridge branch expectations:
+
+- PathMap: [Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap) `master`
+- MORK: [zariuq/MORK](https://github.com/zariuq/MORK) `main`
+
+The checked bridge lane vendors its tiny MM2 regression inputs under
+`tests/support/mork_mm2/`, so it no longer depends on sibling
+`MORK/examples/...` paths staying stable across upstream reorganizations.
+
+Treat `BUILD=main` and `BUILD=full` as the two standard bridge builds. They
+share the same external repo requirements; `BUILD=mork` and `BUILD=pathmap`
+are just the corresponding no-Python variants.
+
+If your `MORK` and `PathMap` checkouts already live as siblings next to
+`CeTTa`, the standard bridge commands should work without extra flags:
+
+```bash
+ulimit -v 10485760 && make BUILD=main
+ulimit -v 10485760 && make BUILD=full
+```
+
+If your checkouts live elsewhere, you do not need symlinks. Pass the repo
+locations directly:
+
+```bash
+make doctor-bridge \
+  PATHMAP_REPO_DIR=/path/to/PathMap \
+  MORK_REPO_DIR=/path/to/MORK
+make BUILD=main \
+  PATHMAP_REPO_DIR=/path/to/PathMap \
+  MORK_REPO_DIR=/path/to/MORK
+make BUILD=full \
+  PATHMAP_REPO_DIR=/path/to/PathMap \
+  MORK_REPO_DIR=/path/to/MORK
+```
+
+The top-level `Makefile` uses those overrides both for dependency discovery and
+for generating a bridge workspace manifest with the resolved Rust paths, so the
+bridge build no longer requires a symlinked sibling mirror just to satisfy
+Cargo path dependencies.
+
+If you need MM2 arithmetic sink examples (`i+`, `i-`, `i*`, `f+`, `f-`, `f*`)
+today, use the MORK branch
+[`feature/arithsinks-pr-sync`](https://github.com/zariuq/MORK/tree/feature/arithsinks-pr-sync)
+instead.
+
+The first bridge build can take a few minutes on a cold Cargo cache.
+
+For a longer bridge/MM2 walkthrough, see `MORK_TUTORIAL.md`.
+
+Build the smaller no-Python bridge variants:
+
+```bash
+ulimit -v 10485760 && make BUILD=pathmap
+ulimit -v 10485760 && make BUILD=mork
+```
+
+The `BUILD=pathmap` and `BUILD=full` modes enable `(new-space pathmap)` with
+counted-key storage. This stores `atom_bytes || count_bytes` as PathMap keys,
+preserving multiset semantics while still benefiting from PathMap's structural
+matching. See `specs/pathmap_counted_space_design.txt` for the full design.
+
+## Play Here First
+
+If you want one successful first run in each major mode, start here after
+choosing and building the mode you want:
+
+### Default HE lane
+
+```bash
+make
+./cetta tests/test_map_filter_atom.metta
+```
+
+### Python + MORK/MM2 bridge
+
+```bash
+make BUILD=main
+./cetta examples/mork_showcase.metta
+```
+
+### Python + MORK/MM2 bridge + pathmap spaces
+
+```bash
+make BUILD=full
+./cetta tests/test_pathmap_counted_space_surface.metta
 ```
 
 ## Verified Test Commands
@@ -68,75 +193,6 @@ Promote the current checked binary to the local stable runtime path:
 make promote-runtime
 ```
 
-## Optional Bridge Builds
-
-The bridge-enabled modes build `rust/cetta-space-bridge` and link it
-statically into CeTTa. They are optional; you do not need them for the default
-HE-style build above.
-
-Expected checkout layout:
-
-```text
-<parent>/
-├── CeTTa/
-├── MORK/
-└── PathMap/
-```
-
-CeTTa's optional bridge build currently follows the same sibling-repo layout
-that MORK itself expects.
-
-If you already keep `MORK` and `PathMap` elsewhere, the simplest workaround is
-to create sibling symlinks next to `CeTTa`:
-
-```bash
-ln -s /path/to/MORK ../MORK
-ln -s /path/to/PathMap ../PathMap
-```
-
-| Mode | Purpose | Python | Extra repos needed |
-|------|---------|--------|--------------------|
-| `BUILD=core` | small standalone binary | no | none |
-| `BUILD=python` or plain `make` | default daily-driver build | yes | none |
-| `BUILD=mork` | MM2/lib_mork bridge lane | no | `MORK`, `PathMap` |
-| `BUILD=main` | MM2/lib_mork bridge lane | yes | `MORK`, `PathMap` |
-| `BUILD=pathmap` | `(new-space pathmap)` with multiset semantics | no | `MORK`, `PathMap` |
-| `BUILD=full` | pathmap + Python | yes | `MORK`, `PathMap` |
-
-Current bridge branch expectations:
-
-- PathMap: [Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap) `master`
-- MORK: [zariuq/MORK](https://github.com/zariuq/MORK) `cetta/query-multi-factor-exprs`
-
-If you need MM2 arithmetic sink examples (`i+`, `i-`, `i*`, `f+`, `f-`, `f*`)
-today, use the MORK branch
-[`feature/arithsinks-pr-sync`](https://github.com/zariuq/MORK/tree/feature/arithsinks-pr-sync)
-instead.
-
-Build the MM2/lib_mork lane:
-
-```bash
-ulimit -v 10485760 && make BUILD=mork
-./cetta examples/mork_showcase.metta
-./cetta examples/mork_mm2_showcase.metta
-```
-
-The first bridge build can take a few minutes on a cold Cargo cache.
-
-For a longer bridge/MM2 walkthrough, see `MORK_TUTORIAL.md`.
-
-Build counted-key PathMap spaces:
-
-```bash
-ulimit -v 10485760 && make BUILD=pathmap
-./cetta tests/test_pathmap_counted_space_surface.metta
-```
-
-The `BUILD=pathmap` and `BUILD=full` modes enable `(new-space pathmap)` with
-counted-key storage. This stores `atom_bytes || count_bytes` as PathMap keys,
-preserving multiset semantics while still benefiting from PathMap's structural
-matching. See `specs/pathmap_counted_space_design.txt` for the full design.
-
 The bridge code includes two thin compatibility adapters:
 
 - `rust/cetta-pathmap-adapter/` for PathMap compatibility
@@ -158,11 +214,14 @@ The bridge code includes two thin compatibility adapters:
 
 ## Test Status
 
-Fresh verification on a clean export of this tree produced:
+Fresh verification on April 30, 2026 in a clean `origin/main` clone produced:
 
 - `make test`: main HE/golden sweep `335 passed, 0 failed, 38 skipped`, then the
-  runtime-stats lane `16 passed, 0 failed`
+  runtime-stats lane `16 passed, 0 failed`; when local bridge deps were
+  present it also re-ran the `BUILD=main` MORK runtime-stats spot checks
 - `make test-profiles`: `77 passed, 0 failed`
+- Explicit bridge lanes also passed for `BUILD=mork`, `BUILD=main`,
+  `BUILD=pathmap`, and `BUILD=full`, including their runtime-stats lane bodies
 
 If the bridge dependencies are available locally, `make test` also re-runs the
 MORK runtime-stats spot checks after the default lanes. If they are not

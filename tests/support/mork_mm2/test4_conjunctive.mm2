@@ -1,0 +1,9 @@
+(name alice)
+(age alice 30)
+
+(exec (0 build-profile)
+      (, (name $x)
+         (age $x $age))
+      (O (+ (profile $x $age))
+         (- (name $x))
+         (- (age $x $age))))

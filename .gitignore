@@ -47,4 +47,5 @@
 /native/*.stage0.o
 /src/*.o
 /src/*.stage0.o
+/runtime/bootstrap/bridge-workspace.*/
 /rust/target/
