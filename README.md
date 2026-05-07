@@ -36,6 +36,9 @@ Run a small file:
 
 For the full CLI surface, run `./cetta --help`.
 
+Run `./cetta -v` (or `./cetta --version`) to see the exact version and active
+build mode of the binary currently sitting at `./cetta`.
+
 If you want the smaller no-Python binary instead:
 
 ```bash
@@ -55,10 +58,10 @@ Bridge-capable modes:
 
 | Mode | Includes | Python | When to use |
 |------|----------|--------|-------------|
-| `BUILD=main` | `lib_mork` / MM2 bridge | yes | recommended bridge daily-driver |
-| `BUILD=full` | `lib_mork` / MM2 bridge + generic `(new-space pathmap)` | yes | recommended full bridge daily-driver |
-| `BUILD=mork` | `BUILD=main` without Python | no | smaller no-Python bridge binary |
-| `BUILD=pathmap` | `BUILD=full` without Python | no | smaller no-Python full bridge binary |
+| `BUILD=main` | `lib_mork` / MM2 bridge + generic `(new-space pathmap)` | yes | recommended bridge daily-driver |
+| `BUILD=full` | compatibility alias of `BUILD=main` | yes | accepted old spelling for the same bridge build |
+| `BUILD=mork` | same bridge surface as `BUILD=main`, without Python | no | recommended smaller no-Python bridge binary |
+| `BUILD=pathmap` | compatibility alias of `BUILD=mork` | no | accepted old spelling for the same no-Python bridge build |
 
 ## Bridge Setup
 
@@ -81,22 +84,22 @@ that MORK itself expects.
 Current bridge branch expectations:
 
 - PathMap: [Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap) `master`
-- MORK: [zariuq/MORK](https://github.com/zariuq/MORK) `main`
+- MORK: [trueagi-io/MORK](https://github.com/trueagi-io/MORK) `main`
 
 The checked bridge lane vendors its tiny MM2 regression inputs under
 `tests/support/mork_mm2/`, so it no longer depends on sibling
 `MORK/examples/...` paths staying stable across upstream reorganizations.
 
-Treat `BUILD=main` and `BUILD=full` as the two standard bridge builds. They
-share the same external repo requirements; `BUILD=mork` and `BUILD=pathmap`
-are just the corresponding no-Python variants.
+Treat `BUILD=main` and `BUILD=mork` as the canonical bridge builds. `BUILD=full`
+and `BUILD=pathmap` remain accepted compatibility aliases, but they no longer
+name different feature sets.
 
 If your `MORK` and `PathMap` checkouts already live as siblings next to
 `CeTTa`, the standard bridge commands should work without extra flags:
 
 ```bash
 ulimit -v 10485760 && make BUILD=main
-ulimit -v 10485760 && make BUILD=full
+ulimit -v 10485760 && make BUILD=mork
 ```
 
 If your checkouts live elsewhere, you do not need symlinks. Pass the repo
@@ -109,7 +112,7 @@ make doctor-bridge \
 make BUILD=main \
   PATHMAP_REPO_DIR=/path/to/PathMap \
   MORK_REPO_DIR=/path/to/MORK
-make BUILD=full \
+make BUILD=mork \
   PATHMAP_REPO_DIR=/path/to/PathMap \
   MORK_REPO_DIR=/path/to/MORK
 ```
@@ -131,14 +134,15 @@ For a longer bridge/MM2 walkthrough, see `MORK_TUTORIAL.md`.
 Build the smaller no-Python bridge variants:
 
 ```bash
-ulimit -v 10485760 && make BUILD=pathmap
 ulimit -v 10485760 && make BUILD=mork
+ulimit -v 10485760 && make BUILD=pathmap   # compatibility alias
 ```
 
-The `BUILD=pathmap` and `BUILD=full` modes enable `(new-space pathmap)` with
-counted-key storage. This stores `atom_bytes || count_bytes` as PathMap keys,
-preserving multiset semantics while still benefiting from PathMap's structural
-matching. See `specs/pathmap_counted_space_design.txt` for the full design.
+All bridge-enabled builds (`BUILD=main`, `BUILD=full`, `BUILD=mork`, and
+`BUILD=pathmap`) enable `(new-space pathmap)` with counted-key storage. This
+stores `atom_bytes || count_bytes` as PathMap keys, preserving multiset
+semantics while still benefiting from PathMap's structural matching. See
+`specs/pathmap_counted_space_design.txt` for the full design.
 
 ## Play Here First
 
@@ -152,23 +156,23 @@ make
 ./cetta tests/test_map_filter_atom.metta
 ```
 
-### Python + MORK/MM2 bridge
+### Python + bridge build
 
 ```bash
 make BUILD=main
 ./cetta examples/mork_showcase.metta
 ```
 
-### Python + MORK/MM2 bridge + pathmap spaces
+### PathMap counted-space surface
 
 ```bash
-make BUILD=full
+make BUILD=main
 ./cetta tests/test_pathmap_counted_space_surface.metta
 ```
 
 ## Verified Test Commands
 
-Run the main checked suite:
+Run the ordinary checked suite for the current build:
 
 ```bash
 make test
@@ -180,17 +184,43 @@ Run the profile surface suite:
 make test-profiles
 ```
 
-`make test` always runs the fast HE/golden suite and the runtime-stats lane.
-If the optional Rust bridge dependencies are available locally, it also runs the
-MM2/MORK regression lane. If they are not available, those bridge-only lanes are
-skipped cleanly instead of failing the default build/test path.
+Run the explicit runtime-stats suite for the current build:
+
+```bash
+make ENABLE_RUNTIME_STATS=1 test-runtime-stats
+```
+
+`make test` now stays inside the current build configuration. It runs the fast
+HE/golden suite, and on bridge-enabled builds it also runs the matching current
+bridge regressions:
+
+- `BUILD=main` / `BUILD=full`: MORK/MM2 bridge core lane plus pathmap-space lane
+- `BUILD=mork` / `BUILD=pathmap`: the same regression set without Python
+
+It does not silently switch `BUILD=` and it does not silently trigger a second
+runtime-stats build. Use `test-runtime-stats` explicitly when you want the
+compile-time runtime-stats lane.
+
 The checked default lanes vendor their tiny Metamath parser fixtures under
 `tests/support/`, so they do not require a separate Metamath checkout either.
+
+For a full checked sweep of a bridge build, use the same `BUILD=` consistently:
+
+```bash
+make BUILD=main test
+make BUILD=main test-profiles
+make BUILD=main ENABLE_RUNTIME_STATS=1 test-runtime-stats
+
+make BUILD=mork test
+make BUILD=mork test-profiles
+make BUILD=mork ENABLE_RUNTIME_STATS=1 test-runtime-stats
+```
 
 Promote the current checked binary to the local stable runtime path:
 
 ```bash
 make promote-runtime
+make BUILD=main promote-runtime
 ```
 
 The bridge code includes two thin compatibility adapters:
@@ -214,18 +244,13 @@ The bridge code includes two thin compatibility adapters:
 
 ## Test Status
 
-Fresh verification on April 30, 2026 in a clean `origin/main` clone produced:
+Recent verification in a clean `origin/main` clone produced:
 
-- `make test`: main HE/golden sweep `335 passed, 0 failed, 38 skipped`, then the
-  runtime-stats lane `16 passed, 0 failed`; when local bridge deps were
-  present it also re-ran the `BUILD=main` MORK runtime-stats spot checks
+- `make test`: main HE/golden sweep `335 passed, 0 failed, 38 skipped`
 - `make test-profiles`: `77 passed, 0 failed`
-- Explicit bridge lanes also passed for `BUILD=mork`, `BUILD=main`,
-  `BUILD=pathmap`, and `BUILD=full`, including their runtime-stats lane bodies
-
-If the bridge dependencies are available locally, `make test` also re-runs the
-MORK runtime-stats spot checks after the default lanes. If they are not
-available, those bridge-only lanes are skipped with an explicit message.
+- Explicit bridge lanes passed for `BUILD=mork`, `BUILD=main`,
+  and their compatibility aliases `BUILD=pathmap` and `BUILD=full`
+- Explicit runtime-stats lane bodies also passed for the checked bridge builds
 
 ## Examples
 
@@ -272,8 +297,8 @@ $ timeout 15 ./cetta --lang he benchmarks/bench_bio_1M.metta 2>/dev/null | head 
 === Phase 3: TF regulatory targets of rs10000544 (depth 2) ===
 ```
 
-This preview uses a tracked workload in `benchmarks/`. The full run on our
-development machine produces approximately 1,411,430 hypotheses in 3m 22s
+This preview uses a tracked workload in `benchmarks/`. A full run on a
+development workstation produces approximately 1,411,430 hypotheses in 3m 22s
 across 17 query phases.
 
 ### Structured spaces (queue, hash, stack)
@@ -300,8 +325,8 @@ $ ./cetta --profile he_extended tests/test_tilepuzzle.metta
 ```
 
 Uses queue-space for BFS frontier and hash-space for visited-set dedup. This is
-a longer-running example on our development machine; prefer the smaller files
-below for a quick smoke test.
+a longer-running example; prefer the smaller files below for a quick smoke
+test.
 
 ## Good First Things To Run
 
@@ -321,8 +346,15 @@ Python-facing surface in the default build:
 Optional MORK-facing surface (requires sibling `MORK` / `PathMap` checkouts):
 
 ```bash
-make BUILD=mork
+make BUILD=main
 ./cetta examples/mork_showcase.metta
+```
+
+Optional counted PathMap space surface:
+
+```bash
+make BUILD=main
+./cetta tests/test_pathmap_counted_space_surface.metta
 ```
 
 Large genomic benchmark preview:
