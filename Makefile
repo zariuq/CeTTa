@@ -6,10 +6,10 @@ CC = gcc
 #   make                   -> BUILD=python      (default: Python foreign-module support enabled)
 #   make BUILD=core        -> bare CeTTa (no Python, no static MORK bridge)
 #   make BUILD=python      -> CeTTa + Python (no static MORK bridge)
-#   make BUILD=mork        -> mainline-safe lib_mork lane (no Python, no generic pathmap spaces)
-#   make BUILD=main        -> BUILD=mork + Python
-#   make BUILD=pathmap     -> modified-MORK lane with generic pathmap-backed spaces (no Python)
-#   make BUILD=full        -> BUILD=pathmap + Python
+#   make BUILD=mork        -> bridge build without Python (canonical no-Python bridge mode)
+#   make BUILD=main        -> bridge build with Python (canonical bridge mode)
+#   make BUILD=pathmap     -> compatibility alias of BUILD=mork
+#   make BUILD=full        -> compatibility alias of BUILD=main
 #
 # Core and python builds do not auto-link local MORK artifacts. Non-mork
 # builds can still load a bridge dynamically at runtime via
@@ -40,11 +40,12 @@ ENABLE_MORK_STATIC := 1
 endif
 ifeq ($(BUILD_CANON),pathmap)
 ENABLE_MORK_STATIC := 1
-ENABLE_PATHMAP_SPACE := 1
 endif
 ifeq ($(BUILD_CANON),full)
 ENABLE_PYTHON := 1
 ENABLE_MORK_STATIC := 1
+endif
+ifeq ($(ENABLE_MORK_STATIC),1)
 ENABLE_PATHMAP_SPACE := 1
 endif
 
@@ -338,6 +339,8 @@ STDLIB_BLOB = src/stdlib_blob.h
 STDLIB_BLOB_STAMP = $(BOOTSTRAP_TMPDIR)/stdlib_blob.$(BUILD_CANON).stamp
 
 all: $(BIN)
+	@echo "Built ./$(BIN) [BUILD=$(BUILD_CANON), runtime-stats=$(ENABLE_RUNTIME_STATS)]"
+	@echo "Tip: ./$(BIN) -v prints the active version and build mode"
 
 core:
 	@$(MAKE) BUILD=core $(BIN)
@@ -376,31 +379,31 @@ bench-pathmap-fc-d3: $(BIN)
 	@./scripts/bench_pathmap_fc_d3.sh
 
 bench-fc-backend-matrix:
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_fc_backend_matrix.sh
 
 bench-space-backend-matrix:
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_space_backend_matrix.sh
 
 bench-space-transfer-matrix:
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_space_transfer_matrix.sh
 
 bench-space-scale-ladder:
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_space_scale_ladder.sh
 
 bench-ffi-friction-light:
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_ffi_friction_suite.sh light $(or $(BENCH_FFI_LIGHT_N),1000) $(or $(BENCH_FFI_LIGHT_ROUNDS),1)
 
 bench-ffi-friction-basic:
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_ffi_friction_suite.sh basic $(or $(BENCH_FFI_BASIC_N),10000) $(or $(BENCH_FFI_BASIC_ROUNDS),3)
 
 bench-ffi-friction-stress:
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@./scripts/bench_ffi_friction_suite.sh stress $(or $(BENCH_FFI_STRESS_N),50000) $(or $(BENCH_FFI_STRESS_ROUNDS),3)
 
 bench-ffi-friction-heavy:
@@ -409,7 +412,7 @@ bench-ffi-friction-heavy:
 		echo "Try: BENCH_FFI_ALLOW_HEAVY=1 make bench-ffi-friction-heavy"; \
 		exit 2; \
 	fi
-	@$(MAKE) -s BUILD=full ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
 	@BENCH_FFI_ALLOW_HEAVY=1 ./scripts/bench_ffi_friction_suite.sh heavy $(or $(BENCH_FFI_HEAVY_N),100000) $(or $(BENCH_FFI_HEAVY_ROUNDS),3)
 
 perf-runtime-stats:
@@ -443,7 +446,7 @@ bench-performance-light:
 	fi
 
 bench-optional-bridge-light:
-	@$(MAKE) -s BUILD=full bench-ffi-friction-light
+	@$(MAKE) -s BUILD=main bench-ffi-friction-light
 
 bench-capacity:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) perf-capacity-tu
@@ -675,7 +678,10 @@ clean:
 	rm -rf $(BOOTSTRAP_TMPDIR)/bridge-workspace.*
 
 promote-runtime: $(BIN)
-	@./scripts/promote_runtime.sh
+	@BUILD=$(BUILD_CANON) \
+	PATHMAP_REPO_DIR="$(PATHMAP_REPO_DIR)" \
+	MORK_REPO_DIR="$(MORK_REPO_DIR)" \
+	./scripts/promote_runtime.sh
 
 bridge-setup: $(MORK_BRIDGE_WORKSPACE_MANIFEST)
 	@if [ "$(MORK_BRIDGE_DEPS_READY)" != "1" ]; then \
@@ -688,7 +694,8 @@ bridge-setup: $(MORK_BRIDGE_WORKSPACE_MANIFEST)
 	@echo "  PathMap:  $(PATHMAP_DEP_DIR)"
 	@echo "  MORK:     $(MORK_REPO_DIR)"
 	@echo "  Try: make BUILD=main"
-	@echo "  Try: make BUILD=full"
+	@echo "  Try: make BUILD=mork"
+	@echo "  Note: BUILD=full and BUILD=pathmap remain compatibility aliases"
 
 doctor-bridge:
 	@echo "CeTTa repo: $(CETTA_REPO_DIR)"
@@ -705,7 +712,8 @@ doctor-bridge:
 	@if [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
 		echo "PASS: external bridge manifests present"; \
 		echo "INFO: generated bridge workspace will be $(MORK_BRIDGE_WORKSPACE_MANIFEST)"; \
-		echo "INFO: recommended builds are BUILD=main and BUILD=full"; \
+		echo "INFO: recommended builds are BUILD=main and BUILD=mork"; \
+		echo "INFO: BUILD=full and BUILD=pathmap remain compatibility aliases"; \
 	else \
 		echo "FAIL: missing bridge manifests"; \
 		printf '  %s\n' $(MORK_BRIDGE_MISSING_MANIFESTS); \
@@ -841,8 +849,8 @@ endef
 define require_pathmap_bridge_or_reexec
 	@if [ "$(ENABLE_PATHMAP_SPACE)" != "1" ]; then \
 		if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
-			bridge_build=pathmap; \
-			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
+			bridge_build=mork; \
+			if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 			echo "INFO: $(1) requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
 			$(MAKE) BUILD=$$bridge_build $(2); \
 		else \
@@ -864,7 +872,7 @@ define require_runtime_stats_or_reexec
 	fi
 endef
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-mork-lane-core test-closed-stream-fastpath
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-closed-stream-fastpath
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -934,7 +942,12 @@ test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-varia
 	if [ $$no_exp -gt 0 ]; then summary="$$summary, $$no_exp no .expected file"; fi; \
 	echo "$$summary"; \
 	[ $$fail -eq 0 ]
-	@$(MAKE) -s BUILD=$(BUILD_CANON) test-runtime-stats-lane
+	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lane-core-body; \
+	fi
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-lane-body
+endif
 
 test-light: test
 
@@ -974,14 +987,17 @@ test-heavy: $(BIN)
 test-correctness-all:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-heavy
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats
 
-test-runtime-stats-lane:
+test-runtime-stats:
 	@if [ "$(ENABLE_RUNTIME_STATS)" != "1" ]; then \
 		echo "INFO: runtime-stats test lane requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"; \
 		$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-lane-body; \
 	else \
 		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-lane-body; \
 	fi
+
+test-runtime-stats-lane: test-runtime-stats
 
 test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
@@ -990,9 +1006,11 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-cli
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-closed-stream-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-metta-suite
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-lane
+	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-lane-body; \
+	fi
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-runtime-stats-lane
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-runtime-stats-lane-body
 endif
 
 test-runtime-stats-metta-suite:
@@ -1718,7 +1736,7 @@ test-deprecated-space-engine-mork-guard: $(BIN)
 	if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		pathmap_line="  pathmap                flattened PathMap-style CeTTa engine without bridge rows"; \
 	else \
-		pathmap_line="  pathmap                flattened PathMap-style CeTTa engine without bridge rows (requires BUILD=pathmap or BUILD=full)"; \
+		pathmap_line="  pathmap                flattened PathMap-style CeTTa engine without bridge rows (requires a bridge build: BUILD=mork or BUILD=main)"; \
 	fi; \
 	expected=$$(printf '%s\n' \
 		"error: unknown space engine 'mork'" \
@@ -1740,9 +1758,9 @@ test-mork-basic-pathmap-guard: $(BIN)
 		echo "SKIP: mork/basic pathmap guards (pathmap lane enabled)"; \
 	else \
 		result=$$(./$(BIN) --profile he_extended --lang he \
-			-e '!(assertEqualToResult (new-space pathmap) ((Error (new-space pathmap) "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full")))' \
+			-e '!(assertEqualToResult (new-space pathmap) ((Error (new-space pathmap) "generic pathmap-backed spaces require a bridge build (BUILD=mork or BUILD=main)")))' \
 			-e '!(bind! &h (new-space hash))' \
-			-e '!(assertEqualToResult (space-set-backend! &h pathmap) ((Error (space-set-backend! &h pathmap) "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full")))' \
+			-e '!(assertEqualToResult (space-set-backend! &h pathmap) ((Error (space-set-backend! &h pathmap) "generic pathmap-backed spaces require a bridge build (BUILD=mork or BUILD=main)")))' \
 			2>&1); \
 		expected=$$'[()]\n[()]\n[()]'; \
 		if [ "$$result" = "$$expected" ]; then \
@@ -1759,8 +1777,8 @@ ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-lane-body
 else
 	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
-		bridge_build=pathmap; \
-		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
+		bridge_build=mork; \
+		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 		echo "INFO: pathmap lane regression suite requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
 		$(MAKE) BUILD=$$bridge_build test-pathmap-lane-body; \
 	else \
@@ -1807,8 +1825,8 @@ ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) probe-pathmap-lane-body
 else
 	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
-		bridge_build=pathmap; \
-		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
+		bridge_build=mork; \
+		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 		echo "INFO: pathmap probe lane requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build"; \
 		$(MAKE) BUILD=$$bridge_build probe-pathmap-lane-body; \
 	else \
@@ -1836,8 +1854,8 @@ ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	fi
 else
 	@if [ -f "$(MORK_BRIDGE_MANIFEST)" ] && [ "$(MORK_BRIDGE_DEPS_READY)" = "1" ]; then \
-		bridge_build=pathmap; \
-		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=full; fi; \
+		bridge_build=mork; \
+		if [ "$(ENABLE_PYTHON)" = "1" ]; then bridge_build=main; fi; \
 		echo "INFO: pathmap runtime-stats lane requires generic pathmap-backed spaces; re-running with BUILD=$$bridge_build and ENABLE_RUNTIME_STATS=1"; \
 		$(MAKE) BUILD=$$bridge_build ENABLE_RUNTIME_STATS=1 test-pathmap-runtime-stats-lane-body; \
 	else \
@@ -2643,5 +2661,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

@@ -6478,7 +6478,7 @@ bool space_match_backend_supports_direct_bindings(const Space *s) {
 const char *space_match_backend_unavailable_reason(SpaceEngine kind) {
 #if !CETTA_BUILD_WITH_PATHMAP_SPACE
     if (kind == SPACE_ENGINE_PATHMAP)
-        return "generic pathmap-backed spaces require BUILD=pathmap or BUILD=full";
+        return "generic pathmap-backed spaces require a bridge build (BUILD=mork or BUILD=main)";
 #endif
     (void)kind;
     return NULL;
@@ -6520,7 +6520,7 @@ void space_match_backend_print_inventory(FILE *out) {
     fprintf(out, "  native                 standard CeTTa / HE engine\n");
     fprintf(out, "  pathmap                flattened PathMap-style CeTTa engine without bridge rows");
 #if !CETTA_BUILD_WITH_PATHMAP_SPACE
-    fprintf(out, " (requires BUILD=pathmap or BUILD=full)");
+    fprintf(out, " (requires a bridge build: BUILD=mork or BUILD=main)");
 #endif
     fprintf(out, "\n");
     fprintf(out, "  native-candidate-exact diagnostic native exact-matcher lane\n");
