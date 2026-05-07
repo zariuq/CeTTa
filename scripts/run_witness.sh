@@ -45,6 +45,20 @@ IFS=$'\t' read -r witness_name category build_hint timeout_s mem_kib command not
 witness_bin="./cetta"
 witness_build_config="./runtime/bootstrap/build_config.core.h"
 
+canonical_build_mode() {
+    case "$1" in
+        full)
+            printf 'main\n'
+            ;;
+        pathmap)
+            printf 'mork\n'
+            ;;
+        *)
+            printf '%s\n' "$1"
+            ;;
+    esac
+}
+
 ensure_build_from_hint() {
     local hint="$1"
     local build_mode=""
@@ -64,6 +78,8 @@ ensure_build_from_hint() {
             exit 2
             ;;
     esac
+
+    build_mode="$(canonical_build_mode "$build_mode")"
 
     if [[ "$enable_runtime_stats" -eq 1 ]]; then
         runtime_target="runtime/cetta-${build_mode}-runtime-stats"

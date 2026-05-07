@@ -11,7 +11,7 @@ struct CettaForeignRuntime {
 };
 
 static const char *CETTA_FOREIGN_DISABLED_MSG =
-    "python foreign modules require a Python-enabled build (BUILD=python, BUILD=main, or BUILD=full)";
+    "python foreign modules require a Python-enabled build (BUILD=python or BUILD=main)";
 
 static void set_reason(char *reason, size_t reason_sz, const char *msg) {
     if (!reason || reason_sz == 0)
