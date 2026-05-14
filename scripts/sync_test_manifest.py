@@ -184,7 +184,7 @@ SPECIAL_INVENTORY_ROWS = {
             "tests/spec_module_inventory.metta",
             "he",
             "metta",
-            "he_extended",
+            "he-extended",
             "main",
             "native",
             "test-profiles",
@@ -327,24 +327,24 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             "pathmap lane golden regression",
         )
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", "pathmap", "pathmap",
+            test_path, "he", "metta", "he-extended", "pathmap", "pathmap",
             "test-pathmap-lane", expect, note,
         )
     if test_path in sets["PATHMAP_PROBE_TESTS"]:
         expect, note = no_expected_expect_and_note(repo, test_path)
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", "pathmap", "pathmap",
+            test_path, "he", "metta", "he-extended", "pathmap", "pathmap",
             "probe-pathmap-lane", expect, note,
         )
     if test_path in sets["CORE_PROBE_TESTS"]:
         expect, note = no_expected_expect_and_note(repo, test_path)
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", "main", "native",
+            test_path, "he", "metta", "he-extended", "main", "native",
             "probe-core-lane", expect, note,
         )
     if test_path in sets["CORE_XFAIL_TESTS"]:
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", "main", "native",
+            test_path, "he", "metta", "he-extended", "main", "native",
             "xfail-core-lane", "xfail",
             "known failing core regression",
         )
@@ -355,7 +355,7 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             "runtime-stats lane golden regression",
         )
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", "runtime-stats", "native",
+            test_path, "he", "metta", "he-extended", "runtime-stats", "native",
             "test-runtime-stats-lane", expect, note,
         )
     if test_path in sets["PYTHON_TESTS"]:
@@ -365,7 +365,7 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             "Python-enabled build golden regression",
         )
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", "python", "native",
+            test_path, "he", "metta", "he-extended", "python", "native",
             "test-python", expect, note,
         )
     if test_path in sets["BACKEND_HEAVY_TESTS"]:
@@ -377,7 +377,7 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             "heavy backend golden regression",
         )
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", build, engine,
+            test_path, "he", "metta", "he-extended", build, engine,
             "test-heavy", expect, note,
         )
     if test_path in sets["BACKEND_DEDICATED_TESTS"]:
@@ -395,7 +395,7 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             "dedicated backend or bridge golden regression",
         )
         return ManifestRow(
-            test_path, "he", "metta", "he_extended", build, engine,
+            test_path, "he", "metta", "he-extended", build, engine,
             "test-backend-dedicated", expect, note,
         )
 
@@ -405,7 +405,7 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
         "-",
     )
     return ManifestRow(
-        test_path, "he", "metta", "he_extended", "main", "native",
+        test_path, "he", "metta", "he-extended", "main", "native",
         "test", expect, note,
     )
 
