@@ -6,7 +6,7 @@
 static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .id = CETTA_PROFILE_HE_COMPAT,
     .language_id = CETTA_LANGUAGE_HE,
-    .name = "he_compat",
+    .name = "he-compat",
     .note = "HE-compatible public/runtime surface.",
     .he_compatible_surface = true,
     .enable_cetta_extensions = false,
@@ -16,7 +16,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_HE_EXTENDED,
     .language_id = CETTA_LANGUAGE_HE,
-    .name = "he_extended",
+    .name = "he-extended",
     .note = "HE-compatible surface plus labeled CeTTa extensions.",
     .he_compatible_surface = true,
     .enable_cetta_extensions = true,
@@ -26,8 +26,8 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
 static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .id = CETTA_PROFILE_HE_PRIME,
     .language_id = CETTA_LANGUAGE_HE,
-    .name = "he_prime",
-    .note = "Binder-aware dependent telescope elaboration atop he_extended.",
+    .name = "he-prime",
+    .note = "Binder-aware dependent telescope elaboration atop he-extended.",
     .he_compatible_surface = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
@@ -148,6 +148,14 @@ static uint32_t cetta_language_base_surface_mask(CettaLanguageId language_id) {
     return CETTA_PROFILE_MASK_ALL;
 }
 
+static bool cetta_profile_name_matches(const char *name,
+                                       const CettaProfile *profile,
+                                       const char *legacy_alias) {
+    if (!name || !profile || !profile->name) return false;
+    if (strcmp(name, profile->name) == 0) return true;
+    return legacy_alias && strcmp(name, legacy_alias) == 0;
+}
+
 const CettaProfile *cetta_profile_he_compat(void) {
     return &CETTA_PROFILE_HE_COMPAT_VALUE;
 }
@@ -175,13 +183,16 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
     if (!cetta_language_has_named_profiles(language_id)) {
         return NULL;
     }
-    if (strcmp(name, CETTA_PROFILE_HE_COMPAT_VALUE.name) == 0) {
+    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_COMPAT_VALUE,
+                                   "he_compat")) {
         return &CETTA_PROFILE_HE_COMPAT_VALUE;
     }
-    if (strcmp(name, CETTA_PROFILE_HE_EXTENDED_VALUE.name) == 0) {
+    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_EXTENDED_VALUE,
+                                   "he_extended")) {
         return &CETTA_PROFILE_HE_EXTENDED_VALUE;
     }
-    if (strcmp(name, CETTA_PROFILE_HE_PRIME_VALUE.name) == 0) {
+    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_PRIME_VALUE,
+                                   "he_prime")) {
         return &CETTA_PROFILE_HE_PRIME_VALUE;
     }
     return NULL;
