@@ -4,7 +4,7 @@
 !(bind! &m (mod-space! import_pkg:moduleA))
 !(bind! &mods (module-inventory!))
 !(assertEqualToResult (match &mods (module-language he) ok) (ok))
-!(assertEqualToResult (match &mods (module-profile he_extended) ok) (ok))
+!(assertEqualToResult (match &mods (module-profile he-extended) ok) (ok))
 !(assertEqualToResult (match &mods (module-import-mode relative) ok) (ok))
 !(assertEqualToResult (match &mods (module-provider registered-root enabled) ok) (ok))
 !(assertEqualToResult (match &mods (module-provider relative-file enabled) ok) (ok))

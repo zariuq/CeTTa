@@ -1,4 +1,4 @@
-; he_prime binder-aware telescope conformance.
+; he-prime binder-aware telescope conformance.
 (: Fact Type)
 (: fact Fact)
 (: other Fact)

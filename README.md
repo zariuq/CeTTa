@@ -2,7 +2,7 @@
 
 CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). The default
 public lane is the HE-style evaluator (`--lang he`) with the
-`he_extended` profile.
+`he-extended` profile.
 
 ## Requirements
 
@@ -167,7 +167,7 @@ make BUILD=main
 
 ```bash
 make BUILD=main
-./cetta tests/test_pathmap_counted_space_surface.metta
+./cetta --profile he-extended --lang he tests/test_pathmap_counted_space_surface.metta
 ```
 
 ## Verified Test Commands
@@ -317,7 +317,7 @@ across 17 query phases.
 ### 8-puzzle BFS (181K states)
 
 ```
-$ ./cetta --profile he_extended tests/test_tilepuzzle.metta
+$ ./cetta --profile he-extended tests/test_tilepuzzle.metta
 8-puzzle BFS: counting all reachable states from solved position...
 [()]
 [()]
@@ -354,7 +354,7 @@ Optional counted PathMap space surface:
 
 ```bash
 make BUILD=main
-./cetta tests/test_pathmap_counted_space_surface.metta
+./cetta --profile he-extended --lang he tests/test_pathmap_counted_space_surface.metta
 ```
 
 Large genomic benchmark preview:
@@ -366,7 +366,7 @@ timeout 15 ./cetta --lang he benchmarks/bench_bio_1M.metta 2>/dev/null | head -3
 Full tile puzzle (longer-running):
 
 ```bash
-./cetta --profile he_extended tests/test_tilepuzzle.metta
+./cetta --profile he-extended tests/test_tilepuzzle.metta
 ```
 
 The large bio benchmark is included because it is runnable in this tree, but
