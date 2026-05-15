@@ -54,7 +54,7 @@ run_cetta_file() {
     local output=$2
     local status=0
     /usr/bin/time -f 'elapsed=%e rss=%MKB' \
-        bash -lc "ulimit -v 10485760; ulimit -s unlimited; '$CETTA_BIN' --quiet --lang he '$file'" \
+        bash -lc "'$CETTA_BIN' --quiet --lang he '$file'" \
         >"$output" 2>&1 || status=$?
     return "$status"
 }

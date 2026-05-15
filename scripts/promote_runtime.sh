@@ -10,7 +10,6 @@ BUILD_MODE="${BUILD:-python}"
 
 cd "$ROOT"
 
-ulimit -v 10485760
 make -j1 BUILD="$BUILD_MODE" test
 make -j1 BUILD="$BUILD_MODE" test-profiles
 make -j1 BUILD="$BUILD_MODE" ENABLE_RUNTIME_STATS=1 test-runtime-stats

@@ -1,5 +1,5 @@
 ; Translated from PeTTa to HE (114 atoms)
-; Source: /home/zar/claude/hyperon/metamath/pverify/pverify-utils.metta
+; Source: pverify-utils.metta from the Metamath pverify tools
 
 !(import! &self cverify_compat)
 ; Use evaluator-backed select/once because ordinary equation wrappers

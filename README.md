@@ -1,8 +1,9 @@
 # CeTTa
 
 CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). The default
-public lane is the HE-style evaluator (`--lang he`) with the
-`he-extended` profile.
+public lane is the base HE-style evaluator (`--lang he`) with no named profile
+selected. Use `--profile he-extended` when you want the labeled CeTTa
+extension surface.
 
 ## Requirements
 
@@ -98,8 +99,8 @@ If your `MORK` and `PathMap` checkouts already live as siblings next to
 `CeTTa`, the standard bridge commands should work without extra flags:
 
 ```bash
-ulimit -v 10485760 && make BUILD=main
-ulimit -v 10485760 && make BUILD=mork
+make BUILD=main
+make BUILD=mork
 ```
 
 If your checkouts live elsewhere, you do not need symlinks. Pass the repo
@@ -134,8 +135,8 @@ For a longer bridge/MM2 walkthrough, see `MORK_TUTORIAL.md`.
 Build the smaller no-Python bridge variants:
 
 ```bash
-ulimit -v 10485760 && make BUILD=mork
-ulimit -v 10485760 && make BUILD=pathmap   # compatibility alias
+make BUILD=mork
+make BUILD=pathmap   # compatibility alias
 ```
 
 All bridge-enabled builds (`BUILD=main`, `BUILD=full`, `BUILD=mork`, and

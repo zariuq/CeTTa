@@ -63,7 +63,7 @@ PROG
     local timing="$TMPDIR/timing.txt"
     local status=0
     /usr/bin/time -f 'elapsed=%e rss=%MKB' \
-        bash -lc "ulimit -s unlimited && '$CETTA_BIN' '$program'" \
+        bash -lc "'$CETTA_BIN' '$program'" \
         >"$out" 2>"$timing" || status=$?
 
     local result

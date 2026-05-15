@@ -21,7 +21,7 @@ static char alt_stack_buf[16384];  /* alternate signal stack for SIGSEGV handler
 
 static void handle_sigsegv(int sig) {
     (void)sig;
-    const char msg[] = "\nStack overflow. Use tail recursion or increase stack: ulimit -s unlimited\n";
+    const char msg[] = "\nStack overflow. Use tail recursion or increase the stack limit.\n";
     ssize_t r = write(STDERR_FILENO, msg, sizeof(msg) - 1);
     (void)r;
     _exit(2);

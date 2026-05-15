@@ -13,11 +13,21 @@ import json
 import os
 import sys
 from collections import defaultdict
+from pathlib import Path
 
-CACHE = "/home/zar/claude/hypothesis-generation-demo/scripts/cache"
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CACHE = SCRIPT_DIR / "cache"
+CACHE = Path(os.environ.get("CETTA_BIO_KB_CACHE", DEFAULT_CACHE))
 
 def load_json(name):
-    with open(os.path.join(CACHE, name)) as f:
+    path = CACHE / name
+    if not path.exists():
+        raise FileNotFoundError(
+            f"missing cache file: {path}. Set CETTA_BIO_KB_CACHE to the "
+            "directory containing snp_coords.json, gtex_eqtl.json, and "
+            "abc_features.json."
+        )
+    with path.open() as f:
         return json.load(f)
 
 def main():
@@ -80,4 +90,8 @@ def main():
     print(f"\n; Total: {len(evidence)} evidence atoms", file=sys.stderr)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)

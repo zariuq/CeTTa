@@ -68,7 +68,7 @@ baseline_distance=""
 context_line=""
 context_distance=""
 
-while IFS=$'\t' read -r row_name repo_label commit status elapsed rss_kib build_hint timeout_s mem_kib note role; do
+while IFS=$'\t' read -r row_name repo_label commit status elapsed rss_kib build_hint timeout_s resource_hint_kib note role; do
     [[ "$row_name" == "name" ]] && continue
     [[ "$row_name" != "$name" ]] && continue
     if ! git -C "$repo_root" merge-base --is-ancestor "$commit" HEAD 2>/dev/null; then

@@ -2,13 +2,13 @@
   "generated_on": "2026-03-27",
   "scope": "HE 3-layer runtime overview (kernel / grounded / stdlib docs) cross-referenced against CeTTa",
   "sources": [
-    "/home/zar/claude/c-projects/cetta/specs/he_runtime_3layer_matrix.json",
-    "/home/zar/claude/c-projects/cetta/specs/he_runtime_impl_matrix.json",
-    "/home/zar/claude/c-projects/cetta/src/eval.c",
-    "/home/zar/claude/c-projects/cetta/src/grounded.c",
-    "/home/zar/claude/c-projects/cetta/src/parser.c",
-    "/home/zar/claude/c-projects/cetta/src/compile.c",
-    "/home/zar/claude/c-projects/cetta/lib/stdlib.metta"
+    "specs/he_runtime_3layer_matrix.json",
+    "specs/he_runtime_impl_matrix.json",
+    "src/eval.c",
+    "src/grounded.c",
+    "src/parser.c",
+    "src/compile.c",
+    "lib/stdlib.metta"
   ],
   "summary": {
     "kernel": {
