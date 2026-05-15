@@ -48,7 +48,7 @@ run_cetta() {
     local expected=$3
     local out status count timing
     out=$(/usr/bin/time -f 'elapsed=%E rss=%MKB' bash -lc \
-        "ulimit -v 6291456; '$CETTA_BIN' --space-engine '$backend' --count-only '$file'" \
+        "'$CETTA_BIN' --space-engine '$backend' --count-only '$file'" \
         2>&1) || status=$?
     status=${status:-0}
     count=$(printf '%s\n' "$out" | grep -E '^[0-9]+$' | tail -1 || true)
@@ -67,7 +67,7 @@ run_cetta_value() {
     local expected=$3
     local out status value timing
     out=$(/usr/bin/time -f 'elapsed=%E rss=%MKB' bash -lc \
-        "ulimit -v 6291456; '$CETTA_BIN' --space-engine '$backend' --lang he '$file'" \
+        "'$CETTA_BIN' --space-engine '$backend' --lang he '$file'" \
         2>&1) || status=$?
     status=${status:-0}
     value=$(printf '%s\n' "$out" | extract_numeric_tail || true)
@@ -85,7 +85,7 @@ run_petta() {
     local expected=$2
     local out status count timing
     out=$(/usr/bin/time -f 'elapsed=%E rss=%MKB' bash -lc \
-        "cd '$PETTA_DIR'; ulimit -v 6291456; '$PETTA_RUN' '$file' --silent" \
+        "cd '$PETTA_DIR'; '$PETTA_RUN' '$file' --silent" \
         2>&1) || status=$?
     status=${status:-0}
     count=$(printf '%s\n' "$out" | grep -E '^[0-9]+$' | tail -1 || true)
@@ -103,7 +103,7 @@ run_petta_value() {
     local expected=$2
     local out status value timing
     out=$(/usr/bin/time -f 'elapsed=%E rss=%MKB' bash -lc \
-        "cd '$PETTA_DIR'; ulimit -v 6291456; '$PETTA_RUN' '$file' --silent" \
+        "cd '$PETTA_DIR'; '$PETTA_RUN' '$file' --silent" \
         2>&1) || status=$?
     status=${status:-0}
     value=$(printf '%s\n' "$out" | extract_numeric_tail || true)

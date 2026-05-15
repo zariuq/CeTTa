@@ -1,4 +1,4 @@
-name	category	build_hint	timeout_s	mem_kib	command	notes
+name	category	build_hint	timeout_s	resource_hint_kib	command	notes
 tu_space_term_universe_membership	conformance	core	60	6291456	make -j1 test-space-term-universe-membership	Structural witness for Space to AtomId membership over TermUniverse.
 tu_table_delayed_query_replay	conformance	profile-core	60	6291456	./cetta --quiet --profile he-extended --lang he tests/test_table_delayed_query_replay_regression.metta	Cached delayed-answer replay should remain alpha-correct.
 tu_table_delayed_single_tail_reenter	conformance	profile-core	60	6291456	./cetta --quiet --profile he-extended --lang he tests/test_table_delayed_single_tail_reenter_regression.metta	Single-result tail reentry should preserve delayed semantics cleanly.

@@ -73,7 +73,6 @@ cetta_ensure_build_mode() {
 
     printf '%s\n' "building CeTTa with BUILD=$required_canon for $reason" >&2
     (
-        ulimit -v 10485760 2>/dev/null || true
         make -C "$root" -j1 BUILD="$required_canon" cetta
     )
 }

@@ -9,7 +9,7 @@
 ; as the Layer 3 / Layer 4 yardstick.
 ;
 ; Usage:
-;   ulimit -v 2097152 && timeout 30 ./cetta benchmarks/bench_term_sharing_blowup.metta
+;   timeout 30 ./cetta benchmarks/bench_term_sharing_blowup.metta
 ;
 ; Quick validation:
 ;   Change (blowup-depth) to 3 below.

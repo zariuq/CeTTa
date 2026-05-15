@@ -59,7 +59,7 @@ ensure_acts() {
             continue
         fi
         echo "preparing compiled ACT artifact: $act_path" >&2
-        bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --quiet --lang he '$prep_input' >'$prep_result' 2>&1"
+        bash -lc "cd '$ROOT' && ./cetta --quiet --lang he '$prep_input' >'$prep_result' 2>&1"
         if [ -s "$prep_result" ]; then
             echo "error: ACT prepare produced unsuppressed output for $prep_input" >&2
             cat "$prep_result" >&2
@@ -78,7 +78,7 @@ result_bytes=""
 
 set +e
 /usr/bin/time -v -o "$time_file" \
-    bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --emit-runtime-stats --quiet --lang he '$BENCH_REL' >'$result_file'" \
+    bash -lc "cd '$ROOT' && ./cetta --emit-runtime-stats --quiet --lang he '$BENCH_REL' >'$result_file'" \
     2> "$stats_file"
 status=$?
 set -e

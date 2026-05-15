@@ -8,7 +8,6 @@ RUNTIME_DIR="$ROOT/runtime"
 ACT_PATH="$RUNTIME_DIR/bench_eqtl_for_mining.act"
 PREP_INPUT="$RUNTIME_DIR/.prepare_eqtl_for_mining_act.generated.metta"
 PREP_RESULT="$RUNTIME_DIR/prepare_eqtl_for_mining_act.out"
-PREP_VM_LIMIT_KB="${PREP_VM_LIMIT_KB:-10485760}"
 
 source "$ROOT/scripts/cetta_bench_build.sh"
 
@@ -64,7 +63,7 @@ ensure_act() {
 EOF
 
     echo "preparing compiled ACT artifact: $ACT_PATH" >&2
-    bash -lc "ulimit -v $PREP_VM_LIMIT_KB && cd '$ROOT' && ./cetta --quiet --lang he '$PREP_INPUT' >'$PREP_RESULT' 2>&1"
+    bash -lc "cd '$ROOT' && ./cetta --quiet --lang he '$PREP_INPUT' >'$PREP_RESULT' 2>&1"
     if [ -s "$PREP_RESULT" ]; then
         echo "error: ACT prepare produced unsuppressed output" >&2
         cat "$PREP_RESULT" >&2
@@ -99,7 +98,7 @@ run_mode() {
 
     set +e
     /usr/bin/time -f 'elapsed_sec=%e rss_kb=%M' -o "$time_file" \
-        bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --emit-runtime-stats --quiet --lang he '$bench_rel' >'$result_file'" \
+        bash -lc "cd '$ROOT' && ./cetta --emit-runtime-stats --quiet --lang he '$bench_rel' >'$result_file'" \
         2> "$stats_file"
     status=$?
     set -e

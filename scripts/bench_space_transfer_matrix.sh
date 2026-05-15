@@ -83,7 +83,7 @@ run_cetta_file() {
     local output=$2
     local status=0
     /usr/bin/time -f 'time_sec=%e rss_kb=%M' \
-        bash -lc "ulimit -v 10485760; ulimit -s unlimited; cd '$ROOT'; '$BIN' --quiet --lang he '$file'" \
+        bash -lc "cd '$ROOT'; '$BIN' --quiet --lang he '$file'" \
         >"$output" 2>&1 || status=$?
     return "$status"
 }

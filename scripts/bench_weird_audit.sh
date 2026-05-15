@@ -16,8 +16,8 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 LATEST_TMP="$RESULTS_DIR/.bench_weird_latest_${RUN_ID}.tsv"
 
 METAMATH_TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-180}"
-DEFAULT_VM_LIMIT_KB="${DEFAULT_VM_LIMIT_KB:-6291456}"
-MORK_VM_LIMIT_KB="${MORK_VM_LIMIT_KB:-10485760}"
+DEFAULT_RESOURCE_HINT_KIB="${RESOURCE_HINT_KIB:-${DEFAULT_VM_LIMIT_KB:-}}"
+MORK_RESOURCE_HINT_KIB="${MORK_RESOURCE_HINT_KIB:-${MORK_VM_LIMIT_KB:-}}"
 D4_PROBE_TIMEOUT="${D4_PROBE_TIMEOUT:-60}"
 WEIRD_FILTER="${WEIRD_FILTER:-}"
 
@@ -32,7 +32,7 @@ mkdir -p "$RESULTS_DIR" "$RUNTIME_DIR"
 
 cetta_ensure_build_mode "$ROOT" "$BIN" pathmap "weird benchmark audit"
 
-header='run_id	timestamp_utc	benchmark	classification	system	backend	input	status	expected	count	elapsed_sec	rss_kb	timeout_sec	vm_limit_kb	branch	commit	dirty	note'
+header='run_id	timestamp_utc	benchmark	classification	system	backend	input	status	expected	count	elapsed_sec	rss_kb	timeout_sec	resource_hint_kib	branch	commit	dirty	note'
 
 ensure_header() {
     local file="$1"
@@ -57,7 +57,7 @@ append_record() {
     local elapsed_sec="$9"
     local rss_kb="${10}"
     local timeout_sec="${11}"
-    local vm_limit_kb="${12}"
+    local resource_hint_kib="${12}"
     local note="${13}"
     local timestamp_utc
 
@@ -76,7 +76,7 @@ append_record() {
         "$(sanitize "$elapsed_sec")" \
         "$(sanitize "$rss_kb")" \
         "$(sanitize "$timeout_sec")" \
-        "$(sanitize "$vm_limit_kb")" \
+        "$(sanitize "$resource_hint_kib")" \
         "$(sanitize "$BRANCH")" \
         "$(sanitize "$COMMIT")" \
         "$(sanitize "$DIRTY")" \
@@ -102,7 +102,7 @@ run_cetta_count_probe() {
     local input_file="$4"
     local expected="$5"
     local timeout_seconds="$6"
-    local vm_limit_kb="$7"
+    local resource_hint_kib="$7"
     local extra_args="$8"
 
     local cmd out status time_line elapsed_sec rss_kb count checkpoint result_status note
@@ -119,7 +119,7 @@ run_cetta_count_probe() {
     out=""
     status=0
     out=$(/usr/bin/time -f 'elapsed_sec=%e rss_kb=%M' bash -lc \
-        "ulimit -v $vm_limit_kb; timeout $timeout_seconds bash -lc \"$cmd\"" \
+        "timeout $timeout_seconds bash -lc \"$cmd\"" \
         2>&1) || status=$?
 
     time_line="$(printf '%s\n' "$out" | grep -E 'elapsed_sec=|rss_kb=' | tail -1 || true)"
@@ -162,7 +162,7 @@ run_cetta_count_probe() {
     append_record \
         "$benchmark" "$classification" "cetta" "$backend" "$input_file" \
         "$result_status" "$expected" "$count" "$elapsed_sec" "$rss_kb" \
-        "$timeout_seconds" "$vm_limit_kb" "$note"
+        "$timeout_seconds" "$resource_hint_kib" "$note"
 
     printf '%-24s %-20s status=%-14s count=%-8s elapsed=%-8s rss=%s\n' \
         "$benchmark" "${backend:-default}" "$result_status" "${count:-<none>}" "${elapsed_sec:-<na>}" "${rss_kb:-<na>}"
@@ -179,7 +179,7 @@ run_eqtl_act_modes() {
     if [[ $status -ne 0 ]]; then
         append_record \
             "bio-eqtl-act" "benchmark" "cetta" "act" "benchmarks/bench_bio_eqtl_mork_*" \
-            "error" "" "" "" "" "" "$MORK_VM_LIMIT_KB" \
+            "error" "" "" "" "" "" "$MORK_RESOURCE_HINT_KIB" \
             "$(printf '%s\n' "$out" | tail -5 | tr '\n' ' ' | sed 's/  */ /g')"
         printf '%-24s %-20s status=%s\n' "bio-eqtl-act" "act" "error"
         return
@@ -194,7 +194,7 @@ run_eqtl_act_modes() {
             note="prepared_via_mork_dump"
             append_record \
                 "bio-eqtl-act-$mode" "benchmark" "cetta" "act" "$benchmark" \
-                "ok" "" "" "$wall" "$rss" "" "$MORK_VM_LIMIT_KB" "$note"
+                "ok" "" "" "$wall" "$rss" "" "$MORK_RESOURCE_HINT_KIB" "$note"
             printf '%-24s %-20s status=%-14s elapsed=%-8s rss=%s\n' \
                 "bio-eqtl-act-$mode" "act" "ok" "${wall:-<na>}" "${rss:-<na>}"
         fi
@@ -303,40 +303,40 @@ echo "branch=$BRANCH commit=$COMMIT dirty=$DIRTY"
 if is_selected "metamath-d5"; then
     run_cetta_count_probe \
         "metamath-depth5" "target" "" "benchmarks/bench_metamath_d5.metta" \
-        "" "$METAMATH_TIMEOUT_SECONDS" "$DEFAULT_VM_LIMIT_KB" "--lang he"
+        "" "$METAMATH_TIMEOUT_SECONDS" "$DEFAULT_RESOURCE_HINT_KIB" "--lang he"
 fi
 
 if is_selected "d3-nodup"; then
     run_cetta_count_probe \
         "nil-depth3-nodup" "probe" "" "tests/nil_pc_fc_d3_nodup.metta" \
-        "" "120" "$DEFAULT_VM_LIMIT_KB" ""
+        "" "120" "$DEFAULT_RESOURCE_HINT_KIB" ""
 fi
 
 if is_selected "d3-nodup-backends"; then
     for backend in native native-candidate-exact pathmap; do
         run_cetta_count_probe \
             "nil-depth3-nodup" "probe" "$backend" "tests/nil_pc_fc_d3_nodup.metta" \
-            "" "120" "$DEFAULT_VM_LIMIT_KB" ""
+            "" "120" "$DEFAULT_RESOURCE_HINT_KIB" ""
     done
 fi
 
 if is_selected "d4"; then
     run_cetta_count_probe \
         "nil-depth4" "probe" "" "tests/nil_pc_fc_d4.metta" \
-        "" "600" "$DEFAULT_VM_LIMIT_KB" ""
+        "" "600" "$DEFAULT_RESOURCE_HINT_KIB" ""
 fi
 
 if is_selected "d4-nodup"; then
     run_cetta_count_probe \
         "nil-depth4-nodup" "probe" "" "tests/nil_pc_fc_d4_nodup.metta" \
-        "" "600" "$DEFAULT_VM_LIMIT_KB" ""
+        "" "600" "$DEFAULT_RESOURCE_HINT_KIB" ""
 fi
 
 if is_selected "d4-backends"; then
     for backend in native native-candidate-exact pathmap; do
         run_cetta_count_probe \
             "nil-depth4" "probe" "$backend" "tests/nil_pc_fc_d4.metta" \
-            "" "$D4_PROBE_TIMEOUT" "$DEFAULT_VM_LIMIT_KB" ""
+            "" "$D4_PROBE_TIMEOUT" "$DEFAULT_RESOURCE_HINT_KIB" ""
     done
 fi
 
@@ -344,7 +344,7 @@ if is_selected "d4-nodup-backends"; then
     for backend in native native-candidate-exact pathmap; do
         run_cetta_count_probe \
             "nil-depth4-nodup" "probe" "$backend" "tests/nil_pc_fc_d4_nodup.metta" \
-            "" "$D4_PROBE_TIMEOUT" "$DEFAULT_VM_LIMIT_KB" ""
+            "" "$D4_PROBE_TIMEOUT" "$DEFAULT_RESOURCE_HINT_KIB" ""
     done
 fi
 
