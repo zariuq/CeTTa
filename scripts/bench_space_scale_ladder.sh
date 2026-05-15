@@ -42,7 +42,6 @@ run_backend_case() {
 
     (
         cd "$ROOT"
-        ulimit -v 10485760
         /usr/bin/time -f 'ELAPSED=%E\nRSS_KB=%M' \
             timeout "$TIMEOUT_S" "$BACKEND_SCRIPT" "$mode" "$fact_count" "$MATCH_ROUNDS" "suite_total"
     ) >"$log" 2>&1 || shell_status=$?
@@ -64,7 +63,6 @@ run_transfer_case() {
 
     (
         cd "$ROOT"
-        ulimit -v 10485760
         /usr/bin/time -f 'ELAPSED=%E\nRSS_KB=%M' \
             timeout "$TIMEOUT_S" "$TRANSFER_SCRIPT" "$case_id" "$fact_count" "$MATCH_ROUNDS" "suite_total"
     ) >"$log" 2>&1 || shell_status=$?

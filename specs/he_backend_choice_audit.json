@@ -7,14 +7,14 @@
     "extension_rule": "CeTTa-only APIs are acceptable when they are labeled explicitly and kept out of the HE-core compatibility claim."
   },
   "sources": [
-    "/home/zar/claude/c-projects/cetta/specs/he_runtime_3layer_matrix.json",
-    "/home/zar/claude/c-projects/cetta/specs/runtime_callables.json",
-    "/home/zar/claude/c-projects/cetta/lib/stdlib.metta",
-    "/home/zar/claude/c-projects/cetta/src/eval.c",
-    "/home/zar/claude/c-projects/cetta/src/grounded.c",
-    "/home/zar/claude/c-projects/cetta/src/match.c",
-    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/stdlib.metta",
-    "/home/zar/claude/hyperon/hyperon-experimental/lib/src/metta/runner/stdlib/core.rs"
+    "specs/he_runtime_3layer_matrix.json",
+    "specs/runtime_callables.json",
+    "lib/stdlib.metta",
+    "src/eval.c",
+    "src/grounded.c",
+    "src/match.c",
+    "hyperon-experimental/lib/src/metta/runner/stdlib/stdlib.metta",
+    "hyperon-experimental/lib/src/metta/runner/stdlib/core.rs"
   ],
   "entries": [
     {
@@ -48,9 +48,9 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_foldl_atom.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_minimal_foldl_atom_errors.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_minimal_foldl_atom_bad_space.metta"
+        "tests/test_foldl_atom.metta",
+        "tests/test_minimal_foldl_atom_errors.metta",
+        "tests/test_minimal_foldl_atom_bad_space.metta"
       ]
     },
     {
@@ -83,8 +83,8 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_foldl_atom_in_space_extension.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_foldl_atom.metta"
+        "tests/test_foldl_atom_in_space_extension.metta",
+        "tests/test_foldl_atom.metta"
       ]
     },
     {
@@ -110,7 +110,7 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_foldl_atom.metta"
+        "tests/test_foldl_atom.metta"
       ]
     },
     {
@@ -144,10 +144,10 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_capture.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_capture_arity.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_capture_extra_args.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_capture_bound_arity.metta"
+        "tests/test_capture.metta",
+        "tests/test_capture_arity.metta",
+        "tests/test_capture_extra_args.metta",
+        "tests/test_capture_bound_arity.metta"
       ]
     },
     {
@@ -174,9 +174,9 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_quote.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_quote_arity.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_unquote.metta"
+        "tests/test_quote.metta",
+        "tests/test_quote_arity.metta",
+        "tests/test_unquote.metta"
       ]
     },
     {
@@ -203,7 +203,7 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_unquote.metta"
+        "tests/test_unquote.metta"
       ]
     },
     {
@@ -237,8 +237,8 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_sealed.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_sealed_arity.metta"
+        "tests/test_sealed.metta",
+        "tests/test_sealed_arity.metta"
       ]
     },
     {
@@ -264,7 +264,7 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_unknown_space_count.metta"
+        "tests/test_unknown_space_count.metta"
       ]
     },
     {
@@ -301,13 +301,13 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_include_arity.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_include_missing.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_mod_space.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_mod_space_arity.metta",
-        "/home/zar/claude/c-projects/cetta/tests/spec_mod_space_missing.metta",
-        "/home/zar/claude/c-projects/cetta/tests/spec_include_unit.metta",
-        "/home/zar/claude/c-projects/cetta/tests/spec_print_mods_inventory.metta"
+        "tests/test_include_arity.metta",
+        "tests/test_include_missing.metta",
+        "tests/test_mod_space.metta",
+        "tests/test_mod_space_arity.metta",
+        "tests/spec_mod_space_missing.metta",
+        "tests/spec_include_unit.metta",
+        "tests/spec_print_mods_inventory.metta"
       ]
     },
     {
@@ -343,9 +343,9 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_import_modules.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_import_transaction.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_register_module_rebind.metta"
+        "tests/test_import_modules.metta",
+        "tests/test_import_transaction.metta",
+        "tests/test_register_module_rebind.metta"
       ]
     },
     {
@@ -382,7 +382,7 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/spec_module_inventory.metta"
+        "tests/spec_module_inventory.metta"
       ]
     },
     {
@@ -419,10 +419,10 @@
         ]
       },
       "tests": [
-        "/home/zar/claude/c-projects/cetta/tests/test_git_module_arity.metta",
-        "/home/zar/claude/c-projects/cetta/tests/test_git_module_missing.metta",
-        "make -C /home/zar/claude/c-projects/cetta test-git-module",
-        "/home/zar/claude/c-projects/cetta/runtime/he_git_module_probe.metta"
+        "tests/test_git_module_arity.metta",
+        "tests/test_git_module_missing.metta",
+        "make test-git-module",
+        "runtime/he_git_module_probe.metta"
       ]
     }
   ]

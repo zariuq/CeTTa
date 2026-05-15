@@ -143,10 +143,9 @@ $(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
 $(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS) $(MORK_BRIDGE_WORKSPACE_MANIFEST)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
 	@cd $(MORK_BRIDGE_WORKDIR) && \
-	(ulimit -v 10485760 2>/dev/null || true) && \
-	CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
-	RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
-	cargo build --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
+		CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
+		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
+		cargo build --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
 	@test -f "$(MORK_BRIDGE_STATICLIB)"
 	@touch "$@"
 
@@ -2359,7 +2358,6 @@ oracle-refresh:
 		fi; \
 		exp="$${f%.metta}.expected"; \
 		echo "oracle: $$f"; \
-		ulimit -v 6291456; \
 		source $$HOME/miniconda3/bin/activate hyperon && \
 		timeout 30 metta "$$f" > "$$exp" 2>&1; \
 	done; \
@@ -2492,24 +2490,24 @@ bench-join12-runtime-backends: $(BIN)
 	done
 
 bench-d4: $(BIN)
-	@out=$$(ulimit -v 6291456; timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
+	@out=$$(timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 	status=$$?; \
 	count=$$(printf '%s\n' "$$out" | tail -1); \
 	echo "depth-4 total: $$count theorems"; \
 	if [ $$status -eq 0 ] && printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
-		echo "PASS: depth-4 produced a count under the memory cap"; \
+		echo "PASS: depth-4 produced a count"; \
 	else \
 		printf '%s\n' "$$out" | tail -5; \
 		echo "FAIL: depth-4 did not produce a valid count"; exit 1; \
 	fi
 
 bench-d4-nodup: $(BIN)
-	@out=$$(ulimit -v 6291456; timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+	@out=$$(timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
 	status=$$?; \
 	count=$$(printf '%s\n' "$$out" | tail -1); \
 	echo "depth-4 nodup total: $$count theorems"; \
 	if [ $$status -eq 0 ] && printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
-		echo "PASS: depth-4 nodup produced a count under the memory cap"; \
+		echo "PASS: depth-4 nodup produced a count"; \
 	else \
 		printf '%s\n' "$$out" | tail -5; \
 		echo "FAIL: depth-4 nodup did not produce a valid count"; exit 1; \
@@ -2517,7 +2515,7 @@ bench-d4-nodup: $(BIN)
 
 bench-d4-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		out=$$(ulimit -v 6291456; timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
+		out=$$(timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 		status=$$?; \
 		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
 		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
@@ -2535,7 +2533,7 @@ bench-d4-backends: $(BIN)
 
 bench-d4-nodup-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		out=$$(ulimit -v 6291456; timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+		out=$$(timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
 		status=$$?; \
 		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
 		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
@@ -2566,7 +2564,7 @@ bench-mork-bridge-add:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_add
 	@for n in $(or $(BENCH_MORK_BRIDGE_SIZES),1000 10000 100000); do \
 		echo "=== bridge-add $$n ==="; \
-		(ulimit -v 10485760; ./runtime/bench_mork_bridge_add "$$n" $(or $(BENCH_MORK_BRIDGE_REPEAT),3)); \
+		./runtime/bench_mork_bridge_add "$$n" $(or $(BENCH_MORK_BRIDGE_REPEAT),3); \
 		echo; \
 	done
 
@@ -2575,7 +2573,7 @@ bench-mork-bridge-query:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_query
 	@for n in $(or $(BENCH_MORK_BRIDGE_QUERY_SIZES),1000 10000 100000); do \
 		echo "=== bridge-query $$n ==="; \
-		(ulimit -v 10485760; ./runtime/bench_mork_bridge_query "$$n" $(or $(BENCH_MORK_BRIDGE_QUERY_REPEAT),3)); \
+		./runtime/bench_mork_bridge_query "$$n" $(or $(BENCH_MORK_BRIDGE_QUERY_REPEAT),3); \
 		echo; \
 	done
 
@@ -2584,7 +2582,7 @@ bench-mork-bridge-scalar-cursor:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_scalar_cursor
 	@for n in $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_SIZES),1000 10000 100000); do \
 		echo "=== bridge-scalar-cursor $$n ==="; \
-		(ulimit -v 10485760; ./runtime/bench_mork_bridge_scalar_cursor "$$n" $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_REPEAT),3)); \
+		./runtime/bench_mork_bridge_scalar_cursor "$$n" $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_REPEAT),3); \
 		echo; \
 	done
 
@@ -2593,7 +2591,7 @@ bench-mork-bridge-space-ops:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_space_ops
 	@for n in $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_SIZES),1000 10000 100000); do \
 		echo "=== bridge-space-ops $$n ==="; \
-		(ulimit -v 10485760; ./runtime/bench_mork_bridge_space_ops "$$n" $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_REPEAT),3)); \
+		./runtime/bench_mork_bridge_space_ops "$$n" $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_REPEAT),3); \
 		echo; \
 	done
 

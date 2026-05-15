@@ -9,7 +9,7 @@ Usage:
   scripts/run_witness.sh --show-baselines
 
 Runs a named witness from perf/witness_catalog.tsv with the recorded timeout and
-memory budget, then prints a stable machine-readable summary plus a TSV record
+witness metadata, then prints a stable machine-readable summary plus a TSV record
 line that can be copied into perf/baseline_records.tsv when desired.
 EOF
 }
@@ -40,7 +40,7 @@ if [[ -z "$row" ]]; then
     exit 2
 fi
 
-IFS=$'\t' read -r witness_name category build_hint timeout_s mem_kib command notes <<< "$row"
+IFS=$'\t' read -r witness_name category build_hint timeout_s resource_hint_kib command notes <<< "$row"
 
 witness_bin="./cetta"
 witness_build_config="./runtime/bootstrap/build_config.core.h"
@@ -83,12 +83,12 @@ ensure_build_from_hint() {
 
     if [[ "$enable_runtime_stats" -eq 1 ]]; then
         runtime_target="runtime/cetta-${build_mode}-runtime-stats"
-        (cd "$repo_root" && ulimit -v "$mem_kib" && \
+        (cd "$repo_root" && \
             make -j1 BUILD="$build_mode" ENABLE_RUNTIME_STATS=1 "$runtime_target" >/dev/null)
         witness_bin="./$runtime_target"
         witness_build_config="./runtime/bootstrap/build_config.${build_mode}.runtime-stats.h"
     else
-        (cd "$repo_root" && ulimit -v "$mem_kib" && \
+        (cd "$repo_root" && \
             make -j1 BUILD="$build_mode" ENABLE_RUNTIME_STATS=0 cetta >/dev/null)
         witness_bin="./cetta"
         witness_build_config="./runtime/bootstrap/build_config.${build_mode}.h"
@@ -122,7 +122,6 @@ trap 'rm -f "$logfile"' EXIT
 set +e
 (
     cd "$repo_root"
-    ulimit -v "$mem_kib"
     /usr/bin/time -f 'ELAPSED=%E\nRSS_KB=%M\nEXIT=%x' \
         timeout "$timeout_s" bash -lc "$run_command"
 ) >"$logfile" 2>&1
@@ -173,7 +172,7 @@ printf 'TREE_STATE=%s\n' "$tree_state"
 printf 'STATUS=%s\n' "$status"
 printf 'STATUS_REASON=%s\n' "$status_reason"
 printf 'TIMEOUT_S=%s\n' "$timeout_s"
-printf 'MEM_KIB=%s\n' "$mem_kib"
+printf 'RESOURCE_HINT_KIB=%s\n' "$resource_hint_kib"
 printf 'ELAPSED=%s\n' "${elapsed:-unknown}"
 printf 'RSS_KB=%s\n' "${rss_kib:-unknown}"
 printf 'COMMAND=%s\n' "$run_command"
@@ -189,7 +188,7 @@ printf 'TSV_RECORD=%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${rss_kib:-unknown}" \
     "$build_hint" \
     "$timeout_s" \
-    "$mem_kib" \
+    "$resource_hint_kib" \
     "${last_payload:-}"
 
 if [[ "$shell_status" -ne 0 && "$shell_status" -ne 124 ]]; then

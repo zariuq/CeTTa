@@ -1,4 +1,4 @@
-name	repo_label	commit	status	elapsed	rss_kib	build_hint	timeout_s	mem_kib	note	role
+name	repo_label	commit	status	elapsed	rss_kib	build_hint	timeout_s	resource_hint_kib	note	role
 tu_fc_d3_variant	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	0:09.04	15992	core	60	6291456	Clean TU checkpoint hot-path benchmark baseline.	solid_anchor
 core_conjunction12_count	CeTTa-TermUniverse-baseline-4ac722a	4ac722a	pass	0:00.10	25208	core	60	6291456	Clean TU checkpoint structured-space count benchmark baseline.	solid_anchor
 tu_tail_special_forms	CeTTa-main-preTU-fc3afa7	fc3afa7	pass	0:00.65	479268	core	300	10485760	True pre-TU main anchor.	solid_anchor

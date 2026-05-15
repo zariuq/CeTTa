@@ -97,7 +97,7 @@ run_case() {
     local program
     program="$(prepare_case_program "$mode" "$n")"
     /usr/bin/time -f '%e' \
-        bash -lc "ulimit -v 10485760 && cd '$ROOT' && ./cetta --quiet --lang he '$program' >/dev/null" \
+        bash -lc "cd '$ROOT' && ./cetta --quiet --lang he '$program' >/dev/null" \
         2>&1
 }
 

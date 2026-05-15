@@ -8,7 +8,6 @@ BUILD_CFG="${CETTA_BUILD_CONFIG:-$ROOT/runtime/bootstrap/build_config.core.runti
 RUNTIME_DIR="$ROOT/runtime"
 BENCH_DIR="$RUNTIME_DIR/bench_answer_ref_demand"
 SEED_COUNT="${1:-32}"
-VM_LIMIT_KIB="${VM_LIMIT_KIB:-6291456}"
 
 if [ ! -x "$BIN" ]; then
     echo "error: missing executable $BIN" >&2
@@ -149,7 +148,7 @@ run_case() {
     log_file="$BENCH_DIR/${scenario}_${SEED_COUNT}.log"
 
     /usr/bin/time -f 'ELAPSED=%e\nRSS_KB=%M' \
-        bash -lc "ulimit -v '$VM_LIMIT_KIB' && cd '$ROOT' && '$BIN' --emit-runtime-stats --quiet '$program'" \
+        bash -lc "cd '$ROOT' && '$BIN' --emit-runtime-stats --quiet '$program'" \
         > "$out_file" 2> "$log_file"
 
     table_hit="$(counter_value "$log_file" "table-hit")"

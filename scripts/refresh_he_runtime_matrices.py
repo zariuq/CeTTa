@@ -18,16 +18,15 @@ checked refresh path fixes drift in status/layer claims without re-auditing the
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = ROOT.parents[1]
-HE_ROOT = WORKSPACE / "hyperon" / "hyperon-experimental"
-HE_STDLIB = HE_ROOT / "lib" / "src" / "metta" / "runner" / "stdlib"
 SPECS = ROOT / "specs"
 
 IMPL_MATRIX_PATH = SPECS / "he_runtime_impl_matrix.json"
@@ -39,6 +38,36 @@ GROUNDED_PATH = ROOT / "src" / "grounded.c"
 PARSER_PATH = ROOT / "src" / "parser.c"
 COMPILE_PATH = ROOT / "src" / "compile.c"
 STDLIB_PATH = ROOT / "lib" / "stdlib.metta"
+
+
+def discover_he_root() -> Path | None:
+    override = os.environ.get("CETTA_HE_ROOT")
+    candidates = []
+    if override:
+        candidates.append(Path(override))
+    candidates.extend([
+        ROOT.parent / "hyperon-experimental",
+        ROOT.parent / "hyperon" / "hyperon-experimental",
+        ROOT.parents[1] / "hyperon-experimental",
+        ROOT.parents[1] / "hyperon" / "hyperon-experimental",
+    ])
+    for candidate in candidates:
+        stdlib = candidate / "lib" / "src" / "metta" / "runner" / "stdlib"
+        if stdlib.is_dir():
+            return candidate.resolve()
+    return None
+
+
+HE_ROOT = discover_he_root()
+if HE_ROOT is None:
+    print(
+        "error: unable to locate a hyperon-experimental checkout. "
+        "Set CETTA_HE_ROOT=/path/to/hyperon-experimental.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+HE_STDLIB = HE_ROOT / "lib" / "src" / "metta" / "runner" / "stdlib"
 
 HE_IMPL_FILES = [
     HE_STDLIB / "arithmetics.rs",
@@ -59,6 +88,19 @@ KERNEL_FALLBACK = [
     "new-state", "get-state", "change-state!", "context-space", "import!",
     "register-module!",
 ]
+
+
+def display_path(path: Path) -> str:
+    path = path.resolve()
+    try:
+        return str(path.relative_to(ROOT)).replace("\\", "/")
+    except ValueError:
+        pass
+    try:
+        return str(Path("hyperon-experimental") / path.relative_to(HE_ROOT)).replace("\\", "/")
+    except ValueError:
+        pass
+    return path.name
 
 
 def read_text(path: Path) -> str:
@@ -221,8 +263,13 @@ def build_impl_matrix(audit_map: dict[str, dict]) -> dict:
     return {
         "generated_on": date.today().isoformat(),
         "scope": "HE Rust stdlib grounded/user-callable implementation matrix",
-        "sources": [str(path) for path in HE_IMPL_FILES] + [
-            str(EVAL_PATH), str(GROUNDED_PATH), str(PARSER_PATH), str(COMPILE_PATH), str(STDLIB_PATH), str(AUDIT_PATH)
+        "sources": [display_path(path) for path in HE_IMPL_FILES] + [
+            display_path(EVAL_PATH),
+            display_path(GROUNDED_PATH),
+            display_path(PARSER_PATH),
+            display_path(COMPILE_PATH),
+            display_path(STDLIB_PATH),
+            display_path(AUDIT_PATH),
         ],
         "summary": {
             "total_heads": len(entries),
@@ -265,13 +312,13 @@ def build_3layer_matrix(audit_map: dict[str, dict], impl_matrix: dict) -> dict:
         "generated_on": date.today().isoformat(),
         "scope": "HE 3-layer runtime overview (kernel / grounded / stdlib docs) cross-referenced against CeTTa",
         "sources": [
-            str(THREELAYER_MATRIX_PATH if THREELAYER_MATRIX_PATH.exists() else STDLIB_PATH),
-            str(IMPL_MATRIX_PATH),
-            str(EVAL_PATH),
-            str(GROUNDED_PATH),
-            str(PARSER_PATH),
-            str(COMPILE_PATH),
-            str(STDLIB_PATH),
+            display_path(THREELAYER_MATRIX_PATH if THREELAYER_MATRIX_PATH.exists() else STDLIB_PATH),
+            display_path(IMPL_MATRIX_PATH),
+            display_path(EVAL_PATH),
+            display_path(GROUNDED_PATH),
+            display_path(PARSER_PATH),
+            display_path(COMPILE_PATH),
+            display_path(STDLIB_PATH),
         ],
         "summary": {
             tier: {

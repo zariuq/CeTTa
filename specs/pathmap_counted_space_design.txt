@@ -19,7 +19,7 @@ Goals
 
 1. Keep PathMap as the single structural term index / storage truth.
 2. Represent multiplicity without `atom_index_rows`.
-3. Stay compatible with mainline `/home/zar/claude/hyperon/PathMap`.
+3. Stay compatible with mainline `PathMap`.
 4. Preserve prefix-based narrowing for factor queries.
 5. Keep CeTTa free to optimize query semantics locally.
 

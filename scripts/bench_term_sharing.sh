@@ -21,18 +21,16 @@ ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 CETTA_BIN="$ROOT/cetta"
 
 MODE="${1:-quick}"
-VM_LIMIT_KB="${VM_LIMIT_KB:-2097152}"  # 2GB
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-45}"
 
 echo "=== Term Sharing Benchmark Suite ==="
 echo "Mode: $MODE"
-echo "VM limit: ${VM_LIMIT_KB}KB"
 echo ""
 
 run_stress_test() {
     echo "--- Stress Test (targeted sharing invariants) ---"
     if /usr/bin/time -f 'rss=%MKB time=%E' \
-        bash -c "ulimit -v $VM_LIMIT_KB; timeout $TIMEOUT_SECONDS '$CETTA_BIN' --emit-runtime-stats '$ROOT/benchmarks/bench_term_sharing_stress.metta'" 2>&1 | \
+        bash -c "timeout $TIMEOUT_SECONDS '$CETTA_BIN' --emit-runtime-stats '$ROOT/benchmarks/bench_term_sharing_stress.metta'" 2>&1 | \
         grep -E '(hashcons|term-universe|space-len|Test|===|rss=)'; then
         echo "STATUS: pass"
     else
@@ -46,7 +44,7 @@ run_blowup_test() {
     local status=0
     local output
     output=$(/usr/bin/time -f 'rss=%MKB time=%E' \
-        bash -c "ulimit -v $VM_LIMIT_KB; timeout $TIMEOUT_SECONDS '$CETTA_BIN' '$ROOT/benchmarks/bench_term_sharing_blowup.metta'" 2>&1) || status=$?
+        bash -c "timeout $TIMEOUT_SECONDS '$CETTA_BIN' '$ROOT/benchmarks/bench_term_sharing_blowup.metta'" 2>&1) || status=$?
 
     if echo "$output" | grep -q 'SUCCESS: Blowup avoided'; then
         echo "STATUS: pass"

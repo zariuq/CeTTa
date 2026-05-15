@@ -39,7 +39,7 @@ run_case() {
     expr="$(case_expr "$mode")"
     expr="${expr//__N__/$n}"
     /usr/bin/time -f '%e' \
-        bash -lc "ulimit -v 6291456 && cd '$ROOT' && ./cetta --quiet --lang he -e '$expr' >/dev/null" \
+        bash -lc "cd '$ROOT' && ./cetta --quiet --lang he -e '$expr' >/dev/null" \
         2>&1
 }
 

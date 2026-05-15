@@ -1,7 +1,8 @@
 ; ALIGNED BENCH v4 — Pure PeTTa, 3-hop, 155 edges, scored + filtered
 ; Expected: 152 scored triples (matching all other versions)
 
-!(import! &self /home/zar/claude/hyperon/PeTTa/lib/lib_he)
+; Assumes a sibling PeTTa checkout in the standard workspace layout.
+!(import! &self ../../PeTTa/lib/lib_he)
 
 ; === Graph (155 edges) ===
 (edge src n00 0.38)
