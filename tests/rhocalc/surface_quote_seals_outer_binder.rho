@@ -1,0 +1,2 @@
+// H7.7 Surface literal quote is parsed outside the current input-binder scope.
+for ($x <- @{0}) {@{*$x}!(0)} | @{0}!(@{0}!(0))

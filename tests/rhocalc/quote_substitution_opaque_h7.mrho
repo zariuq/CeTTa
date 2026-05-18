@@ -1,0 +1,9 @@
+; H7.1 Literal quote is static code, not a dynamic substitution context.
+; The $x below is inside a literal rho:quote name. COMM substitutes in the
+; receive body, but must not descend through the quoted process body.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:send
+      (rho:quote (rho:send $x rho:nil))
+      rho:nil))
+  (rho:send (rho:quote rho:nil) rho:nil))

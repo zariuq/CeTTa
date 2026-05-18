@@ -21,6 +21,13 @@ typedef enum {
 } CettaLanguageId;
 
 typedef enum {
+    CETTA_SYNTAX_AUTO = 0,
+    CETTA_SYNTAX_METTA = 1,
+    CETTA_SYNTAX_MRHO = 2,
+    CETTA_SYNTAX_RHO = 3
+} CettaSyntaxId;
+
+typedef enum {
     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY = 0,
     CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK = 1,
     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY = 2,
@@ -38,6 +45,11 @@ typedef struct {
 const CettaLanguageSpec *cetta_language_lookup(const char *name);
 const CettaLanguageSpec *cetta_language_from_id(CettaLanguageId id);
 const char *cetta_language_canonical_name(CettaLanguageId id);
+const char *cetta_syntax_name(CettaSyntaxId syntax);
+bool cetta_syntax_from_name(const char *name, CettaSyntaxId *out_syntax);
+CettaSyntaxId cetta_syntax_default_for_language(CettaLanguageId id);
+CettaSyntaxId cetta_syntax_infer_for_path(CettaLanguageId id, const char *path);
+bool cetta_language_supports_syntax(CettaLanguageId id, CettaSyntaxId syntax);
 const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy);
 bool cetta_relative_module_policy_from_name(const char *name,
                                             CettaRelativeModulePolicy *out_policy);

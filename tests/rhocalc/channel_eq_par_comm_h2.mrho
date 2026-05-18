@@ -1,0 +1,18 @@
+; H2.2 Channel matching under par-commutativity inside @{...}.
+; Send channel: @{send@{0}(0) | for($z <- @{0}) {0}}
+; Recv channel: @{for($z <- @{0}) {0} | send@{0}(0)}
+; ACU sort should canonicalize both to the same order; COMM should fire.
+(rho:par
+  (rho:send
+    (rho:quote
+      (rho:par
+        (rho:send (rho:quote rho:nil) rho:nil)
+        (rho:recv (rho:quote rho:nil) $z rho:nil)))
+    rho:nil)
+  (rho:recv
+    (rho:quote
+      (rho:par
+        (rho:recv (rho:quote rho:nil) $z rho:nil)
+        (rho:send (rho:quote rho:nil) rho:nil)))
+    $x
+    rho:nil))

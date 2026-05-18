@@ -1,0 +1,7 @@
+; H4.1 Paper-faithful name-pass: COMM with non-trivial payload.
+; for($x <- @{0}) {*$x} | @{0}!(@{0}!(0))
+; After COMM: $x bound to @{send@{0}(0)}; body *$x reduces via drop-quote to send@{0}(0).
+; Meredith-Radestock 2005 §3: basic name-pass illustration.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x (rho:drop $x))
+  (rho:send (rho:quote rho:nil) (rho:send (rho:quote rho:nil) rho:nil)))

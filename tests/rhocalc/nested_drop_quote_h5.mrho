@@ -1,0 +1,18 @@
+; H5 Iterated drop-quote cancellation in channel.
+; Send channel: @{*@{*@{ for($x <- @{0}) {*$x} }}}
+; Recv channel: @{ for($x <- @{0}) {*$x} }
+; Both should normalize to the same canonical name; COMM should fire.
+(rho:par
+  (rho:send
+    (rho:quote
+      (rho:drop
+        (rho:quote
+          (rho:drop
+            (rho:quote
+              (rho:recv (rho:quote rho:nil) $x (rho:drop $x)))))))
+    rho:nil)
+  (rho:recv
+    (rho:quote
+      (rho:recv (rho:quote rho:nil) $x (rho:drop $x)))
+    $z
+    rho:nil))
