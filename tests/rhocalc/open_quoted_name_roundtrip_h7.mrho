@@ -1,0 +1,5 @@
+; H7.4 Open variables under literal quote remain static quoted data.
+; This fixture is also the one-step result shape of quote_substitution_opaque_h7.
+(rho:send
+  (rho:quote (rho:send $x rho:nil))
+  rho:nil)

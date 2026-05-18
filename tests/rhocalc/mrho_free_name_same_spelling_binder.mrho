@@ -1,0 +1,8 @@
+; A free $x remains distinct from an inner receive binder also spelled $x.
+; The printed result is spelling-ambiguous, but the parsed core identities are
+; different; this fixture locks in the elaboration boundary.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $y
+    (rho:recv (rho:quote rho:nil) $x
+      (rho:drop $y)))
+  (rho:send (rho:quote rho:nil) (rho:drop $x)))

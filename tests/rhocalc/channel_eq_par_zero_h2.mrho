@@ -1,0 +1,13 @@
+; H2.1 Channel matching under par-with-0 identity inside @{...}.
+; Send channel: @{0 | send@{0}(0)} — syntactically distinct from recv channel.
+; Recv channel: @{send@{0}(0)}.
+; Both normalize to @{send@{0}(0)}; COMM should fire.
+; If COMM fires: result is (rho:steps rho:nil); if not: (rho:steps).
+(rho:par
+  (rho:send
+    (rho:quote (rho:par rho:nil (rho:send (rho:quote rho:nil) rho:nil)))
+    rho:nil)
+  (rho:recv
+    (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+    $x
+    rho:nil))

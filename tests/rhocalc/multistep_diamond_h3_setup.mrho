@@ -1,0 +1,12 @@
+; H3 Diamond confluence — initial process with two independent recv/send pairs.
+; Channels are distinct: @{0} (pair A) and @{send@{0}(0)} (pair B).
+; pair A: for($x <- @{0}) {*$x} | @{0}!(send@{0}(send@{0}(0)))
+; pair B: for($y <- @{send@{0}(0)}) {*$y} | @{send@{0}(0)}!(0)
+; One-step output should list both possible reductions in (rho:steps ...).
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x (rho:drop $x))
+  (rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $y (rho:drop $y))
+  (rho:send (rho:quote rho:nil)
+    (rho:send (rho:quote rho:nil)
+      (rho:send (rho:quote rho:nil) rho:nil)))
+  (rho:send (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) rho:nil))

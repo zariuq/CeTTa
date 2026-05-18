@@ -183,7 +183,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_CANON).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -871,7 +871,7 @@ define require_runtime_stats_or_reexec
 	fi
 endef
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-closed-stream-fastpath
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -951,6 +951,71 @@ endif
 test-light: test
 
 test-correctness: test
+
+test-rhocalc: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/rhocalc/*.mrho tests/rhocalc/*.rho; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		if [ ! -f "$$exp" ]; then continue; fi; \
+		result=$$(./$(BIN) --lang rhocalc "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	result=$$(./$(BIN) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/pure_surface.rho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_to_mrho.expected)" ]; then \
+		echo "PASS: rhocalc translate rho -> mrho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate rho -> mrho"; \
+		diff <(cat tests/rhocalc/translate_rho_to_mrho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/core_comm.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_to_rho.expected)" ]; then \
+		echo "PASS: rhocalc translate mrho -> rho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate mrho -> rho"; \
+		diff <(cat tests/rhocalc/translate_mrho_to_rho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_alpha_to_mrho.expected)" ]; then \
+		echo "PASS: rhocalc translate alpha mrho -> mrho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate alpha mrho -> mrho"; \
+		diff <(cat tests/rhocalc/translate_mrho_alpha_to_mrho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_alpha_to_rho.expected)" ]; then \
+		echo "PASS: rhocalc translate alpha mrho -> rho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate alpha mrho -> rho"; \
+		diff <(cat tests/rhocalc/translate_mrho_alpha_to_rho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/surface_shadowing.rho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_shadow_to_mrho.expected)" ]; then \
+		echo "PASS: rhocalc translate shadow rho -> mrho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate shadow rho -> mrho"; \
+		diff <(cat tests/rhocalc/translate_rho_shadow_to_mrho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 probe-core-lane: $(BIN)
 	@for f in $(CORE_PROBE_TESTS); do \
@@ -2324,7 +2389,8 @@ test-runtime-stats-cli: $(BIN)
 test-help-flags: $(BIN)
 	@help_long=$$(./$(BIN) --help 2>&1); \
 	help_short=$$(./$(BIN) -h 2>&1); \
-	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] <file.metta>' && \
+	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
 	   [ "$$help_long" = "$$help_short" ]; then \
 		echo "PASS: cli help flags"; \

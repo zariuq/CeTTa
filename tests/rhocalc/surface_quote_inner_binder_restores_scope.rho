@@ -1,0 +1,4 @@
+// Quoted binders must not corrupt the surrounding surface binder stack.
+for ($x <- @{0}) {
+  @{for ($y <- @{0}) {*$y}}!(0) | $x!(0)
+} | @{0}!(@{0}!(0))

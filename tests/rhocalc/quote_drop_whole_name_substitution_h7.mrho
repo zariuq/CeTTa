@@ -1,0 +1,11 @@
+; H7.2 Literal quote seals the surrounding input scope, even for @{*$x}.
+; The $x inside the quoted drop is free, not the outer receive binder. After
+; quote-drop normalization, the resulting send channel is that free $x.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:send
+      (rho:quote (rho:drop $x))
+      rho:nil))
+  (rho:send
+    (rho:quote rho:nil)
+    (rho:send (rho:quote rho:nil) rho:nil)))

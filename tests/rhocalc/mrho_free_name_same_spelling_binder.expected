@@ -1,0 +1,1 @@
+(rho:steps (rho:recv (rho:quote rho:nil) $x_rho1 (rho:drop $x)))

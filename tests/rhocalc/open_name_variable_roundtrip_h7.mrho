@@ -1,0 +1,3 @@
+; H7.3 Open name variables are valid strict-core names.
+; A lone open send has no matching top-level receive, so it is stuck.
+(rho:send $x rho:nil)

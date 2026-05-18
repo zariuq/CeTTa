@@ -1,0 +1,8 @@
+; H4.3 Substitution into a channel position of an inner recv.
+; for($x <- @{0}) { for($y <- $x) {*$y} } | @{0}!(@{0}!(0))
+; After COMM: $x → @{send@{0}(0)}; inner recv's channel becomes @{send@{0}(0)}.
+; Exercises rho_subst_name in name (channel) position with replacement.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:recv $x $y (rho:drop $y)))
+  (rho:send (rho:quote rho:nil) (rho:send (rho:quote rho:nil) rho:nil)))
