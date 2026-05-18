@@ -32,7 +32,7 @@
 (: mork:zipper (-> MorkSpace Atom))
 (: mork:zipper-close! (-> Atom (->)))
 (: mork:zipper-path-exists (-> Atom Bool))
-(: mork:zipper-is-val (-> Atom Bool))
+(: mork:zipper-is-valid (-> Atom Bool))
 (: mork:zipper-child-count (-> Atom Number))
 (: mork:zipper-path-bytes (-> Atom Atom))
 (: mork:zipper-child-bytes (-> Atom Atom))
@@ -60,7 +60,7 @@
 (: mork:product-zipper (-> MorkSpace MorkSpace MorkSpace MorkSpace Atom))
 (: mork:product-zipper-close! (-> Atom (->)))
 (: mork:product-zipper-path-exists (-> Atom Bool))
-(: mork:product-zipper-is-val (-> Atom Bool))
+(: mork:product-zipper-is-valid (-> Atom Bool))
 (: mork:product-zipper-child-count (-> Atom Number))
 (: mork:product-zipper-path-bytes (-> Atom Atom))
 (: mork:product-zipper-child-bytes (-> Atom Atom))
@@ -86,7 +86,7 @@
 (: mork:overlay-zipper (-> MorkSpace MorkSpace Atom))
 (: mork:overlay-zipper-close! (-> Atom (->)))
 (: mork:overlay-zipper-path-exists (-> Atom Bool))
-(: mork:overlay-zipper-is-val (-> Atom Bool))
+(: mork:overlay-zipper-is-valid (-> Atom Bool))
 (: mork:overlay-zipper-child-count (-> Atom Number))
 (: mork:overlay-zipper-path-bytes (-> Atom Atom))
 (: mork:overlay-zipper-child-bytes (-> Atom Atom))
@@ -375,9 +375,9 @@
     (case (__cetta_lib_mork_zipper_path_exists $zipper)
       (($result (return $result))))))
 
-(= (mork:zipper-is-val $zipper)
+(= (mork:zipper-is-valid $zipper)
   (function
-    (case (__cetta_lib_mork_zipper_is_val $zipper)
+    (case (__cetta_lib_mork_zipper_is_valid $zipper)
       (($result (return $result))))))
 
 (= (mork:zipper-child-count $zipper)
@@ -515,9 +515,9 @@
     (case (__cetta_lib_mork_product_zipper_path_exists $zipper)
       (($result (return $result))))))
 
-(= (mork:product-zipper-is-val $zipper)
+(= (mork:product-zipper-is-valid $zipper)
   (function
-    (case (__cetta_lib_mork_product_zipper_is_val $zipper)
+    (case (__cetta_lib_mork_product_zipper_is_valid $zipper)
       (($result (return $result))))))
 
 (= (mork:product-zipper-child-count $zipper)
@@ -645,9 +645,9 @@
     (case (__cetta_lib_mork_overlay_zipper_path_exists $zipper)
       (($result (return $result))))))
 
-(= (mork:overlay-zipper-is-val $zipper)
+(= (mork:overlay-zipper-is-valid $zipper)
   (function
-    (case (__cetta_lib_mork_overlay_zipper_is_val $zipper)
+    (case (__cetta_lib_mork_overlay_zipper_is_valid $zipper)
       (($result (return $result))))))
 
 (= (mork:overlay-zipper-child-count $zipper)

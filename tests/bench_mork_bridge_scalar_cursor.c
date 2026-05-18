@@ -453,12 +453,12 @@ int main(int argc, char **argv) {
                                 cetta_mork_bridge_cursor_path_exists,
                                 true, false, false));
     printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-is-val-root",
+           "cursor-is-valid-root",
            n,
            n,
            run_cursor_bool_mode(space, n, repeat,
-                                "cetta_mork_bridge_cursor_is_val",
-                                cetta_mork_bridge_cursor_is_val,
+                                "cetta_mork_bridge_cursor_is_valid",
+                                cetta_mork_bridge_cursor_is_valid,
                                 false, false, false));
     printf("%-26s %10zu %10zu %10.6f\n",
            "cursor-child-count-root",
