@@ -1,0 +1,11 @@
+; H1a Shadow handling for same-name nested binders under mrho interning.
+; Outer recv binds $x; body has an inner recv that ALSO binds $x (shadows outer).
+; The inner-recv body uses $x (which lexically means INNER $x).
+; Outside the inner recv (but inside the outer recv body), $x is the OUTER $x.
+; After outer COMM fires: outer-$x is substituted, inner-recv body is shielded by shadow check.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:par
+      (rho:recv (rho:quote rho:nil) $x (rho:drop $x))
+      (rho:drop $x)))
+  (rho:send (rho:quote rho:nil) (rho:send (rho:quote rho:nil) rho:nil)))

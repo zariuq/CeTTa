@@ -1,0 +1,10 @@
+; MRHO elaboration gives nested same-spelling binders distinct identities.
+; This is the s-expression counterpart of surface_shadowing.rho.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:par
+      (rho:recv $x $x (rho:drop $x))
+      (rho:send $x rho:nil)))
+  (rho:send
+    (rho:quote rho:nil)
+    (rho:send (rho:quote rho:nil) rho:nil)))

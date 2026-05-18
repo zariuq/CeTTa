@@ -1,0 +1,22 @@
+; H2.3 Channel matching under par-associativity inside @{...}.
+; Send channel: @{(send@{0}(0) | recv@{0}($z, 0)) | send@{0}(0)} — explicit parenthesization shown via nested par
+; Recv channel: @{send@{0}(0) | (recv@{0}($z, 0) | send@{0}(0))}
+; rho_collect_par should flatten both; COMM should fire.
+(rho:par
+  (rho:send
+    (rho:quote
+      (rho:par
+        (rho:par
+          (rho:send (rho:quote rho:nil) rho:nil)
+          (rho:recv (rho:quote rho:nil) $z rho:nil))
+        (rho:send (rho:quote rho:nil) rho:nil)))
+    rho:nil)
+  (rho:recv
+    (rho:quote
+      (rho:par
+        (rho:send (rho:quote rho:nil) rho:nil)
+        (rho:par
+          (rho:recv (rho:quote rho:nil) $z rho:nil)
+          (rho:send (rho:quote rho:nil) rho:nil))))
+    $x
+    rho:nil))

@@ -9,6 +9,8 @@
 #include "cetta_stdlib.h"
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
+#include "rhocalc_core.h"
+#include "rhocalc_syntax.h"
 #include "stats.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -552,12 +554,211 @@ static void write_results(FILE *out, ResultSet *rs) {
     fprintf(out, "]\n");
 }
 
+typedef struct {
+    const char *lang_name;
+    const char *profile_name;
+    CettaSyntaxId syntax;
+    const CettaLanguageSpec *lang;
+    const CettaProfile *profile;
+} CettaCliEndpoint;
+
+static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
+    endpoint->lang_name = lang_name;
+    endpoint->profile_name = NULL;
+    endpoint->syntax = CETTA_SYNTAX_AUTO;
+    endpoint->lang = NULL;
+    endpoint->profile = NULL;
+}
+
+static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role) {
+    endpoint->lang = cetta_language_lookup(endpoint->lang_name);
+    if (!endpoint->lang) {
+        fprintf(stderr, "error: unknown %s language '%s'\n",
+                role, endpoint->lang_name);
+        cetta_language_print_inventory(stderr);
+        return false;
+    }
+    if (!endpoint->lang->implemented) {
+        fprintf(stderr,
+                "error: %s language '%s' is recognized but not implemented in cetta yet\n",
+                role, endpoint->lang_name);
+        fprintf(stderr, "note: %s\n", endpoint->lang->note);
+        return false;
+    }
+    if (endpoint->profile_name) {
+        if (!cetta_language_has_named_profiles(endpoint->lang->id)) {
+            fprintf(stderr, "error: %s language '%s' has no named profiles\n",
+                    role, endpoint->lang->canonical);
+            return false;
+        }
+        endpoint->profile =
+            cetta_profile_from_name_for_language(endpoint->lang->id,
+                                                 endpoint->profile_name);
+        if (!endpoint->profile) {
+            fprintf(stderr, "error: unknown %s profile '%s' for language '%s'\n",
+                    role, endpoint->profile_name, endpoint->lang->canonical);
+            cetta_profile_print_inventory_for_language(stderr, endpoint->lang->id);
+            return false;
+        }
+    }
+    return true;
+}
+
+static CettaSyntaxId endpoint_effective_syntax(const CettaCliEndpoint *endpoint,
+                                               const char *filename) {
+    if (endpoint->syntax != CETTA_SYNTAX_AUTO) {
+        return endpoint->syntax;
+    }
+    return cetta_syntax_infer_for_path(endpoint->lang->id, filename);
+}
+
+static bool endpoint_supports_syntax(const CettaCliEndpoint *endpoint,
+                                     CettaSyntaxId syntax,
+                                     const char *role) {
+    if (cetta_language_supports_syntax(endpoint->lang->id, syntax)) {
+        return true;
+    }
+    fprintf(stderr, "error: %s syntax '%s' is not supported for --lang %s\n",
+            role, cetta_syntax_name(syntax), endpoint->lang->canonical);
+    return false;
+}
+
+static int run_rhocalc_cli(const char *filename,
+                           const char *inline_text,
+                           CettaSyntaxId syntax,
+                           bool count_only) {
+    int rc = 0;
+    int n = 0;
+    Atom **atoms = NULL;
+    Arena arena;
+    SymbolTable symbol_table;
+    VarInternTable var_intern_table;
+    HashConsTable hashcons_table;
+
+    arena_init(&arena);
+    symbol_table_init(&symbol_table);
+    symbol_table_init_builtins(&symbol_table, &g_builtin_syms);
+    var_intern_init(&var_intern_table);
+    hashcons_init(&hashcons_table);
+    g_symbols = &symbol_table;
+    g_var_intern = &var_intern_table;
+    g_hashcons = &hashcons_table;
+    arena_set_hashcons(&arena, &hashcons_table);
+
+    n = inline_text
+        ? rhocalc_parse_text(inline_text, syntax, &arena, &atoms)
+        : rhocalc_parse_file(filename, syntax, &arena, &atoms);
+    if (n < 0) {
+        const char *detail = rhocalc_last_parse_error();
+        fprintf(stderr, "error: could not parse %s as rhocalc/%s\n",
+                inline_text ? "inline input" : filename,
+                cetta_syntax_name(syntax));
+        if (detail) fprintf(stderr, "note: %s\n", detail);
+        rc = 1;
+        goto done;
+    }
+
+    for (int i = 0; i < n; i++) {
+        RhoStepSet steps = {0};
+        Atom *steps_atom;
+        if (!rhocalc_one_step(&arena, atoms[i], &steps)) {
+            const char *detail = rhocalc_last_validation_error();
+            fprintf(stderr, "error: invalid rhocalc core process");
+            if (detail) fprintf(stderr, ": %s", detail);
+            fputc('\n', stderr);
+            free(steps.items);
+            rc = 1;
+            goto done;
+        }
+        if (count_only) {
+            printf("%u\n", steps.len);
+            free(steps.items);
+            continue;
+        }
+        steps_atom = rhocalc_steps_atom(&arena, &steps);
+        rhocalc_print_atom_syntax(steps_atom, CETTA_SYNTAX_MRHO, stdout);
+        fputc('\n', stdout);
+        free(steps.items);
+    }
+
+done:
+    free(atoms);
+    g_hashcons = NULL;
+    g_var_intern = NULL;
+    g_symbols = NULL;
+    hashcons_free(&hashcons_table);
+    var_intern_free(&var_intern_table);
+    symbol_table_free(&symbol_table);
+    arena_free(&arena);
+    return rc;
+}
+
+static int run_rhocalc_translation(const char *filename,
+                                   const char *inline_text,
+                                   CettaSyntaxId input_syntax,
+                                   CettaSyntaxId output_syntax) {
+    int rc = 0;
+    int n = 0;
+    Atom **atoms = NULL;
+    Arena arena;
+    SymbolTable symbol_table;
+    VarInternTable var_intern_table;
+    HashConsTable hashcons_table;
+
+    arena_init(&arena);
+    symbol_table_init(&symbol_table);
+    symbol_table_init_builtins(&symbol_table, &g_builtin_syms);
+    var_intern_init(&var_intern_table);
+    hashcons_init(&hashcons_table);
+    g_symbols = &symbol_table;
+    g_var_intern = &var_intern_table;
+    g_hashcons = &hashcons_table;
+    arena_set_hashcons(&arena, &hashcons_table);
+
+    n = inline_text
+        ? rhocalc_parse_text(inline_text, input_syntax, &arena, &atoms)
+        : rhocalc_parse_file(filename, input_syntax, &arena, &atoms);
+    if (n < 0) {
+        const char *detail = rhocalc_last_parse_error();
+        fprintf(stderr, "error: could not parse %s as rhocalc/%s\n",
+                inline_text ? "inline input" : filename,
+                cetta_syntax_name(input_syntax));
+        if (detail) fprintf(stderr, "note: %s\n", detail);
+        rc = 1;
+        goto done;
+    }
+    for (int i = 0; i < n; i++) {
+        if (!rhocalc_process_well_formed(atoms[i])) {
+            const char *detail = rhocalc_last_validation_error();
+            fprintf(stderr, "error: invalid rhocalc core process");
+            if (detail) fprintf(stderr, ": %s", detail);
+            fputc('\n', stderr);
+            rc = 1;
+            goto done;
+        }
+        rhocalc_print_atom_syntax(atoms[i], output_syntax, stdout);
+        fputc('\n', stdout);
+    }
+
+done:
+    free(atoms);
+    g_hashcons = NULL;
+    g_var_intern = NULL;
+    g_symbols = NULL;
+    hashcons_free(&hashcons_table);
+    var_intern_free(&var_intern_table);
+    symbol_table_free(&symbol_table);
+    arena_free(&arena);
+    return rc;
+}
+
 static void print_usage(FILE *out) {
-    fputs("usage: cetta [--lang <name>] <file.metta>\n", out);
+    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
+    fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he-compat|he-extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
-    fputs("       note: --lang selects the base language; --profile is an optional language-specific override\n", out);
+    fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
@@ -919,9 +1120,10 @@ int main(int argc, char **argv) {
         sigaction(SIGSEGV, &sa, NULL);
     }
 
-    const char *lang_name = "he";
-    const char *profile_name = NULL;
     const CettaProfile *profile = NULL;
+    CettaCliEndpoint source_endpoint;
+    CettaCliEndpoint target_endpoint;
+    CettaCliEndpoint *current_endpoint = NULL;
     bool import_mode_overridden = false;
     CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     const char *filename = NULL;
@@ -936,9 +1138,15 @@ int main(int argc, char **argv) {
     bool count_only = false;
     bool emit_runtime_stats = false;
     bool list_profiles = false;
+    bool translate_mode = false;
+    uint32_t lang_occurrences = 0;
     int fuel_override = -1;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
+
+    endpoint_init(&source_endpoint, "he");
+    endpoint_init(&target_endpoint, NULL);
+    current_endpoint = &source_endpoint;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -960,6 +1168,10 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--list-profiles") == 0) {
             list_profiles = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--translate") == 0 || strcmp(argv[i], "-t") == 0) {
+            translate_mode = true;
             continue;
         }
         if (strcmp(argv[i], "--compile") == 0) {
@@ -1046,7 +1258,33 @@ int main(int argc, char **argv) {
                 print_usage(stderr);
                 return 1;
             }
-            lang_name = argv[++i];
+            if (translate_mode && lang_occurrences >= 1) {
+                target_endpoint.lang_name = argv[++i];
+                current_endpoint = &target_endpoint;
+            } else {
+                source_endpoint.lang_name = argv[++i];
+                current_endpoint = &source_endpoint;
+            }
+            lang_occurrences++;
+            if (translate_mode && lang_occurrences > 2) {
+                fprintf(stderr, "error: --translate accepts at most two --lang endpoints\n");
+                return 2;
+            }
+            if (!translate_mode && lang_occurrences > 1) {
+                fprintf(stderr, "error: repeated --lang requires --translate\n");
+                return 2;
+            }
+            continue;
+        }
+        if (strcmp(argv[i], "--syntax") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!cetta_syntax_from_name(argv[++i], &current_endpoint->syntax)) {
+                fprintf(stderr, "error: unknown syntax '%s'\n", argv[i]);
+                return 2;
+            }
             continue;
         }
         if (strcmp(argv[i], "--profile") == 0) {
@@ -1054,7 +1292,7 @@ int main(int argc, char **argv) {
                 print_usage(stderr);
                 return 1;
             }
-            profile_name = argv[++i];
+            current_endpoint->profile_name = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--import-mode") == 0) {
@@ -1100,36 +1338,20 @@ int main(int argc, char **argv) {
     if (inline_buf)
         inline_text = inline_buf;
 
-    const CettaLanguageSpec *lang = cetta_language_lookup(lang_name);
-    if (!lang) {
-        fprintf(stderr, "error: unknown language '%s'\n", lang_name);
-        cetta_language_print_inventory(stderr);
+    if (translate_mode && !target_endpoint.lang_name) {
+        target_endpoint = source_endpoint;
+    }
+    if (!endpoint_resolve(&source_endpoint, "source")) {
+        free(inline_buf);
         return 2;
     }
-    if (!lang->implemented) {
-        fprintf(
-            stderr,
-            "error: language '%s' is recognized but not implemented in cetta yet\n",
-            lang_name
-        );
-        fprintf(stderr, "note: %s\n", lang->note);
+    if (translate_mode && !endpoint_resolve(&target_endpoint, "target")) {
+        free(inline_buf);
         return 2;
     }
 
-    if (profile_name) {
-        if (!cetta_language_has_named_profiles(lang->id)) {
-            fprintf(stderr, "error: language '%s' has no named profiles\n",
-                    lang->canonical);
-            return 2;
-        }
-        profile = cetta_profile_from_name_for_language(lang->id, profile_name);
-        if (!profile) {
-            fprintf(stderr, "error: unknown profile '%s' for language '%s'\n",
-                    profile_name, lang->canonical);
-            cetta_profile_print_inventory_for_language(stderr, lang->id);
-            return 2;
-        }
-    }
+    const CettaLanguageSpec *lang = source_endpoint.lang;
+    profile = source_endpoint.profile;
 
     if (list_profiles) {
         cetta_profile_print_inventory_for_language(stdout, lang->id);
@@ -1141,6 +1363,47 @@ int main(int argc, char **argv) {
         print_usage(stderr);
         free(inline_buf);
         return 1;
+    }
+
+    CettaSyntaxId syntax = endpoint_effective_syntax(&source_endpoint, filename);
+    if (!endpoint_supports_syntax(&source_endpoint, syntax, "source")) {
+        free(inline_buf);
+        return 2;
+    }
+
+    if (translate_mode) {
+        CettaSyntaxId output_syntax =
+            endpoint_effective_syntax(&target_endpoint, NULL);
+        if (!endpoint_supports_syntax(&target_endpoint, output_syntax, "target")) {
+            free(inline_buf);
+            return 2;
+        }
+        if (compile_mode || compile_stdlib_mode) {
+            fprintf(stderr, "error: --translate does not combine with compile modes\n");
+            free(inline_buf);
+            return 2;
+        }
+        if (source_endpoint.lang->id != CETTA_LANGUAGE_RHOCALC ||
+            target_endpoint.lang->id != CETTA_LANGUAGE_RHOCALC) {
+            fprintf(stderr, "error: --translate currently supports only rhocalc endpoints\n");
+            free(inline_buf);
+            return 2;
+        }
+        int translate_rc =
+            run_rhocalc_translation(filename, inline_text, syntax, output_syntax);
+        free(inline_buf);
+        return translate_rc;
+    }
+
+    if (lang->id == CETTA_LANGUAGE_RHOCALC) {
+        if (compile_mode || compile_stdlib_mode) {
+            fprintf(stderr, "error: compile modes are not supported with --lang rhocalc\n");
+            free(inline_buf);
+            return 2;
+        }
+        int rho_rc = run_rhocalc_cli(filename, inline_text, syntax, count_only);
+        free(inline_buf);
+        return rho_rc;
     }
 
     /* --compile-stdlib: parse .metta file, emit C blob header, exit */
