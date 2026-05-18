@@ -3079,7 +3079,7 @@ pub extern "C" fn mork_cursor_path_exists(cursor: *const MorkCursor) -> MorkStat
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn mork_cursor_is_val(cursor: *const MorkCursor) -> MorkStatus {
+pub extern "C" fn mork_cursor_is_valid(cursor: *const MorkCursor) -> MorkStatus {
     with_catch_status(|| unsafe {
         let bridge = match bridge_cursor_ref(cursor) {
             Ok(cursor) => cursor,
@@ -3494,7 +3494,7 @@ pub extern "C" fn mork_product_cursor_path_exists(cursor: *const MorkProductCurs
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn mork_product_cursor_is_val(cursor: *const MorkProductCursor) -> MorkStatus {
+pub extern "C" fn mork_product_cursor_is_valid(cursor: *const MorkProductCursor) -> MorkStatus {
     with_catch_status(|| unsafe {
         let bridge = match bridge_product_cursor_ref(cursor) {
             Ok(cursor) => cursor,
@@ -4009,7 +4009,7 @@ pub extern "C" fn mork_overlay_cursor_path_exists(cursor: *const MorkOverlayCurs
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn mork_overlay_cursor_is_val(cursor: *const MorkOverlayCursor) -> MorkStatus {
+pub extern "C" fn mork_overlay_cursor_is_valid(cursor: *const MorkOverlayCursor) -> MorkStatus {
     with_catch_status(|| unsafe {
         let bridge = match bridge_overlay_cursor_ref(cursor) {
             Ok(cursor) => cursor,
@@ -6002,11 +6002,11 @@ mod tests {
         assert_eq!(descended.value, 1);
 
         let exists = mork_overlay_cursor_path_exists(cursor);
-        let is_val = mork_overlay_cursor_is_val(cursor);
+        let is_valid = mork_overlay_cursor_is_valid(cursor);
         assert!(status_ok(&exists));
-        assert!(status_ok(&is_val));
+        assert!(status_ok(&is_valid));
         assert_eq!(exists.value, 1);
-        assert_eq!(is_val.value, 1);
+        assert_eq!(is_valid.value, 1);
 
         mork_overlay_cursor_free(cursor);
         mork_space_free(base);

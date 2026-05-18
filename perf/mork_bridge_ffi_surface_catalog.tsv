@@ -23,7 +23,7 @@ scalar-size-call	host<->rust	scalar	no rows, one u64 reply	./runtime/bench_mork_
 scalar-unique-size-call	host<->rust	scalar	no rows, one u64 reply	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures `space_unique_size` fixed cost directly.
 cursor-new	host->rust	cursor	cursor handle allocation	./runtime/bench_mork_bridge_scalar_cursor	implemented	Useful fixed overhead for streaming/query plans that reuse cursors.
 cursor-path-exists-root	host<->rust	cursor	root bool probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures the fixed boolean status call on the root cursor.
-cursor-is-val-root	host<->rust	cursor	root bool probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures root value-status latency without cursor movement.
+cursor-is-valid-root	host<->rust	cursor	root bool probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures root value-status latency without cursor movement.
 cursor-child-count-root	host<->rust	cursor	root u64 probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures fixed child-count latency on the root cursor.
 cursor-val-count-root	host<->rust	cursor	root u64 probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures fixed val-count latency on the root cursor.
 cursor-depth-root	host<->rust	cursor	root u64 probe	./runtime/bench_mork_bridge_scalar_cursor	implemented	Measures fixed depth latency on the root cursor.

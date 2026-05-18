@@ -1,2 +1,2 @@
 !(import! &self system)
-!(system-cwd)
+!(system:cwd)

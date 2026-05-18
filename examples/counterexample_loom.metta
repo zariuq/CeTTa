@@ -86,12 +86,12 @@
     (add-atoms $dst $atoms)))
 
 ; Check whether a specific atom exists in an exported ordinary space.
-(= (view-has? $space $atom)
+(= (view-has $space $atom)
   (let $hits (collapse (match $space $atom yes))
     (if (== (size-atom $hits) 0) False True)))
 
-(= (forbidden-absent? $space $atom)
-  (if (view-has? $space $atom) False True))
+(= (view-lacks $space $atom)
+  (if (view-has $space $atom) False True))
 
 (= (winner-if-ok $name $solar $lunar $sterile $chorus)
   (if (== $solar True)
@@ -162,39 +162,39 @@
 !(export-visible! &balancedChorusView &balancedChorus)
 
 !(println! (candidate-check solar-only
-             solar (view-has? &solarOnlySolarView (artifact star-lantern))
-             lunar (view-has? &solarOnlyLunarView (artifact star-lantern))
-             sterile (forbidden-absent? &solarOnlySterileView (artifact ash))
-             chorus-guard (forbidden-absent? &solarOnlyChorusView (artifact chorus))))
+             solar (view-has &solarOnlySolarView (artifact star-lantern))
+             lunar (view-has &solarOnlyLunarView (artifact star-lantern))
+             sterile (view-lacks &solarOnlySterileView (artifact ash))
+             chorus-guard (view-lacks &solarOnlyChorusView (artifact chorus))))
 !(println! (candidate-check chorus-trap
-             solar (view-has? &chorusTrapSolarView (artifact star-lantern))
-             lunar (view-has? &chorusTrapLunarView (artifact star-lantern))
-             sterile (forbidden-absent? &chorusTrapSterileView (artifact ash))
-             chorus-guard (forbidden-absent? &chorusTrapChorusView (artifact chorus))))
+             solar (view-has &chorusTrapSolarView (artifact star-lantern))
+             lunar (view-has &chorusTrapLunarView (artifact star-lantern))
+             sterile (view-lacks &chorusTrapSterileView (artifact ash))
+             chorus-guard (view-lacks &chorusTrapChorusView (artifact chorus))))
 !(println! (candidate-check balanced
-             solar (view-has? &balancedSolarView (artifact star-lantern))
-             lunar (view-has? &balancedLunarView (artifact star-lantern))
-             sterile (forbidden-absent? &balancedSterileView (artifact ash))
-             chorus-guard (forbidden-absent? &balancedChorusView (artifact chorus))))
+             solar (view-has &balancedSolarView (artifact star-lantern))
+             lunar (view-has &balancedLunarView (artifact star-lantern))
+             sterile (view-lacks &balancedSterileView (artifact ash))
+             chorus-guard (view-lacks &balancedChorusView (artifact chorus))))
 
 !(let $winner
      (select
        (superpose (
          (winner-if-ok solar-only
-           (view-has? &solarOnlySolarView (artifact star-lantern))
-           (view-has? &solarOnlyLunarView (artifact star-lantern))
-           (forbidden-absent? &solarOnlySterileView (artifact ash))
-           (forbidden-absent? &solarOnlyChorusView (artifact chorus)))
+           (view-has &solarOnlySolarView (artifact star-lantern))
+           (view-has &solarOnlyLunarView (artifact star-lantern))
+           (view-lacks &solarOnlySterileView (artifact ash))
+           (view-lacks &solarOnlyChorusView (artifact chorus)))
          (winner-if-ok chorus-trap
-           (view-has? &chorusTrapSolarView (artifact star-lantern))
-           (view-has? &chorusTrapLunarView (artifact star-lantern))
-           (forbidden-absent? &chorusTrapSterileView (artifact ash))
-           (forbidden-absent? &chorusTrapChorusView (artifact chorus)))
+           (view-has &chorusTrapSolarView (artifact star-lantern))
+           (view-has &chorusTrapLunarView (artifact star-lantern))
+           (view-lacks &chorusTrapSterileView (artifact ash))
+           (view-lacks &chorusTrapChorusView (artifact chorus)))
          (winner-if-ok balanced
-           (view-has? &balancedSolarView (artifact star-lantern))
-           (view-has? &balancedLunarView (artifact star-lantern))
-           (forbidden-absent? &balancedSterileView (artifact ash))
-           (forbidden-absent? &balancedChorusView (artifact chorus))))))
+           (view-has &balancedSolarView (artifact star-lantern))
+           (view-has &balancedLunarView (artifact star-lantern))
+           (view-lacks &balancedSterileView (artifact ash))
+           (view-lacks &balancedChorusView (artifact chorus))))))
    (println! (if (== $winner Empty)
                (catalog-result no-shared-bundle)
                $winner)))

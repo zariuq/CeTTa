@@ -28,7 +28,7 @@
   (mork:product-zipper-path-exists &pz)
   (True))
 !(assertEqualToResult
-  (mork:product-zipper-is-val &pz)
+  (mork:product-zipper-is-valid &pz)
   (False))
 !(assertEqualToResult
   (mork:product-zipper-descend-first! &pz)
@@ -70,7 +70,7 @@
   (mork:product-zipper-focus-factor &pz)
   (2))
 !(assertEqualToResult
-  (mork:product-zipper-is-val &pz)
+  (mork:product-zipper-is-valid &pz)
   (True))
 !(assertEqualToResult
   (mork:product-zipper-val-count &pz)

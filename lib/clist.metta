@@ -13,10 +13,10 @@
 (= (clist:cons $head $tail)
    (ClistCons $head $tail))
 
-(= (clist:empty? $list)
+(= (clist:is-empty $list)
    (== $list ClistNil))
 
-(= (clist:cons? $list)
+(= (clist:is-cons $list)
    (case $list
      (((ClistCons $head $tail) True)
       ($else False))))
