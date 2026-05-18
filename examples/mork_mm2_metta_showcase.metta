@@ -45,7 +45,7 @@
 !(bind! &z (mork:zipper &derived-only))
 !(let $_ (mork:zipper-descend-until! &z) ())
 !(println! ("at" (mork:zipper-path-bytes &z)
-            "is-val?" (mork:zipper-is-val &z)))
+            "is-valid" (mork:zipper-is-valid &z)))
 !(mork:zipper-close! &z)
 
 ; ── Overlay: virtual union of filtered + selector ───────────
@@ -54,7 +54,7 @@
 !(bind! &oz (mork:overlay-zipper &derived-only &selector))
 !(let $_ (mork:overlay-zipper-descend-until! &oz) ())
 !(println! ("at" (mork:overlay-zipper-path-bytes &oz)
-            "is-val?" (mork:overlay-zipper-is-val &oz)))
+            "is-valid" (mork:overlay-zipper-is-valid &oz)))
 !(mork:overlay-zipper-close! &oz)
 
 ; ── MeTTa annotation: semantic analysis of derived facts ────

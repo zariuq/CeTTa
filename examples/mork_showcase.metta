@@ -41,11 +41,11 @@
             "child-bytes" (mork:zipper-child-bytes &mz)))
 !(let $_ (mork:zipper-descend-until! &mz) ())
 !(println! ("shared-prefix-bytes" (mork:zipper-path-bytes &mz)))
-!(println! ("exists?" (mork:zipper-path-exists &mz)
-            "is-val?" (mork:zipper-is-val &mz)))
+!(println! ("exists" (mork:zipper-path-exists &mz)
+            "is-valid" (mork:zipper-is-valid &mz)))
 !(let $_ (mork:zipper-descend-first! &mz) ())
 !(println! ("first-leaf-bytes" (mork:zipper-path-bytes &mz)
-            "is-val?" (mork:zipper-is-val &mz)))
+            "is-valid" (mork:zipper-is-valid &mz)))
 !(mork:zipper-close! &mz)
 
 ; ── Prefix restriction: selector-shaped filtering ───────────
@@ -69,7 +69,7 @@
 !(bind! &oz (mork:overlay-zipper &restricted &selector))
 !(let $_ (mork:overlay-zipper-descend-until! &oz) ())
 !(println! ("overlay-focus-bytes" (mork:overlay-zipper-path-bytes &oz)
-            "is-val?" (mork:overlay-zipper-is-val &oz)))
+            "is-valid" (mork:overlay-zipper-is-valid &oz)))
 !(mork:overlay-zipper-close! &oz)
 
 ; ── Product zipper: stitched multi-factor traversal ─────────

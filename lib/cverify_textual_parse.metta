@@ -33,17 +33,17 @@
          (expr-contains $tail $needle))))
 
 (= (resolve-input-path $filename)
-   (if (path-is-absolute? $filename)
-       (path-normalize $filename)
-       (path-join (system-cwd) $filename)))
+   (if (path:is-absolute $filename)
+       (path:normalize $filename)
+       (path:join (system:cwd) $filename)))
 
-(= (mm-boundary-ok? $stream)
-   (let $ch (text-stream-peek $stream)
+(= (mm-boundary-is-valid $stream)
+   (let $ch (text-stream:peek $stream)
      (if (== $ch Empty)
          True
-         (text-char-whitespace? $ch))))
+         (text-char:is-whitespace $ch))))
 
-(= (mm-control-token? $token)
+(= (mm-token-is-control $token)
    (or (== $token "$c")
        (or (== $token "$v")
            (or (== $token "$f")
@@ -61,50 +61,50 @@
                                                            (== $token "$)"))))))))))))))))
 
 (= (mm-read-plain-token $stream $acc)
-   (let $ch (text-stream-peek $stream)
+   (let $ch (text-stream:peek $stream)
      (if (== $ch Empty)
          (if (== $acc "")
              parse-unsupported
              (TokenRead $acc $stream))
-         (if (text-char-whitespace? $ch)
+         (if (text-char:is-whitespace $ch)
              (if (== $acc "")
                  parse-unsupported
                  (TokenRead $acc $stream))
              (if (== $ch "$")
                  parse-unsupported
                  (mm-read-plain-token
-                   (text-stream-advance $stream 1)
-                   (str-concat $acc $ch)))))))
+                   (text-stream:advance $stream 1)
+                   (str:concat $acc $ch)))))))
 
 (= (mm-skip-comment $stream)
-   (let $peek2 (text-stream-peek-n $stream 2)
+   (let $peek2 (text-stream:peek-n $stream 2)
      (if (== $peek2 "")
          parse-unsupported
          (if (== $peek2 "$)")
-             (text-stream-advance $stream 2)
+             (text-stream:advance $stream 2)
              (if (== $peek2 "$(")
                  parse-unsupported
-                 (mm-skip-comment (text-stream-advance $stream 1)))))))
+                 (mm-skip-comment (text-stream:advance $stream 1)))))))
 
 (= (mm-tokenize-text $text)
-   (mm-tokenize-stream (text-stream $text) ()))
+   (mm-tokenize-stream (text-stream:new $text) ()))
 
 (= (mm-tokenize-stream $stream $acc)
-   (let $cursor (text-stream-skip-whitespace $stream)
-     (if (text-stream-done? $cursor)
+   (let $cursor (text-stream:skip-whitespace $stream)
+     (if (text-stream:is-done $cursor)
          (reverse-atom-expr $acc)
-         (let $peek2 (text-stream-peek-n $cursor 2)
+         (let $peek2 (text-stream:peek-n $cursor 2)
            (if (== $peek2 "$(")
-               (let $after-comment (mm-skip-comment (text-stream-advance $cursor 2))
+               (let $after-comment (mm-skip-comment (text-stream:advance $cursor 2))
                  (case $after-comment
                    ((parse-unsupported parse-unsupported)
                     ($after
-                      (if (mm-boundary-ok? $after)
+                      (if (mm-boundary-is-valid $after)
                           (mm-tokenize-stream $after $acc)
                           parse-unsupported)))))
-               (if (mm-control-token? $peek2)
-                   (let $after-token (text-stream-advance $cursor 2)
-                     (if (mm-boundary-ok? $after-token)
+               (if (mm-token-is-control $peek2)
+                   (let $after-token (text-stream:advance $cursor 2)
+                     (if (mm-boundary-is-valid $after-token)
                          (mm-tokenize-stream $after-token (cons-atom $peek2 $acc))
                          parse-unsupported))
                    (let $read (mm-read-plain-token $cursor "")
@@ -140,7 +140,7 @@
      (let $tail-mapped (map-metamath-tokens $tail)
        (cons-atom (map-metamath-token $head) $tail-mapped))))
 
-(= (inline-block-token? $token)
+(= (mm-token-is-inline-block $token)
    (or (== $token "$[")
        (or (== $token "$]")
            (or (== $token "${")
@@ -156,7 +156,7 @@
    (let ($head $tail) (decons-atom $tokens)
      (if (== $head $stop)
          (collected (reverse-atom-expr $acc) $tail)
-         (if (inline-block-token? $head)
+         (if (mm-token-is-inline-block $head)
              parse-unsupported
              (collect-until-token-acc $tail $stop (cons-atom $head $acc))))))
 
@@ -170,7 +170,7 @@
    (let ($head $tail) (decons-atom $tokens)
      (if (== $head "$=")
          (proof-parts (reverse-atom-expr $acc) $tail)
-         (if (inline-block-token? $head)
+         (if (mm-token-is-inline-block $head)
              parse-unsupported
              (split-at-proof-marker-acc $tail (cons-atom $head $acc))))))
 
@@ -306,7 +306,7 @@
              $filename
              $seen
              $loading
-             (fs-read-text $filename)))))
+             (fs:read-text $filename)))))
 
 (= (parse-include-result $rest parse-unsupported)
    parse-unsupported)
@@ -323,7 +323,7 @@
        (let ($include-name $rest1) (decons-atom $tokens)
          (let ($close $rest2) (decons-atom $rest1)
            (if (== $close "$]")
-               (let $resolved (path-resolve-from $current-file $include-name)
+               (let $resolved (path:resolve-from $current-file $include-name)
                  (parse-include-result
                    $rest2
                    (parse-metamath-file $resolved $seen $loading)))

@@ -1,7 +1,7 @@
 !(import! &self clist)
 
-!(assertEqual (clist:empty? (clist:nil)) True)
-!(assertEqual (clist:cons? (clist:cons a (clist:nil))) True)
+!(assertEqual (clist:is-empty (clist:nil)) True)
+!(assertEqual (clist:is-cons (clist:cons a (clist:nil))) True)
 !(assertEqual (clist:first (clist:cons a (clist:nil))) a)
 !(assertEqual (clist:rest (clist:cons a (clist:nil))) (clist:nil))
 !(assertEqual (clist:to-list (clist:from-list (a b c))) (a b c))
