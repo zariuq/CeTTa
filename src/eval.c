@@ -4054,26 +4054,77 @@ static bool direct_outcome_walk_mork_match(Space *s, Arena *a, Atom *atom, int f
         bridge, a, pattern, direct_outcome_walk_mork_row, &mork);
 }
 
-static bool direct_outcome_walk_supported(Space *s, Arena *a, Atom *atom, int fuel) {
-    Atom *bound = registry_lookup_atom(atom);
-    if (bound)
-        atom = bound;
-    atom = materialize_runtime_token(s, a, atom);
-    if (atom_is_empty(atom) || atom_is_error(atom) || atom_eval_is_immediate_value(atom, fuel))
-        return true;
-    if (direct_outcome_walk_mork_match_supported(a, atom))
-        return true;
-    if (expr_head_is_id(atom, g_builtin_syms.superpose) && expr_nargs(atom) == 1) {
-        Atom *list = expr_arg(atom, 0);
-        if (list->kind != ATOM_EXPR)
+typedef struct {
+    Atom **items;
+    uint32_t len;
+    uint32_t cap;
+} DirectWalkStack;
+
+static bool direct_walk_stack_push(DirectWalkStack *stack, Atom *atom) {
+    if (stack->len >= stack->cap) {
+        uint32_t next_cap = stack->cap ? stack->cap * 2 : 32;
+        Atom **next = cetta_realloc(stack->items, sizeof(Atom *) * next_cap);
+        if (!next)
             return false;
-        for (uint32_t i = 0; i < list->expr.len; i++) {
-            if (!direct_outcome_walk_supported(s, a, list->expr.elems[i], fuel))
-                return false;
-        }
-        return true;
+        stack->items = next;
+        stack->cap = next_cap;
     }
-    return false;
+    stack->items[stack->len++] = atom;
+    return true;
+}
+
+static Atom *direct_walk_stack_pop(DirectWalkStack *stack) {
+    return stack->items[--stack->len];
+}
+
+static void direct_walk_stack_free(DirectWalkStack *stack) {
+    free(stack->items);
+    stack->items = NULL;
+    stack->len = 0;
+    stack->cap = 0;
+}
+
+static bool direct_walk_stack_push_superpose(DirectWalkStack *stack, Atom *list) {
+    for (uint32_t i = list->expr.len; i > 0; i--) {
+        if (!direct_walk_stack_push(stack, list->expr.elems[i - 1]))
+            return false;
+    }
+    return true;
+}
+
+static bool direct_outcome_walk_supported(Space *s, Arena *a, Atom *atom, int fuel) {
+    DirectWalkStack stack = {0};
+    if (!direct_walk_stack_push(&stack, atom))
+        return false;
+
+    while (stack.len > 0) {
+        Atom *current = direct_walk_stack_pop(&stack);
+        Atom *bound = registry_lookup_atom(current);
+        if (bound)
+            current = bound;
+        current = materialize_runtime_token(s, a, current);
+        if (atom_is_empty(current) || atom_is_error(current) ||
+            atom_eval_is_immediate_value(current, fuel)) {
+            continue;
+        }
+        if (direct_outcome_walk_mork_match_supported(a, current))
+            continue;
+        if (expr_head_is_id(current, g_builtin_syms.superpose) &&
+            expr_nargs(current) == 1) {
+            Atom *list = expr_arg(current, 0);
+            if (list->kind != ATOM_EXPR ||
+                !direct_walk_stack_push_superpose(&stack, list)) {
+                direct_walk_stack_free(&stack);
+                return false;
+            }
+            continue;
+        }
+        direct_walk_stack_free(&stack);
+        return false;
+    }
+
+    direct_walk_stack_free(&stack);
+    return true;
 }
 
 static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
@@ -4081,33 +4132,51 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
                                 uint32_t *visited) {
     Bindings empty;
     bindings_init(&empty);
-    Atom *bound = registry_lookup_atom(atom);
-    if (bound)
-        atom = bound;
-    atom = materialize_runtime_token(s, a, atom);
-    if (atom_is_empty(atom)) {
-        /* Match HE's internal sentinel behavior: Empty does not become a
-           user-visible stream item on the native fast path. */
-        return true;
-    }
-    if (atom_is_error(atom) || atom_eval_is_immediate_value(atom, fuel)) {
-        (*visited)++;
-        return visitor(a, atom, &empty, ctx);
-    }
-    if (direct_outcome_walk_mork_match_supported(a, atom)) {
-        return direct_outcome_walk_mork_match(s, a, atom, fuel, visitor, ctx, visited);
-    }
-    if (expr_head_is_id(atom, g_builtin_syms.superpose) && expr_nargs(atom) == 1) {
-        Atom *list = expr_arg(atom, 0);
-        if (list->kind != ATOM_EXPR)
-            return false;
-        for (uint32_t i = 0; i < list->expr.len; i++) {
-            if (!direct_outcome_walk(s, a, list->expr.elems[i], fuel, visitor, ctx, visited))
+
+    DirectWalkStack stack = {0};
+    if (!direct_walk_stack_push(&stack, atom))
+        return false;
+
+    while (stack.len > 0) {
+        Atom *current = direct_walk_stack_pop(&stack);
+        Atom *bound = registry_lookup_atom(current);
+        if (bound)
+            current = bound;
+        current = materialize_runtime_token(s, a, current);
+        if (atom_is_empty(current))
+            continue;
+        if (atom_is_error(current) || atom_eval_is_immediate_value(current, fuel)) {
+            (*visited)++;
+            if (!visitor(a, current, &empty, ctx)) {
+                direct_walk_stack_free(&stack);
                 return false;
+            }
+            continue;
         }
-        return true;
+        if (direct_outcome_walk_mork_match_supported(a, current)) {
+            if (!direct_outcome_walk_mork_match(s, a, current, fuel, visitor, ctx,
+                                                visited)) {
+                direct_walk_stack_free(&stack);
+                return false;
+            }
+            continue;
+        }
+        if (expr_head_is_id(current, g_builtin_syms.superpose) &&
+            expr_nargs(current) == 1) {
+            Atom *list = expr_arg(current, 0);
+            if (list->kind != ATOM_EXPR ||
+                !direct_walk_stack_push_superpose(&stack, list)) {
+                direct_walk_stack_free(&stack);
+                return false;
+            }
+            continue;
+        }
+        direct_walk_stack_free(&stack);
+        return false;
     }
-    return false;
+
+    direct_walk_stack_free(&stack);
+    return true;
 }
 
 static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
@@ -4196,7 +4265,10 @@ typedef struct {
 static bool stream_item_buffer_push(StreamItemBuffer *buffer, Atom *item) {
     if (buffer->len >= buffer->cap) {
         uint32_t next_cap = buffer->cap ? buffer->cap * 2 : 8;
-        buffer->items = cetta_realloc(buffer->items, sizeof(Atom *) * next_cap);
+        Atom **next = cetta_realloc(buffer->items, sizeof(Atom *) * next_cap);
+        if (!next)
+            return false;
+        buffer->items = next;
         buffer->cap = next_cap;
     }
     buffer->items[buffer->len++] = item;
@@ -4325,6 +4397,43 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
         items[i] = collect.buffer.items[i];
     outcome_set_add(os, atom_expr(a, items, collect.buffer.len), &_empty);
     stream_item_buffer_free(&collect.buffer);
+}
+
+static bool collapse_direct_stream(Space *s, Arena *a, Atom *stream_expr, int fuel,
+                                   OutcomeSet *os) {
+    if (!direct_outcome_walk_supported(s, a, stream_expr, fuel))
+        return false;
+
+    StreamCollectCtx collect = {0};
+    uint32_t visited = 0;
+    if (!direct_outcome_walk(s, a, stream_expr, fuel,
+                             stream_visit_collect, &collect, &visited)) {
+        stream_item_buffer_free(&collect.buffer);
+        return false;
+    }
+
+    bool has_success = false;
+    for (uint32_t i = 0; i < collect.buffer.len; i++) {
+        if (!atom_is_error(collect.buffer.items[i])) {
+            has_success = true;
+            break;
+        }
+    }
+
+    Atom **items = arena_alloc(a, sizeof(Atom *) *
+                                  (collect.buffer.len > 0 ? collect.buffer.len : 1));
+    uint32_t len = 0;
+    for (uint32_t i = 0; i < collect.buffer.len; i++) {
+        if (has_success && atom_is_error(collect.buffer.items[i]))
+            continue;
+        items[len++] = collect.buffer.items[i];
+    }
+
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(os, atom_expr(a, items, len), &empty);
+    stream_item_buffer_free(&collect.buffer);
+    return true;
 }
 
 static bool eval_bound_single_with_scratch(Space *s, Arena *a, Arena *scratch,
@@ -5600,6 +5709,133 @@ static bool effect_safe_single_feeder_value(Space *s, Arena *a,
     return true;
 }
 
+typedef struct {
+    StreamItemBuffer *items;
+    ResultSet stream_errors;
+    ResultSet *body_results;
+    bool identity_body;
+    bool has_success;
+} CollapseLetStreamCtx;
+
+enum {
+    COLLAPSE_LET_MAX_FAST_DEPTH = 8,
+};
+
+static bool collapse_push_result_set(StreamItemBuffer *items, ResultSet *rs) {
+    for (uint32_t i = 0; i < rs->len; i++) {
+        if (atom_is_empty(rs->items[i]))
+            continue;
+        if (!stream_item_buffer_push(items, rs->items[i]))
+            return false;
+    }
+    return true;
+}
+
+static bool collapse_let_stream_visit(Arena *a, Atom *atom,
+                                      const Bindings *env, void *user_ctx) {
+    (void)a;
+    (void)env;
+    CollapseLetStreamCtx *ctx = user_ctx;
+    if (atom_is_error(atom)) {
+        result_set_add(&ctx->stream_errors, atom);
+        return true;
+    }
+    ctx->has_success = true;
+    if (ctx->identity_body)
+        return stream_item_buffer_push(ctx->items, atom);
+    return collapse_push_result_set(ctx->items, ctx->body_results);
+}
+
+static bool collapse_let_collect(Space *s, Arena *a, Atom *inner, int fuel,
+                                 const Bindings *outer_env, uint32_t depth,
+                                 StreamItemBuffer *items) {
+    if (depth >= COLLAPSE_LET_MAX_FAST_DEPTH || !inner ||
+        inner->kind != ATOM_EXPR ||
+        !expr_head_is_id(inner, g_builtin_syms.let) ||
+        expr_nargs(inner) != 3) {
+        return false;
+    }
+
+    Atom *pat = expr_arg(inner, 0);
+    if (!pat || pat->kind != ATOM_VAR)
+        return false;
+
+    Atom *stream_expr =
+        bindings_apply_if_vars(outer_env, a, expr_arg(inner, 1));
+    Atom *body = expr_arg(inner, 2);
+
+    if (direct_outcome_walk_supported(s, a, stream_expr, fuel)) {
+        Atom *body_applied = bindings_apply_if_vars(outer_env, a, body);
+        bool identity_body =
+            body_applied->kind == ATOM_VAR && body_applied->var_id == pat->var_id;
+
+        ResultSet body_results;
+        result_set_init(&body_results);
+        if (!identity_body) {
+            if (atom_contains_vars(body_applied) ||
+                !direct_outcome_walk_supported(s, a, body_applied, fuel)) {
+                result_set_free(&body_results);
+                return false;
+            }
+            metta_eval(s, a, NULL, body_applied, fuel, &body_results);
+        }
+
+        CollapseLetStreamCtx ctx = {
+            .items = items,
+            .stream_errors = {0},
+            .body_results = &body_results,
+            .identity_body = identity_body,
+            .has_success = false,
+        };
+        result_set_init(&ctx.stream_errors);
+        uint32_t visited = 0;
+        bool ok = direct_outcome_walk(s, a, stream_expr, fuel,
+                                      collapse_let_stream_visit, &ctx, &visited);
+        if (ok && !ctx.has_success)
+            ok = collapse_push_result_set(items, &ctx.stream_errors);
+        result_set_free(&ctx.stream_errors);
+        result_set_free(&body_results);
+        return ok;
+    }
+
+    Atom *single = NULL;
+    if (!effect_safe_single_feeder_value(s, a, stream_expr, fuel, &single))
+        return false;
+
+    BindingsBuilder b;
+    if (!bindings_builder_init(&b, outer_env))
+        return false;
+    if (!bindings_builder_add_var_fresh(&b, pat, single)) {
+        bindings_builder_free(&b);
+        return false;
+    }
+
+    bool handled = collapse_let_collect(
+        s, a, body, fuel, bindings_builder_bindings(&b), depth + 1, items);
+    bindings_builder_free(&b);
+    return handled;
+}
+
+static bool collapse_let_stream(Space *s, Arena *a, Atom *inner, int fuel,
+                                const Bindings *outer_env, OutcomeSet *os) {
+    StreamItemBuffer items_buf = {0};
+    if (!collapse_let_collect(s, a, inner, fuel, outer_env, 0, &items_buf)) {
+        stream_item_buffer_free(&items_buf);
+        return false;
+    }
+
+    Atom **items = arena_alloc(a, sizeof(Atom *) *
+                                  (items_buf.len > 0 ? items_buf.len : 1));
+    for (uint32_t i = 0; i < items_buf.len; i++)
+        items[i] = items_buf.items[i];
+
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(os, atom_expr(a, items, items_buf.len), &empty);
+    stream_item_buffer_free(&items_buf);
+    return true;
+}
+
 static bool try_effect_batch_append_collapse_count(Space *s, Arena *a,
                                                    Atom *inner, int fuel,
                                                    const Bindings *outer_env,
@@ -5620,7 +5856,9 @@ static bool try_effect_batch_append_collapse_count(Space *s, Arena *a,
         return true;
     }
 
-    if (depth >= 8)
+    /* This is only a fast-path recursion cap; deeper terms fall back to the
+       ordinary evaluator, preserving semantics. */
+    if (depth >= COLLAPSE_LET_MAX_FAST_DEPTH)
         return false;
 
     Atom *single = NULL;
@@ -8465,6 +8703,14 @@ tail_call: ;
         if (!preserve_bindings &&
             try_effect_batch_append_collapse(s, a, expr_arg(atom, 0),
                                              fuel, CURRENT_ENV, os)) {
+            return;
+        }
+        if (!preserve_bindings &&
+            collapse_let_stream(s, a, expr_arg(atom, 0), fuel, CURRENT_ENV, os)) {
+            return;
+        }
+        if (!preserve_bindings &&
+            collapse_direct_stream(s, a, expr_arg(atom, 0), fuel, os)) {
             return;
         }
         ResultSet inner;
