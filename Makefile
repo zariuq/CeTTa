@@ -205,6 +205,8 @@ ifeq ($(ENABLE_PATHMAP_SPACE),1)
 SPACE_ENGINES += pathmap
 endif
 D4_PROBE_TIMEOUT ?= 60
+CETTA_BENCH_VMEM_KIB ?=
+CETTA_BENCH_LIMIT_PREFIX = $(if $(strip $(CETTA_BENCH_VMEM_KIB)),ulimit -v $(CETTA_BENCH_VMEM_KIB); )
 GIT_TEST_FIXTURE_ROOT = $(CURDIR)/runtime/git_module_fixture
 GIT_TEST_CACHE_DIR = $(CURDIR)/runtime/test-git-module-cache
 GIT_TEST_URL = file://$(GIT_TEST_FIXTURE_ROOT)
@@ -2490,7 +2492,7 @@ bench-join12-runtime-backends: $(BIN)
 	done
 
 bench-d4: $(BIN)
-	@out=$$(timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
+	@out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 	status=$$?; \
 	count=$$(printf '%s\n' "$$out" | tail -1); \
 	echo "depth-4 total: $$count theorems"; \
@@ -2502,7 +2504,7 @@ bench-d4: $(BIN)
 	fi
 
 bench-d4-nodup: $(BIN)
-	@out=$$(timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+	@out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
 	status=$$?; \
 	count=$$(printf '%s\n' "$$out" | tail -1); \
 	echo "depth-4 nodup total: $$count theorems"; \
@@ -2515,7 +2517,7 @@ bench-d4-nodup: $(BIN)
 
 bench-d4-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		out=$$(timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
+		out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 		status=$$?; \
 		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
 		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
@@ -2533,7 +2535,7 @@ bench-d4-backends: $(BIN)
 
 bench-d4-nodup-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		out=$$(timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+		out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
 		status=$$?; \
 		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
 		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
@@ -2564,7 +2566,7 @@ bench-mork-bridge-add:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_add
 	@for n in $(or $(BENCH_MORK_BRIDGE_SIZES),1000 10000 100000); do \
 		echo "=== bridge-add $$n ==="; \
-		./runtime/bench_mork_bridge_add "$$n" $(or $(BENCH_MORK_BRIDGE_REPEAT),3); \
+		$(CETTA_BENCH_LIMIT_PREFIX)./runtime/bench_mork_bridge_add "$$n" $(or $(BENCH_MORK_BRIDGE_REPEAT),3); \
 		echo; \
 	done
 
@@ -2573,7 +2575,7 @@ bench-mork-bridge-query:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_query
 	@for n in $(or $(BENCH_MORK_BRIDGE_QUERY_SIZES),1000 10000 100000); do \
 		echo "=== bridge-query $$n ==="; \
-		./runtime/bench_mork_bridge_query "$$n" $(or $(BENCH_MORK_BRIDGE_QUERY_REPEAT),3); \
+		$(CETTA_BENCH_LIMIT_PREFIX)./runtime/bench_mork_bridge_query "$$n" $(or $(BENCH_MORK_BRIDGE_QUERY_REPEAT),3); \
 		echo; \
 	done
 
@@ -2582,7 +2584,7 @@ bench-mork-bridge-scalar-cursor:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_scalar_cursor
 	@for n in $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_SIZES),1000 10000 100000); do \
 		echo "=== bridge-scalar-cursor $$n ==="; \
-		./runtime/bench_mork_bridge_scalar_cursor "$$n" $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_REPEAT),3); \
+		$(CETTA_BENCH_LIMIT_PREFIX)./runtime/bench_mork_bridge_scalar_cursor "$$n" $(or $(BENCH_MORK_BRIDGE_SCALAR_CURSOR_REPEAT),3); \
 		echo; \
 	done
 
@@ -2591,7 +2593,7 @@ bench-mork-bridge-space-ops:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/bench_mork_bridge_space_ops
 	@for n in $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_SIZES),1000 10000 100000); do \
 		echo "=== bridge-space-ops $$n ==="; \
-		./runtime/bench_mork_bridge_space_ops "$$n" $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_REPEAT),3); \
+		$(CETTA_BENCH_LIMIT_PREFIX)./runtime/bench_mork_bridge_space_ops "$$n" $(or $(BENCH_MORK_BRIDGE_SPACE_OPS_REPEAT),3); \
 		echo; \
 	done
 

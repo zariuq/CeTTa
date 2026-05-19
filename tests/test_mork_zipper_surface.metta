@@ -30,7 +30,7 @@
   (mork:zipper-path-exists &z)
   (True))
 !(assertEqualToResult
-  (mork:zipper-is-valid &z)
+  (mork:zipper-is-val &z)
   (False))
 !(assertEqualToResult
   (mork:zipper-val-count &z)
