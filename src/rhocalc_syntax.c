@@ -31,6 +31,7 @@ typedef struct {
 
 typedef struct {
     SymbolId spelling;
+    VarId source_var_id;
     Atom *var;
 } RhoElabBinding;
 
@@ -488,16 +489,19 @@ static void rho_elab_pop(RhoElaborator *elab, uint32_t mark) {
     elab->binding_len = mark;
 }
 
-static Atom *rho_elab_lookup(RhoElaborator *elab, SymbolId spelling) {
+static Atom *rho_elab_lookup(RhoElaborator *elab, SymbolId spelling,
+                             VarId source_var_id) {
     for (uint32_t i = elab->binding_len; i > 0; i--) {
-        if (elab->bindings[i - 1].spelling == spelling) {
+        if (elab->bindings[i - 1].spelling == spelling &&
+            elab->bindings[i - 1].source_var_id == source_var_id) {
             return elab->bindings[i - 1].var;
         }
     }
     return NULL;
 }
 
-static bool rho_elab_push(RhoElaborator *elab, SymbolId spelling, Atom *var) {
+static bool rho_elab_push(RhoElaborator *elab, SymbolId spelling,
+                          VarId source_var_id, Atom *var) {
     if (elab->binding_len == elab->binding_cap) {
         uint32_t next_cap = elab->binding_cap ? elab->binding_cap * 2u : 8u;
         RhoElabBinding *next =
@@ -511,6 +515,7 @@ static bool rho_elab_push(RhoElaborator *elab, SymbolId spelling, Atom *var) {
         elab->binding_cap = next_cap;
     }
     elab->bindings[elab->binding_len].spelling = spelling;
+    elab->bindings[elab->binding_len].source_var_id = source_var_id;
     elab->bindings[elab->binding_len].var = var;
     elab->binding_len++;
     return true;
@@ -535,7 +540,7 @@ static Atom *rho_elab_atom(RhoElaborator *elab, Atom *atom) {
     if (!atom) return NULL;
     switch (atom->kind) {
     case ATOM_VAR: {
-        Atom *bound = rho_elab_lookup(elab, atom->sym_id);
+        Atom *bound = rho_elab_lookup(elab, atom->sym_id, atom->var_id);
         return bound ? bound : atom;
     }
     case ATOM_EXPR:
@@ -571,10 +576,12 @@ static Atom *rho_elab_atom(RhoElaborator *elab, Atom *atom) {
             elems[1] = rho_elab_atom(elab, atom->expr.elems[1]);
             elems[2] = atom->expr.elems[2];
             if (elems[2]->kind == ATOM_VAR) {
+                VarId source_var_id = elems[2]->var_id;
                 elems[2] = atom_var_with_spelling(elab->arena,
                                                   elems[2]->sym_id,
                                                   fresh_var_id());
-                if (!rho_elab_push(elab, elems[2]->sym_id, elems[2])) {
+                if (!rho_elab_push(elab, elems[2]->sym_id,
+                                   source_var_id, elems[2])) {
                     return atom;
                 }
             } else {
@@ -609,6 +616,21 @@ static int rhocalc_elaborate_mrho_atoms(Arena *arena,
         return -1;
     }
     return count;
+}
+
+Atom *rhocalc_elaborate_mrho_atom(Arena *arena, Atom *atom) {
+    RhoElaborator elab = {0};
+    Atom *out;
+    rho_parse_clear_error();
+    elab.arena = arena;
+    out = rho_elab_atom(&elab, atom);
+    free(elab.bindings);
+    if (elab.failed) {
+        snprintf(g_rhocalc_parse_error, sizeof(g_rhocalc_parse_error),
+                 "could not elaborate rhocalc/mrho binders");
+        return NULL;
+    }
+    return out;
 }
 
 int rhocalc_parse_text(const char *text,
