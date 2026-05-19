@@ -52,7 +52,7 @@
   (mork:zipper-path-bytes &z)
   (&path))
 !(assertEqualToResult
-  (mork:zipper-is-valid &z)
+  (mork:zipper-is-val &z)
   (True))
 !(assertEqualToResult
   (mork:zipper-close! &z)
@@ -69,7 +69,7 @@
   (mork:overlay-zipper-path-exists &oz)
   (True))
 !(assertEqualToResult
-  (mork:overlay-zipper-is-valid &oz)
+  (mork:overlay-zipper-is-val &oz)
   (True))
 !(assertEqualToResult
   (mork:overlay-zipper-close! &oz)

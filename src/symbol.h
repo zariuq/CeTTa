@@ -257,7 +257,7 @@ typedef struct {
     X(lib_mork_zipper_new, "__cetta_lib_mork_zipper_new") \
     X(lib_mork_zipper_close, "__cetta_lib_mork_zipper_close") \
     X(lib_mork_zipper_path_exists, "__cetta_lib_mork_zipper_path_exists") \
-    X(lib_mork_zipper_is_valid, "__cetta_lib_mork_zipper_is_valid") \
+    X(lib_mork_zipper_is_val, "__cetta_lib_mork_zipper_is_val") \
     X(lib_mork_zipper_child_count, "__cetta_lib_mork_zipper_child_count") \
     X(lib_mork_path_of_atom, "__cetta_lib_mork_path_of_atom") \
     X(lib_mork_zipper_path_bytes, "__cetta_lib_mork_zipper_path_bytes") \
@@ -284,7 +284,7 @@ typedef struct {
     X(lib_mork_product_zipper_new, "__cetta_lib_mork_product_zipper_new") \
     X(lib_mork_product_zipper_close, "__cetta_lib_mork_product_zipper_close") \
     X(lib_mork_product_zipper_path_exists, "__cetta_lib_mork_product_zipper_path_exists") \
-    X(lib_mork_product_zipper_is_valid, "__cetta_lib_mork_product_zipper_is_valid") \
+    X(lib_mork_product_zipper_is_val, "__cetta_lib_mork_product_zipper_is_val") \
     X(lib_mork_product_zipper_child_count, "__cetta_lib_mork_product_zipper_child_count") \
     X(lib_mork_product_zipper_path_bytes, "__cetta_lib_mork_product_zipper_path_bytes") \
     X(lib_mork_product_zipper_child_bytes, "__cetta_lib_mork_product_zipper_child_bytes") \
@@ -310,7 +310,7 @@ typedef struct {
     X(lib_mork_overlay_zipper_new, "__cetta_lib_mork_overlay_zipper_new") \
     X(lib_mork_overlay_zipper_close, "__cetta_lib_mork_overlay_zipper_close") \
     X(lib_mork_overlay_zipper_path_exists, "__cetta_lib_mork_overlay_zipper_path_exists") \
-    X(lib_mork_overlay_zipper_is_valid, "__cetta_lib_mork_overlay_zipper_is_valid") \
+    X(lib_mork_overlay_zipper_is_val, "__cetta_lib_mork_overlay_zipper_is_val") \
     X(lib_mork_overlay_zipper_child_count, "__cetta_lib_mork_overlay_zipper_child_count") \
     X(lib_mork_overlay_zipper_path_bytes, "__cetta_lib_mork_overlay_zipper_path_bytes") \
     X(lib_mork_overlay_zipper_child_bytes, "__cetta_lib_mork_overlay_zipper_child_bytes") \

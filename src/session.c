@@ -149,11 +149,9 @@ static uint32_t cetta_language_base_surface_mask(CettaLanguageId language_id) {
 }
 
 static bool cetta_profile_name_matches(const char *name,
-                                       const CettaProfile *profile,
-                                       const char *legacy_alias) {
+                                       const CettaProfile *profile) {
     if (!name || !profile || !profile->name) return false;
-    if (strcmp(name, profile->name) == 0) return true;
-    return legacy_alias && strcmp(name, legacy_alias) == 0;
+    return strcmp(name, profile->name) == 0;
 }
 
 const CettaProfile *cetta_profile_he_compat(void) {
@@ -183,16 +181,13 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
     if (!cetta_language_has_named_profiles(language_id)) {
         return NULL;
     }
-    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_COMPAT_VALUE,
-                                   "he_compat")) {
+    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_COMPAT_VALUE)) {
         return &CETTA_PROFILE_HE_COMPAT_VALUE;
     }
-    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_EXTENDED_VALUE,
-                                   "he_extended")) {
+    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_EXTENDED_VALUE)) {
         return &CETTA_PROFILE_HE_EXTENDED_VALUE;
     }
-    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_PRIME_VALUE,
-                                   "he_prime")) {
+    if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_PRIME_VALUE)) {
         return &CETTA_PROFILE_HE_PRIME_VALUE;
     }
     return NULL;

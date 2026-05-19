@@ -146,8 +146,8 @@ CettaMorkCursorHandle *cetta_mork_bridge_cursor_new(
 void cetta_mork_bridge_cursor_free(CettaMorkCursorHandle *cursor);
 bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
                                           bool *out_exists);
-bool cetta_mork_bridge_cursor_is_valid(const CettaMorkCursorHandle *cursor,
-                                       bool *out_is_valid);
+bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
+                                    bool *out_is_val);
 bool cetta_mork_bridge_cursor_child_count(const CettaMorkCursorHandle *cursor,
                                           uint64_t *out_child_count);
 bool cetta_mork_bridge_cursor_path_bytes(const CettaMorkCursorHandle *cursor,
@@ -205,9 +205,9 @@ void cetta_mork_bridge_product_cursor_free(CettaMorkProductCursorHandle *cursor)
 bool cetta_mork_bridge_product_cursor_path_exists(
     const CettaMorkProductCursorHandle *cursor,
     bool *out_exists);
-bool cetta_mork_bridge_product_cursor_is_valid(
+bool cetta_mork_bridge_product_cursor_is_val(
     const CettaMorkProductCursorHandle *cursor,
-    bool *out_is_valid);
+    bool *out_is_val);
 bool cetta_mork_bridge_product_cursor_child_count(
     const CettaMorkProductCursorHandle *cursor,
     uint64_t *out_child_count);
@@ -287,9 +287,9 @@ void cetta_mork_bridge_overlay_cursor_free(CettaMorkOverlayCursorHandle *cursor)
 bool cetta_mork_bridge_overlay_cursor_path_exists(
     const CettaMorkOverlayCursorHandle *cursor,
     bool *out_exists);
-bool cetta_mork_bridge_overlay_cursor_is_valid(
+bool cetta_mork_bridge_overlay_cursor_is_val(
     const CettaMorkOverlayCursorHandle *cursor,
-    bool *out_is_valid);
+    bool *out_is_val);
 bool cetta_mork_bridge_overlay_cursor_child_count(
     const CettaMorkOverlayCursorHandle *cursor,
     uint64_t *out_child_count);

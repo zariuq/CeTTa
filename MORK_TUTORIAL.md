@@ -419,7 +419,7 @@ Given a space with `(edge a b)` and `(edge a c)`, `descend-until!` walks to the 
 !(mork:zipper-path-bytes &z)       ; => (3 196 101 100 103 101 193 97 193)
                                     ;    shared prefix of both edges
 !(mork:zipper-path-exists &z)      ; => True   (node exists at this path)
-!(mork:zipper-is-valid &z)         ; => False  (not a leaf — it's a branch point)
+!(mork:zipper-is-val &z)           ; => False  (not a leaf — it's a branch point)
 !(mork:zipper-child-count &z)      ; => 2      (two children: b and c)
 !(mork:zipper-child-bytes &z)      ; => (98 99)  (ASCII for 'b' and 'c')
 !(mork:zipper-depth &z)            ; => 9      (9 bytes deep in the trie)
@@ -552,7 +552,7 @@ Walk a stitched multi-factor search surface without materializing a brute-force 
 !(mork:product-zipper-path-bytes &pz)       ; => (193 97 193 98)
 !(mork:product-zipper-descend-until! &pz)   ; => True
 !(mork:product-zipper-focus-factor &pz)     ; => 2
-!(mork:product-zipper-is-valid &pz)         ; => True
+!(mork:product-zipper-is-val &pz)           ; => True
 !(mork:product-zipper-val-count &pz)        ; => 1
 !(mork:product-zipper-path-bytes &pz)       ; => (193 97 193 98 193 99)
 ```
@@ -619,7 +619,7 @@ Here `base` contributes the atom `a`, while `overlay` contributes `(edge a b)`. 
 !(mork:overlay-zipper-descend-index! &oz 0) ; => True
 !(mork:overlay-zipper-path-bytes &oz)       ; => (3)    ; the (edge ...) branch
 !(mork:overlay-zipper-path-exists &oz)      ; => True
-!(mork:overlay-zipper-is-valid &oz)         ; => False
+!(mork:overlay-zipper-is-val &oz)           ; => False
 !(mork:overlay-zipper-reset! &oz)           ; => ()
 !(mork:overlay-zipper-descend-index! &oz 1) ; => True
 !(mork:overlay-zipper-path-bytes &oz)       ; => (193)  ; the atom a branch
@@ -649,7 +649,7 @@ This is often the more useful example.
 ; => (3 196 101 100 103 101 193 97 193)
 !(mork:overlay-zipper-path-exists &shared)        ; => True
 !(mork:overlay-zipper-child-count &shared)        ; => 2
-!(mork:overlay-zipper-is-valid &shared)           ; => False
+!(mork:overlay-zipper-is-val &shared)             ; => False
 !(mork:overlay-zipper-depth &shared)              ; => 9
 ```
 
@@ -745,9 +745,9 @@ MM2 derives a fact, then ordinary MeTTa equations annotate it with semantic meta
 === prefix-restrict: only derived paths ===
 ("filtered" ((path a c)))
 === zipper on filtered space ===
-("at" (3 196 112 97 116 104 193 97 193 99) "is-valid" True)
+("at" (3 196 112 97 116 104 193 97 193 99) "is-val" True)
 === overlay: filtered + selector ===
-("at" (3 196 112 97 116 104 193 97 193 99) "is-valid" True)
+("at" (3 196 112 97 116 104 193 97 193 99) "is-val" True)
 === MeTTa analysis ===
 ("annotated" ((annotated a c strong (two-hop a b c))))
 === showcase complete ===
@@ -791,12 +791,12 @@ Exercises zippers, prefix-restrict, overlay, and product cursors on a two-edge s
 === zipper: walk to first branch/value ===
 ("root-children" 1 "child-bytes" (3))
 ("shared-prefix-bytes" (3 196 101 100 103 101 193 97 193))
-("exists" True "is-valid" False)
-("first-leaf-bytes" (3 196 101 100 103 101 193 97 193 98) "is-valid" True)
+("exists" True "is-val" False)
+("first-leaf-bytes" (3 196 101 100 103 101 193 97 193 98) "is-val" True)
 === prefix-restrict: keep only (edge a b) ===
 ("restricted" ((edge a b)))
 === overlay: restricted + selector ===
-("overlay-focus-bytes" (3 196 101 100 103 101 193 97 193 98) "is-valid" True)
+("overlay-focus-bytes" (3 196 101 100 103 101 193 97 193 98) "is-val" True)
 === product: three-factor traversal ===
 ("factors" 3)
 ("focus-factor" 0 "product-path-bytes" (2 193 120 193 49))
