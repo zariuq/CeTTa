@@ -235,6 +235,7 @@ typedef struct {
     X(lib_str_starts_with, "__cetta_lib_str_starts_with") \
     X(lib_str_ends_with, "__cetta_lib_str_ends_with") \
     X(lib_str_trim, "__cetta_lib_str_trim") \
+    X(lib_rho_step, "__cetta_lib_rho_step") \
     X(lib_mork_space_new, "__cetta_lib_mork_space_new") \
     X(lib_mork_space_include, "__cetta_lib_mork_space_include") \
     X(lib_mork_space_open_act, "__cetta_lib_mork_space_open_act") \

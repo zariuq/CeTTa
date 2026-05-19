@@ -15,6 +15,7 @@ int rhocalc_parse_file(const char *path,
                        Arena *arena,
                        Atom ***out_atoms);
 const char *rhocalc_last_parse_error(void);
+Atom *rhocalc_elaborate_mrho_atom(Arena *arena, Atom *atom);
 void rhocalc_print_atom_syntax(Atom *atom, CettaSyntaxId syntax, FILE *out);
 
 #endif /* CETTA_RHOCALC_SYNTAX_H */
