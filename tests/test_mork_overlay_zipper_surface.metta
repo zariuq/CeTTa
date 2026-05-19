@@ -23,7 +23,7 @@
   (mork:overlay-zipper-path-exists &oz)
   (True))
 !(assertEqualToResult
-  (mork:overlay-zipper-is-valid &oz)
+  (mork:overlay-zipper-is-val &oz)
   (False))
 !(assertEqualToResult
   (mork:overlay-zipper-reset! &oz)
@@ -91,7 +91,7 @@
   (mork:overlay-zipper-child-count &shared)
   (2))
 !(assertEqualToResult
-  (mork:overlay-zipper-is-valid &shared)
+  (mork:overlay-zipper-is-val &shared)
   (False))
 !(assertEqualToResult
   (mork:overlay-zipper-depth &shared)

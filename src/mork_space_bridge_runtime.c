@@ -183,7 +183,7 @@ extern CettaMorkSpaceHandle *mork_space_restrict(const CettaMorkSpaceHandle *lhs
 extern CettaMorkCursorHandle *mork_cursor_new(const CettaMorkSpaceHandle *space);
 extern void mork_cursor_free(CettaMorkCursorHandle *cursor);
 extern CettaMorkStatus mork_cursor_path_exists(const CettaMorkCursorHandle *cursor);
-extern CettaMorkStatus mork_cursor_is_valid(const CettaMorkCursorHandle *cursor);
+extern CettaMorkStatus mork_cursor_is_val(const CettaMorkCursorHandle *cursor);
 extern CettaMorkStatus mork_cursor_child_count(const CettaMorkCursorHandle *cursor);
 extern CettaMorkBuffer mork_cursor_path_bytes(const CettaMorkCursorHandle *cursor);
 extern CettaMorkBuffer mork_cursor_child_bytes(const CettaMorkCursorHandle *cursor);
@@ -216,7 +216,7 @@ extern CettaMorkProductCursorHandle *mork_product_cursor_new(
 extern void mork_product_cursor_free(CettaMorkProductCursorHandle *cursor);
 extern CettaMorkStatus mork_product_cursor_path_exists(
     const CettaMorkProductCursorHandle *cursor);
-extern CettaMorkStatus mork_product_cursor_is_valid(
+extern CettaMorkStatus mork_product_cursor_is_val(
     const CettaMorkProductCursorHandle *cursor);
 extern CettaMorkStatus mork_product_cursor_child_count(
     const CettaMorkProductCursorHandle *cursor);
@@ -270,7 +270,7 @@ extern CettaMorkOverlayCursorHandle *mork_overlay_cursor_new(
 extern void mork_overlay_cursor_free(CettaMorkOverlayCursorHandle *cursor);
 extern CettaMorkStatus mork_overlay_cursor_path_exists(
     const CettaMorkOverlayCursorHandle *cursor);
-extern CettaMorkStatus mork_overlay_cursor_is_valid(
+extern CettaMorkStatus mork_overlay_cursor_is_val(
     const CettaMorkOverlayCursorHandle *cursor);
 extern CettaMorkStatus mork_overlay_cursor_child_count(
     const CettaMorkOverlayCursorHandle *cursor);
@@ -820,15 +820,15 @@ bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
                                    bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_cursor_is_valid(const CettaMorkCursorHandle *cursor,
-                                       bool *out_is_valid) {
+bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
+                                    bool *out_is_val) {
     if (!cursor) {
         bridge_set_error("cannot inspect null MORK cursor");
         return false;
     }
-    return bridge_take_status_bool("mork_cursor_is_valid failed: ",
-                                   mork_cursor_is_valid(cursor),
-                                   out_is_valid,
+    return bridge_take_status_bool("mork_cursor_is_val failed: ",
+                                   mork_cursor_is_val(cursor),
+                                   out_is_val,
                                    bridge_free_bytes);
 }
 
@@ -1136,16 +1136,16 @@ bool cetta_mork_bridge_product_cursor_path_exists(
                                    bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_product_cursor_is_valid(
+bool cetta_mork_bridge_product_cursor_is_val(
     const CettaMorkProductCursorHandle *cursor,
-    bool *out_is_valid) {
+    bool *out_is_val) {
     if (!cursor) {
         bridge_set_error("cannot inspect null MORK product cursor");
         return false;
     }
-    return bridge_take_status_bool("mork_product_cursor_is_valid failed: ",
-                                   mork_product_cursor_is_valid(cursor),
-                                   out_is_valid,
+    return bridge_take_status_bool("mork_product_cursor_is_val failed: ",
+                                   mork_product_cursor_is_val(cursor),
+                                   out_is_val,
                                    bridge_free_bytes);
 }
 
@@ -1467,16 +1467,16 @@ bool cetta_mork_bridge_overlay_cursor_path_exists(
                                    bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_overlay_cursor_is_valid(
+bool cetta_mork_bridge_overlay_cursor_is_val(
     const CettaMorkOverlayCursorHandle *cursor,
-    bool *out_is_valid) {
+    bool *out_is_val) {
     if (!cursor) {
         bridge_set_error("cannot inspect null MORK overlay cursor");
         return false;
     }
-    return bridge_take_status_bool("mork_overlay_cursor_is_valid failed: ",
-                                   mork_overlay_cursor_is_valid(cursor),
-                                   out_is_valid,
+    return bridge_take_status_bool("mork_overlay_cursor_is_val failed: ",
+                                   mork_overlay_cursor_is_val(cursor),
+                                   out_is_val,
                                    bridge_free_bytes);
 }
 
@@ -1962,7 +1962,7 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkCursorHandle *(*cursor_new)(const CettaMorkSpaceHandle *space);
     void (*cursor_free)(CettaMorkCursorHandle *cursor);
     CettaMorkStatus (*cursor_path_exists)(const CettaMorkCursorHandle *cursor);
-    CettaMorkStatus (*cursor_is_valid)(const CettaMorkCursorHandle *cursor);
+    CettaMorkStatus (*cursor_is_val)(const CettaMorkCursorHandle *cursor);
     CettaMorkStatus (*cursor_child_count)(const CettaMorkCursorHandle *cursor);
     CettaMorkBuffer (*cursor_path_bytes)(const CettaMorkCursorHandle *cursor);
     CettaMorkBuffer (*cursor_child_bytes)(const CettaMorkCursorHandle *cursor);
@@ -1992,7 +1992,7 @@ typedef struct CettaMorkBridgeApi {
     void (*product_cursor_free)(CettaMorkProductCursorHandle *cursor);
     CettaMorkStatus (*product_cursor_path_exists)(
         const CettaMorkProductCursorHandle *cursor);
-    CettaMorkStatus (*product_cursor_is_valid)(
+    CettaMorkStatus (*product_cursor_is_val)(
         const CettaMorkProductCursorHandle *cursor);
     CettaMorkStatus (*product_cursor_child_count)(
         const CettaMorkProductCursorHandle *cursor);
@@ -2037,7 +2037,7 @@ typedef struct CettaMorkBridgeApi {
     void (*overlay_cursor_free)(CettaMorkOverlayCursorHandle *cursor);
     CettaMorkStatus (*overlay_cursor_path_exists)(
         const CettaMorkOverlayCursorHandle *cursor);
-    CettaMorkStatus (*overlay_cursor_is_valid)(
+    CettaMorkStatus (*overlay_cursor_is_val)(
         const CettaMorkOverlayCursorHandle *cursor);
     CettaMorkStatus (*overlay_cursor_child_count)(
         const CettaMorkOverlayCursorHandle *cursor);
@@ -2307,8 +2307,8 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.cursor_path_exists,
         "mork_cursor_path_exists");
     bridge_resolve_symbol_optional(
-        (void **)&g_mork_bridge_api.cursor_is_valid,
-        "mork_cursor_is_valid");
+        (void **)&g_mork_bridge_api.cursor_is_val,
+        "mork_cursor_is_val");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.cursor_child_count,
         "mork_cursor_child_count");
@@ -2385,8 +2385,8 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.product_cursor_path_exists,
         "mork_product_cursor_path_exists");
     bridge_resolve_symbol_optional(
-        (void **)&g_mork_bridge_api.product_cursor_is_valid,
-        "mork_product_cursor_is_valid");
+        (void **)&g_mork_bridge_api.product_cursor_is_val,
+        "mork_product_cursor_is_val");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.product_cursor_child_count,
         "mork_product_cursor_child_count");
@@ -2463,8 +2463,8 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.overlay_cursor_path_exists,
         "mork_overlay_cursor_path_exists");
     bridge_resolve_symbol_optional(
-        (void **)&g_mork_bridge_api.overlay_cursor_is_valid,
-        "mork_overlay_cursor_is_valid");
+        (void **)&g_mork_bridge_api.overlay_cursor_is_val,
+        "mork_overlay_cursor_is_val");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.overlay_cursor_child_count,
         "mork_overlay_cursor_child_count");
@@ -3061,19 +3061,19 @@ bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
                                    bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_cursor_is_valid(const CettaMorkCursorHandle *cursor,
-                                       bool *out_is_valid) {
+bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
+                                    bool *out_is_val) {
     if (!cursor || !bridge_load_api()) {
         bridge_set_error("cannot inspect null or unavailable MORK cursor");
         return false;
     }
-    if (!g_mork_bridge_api.cursor_is_valid) {
-        bridge_set_error("mork_cursor_is_valid is unavailable in the loaded MORK bridge");
+    if (!g_mork_bridge_api.cursor_is_val) {
+        bridge_set_error("mork_cursor_is_val is unavailable in the loaded MORK bridge");
         return false;
     }
-    return bridge_take_status_bool("mork_cursor_is_valid failed: ",
-                                   g_mork_bridge_api.cursor_is_valid(cursor),
-                                   out_is_valid,
+    return bridge_take_status_bool("mork_cursor_is_val failed: ",
+                                   g_mork_bridge_api.cursor_is_val(cursor),
+                                   out_is_val,
                                    bridge_free_bytes);
 }
 
@@ -3478,20 +3478,20 @@ bool cetta_mork_bridge_product_cursor_path_exists(
                                    bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_product_cursor_is_valid(
+bool cetta_mork_bridge_product_cursor_is_val(
     const CettaMorkProductCursorHandle *cursor,
-    bool *out_is_valid) {
+    bool *out_is_val) {
     if (!cursor || !bridge_load_api()) {
         bridge_set_error("cannot inspect null or unavailable MORK product cursor");
         return false;
     }
-    if (!g_mork_bridge_api.product_cursor_is_valid) {
-        bridge_set_error("mork_product_cursor_is_valid is unavailable in the loaded MORK bridge");
+    if (!g_mork_bridge_api.product_cursor_is_val) {
+        bridge_set_error("mork_product_cursor_is_val is unavailable in the loaded MORK bridge");
         return false;
     }
-    return bridge_take_status_bool("mork_product_cursor_is_valid failed: ",
-                                   g_mork_bridge_api.product_cursor_is_valid(cursor),
-                                   out_is_valid,
+    return bridge_take_status_bool("mork_product_cursor_is_val failed: ",
+                                   g_mork_bridge_api.product_cursor_is_val(cursor),
+                                   out_is_val,
                                    bridge_free_bytes);
 }
 
@@ -3910,20 +3910,20 @@ bool cetta_mork_bridge_overlay_cursor_path_exists(
                                    bridge_free_bytes);
 }
 
-bool cetta_mork_bridge_overlay_cursor_is_valid(
+bool cetta_mork_bridge_overlay_cursor_is_val(
     const CettaMorkOverlayCursorHandle *cursor,
-    bool *out_is_valid) {
+    bool *out_is_val) {
     if (!cursor || !bridge_load_api()) {
         bridge_set_error("cannot inspect null or unavailable MORK overlay cursor");
         return false;
     }
-    if (!g_mork_bridge_api.overlay_cursor_is_valid) {
-        bridge_set_error("mork_overlay_cursor_is_valid is unavailable in the loaded MORK bridge");
+    if (!g_mork_bridge_api.overlay_cursor_is_val) {
+        bridge_set_error("mork_overlay_cursor_is_val is unavailable in the loaded MORK bridge");
         return false;
     }
-    return bridge_take_status_bool("mork_overlay_cursor_is_valid failed: ",
-                                   g_mork_bridge_api.overlay_cursor_is_valid(cursor),
-                                   out_is_valid,
+    return bridge_take_status_bool("mork_overlay_cursor_is_val failed: ",
+                                   g_mork_bridge_api.overlay_cursor_is_val(cursor),
+                                   out_is_val,
                                    bridge_free_bytes);
 }
 

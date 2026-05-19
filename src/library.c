@@ -3435,7 +3435,7 @@ static Atom *mork_zipper_bool_native(CettaLibraryContext *ctx, Arena *a,
                                              "MORK zipper path-exists failed: ");
         }
     } else {
-        if (!cetta_mork_bridge_cursor_is_valid(resource->cursor, &value)) {
+        if (!cetta_mork_bridge_cursor_is_val(resource->cursor, &value)) {
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK zipper validity check failed: ");
         }
@@ -3832,7 +3832,7 @@ static Atom *mork_product_zipper_bool_native(CettaLibraryContext *ctx, Arena *a,
                                              "MORK product-zipper path-exists failed: ");
         }
     } else {
-        if (!cetta_mork_bridge_product_cursor_is_valid(resource->cursor, &value)) {
+        if (!cetta_mork_bridge_product_cursor_is_val(resource->cursor, &value)) {
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK product-zipper validity check failed: ");
         }
@@ -4196,7 +4196,7 @@ static Atom *mork_overlay_zipper_bool_native(CettaLibraryContext *ctx, Arena *a,
                                              "MORK overlay-zipper path-exists failed: ");
         }
     } else {
-        if (!cetta_mork_bridge_overlay_cursor_is_valid(resource->cursor, &value)) {
+        if (!cetta_mork_bridge_overlay_cursor_is_val(resource->cursor, &value)) {
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK overlay-zipper validity check failed: ");
         }
@@ -4568,7 +4568,7 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         return mork_zipper_close_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_zipper_path_exists ||
-        head_id == g_builtin_syms.lib_mork_zipper_is_valid) {
+        head_id == g_builtin_syms.lib_mork_zipper_is_val) {
         return mork_zipper_bool_native(ctx, a, head, args, nargs, head_id);
     }
     if (head_id == g_builtin_syms.lib_mork_path_of_atom) {
@@ -4623,7 +4623,7 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         return mork_product_zipper_close_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_product_zipper_path_exists ||
-        head_id == g_builtin_syms.lib_mork_product_zipper_is_valid) {
+        head_id == g_builtin_syms.lib_mork_product_zipper_is_val) {
         return mork_product_zipper_bool_native(ctx, a, head, args, nargs, head_id);
     }
     if (head_id == g_builtin_syms.lib_mork_product_zipper_path_bytes ||
@@ -4672,7 +4672,7 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         return mork_overlay_zipper_close_native(ctx, a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_mork_overlay_zipper_path_exists ||
-        head_id == g_builtin_syms.lib_mork_overlay_zipper_is_valid) {
+        head_id == g_builtin_syms.lib_mork_overlay_zipper_is_val) {
         return mork_overlay_zipper_bool_native(ctx, a, head, args, nargs, head_id);
     }
     if (head_id == g_builtin_syms.lib_mork_overlay_zipper_path_bytes ||
