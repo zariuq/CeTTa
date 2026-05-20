@@ -438,6 +438,35 @@ static bool imported_bridge_add_atom_contextual_exact(Arena *scratch,
     return ok;
 }
 
+static bool imported_bridge_add_atom_contextual_exact_atom(
+    Arena *scratch,
+    CettaMorkSpaceHandle *bridge_space,
+    Atom *atom) {
+    uint8_t *expr_bytes = NULL;
+    uint8_t *context_bytes = NULL;
+    size_t expr_len = 0;
+    size_t context_len = 0;
+    const char *encode_error = NULL;
+    bool ok = false;
+
+    if (bridge_space && atom) {
+        ok = cetta_mm2_atom_to_contextual_bridge_expr_bytes(
+            scratch, atom, &expr_bytes, &expr_len, &context_bytes,
+            &context_len, &encode_error);
+    }
+
+    if (ok && cetta_mork_bridge_space_add_contextual_exact_expr_bytes(
+                  bridge_space, expr_bytes, expr_len, context_bytes,
+                  context_len, NULL)) {
+        free(expr_bytes);
+        free(context_bytes);
+        return true;
+    }
+    free(expr_bytes);
+    free(context_bytes);
+    return false;
+}
+
 static bool imported_bridge_remove_atom_structural(Arena *scratch,
                                                    CettaMorkSpaceHandle *bridge_space,
                                                    const TermUniverse *universe,
@@ -2311,6 +2340,10 @@ static bool native_materialize_native_storage(Space *s, Arena *persistent_arena)
 
 static bool pathmap_materialize_native_storage(Space *s, Arena *persistent_arena) {
     ImportedBridgeState *st;
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    uint32_t logical = 0;
+#endif
+    bool ok;
 
     if (!s)
         return false;
@@ -2322,7 +2355,18 @@ static bool pathmap_materialize_native_storage(Space *s, Arena *persistent_arena
         return false;
     if (!st->bridge_active)
         return true;
-    return imported_shadow_refresh_from_projection(s);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    logical = imported_logical_len(s);
+#endif
+    ok = imported_shadow_refresh_from_projection(s);
+    if (ok) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_MATERIALIZE_NATIVE);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_PATHMAP_MATERIALIZE_NATIVE_ATOMS,
+                                logical);
+#endif
+    }
+    return ok;
 }
 
 static bool mork_materialize_native_storage(Space *s, Arena *persistent_arena) {
@@ -2453,6 +2497,12 @@ bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
     if (!s || !s->match_backend.ops || !s->match_backend.ops->store_atom_id_direct)
         return false;
     return s->match_backend.ops->store_atom_id_direct(s, atom_id, atom);
+}
+
+bool space_match_backend_store_atom_direct(Space *s, Atom *atom) {
+    if (!s || !s->match_backend.ops || !s->match_backend.ops->store_atom_direct)
+        return false;
+    return s->match_backend.ops->store_atom_direct(s, atom);
 }
 
 bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id) {
@@ -2714,6 +2764,50 @@ bool space_match_backend_mork_query_bindings_direct(
     binding_set_free(out);
     binding_set_init(out);
     return false;
+}
+
+bool space_match_backend_visit_bindings_direct(
+    Space *s,
+    Arena *a,
+    Atom *query,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx) {
+    ImportedBridgeState *st;
+    CettaMorkSpaceHandle *bridge = NULL;
+
+    if (!s || !a || !query || !visitor || space_is_ordered(s))
+        return false;
+
+    switch (s->match_backend.kind) {
+    case SPACE_ENGINE_PATHMAP:
+        if (imported_logical_len(s) == 0)
+            return true;
+        if (imported_atom_has_epoch_vars(query) ||
+            imported_atom_has_bridge_vars(query)) {
+            return false;
+        }
+        if (atom_has_vars(query) && !space_contains_only_exact_atoms(s))
+            return false;
+        st = &s->match_backend.pathmap.bridge;
+        if (st->bridge_unavailable)
+            return false;
+        if (!(st->bridge_active && st->bridge_space) &&
+            !pathmap_local_ensure_bridge_live(s)) {
+            return false;
+        }
+        bridge = (CettaMorkSpaceHandle *)st->bridge_space;
+        break;
+    case SPACE_ENGINE_MORK:
+        if (!space_match_backend_bridge_space(s, &bridge))
+            return false;
+        break;
+    default:
+        return false;
+    }
+
+    return bridge &&
+           space_match_backend_mork_visit_bindings_direct(bridge, a, query,
+                                                          visitor, ctx);
 }
 
 static bool mork_visit_collected_bindings(const BindingSet *set,
@@ -4223,6 +4317,11 @@ static bool imported_projection_capture_from_bridge(Space *s,
     st->projected_atom_ids = snapshot;
     st->projected_len = rows;
     st->projection_valid = true;
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_PROJECTION_CAPTURE);
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_PATHMAP_PROJECTION_ROWS,
+                                rows);
+    }
 
     arena_free(&scratch);
     return true;
@@ -4279,6 +4378,11 @@ static bool imported_shadow_refresh_from_projection(Space *s) {
     s->native.ty_idx_dirty = true;
     s->native.exact_idx_dirty = true;
     s->native.non_exact_atoms_dirty = true;
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_SHADOW_REFRESH);
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_PATHMAP_SHADOW_REFRESH_ATOMS,
+                                st->projected_len);
+    }
     return true;
 }
 
@@ -5098,7 +5202,8 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
         smset_init(out);
         return;
     }
-    if (var_query && !epoch_query && !bridge_query) {
+    if (var_query && !epoch_query && !bridge_query &&
+        !space_contains_only_exact_atoms(s)) {
         Arena *persist = eval_current_persistent_arena();
         if (!space_match_backend_materialize_native_storage(s, persist ? persist : a)) {
             smset_init(out);
@@ -5139,7 +5244,7 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
     if (pathmap_local_ensure_bridge_live(s) && st->bridge_space &&
         space_match_backend_mork_query_bindings_direct(
             (CettaMorkSpaceHandle *)st->bridge_space, a, query, &direct_matches)) {
-        if (direct_matches.len > 0 || space_contains_only_exact_atoms(s)) {
+        if (direct_matches.len > 0 || space_atom_is_exact_indexable(query)) {
             imported_binding_set_to_exact_matches(out, &direct_matches);
             binding_set_free(&direct_matches);
             return;
@@ -5514,6 +5619,54 @@ static bool pathmap_local_store_atom_id_direct(Space *s, AtomId atom_id, Atom *a
         return false;
     }
     pathmap_local_backend_primary_bulk_commit(s, st);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_DIRECT_STORE);
+    return true;
+}
+
+static bool pathmap_local_store_atom_direct(Space *s, Atom *atom) {
+    ImportedBridgeState *st;
+    bool had_live_bridge;
+    bool prior_built;
+    bool prior_dirty;
+    if (!s || !atom || space_is_ordered(s))
+        return false;
+    st = &s->match_backend.pathmap.bridge;
+    if (st->bridge_unavailable)
+        return false;
+    had_live_bridge = st->bridge_active && st->bridge_space;
+    prior_built = st->built;
+    prior_dirty = st->dirty;
+    if (!(st->bridge_active && st->bridge_space) &&
+        !pathmap_local_ensure_bridge_live(s)) {
+        if (!had_live_bridge) {
+            st->bridge_active = false;
+            st->built = prior_built;
+            st->dirty = prior_dirty;
+        }
+        return false;
+    }
+    Arena scratch;
+    arena_init(&scratch);
+    bool ok = atom_has_vars(atom)
+                  ? imported_bridge_add_atom_contextual_exact_atom(
+                        &scratch, (CettaMorkSpaceHandle *)st->bridge_space,
+                        atom)
+                  : imported_bridge_add_atom_structural(
+                        &scratch, (CettaMorkSpaceHandle *)st->bridge_space,
+                        NULL, CETTA_ATOM_ID_NONE, atom);
+    arena_free(&scratch);
+    if (!ok) {
+        if (had_live_bridge) {
+            (void)pathmap_local_deactivate_bridge_preserving_shadow(s, st);
+        } else {
+            st->bridge_active = false;
+            st->built = prior_built;
+            st->dirty = prior_dirty;
+        }
+        return false;
+    }
+    pathmap_local_backend_primary_bulk_commit(s, st);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_DIRECT_STORE);
     return true;
 }
 
@@ -5551,6 +5704,7 @@ static bool pathmap_local_remove_atom_id_direct(Space *s, AtomId atom_id) {
         return false;
 
     pathmap_local_backend_primary_bulk_commit(s, st);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_DIRECT_REMOVE);
     return true;
 }
 
@@ -5588,6 +5742,7 @@ static bool pathmap_local_remove_atom_direct(Space *s, Atom *atom) {
         return false;
 
     pathmap_local_backend_primary_bulk_commit(s, st);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_DIRECT_REMOVE);
     return true;
 }
 
@@ -6291,6 +6446,7 @@ static void imported_query_conjunction(Space *s, Arena *a, Atom **patterns,
 
 static const SpaceMatchBackendOps NATIVE_BACKEND_OPS = {
     .name = "native-subst-tree",
+    .store_atom_direct = NULL,
     .store_atom_id_direct = NULL,
     .remove_atom_id_direct = NULL,
     .remove_atom_direct = NULL,
@@ -6310,6 +6466,7 @@ static const SpaceMatchBackendOps NATIVE_BACKEND_OPS = {
 
 static const SpaceMatchBackendOps NATIVE_CANDIDATE_EXACT_BACKEND_OPS = {
     .name = "native-candidate-exact",
+    .store_atom_direct = NULL,
     .store_atom_id_direct = NULL,
     .remove_atom_id_direct = NULL,
     .remove_atom_direct = NULL,
@@ -6330,6 +6487,7 @@ static const SpaceMatchBackendOps NATIVE_CANDIDATE_EXACT_BACKEND_OPS = {
 /* Generic SPACE_ENGINE_PATHMAP stays local to CeTTa-owned atoms. */
 static const SpaceMatchBackendOps PATHMAP_BACKEND_OPS = {
     .name = "pathmap",
+    .store_atom_direct = pathmap_local_store_atom_direct,
     .store_atom_id_direct = pathmap_local_store_atom_id_direct,
     .remove_atom_id_direct = pathmap_local_remove_atom_id_direct,
     .remove_atom_direct = pathmap_local_remove_atom_direct,
@@ -6350,6 +6508,7 @@ static const SpaceMatchBackendOps PATHMAP_BACKEND_OPS = {
 /* Explicit MORK spaces keep the bridge-backed imported lane. */
 static const SpaceMatchBackendOps MORK_BRIDGE_BACKEND_OPS = {
     .name = "mork",
+    .store_atom_direct = NULL,
     .store_atom_id_direct = NULL,
     .remove_atom_id_direct = NULL,
     .remove_atom_direct = NULL,

@@ -225,6 +225,12 @@ bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
     return false;
 }
 
+bool space_match_backend_store_atom_direct(Space *s, Atom *atom) {
+    (void)s;
+    (void)atom;
+    return false;
+}
+
 bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id) {
     (void)s;
     (void)atom_id;
