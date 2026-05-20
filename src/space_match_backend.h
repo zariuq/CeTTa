@@ -108,6 +108,7 @@ typedef struct SpaceMatchBackendOps {
        lazy projection.
        Negative example: every special backend being forced to append into the
        native shadow first just because `Space` historically started there. */
+    bool (*store_atom_direct)(Space *s, Atom *atom);
     bool (*store_atom_id_direct)(Space *s, AtomId atom_id, Atom *atom);
     bool (*remove_atom_id_direct)(Space *s, AtomId atom_id);
     bool (*remove_atom_direct)(Space *s, Atom *atom);
@@ -195,6 +196,7 @@ bool space_match_backend_bridge_space(Space *s,
                                       CettaMorkSpaceHandle **out_bridge);
 bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
                                               Atom *atom);
+bool space_match_backend_store_atom_direct(Space *s, Atom *atom);
 bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id);
 bool space_match_backend_remove_atom_direct(Space *s, Atom *atom);
 bool space_match_backend_truncate_direct(Space *s, uint32_t new_len);
@@ -230,6 +232,12 @@ bool space_match_backend_mork_query_bindings_direct(
     BindingSet *out);
 bool space_match_backend_mork_visit_bindings_direct(
     CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom *query,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx);
+bool space_match_backend_visit_bindings_direct(
+    Space *s,
     Arena *a,
     Atom *query,
     CettaMorkBindingsVisitor visitor,

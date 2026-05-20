@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/resource.h>
+#include <assert.h>
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static Registry *g_registry = NULL;
@@ -833,6 +834,9 @@ static Atom *outcome_preview_atom(const Outcome *out) {
 }
 
 static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static bool try_count_collapse_match(Space *s, Arena *a, Atom *atom,
+                                     const Bindings *current_env, int fuel,
+                                     uint64_t *out_count);
 static Atom *materialize_runtime_token(Space *s, Arena *a, Atom *atom);
 static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int fuel);
 static Atom *space_arg_error(Arena *a, Atom *call, const char *message);
@@ -953,6 +957,16 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
         return NULL;
 
     uint32_t nargs = atom->expr.len - 1;
+    if ((head->sym_id == g_builtin_syms.size ||
+         head->sym_id == g_builtin_syms.size_atom) &&
+        nargs == 1) {
+        uint64_t count = 0;
+        Atom *applied = (!prefix || prefix->len == 0)
+            ? atom
+            : bindings_apply_if_vars(prefix, a, atom);
+        if (try_count_collapse_match(s, a, applied, NULL, fuel, &count))
+            return atom_int(a, (int64_t)count);
+    }
     Atom **args = arena_alloc(a, sizeof(Atom *) * nargs);
     for (uint32_t i = 0; i < nargs; i++) {
         Atom *arg = atom->expr.elems[i + 1];
@@ -3146,6 +3160,9 @@ static bool bindings_builder_merge_commit(BindingsBuilder *dst,
 }
 
 typedef struct {
+    /* This is intentionally copied by value in interpret_tuple. When
+       used_builder is false, callers that copy it must rebind env to the
+       copy's owned field before finishing the attempt. */
     const Bindings *env;
     Bindings owned;
     uint32_t mark;
@@ -3179,6 +3196,7 @@ bindings_builder_merge_or_clone(BindingsBuilder *builder,
 static __attribute__((unused)) void
 bindings_merge_attempt_finish(BindingsBuilder *builder,
                               BindingsMergeAttempt *attempt) {
+    assert(attempt->used_builder || attempt->env == &attempt->owned);
     if (attempt->used_builder) {
         bindings_builder_rollback(builder, attempt->mark);
     } else {
@@ -7180,61 +7198,176 @@ static bool outcome_atom_is_error_at_site(Arena *a, Outcome *out,
     return atom_is_error(outcome_atom_materialize_traced(a, out, site_counter));
 }
 
+typedef enum {
+    INTERPRET_TUPLE_FRAME_ENTER = 0,
+    INTERPRET_TUPLE_FRAME_ITERATE = 1,
+    INTERPRET_TUPLE_FRAME_AFTER_CHILD = 2,
+} InterpretTupleFrameState;
+
+/* Explicit frames replace recursive tuple interpretation so very wide tuples
+   do not consume one C stack frame per element. ENTER/ITERATE/AFTER_CHILD
+   mirrors the old DFS recursion, preserving left-to-right binding threading,
+   result order, and empty/error short-circuit behavior. */
+typedef struct {
+    uint32_t idx;
+    const Bindings *ctx;
+    const VariantInstance *prefix_variant;
+    ResultBindSet sub;
+    BindingsBuilder merged_builder;
+    BindingsMergeAttempt active_attempt;
+    VariantInstance active_variant;
+    uint32_t sub_index;
+    InterpretTupleFrameState state;
+    bool sub_initialized;
+    bool builder_initialized;
+    bool active_attempt_initialized;
+    bool active_variant_owned;
+} InterpretTupleFrame;
+
+static void interpret_tuple_frame_init(InterpretTupleFrame *frame,
+                                       uint32_t idx,
+                                       const Bindings *ctx,
+                                       const VariantInstance *prefix_variant) {
+    frame->idx = idx;
+    frame->ctx = ctx;
+    frame->prefix_variant = prefix_variant;
+    frame->sub_index = 0;
+    frame->state = INTERPRET_TUPLE_FRAME_ENTER;
+    frame->sub_initialized = false;
+    frame->builder_initialized = false;
+    frame->active_attempt_initialized = false;
+    frame->active_variant_owned = false;
+    variant_instance_init(&frame->active_variant);
+}
+
+static void interpret_tuple_frame_finish_child(InterpretTupleFrame *frame) {
+    if (frame->active_attempt_initialized) {
+        bindings_merge_attempt_finish(&frame->merged_builder,
+                                      &frame->active_attempt);
+        frame->active_attempt_initialized = false;
+    }
+    if (frame->active_variant_owned) {
+        variant_instance_free(&frame->active_variant);
+        frame->active_variant_owned = false;
+    }
+    frame->state = INTERPRET_TUPLE_FRAME_ITERATE;
+}
+
+static void interpret_tuple_frame_cleanup(InterpretTupleFrame *frame) {
+    if (!frame)
+        return;
+    if (frame->active_attempt_initialized)
+        interpret_tuple_frame_finish_child(frame);
+    if (frame->builder_initialized) {
+        bindings_builder_free(&frame->merged_builder);
+        frame->builder_initialized = false;
+    }
+    if (frame->sub_initialized) {
+        outcome_set_free(&frame->sub);
+        frame->sub_initialized = false;
+    }
+    variant_instance_free(&frame->active_variant);
+}
+
 static void interpret_tuple(Space *s, Arena *a,
                             Atom **orig_elems, uint32_t len,
                             uint32_t idx, Atom **prefix,
                             Bindings *ctx, const VariantInstance *prefix_variant,
                             int fuel, ResultBindSet *rbs) {
-    if (idx == len) {
-        Atom *tuple_atom = atom_expr(a, prefix, len);
-        if (prefix_variant && variant_instance_present(prefix_variant)) {
-            outcome_set_add_with_variant(rbs, tuple_atom, ctx, prefix_variant);
-        } else {
-            rb_set_add(rbs, tuple_atom, ctx);
-        }
+    if (idx > len)
         return;
-    }
-    /* Apply accumulated bindings to this element before evaluating */
-    Atom *elem = bindings_apply_if_vars(ctx, a, orig_elems[idx]);
-    ResultBindSet sub;
-    rb_set_init(&sub);
-    metta_eval_bind(s, a, elem, fuel, &sub);
-    if (sub.len == 0) {
-        outcome_set_free(&sub);
-        return;
-    }
+
     Bindings empty;
     bindings_init(&empty);
-    BindingsBuilder merged_builder;
-    if (!bindings_builder_init(&merged_builder, ctx)) {
-        outcome_set_free(&sub);
+
+    size_t frame_cap = (size_t)len - (size_t)idx + 1;
+    if (frame_cap > SIZE_MAX / sizeof(InterpretTupleFrame))
         return;
-    }
-    for (uint32_t i = 0; i < sub.len; i++) {
-        Atom *sub_atom = sub.items[i].atom;
+
+    enum { INTERPRET_TUPLE_INLINE_FRAMES = 8 };
+    InterpretTupleFrame inline_frames[INTERPRET_TUPLE_INLINE_FRAMES];
+    InterpretTupleFrame *frames =
+        frame_cap <= INTERPRET_TUPLE_INLINE_FRAMES
+            ? inline_frames
+            : cetta_malloc(sizeof(InterpretTupleFrame) * frame_cap);
+    size_t frame_len = 0;
+    interpret_tuple_frame_init(&frames[frame_len++], idx, ctx, prefix_variant);
+
+    while (frame_len > 0) {
+        InterpretTupleFrame *frame = &frames[frame_len - 1];
+
+        if (frame->state == INTERPRET_TUPLE_FRAME_AFTER_CHILD) {
+            interpret_tuple_frame_finish_child(frame);
+            continue;
+        }
+
+        if (frame->idx == len) {
+            Atom *tuple_atom = atom_expr(a, prefix, len);
+            if (frame->prefix_variant &&
+                variant_instance_present(frame->prefix_variant)) {
+                outcome_set_add_with_variant(rbs, tuple_atom, frame->ctx,
+                                             frame->prefix_variant);
+            } else {
+                rb_set_add(rbs, tuple_atom, (Bindings *)frame->ctx);
+            }
+            interpret_tuple_frame_cleanup(frame);
+            frame_len--;
+            continue;
+        }
+
+        if (frame->state == INTERPRET_TUPLE_FRAME_ENTER) {
+            Atom *elem = bindings_apply_if_vars(frame->ctx, a,
+                                                orig_elems[frame->idx]);
+            rb_set_init(&frame->sub);
+            frame->sub_initialized = true;
+            metta_eval_bind(s, a, elem, fuel, &frame->sub);
+            if (frame->sub.len == 0) {
+                interpret_tuple_frame_cleanup(frame);
+                frame_len--;
+                continue;
+            }
+            if (!bindings_builder_init(&frame->merged_builder, frame->ctx)) {
+                interpret_tuple_frame_cleanup(frame);
+                frame_len--;
+                continue;
+            }
+            frame->builder_initialized = true;
+            frame->state = INTERPRET_TUPLE_FRAME_ITERATE;
+        }
+
+        if (frame->sub_index >= frame->sub.len) {
+            interpret_tuple_frame_cleanup(frame);
+            frame_len--;
+            continue;
+        }
+
+        Outcome *sub_item = &frame->sub.items[frame->sub_index++];
+        Atom *sub_atom = sub_item->atom;
         Atom *effective_atom = sub_atom;
-        const VariantInstance *next_variant_ref = prefix_variant;
+        const VariantInstance *next_variant_ref = frame->prefix_variant;
         VariantInstance next_variant;
         bool owns_next_variant = false;
+        variant_instance_init(&next_variant);
 
         if (atom_is_empty(sub_atom) ||
             outcome_atom_is_error_at_site(
-                a, &sub.items[i],
+                a, sub_item,
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_INTERPRET_TUPLE)) {
             effective_atom = outcome_atom_materialize_traced(
-                a, &sub.items[i],
+                a, sub_item,
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_INTERPRET_TUPLE);
             rb_set_add(rbs, effective_atom, &empty);
             continue;
         }
-        if (variant_instance_present(&sub.items[i].variant)) {
-            variant_instance_init(&next_variant);
-            if (prefix_variant && variant_instance_present(prefix_variant) &&
-                !variant_instance_clone(&next_variant, prefix_variant)) {
+        if (variant_instance_present(&sub_item->variant)) {
+            if (frame->prefix_variant &&
+                variant_instance_present(frame->prefix_variant) &&
+                !variant_instance_clone(&next_variant, frame->prefix_variant)) {
+                variant_instance_free(&next_variant);
                 continue;
             }
             if (!variant_instance_append_rebased(a, &next_variant, &effective_atom,
-                                                 sub_atom, &sub.items[i].variant)) {
+                                                 sub_atom, &sub_item->variant)) {
                 variant_instance_free(&next_variant);
                 continue;
             }
@@ -7245,22 +7378,38 @@ static void interpret_tuple(Space *s, Arena *a,
             if (owns_next_variant)
                 variant_instance_free(&next_variant);
             rb_set_add(rbs, effective_atom, &empty);
-        } else {
-            BindingsMergeAttempt attempt;
-            if (!bindings_builder_merge_or_clone(&merged_builder, ctx,
-                                                 &sub.items[i].env, &attempt))
-                goto next_item;
-            prefix[idx] = effective_atom;
-            interpret_tuple(s, a, orig_elems, len, idx + 1, prefix,
-                            (Bindings *)attempt.env, next_variant_ref, fuel, rbs);
-            bindings_merge_attempt_finish(&merged_builder, &attempt);
+            continue;
         }
-next_item:
-        if (owns_next_variant)
-            variant_instance_free(&next_variant);
+
+        BindingsMergeAttempt attempt;
+        if (!bindings_builder_merge_or_clone(&frame->merged_builder, frame->ctx,
+                                             &sub_item->env, &attempt)) {
+            if (owns_next_variant)
+                variant_instance_free(&next_variant);
+            continue;
+        }
+
+        prefix[frame->idx] = effective_atom;
+        frame->active_attempt = attempt;
+        if (!frame->active_attempt.used_builder)
+            frame->active_attempt.env = &frame->active_attempt.owned;
+        assert(frame->active_attempt.used_builder ||
+               frame->active_attempt.env == &frame->active_attempt.owned);
+        frame->active_attempt_initialized = true;
+        const Bindings *child_ctx = frame->active_attempt.env;
+        if (owns_next_variant) {
+            variant_instance_move(&frame->active_variant, &next_variant);
+            frame->active_variant_owned = true;
+            next_variant_ref = &frame->active_variant;
+        }
+        frame->state = INTERPRET_TUPLE_FRAME_AFTER_CHILD;
+        assert(frame_len < frame_cap);
+        interpret_tuple_frame_init(&frames[frame_len++], frame->idx + 1,
+                                   child_ctx, next_variant_ref);
     }
-    bindings_builder_free(&merged_builder);
-    outcome_set_free(&sub);
+
+    if (frames != inline_frames)
+        free(frames);
 }
 
 static __attribute__((noinline)) bool
@@ -7793,6 +7942,255 @@ static bool emit_direct_mork_match_rows(Space *s, Arena *a, Atom *surface_atom,
     return true;
 }
 
+typedef struct {
+    Space *space;
+    Arena *arena;
+    Atom *templ;
+    int fuel;
+    uint64_t count;
+    bool unsupported;
+} MatchCountCtx;
+
+static bool atom_is_single_result_data(Space *s, Atom *atom, int fuel) {
+    if (!atom || atom_is_error(atom))
+        return false;
+    if (atom_is_empty(atom))
+        return true;
+    if (atom_eval_is_immediate_value(atom, fuel))
+        return true;
+    if (atom->kind == ATOM_EXPR && atom->expr.len > 0) {
+        Atom *head = atom->expr.elems[0];
+        if (head->kind != ATOM_SYMBOL)
+            return false;
+        if (is_grounded_op(head->sym_id))
+            return false;
+        if (space_equations_may_match_known_head(s, head->sym_id))
+            return false;
+        return true;
+    }
+    return false;
+}
+
+static bool count_template_units(Space *s, Arena *a, Atom *templ,
+                                 const Bindings *bindings, int fuel,
+                                 uint64_t *out_units) {
+    Atom *result;
+    if (!a || !templ || !bindings || !out_units)
+        return false;
+    *out_units = 0;
+    result = bindings_apply_if_vars(bindings, a, templ);
+    if (atom_is_empty(result))
+        return true;
+    if (!atom_is_single_result_data(s, result, fuel))
+        return false;
+    *out_units = 1;
+    return true;
+}
+
+static bool count_mork_match_row(const Bindings *bindings, void *ctx) {
+    MatchCountCtx *count = ctx;
+    uint64_t units = 0;
+    if (!count_template_units(count->space, count->arena, count->templ, bindings,
+                              count->fuel, &units)) {
+        count->unsupported = true;
+        return false;
+    }
+    count->count += units;
+    return true;
+}
+
+static bool try_count_mork_match_collapse(Space *s, Arena *a, Atom *match_atom,
+                                          int fuel, uint64_t *out_count) {
+    Atom *space_arg;
+    Atom *pattern;
+    Atom *templ;
+    CettaMorkSpaceHandle *bridge = NULL;
+    MatchCountCtx ctx;
+    bool ok;
+
+    if (!match_atom || match_atom->kind != ATOM_EXPR ||
+        atom_head_symbol_id(match_atom) != g_builtin_syms.mork_match_surface ||
+        expr_nargs(match_atom) != 3 || !g_library_context || !out_count) {
+        return false;
+    }
+
+    space_arg = resolve_registry_refs(a, expr_arg(match_atom, 0));
+    if (!cetta_library_lookup_explicit_mork_bridge(g_library_context, space_arg,
+                                                   &bridge) || !bridge) {
+        return false;
+    }
+    pattern = resolve_registry_refs(a, expr_arg(match_atom, 1));
+    templ = resolve_registry_refs(a, expr_arg(match_atom, 2));
+    ctx = (MatchCountCtx){
+        .space = s,
+        .arena = a,
+        .templ = templ,
+        .fuel = fuel,
+        .count = 0,
+        .unsupported = false,
+    };
+
+    if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
+        ok = space_match_backend_mork_visit_conjunction_direct(
+            bridge, a, pattern->expr.elems + 1, pattern->expr.len - 1, NULL,
+            count_mork_match_row, &ctx);
+    } else {
+        ok = space_match_backend_mork_visit_bindings_direct(
+            bridge, a, pattern, count_mork_match_row, &ctx);
+    }
+    if (!ok || ctx.unsupported)
+        return false;
+    *out_count = ctx.count;
+    (void)s;
+    return true;
+}
+
+static bool count_projected_template(Arena *a, const MatchVisibleVarSet *visible,
+                                     const Bindings *bindings, Atom *templ,
+                                     Space *s, int fuel, uint64_t *count) {
+    Bindings projected;
+    uint64_t units = 0;
+    if (!project_match_visible_bindings(a, visible, bindings, &projected))
+        return true;
+    if (!count_template_units(s, a, templ, &projected, fuel, &units)) {
+        bindings_free(&projected);
+        return false;
+    }
+    *count += units;
+    bindings_free(&projected);
+    return true;
+}
+
+typedef struct {
+    Arena *arena;
+    const MatchVisibleVarSet *visible;
+    Atom *templ;
+    Space *space;
+    int fuel;
+    uint64_t count;
+    bool unsupported;
+} GenericMatchCountCtx;
+
+static bool count_generic_direct_match_row(const Bindings *bindings, void *ctx) {
+    GenericMatchCountCtx *count = ctx;
+    if (!count_projected_template(count->arena, count->visible, bindings,
+                                  count->templ, count->space, count->fuel,
+                                  &count->count)) {
+        count->unsupported = true;
+        return false;
+    }
+    return true;
+}
+
+static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_atom,
+                                             int fuel, uint64_t *out_count) {
+    Bindings empty;
+    Atom *space_ref;
+    Atom *pattern;
+    Atom *templ;
+    Space *ms;
+    MatchVisibleVarSet visible;
+    uint64_t count = 0;
+    bool ok = true;
+
+    if (!match_atom || match_atom->kind != ATOM_EXPR ||
+        atom_head_symbol_id(match_atom) != g_builtin_syms.match ||
+        expr_nargs(match_atom) != 3 || !out_count) {
+        return false;
+    }
+
+    bindings_init(&empty);
+    space_ref = expr_arg(match_atom, 0);
+    pattern = resolve_registry_refs(a, expr_arg(match_atom, 1));
+    templ = resolve_registry_refs(a, expr_arg(match_atom, 2));
+    ms = resolve_single_space_arg(s, a, space_ref, fuel);
+    if (!ms)
+        ms = s;
+    if (!ms || space_is_ordered(ms))
+        return false;
+    if (!space_engine_uses_pathmap(ms->match_backend.kind) && atom_has_vars(templ))
+        return false;
+    if (guard_mork_space_surface(a, match_atom, ms, "match", "mork:match"))
+        return false;
+
+    match_visible_var_set_init(&visible);
+    if (!collect_match_visible_vars_rec(pattern, &visible)) {
+        match_visible_var_set_free(&visible);
+        return false;
+    }
+    if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
+        BindingSet matches;
+        space_query_conjunction(ms, a, pattern->expr.elems + 1,
+                                pattern->expr.len - 1, NULL, &matches);
+        for (uint32_t i = 0; i < matches.len && ok; i++) {
+            ok = count_projected_template(a, &visible, &matches.items[i],
+                                          templ, s, fuel, &count);
+        }
+        binding_set_free(&matches);
+    } else {
+        SubstMatchSet matches;
+        GenericMatchCountCtx direct_ctx = {
+            .arena = a,
+            .visible = &visible,
+            .templ = templ,
+            .space = s,
+            .fuel = fuel,
+            .count = 0,
+            .unsupported = false,
+        };
+        if (space_match_backend_visit_bindings_direct(
+                ms, a, pattern, count_generic_direct_match_row, &direct_ctx)) {
+            match_visible_var_set_free(&visible);
+            if (direct_ctx.unsupported)
+                return false;
+            *out_count = direct_ctx.count;
+            return true;
+        }
+        smset_init(&matches);
+        space_subst_query(ms, a, pattern, &matches);
+        for (uint32_t i = 0; i < matches.len && ok; i++) {
+            Bindings mb;
+            if (space_subst_match_with_seed(ms, pattern, &matches.items[i],
+                                            &empty, a, &mb)) {
+                ok = count_projected_template(a, &visible, &mb, templ,
+                                              s, fuel, &count);
+                bindings_free(&mb);
+            }
+        }
+        smset_free(&matches);
+    }
+    match_visible_var_set_free(&visible);
+    if (!ok)
+        return false;
+    *out_count = count;
+    return true;
+}
+
+static bool try_count_collapse_match(Space *s, Arena *a, Atom *atom,
+                                     const Bindings *current_env, int fuel,
+                                     uint64_t *out_count) {
+    Atom *target;
+    if (!atom || atom->kind != ATOM_EXPR || expr_nargs(atom) != 1 ||
+        !out_count || (current_env && current_env->len != 0)) {
+        return false;
+    }
+    if (atom_head_symbol_id(atom) != g_builtin_syms.size &&
+        atom_head_symbol_id(atom) != g_builtin_syms.size_atom) {
+        return false;
+    }
+    target = expr_arg(atom, 0);
+    if (!target || target->kind != ATOM_EXPR ||
+        atom_head_symbol_id(target) != g_builtin_syms.collapse ||
+        expr_nargs(target) != 1) {
+        return false;
+    }
+    target = expr_arg(target, 0);
+    return try_count_mork_match_collapse(s, a, target, fuel, out_count) ||
+           try_count_generic_match_collapse(s, a, target, fuel, out_count);
+}
+
 static __attribute__((noinline)) bool
 handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 const Bindings *current_env,
@@ -7808,6 +8206,14 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     Atom *op = atom->expr.elems[0];
     SymbolId head_id = op->kind == ATOM_SYMBOL ? op->sym_id : SYMBOL_ID_NONE;
     uint32_t nargs = atom->expr.len - 1;
+    if ((head_id == g_builtin_syms.size || head_id == g_builtin_syms.size_atom) &&
+        nargs == 1) {
+        uint64_t count = 0;
+        if (try_count_collapse_match(s, a, atom, current_env, fuel, &count)) {
+            outcome_set_add(os, atom_int(a, (int64_t)count), &_empty);
+            return true;
+        }
+    }
     if (head_id == g_builtin_syms.mork_get_atoms_surface && nargs == 1) {
         if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_atoms,
                                     atom, nargs, atom->expr.elems + 1,

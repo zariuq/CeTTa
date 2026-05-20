@@ -162,6 +162,14 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "query-episode-promoted-answer-count",
     "query-episode-promoted-answer-bytes",
     "query-episode-delayed-outcome-survivor-count",
+    "pathmap-projection-capture",
+    "pathmap-projection-rows",
+    "pathmap-shadow-refresh",
+    "pathmap-shadow-refresh-atoms",
+    "pathmap-materialize-native",
+    "pathmap-materialize-native-atoms",
+    "pathmap-direct-store",
+    "pathmap-direct-remove",
 };
 
 static int64_t clamp_counter(uint64_t value) {
