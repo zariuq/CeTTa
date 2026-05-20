@@ -1,0 +1,7 @@
+@"bcast"!(Nil) |
+for (x <- @"bcast") {
+  @"c0"!(*x) |
+  @"c1"!(*x)
+} |
+for (_ <- @"c0") { Nil } |
+for (_ <- @"c1") { Nil }

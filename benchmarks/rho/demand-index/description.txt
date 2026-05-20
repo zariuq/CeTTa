@@ -1,0 +1,24 @@
+demand-index
+
+This benchmark is authored as MeTTa data, not as a rho process. The source
+contains two tables: (watch topic sink) subscriptions and (fact topic payload)
+facts. MeTTa recursively compiles those tables into rho receives and sends,
+then calls rho.step.
+
+This models a demand/fact notification frontier: many watchers may demand
+several topics, and several facts may arrive on those topics. --lang rhocalc
+can run the compiled process, but it cannot itself interpret the two MeTTa
+tables and synthesize the rho network.
+
+Files:
+- sizes.tsv: default topic/watch/fact sizes for this benchmark only.
+- generate.sh SIZE OUT_DIR: writes demand_index_SIZE.metta and
+  demand_index_SIZE.rho.
+- run.sh: runs only demand-index against CeTTa lib_rho and f1r3node
+  rholang-cli.
+
+The default ladder starts at 32/48/64 now that the evaluator visible-variable
+cap has been removed. Larger SIZES values may investigate MeTTa builder limits
+or true rho-frontier output cost rather than pure rho step overhead.
+
+CeTTa lib_rho prints the full rho:steps reduction frontier; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
