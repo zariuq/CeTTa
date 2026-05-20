@@ -3039,54 +3039,32 @@ bindings_resolve_body_visible_var(Arena *a, const Bindings *full,
     return slot_var;
 }
 
-static bool collect_pattern_vars_simple_rec(Atom *atom, VarId *ids,
-                                            SymbolId *spellings,
-                                            uint32_t *len, uint32_t cap) {
-    if (!atom)
-        return true;
-    if (atom->kind == ATOM_VAR) {
-        for (uint32_t i = 0; i < *len; i++) {
-            if (ids[i] == atom->var_id)
-                return true;
-        }
-        if (*len >= cap)
-            return false;
-        ids[*len] = atom->var_id;
-        spellings[*len] = atom->sym_id;
-        (*len)++;
-        return true;
-    }
-    if (atom->kind != ATOM_EXPR)
-        return true;
-    for (uint32_t i = 0; i < atom->expr.len; i++) {
-        if (!collect_pattern_vars_simple_rec(atom->expr.elems[i], ids, spellings,
-                                             len, cap)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool bindings_project_body_visible_env(Arena *a, Atom *body,
                                               const Bindings *full, Bindings *out) {
-    VarId body_ids[64];
-    SymbolId body_spellings[64];
-    uint32_t nbody = 0;
+    FreeVarSet body_vars;
 
     bindings_init(out);
     if (!full || full->len == 0)
         return true;
     if (!atom_contains_vars(body))
         return true;
-    if (!collect_pattern_vars_simple_rec(body, body_ids, body_spellings, &nbody, 64))
+
+    free_var_set_init(&body_vars);
+    if (!collect_structural_vars_rec(body, &body_vars)) {
+        free_var_set_free(&body_vars);
+        bindings_free(out);
         return false;
-    if (nbody == 0)
+    }
+    if (body_vars.len == 0) {
+        free_var_set_free(&body_vars);
         return true;
+    }
+
     for (uint32_t i = 0; i < full->len; i++) {
         bool used = false;
-        for (uint32_t j = 0; j < nbody; j++) {
-            if (body_ids[j] == full->entries[i].var_id ||
-                body_spellings[j] == full->entries[i].spelling) {
+        for (uint32_t j = 0; j < body_vars.len; j++) {
+            if (body_vars.items[j].var_id == full->entries[i].var_id ||
+                body_vars.items[j].spelling == full->entries[i].spelling) {
                 used = true;
                 break;
             }
@@ -3100,10 +3078,12 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
             : val;
         if (!bindings_add_id(out, full->entries[i].var_id,
                              full->entries[i].spelling, projected)) {
+            free_var_set_free(&body_vars);
             bindings_free(out);
             return false;
         }
     }
+    free_var_set_free(&body_vars);
     return true;
 }
 

@@ -1,6 +1,7 @@
 #ifndef CETTA_RHOCALC_SYNTAX_H
 #define CETTA_RHOCALC_SYNTAX_H
 
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "atom.h"
@@ -16,6 +17,7 @@ int rhocalc_parse_file(const char *path,
                        Atom ***out_atoms);
 const char *rhocalc_last_parse_error(void);
 Atom *rhocalc_elaborate_mrho_atom(Arena *arena, Atom *atom);
+bool rhocalc_is_domain_atom(Atom *atom);
 void rhocalc_print_atom_syntax(Atom *atom, CettaSyntaxId syntax, FILE *out);
 
 #endif /* CETTA_RHOCALC_SYNTAX_H */
