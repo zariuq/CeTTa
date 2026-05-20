@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 #define SYMBOL_TABLE_MIN_SLOTS 4096u
 #define SYMBOL_TABLE_MAX_LOAD_NUM 7u
@@ -10,6 +11,7 @@
 
 SymbolTable *g_symbols = NULL;
 BuiltinSyms g_builtin_syms;
+static pthread_mutex_t g_symbol_table_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void symbol_oom(size_t size) {
     fprintf(stderr, "fatal: out of memory allocating %zu bytes\n", size);
@@ -113,6 +115,7 @@ void symbol_table_free(SymbolTable *st) {
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash) {
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
+    pthread_mutex_lock(&g_symbol_table_mutex);
     if ((st->slot_used + 1) * SYMBOL_TABLE_MAX_LOAD_DEN >
         st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
         symbol_table_resize(st, st->slot_cap ? st->slot_cap * 2 : SYMBOL_TABLE_MIN_SLOTS);
@@ -137,12 +140,16 @@ SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
             entry->len = len;
             entry->id = id;
             st->slot_used++;
+            pthread_mutex_unlock(&g_symbol_table_mutex);
             return id;
         }
         if (entry->hash == hash) {
             const SymbolEntry *sym = &st->entries[entry->id];
-            if (symbol_entry_matches(sym, bytes, len, hash))
-                return entry->id;
+            if (symbol_entry_matches(sym, bytes, len, hash)) {
+                SymbolId id = entry->id;
+                pthread_mutex_unlock(&g_symbol_table_mutex);
+                return id;
+            }
         }
         slot = (slot + 1) % st->slot_cap;
     }
@@ -159,25 +166,42 @@ SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {
 }
 
 const char *symbol_bytes(const SymbolTable *st, SymbolId id) {
-    if (!st || id == SYMBOL_ID_NONE || id >= st->entry_len) return "";
-    return st->entries[id].bytes ? st->entries[id].bytes : "";
+    if (!st || id == SYMBOL_ID_NONE) return "";
+    pthread_mutex_lock(&g_symbol_table_mutex);
+    const char *bytes =
+        (id < st->entry_len && st->entries[id].bytes) ? st->entries[id].bytes : "";
+    pthread_mutex_unlock(&g_symbol_table_mutex);
+    return bytes;
 }
 
 uint32_t symbol_len(const SymbolTable *st, SymbolId id) {
-    if (!st || id == SYMBOL_ID_NONE || id >= st->entry_len) return 0;
-    return st->entries[id].len;
+    if (!st || id == SYMBOL_ID_NONE) return 0;
+    pthread_mutex_lock(&g_symbol_table_mutex);
+    uint32_t len = id < st->entry_len ? st->entries[id].len : 0;
+    pthread_mutex_unlock(&g_symbol_table_mutex);
+    return len;
 }
 
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
-    if (!st || id == SYMBOL_ID_NONE || id >= st->entry_len) return (uint64_t)id;
-    return st->entries[id].hash;
+    if (!st || id == SYMBOL_ID_NONE) return (uint64_t)id;
+    pthread_mutex_lock(&g_symbol_table_mutex);
+    uint64_t hash = id < st->entry_len ? st->entries[id].hash : (uint64_t)id;
+    pthread_mutex_unlock(&g_symbol_table_mutex);
+    return hash;
 }
 
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {
     if (!st || id == SYMBOL_ID_NONE || !text) return false;
     uint32_t len = (uint32_t)strlen(text);
+    pthread_mutex_lock(&g_symbol_table_mutex);
+    if (id >= st->entry_len) {
+        pthread_mutex_unlock(&g_symbol_table_mutex);
+        return false;
+    }
     const SymbolEntry *entry = &st->entries[id];
-    return entry->len == len && memcmp(entry->bytes, text, len) == 0;
+    bool eq = entry->len == len && memcmp(entry->bytes, text, len) == 0;
+    pthread_mutex_unlock(&g_symbol_table_mutex);
+    return eq;
 }
 
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {

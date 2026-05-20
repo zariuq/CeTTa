@@ -4,11 +4,12 @@
 #include "symbol.h"
 
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
-static uint64_t g_runtime_counters[CETTA_RUNTIME_COUNTER_COUNT];
-static bool g_runtime_stats_enabled = false;
+static _Atomic uint64_t g_runtime_counters[CETTA_RUNTIME_COUNTER_COUNT];
+static atomic_bool g_runtime_stats_enabled = false;
 
 static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT] = {
     "bindings-lookup",
@@ -162,6 +163,15 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "query-episode-promoted-answer-count",
     "query-episode-promoted-answer-bytes",
     "query-episode-delayed-outcome-survivor-count",
+    "hyperpose-threaded-run",
+    "hyperpose-worker-started",
+    "hyperpose-result-emitted",
+    "hyperpose-cooperative-fallback",
+    "hyperpose-fallback-thread-limit",
+    "hyperpose-once-run",
+    "hyperpose-cancel-request",
+    "hyperpose-cancel-observed",
+    "hyperpose-select-k-run",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -177,41 +187,59 @@ const char *cetta_runtime_counter_name(CettaRuntimeCounter counter) {
 }
 
 void cetta_runtime_stats_reset(void) {
-    memset(g_runtime_counters, 0, sizeof(g_runtime_counters));
+    for (uint32_t i = 0; i < CETTA_RUNTIME_COUNTER_COUNT; i++)
+        atomic_store_explicit(&g_runtime_counters[i], 0, memory_order_relaxed);
 }
 
-void cetta_runtime_stats_enable(void) { g_runtime_stats_enabled = true; }
-void cetta_runtime_stats_disable(void) { g_runtime_stats_enabled = false; }
-bool cetta_runtime_stats_is_enabled(void) { return g_runtime_stats_enabled; }
+void cetta_runtime_stats_enable(void) {
+    atomic_store_explicit(&g_runtime_stats_enabled, true, memory_order_relaxed);
+}
+void cetta_runtime_stats_disable(void) {
+    atomic_store_explicit(&g_runtime_stats_enabled, false, memory_order_relaxed);
+}
+bool cetta_runtime_stats_is_enabled(void) {
+    return atomic_load_explicit(&g_runtime_stats_enabled, memory_order_relaxed);
+}
 
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
-    if (__builtin_expect(!g_runtime_stats_enabled, 1))
+    if (__builtin_expect(!cetta_runtime_stats_is_enabled(), 1))
         return;
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
-    g_runtime_counters[counter] += delta;
+    atomic_fetch_add_explicit(&g_runtime_counters[counter], delta,
+                              memory_order_relaxed);
 }
 
 void cetta_runtime_stats_set(CettaRuntimeCounter counter, uint64_t value) {
-    if (__builtin_expect(!g_runtime_stats_enabled, 1))
+    if (__builtin_expect(!cetta_runtime_stats_is_enabled(), 1))
         return;
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
-    g_runtime_counters[counter] = value;
+    atomic_store_explicit(&g_runtime_counters[counter], value,
+                          memory_order_relaxed);
 }
 
 void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value) {
-    if (__builtin_expect(!g_runtime_stats_enabled, 1))
+    if (__builtin_expect(!cetta_runtime_stats_is_enabled(), 1))
         return;
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
-    if (value > g_runtime_counters[counter])
-        g_runtime_counters[counter] = value;
+    uint64_t observed =
+        atomic_load_explicit(&g_runtime_counters[counter], memory_order_relaxed);
+    while (value > observed &&
+           !atomic_compare_exchange_weak_explicit(&g_runtime_counters[counter],
+                                                  &observed, value,
+                                                  memory_order_relaxed,
+                                                  memory_order_relaxed)) {
+    }
 }
 
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     if (!out) return;
-    memcpy(out->counters, g_runtime_counters, sizeof(g_runtime_counters));
+    for (uint32_t i = 0; i < CETTA_RUNTIME_COUNTER_COUNT; i++) {
+        out->counters[i] =
+            atomic_load_explicit(&g_runtime_counters[i], memory_order_relaxed);
+    }
 }
 
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats) {

@@ -31,6 +31,7 @@ tests/spec_profile_fold_extension.metta	he	metta	he-extended	main	native	test	go
 tests/spec_profile_foldl_extension.metta	he	metta	he-extended	main	native	test	golden	-
 tests/spec_profile_foldl_public.metta	he	metta	he-extended	main	native	test	golden	-
 tests/spec_profile_fs_extension.metta	he	metta	he-extended	main	native	test	golden	-
+tests/spec_profile_hyperpose_extension.metta	he	metta	he-extended	main	native	test	golden	-
 tests/spec_profile_once_alias_extension.metta	he	metta		main	native	test-profiles	diagnostic	base HE rejects an extended surface without a profile
 tests/spec_profile_reduce_extension.metta	he	metta	he-extended	main	native	test	golden	-
 tests/spec_profile_runtime_stats_extension.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
@@ -173,6 +174,13 @@ tests/test_git_module_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_git_module_missing.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hash_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_nested_binding_substitution_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_hyperpose.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_hyperpose_arity.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_hyperpose_fair_once.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_hyperpose_handle_fallback_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
+tests/test_hyperpose_hidden_effect_fallback_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_hyperpose_threaded_error_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_hyperpose_threaded_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_if.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_equal.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_equal_arity.metta	he	metta	he-extended	main	native	test	golden	-

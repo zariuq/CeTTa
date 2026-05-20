@@ -35,6 +35,7 @@
 (: import! (-> Atom Atom (->)))
 (: select (-> Atom %Undefined%))
 (: collect (-> Atom Expression))
+(: hyperpose (-> Expression %Undefined%))
 (: fold (-> Atom Atom Variable Variable Atom %Undefined%))
 (: fold-by-key (-> Atom Atom Variable Variable Atom Atom %Undefined%))
 (: reduce (-> Atom Atom Variable Variable Atom %Undefined%))
@@ -149,6 +150,12 @@
   (@params (
     (@param "Result expression to evaluate")))
   (@return "Collected expression of surviving results in current traversal order"))
+
+(@doc hyperpose
+  (@desc "HE-extended nondeterministic branch surface with the same pure result frontier as superpose. Ordinary evaluation and collapse preserve deterministic source-order collection. For syntactically eligible static branch lists, (pragma! hyperpose-threads N) or --hyperpose-threads N with N greater than 1 enables OS-threaded branch execution for once/select 1 and collapse. Unsupported or visibly effectful branches use the sequential fallback; hidden effects inside user definitions remain user responsibility.")
+  (@params (
+    (@param "Expression containing branch expressions")))
+  (@return "Nondeterministic branch results"))
 
 (@doc fold
   (@desc "HE-extended fold over nondeterministic results. Evaluates a result fan-out, skips Empty results, and folds the surviving items into one accumulator without first packaging them into an expression. The primary form is (fold results init $acc $item step). The policy form (fold (search-policy lane) results init $acc $item step) keeps the same lane and ordering controls as select and collect. Each fold step must produce exactly one non-empty result. If the step is order-sensitive, the final value follows engine/policy traversal order rather than a semantic ordering guarantee.")

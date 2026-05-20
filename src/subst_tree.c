@@ -1,13 +1,16 @@
 #include "subst_tree.h"
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 /* ── Epoch counter ─────────────────────────────────────────────────────── */
 
-static uint32_t g_stree_epoch = 1;
+static _Atomic uint32_t g_stree_epoch = 1;
 
-uint32_t stree_next_epoch(void) { return g_stree_epoch++; }
+uint32_t stree_next_epoch(void) {
+    return atomic_fetch_add_explicit(&g_stree_epoch, 1, memory_order_relaxed);
+}
 
 /* ── SubstNode lifecycle ───────────────────────────────────────────────── */
 

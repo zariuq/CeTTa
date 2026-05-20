@@ -67,6 +67,7 @@ typedef struct {
     X(comma, ",") \
     X(match, "match") \
     X(superpose, "superpose") \
+    X(hyperpose, "hyperpose") \
     X(collapse, "collapse") \
     X(cons_atom, "cons-atom") \
     X(union_atom, "union-atom") \
