@@ -125,6 +125,51 @@ static bool rho_expr_head_named(Atom *atom, const char *name) {
            strcmp(atom_name_cstr(atom->expr.elems[0]), name) == 0;
 }
 
+static bool rhocalc_is_domain_proc_atom(Atom *atom);
+
+static bool rhocalc_is_domain_name_atom(Atom *atom) {
+    if (!atom) return false;
+    if (atom->kind == ATOM_VAR) return true;
+    return rho_expr_head_named(atom, "rho:quote") && atom->expr.len == 2 &&
+           rhocalc_is_domain_proc_atom(atom->expr.elems[1]);
+}
+
+static bool rhocalc_is_domain_proc_atom(Atom *atom) {
+    if (atom_is_symbol(atom, "rho:nil")) return true;
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0) return false;
+
+    if (rho_expr_head_named(atom, "rho:par")) {
+        for (uint32_t i = 1; i < atom->expr.len; i++) {
+            if (!rhocalc_is_domain_proc_atom(atom->expr.elems[i])) return false;
+        }
+        return true;
+    }
+    if (rho_expr_head_named(atom, "rho:send") && atom->expr.len == 3) {
+        return rhocalc_is_domain_name_atom(atom->expr.elems[1]) &&
+               rhocalc_is_domain_proc_atom(atom->expr.elems[2]);
+    }
+    if (rho_expr_head_named(atom, "rho:recv") && atom->expr.len == 4) {
+        return rhocalc_is_domain_name_atom(atom->expr.elems[1]) &&
+               atom->expr.elems[2]->kind == ATOM_VAR &&
+               rhocalc_is_domain_proc_atom(atom->expr.elems[3]);
+    }
+    if (rho_expr_head_named(atom, "rho:drop") && atom->expr.len == 2) {
+        return rhocalc_is_domain_name_atom(atom->expr.elems[1]);
+    }
+    return false;
+}
+
+bool rhocalc_is_domain_atom(Atom *atom) {
+    if (rhocalc_is_domain_proc_atom(atom)) return true;
+    if (rho_expr_head_named(atom, "rho:steps")) {
+        for (uint32_t i = 1; i < atom->expr.len; i++) {
+            if (!rhocalc_is_domain_proc_atom(atom->expr.elems[i])) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 static void rp_skip_ws(RhoParser *parser) {
     for (;;) {
         while (isspace((unsigned char)parser->text[parser->pos])) {

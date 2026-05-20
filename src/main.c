@@ -80,6 +80,14 @@ static bool result_set_all_empty(ResultSet *rs) {
     return true;
 }
 
+static bool result_set_all_rhocalc_domain(ResultSet *rs) {
+    if (rs->len == 0) return false;
+    for (uint32_t i = 0; i < rs->len; i++) {
+        if (!rhocalc_is_domain_atom(rs->items[i])) return false;
+    }
+    return true;
+}
+
 static bool path_has_suffix(const char *path, const char *suffix) {
     size_t path_len;
     size_t suffix_len;
@@ -539,6 +547,15 @@ static void write_results(FILE *out, ResultSet *rs) {
     if (g_quiet_results && !result_set_has_error(rs) && result_set_all_empty(rs)) {
         return;
     }
+    if (result_set_all_rhocalc_domain(rs)) {
+        fprintf(out, "[");
+        for (uint32_t i = 0; i < rs->len; i++) {
+            if (i > 0) fprintf(out, ", ");
+            rhocalc_print_atom_syntax(rs->items[i], CETTA_SYNTAX_MRHO, out);
+        }
+        fprintf(out, "]\n");
+        return;
+    }
     bool pretty_vars = display_vars_pretty_enabled_for(logical_dest);
     bool pretty_namespaces = display_namespaces_pretty_enabled_for(logical_dest);
     if (pretty_vars || pretty_namespaces) {
@@ -549,7 +566,11 @@ static void write_results(FILE *out, ResultSet *rs) {
     fprintf(out, "[");
     for (uint32_t i = 0; i < rs->len; i++) {
         if (i > 0) fprintf(out, ", ");
-        atom_print(rs->items[i], out);
+        if (rhocalc_is_domain_atom(rs->items[i])) {
+            rhocalc_print_atom_syntax(rs->items[i], CETTA_SYNTAX_MRHO, out);
+        } else {
+            atom_print(rs->items[i], out);
+        }
     }
     fprintf(out, "]\n");
 }
