@@ -1,0 +1,23 @@
+route-synthesis
+
+This benchmark is authored as MeTTa data, not as a rho process. The source
+contains a route table of (edge src dst) facts and MeTTa builder rules that
+synthesize a strict-core rho forwarding network before calling rho.step.
+
+That is the point of the benchmark: --lang rhocalc can run the generated rho
+process, but it cannot itself consume the route-table data and construct the
+process. The Rholang lane receives the equivalent generated network for
+cross-engine timing.
+
+Files:
+- sizes.tsv: default route-table sizes for this benchmark only.
+- generate.sh SIZE OUT_DIR: writes route_synthesis_SIZE.metta and
+  route_synthesis_SIZE.rho.
+- run.sh: runs only route-synthesis against CeTTa lib_rho and f1r3node
+  rholang-cli.
+
+The default ladder starts at 32/48/64 now that the evaluator visible-variable
+cap has been removed. Larger SIZES values may investigate MeTTa builder limits
+or true rho-frontier output cost rather than pure rho step overhead.
+
+CeTTa lib_rho prints the full rho:steps reduction frontier; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.

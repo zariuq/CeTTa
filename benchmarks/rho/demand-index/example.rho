@@ -1,0 +1,5 @@
+for (x0 <- @"topic0") { @"sink0"!(*x0) } |
+for (x1 <- @"topic0") { @"sink1"!(*x1) } |
+for (x2 <- @"topic1") { @"sink2"!(*x2) } |
+@"topic0"!(@"payload0"!(Nil)) |
+@"topic1"!(@"payload1"!(Nil))
