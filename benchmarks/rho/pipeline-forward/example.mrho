@@ -1,0 +1,5 @@
+(rho:par
+  (rho:send $c0 rho:nil)
+  (rho:recv $c0 $msg (rho:send $c1 (rho:drop $msg)))
+  (rho:recv $c1 $msg (rho:send $c2 (rho:drop $msg)))
+  (rho:recv $c2 $done rho:nil))

@@ -1,0 +1,26 @@
+route-policy
+
+This benchmark extends route-synthesis with a simple policy field. The source
+is a MeTTa route table of (edge src dst tag) facts. MeTTa filters the table to
+one required tag, synthesizes only the allowed rho forwarders and signals, and
+then calls rho.step.
+
+The route tag is symbolic policy data, while src and dst are rho name atoms used
+for communication.
+
+The point is to measure MeTTa doing symbolic policy selection before strict-core
+rho execution. --lang rhocalc can run the filtered process, but it cannot itself
+interpret the route table and policy. The Rholang lane receives the equivalent
+filtered network for cross-engine timing.
+
+Files:
+- sizes.tsv: route-table sizes for this benchmark only.
+- generate.sh SIZE OUT_DIR: writes route_policy_SIZE.metta and
+  route_policy_SIZE.rho.
+- run.sh: runs only route-policy against CeTTa lib_rho and f1r3node
+  rholang-cli.
+
+Use ROUTE_POLICY=trusted or ROUTE_POLICY=backup to select the allowed edge tag.
+The default is trusted.
+
+CeTTa lib_rho prints the full rho:steps reduction frontier; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
