@@ -1,7 +1,7 @@
 !(import! &self list)
 
-!(assertEqual (list:empty? ()) True)
-!(assertEqual (list:empty? (a b)) False)
+!(assertEqual (list:is-empty ()) True)
+!(assertEqual (list:is-empty (a b)) False)
 !(assertEqual (list:first (a b c)) a)
 !(assertEqual (list:rest (a b c)) (b c))
 !(assertEqual (list:len (a b c)) 3)

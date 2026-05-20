@@ -5,7 +5,7 @@
 ; - It is backed by ordinary expressions and thin wrappers over native primitives.
 ; - Explicit cons-lists live separately in clist.metta.
 
-(= (list:empty? $xs)
+(= (list:is-empty $xs)
    (== $xs ()))
 
 (= (list:first $xs)

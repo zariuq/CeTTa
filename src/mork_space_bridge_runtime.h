@@ -147,7 +147,7 @@ void cetta_mork_bridge_cursor_free(CettaMorkCursorHandle *cursor);
 bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
                                           bool *out_exists);
 bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
-                                     bool *out_is_val);
+                                    bool *out_is_val);
 bool cetta_mork_bridge_cursor_child_count(const CettaMorkCursorHandle *cursor,
                                           uint64_t *out_child_count);
 bool cetta_mork_bridge_cursor_path_bytes(const CettaMorkCursorHandle *cursor,

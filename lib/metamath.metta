@@ -3,7 +3,7 @@
 
 (= (mm-read-tokens $filename)
    (function
-     (case (fs-read-text $filename)
+     (case (fs:read-text $filename)
        (((Error $source $message)
          (return (Error (mm-read-tokens $filename) $message)))
         ($text

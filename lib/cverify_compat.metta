@@ -10,37 +10,37 @@
 
 (= (get_cmdline_args)
    (function
-     (case (system-args)
+     (case (system:args)
        (($result (return $result))))))
 
 (= (get_cmdline_arg $idx)
    (function
-     (case (system-arg $idx)
+     (case (system:arg $idx)
        (($result (return $result))))))
 
 (= (cmdline_arg_count)
    (function
-     (case (system-argc)
+     (case (system:argc)
        (($result (return $result))))))
 
 (= (has_cmdline_args)
    (function
-     (case (system-has-args)
+     (case (system:has-args)
        (($result (return $result))))))
 
 (= (get_env_var_or_default $name $default)
    (function
-     (case (system-getenv-or-default $name $default)
+     (case (system:getenv-or-default $name $default)
        (($result (return $result))))))
 
 (= (halt_with_code $code)
    (function
-     (case (system-exit $code)
+     (case (system:exit $code)
        (($result (return $result))))))
 
 (= (is_flag_arg $arg)
    (function
-     (case (system-flag-arg? $arg)
+     (case (system:is-flag $arg)
        ((True (return true))
         (False (return false))))))
 
