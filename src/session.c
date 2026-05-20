@@ -54,6 +54,7 @@ static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"collect", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
     {"fold", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"fold-by-key", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
     {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},

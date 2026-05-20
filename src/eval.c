@@ -12,37 +12,42 @@
 #include "term_universe.h"
 #include "variant_shape.h"
 #include <inttypes.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
 #include <time.h>
 #include <sys/resource.h>
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
-static Registry *g_registry = NULL;
+static __thread Registry *g_registry = NULL;
 /* Current evaluation root space and persistent fallback. */
-static Space *g_eval_root_space = NULL;
-static TermUniverse g_eval_fallback_universe = {0};
+static __thread Space *g_eval_root_space = NULL;
+static __thread TermUniverse g_eval_fallback_universe = {0};
 /* Query cache for the current logical evaluation episode. */
-static TableStore g_episode_table;
-static bool g_episode_table_ready = false;
-static AnswerBank g_episode_answer_bank;
-static bool g_episode_answer_bank_ready = false;
-static VariantBank g_episode_outcome_variant_bank;
-static bool g_episode_outcome_variant_bank_ready = false;
-static Arena g_episode_survivor_arena;
-static bool g_episode_survivor_arena_ready = false;
+static __thread TableStore g_episode_table;
+static __thread bool g_episode_table_ready = false;
+static __thread AnswerBank g_episode_answer_bank;
+static __thread bool g_episode_answer_bank_ready = false;
+static __thread VariantBank g_episode_outcome_variant_bank;
+static __thread bool g_episode_outcome_variant_bank_ready = false;
+static __thread Arena g_episode_survivor_arena;
+static __thread bool g_episode_survivor_arena_ready = false;
 /* Active importable library set */
-static CettaLibraryContext *g_library_context = NULL;
-static CettaEvalSession g_fallback_eval_session;
-static bool g_fallback_eval_session_ready = false;
+static __thread CettaLibraryContext *g_library_context = NULL;
+static __thread CettaEvalSession g_fallback_eval_session;
+static __thread bool g_fallback_eval_session_ready = false;
+static __thread _Atomic bool *g_eval_cancel_requested = NULL;
+static __thread bool g_eval_cancel_observed = false;
+static __thread _Atomic bool *g_hyperpose_thread_unsafe_requested = NULL;
 
 typedef struct {
     Space **items;
     uint32_t len, cap;
 } TempSpaceSet;
 
-static TempSpaceSet g_temp_spaces = {0};
+static __thread TempSpaceSet g_temp_spaces = {0};
 
 typedef struct {
     Arena scratch;
@@ -93,6 +98,44 @@ static bool eval_type_check_auto_enabled(void) {
 
 static bool eval_bare_minimal_enabled(void) {
     return cetta_evaluator_options_is_bare_minimal(active_eval_options_const());
+}
+
+static _Atomic bool *eval_set_cancel_token(_Atomic bool *cancel_requested) {
+    _Atomic bool *prev = g_eval_cancel_requested;
+    g_eval_cancel_requested = cancel_requested;
+    g_eval_cancel_observed = false;
+    return prev;
+}
+
+static _Atomic bool *eval_set_hyperpose_thread_unsafe_token(
+    _Atomic bool *unsafe_requested) {
+    _Atomic bool *prev = g_hyperpose_thread_unsafe_requested;
+    g_hyperpose_thread_unsafe_requested = unsafe_requested;
+    return prev;
+}
+
+static bool eval_mark_hyperpose_thread_unsafe(void) {
+    if (!g_hyperpose_thread_unsafe_requested)
+        return false;
+    atomic_store_explicit(g_hyperpose_thread_unsafe_requested, true,
+                          memory_order_release);
+    if (g_eval_cancel_requested) {
+        atomic_store_explicit(g_eval_cancel_requested, true,
+                              memory_order_release);
+    }
+    return true;
+}
+
+static bool eval_cancel_check(void) {
+    if (!g_eval_cancel_requested ||
+        !atomic_load_explicit(g_eval_cancel_requested, memory_order_acquire)) {
+        return false;
+    }
+    if (!g_eval_cancel_observed) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_CANCEL_OBSERVED);
+        g_eval_cancel_observed = true;
+    }
+    return true;
 }
 
 static int current_eval_fuel_limit(void) {
@@ -290,6 +333,7 @@ static Atom *mork_handle_surface_error(Arena *a, Atom *call,
 }
 
 static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static bool hyperpose_effectful_head(SymbolId head_id, Atom *head);
 static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
                                     Atom *surface_atom, uint32_t nargs,
                                     Atom **args, bool evaluate_rows, int fuel,
@@ -304,6 +348,8 @@ static Atom *dispatch_named_native(Space *s, Arena *a, SymbolId head_id,
     Atom *result = grounded_dispatch(a, head, args, nargs);
     if (result) return result;
     if (g_library_context) {
+        if (eval_mark_hyperpose_thread_unsafe())
+            return NULL;
         return cetta_library_dispatch_native(g_library_context, s, a, head, args, nargs);
     }
     return NULL;
@@ -1483,16 +1529,6 @@ static bool active_surface_allowed(const char *surface_name) {
                                          surface_name);
 }
 
-static Atom *profile_surface_error(Arena *a, Atom *call, const char *surface_name) {
-    const CettaProfile *profile = active_profile();
-    char buf[256];
-    snprintf(buf, sizeof(buf), "surface %s is unavailable in %s %s",
-             surface_name,
-             profile ? "profile" : "language",
-             profile ? profile->name : cetta_language_canonical_name(active_language_id()));
-    return atom_error(a, call, atom_symbol(a, buf));
-}
-
 static Atom *bad_arg_type_error(Space *s, Arena *a, Atom *call, int64_t arg_index,
                                 Atom *expected_type, Atom *actual) {
     Atom **actual_types = NULL;
@@ -1864,9 +1900,14 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
 }
 
 static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (head && head->kind == ATOM_SYMBOL &&
+        hyperpose_effectful_head(head->sym_id, head) &&
+        eval_mark_hyperpose_thread_unsafe()) {
+        return NULL;
+    }
     const char *head_name = head ? atom_name_cstr(head) : NULL;
     if (head && head_name && !active_surface_allowed(head_name)) {
-        return profile_surface_error(a, make_call_expr(a, head, args, nargs), head_name);
+        return NULL;
     }
     if (head && atom_is_symbol_id(head, g_builtin_syms.size) &&
         nargs == 1) {
@@ -4072,6 +4113,37 @@ static bool direct_walk_stack_push_superpose(DirectWalkStack *stack, Atom *list)
     return true;
 }
 
+static bool hyperpose_static_branch_list(Atom *atom, Atom **list_out) {
+    if (list_out)
+        *list_out = NULL;
+    if (!atom || !expr_head_is_id(atom, g_builtin_syms.hyperpose) ||
+        expr_nargs(atom) != 1) {
+        return false;
+    }
+    Atom *list = expr_arg(atom, 0);
+    if (!list || list->kind != ATOM_EXPR)
+        return false;
+    if (list_out)
+        *list_out = list;
+    return true;
+}
+
+static bool direct_outcome_pose_list(Atom *current, Atom **list_out) {
+    if (expr_head_is_id(current, g_builtin_syms.superpose) &&
+        expr_nargs(current) == 1) {
+        Atom *list = expr_arg(current, 0);
+        if (list && list->kind == ATOM_EXPR) {
+            if (list_out)
+                *list_out = list;
+            return true;
+        }
+        return false;
+    }
+    if (hyperpose_static_branch_list(current, list_out))
+        return active_surface_allowed("hyperpose");
+    return false;
+}
+
 static bool direct_outcome_walk_supported(Space *s, Arena *a, Atom *atom, int fuel) {
     DirectWalkStack stack = {0};
     if (!direct_walk_stack_push(&stack, atom))
@@ -4079,6 +4151,7 @@ static bool direct_outcome_walk_supported(Space *s, Arena *a, Atom *atom, int fu
 
     while (stack.len > 0) {
         Atom *current = direct_walk_stack_pop(&stack);
+        Atom *list = NULL;
         Atom *bound = registry_lookup_atom(current);
         if (bound)
             current = bound;
@@ -4089,11 +4162,8 @@ static bool direct_outcome_walk_supported(Space *s, Arena *a, Atom *atom, int fu
         }
         if (direct_outcome_walk_mork_match_supported(a, current))
             continue;
-        if (expr_head_is_id(current, g_builtin_syms.superpose) &&
-            expr_nargs(current) == 1) {
-            Atom *list = expr_arg(current, 0);
-            if (list->kind != ATOM_EXPR ||
-                !direct_walk_stack_push_superpose(&stack, list)) {
+        if (direct_outcome_pose_list(current, &list)) {
+            if (!direct_walk_stack_push_superpose(&stack, list)) {
                 direct_walk_stack_free(&stack);
                 return false;
             }
@@ -4119,6 +4189,7 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
 
     while (stack.len > 0) {
         Atom *current = direct_walk_stack_pop(&stack);
+        Atom *list = NULL;
         Atom *bound = registry_lookup_atom(current);
         if (bound)
             current = bound;
@@ -4141,11 +4212,8 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
             }
             continue;
         }
-        if (expr_head_is_id(current, g_builtin_syms.superpose) &&
-            expr_nargs(current) == 1) {
-            Atom *list = expr_arg(current, 0);
-            if (list->kind != ATOM_EXPR ||
-                !direct_walk_stack_push_superpose(&stack, list)) {
+        if (direct_outcome_pose_list(current, &list)) {
+            if (!direct_walk_stack_push_superpose(&stack, list)) {
                 direct_walk_stack_free(&stack);
                 return false;
             }
@@ -4262,6 +4330,756 @@ static void stream_item_buffer_free(StreamItemBuffer *buffer) {
     buffer->cap = 0;
 }
 
+static int64_t eval_option_int_or_default(const char *key, int64_t default_value) {
+    const CettaEvalOptionEntry *option = active_eval_option(key);
+    if (!option)
+        return default_value;
+    if (option->kind == CETTA_EVAL_OPTION_VALUE_INT)
+        return option->int_value;
+    if (strcmp(option->repr, "off") == 0 ||
+        strcmp(option->repr, "false") == 0 ||
+        strcmp(option->repr, "disabled") == 0) {
+        return 0;
+    }
+    if (strcmp(option->repr, "on") == 0 ||
+        strcmp(option->repr, "true") == 0 ||
+        strcmp(option->repr, "fair") == 0 ||
+        strcmp(option->repr, "threaded") == 0 ||
+        strcmp(option->repr, "parallel") == 0) {
+        return 2;
+    }
+    return default_value;
+}
+
+static bool symbol_name_has_bang_suffix(Atom *atom) {
+    if (!atom || atom->kind != ATOM_SYMBOL)
+        return false;
+    const char *name = atom_name_cstr(atom);
+    if (!name)
+        return false;
+    size_t len = strlen(name);
+    return len > 0 && name[len - 1] == '!';
+}
+
+static bool symbol_name_has_prefix(Atom *atom, const char *prefix) {
+    if (!atom || atom->kind != ATOM_SYMBOL || !prefix)
+        return false;
+    const char *name = atom_name_cstr(atom);
+    if (!name)
+        return false;
+    size_t prefix_len = strlen(prefix);
+    return strncmp(name, prefix, prefix_len) == 0;
+}
+
+static bool hyperpose_external_unsafe_head(Atom *head) {
+    return symbol_name_has_prefix(head, "mork:") ||
+           symbol_name_has_prefix(head, "mm2:") ||
+           symbol_name_has_prefix(head, "fs:") ||
+           symbol_name_has_prefix(head, "system:") ||
+           symbol_name_has_prefix(head, "foreign:") ||
+           symbol_name_has_prefix(head, "__cetta_lib_");
+}
+
+static bool hyperpose_effectful_head(SymbolId head_id, Atom *head) {
+    if (head_id == g_builtin_syms.bind_bang ||
+        head_id == g_builtin_syms.add_reduct ||
+        head_id == g_builtin_syms.new_space ||
+        head_id == g_builtin_syms.context_space ||
+        head_id == g_builtin_syms.get_type_space ||
+        head_id == g_builtin_syms.new_state ||
+        head_id == g_builtin_syms.get_state ||
+        head_id == g_builtin_syms.capture ||
+        head_id == g_builtin_syms.add_atom ||
+        head_id == g_builtin_syms.add_atoms ||
+        head_id == g_builtin_syms.add_atom_nodup ||
+        head_id == g_builtin_syms.remove_atom ||
+        head_id == g_builtin_syms.change_state_bang ||
+        head_id == g_builtin_syms.pragma_bang ||
+        head_id == g_builtin_syms.import_bang ||
+        head_id == g_builtin_syms.include ||
+        head_id == g_builtin_syms.register_module_bang ||
+        head_id == g_builtin_syms.git_module_bang ||
+        head_id == g_builtin_syms.mod_space_bang ||
+        head_id == g_builtin_syms.print_mods_bang ||
+        head_id == g_builtin_syms.module_inventory_bang ||
+        head_id == g_builtin_syms.reset_runtime_stats_bang ||
+        head_id == g_builtin_syms.runtime_stats_bang ||
+        head_id == g_builtin_syms.space_set_backend_bang ||
+        head_id == g_builtin_syms.space_set_match_backend_bang ||
+        head_id == g_builtin_syms.space_push ||
+        head_id == g_builtin_syms.space_pop ||
+        head_id == g_builtin_syms.space_truncate ||
+        head_id == g_builtin_syms.step_bang ||
+        head_id == g_builtin_syms.call_native ||
+        head_id == g_builtin_syms.println_bang ||
+        head_id == g_builtin_syms.print_alternatives_bang ||
+        head_id == g_builtin_syms.assert_text ||
+        head_id == g_builtin_syms.assertEqual ||
+        head_id == g_builtin_syms.assertEqualToResult ||
+        head_id == g_builtin_syms.assertEqualMsg ||
+        head_id == g_builtin_syms.assertEqualToResultMsg ||
+        head_id == g_builtin_syms.assertAlphaEqual ||
+        head_id == g_builtin_syms.assertAlphaEqualMsg ||
+        head_id == g_builtin_syms.assertAlphaEqualToResult ||
+        head_id == g_builtin_syms.assertAlphaEqualToResultMsg ||
+        head_id == g_builtin_syms.assertIncludes) {
+        return true;
+    }
+    return symbol_name_has_bang_suffix(head) || hyperpose_external_unsafe_head(head);
+}
+
+static bool hyperpose_atom_is_thread_local_resource(Atom *atom) {
+    if (!atom)
+        return false;
+    if (atom_is_symbol_id(atom, g_builtin_syms.capture))
+        return true;
+    return atom->kind == ATOM_GROUNDED &&
+           (atom->ground.gkind == GV_SPACE ||
+            atom->ground.gkind == GV_STATE ||
+            atom->ground.gkind == GV_CAPTURE ||
+            atom->ground.gkind == GV_FOREIGN);
+}
+
+static bool hyperpose_atom_has_thread_local_resource(Atom *atom) {
+    if (!atom)
+        return false;
+    if (hyperpose_atom_is_thread_local_resource(atom))
+        return true;
+    if (atom->kind == ATOM_EXPR) {
+        for (uint32_t i = 0; i < atom->expr.len; i++) {
+            if (hyperpose_atom_has_thread_local_resource(atom->expr.elems[i]))
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool hyperpose_atom_parent_portable(Atom *atom) {
+    return !hyperpose_atom_has_thread_local_resource(atom);
+}
+
+#define HYPERPOSE_THREAD_ELIGIBILITY_STACK_MAX 128
+
+typedef struct {
+    SymbolId visiting[HYPERPOSE_THREAD_ELIGIBILITY_STACK_MAX];
+    uint32_t visiting_len;
+} HyperposeThreadEligibilityCtx;
+
+static bool hyperpose_thread_eligibility_visiting(
+    const HyperposeThreadEligibilityCtx *ctx, SymbolId head) {
+    for (uint32_t i = 0; i < ctx->visiting_len; i++) {
+        if (ctx->visiting[i] == head)
+            return true;
+    }
+    return false;
+}
+
+static bool hyperpose_thread_eligibility_push(
+    HyperposeThreadEligibilityCtx *ctx, SymbolId head) {
+    if (hyperpose_thread_eligibility_visiting(ctx, head))
+        return true;
+    if (ctx->visiting_len >= HYPERPOSE_THREAD_ELIGIBILITY_STACK_MAX)
+        return false;
+    ctx->visiting[ctx->visiting_len++] = head;
+    return true;
+}
+
+static void hyperpose_thread_eligibility_pop(
+    HyperposeThreadEligibilityCtx *ctx, SymbolId head) {
+    if (ctx->visiting_len > 0 &&
+        ctx->visiting[ctx->visiting_len - 1] == head) {
+        ctx->visiting_len--;
+    }
+}
+
+static bool hyperpose_branch_thread_eligible_rec(
+    Space *s, Atom *atom, HyperposeThreadEligibilityCtx *ctx);
+
+static bool hyperpose_equation_bodies_thread_eligible_for_head(
+    Space *s, SymbolId head_id, HyperposeThreadEligibilityCtx *ctx) {
+    if (!s || head_id == SYMBOL_ID_NONE)
+        return true;
+    if (hyperpose_thread_eligibility_visiting(ctx, head_id))
+        return true;
+    if (!hyperpose_thread_eligibility_push(ctx, head_id))
+        return false;
+
+    bool ok = true;
+    uint32_t len = space_length(s);
+    for (uint32_t i = 0; i < len && ok; i++) {
+        Atom *eq = space_get_at(s, i);
+        if (!expr_head_is_id(eq, g_builtin_syms.equals) || expr_nargs(eq) != 2)
+            continue;
+        Atom *lhs = expr_arg(eq, 0);
+        Atom *rhs = expr_arg(eq, 1);
+        SymbolId lhs_head = atom_head_symbol_id(lhs);
+        if (lhs_head == head_id || lhs_head == SYMBOL_ID_NONE) {
+            ok = hyperpose_branch_thread_eligible_rec(s, rhs, ctx);
+        }
+    }
+
+    hyperpose_thread_eligibility_pop(ctx, head_id);
+    return ok;
+}
+
+static bool hyperpose_branch_thread_eligible_rec(
+    Space *s, Atom *atom, HyperposeThreadEligibilityCtx *ctx) {
+    if (!atom)
+        return true;
+    if (hyperpose_atom_is_thread_local_resource(atom))
+        return false;
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0)
+        return true;
+    Atom *head = atom->expr.elems[0];
+    SymbolId head_id = atom_head_symbol_id(atom);
+    if (hyperpose_effectful_head(head_id, head))
+        return false;
+    if (!hyperpose_equation_bodies_thread_eligible_for_head(s, head_id, ctx))
+        return false;
+    for (uint32_t i = 0; i < atom->expr.len; i++) {
+        if (!hyperpose_branch_thread_eligible_rec(s, atom->expr.elems[i], ctx))
+            return false;
+    }
+    return true;
+}
+
+static bool hyperpose_branch_thread_eligible(Space *s, Atom *atom) {
+    HyperposeThreadEligibilityCtx ctx = {0};
+    return hyperpose_branch_thread_eligible_rec(s, atom, &ctx);
+}
+
+static bool hyperpose_all_branches_thread_eligible(Space *s, Atom *branches) {
+    if (!branches || branches->kind != ATOM_EXPR)
+        return false;
+    for (uint32_t i = 0; i < branches->expr.len; i++) {
+        if (!hyperpose_branch_thread_eligible(s, branches->expr.elems[i]))
+            return false;
+    }
+    return true;
+}
+
+static bool hyperpose_all_branches_thread_eligible_without_capture(Space *s,
+                                                                   Atom *branches) {
+    if (!hyperpose_all_branches_thread_eligible(s, branches))
+        return false;
+    for (uint32_t i = 0; i < branches->expr.len; i++) {
+        Atom *branch = branches->expr.elems[i];
+        if (atom_has_vars(branch) || atom_has_registry_refs(branch))
+            return false;
+    }
+    return true;
+}
+
+typedef struct {
+    Atom **items;
+    uint32_t len;
+    uint32_t cap;
+} HyperposeThreadResultBuffer;
+
+typedef struct {
+    Space **items;
+    uint32_t len;
+    uint32_t cap;
+} HyperposeOwnedSpaces;
+
+typedef struct HyperposeThreadBranch {
+    uint32_t index;
+    Atom *branch;
+    Arena persistent_arena;
+    Arena eval_arena;
+    TermUniverse term_universe;
+    Space *space;
+    Registry registry;
+    HyperposeOwnedSpaces owned_spaces;
+    HyperposeThreadResultBuffer results;
+    bool has_success;
+    bool prepared;
+} HyperposeThreadBranch;
+
+typedef struct {
+    HyperposeThreadBranch *branches;
+    uint32_t branch_count;
+    int fuel;
+    bool preserve_bindings;
+    bool first_success;
+    CettaLibraryContext *library_context;
+    _Atomic bool cancel_requested;
+    _Atomic bool unsafe_result;
+    _Atomic uint32_t next_branch;
+    _Atomic int winner_index;
+} HyperposeThreadRun;
+
+static bool hyperpose_result_buffer_push(HyperposeThreadResultBuffer *buffer,
+                                         Atom *atom) {
+    if (buffer->len >= buffer->cap) {
+        uint32_t next_cap = buffer->cap ? buffer->cap * 2 : 4;
+        Atom **next =
+            cetta_realloc(buffer->items, sizeof(Atom *) * next_cap);
+        buffer->items = next;
+        buffer->cap = next_cap;
+    }
+    buffer->items[buffer->len++] = atom;
+    return true;
+}
+
+static void hyperpose_result_buffer_free(HyperposeThreadResultBuffer *buffer) {
+    free(buffer->items);
+    buffer->items = NULL;
+    buffer->len = 0;
+    buffer->cap = 0;
+}
+
+static bool hyperpose_owned_spaces_push(HyperposeOwnedSpaces *spaces,
+                                        Space *space) {
+    if (spaces->len >= spaces->cap) {
+        uint32_t next_cap = spaces->cap ? spaces->cap * 2 : 4;
+        Space **next =
+            cetta_realloc(spaces->items, sizeof(Space *) * next_cap);
+        spaces->items = next;
+        spaces->cap = next_cap;
+    }
+    spaces->items[spaces->len++] = space;
+    return true;
+}
+
+static Atom *hyperpose_clone_atom_materialized(Arena *owner, Atom *src) {
+    if (!owner || !src)
+        return NULL;
+    switch (src->kind) {
+    case ATOM_SYMBOL:
+        return atom_symbol_id(owner, src->sym_id);
+    case ATOM_VAR:
+        return atom_var_with_spelling(owner, src->sym_id, src->var_id);
+    case ATOM_GROUNDED:
+        switch (src->ground.gkind) {
+        case GV_INT:
+            return atom_int(owner, src->ground.ival);
+        case GV_FLOAT:
+            return atom_float(owner, src->ground.fval);
+        case GV_BOOL:
+            return atom_bool(owner, src->ground.bval);
+        case GV_STRING:
+            return atom_string(owner, src->ground.sval);
+        case GV_STATE: {
+            StateCell *src_cell = (StateCell *)src->ground.ptr;
+            StateCell *dst_cell = arena_alloc(owner, sizeof(StateCell));
+            dst_cell->value = NULL;
+            dst_cell->content_type = NULL;
+            if (src_cell) {
+                if (src_cell->value) {
+                    dst_cell->value =
+                        hyperpose_clone_atom_materialized(owner, src_cell->value);
+                    if (!dst_cell->value)
+                        return NULL;
+                }
+                if (src_cell->content_type) {
+                    dst_cell->content_type = hyperpose_clone_atom_materialized(
+                        owner, src_cell->content_type);
+                    if (!dst_cell->content_type)
+                        return NULL;
+                }
+            }
+            return atom_state(owner, dst_cell);
+        }
+        case GV_SPACE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return NULL;
+        }
+        return NULL;
+    case ATOM_EXPR: {
+        Atom **elems = arena_alloc(owner, sizeof(Atom *) * src->expr.len);
+        for (uint32_t i = 0; i < src->expr.len; i++) {
+            elems[i] = hyperpose_clone_atom_materialized(owner, src->expr.elems[i]);
+            if (!elems[i])
+                return NULL;
+        }
+        return atom_expr(owner, elems, src->expr.len);
+    }
+    }
+    return NULL;
+}
+
+static Space *hyperpose_clone_space_materialized(Space *src, Arena *owner,
+                                                 TermUniverse *universe) {
+    if (!src || !owner || !universe)
+        return NULL;
+    Space *clone = cetta_malloc(sizeof(Space));
+    space_init_with_universe(clone, universe);
+    clone->kind = src->kind;
+    uint32_t len = space_length(src);
+    for (uint32_t i = 0; i < len; i++) {
+        Atom *item = space_get_at(src, i);
+        if (!item)
+            continue;
+        Atom *cloned_item = hyperpose_clone_atom_materialized(owner, item);
+        if (!cloned_item) {
+            space_free(clone);
+            free(clone);
+            return NULL;
+        }
+        space_add(clone, cloned_item);
+    }
+    return clone;
+}
+
+static bool hyperpose_clone_registry(Registry *dst, Registry *src,
+                                     Space *src_root, Space *root_clone,
+                                     Arena *owner,
+                                     HyperposeOwnedSpaces *owned_spaces) {
+    registry_init(dst);
+    bool saw_self = false;
+    if (src) {
+        for (uint32_t i = 0; i < src->len; i++) {
+            SymbolId key = src->entries[i].key;
+            Atom *value = src->entries[i].value;
+            if (key == SYMBOL_ID_NONE || !value)
+                continue;
+            if (key == g_builtin_syms.self)
+                saw_self = true;
+            if (value->kind == ATOM_GROUNDED &&
+                value->ground.gkind == GV_SPACE) {
+                Space *space_value = (Space *)value->ground.ptr;
+                Space *space_clone = space_value == src_root
+                    ? root_clone
+                    : hyperpose_clone_space_materialized(space_value, owner,
+                                                        root_clone->native.universe);
+                if (!space_clone)
+                    return false;
+                if (space_clone != root_clone &&
+                    !hyperpose_owned_spaces_push(owned_spaces, space_clone)) {
+                    space_free(space_clone);
+                    free(space_clone);
+                    return false;
+                }
+                registry_bind_id(dst, key, atom_space(owner, space_clone));
+            } else {
+                Atom *cloned_value = hyperpose_clone_atom_materialized(owner, value);
+                if (!cloned_value)
+                    return false;
+                registry_bind_id(dst, key, cloned_value);
+            }
+        }
+    }
+    if (!saw_self)
+        registry_bind_id(dst, g_builtin_syms.self, atom_space(owner, root_clone));
+    return true;
+}
+
+static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
+                                            uint32_t index,
+                                            Space *source_space,
+                                            Registry *source_registry,
+                                            Atom *source_branch) {
+    memset(branch, 0, sizeof(*branch));
+    branch->index = index;
+    arena_init(&branch->persistent_arena);
+    arena_set_hashcons(&branch->persistent_arena, NULL);
+    arena_set_runtime_kind(&branch->persistent_arena,
+                           CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&branch->eval_arena);
+    arena_set_hashcons(&branch->eval_arena, NULL);
+    arena_set_runtime_kind(&branch->eval_arena,
+                           CETTA_ARENA_RUNTIME_KIND_EVAL);
+    term_universe_init(&branch->term_universe);
+    term_universe_set_persistent_arena(&branch->term_universe,
+                                       &branch->persistent_arena);
+    branch->space =
+        hyperpose_clone_space_materialized(source_space, &branch->persistent_arena,
+                                          &branch->term_universe);
+    if (!branch->space)
+        return false;
+    if (!hyperpose_owned_spaces_push(&branch->owned_spaces, branch->space))
+        return false;
+    if (!hyperpose_clone_registry(&branch->registry, source_registry,
+                                  source_space, branch->space,
+                                  &branch->persistent_arena,
+                                  &branch->owned_spaces)) {
+        return false;
+    }
+    branch->branch = hyperpose_clone_atom_materialized(&branch->persistent_arena,
+                                                       source_branch);
+    if (!branch->branch)
+        return false;
+    branch->prepared = true;
+    return true;
+}
+
+static void hyperpose_thread_branch_free(HyperposeThreadBranch *branch) {
+    if (!branch)
+        return;
+    hyperpose_result_buffer_free(&branch->results);
+    for (uint32_t i = 0; i < branch->owned_spaces.len; i++) {
+        if (branch->owned_spaces.items[i]) {
+            space_free(branch->owned_spaces.items[i]);
+            free(branch->owned_spaces.items[i]);
+        }
+    }
+    free(branch->owned_spaces.items);
+    branch->owned_spaces.items = NULL;
+    branch->owned_spaces.len = 0;
+    branch->owned_spaces.cap = 0;
+    term_universe_free(&branch->term_universe);
+    arena_free(&branch->eval_arena);
+    arena_free(&branch->persistent_arena);
+    memset(branch, 0, sizeof(*branch));
+}
+
+static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
+                                            HyperposeThreadBranch *branch) {
+    if (atomic_load_explicit(&run->unsafe_result, memory_order_acquire))
+        return;
+    if (run->first_success &&
+        atomic_load_explicit(&run->cancel_requested, memory_order_acquire))
+        return;
+
+    Registry *prev_registry = g_registry;
+    Space *prev_root_space = g_eval_root_space;
+    Arena *prev_fallback_persistent =
+        g_eval_fallback_universe.persistent_arena;
+    CettaLibraryContext *prev_library_context = g_library_context;
+    _Atomic bool *prev_cancel = eval_set_cancel_token(&run->cancel_requested);
+    _Atomic bool *prev_unsafe =
+        eval_set_hyperpose_thread_unsafe_token(&run->unsafe_result);
+
+    g_registry = &branch->registry;
+    g_eval_root_space = branch->space;
+    g_library_context = run->library_context;
+    term_universe_set_persistent_arena(&g_eval_fallback_universe,
+                                       &branch->persistent_arena);
+    eval_release_outcome_variant_bank();
+
+    Bindings empty;
+    bindings_init(&empty);
+    OutcomeSet outcomes;
+    outcome_set_init(&outcomes);
+    eval_for_current_caller(branch->space, &branch->eval_arena, NULL,
+                            branch->branch, run->fuel, &empty, &empty,
+                            run->preserve_bindings, &outcomes);
+    for (uint32_t i = 0; i < outcomes.len; i++) {
+        Atom *candidate =
+            outcome_atom_materialize(&branch->eval_arena, &outcomes.items[i]);
+        if (atom_is_empty(candidate))
+            continue;
+        if (!hyperpose_atom_parent_portable(candidate)) {
+            atomic_store_explicit(&run->unsafe_result, true, memory_order_release);
+            atomic_store_explicit(&run->cancel_requested, true, memory_order_release);
+            break;
+        }
+        bool success = !atom_is_error(candidate);
+        Atom *stable = atom_deep_copy(&branch->persistent_arena, candidate);
+        hyperpose_result_buffer_push(&branch->results, stable);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_RESULT_EMITTED);
+        if (success)
+            branch->has_success = true;
+        if (success && run->first_success) {
+            int expected = -1;
+            if (atomic_compare_exchange_strong_explicit(
+                    &run->winner_index, &expected, (int)branch->index,
+                    memory_order_acq_rel, memory_order_acquire)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_HYPERPOSE_CANCEL_REQUEST);
+                atomic_store_explicit(&run->cancel_requested, true,
+                                      memory_order_release);
+            }
+            break;
+        }
+    }
+    outcome_set_free(&outcomes);
+    eval_release_temporary_spaces();
+
+    eval_set_hyperpose_thread_unsafe_token(prev_unsafe);
+    eval_set_cancel_token(prev_cancel);
+    g_library_context = prev_library_context;
+    g_registry = prev_registry;
+    g_eval_root_space = prev_root_space;
+    term_universe_set_persistent_arena(&g_eval_fallback_universe,
+                                       prev_fallback_persistent);
+}
+
+static void *hyperpose_thread_worker(void *ctx) {
+    HyperposeThreadRun *run = ctx;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_WORKER_STARTED);
+    while (true) {
+        if (atomic_load_explicit(&run->unsafe_result, memory_order_acquire))
+            break;
+        if (run->first_success &&
+            atomic_load_explicit(&run->cancel_requested, memory_order_acquire))
+            break;
+        uint32_t index =
+            atomic_fetch_add_explicit(&run->next_branch, 1,
+                                      memory_order_acq_rel);
+        if (index >= run->branch_count)
+            break;
+        hyperpose_eval_branch_in_thread(run, &run->branches[index]);
+    }
+    return NULL;
+}
+
+static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
+                                      int fuel, bool bounded, int64_t limit,
+                                      bool preserve_bindings, OutcomeSet *os) {
+    Atom *branches_expr = NULL;
+    if (!hyperpose_static_branch_list(stream_expr, &branches_expr))
+        return false;
+    if (!active_surface_allowed("hyperpose"))
+        return false;
+    if (preserve_bindings)
+        return false;
+
+    int64_t configured_threads =
+        eval_option_int_or_default("hyperpose-threads", 1);
+    if (configured_threads <= 1)
+        return false;
+    if (configured_threads > 1024)
+        configured_threads = 1024;
+
+    uint32_t branch_count = branches_expr->expr.len;
+    if (branch_count == 0)
+        return false;
+    if (bounded && limit > 1) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_SELECT_K_RUN);
+        return false;
+    }
+    if (!hyperpose_all_branches_thread_eligible_without_capture(s, branches_expr)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
+        return false;
+    }
+
+    HyperposeThreadBranch *branches =
+        calloc(branch_count, sizeof(HyperposeThreadBranch));
+    if (!branches)
+        return false;
+    bool prepared = true;
+    for (uint32_t i = 0; i < branch_count; i++) {
+        if (!hyperpose_prepare_thread_branch(&branches[i], i, s, g_registry,
+                                             branches_expr->expr.elems[i])) {
+            prepared = false;
+            break;
+        }
+    }
+    if (!prepared) {
+        for (uint32_t i = 0; i < branch_count; i++)
+            hyperpose_thread_branch_free(&branches[i]);
+        free(branches);
+        return false;
+    }
+
+    uint32_t thread_count = (uint32_t)configured_threads;
+    if (thread_count > branch_count)
+        thread_count = branch_count;
+    pthread_t *threads = calloc(thread_count, sizeof(pthread_t));
+    if (!threads) {
+        for (uint32_t i = 0; i < branch_count; i++)
+            hyperpose_thread_branch_free(&branches[i]);
+        free(branches);
+        return false;
+    }
+
+    HyperposeThreadRun run = {
+        .branches = branches,
+        .branch_count = branch_count,
+        .fuel = fuel,
+        .preserve_bindings = preserve_bindings,
+        .first_success = bounded && limit == 1,
+        .library_context = g_library_context,
+    };
+    atomic_init(&run.cancel_requested, false);
+    atomic_init(&run.unsafe_result, false);
+    atomic_init(&run.next_branch, 0);
+    atomic_init(&run.winner_index, -1);
+
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_THREADED_RUN);
+    if (run.first_success)
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_ONCE_RUN);
+
+    uint32_t started = 0;
+    bool start_ok = true;
+    for (uint32_t i = 0; i < thread_count; i++) {
+        if (pthread_create(&threads[i], NULL, hyperpose_thread_worker, &run) != 0) {
+            start_ok = false;
+            atomic_store_explicit(&run.cancel_requested, true,
+                                  memory_order_release);
+            break;
+        }
+        started++;
+    }
+    for (uint32_t i = 0; i < started; i++)
+        pthread_join(threads[i], NULL);
+    free(threads);
+
+    if (!start_ok) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_FALLBACK_THREAD_LIMIT);
+        for (uint32_t i = 0; i < branch_count; i++)
+            hyperpose_thread_branch_free(&branches[i]);
+        free(branches);
+        return false;
+    }
+
+    if (atomic_load_explicit(&run.unsafe_result, memory_order_acquire)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
+        for (uint32_t i = 0; i < branch_count; i++)
+            hyperpose_thread_branch_free(&branches[i]);
+        free(branches);
+        return false;
+    }
+
+    Bindings empty;
+    bindings_init(&empty);
+    if (run.first_success) {
+        int winner =
+            atomic_load_explicit(&run.winner_index, memory_order_acquire);
+        Atom *selected_atom = NULL;
+        if (winner >= 0 && (uint32_t)winner < branch_count) {
+            HyperposeThreadBranch *branch = &branches[winner];
+            for (uint32_t i = 0; i < branch->results.len; i++) {
+                if (!atom_is_error(branch->results.items[i])) {
+                    selected_atom = branch->results.items[i];
+                    break;
+                }
+            }
+        }
+        if (!selected_atom) {
+            for (uint32_t i = 0; i < branch_count && !selected_atom; i++) {
+                if (branches[i].results.len > 0)
+                    selected_atom = branches[i].results.items[0];
+            }
+        }
+        outcome_set_add(os,
+                        selected_atom ? atom_deep_copy(a, selected_atom)
+                                      : atom_empty(a),
+                        &empty);
+    } else {
+        bool has_success = false;
+        uint32_t result_count = 0;
+        for (uint32_t i = 0; i < branch_count; i++) {
+            result_count += branches[i].results.len;
+            if (branches[i].has_success)
+                has_success = true;
+        }
+        Atom **items =
+            arena_alloc(a, sizeof(Atom *) * (result_count ? result_count : 1));
+        uint32_t len = 0;
+        for (uint32_t i = 0; i < branch_count; i++) {
+            for (uint32_t j = 0; j < branches[i].results.len; j++) {
+                Atom *item = branches[i].results.items[j];
+                if (has_success && atom_is_error(item))
+                    continue;
+                items[len++] = atom_deep_copy(a, item);
+            }
+        }
+        outcome_set_add(os, atom_expr(a, items, len), &empty);
+    }
+
+    for (uint32_t i = 0; i < branch_count; i++)
+        hyperpose_thread_branch_free(&branches[i]);
+    free(branches);
+    return true;
+}
+
 typedef struct {
     OutcomeSet *os;
 } StreamFirstResultCtx;
@@ -4352,17 +5170,23 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     Bindings _empty;
     bindings_init(&_empty);
 
+    if (bounded && limit == 0) {
+        outcome_set_add(os, atom_unit(a), &_empty);
+        return;
+    }
+
+    if (order == CETTA_SEARCH_POLICY_ORDER_NATIVE &&
+        hyperpose_threaded_stream(s, a, stream_expr, fuel, bounded, limit,
+                                  preserve_bindings, os)) {
+        return;
+    }
+
     if (bounded && limit == 1) {
         StreamFirstResultCtx first = { .os = os };
         if (metta_eval_bind_visit(s, a, stream_expr, fuel, order,
                                   stream_visit_emit_first, &first) == 0) {
             outcome_set_add(os, atom_empty(a), &_empty);
         }
-        return;
-    }
-
-    if (bounded && limit == 0) {
-        outcome_set_add(os, atom_unit(a), &_empty);
         return;
     }
 
@@ -6364,6 +7188,8 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs) {
     __attribute__((cleanup(eval_c_stack_guard_leave)))
     EvalCStackGuard stack_guard = {0};
+    if (eval_cancel_check())
+        return;
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_EVAL);
         result_set_add(rs, atom_error(a, atom, atom_symbol(a, "StackOverflow")));
@@ -6437,6 +7263,8 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os) {
     __attribute__((cleanup(eval_c_stack_guard_leave)))
     EvalCStackGuard stack_guard = {0};
+    if (eval_cancel_check())
+        return;
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND);
         Bindings overflow_empty;
@@ -6466,6 +7294,8 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
 static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, OutcomeSet *os) {
     __attribute__((cleanup(eval_c_stack_guard_leave)))
     EvalCStackGuard stack_guard = {0};
+    if (eval_cancel_check())
+        return;
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND_TYPED);
@@ -7218,6 +8048,10 @@ static void dispatch_capture_outcomes(Space *s, Arena *a, Atom *head, Atom **arg
                                       bool preserve_bindings, OutcomeSet *os) {
     if (!is_capture_closure(head))
         return;
+    if (eval_mark_hyperpose_thread_unsafe()) {
+        outcome_set_add(os, atom_empty(a), prefix);
+        return;
+    }
 
     if (nargs != 1) {
         Atom *err = atom_error(a, make_call_expr(a, head, args, nargs),
@@ -7246,6 +8080,10 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
     if (!g_library_context || !g_library_context->foreign_runtime ||
         !cetta_foreign_is_callable_atom(head)) {
         return false;
+    }
+    if (eval_mark_hyperpose_thread_unsafe()) {
+        outcome_set_add(os, atom_empty(a), prefix);
+        return true;
     }
 
     ResultSet rs;
@@ -8612,6 +9450,8 @@ static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
 #define outcome_set_add(_os, _atom, _env) \
     outcome_set_add_prefixed(a, (_os), (_atom), (_env), CURRENT_ENV, preserve_bindings)
 tail_call: ;
+    if (eval_cancel_check())
+        return;
     atom = materialize_runtime_token(s, a, atom);
     if (atom_is_error(atom) || atom_is_empty(atom)) {
         outcome_set_add(os, atom, &_empty);
@@ -8648,11 +9488,48 @@ tail_call: ;
 
     uint32_t nargs = expr_nargs(atom);
     const SymbolId head_id = atom_head_symbol_id(atom);
+    Atom *head = atom->expr.elems[0];
+
+    if (g_hyperpose_thread_unsafe_requested &&
+        hyperpose_effectful_head(head_id, head)) {
+        eval_mark_hyperpose_thread_unsafe();
+        outcome_set_add(os, atom_empty(a), &_empty);
+        return;
+    }
 
     /* ── Special forms (arguments NOT pre-evaluated) ───────────────────── */
 
-    /* ── superpose ─────────────────────────────────────────────────────── */
+    /* ── superpose / hyperpose ─────────────────────────────────────────── */
     if (head_id == g_builtin_syms.superpose) {
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Atom *list = expr_arg(atom, 0);
+        if (list->kind == ATOM_EXPR) {
+            for (uint32_t i = 0; i < list->expr.len; i++) {
+                OutcomeSet branch;
+                outcome_set_init(&branch);
+                eval_for_current_caller(s, a, etype, list->expr.elems[i], fuel, &_empty,
+                                        CURRENT_ENV, preserve_bindings, &branch);
+                for (uint32_t j = 0; j < branch.len; j++) {
+                    Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
+                    if (atom_is_empty(branch_atom))
+                        continue;
+                    outcome_set_add_existing(os, &branch.items[j]);
+                }
+                outcome_set_free(&branch);
+            }
+        }
+        return;
+    }
+    if (head_id == g_builtin_syms.hyperpose) {
+        if (!active_surface_allowed("hyperpose")) {
+            outcome_set_add(os, atom, &_empty);
+            return;
+        }
         if (nargs != 1) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
@@ -8687,6 +9564,11 @@ tail_call: ;
         }
         if (!preserve_bindings &&
             collapse_let_stream(s, a, expr_arg(atom, 0), fuel, CURRENT_ENV, os)) {
+            return;
+        }
+        if (!preserve_bindings &&
+            hyperpose_threaded_stream(s, a, expr_arg(atom, 0), fuel, false, 0,
+                                      preserve_bindings, os)) {
             return;
         }
         if (!preserve_bindings &&
@@ -9334,7 +10216,7 @@ tail_call: ;
     /* ── search-policy ─────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.search_policy) {
         if (!active_surface_allowed("search-policy")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "search-policy"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         CettaSearchPolicySpec spec = {0};
@@ -9371,7 +10253,7 @@ tail_call: ;
         CettaSearchPolicySpec policy = {0};
         policy.order = CETTA_SEARCH_POLICY_ORDER_NATIVE;
         if (!active_surface_allowed(surface)) {
-            outcome_set_add(os, profile_surface_error(a, atom, surface), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
 
@@ -9762,8 +10644,7 @@ tail_call: ;
     /* ── foldl-atom-in-space (clean extension surface) ────────────────── */
     if (head_id == g_builtin_syms.foldl_atom_in_space) {
         if (!active_surface_allowed("foldl-atom-in-space")) {
-            outcome_set_add(os,
-                profile_surface_error(a, atom, "foldl-atom-in-space"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if (nargs != 6) {
@@ -9798,7 +10679,7 @@ tail_call: ;
         }
         if (nargs == 1) {
             if (!active_surface_allowed("new-space-kind")) {
-                outcome_set_add(os, profile_surface_error(a, atom, "new-space-kind"), &_empty);
+                outcome_set_add(os, atom, &_empty);
                 return;
             }
             const char *kind_name = string_like_atom(expr_arg(atom, 0));
@@ -10033,7 +10914,7 @@ tail_call: ;
             return;
         }
         if (!active_surface_allowed("module-inventory!")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "module-inventory!"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         Atom *error = NULL;
@@ -10056,8 +10937,7 @@ tail_call: ;
             return;
         }
         if (!active_surface_allowed("reset-runtime-stats!")) {
-            outcome_set_add(os,
-                profile_surface_error(a, atom, "reset-runtime-stats!"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         cetta_runtime_stats_reset();
@@ -10074,8 +10954,7 @@ tail_call: ;
             return;
         }
         if (!active_surface_allowed("runtime-stats!")) {
-            outcome_set_add(os,
-                profile_surface_error(a, atom, "runtime-stats!"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         outcome_set_add(os, runtime_stats_inventory_atom(a), &_empty);
@@ -10146,8 +11025,7 @@ tail_call: ;
                 ? "space-set-backend!"
                 : "space-set-match-backend!";
         if (!active_surface_allowed(surface_name)) {
-            outcome_set_add(os,
-                profile_surface_error(a, atom, surface_name), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if (nargs != 2 || !g_registry) {
@@ -10212,7 +11090,7 @@ tail_call: ;
 
     if (head_id == g_builtin_syms.space_len) {
         if (!active_surface_allowed("space-len")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "space-len"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if (nargs != 1 || !g_registry) {
@@ -10250,7 +11128,7 @@ tail_call: ;
 
     if (head_id == g_builtin_syms.step_bang) {
         if (!active_surface_allowed("step!")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "step!"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if ((nargs != 1 && nargs != 2) || !g_registry) {
@@ -10327,7 +11205,7 @@ tail_call: ;
 
     if (head_id == g_builtin_syms.space_push) {
         if (!active_surface_allowed("space-push")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "space-push"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if (nargs != 2 || !g_registry) {
@@ -10357,7 +11235,7 @@ tail_call: ;
 
     if (head_id == g_builtin_syms.space_peek) {
         if (!active_surface_allowed("space-peek")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "space-peek"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if (nargs != 1 || !g_registry) {
@@ -10391,7 +11269,7 @@ tail_call: ;
 
     if (head_id == g_builtin_syms.space_pop) {
         if (!active_surface_allowed("space-pop")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "space-pop"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if (nargs != 1 || !g_registry) {
@@ -10429,7 +11307,7 @@ tail_call: ;
         const bool is_get = head_id == g_builtin_syms.space_get;
         const char *surface = is_get ? "space-get" : "space-truncate";
         if (!active_surface_allowed(surface)) {
-            outcome_set_add(os, profile_surface_error(a, atom, surface), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         if (nargs != 2 || !g_registry) {
@@ -10766,7 +11644,7 @@ tail_call: ;
     /* ── count-atoms ──────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.count_atoms && nargs == 1 && g_registry) {
         if (!active_surface_allowed("count-atoms")) {
-            outcome_set_add(os, profile_surface_error(a, atom, "count-atoms"), &_empty);
+            outcome_set_add(os, atom, &_empty);
             return;
         }
         Atom *space_ref = expr_arg(atom, 0);

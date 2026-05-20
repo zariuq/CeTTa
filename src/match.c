@@ -2,6 +2,8 @@
 #include "stats.h"
 #include "variant_shape.h"
 #include <assert.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -24,6 +26,7 @@ typedef struct BindingPoolBlock {
 static const uint32_t BINDINGS_POOL_CAPS[BINDINGS_POOL_CLASS_COUNT] = {8, 16, 32, 64};
 static BindingPoolBlock *g_binding_entry_pools[BINDINGS_POOL_CLASS_COUNT];
 static BindingPoolBlock *g_binding_constraint_pools[BINDINGS_POOL_CLASS_COUNT];
+static pthread_mutex_t g_binding_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 static size_t g_binding_entry_active_bytes = 0;
 static size_t g_binding_entry_pool_bytes = 0;
 static size_t g_binding_entry_retained_bytes = 0;
@@ -123,6 +126,7 @@ static int bindings_pool_class(uint32_t cap) {
 static Binding *bindings_entries_alloc(uint32_t cap) {
     int klass = bindings_pool_class(cap);
     size_t bytes = sizeof(Binding) * cap;
+    pthread_mutex_lock(&g_binding_pool_mutex);
     if (klass >= 0 && g_binding_entry_pools[klass]) {
         BindingPoolBlock *block = g_binding_entry_pools[klass];
         g_binding_entry_pools[klass] = block->next;
@@ -132,11 +136,13 @@ static Binding *bindings_entries_alloc(uint32_t cap) {
             g_binding_entry_pool_bytes = 0;
         g_binding_entry_active_bytes += bytes;
         bindings_note_entry_pool_metrics();
+        pthread_mutex_unlock(&g_binding_pool_mutex);
         return (Binding *)block;
     }
     g_binding_entry_active_bytes += bytes;
     g_binding_entry_retained_bytes += bytes;
     bindings_note_entry_pool_metrics();
+    pthread_mutex_unlock(&g_binding_pool_mutex);
     return cetta_malloc(bytes);
 }
 
@@ -145,6 +151,7 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
     if (!entries) return;
     bytes = sizeof(Binding) * cap;
     int klass = bindings_pool_class(cap);
+    pthread_mutex_lock(&g_binding_pool_mutex);
     if (klass < 0) {
         if (g_binding_entry_active_bytes >= bytes)
             g_binding_entry_active_bytes -= bytes;
@@ -155,6 +162,7 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
         else
             g_binding_entry_retained_bytes = 0;
         bindings_note_entry_pool_metrics();
+        pthread_mutex_unlock(&g_binding_pool_mutex);
         free(entries);
         return;
     }
@@ -167,11 +175,13 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
     block->next = g_binding_entry_pools[klass];
     g_binding_entry_pools[klass] = block;
     bindings_note_entry_pool_metrics();
+    pthread_mutex_unlock(&g_binding_pool_mutex);
 }
 
 static BindingConstraint *bindings_constraints_alloc(uint32_t cap) {
     int klass = bindings_pool_class(cap);
     size_t bytes = sizeof(BindingConstraint) * cap;
+    pthread_mutex_lock(&g_binding_pool_mutex);
     if (klass >= 0 && g_binding_constraint_pools[klass]) {
         BindingPoolBlock *block = g_binding_constraint_pools[klass];
         g_binding_constraint_pools[klass] = block->next;
@@ -181,11 +191,13 @@ static BindingConstraint *bindings_constraints_alloc(uint32_t cap) {
             g_binding_constraint_pool_bytes = 0;
         g_binding_constraint_active_bytes += bytes;
         bindings_note_constraint_pool_metrics();
+        pthread_mutex_unlock(&g_binding_pool_mutex);
         return (BindingConstraint *)block;
     }
     g_binding_constraint_active_bytes += bytes;
     g_binding_constraint_retained_bytes += bytes;
     bindings_note_constraint_pool_metrics();
+    pthread_mutex_unlock(&g_binding_pool_mutex);
     return cetta_malloc(bytes);
 }
 
@@ -194,6 +206,7 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
     if (!constraints) return;
     bytes = sizeof(BindingConstraint) * cap;
     int klass = bindings_pool_class(cap);
+    pthread_mutex_lock(&g_binding_pool_mutex);
     if (klass < 0) {
         if (g_binding_constraint_active_bytes >= bytes)
             g_binding_constraint_active_bytes -= bytes;
@@ -204,6 +217,7 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
         else
             g_binding_constraint_retained_bytes = 0;
         bindings_note_constraint_pool_metrics();
+        pthread_mutex_unlock(&g_binding_pool_mutex);
         free(constraints);
         return;
     }
@@ -216,6 +230,7 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
     block->next = g_binding_constraint_pools[klass];
     g_binding_constraint_pools[klass] = block;
     bindings_note_constraint_pool_metrics();
+    pthread_mutex_unlock(&g_binding_pool_mutex);
 }
 
 static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling);
@@ -1399,7 +1414,7 @@ void bindings_builder_take(BindingsBuilder *bb, Bindings *out) {
 
 /* ── Variable renaming (standardization apart) ─────────────────────────── */
 
-static uint32_t g_var_counter = 0;
+static _Atomic uint32_t g_var_counter = 0;
 
 typedef struct {
     VarId *items;
@@ -1419,7 +1434,7 @@ typedef struct {
 } RenameVarMap;
 
 uint32_t fresh_var_suffix(void) {
-    return g_var_counter++;
+    return atomic_fetch_add_explicit(&g_var_counter, 1, memory_order_relaxed);
 }
 
 static void var_id_set_init(VarIdSet *set) {

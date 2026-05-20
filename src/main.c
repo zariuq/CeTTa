@@ -792,6 +792,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mork./runtime. namespace sugar\n", out);
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
+    fputs("       cetta --hyperpose-threads <n> <file.metta> # enable OS-threaded hyperpose scheduling when n > 1\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
     fputs("       cetta [--lang <name>] --list-profiles\n", out);
@@ -803,114 +804,11 @@ static void print_version(FILE *out) {
     fprintf(out, "cetta %s (%s)\n", CETTA_VERSION_STRING, CETTA_BUILD_MODE_STRING);
 }
 
-static const char *active_scope_name(CettaLanguageId language_id,
-                                     const CettaProfile *profile) {
-    if (profile && profile->name) return profile->name;
-    return cetta_language_canonical_name(language_id);
-}
-
-static const char *active_scope_kind(const CettaProfile *profile) {
-    return profile ? "profile" : "language";
-}
-
-static const char *find_profile_blocked_surface(CettaLanguageId language_id,
-                                                const CettaProfile *profile,
-                                                Atom *atom) {
-    if (!atom) return NULL;
-    if (atom->kind != ATOM_EXPR || atom->expr.len == 0) return NULL;
-
-    Atom *head = atom->expr.elems[0];
-    if (head->kind == ATOM_SYMBOL) {
-        if (atom_is_symbol_id(head, g_builtin_syms.quote)) {
-            return NULL;
-        }
-        if (!cetta_language_allows_surface(language_id, profile, atom_name_cstr(head))) {
-            return atom_name_cstr(head);
-        }
-        if (atom_is_symbol_id(head, g_builtin_syms.colon) && atom->expr.len >= 2 &&
-            atom->expr.elems[1]->kind == ATOM_SYMBOL &&
-            !cetta_language_allows_surface(language_id, profile,
-                                           atom_name_cstr(atom->expr.elems[1]))) {
-            return atom_name_cstr(atom->expr.elems[1]);
-        }
-    }
-
-    for (uint32_t i = 1; i < atom->expr.len; i++) {
-        const char *blocked = find_profile_blocked_surface(language_id, profile,
-                                                           atom->expr.elems[i]);
-        if (blocked) return blocked;
-    }
-    return NULL;
-}
-
-static bool compile_profile_guard_ok(CettaLanguageId language_id,
-                                     const CettaProfile *profile,
-                                     Atom **atoms,
-                                     int n) {
-    for (int i = 0; i < n; i++) {
-        Atom *at = atoms[i];
-        if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
-            i++;
-            continue;
-        }
-        const char *blocked = find_profile_blocked_surface(language_id, profile, at);
-        if (blocked) {
-            const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
-            fprintf(stderr, "error: surface '%s' is unavailable in %s '%s'",
-                    blocked, active_scope_kind(profile),
-                    active_scope_name(language_id, profile));
-            if (policy && policy->surface_classification) {
-                fprintf(stderr, " (%s)", policy->surface_classification);
-            }
-            fputc('\n', stderr);
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool atom_id_is_symbol_id(const TermUniverse *universe, AtomId atom_id,
                                  SymbolId sym_id) {
     return universe && atom_id != CETTA_ATOM_ID_NONE &&
            tu_kind(universe, atom_id) == ATOM_SYMBOL &&
            tu_sym(universe, atom_id) == sym_id;
-}
-
-static bool compile_profile_guard_ok_ids(CettaLanguageId language_id,
-                                         const CettaProfile *profile,
-                                         TermUniverse *universe,
-                                         const AtomId *atom_ids, int n) {
-    if (!universe)
-        return false;
-    if (n <= 0)
-        return true;
-    if (!atom_ids)
-        return false;
-    for (int i = 0; i < n; i++) {
-        AtomId atom_id = atom_ids[i];
-        if (atom_id_is_symbol_id(universe, atom_id, g_builtin_syms.bang)) {
-            i++;
-            continue;
-        }
-        Atom *at = term_universe_get_atom(universe, atom_id);
-        if (!at) {
-            fprintf(stderr, "error: could not decode parsed term for compile guard\n");
-            return false;
-        }
-        const char *blocked = find_profile_blocked_surface(language_id, profile, at);
-        if (blocked) {
-            const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
-            fprintf(stderr, "error: surface '%s' is unavailable in %s '%s'",
-                    blocked, active_scope_kind(profile),
-                    active_scope_name(language_id, profile));
-            if (policy && policy->surface_classification) {
-                fprintf(stderr, " (%s)", policy->surface_classification);
-            }
-            fputc('\n', stderr);
-            return false;
-        }
-    }
-    return true;
 }
 
 static bool main_try_add_builtin_type_decls_direct(Space *space) {
@@ -1162,6 +1060,7 @@ int main(int argc, char **argv) {
     bool translate_mode = false;
     uint32_t lang_occurrences = 0;
     int fuel_override = -1;
+    int64_t hyperpose_threads_override = -1;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
 
@@ -1244,6 +1143,21 @@ int main(int argc, char **argv) {
                 return 2;
             }
             fuel_override = (int)parsed;
+            continue;
+        }
+        if (strcmp(argv[i], "--hyperpose-threads") == 0) {
+            char *endp = NULL;
+            long long parsed;
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            parsed = strtoll(argv[++i], &endp, 10);
+            if (!endp || *endp != '\0' || parsed < 0 || parsed > 1024) {
+                fprintf(stderr, "error: invalid hyperpose thread count '%s'\n", argv[i]);
+                return 2;
+            }
+            hyperpose_threads_override = (int64_t)parsed;
             continue;
         }
         if (strcmp(argv[i], "--steps") == 0) {
@@ -1553,6 +1467,14 @@ int main(int argc, char **argv) {
     if (import_mode_overridden) {
         cetta_eval_session_set_relative_module_policy(&libraries.session, import_mode);
     }
+    if (hyperpose_threads_override >= 0) {
+        char repr[32];
+        snprintf(repr, sizeof(repr), "%lld",
+                 (long long)hyperpose_threads_override);
+        cetta_eval_session_record_generic_setting(
+            &libraries.session, "hyperpose-threads",
+            CETTA_EVAL_OPTION_VALUE_INT, repr, hyperpose_threads_override);
+    }
     eval_set_library_context(&libraries);
 
     space_init_with_universe(&space, &libraries.term_universe);
@@ -1598,10 +1520,6 @@ int main(int argc, char **argv) {
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
         if (lang_is_mm2) {
-            if (!compile_profile_guard_ok(lang->id, profile, atoms, n)) {
-                rc = 2;
-                goto cleanup;
-            }
             for (int pi = 0; pi < n; pi++) {
                 Atom *at = atoms[pi];
                 if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
@@ -1613,11 +1531,6 @@ int main(int argc, char **argv) {
                 space_add(&space, at);
             }
         } else {
-            if (!compile_profile_guard_ok_ids(lang->id, profile, &libraries.term_universe,
-                                              atom_ids, n)) {
-                rc = 2;
-                goto cleanup;
-            }
             for (int pi = 0; pi < n; pi++) {
                 if (atom_id_is_symbol_id(&libraries.term_universe, atom_ids[pi],
                                          g_builtin_syms.bang)) {

@@ -2,8 +2,10 @@
 #include "atom.h"
 #include "stats.h"
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
@@ -164,6 +166,7 @@ void arena_reset(Arena *a, ArenaMark mark) {
 /* ── Hash-Consing ──────────────────────────────────────────────────────── */
 
 HashConsTable *g_hashcons = NULL;
+static pthread_mutex_t g_hashcons_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static uint32_t atom_hash_compute(Atom *a) {
     if (!a) return 0;
@@ -378,12 +381,18 @@ static Atom *hashcons_intern(HashConsTable *hc, Atom *atom) {
 }
 
 Atom *hashcons_get(HashConsTable *hc, Atom *atom) {
-    return hashcons_intern(hc, atom);
+    if (!hc || !atom)
+        return atom;
+    pthread_mutex_lock(&g_hashcons_mutex);
+    Atom *out = hashcons_intern(hc, atom);
+    pthread_mutex_unlock(&g_hashcons_mutex);
+    return out;
 }
 
 /* ── Variables / cached literal lookups ────────────────────────────────── */
 
 VarInternTable *g_var_intern = NULL;
+static pthread_mutex_t g_var_intern_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define SYMBOL_LITERAL_CACHE_SIZE 64
 
@@ -393,12 +402,13 @@ typedef struct {
     SymbolId id;
 } SymbolLiteralCacheEntry;
 
-static SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
+static __thread SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
 
-static uint32_t g_var_base_counter = 1;
+static _Atomic uint32_t g_var_base_counter = 1;
 
 VarId fresh_var_id(void) {
-    return (VarId)g_var_base_counter++;
+    return (VarId)atomic_fetch_add_explicit(&g_var_base_counter, 1,
+                                            memory_order_relaxed);
 }
 
 uint32_t var_base_id(VarId id) {
@@ -469,6 +479,7 @@ static void var_intern_resize(VarInternTable *t, uint32_t new_size) {
 
 VarId var_intern(VarInternTable *t, SymbolId spelling) {
     if (!t || spelling == SYMBOL_ID_NONE) return fresh_var_id();
+    pthread_mutex_lock(&g_var_intern_mutex);
     if ((t->used + 1) * 10 > t->size * 7)
         var_intern_resize(t, t->size ? t->size * 2 : 4096);
     uint32_t h = spelling % t->size;
@@ -479,11 +490,16 @@ VarId var_intern(VarInternTable *t, SymbolId spelling) {
             t->spellings[idx] = spelling;
             t->ids[idx] = id;
             t->used++;
+            pthread_mutex_unlock(&g_var_intern_mutex);
             return id;
         }
-        if (t->spellings[idx] == spelling)
-            return t->ids[idx];
+        if (t->spellings[idx] == spelling) {
+            VarId id = t->ids[idx];
+            pthread_mutex_unlock(&g_var_intern_mutex);
+            return id;
+        }
     }
+    pthread_mutex_unlock(&g_var_intern_mutex);
     return fresh_var_id();
 }
 
