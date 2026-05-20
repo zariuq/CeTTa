@@ -1,2 +1,2 @@
 !(import! &self str)
-!(str-length "alpha")
+!(str:length "alpha")

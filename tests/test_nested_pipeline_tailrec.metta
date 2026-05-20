@@ -2,4 +2,4 @@
 
 !(parse-metamath-statements
    (mm-tokenize-text
-     (fs-read-text "tests/support/metamath/many_constants_100.mm")))
+     (fs:read-text "tests/support/metamath/many_constants_100.mm")))

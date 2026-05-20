@@ -1,1 +1,1 @@
-(= (cwd-value) (system-cwd))
+(= (cwd-value) (system:cwd))
