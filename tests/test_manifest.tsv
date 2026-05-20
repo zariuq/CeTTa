@@ -266,6 +266,7 @@ tests/test_mork_recursive_bc_regression.metta	he	metta	he-extended	pathmap	pathm
 tests/test_mork_runtime_stats_isolation.metta	he	metta	he-extended	runtime-stats	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_zipper_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_namespace_sugar_guardrails.metta	he	metta	he-extended	python	native	test-python	golden	Python-enabled build golden regression
+tests/test_native_count_collapse_match_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_nested_pipeline_tailrec.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_new_space_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_new_space_mork_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
@@ -413,6 +414,7 @@ tests/test_unknown_space_remove.metta	he	metta	he-extended	main	native	test	gold
 tests/test_unquote.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_variable_head_dispatch.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_variable_scoping.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_width_tuple_semantics_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot_equation_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot_passthrough.metta	he	metta	he-extended	main	native	test	golden	-
