@@ -1926,7 +1926,7 @@ static Atom *system_cli_args(const CettaLibraryContext *ctx, Arena *a, Atom *hea
                              Atom **args, uint32_t nargs) {
     if (!system_zero_arg_ok(args, nargs)) {
         return atom_error(a, library_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "expected: (system-args)"));
+                          atom_symbol(a, "expected: (system:args)"));
     }
     Atom **items = arena_alloc(a, sizeof(Atom *) *
                                   (ctx && ctx->cmdline_arg_len ? ctx->cmdline_arg_len : 1));
@@ -1953,7 +1953,7 @@ static Atom *system_cli_arg(const CettaLibraryContext *ctx, Arena *a, Atom *head
 static Atom *system_cli_arg_count(const CettaLibraryContext *ctx, Arena *a, Atom *head,
                                   Atom **args, uint32_t nargs) {
     if (!system_zero_arg_ok(args, nargs)) {
-        return library_signature_error(a, head, args, nargs, "expected: (system-argc)");
+        return library_signature_error(a, head, args, nargs, "expected: (system:argc)");
     }
     return atom_int(a, ctx ? (int64_t)ctx->cmdline_arg_len : 0);
 }
@@ -1962,7 +1962,7 @@ static Atom *system_has_cli_args(const CettaLibraryContext *ctx, Arena *a, Atom 
                                  Atom **args, uint32_t nargs) {
     if (!system_zero_arg_ok(args, nargs)) {
         return library_signature_error(a, head, args, nargs,
-                                       "expected: (system-has-args)");
+                                       "expected: (system:has-args)");
     }
     return (ctx && ctx->cmdline_arg_len > 0) ? atom_true(a) : atom_false(a);
 }
@@ -2005,7 +2005,7 @@ static Atom *system_exit_with_code(Arena *a, Atom *head,
 static Atom *system_cwd(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     char path[PATH_MAX];
     if (!system_zero_arg_ok(args, nargs)) {
-        return library_signature_error(a, head, args, nargs, "expected: (system-cwd)");
+        return library_signature_error(a, head, args, nargs, "expected: (system:cwd)");
     }
     if (!getcwd(path, sizeof(path))) {
         return library_signature_error(a, head, args, nargs,
@@ -3486,7 +3486,7 @@ static Atom *mork_zipper_bool_native(CettaLibraryContext *ctx, Arena *a,
     } else {
         if (!cetta_mork_bridge_cursor_is_val(resource->cursor, &value)) {
             return library_mork_bridge_error(a, head, args, nargs,
-                                             "MORK zipper is-val failed: ");
+                                             "MORK zipper validity check failed: ");
         }
     }
     return atom_bool(a, value);
@@ -3883,7 +3883,7 @@ static Atom *mork_product_zipper_bool_native(CettaLibraryContext *ctx, Arena *a,
     } else {
         if (!cetta_mork_bridge_product_cursor_is_val(resource->cursor, &value)) {
             return library_mork_bridge_error(a, head, args, nargs,
-                                             "MORK product-zipper is-val failed: ");
+                                             "MORK product-zipper validity check failed: ");
         }
     }
     return atom_bool(a, value);
@@ -4247,7 +4247,7 @@ static Atom *mork_overlay_zipper_bool_native(CettaLibraryContext *ctx, Arena *a,
     } else {
         if (!cetta_mork_bridge_overlay_cursor_is_val(resource->cursor, &value)) {
             return library_mork_bridge_error(a, head, args, nargs,
-                                             "MORK overlay-zipper is-val failed: ");
+                                             "MORK overlay-zipper validity check failed: ");
         }
     }
     return atom_bool(a, value);

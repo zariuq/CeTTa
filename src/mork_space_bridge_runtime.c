@@ -821,7 +821,7 @@ bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
 }
 
 bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
-                                     bool *out_is_val) {
+                                    bool *out_is_val) {
     if (!cursor) {
         bridge_set_error("cannot inspect null MORK cursor");
         return false;
@@ -3062,7 +3062,7 @@ bool cetta_mork_bridge_cursor_path_exists(const CettaMorkCursorHandle *cursor,
 }
 
 bool cetta_mork_bridge_cursor_is_val(const CettaMorkCursorHandle *cursor,
-                                     bool *out_is_val) {
+                                    bool *out_is_val) {
     if (!cursor || !bridge_load_api()) {
         bridge_set_error("cannot inspect null or unavailable MORK cursor");
         return false;

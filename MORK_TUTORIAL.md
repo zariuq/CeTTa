@@ -745,9 +745,9 @@ MM2 derives a fact, then ordinary MeTTa equations annotate it with semantic meta
 === prefix-restrict: only derived paths ===
 ("filtered" ((path a c)))
 === zipper on filtered space ===
-("at" (3 196 112 97 116 104 193 97 193 99) "is-val?" True)
+("at" (3 196 112 97 116 104 193 97 193 99) "is-val" True)
 === overlay: filtered + selector ===
-("at" (3 196 112 97 116 104 193 97 193 99) "is-val?" True)
+("at" (3 196 112 97 116 104 193 97 193 99) "is-val" True)
 === MeTTa analysis ===
 ("annotated" ((annotated a c strong (two-hop a b c))))
 === showcase complete ===
@@ -791,12 +791,12 @@ Exercises zippers, prefix-restrict, overlay, and product cursors on a two-edge s
 === zipper: walk to first branch/value ===
 ("root-children" 1 "child-bytes" (3))
 ("shared-prefix-bytes" (3 196 101 100 103 101 193 97 193))
-("exists?" True "is-val?" False)
-("first-leaf-bytes" (3 196 101 100 103 101 193 97 193 98) "is-val?" True)
+("exists" True "is-val" False)
+("first-leaf-bytes" (3 196 101 100 103 101 193 97 193 98) "is-val" True)
 === prefix-restrict: keep only (edge a b) ===
 ("restricted" ((edge a b)))
 === overlay: restricted + selector ===
-("overlay-focus-bytes" (3 196 101 100 103 101 193 97 193 98) "is-val?" True)
+("overlay-focus-bytes" (3 196 101 100 103 101 193 97 193 98) "is-val" True)
 === product: three-factor traversal ===
 ("factors" 3)
 ("focus-factor" 0 "product-path-bytes" (2 193 120 193 49))
@@ -930,10 +930,10 @@ MeTTa inspects the exported ordinary spaces:
 
 ```metta
 !(println! (candidate-check solar-only
-             solar   (view-has? &solarOnlySolarView   (artifact star-lantern))
-             lunar   (view-has? &solarOnlyLunarView   (artifact star-lantern))
-             sterile (forbidden-absent? &solarOnlySterileView (artifact ash))
-             chorus  (forbidden-absent? &solarOnlyChorusView  (artifact chorus))))
+             solar   (view-has &solarOnlySolarView   (artifact star-lantern))
+             lunar   (view-has &solarOnlyLunarView   (artifact star-lantern))
+             sterile (view-lacks &solarOnlySterileView (artifact ash))
+             chorus  (view-lacks &solarOnlyChorusView  (artifact chorus))))
 ```
 
 Output:
