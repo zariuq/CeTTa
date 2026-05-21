@@ -1,6 +1,10 @@
 #include "rhocalc_core.h"
 
+#include "stats.h"
+
+#include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +41,7 @@ typedef struct {
 typedef struct {
     Atom *atom;
     char *key;
+    uint32_t ordinal;
 } RhoKeyedAtom;
 
 typedef struct {
@@ -59,6 +64,35 @@ typedef struct {
 } RhoEndpointVec;
 
 typedef struct {
+    RhoEndpoint send;
+    RhoEndpoint recv;
+    Atom *result;
+    char *key;
+    bool ok;
+} RhoCommCandidate;
+
+typedef struct {
+    RhoCommCandidate *items;
+    uint32_t len;
+    uint32_t cap;
+} RhoCommCandidateVec;
+
+typedef struct {
+    RhoCommCandidate *candidates;
+    uint32_t candidate_count;
+    RhoAtomVec *components;
+    _Atomic uint32_t next_index;
+    uint32_t chunk_size;
+    _Atomic bool failed;
+} RhoCommWorkQueue;
+
+typedef struct {
+    RhoCommWorkQueue *queue;
+    Arena arena;
+    bool arena_initialized;
+} RhoCommWorker;
+
+typedef struct {
     VarId var_id;
     uint32_t index;
 } RhoAlphaEntry;
@@ -76,7 +110,7 @@ typedef struct {
     size_t cap;
 } RhoStr;
 
-static char g_rhocalc_validation_error[256];
+static __thread char g_rhocalc_validation_error[256];
 
 static char *rho_heap_strdup(const char *text) {
     size_t len = strlen(text) + 1u;
@@ -284,6 +318,42 @@ static bool rho_endpoint_vec_push(RhoEndpointVec *vec,
     vec->items[vec->len].component_index = component_index;
     vec->items[vec->len].view = view;
     vec->items[vec->len].key = key;
+    vec->len++;
+    return true;
+}
+
+static void rho_candidate_vec_init(RhoCommCandidateVec *vec) {
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+static void rho_candidate_vec_free(RhoCommCandidateVec *vec) {
+    for (uint32_t i = 0; i < vec->len; i++) {
+        free(vec->items[i].key);
+    }
+    free(vec->items);
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+static bool rho_candidate_vec_push(RhoCommCandidateVec *vec,
+                                   RhoEndpoint send,
+                                   RhoEndpoint recv) {
+    if (vec->len == vec->cap) {
+        uint32_t next_cap = vec->cap ? vec->cap * 2u : 16u;
+        RhoCommCandidate *next =
+            cetta_realloc(vec->items, sizeof(RhoCommCandidate) * next_cap);
+        if (!next) return false;
+        vec->items = next;
+        vec->cap = next_cap;
+    }
+    vec->items[vec->len].send = send;
+    vec->items[vec->len].recv = recv;
+    vec->items[vec->len].result = NULL;
+    vec->items[vec->len].key = NULL;
+    vec->items[vec->len].ok = false;
     vec->len++;
     return true;
 }
@@ -590,7 +660,11 @@ static char *rho_key_name(Atom *name) {
 static int rho_keyed_atom_cmp(const void *lhs, const void *rhs) {
     const RhoKeyedAtom *a = lhs;
     const RhoKeyedAtom *b = rhs;
-    return strcmp(a->key, b->key);
+    int by_key = strcmp(a->key, b->key);
+    if (by_key != 0) return by_key;
+    if (a->ordinal < b->ordinal) return -1;
+    if (a->ordinal > b->ordinal) return 1;
+    return 0;
 }
 
 static int rho_endpoint_cmp_key(const void *lhs, const void *rhs) {
@@ -627,6 +701,7 @@ static Atom *rho_par_from_vec(Arena *arena, RhoAtomVec *vec) {
     for (uint32_t i = 0; i < vec->len; i++) {
         items[i].atom = vec->items[i];
         items[i].key = rho_key_proc(vec->items[i]);
+        items[i].ordinal = i;
     }
     qsort(items, vec->len, sizeof(RhoKeyedAtom), rho_keyed_atom_cmp);
 
@@ -815,6 +890,12 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
                             VarId var_id, Atom *replacement_name);
 static Atom *rho_subst_name(Arena *arena, Atom *name,
                             VarId var_id, Atom *replacement_name);
+static Atom *rho_subst_proc_no_alpha(Arena *arena, Atom *proc,
+                                     VarId var_id, Atom *replacement_name,
+                                     bool *ok);
+static Atom *rho_subst_name_no_alpha(Arena *arena, Atom *name,
+                                     VarId var_id, Atom *replacement_name,
+                                     bool *ok);
 
 static Atom *rho_subst_name(Arena *arena, Atom *name,
                             VarId var_id, Atom *replacement_name) {
@@ -890,15 +971,130 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
     return proc;
 }
 
-static bool rho_step_acc_push_unique(Arena *arena, RhoStepAcc *acc, Atom *atom) {
-    Atom *norm = rho_normalize_proc(arena, atom);
-    char *key = rho_key_proc(norm);
-    for (uint32_t i = 0; i < acc->len; i++) {
-        if (strcmp(key, acc->keys[i]) == 0) {
-            free(key);
+static bool rho_subst_would_alpha_proc(Atom *proc, VarId var_id,
+                                       Atom *replacement_name) {
+    RhoView view = rho_view(proc);
+    switch (view.kind) {
+    case RHO_NIL:
+        return false;
+    case RHO_PAR:
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            if (rho_subst_would_alpha_proc(view.args[i], var_id,
+                                           replacement_name)) {
+                return true;
+            }
+        }
+        return false;
+    case RHO_SEND:
+        return view.nargs == 2 &&
+               rho_subst_would_alpha_proc(view.args[1], var_id,
+                                          replacement_name);
+    case RHO_RECV:
+        if (view.nargs != 3 || view.args[1]->kind != ATOM_VAR) {
+            return false;
+        }
+        if (view.args[1]->var_id == var_id) {
+            return false;
+        }
+        if (rho_name_has_free_var(replacement_name, view.args[1]->var_id)) {
             return true;
         }
+        return rho_subst_would_alpha_proc(view.args[2], var_id,
+                                          replacement_name);
+    case RHO_DROP:
+    case RHO_QUOTE:
+    case RHO_STEPS:
+    case RHO_BAD:
+        break;
     }
+    return false;
+}
+
+static Atom *rho_subst_name_no_alpha(Arena *arena, Atom *name,
+                                     VarId var_id, Atom *replacement_name,
+                                     bool *ok) {
+    if (!ok || !*ok) return name;
+    Atom *norm = rho_normalize_name(arena, name);
+    if (norm->kind == ATOM_VAR) {
+        return norm->var_id == var_id ? replacement_name : norm;
+    }
+    return norm;
+}
+
+static Atom *rho_subst_proc_no_alpha(Arena *arena, Atom *proc,
+                                     VarId var_id, Atom *replacement_name,
+                                     bool *ok) {
+    if (!ok || !*ok) return proc;
+    RhoView view = rho_view(proc);
+    switch (view.kind) {
+    case RHO_NIL:
+        return rho_nil(arena);
+    case RHO_PAR: {
+        Atom **args = arena_alloc(arena, sizeof(Atom *) * view.nargs);
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            args[i] = rho_subst_proc_no_alpha(arena, view.args[i], var_id,
+                                              replacement_name, ok);
+            if (!*ok) return proc;
+        }
+        return rho_normalize_proc(arena, rho_call(arena, "rho:par",
+                                                  args, view.nargs));
+    }
+    case RHO_SEND:
+        {
+            Atom *channel = rho_subst_name_no_alpha(arena, view.args[0],
+                                                    var_id,
+                                                    replacement_name, ok);
+            Atom *payload = rho_subst_proc_no_alpha(arena, view.args[1],
+                                                    var_id,
+                                                    replacement_name, ok);
+            if (!*ok) return proc;
+            return rho_normalize_proc(arena,
+                rho_binary(arena, "rho:send", channel, payload));
+        }
+    case RHO_RECV:
+        if (view.args[1]->kind == ATOM_VAR &&
+            view.args[1]->var_id == var_id) {
+            return rho_ternary(arena, "rho:recv",
+                               rho_subst_name_no_alpha(arena, view.args[0],
+                                                       var_id,
+                                                       replacement_name, ok),
+                               view.args[1],
+                               view.args[2]);
+        }
+        if (view.args[1]->kind == ATOM_VAR &&
+            rho_name_has_free_var(replacement_name, view.args[1]->var_id)) {
+            *ok = false;
+            return proc;
+        }
+        {
+            Atom *channel = rho_subst_name_no_alpha(arena, view.args[0],
+                                                    var_id,
+                                                    replacement_name, ok);
+            Atom *body = rho_subst_proc_no_alpha(arena, view.args[2],
+                                                 var_id,
+                                                 replacement_name, ok);
+            if (!*ok) return proc;
+            return rho_normalize_proc(arena,
+                rho_ternary(arena, "rho:recv", channel, view.args[1], body));
+        }
+    case RHO_DROP: {
+        Atom *name = rho_subst_name_no_alpha(arena, view.args[0], var_id,
+                                             replacement_name, ok);
+        RhoView name_view = rho_view(name);
+        if (name_view.kind == RHO_QUOTE && name_view.nargs == 1) {
+            return rho_normalize_proc(arena, name_view.args[0]);
+        }
+        return rho_unary(arena, "rho:drop", rho_normalize_name(arena, name));
+    }
+    case RHO_QUOTE:
+    case RHO_STEPS:
+    case RHO_BAD:
+        break;
+    }
+    return proc;
+}
+
+static bool rho_step_acc_push_keyed(RhoStepAcc *acc, Atom *norm, char *key) {
     if (acc->len == acc->cap && !rho_step_acc_grow(acc)) {
         free(key);
         return false;
@@ -909,18 +1105,33 @@ static bool rho_step_acc_push_unique(Arena *arena, RhoStepAcc *acc, Atom *atom) 
     return true;
 }
 
+static bool rho_step_acc_push_normalized(RhoStepAcc *acc, Atom *atom) {
+    /* Frontier deduplication is deferred to rho_step_acc_finish. */
+    return rho_step_acc_push_keyed(acc, atom, rho_key_proc(atom));
+}
+
 static void rho_step_acc_finish(RhoStepAcc *acc, RhoStepSet *out) {
     if (acc->len > 1) {
         RhoKeyedAtom *items = cetta_malloc(sizeof(RhoKeyedAtom) * acc->len);
         for (uint32_t i = 0; i < acc->len; i++) {
             items[i].atom = acc->items[i];
             items[i].key = acc->keys[i];
+            items[i].ordinal = i;
         }
         qsort(items, acc->len, sizeof(RhoKeyedAtom), rho_keyed_atom_cmp);
+        uint32_t write = 0;
+        char *last_key = NULL;
         for (uint32_t i = 0; i < acc->len; i++) {
-            acc->items[i] = items[i].atom;
-            free(items[i].key);
+            if (last_key && strcmp(items[i].key, last_key) == 0) {
+                free(items[i].key);
+                continue;
+            }
+            if (last_key) free(last_key);
+            acc->items[write++] = items[i].atom;
+            last_key = items[i].key;
         }
+        if (last_key) free(last_key);
+        acc->len = write;
         free(items);
     } else if (acc->len == 1) {
         free(acc->keys[0]);
@@ -941,9 +1152,25 @@ static Atom *rho_rebuild_reaction(Arena *arena, RhoAtomVec *components,
     rho_vec_init(&out);
     for (uint32_t i = 0; i < components->len; i++) {
         if (i == send_index || i == recv_index) continue;
-        (void)rho_vec_push(&out, components->items[i]);
+        if (!rho_vec_push(&out, components->items[i])) {
+            rho_vec_free(&out);
+            return NULL;
+        }
     }
-    (void)rho_vec_push(&out, body);
+    RhoView body_view = rho_view(body);
+    if (body_view.kind == RHO_PAR) {
+        for (uint32_t i = 0; i < body_view.nargs; i++) {
+            if (!rho_vec_push(&out, body_view.args[i])) {
+                rho_vec_free(&out);
+                return NULL;
+            }
+        }
+    } else if (body_view.kind != RHO_NIL) {
+        if (!rho_vec_push(&out, body)) {
+            rho_vec_free(&out);
+            return NULL;
+        }
+    }
     Atom *proc = rho_par_from_vec(arena, &out);
     rho_vec_free(&out);
     return proc;
@@ -977,6 +1204,254 @@ static bool rho_collect_endpoints(RhoAtomVec *components,
               rho_endpoint_cmp_key);
     }
     return true;
+}
+
+static bool rho_collect_one_step(Arena *arena, Atom *proc, RhoStepAcc *out);
+
+static bool rho_build_comm_candidates(RhoEndpointVec *sends,
+                                      RhoEndpointVec *recvs,
+                                      RhoCommCandidateVec *candidates) {
+    uint32_t send_pos = 0;
+    uint32_t recv_pos = 0;
+    while (recv_pos < recvs->len && send_pos < sends->len) {
+        int cmp = strcmp(recvs->items[recv_pos].key,
+                         sends->items[send_pos].key);
+        if (cmp < 0) {
+            recv_pos++;
+            continue;
+        }
+        if (cmp > 0) {
+            send_pos++;
+            continue;
+        }
+
+        uint32_t recv_start = recv_pos;
+        uint32_t send_start = send_pos;
+        while (recv_pos < recvs->len &&
+               strcmp(recvs->items[recv_pos].key,
+                      recvs->items[recv_start].key) == 0) {
+            recv_pos++;
+        }
+        while (send_pos < sends->len &&
+               strcmp(sends->items[send_pos].key,
+                      sends->items[send_start].key) == 0) {
+            send_pos++;
+        }
+
+        for (uint32_t r = recv_start; r < recv_pos; r++) {
+            for (uint32_t s = send_start; s < send_pos; s++) {
+                if (!rho_candidate_vec_push(candidates,
+                                            sends->items[s],
+                                            recvs->items[r])) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static bool rho_comm_candidate_requires_alpha(Arena *arena,
+                                              RhoCommCandidate *candidate) {
+    RhoView send = candidate->send.view;
+    RhoView recv = candidate->recv.view;
+    Atom *replacement =
+        rho_unary(arena, "rho:quote", rho_normalize_proc(arena, send.args[1]));
+    return rho_subst_would_alpha_proc(recv.args[2],
+                                      recv.args[1]->var_id,
+                                      replacement);
+}
+
+static bool rho_compute_comm_candidate_no_alpha(Arena *arena,
+                                                RhoAtomVec *components,
+                                                RhoCommCandidate *candidate) {
+    RhoView send = candidate->send.view;
+    RhoView recv = candidate->recv.view;
+    bool ok = true;
+    Atom *replacement;
+    Atom *body;
+    if (send.kind != RHO_SEND || send.nargs != 2 ||
+        recv.kind != RHO_RECV || recv.nargs != 3 ||
+        recv.args[1]->kind != ATOM_VAR) {
+        return false;
+    }
+    replacement =
+        rho_unary(arena, "rho:quote", rho_normalize_proc(arena, send.args[1]));
+    body = rho_subst_proc_no_alpha(arena, recv.args[2],
+                                   recv.args[1]->var_id,
+                                   replacement, &ok);
+    if (!ok || !body) return false;
+    candidate->result =
+        rho_rebuild_reaction(arena, components,
+                             candidate->send.component_index,
+                             candidate->recv.component_index,
+                             body);
+    if (candidate->result) {
+        candidate->key = rho_key_proc(candidate->result);
+    }
+    candidate->ok = candidate->result != NULL && candidate->key != NULL;
+    return candidate->ok;
+}
+
+static void *rho_comm_worker_main(void *arg) {
+    RhoCommWorker *worker = arg;
+    RhoCommWorkQueue *queue = worker->queue;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_STEP_WORKER_STARTED);
+    while (!atomic_load(&queue->failed)) {
+        uint32_t index = atomic_fetch_add(&queue->next_index,
+                                          queue->chunk_size);
+        if (index >= queue->candidate_count) break;
+        uint32_t end = index + queue->chunk_size;
+        if (end > queue->candidate_count) end = queue->candidate_count;
+        for (uint32_t i = index; i < end; i++) {
+            if (!rho_compute_comm_candidate_no_alpha(&worker->arena,
+                                                     queue->components,
+                                                     &queue->candidates[i])) {
+                atomic_store(&queue->failed, true);
+                return NULL;
+            }
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_RHO_STEP_THREAD_CANDIDATE);
+        }
+    }
+    return NULL;
+}
+
+static bool rho_collect_one_step_threaded(Arena *arena, Atom *proc,
+                                          RhoStepAcc *out,
+                                          uint32_t thread_count) {
+    RhoAtomVec components;
+    RhoEndpointVec sends;
+    RhoEndpointVec recvs;
+    RhoCommCandidateVec candidates;
+    RhoCommWorkQueue queue;
+    pthread_t *threads = NULL;
+    RhoCommWorker *workers = NULL;
+    Arena check_arena;
+    bool check_arena_initialized = false;
+    uint32_t worker_count;
+    uint32_t started = 0;
+    bool ok = false;
+    bool fallback = false;
+
+    rho_vec_init(&components);
+    rho_endpoint_vec_init(&sends);
+    rho_endpoint_vec_init(&recvs);
+    rho_candidate_vec_init(&candidates);
+    rho_collect_par(arena, proc, &components);
+
+    if (!rho_collect_endpoints(&components, &sends, &recvs) ||
+        !rho_build_comm_candidates(&sends, &recvs, &candidates)) {
+        goto done;
+    }
+
+    if (thread_count <= 1 || candidates.len < 2) {
+        ok = rho_collect_one_step(arena, proc, out);
+        goto done;
+    }
+
+    arena_init(&check_arena);
+    arena_set_hashcons(&check_arena, NULL);
+    arena_set_runtime_kind(&check_arena, arena->runtime_kind);
+    check_arena_initialized = true;
+    for (uint32_t i = 0; i < candidates.len; i++) {
+        if (rho_comm_candidate_requires_alpha(&check_arena,
+                                              &candidates.items[i])) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_STEP_THREAD_FALLBACK);
+            arena_free(&check_arena);
+            check_arena_initialized = false;
+            ok = rho_collect_one_step(arena, proc, out);
+            goto done;
+        }
+    }
+    arena_free(&check_arena);
+    check_arena_initialized = false;
+
+    worker_count = thread_count;
+    if (worker_count > candidates.len) worker_count = candidates.len;
+    if (worker_count > 1024u) worker_count = 1024u;
+    if (worker_count < 2) {
+        ok = rho_collect_one_step(arena, proc, out);
+        goto done;
+    }
+
+    threads = cetta_malloc(sizeof(pthread_t) * worker_count);
+    workers = cetta_malloc(sizeof(RhoCommWorker) * worker_count);
+    memset(workers, 0, sizeof(RhoCommWorker) * worker_count);
+    queue.candidates = candidates.items;
+    queue.candidate_count = candidates.len;
+    queue.components = &components;
+    queue.chunk_size = candidates.len / (worker_count * 8u);
+    if (queue.chunk_size < 1u) queue.chunk_size = 1u;
+    if (queue.chunk_size > 64u) queue.chunk_size = 64u;
+    atomic_init(&queue.next_index, 0u);
+    atomic_init(&queue.failed, false);
+
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_STEP_THREADED_RUN);
+    for (uint32_t i = 0; i < worker_count; i++) {
+        workers[i].queue = &queue;
+        arena_init(&workers[i].arena);
+        arena_set_hashcons(&workers[i].arena, NULL);
+        arena_set_runtime_kind(&workers[i].arena, arena->runtime_kind);
+        workers[i].arena_initialized = true;
+        if (pthread_create(&threads[i], NULL, rho_comm_worker_main,
+                           &workers[i]) != 0) {
+            atomic_store(&queue.failed, true);
+            fallback = true;
+            break;
+        }
+        started++;
+    }
+
+    for (uint32_t i = 0; i < started; i++) {
+        (void)pthread_join(threads[i], NULL);
+    }
+
+    if (fallback || atomic_load(&queue.failed)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_STEP_THREAD_FALLBACK);
+        ok = rho_collect_one_step(arena, proc, out);
+        goto done;
+    }
+
+    for (uint32_t i = 0; i < started; i++) {
+        arena_adopt(arena, &workers[i].arena);
+        workers[i].arena_initialized = false;
+    }
+
+    ok = true;
+    for (uint32_t i = 0; i < candidates.len; i++) {
+        char *key = candidates.items[i].key;
+        candidates.items[i].key = NULL;
+        if (!candidates.items[i].ok) {
+            free(key);
+            ok = false;
+            break;
+        }
+        if (!rho_step_acc_push_keyed(out, candidates.items[i].result, key)) {
+            ok = false;
+            break;
+        }
+    }
+
+done:
+    if (check_arena_initialized) {
+        arena_free(&check_arena);
+    }
+    if (workers) {
+        uint32_t limit = worker_count;
+        for (uint32_t i = 0; i < limit; i++) {
+            if (workers[i].arena_initialized) {
+                arena_free(&workers[i].arena);
+            }
+        }
+    }
+    free(workers);
+    free(threads);
+    rho_candidate_vec_free(&candidates);
+    rho_endpoint_vec_free(&sends);
+    rho_endpoint_vec_free(&recvs);
+    rho_vec_free(&components);
+    return ok;
 }
 
 static bool rho_collect_one_step(Arena *arena, Atom *proc, RhoStepAcc *out) {
@@ -1037,7 +1512,7 @@ static bool rho_collect_one_step(Arena *arena, Atom *proc, RhoStepAcc *out) {
                                             sends.items[s].component_index,
                                             recvs.items[r].component_index,
                                             body);
-                if (!rho_step_acc_push_unique(arena, out, next)) {
+                if (!next || !rho_step_acc_push_normalized(out, next)) {
                     rho_endpoint_vec_free(&sends);
                     rho_endpoint_vec_free(&recvs);
                     rho_vec_free(&components);
@@ -1053,7 +1528,8 @@ static bool rho_collect_one_step(Arena *arena, Atom *proc, RhoStepAcc *out) {
     return true;
 }
 
-bool rhocalc_one_step(Arena *arena, Atom *proc, RhoStepSet *out) {
+bool rhocalc_one_step_with_threads(Arena *arena, Atom *proc,
+                                   uint32_t thread_count, RhoStepSet *out) {
     RhoStepAcc steps;
     Atom *norm;
     if (!out) return false;
@@ -1064,12 +1540,19 @@ bool rhocalc_one_step(Arena *arena, Atom *proc, RhoStepSet *out) {
     }
     norm = rho_normalize_proc(arena, proc);
     rho_step_acc_init(&steps);
-    if (!rho_collect_one_step(arena, norm, &steps)) {
+    bool ok = thread_count > 1
+        ? rho_collect_one_step_threaded(arena, norm, &steps, thread_count)
+        : rho_collect_one_step(arena, norm, &steps);
+    if (!ok) {
         rho_step_acc_free(&steps);
         return false;
     }
     rho_step_acc_finish(&steps, out);
     return true;
+}
+
+bool rhocalc_one_step(Arena *arena, Atom *proc, RhoStepSet *out) {
+    return rhocalc_one_step_with_threads(arena, proc, 1u, out);
 }
 
 Atom *rhocalc_steps_atom(Arena *arena, const RhoStepSet *steps) {

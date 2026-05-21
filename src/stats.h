@@ -168,7 +168,11 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_HYPERPOSE_CANCEL_REQUEST = 157,
     CETTA_RUNTIME_COUNTER_HYPERPOSE_CANCEL_OBSERVED = 158,
     CETTA_RUNTIME_COUNTER_HYPERPOSE_SELECT_K_RUN = 159,
-    CETTA_RUNTIME_COUNTER_COUNT = 160
+    CETTA_RUNTIME_COUNTER_RHO_STEP_THREADED_RUN = 160,
+    CETTA_RUNTIME_COUNTER_RHO_STEP_WORKER_STARTED = 161,
+    CETTA_RUNTIME_COUNTER_RHO_STEP_THREAD_CANDIDATE = 162,
+    CETTA_RUNTIME_COUNTER_RHO_STEP_THREAD_FALLBACK = 163,
+    CETTA_RUNTIME_COUNTER_COUNT = 164
 } CettaRuntimeCounter;
 
 typedef struct {
@@ -200,15 +204,22 @@ void cetta_runtime_stats_populate_space(Space *space, Arena *a,
 #define cetta_runtime_stats_is_enabled() false
 #define cetta_runtime_stats_add(counter, delta)                                  \
     do {                                                                         \
+        (void)(counter);                                                         \
+        (void)(delta);                                                           \
     } while (0)
 #define cetta_runtime_stats_set(counter, value)                                  \
     do {                                                                         \
+        (void)(counter);                                                         \
+        (void)(value);                                                           \
     } while (0)
 #define cetta_runtime_stats_update_max(counter, value)                           \
     do {                                                                         \
+        (void)(counter);                                                         \
+        (void)(value);                                                           \
     } while (0)
 #define cetta_runtime_stats_inc(counter)                                         \
     do {                                                                         \
+        (void)(counter);                                                         \
     } while (0)
 #else
 static inline void cetta_runtime_stats_inc(CettaRuntimeCounter counter) {

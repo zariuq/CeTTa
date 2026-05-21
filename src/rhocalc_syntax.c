@@ -43,7 +43,7 @@ typedef struct {
     bool failed;
 } RhoElaborator;
 
-static char g_rhocalc_parse_error[256];
+static __thread char g_rhocalc_parse_error[256];
 
 const char *rhocalc_last_parse_error(void) {
     return g_rhocalc_parse_error[0] ? g_rhocalc_parse_error : NULL;

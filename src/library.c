@@ -292,6 +292,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->loaded_module_len = 0;
     ctx->native_handle_len = 0;
     ctx->native_handle_next_id = 1;
+    ctx->rho_step_threads = 1u;
     ctx->foreign_runtime = cetta_foreign_runtime_new();
 }
 
@@ -369,6 +370,44 @@ void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
                           ctx->cmdline_arg_len < CETTA_MAX_CMDLINE_ARGS; i++) {
         ctx->cmdline_args[ctx->cmdline_arg_len++] = argv[i];
     }
+}
+
+static uint32_t library_threads_from_option(CettaEvalOptionValueKind kind,
+                                            const char *repr,
+                                            int64_t int_value,
+                                            uint32_t default_value) {
+    if (kind == CETTA_EVAL_OPTION_VALUE_INT) {
+        if (int_value <= 0) return 1u;
+        if (int_value > 1024) return 1024u;
+        return (uint32_t)int_value;
+    }
+    if (repr &&
+        (strcmp(repr, "off") == 0 ||
+         strcmp(repr, "false") == 0 ||
+         strcmp(repr, "disabled") == 0)) {
+        return 1u;
+    }
+    if (repr &&
+        (strcmp(repr, "on") == 0 ||
+         strcmp(repr, "true") == 0 ||
+         strcmp(repr, "threaded") == 0 ||
+         strcmp(repr, "parallel") == 0)) {
+        return 2u;
+    }
+    return default_value;
+}
+
+void cetta_library_context_set_rho_step_threads(CettaLibraryContext *ctx,
+                                                CettaEvalOptionValueKind kind,
+                                                const char *repr,
+                                                int64_t int_value) {
+    if (!ctx) return;
+    ctx->rho_step_threads =
+        library_threads_from_option(kind, repr, int_value, ctx->rho_step_threads);
+}
+
+uint32_t cetta_library_context_rho_step_threads(const CettaLibraryContext *ctx) {
+    return ctx && ctx->rho_step_threads > 0 ? ctx->rho_step_threads : 1u;
 }
 
 static const char *cetta_library_current_dir(CettaLibraryContext *ctx) {
@@ -1647,7 +1686,8 @@ static bool library_int_arg(Atom *arg, int *out) {
     return false;
 }
 
-static Atom *rho_step_native(Arena *a, Atom *head, Atom **args,
+static Atom *rho_step_native(const CettaLibraryContext *ctx,
+                             Arena *a, Atom *head, Atom **args,
                              uint32_t nargs) {
     if (nargs != 1) {
         return library_signature_error(a, head, args, nargs,
@@ -1663,7 +1703,8 @@ static Atom *rho_step_native(Arena *a, Atom *head, Atom **args,
     }
 
     RhoStepSet steps = {0};
-    if (!rhocalc_one_step(a, proc, &steps)) {
+    uint32_t thread_count = cetta_library_context_rho_step_threads(ctx);
+    if (!rhocalc_one_step_with_threads(a, proc, thread_count, &steps)) {
         const char *detail = rhocalc_last_validation_error();
         char message[320];
         if (detail && *detail) {
@@ -2046,11 +2087,12 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
     return NULL;
 }
 
-static Atom *cetta_library_dispatch_rho(Arena *a, Atom *head,
+static Atom *cetta_library_dispatch_rho(const CettaLibraryContext *ctx,
+                                        Arena *a, Atom *head,
                                         Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     if (head->sym_id == g_builtin_syms.lib_rho_step) {
-        return rho_step_native(a, head, args, nargs);
+        return rho_step_native(ctx, a, head, args, nargs);
     }
     return NULL;
 }
@@ -6435,7 +6477,7 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
         if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_RHO) {
-        Atom *result = cetta_library_dispatch_rho(a, head, args, nargs);
+        Atom *result = cetta_library_dispatch_rho(ctx, a, head, args, nargs);
         if (result) return result;
     }
     {

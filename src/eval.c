@@ -11950,6 +11950,11 @@ tail_call: ;
             }
             handled = cetta_eval_session_record_generic_setting(
                 session, atom_name_cstr(key), value_kind, value_repr, int_value);
+            if (handled && g_library_context &&
+                strcmp(atom_name_cstr(key), "rho-step-threads") == 0) {
+                cetta_library_context_set_rho_step_threads(
+                    g_library_context, value_kind, value_repr, int_value);
+            }
         }
 
         outcome_set_add(os, handled ? atom_unit(a) : atom, &_empty);

@@ -102,6 +102,8 @@ void  arena_init(Arena *a);
 void  arena_free(Arena *a);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+/* Transfer all blocks from src to dst, leaving src empty. */
+void  arena_adopt(Arena *dst, Arena *src);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
