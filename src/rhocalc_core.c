@@ -16,8 +16,7 @@ typedef enum {
     RHO_SEND,
     RHO_RECV,
     RHO_QUOTE,
-    RHO_DROP,
-    RHO_STEPS
+    RHO_DROP
 } RhoKind;
 
 typedef struct {
@@ -160,7 +159,6 @@ static RhoView rho_view(Atom *atom) {
     else if (strcmp(head, "rho:recv") == 0) view.kind = RHO_RECV;
     else if (strcmp(head, "rho:quote") == 0) view.kind = RHO_QUOTE;
     else if (strcmp(head, "rho:drop") == 0) view.kind = RHO_DROP;
-    else if (strcmp(head, "rho:steps") == 0) view.kind = RHO_STEPS;
     return view;
 }
 
@@ -424,9 +422,6 @@ static bool rho_check_proc(Atom *proc, RhoScope *scope) {
     case RHO_QUOTE:
         rho_validation_set("rho:quote is a name, not a process");
         return false;
-    case RHO_STEPS:
-        rho_validation_set("rho:steps is an output container, not a process");
-        return false;
     case RHO_BAD:
         break;
     }
@@ -630,7 +625,6 @@ static void rho_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
         (void)rho_str_append(out, ")");
         return;
     case RHO_QUOTE:
-    case RHO_STEPS:
     case RHO_BAD:
         break;
     }
@@ -757,7 +751,6 @@ static Atom *rho_normalize_proc(Arena *arena, Atom *proc) {
         return rho_unary(arena, "rho:drop",
                          rho_normalize_name(arena, view.args[0]));
     case RHO_QUOTE:
-    case RHO_STEPS:
     case RHO_BAD:
         break;
     }
@@ -801,7 +794,6 @@ static bool rho_proc_has_free_var(Atom *proc, VarId var_id) {
     case RHO_DROP:
         return view.nargs == 1 && rho_name_has_free_var(view.args[0], var_id);
     case RHO_QUOTE:
-    case RHO_STEPS:
     case RHO_BAD:
         break;
     }
@@ -879,7 +871,6 @@ static Atom *rho_rename_proc(Arena *arena, Atom *proc,
                          rho_rename_name(arena, view.args[0], old_id,
                                          replacement_name));
     case RHO_QUOTE:
-    case RHO_STEPS:
     case RHO_BAD:
         break;
     }
@@ -964,7 +955,6 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
         return rho_unary(arena, "rho:drop", rho_normalize_name(arena, name));
     }
     case RHO_QUOTE:
-    case RHO_STEPS:
     case RHO_BAD:
         break;
     }
@@ -1003,7 +993,6 @@ static bool rho_subst_would_alpha_proc(Atom *proc, VarId var_id,
                                           replacement_name);
     case RHO_DROP:
     case RHO_QUOTE:
-    case RHO_STEPS:
     case RHO_BAD:
         break;
     }
@@ -1087,7 +1076,6 @@ static Atom *rho_subst_proc_no_alpha(Arena *arena, Atom *proc,
         return rho_unary(arena, "rho:drop", rho_normalize_name(arena, name));
     }
     case RHO_QUOTE:
-    case RHO_STEPS:
     case RHO_BAD:
         break;
     }
@@ -1556,13 +1544,4 @@ bool rhocalc_one_step_with_threads(Arena *arena, Atom *proc,
 
 bool rhocalc_one_step(Arena *arena, Atom *proc, RhoStepSet *out) {
     return rhocalc_one_step_with_threads(arena, proc, 1u, out);
-}
-
-Atom *rhocalc_steps_atom(Arena *arena, const RhoStepSet *steps) {
-    uint32_t len = steps ? steps->len : 0;
-    Atom **args = arena_alloc(arena, sizeof(Atom *) * len);
-    for (uint32_t i = 0; i < len; i++) {
-        args[i] = steps->items[i];
-    }
-    return rho_call(arena, "rho:steps", args, len);
 }

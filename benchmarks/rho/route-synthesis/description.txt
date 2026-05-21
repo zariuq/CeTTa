@@ -20,4 +20,4 @@ The default ladder starts at 32/48/64 now that the evaluator visible-variable
 cap has been removed. Larger SIZES values may investigate MeTTa builder limits
 or true rho-frontier output cost rather than pure rho step overhead.
 
-CeTTa lib_rho prints the full rho:steps reduction frontier; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
+CeTTa lib_rho prints the full reduction frontier as ordinary CeTTa results; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.

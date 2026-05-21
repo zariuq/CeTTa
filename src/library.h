@@ -74,6 +74,7 @@ void cetta_library_context_set_rho_step_threads(CettaLibraryContext *ctx,
                                                 const char *repr,
                                                 int64_t int_value);
 uint32_t cetta_library_context_rho_step_threads(const CettaLibraryContext *ctx);
+bool cetta_library_context_rho_active(const CettaLibraryContext *ctx);
 uint32_t cetta_library_module_mount_count(const CettaLibraryContext *ctx);
 const CettaModuleMount *cetta_library_module_mount_at(const CettaLibraryContext *ctx,
                                                       uint32_t index);

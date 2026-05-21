@@ -6,6 +6,8 @@
 #include "library.h"
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
+#include "rhocalc_core.h"
+#include "rhocalc_syntax.h"
 #include "stats.h"
 #include "answer_bank.h"
 #include "table_store.h"
@@ -9499,6 +9501,7 @@ tail_call: ;
     uint32_t nargs = expr_nargs(atom);
     const SymbolId head_id = atom_head_symbol_id(atom);
     Atom *head = atom->expr.elems[0];
+    const char *head_name = head ? atom_name_cstr(head) : NULL;
 
     if (g_hyperpose_thread_unsafe_requested &&
         hyperpose_effectful_head(head_id, head)) {
@@ -9508,6 +9511,50 @@ tail_call: ;
     }
 
     /* ── Special forms (arguments NOT pre-evaluated) ───────────────────── */
+
+    /* ── rho:step ──────────────────────────────────────────────────────── */
+    if (head_name && strcmp(head_name, "rho:step") == 0) {
+        if (!cetta_library_context_rho_active(g_library_context)) {
+            outcome_set_add(os, atom, &_empty);
+            return;
+        }
+        if (nargs != 1) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Atom *proc = rhocalc_elaborate_mrho_atom(a, expr_arg(atom, 0));
+        if (!proc) {
+            const char *detail = rhocalc_last_parse_error();
+            outcome_set_add(os,
+                atom_error(a, atom,
+                           atom_string(a, detail ? detail
+                                                 : "could not elaborate rhocalc/mrho binders")),
+                &_empty);
+            return;
+        }
+        RhoStepSet steps = {0};
+        uint32_t thread_count = cetta_library_context_rho_step_threads(g_library_context);
+        if (!rhocalc_one_step_with_threads(a, proc, thread_count, &steps)) {
+            const char *detail = rhocalc_last_validation_error();
+            char message[320];
+            if (detail && *detail) {
+                snprintf(message, sizeof(message),
+                         "invalid rhocalc core process: %s", detail);
+            } else {
+                snprintf(message, sizeof(message), "invalid rhocalc core process");
+            }
+            free(steps.items);
+            outcome_set_add(os, atom_error(a, atom, atom_string(a, message)), &_empty);
+            return;
+        }
+        for (uint32_t i = 0; i < steps.len; i++) {
+            outcome_set_add(os, steps.items[i], &_empty);
+        }
+        free(steps.items);
+        return;
+    }
 
     /* ── superpose / hyperpose ─────────────────────────────────────────── */
     if (head_id == g_builtin_syms.superpose) {

@@ -23,4 +23,4 @@ Files:
 Use ROUTE_POLICY=trusted or ROUTE_POLICY=backup to select the allowed edge tag.
 The default is trusted.
 
-CeTTa lib_rho prints the full rho:steps reduction frontier; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
+CeTTa lib_rho prints the full reduction frontier as ordinary CeTTa results; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
