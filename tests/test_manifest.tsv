@@ -305,6 +305,7 @@ tests/test_pragma_key_type_error.metta	he	metta	he-extended	main	native	test	gol
 tests/test_pragma_max_stack_depth.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pragma_max_stack_depth_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pragma_modes.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_pragma_thread_count_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pragma_wrong_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pretty_namespaces_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pretty_vars_surface.metta	he	metta	he-extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
