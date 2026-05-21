@@ -258,6 +258,7 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_hyperpose_threaded_stats.metta \
 	tests/test_imported_conjunction_bridge_init_regression.metta \
 	tests/test_imported_match_chain_conjunction_lowering.metta \
+	tests/test_rho_step_threaded_stats.metta \
 	tests/test_outcome_variant_composition_regression.metta \
 	tests/test_outcome_variant_observation_seam_regression.metta \
 	tests/test_pathmap_imported_bridge_v2.metta \
@@ -694,12 +695,15 @@ clean:
 		runtime/cetta-*-runtime-stats runtime/cetta-stage0-* \
 		runtime/test_fallback_eval_session-* runtime/bootstrap/test_fallback_eval_session.*.o \
 		runtime/bootstrap/test_fallback_eval_session.*.d \
+		src/*.o src/*.d src/*.stage0.o src/*.stage0.d \
+		native/*.o native/*.d native/*.stage0.o native/*.stage0.d \
+		native/metamath/*.o native/metamath/*.d native/metamath/*.stage0.o native/metamath/*.stage0.d \
 		src/*.runtime-stats.o src/*.runtime-stats.d \
 		native/*.runtime-stats.o native/*.runtime-stats.d \
 		$(STDLIB_BLOB) runtime/bootstrap/mork-bridge.*.stamp \
 		runtime/bootstrap/libcetta_space_bridge.*.a \
 		$(BUILD_CONFIG_HEADER) $(STAGE0_BUILD_CONFIG_HEADER) runtime/bootstrap/build_config.h runtime/bootstrap/build_config.*.h runtime/bootstrap/build_config.stage0.h runtime/bootstrap/build_config.stage0.*.h \
-		$(BUILD_CONFIG_STAMP) $(STAGE0_BUILD_CONFIG_STAMP) $(STDLIB_BLOB_STAMP) \
+		$(BUILD_CONFIG_STAMP) $(STAGE0_BUILD_CONFIG_STAMP) $(STDLIB_BLOB_STAMP) runtime/bootstrap/build_config.*.stamp runtime/bootstrap/stdlib_blob.*.stamp \
 		src/foreign.o src/foreign.d src/foreign.stage0.o src/foreign.stage0.d \
 		src/foreign_stub.o src/foreign_stub.d src/foreign_stub.stage0.o src/foreign_stub.stage0.d
 	rm -rf $(BOOTSTRAP_TMPDIR)/bridge-workspace.*
@@ -996,6 +1000,33 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	result=$$(./$(BIN) --rho-step-threads 4 --lang rhocalc --syntax mrho tests/rhocalc/threaded_hot_frontier.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/threaded_hot_frontier.expected)" ]; then \
+		echo "PASS: rhocalc threaded hot-frontier"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc threaded hot-frontier"; \
+		diff <(cat tests/rhocalc/threaded_hot_frontier.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --rho-step-threads 4 --lang rhocalc --syntax mrho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/mrho_free_name_same_spelling_binder.expected)" ]; then \
+		echo "PASS: rhocalc threaded alpha stability"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc threaded alpha stability"; \
+		diff <(cat tests/rhocalc/mrho_free_name_same_spelling_binder.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+		result=$$(./$(BIN) --rho-step-threads 4 --lang rhocalc --syntax mrho tests/rhocalc/threaded_alpha_dedup_display.mrho 2>&1); \
+		if [ "$$result" = "$$(cat tests/rhocalc/threaded_alpha_dedup_display.expected)" ]; then \
+			echo "PASS: rhocalc threaded alpha dedup display"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc threaded alpha dedup display"; \
+			diff <(cat tests/rhocalc/threaded_alpha_dedup_display.expected) <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
 	result=$$(./$(BIN) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/pure_surface.rho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_to_mrho.expected)" ]; then \
 		echo "PASS: rhocalc translate rho -> mrho"; \
@@ -2389,6 +2420,7 @@ test-help-flags: $(BIN)
 	help_short=$$(./$(BIN) -h 2>&1); \
 	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-step-threads <n> <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
 	   [ "$$help_long" = "$$help_short" ]; then \
 		echo "PASS: cli help flags"; \

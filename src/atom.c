@@ -134,6 +134,24 @@ void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
     arena_runtime_note_usage(a);
 }
 
+void arena_adopt(Arena *dst, Arena *src) {
+    if (!dst || !src || dst == src || !src->head) return;
+
+    ArenaBlock *tail = src->head;
+    while (tail->next) tail = tail->next;
+    tail->next = dst->head;
+    dst->head = src->head;
+    dst->live_bytes += src->live_bytes;
+    dst->reserved_bytes += src->reserved_bytes;
+    dst->block_count += src->block_count;
+    arena_runtime_note_usage(dst);
+
+    src->head = NULL;
+    src->live_bytes = 0;
+    src->reserved_bytes = 0;
+    src->block_count = 0;
+}
+
 ArenaMark arena_mark(const Arena *a) {
     ArenaMark mark = {0};
     if (!a) {

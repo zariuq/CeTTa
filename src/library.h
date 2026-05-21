@@ -56,6 +56,7 @@ typedef struct CettaLibraryContext {
     CettaNativeHandleSlot native_handles[CETTA_MAX_NATIVE_HANDLES];
     uint32_t native_handle_len;
     uint64_t native_handle_next_id;
+    uint32_t rho_step_threads;
     CettaForeignRuntime *foreign_runtime;
 } CettaLibraryContext;
 
@@ -68,6 +69,11 @@ void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *a
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename);
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
                                         char **argv, int arg_start);
+void cetta_library_context_set_rho_step_threads(CettaLibraryContext *ctx,
+                                                CettaEvalOptionValueKind kind,
+                                                const char *repr,
+                                                int64_t int_value);
+uint32_t cetta_library_context_rho_step_threads(const CettaLibraryContext *ctx);
 uint32_t cetta_library_module_mount_count(const CettaLibraryContext *ctx);
 const CettaModuleMount *cetta_library_module_mount_at(const CettaLibraryContext *ctx,
                                                       uint32_t index);
