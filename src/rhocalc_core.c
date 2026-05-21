@@ -1354,6 +1354,9 @@ static bool rho_collect_one_step_threaded(Arena *arena, Atom *proc,
     arena_set_hashcons(&check_arena, NULL);
     arena_set_runtime_kind(&check_arena, arena->runtime_kind);
     check_arena_initialized = true;
+    /* Preflight alpha sensitivity before spawning workers. This duplicates
+       the worker no-alpha check on the happy path, but it keeps alpha-needed
+       frontiers on the sequential fallback without paying partial worker work. */
     for (uint32_t i = 0; i < candidates.len; i++) {
         if (rho_comm_candidate_requires_alpha(&check_arena,
                                               &candidates.items[i])) {

@@ -4351,6 +4351,16 @@ static int64_t eval_option_int_or_default(const char *key, int64_t default_value
     return default_value;
 }
 
+static const char *validate_thread_count_pragma_value(Atom *value) {
+    if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_INT)
+        return "UnsignedIntegerIsExpected";
+    if (value->ground.ival < 0)
+        return "UnsignedIntegerIsExpected";
+    if (value->ground.ival > 1024)
+        return "ThreadCountOutOfRange";
+    return NULL;
+}
+
 static bool symbol_name_has_bang_suffix(Atom *atom) {
     if (!atom || atom->kind != ATOM_SYMBOL)
         return false;
@@ -11933,6 +11943,19 @@ tail_call: ;
             const char *value_repr = NULL;
             int64_t int_value = 0;
             char int_buf[32];
+            const char *key_name = atom_name_cstr(key);
+            bool strict_thread_count =
+                strcmp(key_name, "hyperpose-threads") == 0 ||
+                strcmp(key_name, "rho-step-threads") == 0;
+
+            if (strict_thread_count) {
+                const char *reason = validate_thread_count_pragma_value(value);
+                if (reason) {
+                    outcome_set_add(os, atom_error(a, atom, atom_symbol(a, reason)),
+                                    &_empty);
+                    return;
+                }
+            }
 
             if (value->kind == ATOM_SYMBOL) {
                 value_kind = CETTA_EVAL_OPTION_VALUE_SYMBOL;
@@ -11949,9 +11972,9 @@ tail_call: ;
                 value_repr = atom_to_string(a, value);
             }
             handled = cetta_eval_session_record_generic_setting(
-                session, atom_name_cstr(key), value_kind, value_repr, int_value);
+                session, key_name, value_kind, value_repr, int_value);
             if (handled && g_library_context &&
-                strcmp(atom_name_cstr(key), "rho-step-threads") == 0) {
+                strcmp(key_name, "rho-step-threads") == 0) {
                 cetta_library_context_set_rho_step_threads(
                     g_library_context, value_kind, value_repr, int_value);
             }
