@@ -410,6 +410,10 @@ uint32_t cetta_library_context_rho_step_threads(const CettaLibraryContext *ctx) 
     return ctx && ctx->rho_step_threads > 0 ? ctx->rho_step_threads : 1u;
 }
 
+bool cetta_library_context_rho_active(const CettaLibraryContext *ctx) {
+    return ctx && (ctx->active_mask & CETTA_LIBRARY_RHO) != 0;
+}
+
 static const char *cetta_library_current_dir(CettaLibraryContext *ctx) {
     if (ctx->import_dir_len > 0) {
         return ctx->import_dirs[ctx->import_dir_len - 1];
@@ -1652,9 +1656,7 @@ static Atom *library_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs
     if (head && head->kind == ATOM_SYMBOL) {
         const char *head_name = atom_name_cstr(head);
         char mork_name[192];
-        if (strcmp(head_name, "__cetta_lib_rho_step") == 0) {
-            elems[0] = atom_symbol(a, "rho:step");
-        } else if (library_mork_public_name(head_name, mork_name, sizeof(mork_name))) {
+        if (library_mork_public_name(head_name, mork_name, sizeof(mork_name))) {
             elems[0] = atom_symbol(a, mork_name);
         }
     }
@@ -1684,42 +1686,6 @@ static bool library_int_arg(Atom *arg, int *out) {
         return true;
     }
     return false;
-}
-
-static Atom *rho_step_native(const CettaLibraryContext *ctx,
-                             Arena *a, Atom *head, Atom **args,
-                             uint32_t nargs) {
-    if (nargs != 1) {
-        return library_signature_error(a, head, args, nargs,
-                                       "expected: (rho:step <process>)");
-    }
-
-    Atom *proc = rhocalc_elaborate_mrho_atom(a, args[0]);
-    if (!proc) {
-        const char *detail = rhocalc_last_parse_error();
-        return atom_error(
-            a, library_call_expr(a, head, args, nargs),
-            atom_string(a, detail ? detail : "could not elaborate rhocalc/mrho binders"));
-    }
-
-    RhoStepSet steps = {0};
-    uint32_t thread_count = cetta_library_context_rho_step_threads(ctx);
-    if (!rhocalc_one_step_with_threads(a, proc, thread_count, &steps)) {
-        const char *detail = rhocalc_last_validation_error();
-        char message[320];
-        if (detail && *detail) {
-            snprintf(message, sizeof(message),
-                     "invalid rhocalc core process: %s", detail);
-        } else {
-            snprintf(message, sizeof(message), "invalid rhocalc core process");
-        }
-        return atom_error(a, library_call_expr(a, head, args, nargs),
-                          atom_string(a, message));
-    }
-
-    Atom *out = rhocalc_steps_atom(a, &steps);
-    free(steps.items);
-    return out;
 }
 
 static bool library_expr_of_texts(Atom *arg) {
@@ -2090,10 +2056,11 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
 static Atom *cetta_library_dispatch_rho(const CettaLibraryContext *ctx,
                                         Arena *a, Atom *head,
                                         Atom **args, uint32_t nargs) {
+    (void)ctx;
+    (void)a;
+    (void)args;
+    (void)nargs;
     if (head->kind != ATOM_SYMBOL) return NULL;
-    if (head->sym_id == g_builtin_syms.lib_rho_step) {
-        return rho_step_native(ctx, a, head, args, nargs);
-    }
     return NULL;
 }
 

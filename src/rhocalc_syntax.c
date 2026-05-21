@@ -160,14 +160,7 @@ static bool rhocalc_is_domain_proc_atom(Atom *atom) {
 }
 
 bool rhocalc_is_domain_atom(Atom *atom) {
-    if (rhocalc_is_domain_proc_atom(atom)) return true;
-    if (rho_expr_head_named(atom, "rho:steps")) {
-        for (uint32_t i = 1; i < atom->expr.len; i++) {
-            if (!rhocalc_is_domain_proc_atom(atom->expr.elems[i])) return false;
-        }
-        return true;
-    }
-    return false;
+    return rhocalc_is_domain_proc_atom(atom);
 }
 
 static void rp_skip_ws(RhoParser *parser) {

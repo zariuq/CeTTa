@@ -682,7 +682,6 @@ static int run_rhocalc_cli(const char *filename,
 
     for (int i = 0; i < n; i++) {
         RhoStepSet steps = {0};
-        Atom *steps_atom;
         if (!rhocalc_one_step_with_threads(&arena, atoms[i],
                                            rho_step_threads, &steps)) {
             const char *detail = rhocalc_last_validation_error();
@@ -698,9 +697,12 @@ static int run_rhocalc_cli(const char *filename,
             free(steps.items);
             continue;
         }
-        steps_atom = rhocalc_steps_atom(&arena, &steps);
-        rhocalc_print_atom_syntax(steps_atom, CETTA_SYNTAX_MRHO, stdout);
-        fputc('\n', stdout);
+        ResultSet rs = {
+            .items = steps.items,
+            .len = steps.len,
+            .cap = steps.len,
+        };
+        write_results(stdout, &rs);
         free(steps.items);
     }
 
