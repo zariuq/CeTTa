@@ -201,6 +201,8 @@ Atom *atom_variable_type(Arena *a);    /* Symbol "Variable" */
 Atom *atom_expression_type(Arena *a);  /* Symbol "Expression" */
 Atom *atom_grounded_type(Arena *a);    /* Symbol "Grounded" */
 Atom *get_meta_type(Arena *a, Atom *atom);  /* Meta-type of atom */
+bool atom_is_meta_type(Atom *type);
+bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
 
 /* ── Predicates ─────────────────────────────────────────────────────────── */
 
