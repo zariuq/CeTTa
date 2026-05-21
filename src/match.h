@@ -150,7 +150,7 @@ char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix);
 
 /* Check if bindings contain a variable loop (variable appears in its
    own binding value). Such bindings are unsound and must be rejected. */
-bool bindings_has_loop(Bindings *b);
+bool bindings_has_loop(const Bindings *b);
 
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
 

@@ -171,6 +171,9 @@ typedef struct {
     X(println_bang, "println!") \
     X(trace_bang, "trace!") \
     X(format_args, "format-args") \
+    X(repr, "repr") \
+    X(parse, "parse") \
+    X(parse_first, "parse-first") \
     X(print_alternatives_bang, "print-alternatives!") \
     /* ── Grounded collection/list operations ── */ \
     X(size, "size") \

@@ -14,6 +14,10 @@
 #define M_E 2.71828182845904523536
 #endif
 
+#ifndef CETTA_PARSE_DEPTH_LIMIT
+#define CETTA_PARSE_DEPTH_LIMIT 4096
+#endif
+
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
 static void skip_whitespace_and_comments(const char *text, size_t *pos) {
@@ -105,7 +109,7 @@ static char decode_string_escape(char c) {
     }
 }
 
-static bool parser_text_well_formed(const char *text) {
+bool parser_text_well_formed(const char *text) {
     int depth = 0;
     for (size_t i = 0; text[i]; i++) {
         if (text[i] == ';') {
@@ -124,6 +128,8 @@ static bool parser_text_well_formed(const char *text) {
         }
         if (text[i] == '(') {
             depth++;
+            if (depth > CETTA_PARSE_DEPTH_LIMIT)
+                return false;
             continue;
         }
         if (text[i] == ')') {
@@ -132,6 +138,11 @@ static bool parser_text_well_formed(const char *text) {
         }
     }
     return depth == 0;
+}
+
+bool parser_rest_is_delimiters(const char *text, size_t *pos) {
+    skip_whitespace_and_comments(text, pos);
+    return text[*pos] == '\0';
 }
 
 typedef struct {
@@ -177,7 +188,9 @@ static VarId parser_var_scope_id(ParserVarScope *scope, SymbolId spelling) {
 /* ── Parse a single token or expression ─────────────────────────────────── */
 
 static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
-                                ParserVarScope *scope) {
+                                ParserVarScope *scope, int depth) {
+    if (depth <= 0)
+        return NULL;
     skip_whitespace_and_comments(text, pos);
     if (!text[*pos]) return NULL;
 
@@ -189,6 +202,7 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
             if (text[*pos] == '\\' && text[*pos + 1]) (*pos)++;
             (*pos)++;
         }
+        if (text[*pos] != '"') return NULL;
         size_t len = *pos - start;
         char *buf = arena_alloc(a, len + 1);
         size_t out = 0;
@@ -200,7 +214,7 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
             }
         }
         buf[out] = '\0';
-        if (text[*pos] == '"') (*pos)++;
+        (*pos)++;
         return atom_string(a, buf);
     }
 
@@ -213,7 +227,7 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
         for (;;) {
             skip_whitespace_and_comments(text, pos);
             if (!text[*pos] || text[*pos] == ')') break;
-            Atom *child = parse_sexpr_scoped(a, text, pos, scope);
+            Atom *child = parse_sexpr_scoped(a, text, pos, scope, depth - 1);
             if (!child) break;
             if (n >= ccap) {
                 ccap = ccap ? ccap * 2 : 16;
@@ -221,7 +235,11 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
             }
             children[n++] = child;
         }
-        if (text[*pos] == ')') (*pos)++;
+        if (text[*pos] != ')') {
+            free(children);
+            return NULL;
+        }
+        (*pos)++;
         Atom *expr = atom_expr(a, children, n);
         free(children);
         return expr;
@@ -280,14 +298,17 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
 Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
     ParserVarScope scope;
     parser_var_scope_init(&scope);
-    Atom *result = parse_sexpr_scoped(a, text, pos, &scope);
+    Atom *result = parse_sexpr_scoped(a, text, pos, &scope,
+                                      CETTA_PARSE_DEPTH_LIMIT);
     parser_var_scope_free(&scope);
     return result;
 }
 
 static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
                                        const char *text, size_t *pos,
-                                       ParserVarScope *scope) {
+                                       ParserVarScope *scope, int depth) {
+    if (depth <= 0)
+        return CETTA_ATOM_ID_NONE;
     skip_whitespace_and_comments(text, pos);
     if (!text[*pos] || !universe)
         return CETTA_ATOM_ID_NONE;
@@ -300,6 +321,8 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
                 (*pos)++;
             (*pos)++;
         }
+        if (text[*pos] != '"')
+            return CETTA_ATOM_ID_NONE;
         size_t len = *pos - start;
         char *buf = arena_alloc(scratch, len + 1);
         size_t out = 0;
@@ -311,8 +334,7 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
             }
         }
         buf[out] = '\0';
-        if (text[*pos] == '"')
-            (*pos)++;
+        (*pos)++;
         return tu_intern_string(universe, buf);
     }
 
@@ -327,7 +349,8 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
             if (!text[*pos] || text[*pos] == ')')
                 break;
             AtomId child_id =
-                parse_sexpr_to_id_scoped(universe, scratch, text, pos, scope);
+                parse_sexpr_to_id_scoped(universe, scratch, text, pos, scope,
+                                         depth - 1);
             if (child_id == CETTA_ATOM_ID_NONE)
                 break;
             if (n >= ccap) {
@@ -336,8 +359,11 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
             }
             children[n++] = child_id;
         }
-        if (text[*pos] == ')')
-            (*pos)++;
+        if (text[*pos] != ')') {
+            free(children);
+            return CETTA_ATOM_ID_NONE;
+        }
+        (*pos)++;
         expr_id = tu_expr_from_ids(universe, children, n);
         free(children);
         return expr_id;
@@ -397,7 +423,8 @@ AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos) 
     parser_var_scope_init(&scope);
     arena_init(&scratch);
     arena_set_hashcons(&scratch, NULL);
-    result = parse_sexpr_to_id_scoped(universe, &scratch, text, pos, &scope);
+    result = parse_sexpr_to_id_scoped(universe, &scratch, text, pos, &scope,
+                                      CETTA_PARSE_DEPTH_LIMIT);
     arena_free(&scratch);
     parser_var_scope_free(&scope);
     return result;
@@ -450,7 +477,8 @@ static int parse_metta_buffer_ids(const char *text, TermUniverse *universe,
         ArenaMark mark = arena_mark(&scratch);
         AtomId id;
         parser_var_scope_init(&scope);
-        id = parse_sexpr_to_id_scoped(universe, &scratch, text, &pos, &scope);
+        id = parse_sexpr_to_id_scoped(universe, &scratch, text, &pos, &scope,
+                                      CETTA_PARSE_DEPTH_LIMIT);
         parser_var_scope_free(&scope);
         arena_reset(&scratch, mark);
         if (id == CETTA_ATOM_ID_NONE)

@@ -4315,7 +4315,8 @@ static bool let_direct_branch_visit(Arena *a, Atom *atom,
     if (let_ctx->pat->kind == ATOM_VAR)
         ok = bindings_builder_add_var_fresh(&b, let_ctx->pat, atom);
     else
-        ok = simple_match_builder(let_ctx->pat, atom, &b);
+        ok = match_atoms_builder(atom, let_ctx->pat, &b) &&
+             !bindings_has_loop(bindings_builder_bindings(&b));
     if (ok) {
         const Bindings *bb = bindings_builder_bindings(&b);
         eval_for_current_caller(let_ctx->s, let_ctx->a, NULL, let_ctx->body,
@@ -5851,7 +5852,8 @@ static bool try_effect_batch_append_collapse_count(Space *s, Arena *a,
     Atom *pat = expr_arg(inner, 0);
     bool ok = pat->kind == ATOM_VAR
         ? bindings_builder_add_var_fresh(&b, pat, single)
-        : simple_match_builder(pat, single, &b);
+        : (match_atoms_builder(single, pat, &b) &&
+           !bindings_has_loop(bindings_builder_bindings(&b)));
     if (!ok) {
         bindings_builder_free(&b);
         return false;
@@ -6105,6 +6107,38 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             Atom *binder = NULL;
             Atom *decl =
                 function_domain_type(&tb, &scratch, fresh_ft->expr.elems[ai + 1], &binder);
+            if (atom_is_meta_type(decl)) {
+                if (!atom_meta_type_accepts(a, decl, atom->expr.elems[ai + 1])) {
+                    all_ok = false;
+                    continue;
+                }
+                SearchContext trial_context;
+                if (!search_context_init(&trial_context, &tb, &scratch)) {
+                    bindings_free(&tb);
+                    free(types);
+                    arena_free(&scratch);
+                    free(op_types);
+                    *out_types = NULL;
+                    return 0;
+                }
+                Atom *arg_term =
+                    bindings_apply_if_vars(search_context_bindings(&trial_context),
+                                           search_context_scratch(&trial_context),
+                                           atom->expr.elems[ai + 1]);
+                if (bind_domain_binder_builder(search_context_builder(&trial_context),
+                                               fresh_ft->expr.elems[ai + 1],
+                                               arg_term)) {
+                    Bindings next_tb;
+                    bindings_init(&next_tb);
+                    search_context_take(&trial_context, &next_tb);
+                    bindings_replace(&tb, &next_tb);
+                } else {
+                    all_ok = false;
+                }
+                search_context_free(&trial_context);
+                (void)binder;
+                continue;
+            }
             Atom **atypes = NULL;
             uint32_t nat = get_atom_types_profiled(s, a, atom->expr.elems[ai + 1], &atypes);
             bool found = false;
@@ -6256,6 +6290,38 @@ static bool check_function_applicable(
                 if (nnext < 64) {
                     bindings_move(&next[nnext], &results[r]);
                     nnext++;
+                }
+                continue;
+            }
+            if (atom_is_meta_type(expected)) {
+                if (atom_meta_type_accepts(a, expected, arg)) {
+                    BindingsBuilder candidate_builder;
+                    if (bindings_builder_init(&candidate_builder, &results[r])) {
+                        if (bind_domain_binder_builder(&candidate_builder,
+                                                       arg_types[i], arg) &&
+                            nnext < 64 &&
+                            bindings_clone(&next[nnext],
+                                           bindings_builder_bindings(&candidate_builder))) {
+                            nnext++;
+                        }
+                        bindings_builder_free(&candidate_builder);
+                    }
+                    found = true;
+                } else if (*n_errors < 64) {
+                    Atom **actual_types = NULL;
+                    uint32_t n_actual_types =
+                        get_atom_types_profiled(s, a, arg, &actual_types);
+                    Atom *actual_type = n_actual_types > 0
+                        ? actual_types[0]
+                        : get_meta_type(a, arg);
+                    Atom *reason = atom_expr(a, (Atom*[]){
+                        atom_symbol(a, "BadArgType"),
+                        atom_int(a, (int64_t)(i + 1)),
+                        expected,
+                        actual_type
+                    }, 4);
+                    free(actual_types);
+                    errors[(*n_errors)++] = atom_error(a, expr, reason);
                 }
                 continue;
             }
@@ -9114,7 +9180,8 @@ tail_call: ;
                     outcome_set_free(&vals);
                     return;
                 }
-                ok = simple_match_builder(pat, val_atom, &b);
+                ok = match_atoms_builder(val_atom, pat, &b) &&
+                     !bindings_has_loop(bindings_builder_bindings(&b));
                 outcome_set_free(&vals);
                 if (ok) {
                     const Bindings *bb = bindings_builder_bindings(&b);
@@ -9182,7 +9249,8 @@ tail_call: ;
                 BindingsBuilder b;
                 if (!bindings_builder_init(&b, val_env))
                     continue;
-                if (simple_match_builder(pat, val_atom, &b)) {
+                if (match_atoms_builder(val_atom, pat, &b) &&
+                    !bindings_has_loop(bindings_builder_bindings(&b))) {
                     const Bindings *bb = bindings_builder_bindings(&b);
                     Bindings visible;
                     if (!bindings_project_body_visible_env(a, body_let, bb, &visible)) {

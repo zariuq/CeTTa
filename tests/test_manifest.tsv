@@ -172,6 +172,7 @@ tests/test_get_type_space_nonspace_error.metta	he	metta	he-extended	main	native	
 tests/test_git_module_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_git_module_missing.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hash_space.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_he_compat_surface_regressions.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_nested_binding_substitution_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_equal.metta	he	metta	he-extended	main	native	test	golden	-
@@ -326,6 +327,7 @@ tests/test_remove_atom_canonical_var_regression.metta	he	metta	he-extended	main	
 tests/test_remove_atom_updates_match_index.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_remove_equation_updates_index.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_remove_type_annotation_updates_index.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_repr_parse_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rho_lib_hygiene_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rho_lib_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_round_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-

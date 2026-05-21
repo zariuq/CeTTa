@@ -1663,30 +1663,55 @@ bool space_remove(Space *s, Atom *atom) {
     }
     if (atom && space_match_backend_remove_atom_direct(s, atom))
         return true;
+    if (!atom)
+        return false;
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP)
         return false;
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
     if (space_is_queue(s))
         space_linearize(s);
+    uint32_t remove_idx = UINT32_MAX;
     for (uint32_t i = 0; i < s->native.len; i++) {
-        if (atom_eq(space_get_at(s, i), atom)) {
-            if (space_is_ordered(s)) {
-                for (uint32_t j = i + 1; j < s->native.len; j++) {
-                    s->native.atom_ids[j - 1] = s->native.atom_ids[j];
-                }
-                s->native.len--;
-            } else {
-                s->native.atom_ids[i] =
-                    s->native.atom_ids[--s->native.len]; /* swap with last */
-            }
-            space_mark_indexes_dirty(s);
-            space_match_backend_note_remove(s);
-            space_bump_revision(s);
-            return true;
+        Atom *candidate = space_get_at(s, i);
+        if (!candidate)
+            continue;
+        if (atom_eq(candidate, atom)) {
+            remove_idx = i;
+            break;
         }
     }
-    return false;
+    if (remove_idx == UINT32_MAX) {
+        uint32_t alpha_idx = UINT32_MAX;
+        uint32_t alpha_count = 0;
+        for (uint32_t i = 0; i < s->native.len; i++) {
+            Atom *candidate = space_get_at(s, i);
+            if (!candidate)
+                continue;
+            if (atom_alpha_eq(candidate, atom)) {
+                alpha_idx = i;
+                alpha_count++;
+            }
+        }
+        if (alpha_count == 1)
+            remove_idx = alpha_idx;
+    }
+    if (remove_idx == UINT32_MAX)
+        return false;
+
+    if (space_is_ordered(s)) {
+        for (uint32_t j = remove_idx + 1; j < s->native.len; j++) {
+            s->native.atom_ids[j - 1] = s->native.atom_ids[j];
+        }
+        s->native.len--;
+    } else {
+        s->native.atom_ids[remove_idx] =
+            s->native.atom_ids[--s->native.len]; /* swap with last */
+    }
+    space_mark_indexes_dirty(s);
+    space_match_backend_note_remove(s);
+    space_bump_revision(s);
+    return true;
 }
 
 bool space_contains_atom_id(const Space *s, AtomId atom_id) {
@@ -1994,6 +2019,114 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     return count;
 }
 
+static bool tuple_type_part_keep(Atom *type, bool is_head) {
+    if (!type || atom_is_symbol_id(type, g_builtin_syms.undefined_type))
+        return false;
+    if (is_head && type->kind == ATOM_EXPR && type->expr.len >= 2 &&
+        atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)) {
+        return false;
+    }
+    return true;
+}
+
+static uint32_t get_tuple_value_part_types(Space *s, Arena *a, Atom *atom,
+                                           bool is_head, Atom ***out_types) {
+    Atom **raw = NULL;
+    uint32_t raw_count = 0;
+
+    switch (atom->kind) {
+    case ATOM_VAR:
+        *out_types = NULL;
+        return 0;
+    case ATOM_GROUNDED: {
+        Atom *ty = get_grounded_type(a, atom);
+        if (tuple_type_part_keep(ty, is_head)) {
+            raw = cetta_malloc(sizeof(Atom *));
+            raw[0] = ty;
+            *out_types = raw;
+            return 1;
+        }
+        *out_types = NULL;
+        return 0;
+    }
+    case ATOM_SYMBOL:
+        raw_count = get_annotated_types(s, a, atom, &raw);
+        break;
+    case ATOM_EXPR:
+        raw_count = get_atom_types(s, a, atom, &raw);
+        break;
+    }
+
+    Atom **types = NULL;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < raw_count; i++) {
+        if (!tuple_type_part_keep(raw[i], is_head))
+            continue;
+        types = cetta_realloc(types, sizeof(Atom *) * (count + 1));
+        types[count++] = raw[i];
+    }
+    free(raw);
+    *out_types = types;
+    return count;
+}
+
+typedef struct {
+    Atom **items;
+    uint32_t len;
+} TupleTypeChoices;
+
+#define CETTA_TUPLE_VALUE_TYPE_INFERENCE_CAP 64u
+
+static void tuple_type_choices_free(TupleTypeChoices *choices, uint32_t len) {
+    if (!choices)
+        return;
+    for (uint32_t i = 0; i < len; i++)
+        free(choices[i].items);
+    free(choices);
+}
+
+static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
+                                        Atom ***out_types) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0) {
+        *out_types = NULL;
+        return 0;
+    }
+
+    uint32_t len = atom->expr.len;
+    TupleTypeChoices *choices = cetta_malloc(sizeof(TupleTypeChoices) * len);
+    memset(choices, 0, sizeof(TupleTypeChoices) * len);
+    uint64_t total = 1;
+
+    for (uint32_t i = 0; i < len; i++) {
+        choices[i].len = get_tuple_value_part_types(s, a, atom->expr.elems[i],
+                                                    i == 0, &choices[i].items);
+        if (choices[i].len == 0 ||
+            total > CETTA_TUPLE_VALUE_TYPE_INFERENCE_CAP / choices[i].len) {
+            tuple_type_choices_free(choices, len);
+            *out_types = NULL;
+            return 0;
+        }
+        total *= choices[i].len;
+    }
+
+    Atom **types = cetta_malloc(sizeof(Atom *) * (uint32_t)total);
+    uint32_t count = 0;
+    for (uint64_t n = 0; n < total; n++) {
+        uint64_t rem = n;
+        Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
+        for (uint32_t pos = len; pos > 0; pos--) {
+            uint32_t idx = (uint32_t)(rem % choices[pos - 1].len);
+            rem /= choices[pos - 1].len;
+            elems[pos - 1] = choices[pos - 1].items[idx];
+        }
+        types[count++] = atom_expr(a, elems, len);
+    }
+
+    tuple_type_choices_free(choices, len);
+    *out_types = types;
+    return count;
+}
+
 uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types) {
     uint32_t count = 0;
@@ -2026,6 +2159,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
     case ATOM_EXPR:
         count = get_annotated_types(s, a, atom, &types);
         /* Also try to infer type from operator's function type */
+        bool tried_func_type = false;
         if (count == 0 && atom->expr.len >= 2) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
@@ -2042,7 +2176,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                 op_types = NULL;
                 uint32_t nfunc = 0;
                 for (uint32_t ri = 0; ri < nop; ri++) {
-                    if (recur_types[ri]->kind == ATOM_EXPR && recur_types[ri]->expr.len >= 3 &&
+                    if (recur_types[ri]->kind == ATOM_EXPR && recur_types[ri]->expr.len >= 2 &&
                         atom_is_symbol_id(recur_types[ri]->expr.elems[0], g_builtin_syms.arrow)) {
                         op_types = cetta_realloc(op_types, sizeof(Atom *) * (nfunc + 1));
                         op_types[nfunc++] = recur_types[ri];
@@ -2051,11 +2185,10 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                 free(recur_types);
                 nop = nfunc;
             }
-            bool tried_func_type = false;
             for (uint32_t oi = 0; oi < nop; oi++) {
                 Atom *ft = op_types[oi];
                 /* Check if it's a function type (-> ...) */
-                if (ft->kind == ATOM_EXPR && ft->expr.len >= 3 &&
+                if (ft->kind == ATOM_EXPR && ft->expr.len >= 2 &&
                     atom_is_symbol_id(ft->expr.elems[0], g_builtin_syms.arrow)) {
                     tried_func_type = true;
                     /* Check arity match */
@@ -2072,6 +2205,11 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         /* Apply accumulated bindings to resolve type vars from earlier args */
                         Atom *arg_type_decl =
                             bindings_apply_if_vars(&tb, &scratch, fresh_ft->expr.elems[ai + 1]);
+                        if (atom_is_meta_type(arg_type_decl)) {
+                            all_ok = atom_meta_type_accepts(a, arg_type_decl,
+                                                            atom->expr.elems[ai + 1]);
+                            continue;
+                        }
                         Atom **atypes = NULL;
                         uint32_t nat = get_atom_types(s, a, atom->expr.elems[ai + 1], &atypes);
                         bool found = false;
@@ -2126,6 +2264,8 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                 return 0;  /* empty = ill-typed */
             }
         }
+        if (count == 0 && atom->expr.len > 0 && !tried_func_type)
+            count = infer_tuple_value_types(s, a, atom, &types);
         break;
     }
 
