@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "grounded.h"
 #include "match.h"
+#include "parser.h"
 #include "space.h"
 #include <string.h>
 #include <math.h>
@@ -233,6 +234,9 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.println_bang ||
            id == g_builtin_syms.trace_bang ||
            id == g_builtin_syms.format_args ||
+           id == g_builtin_syms.repr ||
+           id == g_builtin_syms.parse ||
+           id == g_builtin_syms.parse_first ||
            id == g_builtin_syms.py_atom ||
            id == g_builtin_syms.py_dot ||
            id == g_builtin_syms.py_call ||
@@ -402,6 +406,40 @@ static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t n
     for (uint32_t i = 0; i < list->expr.len; i++)
         sorted[i] = atom_string(a, strings[i]);
     return atom_expr(a, sorted, list->expr.len);
+}
+
+static Atom *grounded_repr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    return atom_string(a, atom_to_parseable_string(a, args[0]));
+}
+
+/* Text parsing deliberately has two surfaces:
+   - parse is strict: the string must contain exactly one atom, with only
+     whitespace/comments around it. This is the safer PeTTa-style default.
+   - parse-first is stream-like: it returns the first parsed atom and ignores
+     all remaining text, including malformed trailing text. */
+static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
+                                uint32_t nargs, bool require_all_input) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING))
+        return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                     atom_symbol(a, "String"), args[0]);
+
+    if (require_all_input && !parser_text_well_formed(args[0]->ground.sval))
+        return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                          atom_symbol(a, "ParseFailed"));
+
+    size_t pos = 0;
+    Atom *parsed = parse_sexpr(a, args[0]->ground.sval, &pos);
+    if (!parsed)
+        return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                          atom_symbol(a, "ParseFailed"));
+    if (require_all_input && !parser_rest_is_delimiters(args[0]->ground.sval, &pos))
+        return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                          atom_symbol(a, "ParseFailed"));
+    return parsed;
 }
 
 static Atom *grounded_collapse_add_next(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
@@ -599,6 +637,15 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     if (head_id == g_builtin_syms.sort_strings)
         return grounded_sort_strings(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.repr)
+        return grounded_repr(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.parse)
+        return grounded_parse_text(a, head, args, nargs, true);
+
+    if (head_id == g_builtin_syms.parse_first)
+        return grounded_parse_text(a, head, args, nargs, false);
 
     if (head_id == g_builtin_syms.collapse_add_next)
         return grounded_collapse_add_next(a, head, args, nargs);

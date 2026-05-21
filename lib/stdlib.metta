@@ -94,6 +94,9 @@
 (: for-each-in-atom (-> Expression Atom (->)))
 (: noreduce-eq (-> Atom Atom Bool))
 (: sort-strings (-> Expression Expression))
+(: repr (-> Atom String))
+(: parse (-> String Atom))
+(: parse-first (-> String Atom))
 (: assertAlphaEqual (-> Atom Atom (->)))
 (: assertAlphaEqualMsg (-> Atom Atom Atom (->)))
 (: assertAlphaEqualToResultMsg (-> Atom Atom Atom (->)))
@@ -125,11 +128,31 @@
 (: range-atom (-> Number Number Expression))
 (: repeat-atom (-> Number Atom Expression))
 
+(= (id $x) $x)
+
 (@doc sort-strings
   (@desc "Sorts expression which contains strings in alphabet order")
   (@params (
     (@param "List of strings")))
   (@return "Sorted list of strings"))
+
+(@doc repr
+  (@desc "HE-compatible reader-style representation of one atom. Ordinary atoms are rendered as parser text; native handles are debug text and are not guaranteed to parse back.")
+  (@params (
+    (@param "Atom to render")))
+  (@return "Textual representation of the atom"))
+
+(@doc parse
+  (@desc "Strict parser for one atom from a string. The string must contain exactly one atom, apart from surrounding whitespace or comments.")
+  (@params (
+    (@param "String containing the atom text")))
+  (@return "Parsed atom"))
+
+(@doc parse-first
+  (@desc "Parser-stream style reader for the first atom in a string, ignoring any later text, including malformed trailing text.")
+  (@params (
+    (@param "String beginning with an atom")))
+  (@return "First parsed atom"))
 
 (@doc _collapse-add-next-atom-from-collapse-bind-result
   (@desc "Adds atom from collapse-bind result to the passed list")

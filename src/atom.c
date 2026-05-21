@@ -785,6 +785,22 @@ Atom *get_meta_type(Arena *a, Atom *atom) {
     return atom_undefined_type(a);
 }
 
+bool atom_is_meta_type(Atom *type) {
+    return atom_is_symbol_id(type, g_builtin_syms.atom) ||
+           atom_is_symbol_id(type, g_builtin_syms.symbol) ||
+           atom_is_symbol_id(type, g_builtin_syms.variable) ||
+           atom_is_symbol_id(type, g_builtin_syms.expression) ||
+           atom_is_symbol_id(type, g_builtin_syms.grounded);
+}
+
+bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual) {
+    if (atom_is_symbol_id(formal, g_builtin_syms.atom))
+        return true;
+    if (!atom_is_meta_type(formal))
+        return false;
+    return atom_eq(formal, get_meta_type(a, actual));
+}
+
 Atom *atom_error(Arena *a, Atom *source, Atom *message) {
     return atom_expr3(a, atom_symbol_id(a, g_builtin_syms.error), source, message);
 }

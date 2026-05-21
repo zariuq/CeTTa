@@ -1679,9 +1679,11 @@ static int32_t bindings_find_entry_index_for_loop(const Bindings *b, VarId var_i
     return -1;
 }
 
-static bool bindings_atom_has_loop(Bindings *b, Atom *atom, uint8_t *state, uint32_t depth);
+static bool bindings_atom_has_loop(const Bindings *b, Atom *atom,
+                                   uint8_t *state, uint32_t depth);
 
-static bool bindings_entry_has_loop(Bindings *b, uint32_t idx, uint8_t *state, uint32_t depth) {
+static bool bindings_entry_has_loop(const Bindings *b, uint32_t idx,
+                                    uint8_t *state, uint32_t depth) {
     if (depth > BINDINGS_RECURSION_LIMIT)
         return true;
     if (state[idx] == 1)
@@ -1702,7 +1704,8 @@ static bool bindings_entry_has_loop(Bindings *b, uint32_t idx, uint8_t *state, u
     return has_loop;
 }
 
-static bool bindings_atom_has_loop(Bindings *b, Atom *atom, uint8_t *state, uint32_t depth) {
+static bool bindings_atom_has_loop(const Bindings *b, Atom *atom,
+                                   uint8_t *state, uint32_t depth) {
     if (depth > BINDINGS_RECURSION_LIMIT)
         return true;
     if (!atom_has_vars(atom))
@@ -1727,7 +1730,7 @@ static bool bindings_atom_has_loop(Bindings *b, Atom *atom, uint8_t *state, uint
     }
 }
 
-bool bindings_has_loop(Bindings *b) {
+bool bindings_has_loop(const Bindings *b) {
     if (!b || b->len == 0)
         return false;
     uint8_t state_stack[BINDINGS_SEEN_STACK_CAP];
