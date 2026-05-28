@@ -10,16 +10,21 @@
 //! `MorkStatus`/`MorkBuffer` error packets, while pointer-returning constructors fall back to null.
 //! Raw pointers are interpreted only through the typed bridge helpers below so that null checking
 //! and lifetime assumptions stay centralized.
+//!
+//! Bridge-owned handles rely on caller-managed ownership. Different handles may be used from
+//! different threads, and a handle may be transferred between threads, but the same live
+//! space/program/context/cursor handle must not be read, mutated, or freed concurrently without an
+//! external ownership protocol or synchronization layer.
 
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
 use cetta_space::{
     bridge_expr_env_text, bridge_expr_text, bridge_parse_expr_chunk, bridge_parse_single_expr,
-    counted_contains_expr, counted_entries, counted_expr_row_packet, counted_factor_candidates,
-    counted_insert_expr_batch_cached, counted_insert_expr_cached, counted_insert_expr_count_cached,
-    counted_query_only_packet_rows, counted_query_rows_detailed_packet_rows,
-    counted_remove_expr_batch_cached, counted_remove_one_expr_cached, counted_sexpr_text,
-    counted_sync_cached_logical_size, counted_unique_size, stable_bridge_expr_bytes,
-    stable_bridge_expr_packet_bytes,
+    counted_contains_expr, counted_entries, counted_exact_entry, counted_expr_row_packet,
+    counted_factor_candidates, counted_insert_expr_batch_cached, counted_insert_expr_cached,
+    counted_insert_expr_count_cached, counted_query_only_packet_rows,
+    counted_query_rows_detailed_packet_rows, counted_remove_expr_batch_cached,
+    counted_remove_one_expr_cached, counted_sexpr_text, counted_sync_cached_logical_size,
+    counted_unique_size, stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes,
 };
 use mork::space::Space;
 use mork_expr::{Expr, ExprEnv, Tag, maybe_byte_item, unify};
@@ -289,7 +294,8 @@ fn with_catch_buffer(f: impl FnOnce() -> MorkBuffer) -> MorkBuffer {
 /// `space` must either be null or a live pointer previously returned by `mork_space_new`,
 /// `mork_space_clone`, `mork_space_join`, `mork_space_meet`, `mork_space_subtract`,
 /// `mork_space_restrict`, `mork_cursor_make_map`, or `mork_cursor_make_snapshot_map`, and it
-/// must outlive the returned borrow.
+/// must outlive the returned borrow. The caller must ensure no other thread mutates or frees the
+/// same handle while the returned shared borrow is live.
 unsafe fn bridge_space_ref<'a>(space: *const MorkSpace) -> Result<&'a BridgeSpace, MorkStatus> {
     if space.is_null() {
         return Err(MorkStatus::err(
@@ -306,7 +312,8 @@ unsafe fn bridge_space_ref<'a>(space: *const MorkSpace) -> Result<&'a BridgeSpac
 /// # Safety
 /// `space` must either be null or a uniquely owned pointer previously returned by one of the
 /// bridge space constructors, and no aliasing mutable or immutable borrows may remain active
-/// while the returned reference is used.
+/// while the returned reference is used. The caller must ensure exclusive access to the same live
+/// handle for the duration of the mutable borrow, including across threads.
 unsafe fn bridge_space_mut<'a>(space: *mut MorkSpace) -> Result<&'a mut BridgeSpace, MorkStatus> {
     if space.is_null() {
         return Err(MorkStatus::err(
@@ -554,10 +561,14 @@ fn build_overlay_zipper<'a>(
     Ok(oz)
 }
 
-fn bridge_space_from_parts(space: Space, storage_mode: BridgeStorageMode) -> *mut MorkSpace {
+fn bridge_space_from_parts(
+    space: Space,
+    storage_mode: BridgeStorageMode,
+) -> Result<*mut MorkSpace, String> {
     let counted_logical_size = if storage_mode == BridgeStorageMode::CountedPathmap {
         let mut logical_size = 0u64;
-        counted_sync_cached_logical_size(&space, &mut logical_size).unwrap_or(0)
+        counted_sync_cached_logical_size(&space, &mut logical_size)?;
+        logical_size
     } else {
         space.btm.val_count() as u64
     };
@@ -567,16 +578,16 @@ fn bridge_space_from_parts(space: Space, storage_mode: BridgeStorageMode) -> *mu
         counted_logical_size,
         exact_contexts: HashMap::new(),
     });
-    Box::into_raw(bridge_space) as *mut MorkSpace
+    Ok(Box::into_raw(bridge_space) as *mut MorkSpace)
 }
 
-fn bridge_space_from_snapshot(snapshot: PathMap<()>) -> *mut MorkSpace {
+fn bridge_space_from_snapshot(snapshot: PathMap<()>) -> Result<*mut MorkSpace, String> {
     let mut space = Space::new();
     space.btm = snapshot;
     bridge_space_from_parts(space, BridgeStorageMode::RawExprs)
 }
 
-fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
+fn bridge_space_clone_owned(source: &BridgeSpace) -> BridgeSpace {
     let space = Space {
         btm: source.inner.btm.clone(),
         sm: source.inner.sm.clone(),
@@ -585,12 +596,16 @@ fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
         last_merkleize: source.inner.last_merkleize,
         timing: source.inner.timing,
     };
-    let bridge_space = Box::new(BridgeSpace {
+    BridgeSpace {
         inner: space,
         storage_mode: source.storage_mode,
         counted_logical_size: source.counted_logical_size,
         exact_contexts: source.exact_contexts.clone(),
-    });
+    }
+}
+
+fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
+    let bridge_space = Box::new(bridge_space_clone_owned(source));
     Box::into_raw(bridge_space) as *mut MorkSpace
 }
 
@@ -598,12 +613,51 @@ fn bridge_uses_counted_storage(bridge: &BridgeSpace) -> bool {
     bridge.storage_mode == BridgeStorageMode::CountedPathmap
 }
 
-fn bridge_sync_counted_logical_size(bridge: &mut BridgeSpace) {
+fn bridge_sync_counted_logical_size(bridge: &mut BridgeSpace) -> Result<(), String> {
     if bridge_uses_counted_storage(bridge) {
-        let _ = counted_sync_cached_logical_size(&bridge.inner, &mut bridge.counted_logical_size);
+        counted_sync_cached_logical_size(&bridge.inner, &mut bridge.counted_logical_size)?;
     } else {
         bridge.counted_logical_size = bridge.inner.btm.val_count() as u64;
     }
+    Ok(())
+}
+
+fn bridge_space_structural_support(space: &BridgeSpace) -> Result<Space, String> {
+    let mut support = Space::new();
+
+    if bridge_uses_counted_storage(space) {
+        for entry in counted_entries(&space.inner)? {
+            support.btm.insert(&entry.atom_expr_bytes, ());
+        }
+        return Ok(support);
+    }
+
+    let mut rz = space.inner.btm.read_zipper();
+    while rz.to_next_val() {
+        let stable_expr = bridge_stable_transfer_expr_bytes(&space.inner, rz.origin_path())?;
+        support.btm.insert(&stable_expr, ());
+    }
+    Ok(support)
+}
+
+fn bridge_space_structural_algebra(
+    dst: &mut BridgeSpace,
+    src: &BridgeSpace,
+    op: impl FnOnce(&mut Space, &Space) -> AlgebraicStatus,
+) -> Result<AlgebraicStatus, String> {
+    let status = if bridge_uses_counted_storage(dst) || bridge_uses_counted_storage(src) {
+        let mut dst_support = bridge_space_structural_support(dst)?;
+        let src_support = bridge_space_structural_support(src)?;
+        let status = op(&mut dst_support, &src_support);
+        dst.inner = dst_support;
+        status
+    } else {
+        op(&mut dst.inner, &src.inner)
+    };
+
+    dst.exact_contexts.clear();
+    bridge_sync_counted_logical_size(dst)?;
+    Ok(status)
 }
 
 // Structural algebra works over PathMap support. Opening contexts describe how
@@ -611,54 +665,54 @@ fn bridge_sync_counted_logical_size(bridge: &mut BridgeSpace) {
 // presentation identities are no longer justified. Future value/context
 // propagation should add explicit composition semantics instead of preserving
 // these maps implicitly.
-fn bridge_space_join_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
-    let status = {
-        let rz = src.inner.btm.read_zipper();
-        let mut wz = dst.inner.btm.write_zipper();
+fn bridge_space_join_into(
+    dst: &mut BridgeSpace,
+    src: &BridgeSpace,
+) -> Result<AlgebraicStatus, String> {
+    bridge_space_structural_algebra(dst, src, |dst_space, src_space| {
+        let rz = src_space.btm.read_zipper();
+        let mut wz = dst_space.btm.write_zipper();
         wz.join_into(&rz)
-    };
-    dst.exact_contexts.clear();
-    bridge_sync_counted_logical_size(dst);
-    status
+    })
 }
 
 // Meet keeps only overlapping structural support and invalidates opening context
 // metadata until context composition is modeled explicitly.
-fn bridge_space_meet_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
-    let status = {
-        let rz = src.inner.btm.read_zipper();
-        let mut wz = dst.inner.btm.write_zipper();
+fn bridge_space_meet_into(
+    dst: &mut BridgeSpace,
+    src: &BridgeSpace,
+) -> Result<AlgebraicStatus, String> {
+    bridge_space_structural_algebra(dst, src, |dst_space, src_space| {
+        let rz = src_space.btm.read_zipper();
+        let mut wz = dst_space.btm.write_zipper();
         wz.meet_into(&rz, true)
-    };
-    dst.exact_contexts.clear();
-    bridge_sync_counted_logical_size(dst);
-    status
+    })
 }
 
 // Subtract removes structural support directly from the destination and drops
 // exact opening contexts, even when some structural rows remain.
-fn bridge_space_subtract_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
-    let status = {
-        let rz = src.inner.btm.read_zipper();
-        let mut wz = dst.inner.btm.write_zipper();
+fn bridge_space_subtract_into(
+    dst: &mut BridgeSpace,
+    src: &BridgeSpace,
+) -> Result<AlgebraicStatus, String> {
+    bridge_space_structural_algebra(dst, src, |dst_space, src_space| {
+        let rz = src_space.btm.read_zipper();
+        let mut wz = dst_space.btm.write_zipper();
         wz.subtract_into(&rz, true)
-    };
-    dst.exact_contexts.clear();
-    bridge_sync_counted_logical_size(dst);
-    status
+    })
 }
 
 // Restrict performs selector-shaped narrowing over structural support; value
 // propagation for surviving rows is a separate PathMap semantics TODO.
-fn bridge_space_restrict_into(dst: &mut BridgeSpace, src: &BridgeSpace) -> AlgebraicStatus {
-    let status = {
-        let rz = src.inner.btm.read_zipper();
-        let mut wz = dst.inner.btm.write_zipper();
+fn bridge_space_restrict_into(
+    dst: &mut BridgeSpace,
+    src: &BridgeSpace,
+) -> Result<AlgebraicStatus, String> {
+    bridge_space_structural_algebra(dst, src, |dst_space, src_space| {
+        let rz = src_space.btm.read_zipper();
+        let mut wz = dst_space.btm.write_zipper();
         wz.restrict(&rz)
-    };
-    dst.exact_contexts.clear();
-    bridge_sync_counted_logical_size(dst);
-    status
+    })
 }
 
 struct BridgeLogicalRow {
@@ -724,10 +778,34 @@ fn bridge_space_add_logical_rows_from(
     dst: &mut BridgeSpace,
     src: &BridgeSpace,
 ) -> Result<u64, String> {
+    // This routine may partially mutate `dst` before a later row trips a checked
+    // arithmetic or decoding error. Public callers therefore run it against a
+    // working clone and only publish the clone on success.
     let rows = bridge_source_logical_rows(src)?;
     let mut added = 0u64;
 
     if bridge_uses_counted_storage(dst) {
+        let expr_map = if bridge_uses_counted_storage(src) {
+            Some(bridge_context_transfer_expr_map(&rows))
+        } else {
+            None
+        };
+        if let Some(expr_map) = &expr_map {
+            for (source_expr_bytes, per_expr) in &src.exact_contexts {
+                let Some(transfer_expr_bytes) = expr_map.get(source_expr_bytes.as_slice()) else {
+                    continue;
+                };
+                for (context, count) in per_expr {
+                    ensure_exact_context_count_can_add(
+                        &dst.exact_contexts,
+                        transfer_expr_bytes,
+                        context,
+                        *count,
+                    )?;
+                }
+            }
+        }
+
         for row in &rows {
             counted_insert_expr_count_cached(
                 &mut dst.inner,
@@ -735,11 +813,12 @@ fn bridge_space_add_logical_rows_from(
                 row.count,
                 &mut dst.counted_logical_size,
             )?;
-            added = added.saturating_add(u64::from(row.count));
+            added = added
+                .checked_add(u64::from(row.count))
+                .ok_or_else(|| "bridge logical row add count overflow".to_string())?;
         }
 
-        if bridge_uses_counted_storage(src) {
-            let expr_map = bridge_context_transfer_expr_map(&rows);
+        if let Some(expr_map) = expr_map {
             for (source_expr_bytes, per_expr) in &src.exact_contexts {
                 let Some(transfer_expr_bytes) = expr_map.get(source_expr_bytes.as_slice()) else {
                     continue;
@@ -760,7 +839,9 @@ fn bridge_space_add_logical_rows_from(
         // exact opening contexts do not survive the structural boundary.
         for row in rows {
             dst.inner.btm.insert(&row.transfer_expr_bytes, ());
-            added = added.saturating_add(u64::from(row.count));
+            added = added
+                .checked_add(u64::from(row.count))
+                .ok_or_else(|| "bridge logical row add count overflow".to_string())?;
         }
         dst.counted_logical_size = dst.inner.btm.val_count() as u64;
         dst.exact_contexts.clear();
@@ -772,20 +853,23 @@ fn bridge_space_add_logical_rows_from(
 fn clone_then_mutate(
     lhs: &BridgeSpace,
     rhs: &BridgeSpace,
-    f: fn(&mut BridgeSpace, &BridgeSpace) -> AlgebraicStatus,
-) -> *mut MorkSpace {
+    f: fn(&mut BridgeSpace, &BridgeSpace) -> Result<AlgebraicStatus, String>,
+) -> Result<*mut MorkSpace, String> {
     let cloned = clone_bridge_space(lhs);
     let dst = unsafe {
         match bridge_space_mut(cloned) {
             Ok(space) => space,
             Err(_) => {
                 mork_space_free(cloned);
-                return ptr::null_mut();
+                return Err("failed to borrow cloned bridge space".to_string());
             }
         }
     };
-    f(dst, rhs);
-    cloned
+    if let Err(err) = f(dst, rhs) {
+        mork_space_free(cloned);
+        return Err(err);
+    }
+    Ok(cloned)
 }
 
 fn validate_sexpr_chunk(input: &[u8]) -> Result<usize, String> {
@@ -859,6 +943,108 @@ fn act_copy_sidecar_path(path: &std::path::Path) -> std::path::PathBuf {
     std::path::PathBuf::from(os)
 }
 
+fn unique_artifact_staging_path(path: &std::path::Path, tag: &str) -> std::path::PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut os = path.as_os_str().to_os_string();
+    os.push(format!(".{}.{}.{}", tag, std::process::id(), nonce));
+    std::path::PathBuf::from(os)
+}
+
+fn remove_path_any_kind(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => if meta.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        }
+        .map_err(|err| format!("failed to remove path {}: {}", path.display(), err)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!(
+            "failed to inspect path {} for removal: {}",
+            path.display(),
+            err
+        )),
+    }
+}
+
+fn bridge_space_dump_act_transactional(
+    bridge: &BridgeSpace,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let sidecar_path = act_copy_sidecar_path(path);
+    let staged_act_path = unique_artifact_staging_path(path, "cetta-act-staged");
+    let staged_sidecar_path = unique_artifact_staging_path(&sidecar_path, "cetta-sidecar-staged");
+    let mut staged_sidecar = false;
+
+    if let Err(err) = bridge.inner.backup_tree(&staged_act_path) {
+        return Err(err.to_string());
+    }
+
+    match std::fs::rename(&sidecar_path, &staged_sidecar_path) {
+        Ok(()) => {
+            staged_sidecar = true;
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            let _ = remove_path_any_kind(&staged_act_path);
+            return Err(format!("failed to stage stale ACT copy sidecar: {}", err));
+        }
+    }
+
+    if let Err(err) = std::fs::rename(&staged_act_path, path) {
+        let _ = remove_path_any_kind(&staged_act_path);
+        if staged_sidecar {
+            if let Err(restore_err) = std::fs::rename(&staged_sidecar_path, &sidecar_path) {
+                return Err(format!(
+                    "failed to publish ACT dump: {}; additionally failed to restore stale ACT copy sidecar: {}",
+                    err, restore_err
+                ));
+            }
+        }
+        return Err(format!("failed to publish ACT dump: {}", err));
+    }
+
+    if staged_sidecar {
+        let _ = remove_path_any_kind(&staged_sidecar_path);
+    }
+
+    Ok(())
+}
+
+fn bridge_space_load_act_replacement(
+    storage_mode: BridgeStorageMode,
+    path: &std::path::Path,
+) -> Result<BridgeSpace, String> {
+    let mut loaded = BridgeSpace {
+        inner: Space::new(),
+        storage_mode,
+        counted_logical_size: 0,
+        exact_contexts: HashMap::new(),
+    };
+    let sidecar_path = act_copy_sidecar_path(path);
+
+    loaded
+        .inner
+        .restore_tree(path)
+        .map_err(|err| err.to_string())?;
+
+    match std::fs::read(&sidecar_path) {
+        Ok(data) => {
+            apply_act_copy_sidecar(&mut loaded, &data)?;
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(format!("failed to read ACT copy sidecar: {}", err));
+        }
+    }
+
+    bridge_sync_counted_logical_size(&mut loaded)?;
+    Ok(loaded)
+}
+
 fn bridge_stored_atom_count(bridge: &BridgeSpace) -> u64 {
     if bridge_uses_counted_storage(bridge) {
         return bridge.counted_logical_size;
@@ -871,44 +1057,49 @@ fn bridge_stored_atom_count(bridge: &BridgeSpace) -> u64 {
 unsafe fn bridge_space_mutate_from_raw(
     dst: *mut MorkSpace,
     src: *const MorkSpace,
-    f: fn(&mut BridgeSpace, &BridgeSpace) -> AlgebraicStatus,
+    f: fn(&mut BridgeSpace, &BridgeSpace) -> Result<AlgebraicStatus, String>,
 ) -> MorkStatus {
-    if ptr::eq(dst.cast_const(), src) {
+    let mut cloned_src: *mut MorkSpace = std::ptr::null_mut();
+    let src_for_read = if ptr::eq(dst.cast_const(), src) {
         let cloned = match unsafe { bridge_space_ref(src) } {
             Ok(space) => clone_bridge_space(space),
             Err(err) => return err,
         };
-        let result = {
-            let dst = match unsafe { bridge_space_mut(dst) } {
-                Ok(space) => space,
-                Err(err) => {
-                    mork_space_free(cloned);
-                    return err;
-                }
-            };
-            let src = match unsafe { bridge_space_ref(cloned) } {
-                Ok(space) => space,
-                Err(err) => {
-                    mork_space_free(cloned);
-                    return err;
-                }
-            };
-            let _ = f(dst, src);
-            MorkStatus::ok(0)
-        };
-        mork_space_free(cloned);
-        return result;
-    }
+        cloned_src = cloned;
+        cloned.cast_const()
+    } else {
+        src
+    };
 
     let dst = match unsafe { bridge_space_mut(dst) } {
         Ok(space) => space,
-        Err(err) => return err,
+        Err(err) => {
+            if !cloned_src.is_null() {
+                mork_space_free(cloned_src);
+            }
+            return err;
+        }
     };
-    let src = match unsafe { bridge_space_ref(src) } {
+    let src = match unsafe { bridge_space_ref(src_for_read) } {
         Ok(space) => space,
-        Err(err) => return err,
+        Err(err) => {
+            if !cloned_src.is_null() {
+                mork_space_free(cloned_src);
+            }
+            return err;
+        }
     };
-    let _ = f(dst, src);
+    let mut working = bridge_space_clone_owned(dst);
+    if let Err(err) = f(&mut working, src) {
+        if !cloned_src.is_null() {
+            mork_space_free(cloned_src);
+        }
+        return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+    }
+    *dst = working;
+    if !cloned_src.is_null() {
+        mork_space_free(cloned_src);
+    }
     MorkStatus::ok(0)
 }
 
@@ -916,47 +1107,48 @@ unsafe fn bridge_space_add_logical_rows_from_raw(
     dst: *mut MorkSpace,
     src: *const MorkSpace,
 ) -> MorkStatus {
-    if ptr::eq(dst.cast_const(), src) {
+    let mut cloned_src: *mut MorkSpace = std::ptr::null_mut();
+    let src_for_read = if ptr::eq(dst.cast_const(), src) {
         let cloned = match unsafe { bridge_space_ref(src) } {
             Ok(space) => clone_bridge_space(space),
             Err(err) => return err,
         };
-        let result = {
-            let dst = match unsafe { bridge_space_mut(dst) } {
-                Ok(space) => space,
-                Err(err) => {
-                    mork_space_free(cloned);
-                    return err;
-                }
-            };
-            let src = match unsafe { bridge_space_ref(cloned) } {
-                Ok(space) => space,
-                Err(err) => {
-                    mork_space_free(cloned);
-                    return err;
-                }
-            };
-            match bridge_space_add_logical_rows_from(dst, src) {
-                Ok(added) => MorkStatus::ok(added),
-                Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
-            }
-        };
-        mork_space_free(cloned);
-        return result;
-    }
+        cloned_src = cloned;
+        cloned.cast_const()
+    } else {
+        src
+    };
 
     let dst = match unsafe { bridge_space_mut(dst) } {
         Ok(space) => space,
-        Err(err) => return err,
+        Err(err) => {
+            if !cloned_src.is_null() {
+                mork_space_free(cloned_src);
+            }
+            return err;
+        }
     };
-    let src = match unsafe { bridge_space_ref(src) } {
+    let src = match unsafe { bridge_space_ref(src_for_read) } {
         Ok(space) => space,
-        Err(err) => return err,
+        Err(err) => {
+            if !cloned_src.is_null() {
+                mork_space_free(cloned_src);
+            }
+            return err;
+        }
     };
-    match bridge_space_add_logical_rows_from(dst, src) {
-        Ok(added) => MorkStatus::ok(added),
+    let mut working = bridge_space_clone_owned(dst);
+    let status = match bridge_space_add_logical_rows_from(&mut working, src) {
+        Ok(added) => {
+            *dst = working;
+            MorkStatus::ok(added)
+        }
         Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+    };
+    if !cloned_src.is_null() {
+        mork_space_free(cloned_src);
     }
+    status
 }
 
 fn read_u32_be_at(input: &[u8], offset: &mut usize) -> Result<u32, String> {
@@ -1264,6 +1456,26 @@ fn add_exact_context_count(
         .checked_add(delta)
         .ok_or_else(|| "contextual exact context multiplicity overflow".to_string())?;
     Ok(())
+}
+
+fn ensure_exact_context_count_can_add(
+    contexts: &HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
+    expr_bytes: &[u8],
+    context_bytes: &[u8],
+    delta: u32,
+) -> Result<(), String> {
+    if delta == 0 {
+        return Ok(());
+    }
+    let current = contexts
+        .get(expr_bytes)
+        .and_then(|per_expr| per_expr.get(context_bytes))
+        .copied()
+        .unwrap_or(0);
+    current
+        .checked_add(delta)
+        .map(|_| ())
+        .ok_or_else(|| "contextual exact context multiplicity overflow".to_string())
 }
 
 fn decrement_any_exact_context_count(
@@ -1946,7 +2158,9 @@ fn accumulate_contextual_query_rows(
                 ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
             };
             stack.push((*factor, ExprEnv::new((factor_idx + 1) as u8, atom_expr)));
-            multiplicity = multiplicity.saturating_mul(u64::from(chosen_entry.count));
+            multiplicity = multiplicity
+                .checked_mul(u64::from(chosen_entry.count))
+                .ok_or_else(|| "contextual query row multiplicity overflowed u64".to_string())?;
             chosen_entries.push(chosen_entry);
         }
 
@@ -2132,7 +2346,9 @@ fn dump_bridge_space_text(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), String
         };
         text.extend_from_slice(&bridge_expr_text(&bridge.inner, expr)?);
         text.push(b'\n');
-        count = count.saturating_add(1);
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| "bridge text row count overflow".to_string())?;
     }
     Ok((text, count))
 }
@@ -2151,7 +2367,9 @@ fn dump_bridge_space_expr_rows(bridge: &BridgeSpace) -> Result<(Vec<u8>, u32), S
             ptr: rz.origin_path().as_ptr().cast_mut(),
         };
         append_bridge_expr_bytes(&bridge.inner, &mut packet, expr)?;
-        count = count.saturating_add(1);
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| "bridge expr row count overflow".to_string())?;
     }
     Ok((packet, count))
 }
@@ -2438,6 +2656,11 @@ pub extern "C" fn mork_space_add_contextual_exact_expr_bytes(
         if let Err(err) = validate_contextual_exact_context(context_bytes, var_count) {
             return MorkStatus::err(MorkStatusCode::Parse, err.into_bytes());
         }
+        if let Err(err) =
+            ensure_exact_context_count_can_add(&bridge.exact_contexts, expr_bytes, context_bytes, 1)
+        {
+            return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+        }
         match counted_insert_expr_cached(
             &mut bridge.inner,
             expr_bytes,
@@ -2520,14 +2743,47 @@ pub extern "C" fn mork_space_remove_text(
         let bytes = std::slice::from_raw_parts(text, len);
         if bridge_uses_counted_storage(bridge) {
             match parse_expr_chunk(&mut bridge.inner, bytes) {
-                Ok(exprs) => match counted_remove_expr_batch_cached(
-                    &mut bridge.inner,
-                    &exprs,
-                    &mut bridge.counted_logical_size,
-                ) {
-                    Ok(removed) => MorkStatus::ok(removed),
-                    Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
-                },
+                Ok(exprs) => {
+                    let mut removed_per_expr: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
+                    for expr in &exprs {
+                        let expr_bytes: &[u8] = expr.as_ref();
+                        let requested = removed_per_expr.entry(expr_bytes.to_vec()).or_insert(0);
+                        let Some(next_requested) = requested.checked_add(1) else {
+                            return MorkStatus::err(
+                                MorkStatusCode::Internal,
+                                b"counted PathMap removal request overflow".to_vec(),
+                            );
+                        };
+                        *requested = next_requested;
+                    }
+                    for (expr_bytes, requested) in &mut removed_per_expr {
+                        let current = match counted_exact_entry(&bridge.inner, expr_bytes) {
+                            Ok(entry) => entry.map(|entry| entry.count).unwrap_or(0),
+                            Err(err) => {
+                                return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+                            }
+                        };
+                        *requested = (*requested).min(current);
+                    }
+                    match counted_remove_expr_batch_cached(
+                        &mut bridge.inner,
+                        &exprs,
+                        &mut bridge.counted_logical_size,
+                    ) {
+                        Ok(removed) => {
+                            for (expr_bytes, removed_count) in removed_per_expr {
+                                for _ in 0..removed_count {
+                                    decrement_any_exact_context_count(
+                                        &mut bridge.exact_contexts,
+                                        &expr_bytes,
+                                    );
+                                }
+                            }
+                            MorkStatus::ok(removed)
+                        }
+                        Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+                    }
+                }
                 Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
         } else {
@@ -2764,12 +3020,8 @@ pub extern "C" fn mork_space_dump_act_file(
             Ok(path) => path,
             Err(err) => return err,
         };
-        let sidecar_path = act_copy_sidecar_path(&path);
-        match bridge.inner.backup_tree(&path) {
-            Ok(()) => {
-                let _ = sidecar_path;
-                MorkStatus::ok(bridge_stored_atom_count(bridge))
-            }
+        match bridge_space_dump_act_transactional(bridge, &path) {
+            Ok(()) => MorkStatus::ok(bridge_stored_atom_count(bridge)),
             Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.to_string().into_bytes()),
         }
     })
@@ -2790,32 +3042,12 @@ pub extern "C" fn mork_space_load_act_file(
             Ok(path) => path,
             Err(err) => return err,
         };
-        let sidecar_path = act_copy_sidecar_path(&path);
-        bridge.inner = Space::new();
-        bridge.counted_logical_size = 0;
-        bridge.exact_contexts.clear();
-        match bridge.inner.restore_tree(&path) {
-            Ok(()) => match std::fs::read(&sidecar_path) {
-                Ok(data) => match apply_act_copy_sidecar(bridge, &data) {
-                    Ok(()) => {
-                        bridge_sync_counted_logical_size(bridge);
-                        MorkStatus::ok(bridge_stored_atom_count(bridge))
-                    }
-                    Err(_) => {
-                        bridge_sync_counted_logical_size(bridge);
-                        MorkStatus::ok(bridge_stored_atom_count(bridge))
-                    }
-                },
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                    bridge_sync_counted_logical_size(bridge);
-                    MorkStatus::ok(bridge_stored_atom_count(bridge))
-                }
-                Err(err) => MorkStatus::err(
-                    MorkStatusCode::Internal,
-                    format!("failed to read ACT copy sidecar: {}", err).into_bytes(),
-                ),
-            },
-            Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.to_string().into_bytes()),
+        match bridge_space_load_act_replacement(bridge.storage_mode, &path) {
+            Ok(loaded) => {
+                *bridge = loaded;
+                MorkStatus::ok(bridge_stored_atom_count(bridge))
+            }
+            Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
         }
     })
 }
@@ -2948,7 +3180,10 @@ pub extern "C" fn mork_space_join(lhs: *const MorkSpace, rhs: *const MorkSpace) 
             Ok(space) => space,
             Err(_) => return ptr::null_mut(),
         };
-        clone_then_mutate(lhs, rhs, bridge_space_join_into)
+        match clone_then_mutate(lhs, rhs, bridge_space_join_into) {
+            Ok(space) => space,
+            Err(_) => ptr::null_mut(),
+        }
     })
 }
 
@@ -2968,7 +3203,10 @@ pub extern "C" fn mork_space_meet(lhs: *const MorkSpace, rhs: *const MorkSpace) 
             Ok(space) => space,
             Err(_) => return ptr::null_mut(),
         };
-        clone_then_mutate(lhs, rhs, bridge_space_meet_into)
+        match clone_then_mutate(lhs, rhs, bridge_space_meet_into) {
+            Ok(space) => space,
+            Err(_) => ptr::null_mut(),
+        }
     })
 }
 
@@ -2996,7 +3234,10 @@ pub extern "C" fn mork_space_subtract(
             Ok(space) => space,
             Err(_) => return ptr::null_mut(),
         };
-        clone_then_mutate(lhs, rhs, bridge_space_subtract_into)
+        match clone_then_mutate(lhs, rhs, bridge_space_subtract_into) {
+            Ok(space) => space,
+            Err(_) => ptr::null_mut(),
+        }
     })
 }
 
@@ -3032,7 +3273,10 @@ pub extern "C" fn mork_space_restrict(
             Ok(space) => space,
             Err(_) => return ptr::null_mut(),
         };
-        clone_then_mutate(lhs, rhs, bridge_space_restrict_into)
+        match clone_then_mutate(lhs, rhs, bridge_space_restrict_into) {
+            Ok(space) => space,
+            Err(_) => ptr::null_mut(),
+        }
     })
 }
 
@@ -3416,7 +3660,10 @@ pub extern "C" fn mork_cursor_make_map(cursor: *const MorkCursor) -> *mut MorkSp
             Ok(snapshot) => snapshot,
             Err(_) => return ptr::null_mut(),
         };
-        bridge_space_from_snapshot(snapshot)
+        match bridge_space_from_snapshot(snapshot) {
+            Ok(space) => space,
+            Err(_) => ptr::null_mut(),
+        }
     })
 }
 
@@ -3432,7 +3679,10 @@ pub extern "C" fn mork_cursor_make_snapshot_map(cursor: *const MorkCursor) -> *m
             Ok(snapshot) => snapshot,
             Err(_) => return ptr::null_mut(),
         };
-        bridge_space_from_snapshot(snapshot)
+        match bridge_space_from_snapshot(snapshot) {
+            Ok(space) => space,
+            Err(_) => ptr::null_mut(),
+        }
     })
 }
 
@@ -4584,7 +4834,15 @@ pub extern "C" fn mork_program_add_sexpr(
         match validate_sexpr_chunk(bytes) {
             Ok(count) => {
                 bridge.expr_chunks.push(bytes.to_vec());
-                bridge.expr_count = bridge.expr_count.saturating_add(count as u64);
+                bridge.expr_count = match bridge.expr_count.checked_add(count as u64) {
+                    Some(next) => next,
+                    None => {
+                        return MorkStatus::err(
+                            MorkStatusCode::Internal,
+                            b"program expression count overflow".to_vec(),
+                        );
+                    }
+                };
                 MorkStatus::ok(count as u64)
             }
             Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),

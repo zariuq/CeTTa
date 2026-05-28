@@ -116,8 +116,8 @@ typedef struct {
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
-    uint32_t non_exact_atoms;
-    bool non_exact_atoms_dirty;
+    bool has_non_exact_atoms;
+    bool has_non_exact_atoms_dirty;
 } SpaceNativeStorage;
 
 typedef struct Space {
@@ -134,8 +134,8 @@ typedef struct Space {
             bool eq_idx_dirty;
             bool ty_idx_dirty;
             bool exact_idx_dirty;
-            uint32_t non_exact_atoms;
-            bool non_exact_atoms_dirty;
+            bool has_non_exact_atoms;
+            bool has_non_exact_atoms_dirty;
         };
     };
     SpaceKind kind;
@@ -153,6 +153,9 @@ void space_add(Space *s, Atom *atom);
 void space_add_atom_id(Space *s, AtomId atom_id);
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
 void space_linearize(Space *s);
+void space_mark_derived_state_dirty(Space *s);
+void space_discard_native_logical_view(Space *s);
+void space_note_external_backend_mutation(Space *s);
 Space *space_heap_clone_shallow(Space *src);
 void space_replace_contents(Space *dst, Space *src);
 const char *space_kind_name(SpaceKind kind);

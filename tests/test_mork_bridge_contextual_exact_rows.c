@@ -1,7 +1,9 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "mork_space_bridge_runtime.h"
 
@@ -56,6 +58,66 @@ static void add_text(CettaMorkSpaceHandle *space, const char *text) {
         fail_bridge("cetta_mork_bridge_space_add_sexpr");
     }
     assert(added == 1);
+}
+
+static void remove_text(CettaMorkSpaceHandle *space, const char *text) {
+    uint64_t removed = 0;
+    if (!cetta_mork_bridge_space_remove_sexpr(
+            space, (const uint8_t *)text, strlen(text), &removed)) {
+        fail_bridge("cetta_mork_bridge_space_remove_sexpr");
+    }
+    assert(removed == 1);
+}
+
+static void assert_dump_contains(CettaMorkSpaceHandle *space,
+                                 const char *needle,
+                                 bool expected) {
+    uint8_t *packet = NULL;
+    size_t len = 0;
+    uint32_t rows = 0;
+    char *text = NULL;
+    bool found = false;
+
+    if (!cetta_mork_bridge_space_dump(space, &packet, &len, &rows))
+        fail_bridge("cetta_mork_bridge_space_dump");
+    (void)rows;
+    text = (char *)malloc(len + 1);
+    assert(text != NULL);
+    memcpy(text, packet, len);
+    text[len] = '\0';
+    found = strstr(text, needle) != NULL;
+    free(text);
+    cetta_mork_bridge_bytes_free(packet, len);
+    assert(found == expected);
+}
+
+static void dump_act(CettaMorkSpaceHandle *space, const char *path) {
+    uint64_t saved = 0;
+    if (!cetta_mork_bridge_space_dump_act_file(
+            space, (const uint8_t *)path, strlen(path), &saved)) {
+        fail_bridge("cetta_mork_bridge_space_dump_act_file");
+    }
+    (void)saved;
+}
+
+static void cleanup_act_artifact(const char *path) {
+    char sidecar[512];
+    snprintf(sidecar, sizeof(sidecar), "%s.copies", path);
+    remove(sidecar);
+    remove(path);
+}
+
+static bool file_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+static void write_text_file(const char *path, const char *text) {
+    FILE *f = fopen(path, "wb");
+    size_t len = strlen(text);
+    assert(f != NULL);
+    assert(fwrite(text, 1, len, f) == len);
+    assert(fclose(f) == 0);
 }
 
 static void add_contextual_edge_xx(CettaMorkSpaceHandle *space) {
@@ -300,6 +362,20 @@ static void test_contextual_exact_remove_keeps_requested_identity(void) {
     assert(packet[off] == BRIDGE_EXPR_TAG_ARITY);
 
     cetta_mork_bridge_bytes_free(packet, len);
+    cetta_mork_bridge_space_free(space);
+}
+
+static void test_text_remove_clears_contextual_exact_opening_context(void) {
+    CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
+
+    assert(space != NULL);
+    add_contextual_edge_xx(space);
+    assert_contextual_exact_dump_succeeds(space);
+
+    remove_text(space, "(edge $x $x)");
+    add_text(space, "(edge $x $x)");
+    assert_contextual_exact_dump_missing_context(space);
+
     cetta_mork_bridge_space_free(space);
 }
 
@@ -633,6 +709,88 @@ static void test_structural_algebra_invalidates_contextual_exact_rows(void) {
     cetta_mork_bridge_space_free(join_lhs);
 }
 
+static void test_counted_structural_algebra_canonicalizes_support(void) {
+    CettaMorkSpaceHandle *join_lhs = cetta_mork_bridge_space_new_pathmap();
+    CettaMorkSpaceHandle *join_rhs = cetta_mork_bridge_space_new_pathmap();
+    CettaMorkSpaceHandle *meet_lhs = cetta_mork_bridge_space_new_pathmap();
+    CettaMorkSpaceHandle *meet_rhs = cetta_mork_bridge_space_new_pathmap();
+    CettaMorkSpaceHandle *sub_lhs = cetta_mork_bridge_space_new_pathmap();
+    CettaMorkSpaceHandle *sub_rhs = cetta_mork_bridge_space_new_pathmap();
+    CettaMorkSpaceHandle *restrict_lhs = cetta_mork_bridge_space_new_pathmap();
+    CettaMorkSpaceHandle *restrict_rhs = cetta_mork_bridge_space_new_pathmap();
+    uint64_t size = 0;
+
+    assert(join_lhs != NULL);
+    assert(join_rhs != NULL);
+    assert(meet_lhs != NULL);
+    assert(meet_rhs != NULL);
+    assert(sub_lhs != NULL);
+    assert(sub_rhs != NULL);
+    assert(restrict_lhs != NULL);
+    assert(restrict_rhs != NULL);
+
+    add_text(join_lhs, "(dup a)");
+    add_text(join_lhs, "(dup a)");
+    add_text(join_rhs, "(dup a)");
+    add_text(join_rhs, "(dup a)");
+    add_text(join_rhs, "(dup a)");
+    assert(cetta_mork_bridge_space_join_into(join_lhs, join_rhs));
+    assert(cetta_mork_bridge_space_size(join_lhs, &size));
+    assert(size == 1);
+    add_text(join_lhs, "(dup a)");
+    assert(cetta_mork_bridge_space_size(join_lhs, &size));
+    assert(size == 2);
+    assert_contextual_exact_dump_succeeds(join_lhs);
+
+    add_text(meet_lhs, "(dup a)");
+    add_text(meet_lhs, "(dup a)");
+    add_text(meet_rhs, "(dup a)");
+    add_text(meet_rhs, "(dup a)");
+    add_text(meet_rhs, "(dup a)");
+    assert(cetta_mork_bridge_space_meet_into(meet_lhs, meet_rhs));
+    assert(cetta_mork_bridge_space_size(meet_lhs, &size));
+    assert(size == 1);
+    add_text(meet_lhs, "(dup a)");
+    assert(cetta_mork_bridge_space_size(meet_lhs, &size));
+    assert(size == 2);
+    assert_contextual_exact_dump_succeeds(meet_lhs);
+
+    add_text(sub_lhs, "(dup a)");
+    add_text(sub_lhs, "(dup a)");
+    add_text(sub_rhs, "(dup a)");
+    add_text(sub_rhs, "(dup a)");
+    add_text(sub_rhs, "(dup a)");
+    assert(cetta_mork_bridge_space_subtract_into(sub_lhs, sub_rhs));
+    assert(cetta_mork_bridge_space_size(sub_lhs, &size));
+    assert(size == 0);
+    add_text(sub_lhs, "(dup a)");
+    assert(cetta_mork_bridge_space_size(sub_lhs, &size));
+    assert(size == 1);
+    assert_contextual_exact_dump_succeeds(sub_lhs);
+
+    add_text(restrict_lhs, "(dup a)");
+    add_text(restrict_lhs, "(dup a)");
+    add_text(restrict_rhs, "(dup a)");
+    add_text(restrict_rhs, "(dup a)");
+    add_text(restrict_rhs, "(dup a)");
+    assert(cetta_mork_bridge_space_restrict_into(restrict_lhs, restrict_rhs));
+    assert(cetta_mork_bridge_space_size(restrict_lhs, &size));
+    assert(size == 1);
+    add_text(restrict_lhs, "(dup a)");
+    assert(cetta_mork_bridge_space_size(restrict_lhs, &size));
+    assert(size == 2);
+    assert_contextual_exact_dump_succeeds(restrict_lhs);
+
+    cetta_mork_bridge_space_free(restrict_rhs);
+    cetta_mork_bridge_space_free(restrict_lhs);
+    cetta_mork_bridge_space_free(sub_rhs);
+    cetta_mork_bridge_space_free(sub_lhs);
+    cetta_mork_bridge_space_free(meet_rhs);
+    cetta_mork_bridge_space_free(meet_lhs);
+    cetta_mork_bridge_space_free(join_rhs);
+    cetta_mork_bridge_space_free(join_lhs);
+}
+
 static void test_logical_row_transfer_between_raw_and_counted_spaces(void) {
     CettaMorkSpaceHandle *raw_src = cetta_mork_bridge_space_new();
     CettaMorkSpaceHandle *counted_dst = cetta_mork_bridge_space_new_pathmap();
@@ -736,17 +894,184 @@ static void test_logical_row_transfer_between_raw_and_counted_spaces(void) {
     cetta_mork_bridge_space_free(raw_src);
 }
 
+static void test_low_level_load_act_replaces_existing_state(void) {
+    const char *path = "runtime/test_mork_bridge_load_act_replace.act";
+    CettaMorkSpaceHandle *src = cetta_mork_bridge_space_new();
+    CettaMorkSpaceHandle *dst = cetta_mork_bridge_space_new();
+    uint64_t loaded = 0;
+    uint64_t size = 0;
+
+    assert(src != NULL);
+    assert(dst != NULL);
+    cleanup_act_artifact(path);
+
+    add_text(src, "(loaded a)");
+    add_text(src, "(loaded b)");
+    dump_act(src, path);
+
+    add_text(dst, "(keep row)");
+    assert(cetta_mork_bridge_space_load_act_file(
+        dst, (const uint8_t *)path, strlen(path), &loaded));
+    assert(loaded == 2);
+    assert(cetta_mork_bridge_space_size(dst, &size));
+    assert(size == 2);
+    assert_dump_contains(dst, "(loaded a)", true);
+    assert_dump_contains(dst, "(loaded b)", true);
+    assert_dump_contains(dst, "(keep row)", false);
+
+    cleanup_act_artifact(path);
+    cetta_mork_bridge_space_free(dst);
+    cetta_mork_bridge_space_free(src);
+}
+
+static void test_low_level_load_act_missing_path_preserves_state(void) {
+    const char *path = "runtime/test_mork_bridge_load_act_missing.act";
+    CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new();
+    uint64_t loaded = 99;
+    uint64_t size = 0;
+
+    assert(space != NULL);
+    cleanup_act_artifact(path);
+
+    add_text(space, "(keep row)");
+    assert(!cetta_mork_bridge_space_load_act_file(
+        space, (const uint8_t *)path, strlen(path), &loaded));
+    assert(cetta_mork_bridge_space_size(space, &size));
+    assert(size == 1);
+    assert_dump_contains(space, "(keep row)", true);
+
+    cetta_mork_bridge_space_free(space);
+}
+
+static void test_low_level_load_act_sidecar_read_failure_preserves_state(void) {
+    const char *path = "runtime/test_mork_bridge_load_act_sidecar_failure.act";
+    char sidecar[512];
+    CettaMorkSpaceHandle *src = cetta_mork_bridge_space_new();
+    CettaMorkSpaceHandle *dst = cetta_mork_bridge_space_new();
+    uint64_t loaded = 0;
+    uint64_t size = 0;
+
+    assert(src != NULL);
+    assert(dst != NULL);
+    cleanup_act_artifact(path);
+    snprintf(sidecar, sizeof(sidecar), "%s.copies", path);
+
+    add_text(src, "(loaded row)");
+    dump_act(src, path);
+    assert(mkdir(sidecar, 0700) == 0);
+
+    add_text(dst, "(keep row)");
+    assert(!cetta_mork_bridge_space_load_act_file(
+        dst, (const uint8_t *)path, strlen(path), &loaded));
+    assert(cetta_mork_bridge_space_size(dst, &size));
+    assert(size == 1);
+    assert_dump_contains(dst, "(keep row)", true);
+    assert_dump_contains(dst, "(loaded row)", false);
+
+    cleanup_act_artifact(path);
+    cetta_mork_bridge_space_free(dst);
+    cetta_mork_bridge_space_free(src);
+}
+
+static void test_low_level_load_act_legacy_sidecar_rejects_and_preserves_state(void) {
+    const char *path = "runtime/test_mork_bridge_load_act_legacy_sidecar.act";
+    char sidecar[512];
+    CettaMorkSpaceHandle *src = cetta_mork_bridge_space_new();
+    CettaMorkSpaceHandle *dst = cetta_mork_bridge_space_new();
+    uint64_t loaded = 0;
+    uint64_t size = 0;
+
+    assert(src != NULL);
+    assert(dst != NULL);
+    cleanup_act_artifact(path);
+    snprintf(sidecar, sizeof(sidecar), "%s.copies", path);
+
+    add_text(src, "(loaded row)");
+    dump_act(src, path);
+    write_text_file(sidecar, "legacy row copies are unsupported now\n");
+
+    add_text(dst, "(keep row)");
+    assert(!cetta_mork_bridge_space_load_act_file(
+        dst, (const uint8_t *)path, strlen(path), &loaded));
+    assert(error_contains("legacy ACT copy sidecars are no longer supported"));
+    assert(cetta_mork_bridge_space_size(dst, &size));
+    assert(size == 1);
+    assert_dump_contains(dst, "(keep row)", true);
+    assert_dump_contains(dst, "(loaded row)", false);
+
+    cleanup_act_artifact(path);
+    cetta_mork_bridge_space_free(dst);
+    cetta_mork_bridge_space_free(src);
+}
+
+static void test_low_level_dump_act_removes_stale_sidecar(void) {
+    const char *path = "runtime/test_mork_bridge_dump_act_sidecar_cleanup.act";
+    char sidecar[512];
+    CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new();
+
+    assert(space != NULL);
+    cleanup_act_artifact(path);
+    snprintf(sidecar, sizeof(sidecar), "%s.copies", path);
+
+    add_text(space, "(saved row)");
+    write_text_file(sidecar, "stale sidecar\n");
+    assert(file_exists(sidecar));
+    dump_act(space, path);
+    assert(file_exists(path));
+    assert(!file_exists(sidecar));
+
+    cleanup_act_artifact(path);
+    cetta_mork_bridge_space_free(space);
+}
+
+static void test_low_level_dump_act_publish_failure_restores_stale_sidecar(void) {
+    const char *path = "runtime/test_mork_bridge_dump_act_publish_failure.act";
+    char sidecar[512];
+    struct stat st;
+    CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new();
+
+    assert(space != NULL);
+    cleanup_act_artifact(path);
+    snprintf(sidecar, sizeof(sidecar), "%s.copies", path);
+
+    add_text(space, "(saved row)");
+    write_text_file(sidecar, "stale sidecar\n");
+    assert(file_exists(sidecar));
+    assert(mkdir(path, 0700) == 0);
+
+    {
+        uint64_t saved = 0;
+        assert(!cetta_mork_bridge_space_dump_act_file(
+            space, (const uint8_t *)path, strlen(path), &saved));
+    }
+
+    assert(file_exists(sidecar));
+    assert(stat(path, &st) == 0);
+    assert(S_ISDIR(st.st_mode));
+
+    cleanup_act_artifact(path);
+    cetta_mork_bridge_space_free(space);
+}
+
 int main(void) {
     test_ground_counted_exact_rows();
     test_variable_rows_require_opening_context();
     test_variable_rows_with_opening_context();
     test_contextual_exact_remove_keeps_requested_identity();
+    test_text_remove_clears_contextual_exact_opening_context();
     test_contextual_query_rows_open_exact_value_refs();
     test_contextual_query_rows_split_exact_presentations();
     test_contextual_query_rows_emit_query_slot_refs();
     test_clone_preserves_contextual_exact_rows();
     test_structural_algebra_invalidates_contextual_exact_rows();
+    test_counted_structural_algebra_canonicalizes_support();
     test_logical_row_transfer_between_raw_and_counted_spaces();
+    test_low_level_load_act_replaces_existing_state();
+    test_low_level_load_act_missing_path_preserves_state();
+    test_low_level_load_act_sidecar_read_failure_preserves_state();
+    test_low_level_load_act_legacy_sidecar_rejects_and_preserves_state();
+    test_low_level_dump_act_removes_stale_sidecar();
+    test_low_level_dump_act_publish_failure_restores_stale_sidecar();
     printf("PASS: mork bridge contextual exact rows\n");
     return 0;
 }

@@ -67,6 +67,7 @@ static bool imported_storage_ensure_projection(Space *s);
 static bool imported_shadow_refresh_from_projection(Space *s);
 static uint32_t bridge_space_logical_len(const ImportedBridgeState *st);
 static bool pathmap_local_ensure_bridge_live(Space *s);
+static void imported_mark_bridge_untrusted(Space *s);
 static bool pathmap_local_apply_text_chunk_direct(Space *s,
                                                   const uint8_t *text,
                                                   size_t len,
@@ -917,6 +918,15 @@ static uint32_t bridge_space_logical_len(const ImportedBridgeState *st) {
         return UINT32_MAX;
     if (!cetta_mork_bridge_space_size(
             (const CettaMorkSpaceHandle *)st->bridge_space, &logical))
+        return UINT32_MAX;
+    return logical > UINT32_MAX ? UINT32_MAX : (uint32_t)logical;
+}
+
+static uint32_t bridge_handle_logical_len(CettaMorkSpaceHandle *bridge) {
+    uint64_t logical = 0;
+    if (!bridge)
+        return UINT32_MAX;
+    if (!cetta_mork_bridge_space_size(bridge, &logical))
         return UINT32_MAX;
     return logical > UINT32_MAX ? UINT32_MAX : (uint32_t)logical;
 }
@@ -2309,8 +2319,10 @@ bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *o
 
     if (!mork_imported_ensure_bridge_space(mst))
         return false;
-    if (!cetta_mork_bridge_space_clear((CettaMorkSpaceHandle *)st->bridge_space))
+    if (!cetta_mork_bridge_space_clear((CettaMorkSpaceHandle *)st->bridge_space)) {
+        imported_mark_bridge_untrusted(s);
         return false;
+    }
     if (!cetta_mork_bridge_space_load_act_file((CettaMorkSpaceHandle *)st->bridge_space,
                                                (const uint8_t *)path, strlen(path),
                                                &loaded)) {
@@ -2326,6 +2338,8 @@ bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *o
     mst->attached_count = (uint32_t)loaded;
     st->built = true;
     st->dirty = false;
+    space_discard_native_logical_view(s);
+    space_note_external_backend_mutation(s);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATTACHED_ACT_OPEN);
     if (out_loaded)
         *out_loaded = loaded;
@@ -4187,9 +4201,7 @@ static bool backend_rebuild_bridge(Space *s) {
         arena_free(&scratch);
         if (!ok) {
             cetta_mork_bridge_space_clear((CettaMorkSpaceHandle *)st->bridge_space);
-            st->bridge_active = false;
-            if (s->match_backend.kind == SPACE_ENGINE_PATHMAP)
-                st->bridge_unavailable = true;
+            imported_mark_bridge_untrusted(s);
             return false;
         }
     }
@@ -4374,10 +4386,7 @@ static bool imported_shadow_refresh_from_projection(Space *s) {
     s->native.start = 0;
     s->native.len = st->projected_len;
     s->native.cap = st->projected_len;
-    s->native.eq_idx_dirty = true;
-    s->native.ty_idx_dirty = true;
-    s->native.exact_idx_dirty = true;
-    s->native.non_exact_atoms_dirty = true;
+    space_mark_derived_state_dirty(s);
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_SHADOW_REFRESH);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_PATHMAP_SHADOW_REFRESH_ATOMS,
@@ -4421,19 +4430,16 @@ bool space_match_backend_step(Space *s, Arena *persistent_arena,
         return false;
     if (!cetta_mork_bridge_space_step((CettaMorkSpaceHandle *)st->bridge_space,
                                       steps, &performed)) {
-        st->bridge_active = false;
-        st->built = false;
-        st->dirty = true;
+        imported_mark_bridge_untrusted(s);
         return false;
     }
-    if (out_performed)
-        *out_performed = performed;
     if (performed == 0)
         return true;
     fresh = cetta_malloc(sizeof(Space));
     space_init_with_universe(fresh, s ? s->native.universe : NULL);
     fresh->kind = s->kind;
     if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
+        imported_mark_bridge_untrusted(s);
         goto done;
     }
     ok = imported_materialize_bridge_space(
@@ -4441,10 +4447,14 @@ bool space_match_backend_step(Space *s, Arena *persistent_arena,
         persistent_arena,
         (CettaMorkSpaceHandle *)st->bridge_space,
         NULL);
-    if (!ok)
+    if (!ok) {
+        imported_mark_bridge_untrusted(s);
         goto done;
+    }
 
     space_replace_contents(s, fresh);
+    if (out_performed)
+        *out_performed = performed;
     ok = true;
 
 done:
@@ -4506,19 +4516,16 @@ bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
         return false;
     if (!cetta_mork_bridge_space_add_sexpr((CettaMorkSpaceHandle *)st->bridge_space,
                                            text, len, &added)) {
-        st->bridge_active = false;
-        st->built = false;
-        st->dirty = true;
+        imported_mark_bridge_untrusted(s);
         return false;
     }
-    if (out_added)
-        *out_added = added;
     if (added == 0)
         return true;
     fresh = cetta_malloc(sizeof(Space));
     space_init_with_universe(fresh, s ? s->native.universe : NULL);
     fresh->kind = s->kind;
     if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
+        imported_mark_bridge_untrusted(s);
         goto done;
     }
     ok = imported_materialize_bridge_space(
@@ -4526,10 +4533,14 @@ bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
         persistent_arena,
         (CettaMorkSpaceHandle *)st->bridge_space,
         NULL);
-    if (!ok)
+    if (!ok) {
+        imported_mark_bridge_untrusted(s);
         goto done;
+    }
 
     space_replace_contents(s, fresh);
+    if (out_added)
+        *out_added = added;
     ok = true;
 
 done:
@@ -4591,19 +4602,16 @@ bool space_match_backend_remove_sexpr_chunk(Space *s, Arena *persistent_arena,
         return false;
     if (!cetta_mork_bridge_space_remove_sexpr((CettaMorkSpaceHandle *)st->bridge_space,
                                               text, len, &removed)) {
-        st->bridge_active = false;
-        st->built = false;
-        st->dirty = true;
+        imported_mark_bridge_untrusted(s);
         return false;
     }
-    if (out_removed)
-        *out_removed = removed;
     if (removed == 0)
         return true;
     fresh = cetta_malloc(sizeof(Space));
     space_init_with_universe(fresh, s ? s->native.universe : NULL);
     fresh->kind = s->kind;
     if (!space_match_backend_try_set(fresh, s->match_backend.kind)) {
+        imported_mark_bridge_untrusted(s);
         goto done;
     }
     ok = imported_materialize_bridge_space(
@@ -4611,10 +4619,14 @@ bool space_match_backend_remove_sexpr_chunk(Space *s, Arena *persistent_arena,
         persistent_arena,
         (CettaMorkSpaceHandle *)st->bridge_space,
         NULL);
-    if (!ok)
+    if (!ok) {
+        imported_mark_bridge_untrusted(s);
         goto done;
+    }
 
     space_replace_contents(s, fresh);
+    if (out_removed)
+        *out_removed = removed;
     ok = true;
 
 done:
@@ -5152,6 +5164,23 @@ static void imported_note_remove(Space *s) {
     }
 }
 
+static void imported_mark_bridge_untrusted(Space *s) {
+    ImportedBridgeState *st = backend_bridge_state(s);
+    if (!s || !st)
+        return;
+    imported_projection_clear(st);
+    imported_flat_state_clear(st);
+    st->bridge_active = false;
+    st->built = false;
+    st->dirty = true;
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP)
+        st->bridge_unavailable = true;
+    if (s->match_backend.kind == SPACE_ENGINE_MORK) {
+        s->match_backend.mork.attached_compiled = false;
+        s->match_backend.mork.attached_count = 0;
+    }
+}
+
 static bool pathmap_local_ensure_bridge_live(Space *s) {
     ImportedBridgeState *st;
     if (!s)
@@ -5275,16 +5304,7 @@ static void pathmap_local_backend_primary_bulk_commit(Space *s,
     st->built = false;
     st->dirty = false;
     st->bridge_unavailable = false;
-    free(s->native.atom_ids);
-    s->native.atom_ids = NULL;
-    s->native.start = 0;
-    s->native.len = 0;
-    s->native.cap = 0;
-    s->native.eq_idx_dirty = true;
-    s->native.ty_idx_dirty = true;
-    s->native.exact_idx_dirty = true;
-    s->native.non_exact_atoms = 0;
-    s->native.non_exact_atoms_dirty = true;
+    space_discard_native_logical_view(s);
 }
 
 static bool transfer_ensure_bridge_live(Space *s,
@@ -5323,10 +5343,10 @@ static bool transfer_ensure_bridge_live(Space *s,
     return true;
 }
 
-static bool transfer_mark_bridge_destination(Space *dst, uint64_t added) {
+static bool transfer_mark_bridge_destination(Space *dst, uint64_t added,
+                                             uint32_t logical) {
     ImportedBridgeState *st = backend_bridge_state(dst);
     MorkImportedState *mst = mork_imported_state(dst);
-    uint32_t logical = 0;
 
     if (!dst || !st)
         return false;
@@ -5342,19 +5362,18 @@ static bool transfer_mark_bridge_destination(Space *dst, uint64_t added) {
         st->bridge_unavailable = false;
         st->built = false;
         st->dirty = false;
-        logical = bridge_space_logical_len(st);
         if (logical == UINT32_MAX)
             return false;
         if (mst) {
             mst->attached_compiled = true;
             mst->attached_count = logical;
         }
+        space_discard_native_logical_view(dst);
     } else {
         return false;
     }
 
-    dst->revision++;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+    space_note_external_backend_mutation(dst);
     return true;
 }
 
@@ -5371,8 +5390,11 @@ static bool transfer_space_can_try_bridge_rows(Space *s) {
 
 static SpaceTransferResult transfer_bridge_logical_rows_direct(Space *dst, Space *src,
                                                                uint64_t *out_added) {
+    ImportedBridgeState *dst_st = NULL;
     CettaMorkSpaceHandle *dst_bridge = NULL;
+    CettaMorkSpaceHandle *dst_clone = NULL;
     CettaMorkSpaceHandle *src_bridge = NULL;
+    uint32_t logical = 0;
     uint64_t added = 0;
 
     if (!transfer_space_can_try_bridge_rows(dst) ||
@@ -5383,13 +5405,41 @@ static SpaceTransferResult transfer_bridge_logical_rows_direct(Space *dst, Space
         !transfer_ensure_bridge_live(src, &src_bridge)) {
         return SPACE_TRANSFER_ERROR;
     }
+    dst_st = backend_bridge_state(dst);
+    if (!dst_st || !dst_bridge || !src_bridge)
+        return SPACE_TRANSFER_ERROR;
 
-    if (!cetta_mork_bridge_space_add_logical_rows_from(dst_bridge, src_bridge,
+    dst_clone = cetta_mork_bridge_space_clone(dst_bridge);
+    if (!dst_clone)
+        return SPACE_TRANSFER_ERROR;
+
+    if (!cetta_mork_bridge_space_add_logical_rows_from(dst_clone, src_bridge,
                                                        &added)) {
+        cetta_mork_bridge_space_free(dst_clone);
         return SPACE_TRANSFER_ERROR;
     }
-    if (!transfer_mark_bridge_destination(dst, added))
+    if (added == 0) {
+        cetta_mork_bridge_space_free(dst_clone);
+        if (out_added)
+            *out_added = 0;
+        return SPACE_TRANSFER_OK;
+    }
+
+    if (dst->match_backend.kind == SPACE_ENGINE_MORK) {
+        logical = bridge_handle_logical_len(dst_clone);
+        if (logical == UINT32_MAX) {
+            cetta_mork_bridge_space_free(dst_clone);
+            return SPACE_TRANSFER_ERROR;
+        }
+    }
+    if (!transfer_mark_bridge_destination(dst, added, logical)) {
+        cetta_mork_bridge_space_free(dst_clone);
         return SPACE_TRANSFER_ERROR;
+    }
+
+    cetta_mork_bridge_space_free(dst_bridge);
+    dst_st->bridge_space = dst_clone;
+    dst_st->bridge_active = true;
     if (out_added)
         *out_added = added;
     return SPACE_TRANSFER_OK;
@@ -5478,6 +5528,8 @@ SpaceTransferResult space_match_backend_transfer_resolved_result(
 
         if (!dst.bridge || !src.space)
             return SPACE_TRANSFER_ERROR;
+        if (!space_engine_uses_pathmap(src.space->match_backend.kind))
+            return SPACE_TRANSFER_NEEDS_TEXT_FALLBACK;
         if (!transfer_ensure_bridge_live(src.space, &src_bridge) ||
             !src_bridge) {
             return SPACE_TRANSFER_ERROR;
@@ -5513,6 +5565,10 @@ static bool pathmap_local_deactivate_bridge_preserving_shadow(Space *s,
                                                               ImportedBridgeState *st) {
     if (!s || !st)
         return false;
+    /* This recovery path is used after a failed single-row bridge add.  The
+       bridge add wrappers validate and preflight the known failure modes before
+       mutating; if that FFI contract changes, this path must become clone-based
+       so a failed add cannot be projected into the native shadow. */
     if (st->bridge_active) {
         if (!imported_shadow_refresh_from_projection(s)) {
             st->bridge_active = false;
@@ -5537,6 +5593,7 @@ static bool pathmap_local_apply_text_chunk_direct(Space *s,
                                                   bool remove_atoms,
                                                   uint64_t *out_changed) {
     ImportedBridgeState *st;
+    CettaMorkSpaceHandle *clone = NULL;
     uint64_t changed = 0;
 
     if (out_changed)
@@ -5554,25 +5611,31 @@ static bool pathmap_local_apply_text_chunk_direct(Space *s,
     if (!pathmap_local_ensure_bridge_live(s) || !st->bridge_active || !st->bridge_space)
         return false;
 
+    clone = cetta_mork_bridge_space_clone((CettaMorkSpaceHandle *)st->bridge_space);
+    if (!clone)
+        return false;
+
     if (!(remove_atoms
               ? cetta_mork_bridge_space_remove_sexpr(
-                    (CettaMorkSpaceHandle *)st->bridge_space, text, len, &changed)
+                    clone, text, len, &changed)
               : cetta_mork_bridge_space_add_sexpr(
-                    (CettaMorkSpaceHandle *)st->bridge_space, text, len, &changed))) {
-        st->bridge_active = false;
-        st->built = false;
-        st->dirty = true;
+                    clone, text, len, &changed))) {
+        cetta_mork_bridge_space_free(clone);
         return false;
     }
 
     if (out_changed)
         *out_changed = changed;
-    if (changed == 0)
+    if (changed == 0) {
+        cetta_mork_bridge_space_free(clone);
         return true;
+    }
 
+    cetta_mork_bridge_space_free((CettaMorkSpaceHandle *)st->bridge_space);
+    st->bridge_space = clone;
+    st->bridge_active = true;
     pathmap_local_backend_primary_bulk_commit(s, st);
-    s->revision++;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+    space_note_external_backend_mutation(s);
     return true;
 }
 
@@ -5672,6 +5735,7 @@ static bool pathmap_local_store_atom_direct(Space *s, Atom *atom) {
 
 static bool pathmap_local_remove_atom_id_direct(Space *s, AtomId atom_id) {
     ImportedBridgeState *st;
+    CettaMorkSpaceHandle *clone = NULL;
     Arena scratch;
     uint64_t removed = 0;
     bool ok = false;
@@ -5685,24 +5749,31 @@ static bool pathmap_local_remove_atom_id_direct(Space *s, AtomId atom_id) {
         !pathmap_local_ensure_bridge_live(s))
         return false;
 
+    clone = cetta_mork_bridge_space_clone((CettaMorkSpaceHandle *)st->bridge_space);
+    if (!clone)
+        return false;
+
     arena_init(&scratch);
     ok = tu_has_vars(s->native.universe, atom_id)
              ? imported_bridge_remove_atom_contextual_exact(
-                   &scratch, (CettaMorkSpaceHandle *)st->bridge_space,
+                   &scratch, clone,
                    s->native.universe, atom_id, &removed)
              : imported_bridge_remove_atom_structural(
-                   &scratch, (CettaMorkSpaceHandle *)st->bridge_space,
+                   &scratch, clone,
                    s->native.universe, atom_id, NULL, &removed);
     arena_free(&scratch);
     if (!ok) {
-        st->bridge_active = false;
-        st->built = false;
-        st->dirty = true;
+        cetta_mork_bridge_space_free(clone);
         return false;
     }
-    if (removed == 0)
+    if (removed == 0) {
+        cetta_mork_bridge_space_free(clone);
         return false;
+    }
 
+    cetta_mork_bridge_space_free((CettaMorkSpaceHandle *)st->bridge_space);
+    st->bridge_space = clone;
+    st->bridge_active = true;
     pathmap_local_backend_primary_bulk_commit(s, st);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_DIRECT_REMOVE);
     return true;
@@ -5710,6 +5781,7 @@ static bool pathmap_local_remove_atom_id_direct(Space *s, AtomId atom_id) {
 
 static bool pathmap_local_remove_atom_direct(Space *s, Atom *atom) {
     ImportedBridgeState *st;
+    CettaMorkSpaceHandle *clone = NULL;
     Arena scratch;
     uint64_t removed = 0;
     bool ok = false;
@@ -5723,24 +5795,31 @@ static bool pathmap_local_remove_atom_direct(Space *s, Atom *atom) {
         !pathmap_local_ensure_bridge_live(s))
         return false;
 
+    clone = cetta_mork_bridge_space_clone((CettaMorkSpaceHandle *)st->bridge_space);
+    if (!clone)
+        return false;
+
     arena_init(&scratch);
     ok = atom_has_vars(atom)
              ? imported_bridge_remove_atom_contextual_exact_atom(
-                   &scratch, (CettaMorkSpaceHandle *)st->bridge_space,
+                   &scratch, clone,
                    atom, &removed)
              : imported_bridge_remove_atom_structural(
-                   &scratch, (CettaMorkSpaceHandle *)st->bridge_space,
+                   &scratch, clone,
                    s->native.universe, CETTA_ATOM_ID_NONE, atom, &removed);
     arena_free(&scratch);
     if (!ok) {
-        st->bridge_active = false;
-        st->built = false;
-        st->dirty = true;
+        cetta_mork_bridge_space_free(clone);
         return false;
     }
-    if (removed == 0)
+    if (removed == 0) {
+        cetta_mork_bridge_space_free(clone);
         return false;
+    }
 
+    cetta_mork_bridge_space_free((CettaMorkSpaceHandle *)st->bridge_space);
+    st->bridge_space = clone;
+    st->bridge_active = true;
     pathmap_local_backend_primary_bulk_commit(s, st);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_DIRECT_REMOVE);
     return true;
@@ -5771,12 +5850,12 @@ static bool pathmap_local_truncate_direct(Space *s, uint32_t new_len) {
         return false;
 
     if (new_len == 0) {
-        if (!cetta_mork_bridge_space_clear((CettaMorkSpaceHandle *)st->bridge_space)) {
-            st->bridge_active = false;
-            st->built = false;
-            st->dirty = true;
+        CettaMorkSpaceHandle *empty = cetta_mork_bridge_space_new_pathmap();
+        if (!empty)
             return false;
-        }
+        cetta_mork_bridge_space_free((CettaMorkSpaceHandle *)st->bridge_space);
+        st->bridge_space = empty;
+        st->bridge_active = true;
         pathmap_local_backend_primary_bulk_commit(s, st);
         return true;
     }
@@ -5906,7 +5985,12 @@ static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
             st->dirty = false;
             return;
         }
-        (void)pathmap_local_deactivate_bridge_preserving_shadow(s, st);
+        imported_projection_clear(st);
+        imported_flat_state_clear(st);
+        st->bridge_active = false;
+        st->bridge_unavailable = true;
+        st->built = false;
+        st->dirty = true;
         return;
     }
     if (imported_logical_len(s) <= 1u) {

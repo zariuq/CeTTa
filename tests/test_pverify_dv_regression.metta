@@ -13,9 +13,10 @@
 
 !(assertEqual (lookup_d &kb "x" "y") True)
 !(assertEqual (find_vars &kb ("x")) ("x"))
-!(assertEqual
-   (select (make_assertion &kb ("|-" "x" "y")))
-   ((DVars (("x" "y"))) (FHyps (("formula" "x") ("formula" "y"))) (EHyps ()) (Statement ("|-" "x" "y"))))
+!(let $ma (select (make_assertion &kb ("|-" "x" "y")))
+   (assertEqual
+      $ma
+      ((DVars (("x" "y"))) (FHyps (("formula" "x") ("formula" "y"))) (EHyps ()) (Statement ("|-" "x" "y")))))
 !(assertEqual
    (check_dvs &kb &subst_dv (("x" "y")))
    (Error ("x" "x") "Disjoint variable violation - same variable."))

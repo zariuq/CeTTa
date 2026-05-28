@@ -1419,7 +1419,12 @@ typedef struct {
 } RenameVarMap;
 
 uint32_t fresh_var_suffix(void) {
-    return g_var_counter++;
+    /* Epoch 0 means "no standardization-apart tag", so fresh suffixes must
+       start at 1 and keep skipping 0 on unsigned wraparound. */
+    g_var_counter++;
+    if (g_var_counter == 0)
+        g_var_counter++;
+    return g_var_counter;
 }
 
 static void var_id_set_init(VarIdSet *set) {

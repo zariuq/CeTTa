@@ -301,6 +301,7 @@ BACKEND_DEDICATED_TESTS = \
 	tests/test_mork_zipper_surface.metta \
 	tests/test_import_mm2_mork_session_lowering.metta \
 	tests/test_mork_runtime_stats_isolation.metta \
+	tests/test_pathmap_direct_store_runtime_stats.metta \
 	tests/test_new_space_mork_surface.metta \
 	tests/test_step_space_surface.metta
 
@@ -1871,6 +1872,15 @@ endif
 
 test-pathmap-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@expected=$$(cat tests/test_pathmap_direct_store_runtime_stats.expected); \
+	result=$$(./$(BIN) --profile he-extended --lang he tests/test_pathmap_direct_store_runtime_stats.metta 2>&1); \
+	if [ "$$result" = "$$expected" ]; then \
+		echo "PASS: pathmap direct-store runtime-stats regression"; \
+	else \
+		echo "FAIL: pathmap direct-store runtime-stats regression"; \
+		diff <(echo "$$expected") <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-bridge-v2
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-conjunction-init
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-match-chain-v3

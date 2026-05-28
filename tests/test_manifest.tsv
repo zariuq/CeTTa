@@ -286,6 +286,7 @@ tests/test_pathmap_backend_primary_destructive_regression.metta	he	metta	he-exte
 tests/test_pathmap_backend_primary_growth_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_contextual_var_projection_remove.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_counted_space_surface.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pathmap_direct_store_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_pathmap_fc_depth3_count_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_imported_bridge_v2.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_pathmap_match_copy_var_identity_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
@@ -417,6 +418,7 @@ tests/test_variable_scoping.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_width_tuple_semantics_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot_equation_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_with_space_snapshot_non_exact_query_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot_passthrough.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot_queue_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_xor.metta	he	metta	he-extended	main	native	test	golden	-

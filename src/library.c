@@ -72,10 +72,17 @@ typedef struct {
     size_t cap;
 } CettaStringBuf;
 
-static uint64_t library_monotonic_ns(void) {
+static bool library_read_monotonic_ns(uint64_t *out) {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return false;
+    *out = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    return true;
+}
+
+static uint64_t library_monotonic_ns(void) {
+    uint64_t ns = 0;
+    (void)library_read_monotonic_ns(&ns);
+    return ns;
 }
 
 static void library_mork_cursor_free_resource(void *resource);
@@ -1974,6 +1981,24 @@ static Atom *system_cwd(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return atom_string(a, path);
 }
 
+static Atom *system_monotonic_ns(Arena *a, Atom *head, Atom **args,
+                                 uint32_t nargs) {
+    uint64_t ns = 0;
+    if (!system_zero_arg_ok(args, nargs)) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected: (system:monotonic-ns)");
+    }
+    if (!library_read_monotonic_ns(&ns)) {
+        return library_signature_error(a, head, args, nargs,
+                                       "cannot read monotonic clock");
+    }
+    if (ns > (uint64_t)INT64_MAX) {
+        return library_signature_error(a, head, args, nargs,
+                                       "monotonic clock value exceeds signed integer range");
+    }
+    return atom_int(a, (int64_t)ns);
+}
+
 static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
                                            Arena *a, Atom *head,
                                            Atom **args, uint32_t nargs) {
@@ -2002,6 +2027,9 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
     }
     if (head_id == g_builtin_syms.lib_system_cwd) {
         return system_cwd(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_system_monotonic_ns) {
+        return system_monotonic_ns(a, head, args, nargs);
     }
     return NULL;
 }
@@ -2790,6 +2818,38 @@ static Atom *mork_space_dump_act_native(CettaLibraryContext *ctx, Arena *a,
     return atom_unit(a);
 }
 
+static bool mork_bridge_import_act_additive(CettaMorkSpaceHandle *dst_bridge,
+                                            const char *path) {
+    CettaMorkSpaceHandle *loaded_bridge = NULL;
+    uint64_t loaded = 0;
+    uint64_t added = 0;
+    bool ok = false;
+
+    if (!dst_bridge)
+        return false;
+
+    loaded_bridge = cetta_mork_bridge_space_new();
+    if (!loaded_bridge)
+        return false;
+
+    if (!cetta_mork_bridge_space_load_act_file(
+            loaded_bridge, (const uint8_t *)path, strlen(path), &loaded)) {
+        goto cleanup;
+    }
+    if (!cetta_mork_bridge_space_add_logical_rows_from(
+            dst_bridge, loaded_bridge, &added)) {
+        goto cleanup;
+    }
+
+    ok = true;
+
+cleanup:
+    cetta_mork_bridge_space_free(loaded_bridge);
+    (void)loaded;
+    (void)added;
+    return ok;
+}
+
 static Atom *mork_space_import_act_native(CettaLibraryContext *ctx, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs) {
     CettaMorkSpaceResource *space;
@@ -2814,8 +2874,7 @@ static Atom *mork_space_import_act_native(CettaLibraryContext *ctx, Arena *a,
         return library_mork_bridge_error(a, head, args, nargs,
                                          "MORK ACT import bridge unavailable: ");
     }
-    if (!cetta_mork_bridge_space_load_act_file(
-            bridge, (const uint8_t *)resolved, strlen(resolved), NULL)) {
+    if (!mork_bridge_import_act_additive(bridge, resolved)) {
         return library_mork_bridge_error(a, head, args, nargs,
                                          "MORK ACT import failed: ");
     }
@@ -3323,11 +3382,7 @@ static Atom *mork_space_include_native(CettaLibraryContext *ctx, Arena *a,
     }
 
     if (plan.format.kind == CETTA_MODULE_FORMAT_MORK_ACT) {
-        if (!cetta_mork_bridge_space_load_act_file(
-                bridge,
-                (const uint8_t *)plan.canonical_path,
-                strlen(plan.canonical_path),
-                NULL)) {
+        if (!mork_bridge_import_act_additive(bridge, plan.canonical_path)) {
             error = module_reason_with_detail(
                 ctx, a, "ModuleCompiledLoadFailed", plan.canonical_path,
                 atom_string(a, cetta_mork_bridge_last_error()));

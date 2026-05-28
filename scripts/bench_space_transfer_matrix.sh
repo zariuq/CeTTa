@@ -83,7 +83,7 @@ run_cetta_file() {
     local output=$2
     local status=0
     /usr/bin/time -f 'time_sec=%e rss_kb=%M' \
-        bash -lc "cd '$ROOT'; '$BIN' --quiet --lang he '$file'" \
+        bash -lc "cd '$ROOT'; '$BIN' --quiet --profile he-extended --lang he '$file'" \
         >"$output" 2>&1 || status=$?
     return "$status"
 }
@@ -244,6 +244,8 @@ render_case_program() {
         if need_mork_import "$src_kind" || need_mork_import "$dst_kind"; then
             printf '!(import! &self mork)\n'
         fi
+        printf '!(import! &self system)\n'
+        printf '!(bind! &bench-start-ns (system:monotonic-ns))\n'
 
         kind_bind_space '&src' "$src_kind"
         kind_populate_space '&src' "$src_kind"
@@ -351,6 +353,8 @@ render_case_program() {
                 die "Unknown scenario: $scenario"
                 ;;
         esac
+        printf '!(let $bench-finished-ns (system:monotonic-ns)\n'
+        printf '   (println! (bench scenario_ns (- $bench-finished-ns &bench-start-ns))))\n'
     } >"$out"
 }
 
@@ -401,6 +405,7 @@ run_case_scenario() {
     local scenario_rows
     local time_sec
     local rss_kb
+    local scenario_ns
     local expected
 
     src_kind="$(case_source_kind "$case_id")"
@@ -420,6 +425,7 @@ run_case_scenario() {
     scenario_rows=$(extract_metric scenario_rows "$log")
     time_sec=$(extract_time "$log")
     rss_kb=$(extract_rss "$log")
+    scenario_ns=$(extract_metric scenario_ns "$log")
 
     case "$scenario" in
         copy_only) expected="$FACT_COUNT" ;;
@@ -432,9 +438,10 @@ run_case_scenario() {
     expect_value "$case_id/$scenario scenario_rows" "$expected" "$scenario_rows"
     [ -n "$time_sec" ] || die "missing timing for $case_id/$scenario"
     [ -n "$rss_kb" ] || die "missing RSS for $case_id/$scenario"
+    [ -n "$scenario_ns" ] || die "missing scenario_ns for $case_id/$scenario"
 
-    printf 'transfer\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$case_id" "$src_kind" "$dst_kind" "$route_class" "$scenario" "$FACT_COUNT" "$MATCH_ROUNDS" "$scenario_rows" "$time_sec" "$rss_kb"
+    printf 'transfer\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$case_id" "$src_kind" "$dst_kind" "$route_class" "$scenario" "$FACT_COUNT" "$MATCH_ROUNDS" "$scenario_rows" "$time_sec" "$rss_kb" "$scenario_ns"
 }
 
 IFS=' ' read -r -a scenarios <<< "$SCENARIOS_STR"
@@ -457,7 +464,7 @@ case "$MODE" in
         ;;
 esac
 
-printf 'kind\tcase_id\tsource_kind\ttarget_kind\troute_class\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\n'
+printf 'kind\tcase_id\tsource_kind\ttarget_kind\troute_class\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\tscenario_ns\n'
 for case_id in "${selected_cases[@]}"; do
     for scenario in "${scenarios[@]}"; do
         run_case_scenario "$case_id" "$scenario"
