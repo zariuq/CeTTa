@@ -733,7 +733,7 @@ static uint32_t exact_atom_hash_id(const Space *s, AtomId atom_id) {
 static void eq_index_rebuild(Space *s);
 static void ty_ann_index_rebuild(Space *s);
 static void exact_index_rebuild(Space *s);
-static void non_exact_atom_recount(Space *s);
+static void recompute_has_non_exact_atoms(Space *s);
 
 static TermUniverse g_space_default_universe = {0};
 static Arena g_space_default_arena = {0};
@@ -842,32 +842,124 @@ bool space_is_hash(const Space *s) {
     return s && s->kind == SPACE_KIND_HASH;
 }
 
-static void space_mark_indexes_dirty(Space *s) {
+void space_mark_derived_state_dirty(Space *s) {
     if (!s) return;
     s->native.eq_idx_dirty = true;
     s->native.ty_idx_dirty = true;
     s->native.exact_idx_dirty = true;
-    s->native.non_exact_atoms_dirty = true;
+    s->native.has_non_exact_atoms_dirty = true;
+}
+
+static void space_mark_indexes_dirty(Space *s) {
+    space_mark_derived_state_dirty(s);
+}
+
+void space_discard_native_logical_view(Space *s) {
+    if (!s)
+        return;
+    free(s->native.atom_ids);
+    s->native.atom_ids = NULL;
+    s->native.start = 0;
+    s->native.len = 0;
+    s->native.cap = 0;
+    s->native.has_non_exact_atoms = false;
+    space_mark_derived_state_dirty(s);
 }
 
 static void space_bump_revision(Space *s);
 
 static bool space_store_via_backend_primary(Space *s, AtomId atom_id, Atom *atom) {
+    bool keep_pathmap_exact_metadata;
+    bool had_non_exact_atom;
+    bool atom_exact_indexable;
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
+    keep_pathmap_exact_metadata =
+        s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        !s->native.has_non_exact_atoms_dirty;
+    had_non_exact_atom =
+        keep_pathmap_exact_metadata && s->native.has_non_exact_atoms;
+    atom_exact_indexable = atom_id_is_exact_indexable(s, atom_id);
     if (!space_match_backend_store_atom_id_direct(s, atom_id, atom))
         return false;
     space_mark_indexes_dirty(s);
+    if (keep_pathmap_exact_metadata) {
+        s->native.has_non_exact_atoms =
+            had_non_exact_atom || !atom_exact_indexable;
+        s->native.has_non_exact_atoms_dirty = false;
+    }
+    space_bump_revision(s);
+    return true;
+}
+
+static bool space_store_atom_via_backend_primary(Space *s, Atom *atom) {
+    bool keep_pathmap_exact_metadata;
+    bool had_non_exact_atom;
+    bool atom_exact_indexable;
+    if (!s || !atom)
+        return false;
+    keep_pathmap_exact_metadata =
+        s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        !s->native.has_non_exact_atoms_dirty;
+    had_non_exact_atom =
+        keep_pathmap_exact_metadata && s->native.has_non_exact_atoms;
+    atom_exact_indexable = atom_is_exact_indexable(atom);
+    if (!space_match_backend_store_atom_direct(s, atom))
+        return false;
+    space_mark_indexes_dirty(s);
+    if (keep_pathmap_exact_metadata) {
+        s->native.has_non_exact_atoms =
+            had_non_exact_atom || !atom_exact_indexable;
+        s->native.has_non_exact_atoms_dirty = false;
+    }
     space_bump_revision(s);
     return true;
 }
 
 static bool space_remove_via_backend_primary(Space *s, AtomId atom_id) {
+    bool keep_pathmap_exact_metadata;
+    bool had_non_exact_atom;
+    bool atom_exact_indexable;
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
+    keep_pathmap_exact_metadata =
+        s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        !s->native.has_non_exact_atoms_dirty;
+    had_non_exact_atom =
+        keep_pathmap_exact_metadata && s->native.has_non_exact_atoms;
+    atom_exact_indexable = atom_id_is_exact_indexable(s, atom_id);
     if (!space_match_backend_remove_atom_id_direct(s, atom_id))
         return false;
     space_mark_indexes_dirty(s);
+    if (keep_pathmap_exact_metadata) {
+        s->native.has_non_exact_atoms = had_non_exact_atom;
+        s->native.has_non_exact_atoms_dirty =
+            had_non_exact_atom && !atom_exact_indexable;
+    }
+    space_bump_revision(s);
+    return true;
+}
+
+static bool space_remove_atom_via_backend_primary(Space *s, Atom *atom) {
+    bool keep_pathmap_exact_metadata;
+    bool had_non_exact_atom;
+    bool atom_exact_indexable;
+    if (!s || !atom)
+        return false;
+    keep_pathmap_exact_metadata =
+        s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        !s->native.has_non_exact_atoms_dirty;
+    had_non_exact_atom =
+        keep_pathmap_exact_metadata && s->native.has_non_exact_atoms;
+    atom_exact_indexable = atom_is_exact_indexable(atom);
+    if (!space_match_backend_remove_atom_direct(s, atom))
+        return false;
+    space_mark_indexes_dirty(s);
+    if (keep_pathmap_exact_metadata) {
+        s->native.has_non_exact_atoms = had_non_exact_atom;
+        s->native.has_non_exact_atoms_dirty =
+            had_non_exact_atom && !atom_exact_indexable;
+    }
     space_bump_revision(s);
     return true;
 }
@@ -903,12 +995,15 @@ static void ensure_exact_index(Space *s) {
         exact_index_rebuild(s);
 }
 
-static void ensure_non_exact_atom_count(Space *s) {
-    if (s && s->native.non_exact_atoms_dirty) {
+static bool ensure_has_non_exact_atoms(Space *s) {
+    if (!s)
+        return false;
+    if (s->native.has_non_exact_atoms_dirty) {
         if (!space_match_backend_materialize_native_storage(s, NULL))
-            return;
-        non_exact_atom_recount(s);
+            return false;
+        recompute_has_non_exact_atoms(s);
     }
+    return !s->native.has_non_exact_atoms_dirty;
 }
 
 static bool space_sync_exact_membership_from_backend(Space *s) {
@@ -937,8 +1032,8 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.eq_idx_dirty = false;
     s->native.ty_idx_dirty = false;
     s->native.exact_idx_dirty = false;
-    s->native.non_exact_atoms = 0;
-    s->native.non_exact_atoms_dirty = false;
+    s->native.has_non_exact_atoms = false;
+    s->native.has_non_exact_atoms_dirty = false;
 }
 
 static void space_move_storage_and_backend(Space *dst, Space *src) {
@@ -983,8 +1078,8 @@ void space_free(Space *s) {
     ty_ann_index_free(&s->native.ty_idx);
     exact_index_free(&s->native.exact_idx);
     space_match_backend_free(s);
-    s->native.non_exact_atoms = 0;
-    s->native.non_exact_atoms_dirty = false;
+    s->native.has_non_exact_atoms = false;
+    s->native.has_non_exact_atoms_dirty = false;
 }
 
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
@@ -1131,16 +1226,17 @@ static void exact_index_rebuild(Space *s) {
     s->native.exact_idx_dirty = false;
 }
 
-static void non_exact_atom_recount(Space *s) {
+static void recompute_has_non_exact_atoms(Space *s) {
     if (!s) return;
-    uint32_t count = 0;
+    s->native.has_non_exact_atoms = false;
     for (uint32_t i = 0; i < s->native.len; i++) {
         AtomId atom_id = space_get_atom_id_at(s, i);
-        if (!atom_id_is_exact_indexable(s, atom_id))
-            count++;
+        if (!atom_id_is_exact_indexable(s, atom_id)) {
+            s->native.has_non_exact_atoms = true;
+            break;
+        }
     }
-    s->native.non_exact_atoms = count;
-    s->native.non_exact_atoms_dirty = false;
+    s->native.has_non_exact_atoms_dirty = false;
 }
 
 static void space_bump_revision(Space *s) {
@@ -1148,6 +1244,13 @@ static void space_bump_revision(Space *s) {
         return;
     s->revision++;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+}
+
+void space_note_external_backend_mutation(Space *s) {
+    if (!s)
+        return;
+    space_mark_derived_state_dirty(s);
+    space_bump_revision(s);
 }
 
 static bool space_defer_incremental_secondary_indices(const Space *s) {
@@ -1185,7 +1288,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         s->native.eq_idx_dirty = true;
         s->native.ty_idx_dirty = true;
         s->native.exact_idx_dirty = true;
-        s->native.non_exact_atoms_dirty = true;
+        s->native.has_non_exact_atoms_dirty = true;
     } else {
         /* Index equations by head symbol */
         if (!s->native.eq_idx_dirty) {
@@ -1214,9 +1317,9 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         if (!s->native.exact_idx_dirty && atom_id_is_exact_indexable(s, atom_id))
             exact_atom_bucket_add(
                 &s->native.exact_idx.buckets[exact_atom_hash_id(s, atom_id)], idx);
-        if (!s->native.non_exact_atoms_dirty &&
+        if (!s->native.has_non_exact_atoms_dirty &&
             !atom_id_is_exact_indexable(s, atom_id))
-            s->native.non_exact_atoms++;
+            s->native.has_non_exact_atoms = true;
     }
     /* Match backend owns its own incremental indexing policy. */
     space_match_backend_note_add(s, atom_id,
@@ -1233,6 +1336,8 @@ void space_add_atom_id(Space *s, AtomId atom_id) {
 
 void space_add(Space *s, Atom *atom) {
     AtomId atom_id = CETTA_ATOM_ID_NONE;
+    if (space_store_atom_via_backend_primary(s, atom))
+        return;
     if (space_tracks_atom_ids(s) && atom) {
         atom_id = term_universe_store_atom_id(s->native.universe, NULL, atom);
         if (atom_id == CETTA_ATOM_ID_NONE)
@@ -1246,6 +1351,9 @@ void space_add(Space *s, Atom *atom) {
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
     if (!s || !atom)
         return false;
+
+    if (space_store_atom_via_backend_primary(s, atom))
+        return true;
 
     if (space_tracks_atom_ids(s)) {
         AtomId atom_id =
@@ -1661,7 +1769,7 @@ bool space_remove(Space *s, Atom *atom) {
             return true;
         }
     }
-    if (atom && space_match_backend_remove_atom_direct(s, atom))
+    if (space_remove_atom_via_backend_primary(s, atom))
         return true;
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP)
         return false;
@@ -1845,8 +1953,9 @@ bool space_contains_exact(Space *s, Atom *atom) {
 bool space_contains_only_exact_atoms(Space *s) {
     if (!s)
         return false;
-    ensure_non_exact_atom_count(s);
-    return s->native.non_exact_atoms == 0;
+    if (!ensure_has_non_exact_atoms(s))
+        return false;
+    return !s->native.has_non_exact_atoms;
 }
 
 bool space_atom_is_exact_indexable(Atom *atom) {

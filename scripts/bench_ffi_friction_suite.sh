@@ -88,7 +88,7 @@ LOG_DIR="$RUNTIME_DIR/${SUITE}_${FACT_COUNT}_$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$LOG_DIR"
 summary_log="$LOG_DIR/summary.tsv"
 
-printf 'bench_suite\tphase\tkind\tcase_id\tsource_kind\ttarget_kind\troute_class\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\n' \
+printf 'bench_suite\tphase\tkind\tcase_id\tsource_kind\ttarget_kind\troute_class\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\tscenario_ns\n' \
     | tee "$summary_log"
 
 if [ "$SKIP_BACKEND" != "1" ]; then
@@ -101,7 +101,7 @@ if [ "$SKIP_BACKEND" != "1" ]; then
         | awk -F '\t' -v suite="$SUITE" '
             BEGIN { OFS = "\t" }
             $1 == "backend" {
-                print suite, "backend", $1, $2, $2, $2, "local", $3, $4, $5, $6, $7, $8
+                print suite, "backend", $1, $2, $2, $2, "local", $3, $4, $5, $6, $7, $8, $9
             }
         ' \
         | tee -a "$summary_log"
@@ -125,7 +125,7 @@ if [ "$SKIP_TRANSFER" != "1" ]; then
         | awk -F '\t' -v suite="$SUITE" '
             BEGIN { OFS = "\t" }
             $1 == "transfer" {
-                print suite, "transfer", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+                print suite, "transfer", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
             }
         ' \
         | tee -a "$summary_log"

@@ -76,7 +76,7 @@ run_cetta_file() {
     local output=$2
     local status=0
     /usr/bin/time -f 'time_sec=%e rss_kb=%M' \
-        bash -lc "cd '$ROOT'; '$BIN' --quiet --lang he '$file'" \
+        bash -lc "cd '$ROOT'; '$BIN' --quiet --profile he-extended --lang he '$file'" \
         >"$output" 2>&1 || status=$?
     return "$status"
 }
@@ -87,17 +87,20 @@ mode_imports() {
         native|pathmap)
             cat <<'EOF'
 !(import! &self list)
+!(import! &self system)
 EOF
             ;;
         mork-live)
             cat <<'EOF'
 !(import! &self list)
 !(import! &self mork)
+!(import! &self system)
 EOF
             ;;
         mork-open-act|mork-load-act)
             cat <<'EOF'
 !(import! &self mork)
+!(import! &self system)
 EOF
             ;;
         *)
@@ -258,6 +261,7 @@ render_program() {
 
     {
         mode_imports "$mode"
+        printf '!(bind! &bench-start-ns (system:monotonic-ns))\n'
         mode_setup "$mode"
         mode_insert "$mode"
 
@@ -307,6 +311,8 @@ render_program() {
                 die "Unknown scenario: $scenario"
                 ;;
         esac
+        printf '!(let $bench-finished-ns (system:monotonic-ns)\n'
+        printf '   (println! (bench scenario_ns (- $bench-finished-ns &bench-start-ns))))\n'
     } >"$out"
 }
 
@@ -371,6 +377,7 @@ run_mode_scenario() {
     local scenario_rows
     local time_sec
     local rss_kb
+    local scenario_ns
 
     file=$(scenario_program_path "$mode" "$scenario")
     log=$(scenario_log_path "$mode" "$scenario")
@@ -387,6 +394,7 @@ run_mode_scenario() {
     scenario_rows=$(extract_metric scenario_rows "$log")
     time_sec=$(extract_time "$log")
     rss_kb=$(extract_rss "$log")
+    scenario_ns=$(extract_metric scenario_ns "$log")
 
     case "$scenario" in
         insert_only) expected="$FACT_COUNT" ;;
@@ -400,9 +408,10 @@ run_mode_scenario() {
     expect_value "$mode/$scenario scenario_rows" "$expected" "$scenario_rows"
     [ -n "$time_sec" ] || die "missing timing for $mode/$scenario"
     [ -n "$rss_kb" ] || die "missing RSS for $mode/$scenario"
+    [ -n "$scenario_ns" ] || die "missing scenario_ns for $mode/$scenario"
 
-    printf 'backend\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$mode" "$scenario" "$FACT_COUNT" "$MATCH_ROUNDS" "$scenario_rows" "$time_sec" "$rss_kb"
+    printf 'backend\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$mode" "$scenario" "$FACT_COUNT" "$MATCH_ROUNDS" "$scenario_rows" "$time_sec" "$rss_kb" "$scenario_ns"
 }
 
 IFS=' ' read -r -a scenarios <<< "$SCENARIOS_STR"
@@ -428,7 +437,7 @@ for mode in "${selected_modes[@]}"; do
     fi
 done
 
-printf 'kind\tmode\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\n'
+printf 'kind\tmode\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\tscenario_ns\n'
 for mode in "${selected_modes[@]}"; do
     for scenario in "${scenarios[@]}"; do
         run_mode_scenario "$mode" "$scenario"

@@ -1,5 +1,5 @@
 use mork::space::Space;
-use mork_expr::{Expr, ExprEnv, ExprZipper, Tag, item_byte, maybe_byte_item};
+use mork_expr::{item_byte, maybe_byte_item, Expr, ExprEnv, ExprZipper, Tag};
 use mork_frontend::bytestring_parser::{Context, Parser, ParserError};
 use mork_interning::WritePermit;
 use std::cell::RefCell;
@@ -9,14 +9,14 @@ use std::sync::{Mutex, OnceLock};
 mod counted_pathmap;
 
 pub use counted_pathmap::{
-    CountedDetailedPacketRows, CountedDetailedRow, CountedEntry, counted_contains_expr,
-    counted_entries, counted_expr_row_packet, counted_factor_candidates, counted_insert_expr,
-    counted_insert_expr_batch, counted_insert_expr_batch_cached, counted_insert_expr_cached,
-    counted_insert_expr_count_cached, counted_logical_size, counted_query_only_packet_rows,
-    counted_query_rows_detailed, counted_query_rows_detailed_packet_rows,
-    counted_remove_expr_batch, counted_remove_expr_batch_cached, counted_remove_one_expr,
-    counted_remove_one_expr_cached, counted_sexpr_text, counted_sync_cached_logical_size,
-    counted_unique_size,
+    counted_contains_expr, counted_entries, counted_exact_entry, counted_expr_row_packet,
+    counted_factor_candidates, counted_insert_expr, counted_insert_expr_batch,
+    counted_insert_expr_batch_cached, counted_insert_expr_cached, counted_insert_expr_count_cached,
+    counted_logical_size, counted_query_only_packet_rows, counted_query_rows_detailed,
+    counted_query_rows_detailed_packet_rows, counted_remove_expr_batch,
+    counted_remove_expr_batch_cached, counted_remove_one_expr, counted_remove_one_expr_cached,
+    counted_sexpr_text, counted_sync_cached_logical_size, counted_unique_size,
+    CountedDetailedPacketRows, CountedDetailedRow, CountedEntry,
 };
 
 #[cfg(test)]
@@ -329,7 +329,11 @@ pub fn bridge_expr_text(space: &Space, expr: Expr) -> Result<Vec<u8>, String> {
             }
         },
         |index, is_new| {
-            if is_new { "$" } else { bridge_ref_name(index) }
+            if is_new {
+                "$"
+            } else {
+                bridge_ref_name(index)
+            }
         },
     );
     if let Some(err) = error.into_inner() {

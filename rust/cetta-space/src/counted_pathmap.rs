@@ -10,13 +10,12 @@ use crate::{
 use mork::space::Space;
 #[cfg(test)]
 use mork_expr::serialize;
-use mork_expr::{Expr, ExprZipper, apply};
+use mork_expr::{apply, Expr, ExprZipper};
 #[cfg(feature = "pathmap-space")]
-use mork_expr::{ExprEnv, Tag, byte_item, unify};
+use mork_expr::{byte_item, unify, ExprEnv, Tag};
 use pathmap::zipper::{
     Zipper, ZipperAbsolutePath, ZipperCreation, ZipperIteration, ZipperMoving, ZipperWriting,
 };
-#[cfg(feature = "pathmap-space")]
 use std::collections::BTreeMap;
 
 #[cfg(test)]
@@ -254,14 +253,21 @@ fn counted_update_exact_entry(
     Ok(())
 }
 
-pub fn counted_insert_expr(space: &mut Space, atom_expr_bytes: &[u8]) -> Result<u32, String> {
+fn counted_insert_expr_count(
+    space: &mut Space,
+    atom_expr_bytes: &[u8],
+    delta: u32,
+) -> Result<u32, String> {
     validate_expr_bytes(atom_expr_bytes)?;
+    if delta == 0 {
+        return counted_exact_entry(space, atom_expr_bytes)
+            .map(|entry| entry.map(|entry| entry.count).unwrap_or(0));
+    }
     let current = counted_exact_entry(space, atom_expr_bytes)?;
-    let next_count = current
-        .as_ref()
-        .map(|entry| entry.count)
-        .unwrap_or(0)
-        .saturating_add(1);
+    let current_count = current.as_ref().map(|entry| entry.count).unwrap_or(0);
+    let next_count = current_count
+        .checked_add(delta)
+        .ok_or_else(|| "counted PathMap multiplicity overflow".to_string())?;
     counted_update_exact_entry(
         space,
         atom_expr_bytes,
@@ -271,16 +277,96 @@ pub fn counted_insert_expr(space: &mut Space, atom_expr_bytes: &[u8]) -> Result<
     Ok(next_count)
 }
 
+pub fn counted_insert_expr(space: &mut Space, atom_expr_bytes: &[u8]) -> Result<u32, String> {
+    counted_insert_expr_count(space, atom_expr_bytes, 1)
+}
+
+fn counted_insert_expr_batch_deltas<T: AsRef<[u8]>>(
+    exprs: &[T],
+) -> Result<BTreeMap<Vec<u8>, u32>, String> {
+    let mut deltas = BTreeMap::new();
+    for expr_bytes in exprs {
+        let expr_bytes = expr_bytes.as_ref();
+        validate_expr_bytes(expr_bytes)?;
+        let entry = deltas.entry(expr_bytes.to_vec()).or_insert(0u32);
+        *entry = entry
+            .checked_add(1)
+            .ok_or_else(|| "counted PathMap multiplicity overflow".to_string())?;
+    }
+    Ok(deltas)
+}
+
+fn counted_insert_deltas_total(deltas: &BTreeMap<Vec<u8>, u32>) -> Result<u64, String> {
+    let mut total = 0u64;
+    for delta in deltas.values() {
+        total = total
+            .checked_add(u64::from(*delta))
+            .ok_or_else(|| "counted PathMap logical size overflow".to_string())?;
+    }
+    Ok(total)
+}
+
+fn counted_remove_expr_batch_deltas<T: AsRef<[u8]>>(
+    exprs: &[T],
+) -> Result<BTreeMap<Vec<u8>, u64>, String> {
+    let mut deltas = BTreeMap::new();
+    for expr_bytes in exprs {
+        let expr_bytes = expr_bytes.as_ref();
+        validate_expr_bytes(expr_bytes)?;
+        let entry = deltas.entry(expr_bytes.to_vec()).or_insert(0u64);
+        *entry = entry
+            .checked_add(1)
+            .ok_or_else(|| "counted PathMap logical size overflow".to_string())?;
+    }
+    Ok(deltas)
+}
+
+fn counted_remove_deltas_total(
+    space: &Space,
+    deltas: &BTreeMap<Vec<u8>, u64>,
+) -> Result<u64, String> {
+    let mut total = 0u64;
+    for (expr_bytes, requested) in deltas {
+        let current = counted_exact_entry(space, expr_bytes)?;
+        let removable = current
+            .as_ref()
+            .map(|entry| u64::from(entry.count))
+            .unwrap_or(0)
+            .min(*requested);
+        total = total
+            .checked_add(removable)
+            .ok_or_else(|| "counted PathMap logical size overflow".to_string())?;
+    }
+    Ok(total)
+}
+
+fn counted_insert_expr_deltas(
+    space: &mut Space,
+    deltas: &BTreeMap<Vec<u8>, u32>,
+) -> Result<u64, String> {
+    for (expr_bytes, delta) in deltas {
+        let current = counted_exact_entry(space, expr_bytes)?;
+        let current_count = current.as_ref().map(|entry| entry.count).unwrap_or(0);
+        current_count
+            .checked_add(*delta)
+            .ok_or_else(|| "counted PathMap multiplicity overflow".to_string())?;
+    }
+
+    let added = counted_insert_deltas_total(deltas)?;
+
+    for (expr_bytes, delta) in deltas {
+        counted_insert_expr_count(space, expr_bytes, *delta)?;
+    }
+
+    Ok(added)
+}
+
 pub fn counted_insert_expr_batch<T: AsRef<[u8]>>(
     space: &mut Space,
     exprs: &[T],
 ) -> Result<u64, String> {
-    let mut added = 0u64;
-    for expr_bytes in exprs {
-        counted_insert_expr(space, expr_bytes.as_ref())?;
-        added = added.saturating_add(1);
-    }
-    Ok(added)
+    let deltas = counted_insert_expr_batch_deltas(exprs)?;
+    counted_insert_expr_deltas(space, &deltas)
 }
 
 pub fn counted_remove_one_expr(
@@ -323,8 +409,12 @@ pub fn counted_insert_expr_cached(
     atom_expr_bytes: &[u8],
     cached_logical_size: &mut u64,
 ) -> Result<u32, String> {
+    validate_expr_bytes(atom_expr_bytes)?;
+    let next_cached = cached_logical_size
+        .checked_add(1)
+        .ok_or_else(|| "counted PathMap logical size overflow".to_string())?;
     let next_count = counted_insert_expr(space, atom_expr_bytes)?;
-    *cached_logical_size = cached_logical_size.saturating_add(1);
+    *cached_logical_size = next_cached;
     Ok(next_count)
 }
 
@@ -335,23 +425,11 @@ pub fn counted_insert_expr_count_cached(
     cached_logical_size: &mut u64,
 ) -> Result<u32, String> {
     validate_expr_bytes(atom_expr_bytes)?;
-    if delta == 0 {
-        return counted_exact_entry(space, atom_expr_bytes)
-            .map(|entry| entry.map(|entry| entry.count).unwrap_or(0));
-    }
-
-    let current = counted_exact_entry(space, atom_expr_bytes)?;
-    let current_count = current.as_ref().map(|entry| entry.count).unwrap_or(0);
-    let next_count = current_count
-        .checked_add(delta)
-        .ok_or_else(|| "counted PathMap multiplicity overflow".to_string())?;
-    counted_update_exact_entry(
-        space,
-        atom_expr_bytes,
-        current.as_ref().map(|entry| entry.count),
-        Some(next_count),
-    )?;
-    *cached_logical_size = cached_logical_size.saturating_add(u64::from(delta));
+    let next_cached = cached_logical_size
+        .checked_add(u64::from(delta))
+        .ok_or_else(|| "counted PathMap logical size overflow".to_string())?;
+    let next_count = counted_insert_expr_count(space, atom_expr_bytes, delta)?;
+    *cached_logical_size = next_cached;
     Ok(next_count)
 }
 
@@ -360,8 +438,13 @@ pub fn counted_insert_expr_batch_cached<T: AsRef<[u8]>>(
     exprs: &[T],
     cached_logical_size: &mut u64,
 ) -> Result<u64, String> {
-    let added = counted_insert_expr_batch(space, exprs)?;
-    *cached_logical_size = cached_logical_size.saturating_add(added);
+    let deltas = counted_insert_expr_batch_deltas(exprs)?;
+    let added = counted_insert_deltas_total(&deltas)?;
+    let next_cached = cached_logical_size
+        .checked_add(added)
+        .ok_or_else(|| "counted PathMap logical size overflow".to_string())?;
+    counted_insert_expr_deltas(space, &deltas)?;
+    *cached_logical_size = next_cached;
     Ok(added)
 }
 
@@ -370,10 +453,16 @@ pub fn counted_remove_one_expr_cached(
     atom_expr_bytes: &[u8],
     cached_logical_size: &mut u64,
 ) -> Result<Option<u32>, String> {
-    let removed = counted_remove_one_expr(space, atom_expr_bytes)?;
-    if removed.is_some() {
-        *cached_logical_size = cached_logical_size.saturating_sub(1);
+    validate_expr_bytes(atom_expr_bytes)?;
+    if counted_exact_entry(space, atom_expr_bytes)?.is_none() {
+        return Ok(None);
     }
+    let next_cached = cached_logical_size
+        .checked_sub(1)
+        .ok_or_else(|| "counted PathMap logical size underflow".to_string())?;
+    let removed = counted_remove_one_expr(space, atom_expr_bytes)?;
+    debug_assert!(removed.is_some());
+    *cached_logical_size = next_cached;
     Ok(removed)
 }
 
@@ -382,8 +471,14 @@ pub fn counted_remove_expr_batch_cached<T: AsRef<[u8]>>(
     exprs: &[T],
     cached_logical_size: &mut u64,
 ) -> Result<u64, String> {
+    let deltas = counted_remove_expr_batch_deltas(exprs)?;
+    let removable = counted_remove_deltas_total(space, &deltas)?;
+    let next_cached = cached_logical_size
+        .checked_sub(removable)
+        .ok_or_else(|| "counted PathMap logical size underflow".to_string())?;
     let removed = counted_remove_expr_batch(space, exprs)?;
-    *cached_logical_size = cached_logical_size.saturating_sub(removed);
+    debug_assert_eq!(removed, removable);
+    *cached_logical_size = next_cached;
     Ok(removed)
 }
 
@@ -395,7 +490,9 @@ pub fn counted_logical_size(space: &Space) -> Result<u64, String> {
     let mut rz = space.btm.read_zipper();
     let mut total = 0u64;
     while rz.to_next_val() {
-        total = total.saturating_add(decode_counted_key(rz.path())?.count as u64);
+        total = total
+            .checked_add(u64::from(decode_counted_key(rz.path())?.count))
+            .ok_or_else(|| "counted PathMap logical size overflow".to_string())?;
     }
     Ok(total)
 }
@@ -592,7 +689,9 @@ pub fn counted_expr_row_packet(space: &Space) -> Result<(Vec<u8>, u32), String> 
             };
             let encoded = stable_bridge_expr_packet_bytes(space, expr)?;
             append_expr_row_packet(&mut packet, &encoded)?;
-            count = count.saturating_add(1);
+            count = count
+                .checked_add(1)
+                .ok_or_else(|| "counted expr row packet count overflow".to_string())?;
         }
     }
 
@@ -610,7 +709,9 @@ pub fn counted_sexpr_text(space: &Space) -> Result<(Vec<u8>, u32), String> {
         view.dump_all_sexpr(&mut line)?;
         for _ in 0..entry.count {
             text.extend_from_slice(&line);
-            count = count.saturating_add(1);
+            count = count
+                .checked_add(1)
+                .ok_or_else(|| "counted sexpr text row count overflow".to_string())?;
         }
     }
 
@@ -1231,6 +1332,115 @@ mod tests {
     }
 
     #[test]
+    fn counted_insert_overflow_fails_without_cache_drift() {
+        let mut space = Space::new();
+        let atom = parse_expr(&mut space, "(dup saturated)");
+        let key =
+            counted_key_for_atom_with_count(&atom, u32::MAX).expect("max-count key should encode");
+        let mut cached_logical_size = u64::from(u32::MAX);
+
+        space.btm.insert(&key, ());
+
+        let err = counted_insert_expr_cached(&mut space, &atom, &mut cached_logical_size)
+            .expect_err("max-count insert should fail");
+
+        assert!(err.contains("multiplicity overflow"));
+        assert_eq!(cached_logical_size, u64::from(u32::MAX));
+        assert_eq!(
+            counted_exact_entry(&space, &atom)
+                .unwrap()
+                .expect("entry should remain")
+                .count,
+            u32::MAX
+        );
+        assert_eq!(counted_logical_size(&space).unwrap(), u64::from(u32::MAX));
+    }
+
+    #[test]
+    fn counted_batch_preflights_overflow_before_mutating() {
+        let mut space = Space::new();
+        let saturated = parse_expr(&mut space, "(dup saturated)");
+        let other = parse_expr(&mut space, "(dup other)");
+        let key = counted_key_for_atom_with_count(&saturated, u32::MAX)
+            .expect("max-count key should encode");
+        let mut cached_logical_size = u64::from(u32::MAX);
+
+        space.btm.insert(&key, ());
+
+        let batch = vec![other.clone(), saturated.clone()];
+        let err = counted_insert_expr_batch_cached(&mut space, &batch, &mut cached_logical_size)
+            .expect_err("batch containing max-count insert should fail");
+
+        assert!(err.contains("multiplicity overflow"));
+        assert_eq!(cached_logical_size, u64::from(u32::MAX));
+        assert!(
+            counted_exact_entry(&space, &other).unwrap().is_none(),
+            "preflight failure must not partially add earlier batch rows"
+        );
+        assert_eq!(
+            counted_exact_entry(&space, &saturated)
+                .unwrap()
+                .expect("saturated entry should remain")
+                .count,
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn counted_remove_underflow_fails_without_mutating() {
+        let mut space = Space::new();
+        let atom = parse_expr(&mut space, "(dup remove)");
+        let mut cached_logical_size = 0u64;
+
+        counted_insert_expr(&mut space, &atom).unwrap();
+
+        let err = counted_remove_one_expr_cached(&mut space, &atom, &mut cached_logical_size)
+            .expect_err("cached remove should reject logical-size underflow");
+
+        assert!(err.contains("logical size underflow"));
+        assert_eq!(cached_logical_size, 0);
+        assert_eq!(
+            counted_exact_entry(&space, &atom)
+                .unwrap()
+                .expect("entry should remain")
+                .count,
+            1
+        );
+    }
+
+    #[test]
+    fn counted_batch_remove_preflights_underflow_before_mutating() {
+        let mut space = Space::new();
+        let atom_a = parse_expr(&mut space, "(dup remove-a)");
+        let atom_b = parse_expr(&mut space, "(dup remove-b)");
+        let mut cached_logical_size = 1u64;
+
+        counted_insert_expr(&mut space, &atom_a).unwrap();
+        counted_insert_expr(&mut space, &atom_b).unwrap();
+
+        let batch = vec![atom_a.clone(), atom_b.clone()];
+        let err = counted_remove_expr_batch_cached(&mut space, &batch, &mut cached_logical_size)
+            .expect_err("batch remove should reject cached logical-size underflow");
+
+        assert!(err.contains("logical size underflow"));
+        assert_eq!(cached_logical_size, 1);
+        assert_eq!(
+            counted_exact_entry(&space, &atom_a)
+                .unwrap()
+                .expect("first entry should remain")
+                .count,
+            1
+        );
+        assert_eq!(
+            counted_exact_entry(&space, &atom_b)
+                .unwrap()
+                .expect("second entry should remain")
+                .count,
+            1
+        );
+    }
+
+    #[test]
     fn counted_expr_row_packet_repeats_rows_by_multiplicity() {
         let mut space = Space::new();
         let dup_a = parse_expr(&mut space, "(dup a)");
@@ -1439,16 +1649,12 @@ mod tests {
         assert_ne!(decoded.get(&2).unwrap().2, decoded.get(&3).unwrap().2);
 
         let a1_bytes = &decoded.get(&1).unwrap().2;
-        assert!(
-            a1_bytes
-                .windows(2)
-                .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 0].as_slice())
-        );
-        assert!(
-            a1_bytes
-                .windows(2)
-                .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 1].as_slice())
-        );
+        assert!(a1_bytes
+            .windows(2)
+            .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 0].as_slice()));
+        assert!(a1_bytes
+            .windows(2)
+            .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 1].as_slice()));
     }
 
     #[test]
