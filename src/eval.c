@@ -5729,17 +5729,21 @@ static void space_snapshot_copy_logical_view(Space *dst, const Space *src) {
 
     dst->native.atom_ids = cetta_malloc(sizeof(AtomId) * n);
     dst->native.cap = n;
-    dst->native.len = n;
+    dst->native.len = 0;
     dst->native.start = 0;
     for (uint32_t i = 0; i < n; i++) {
-        dst->native.atom_ids[i] = space_get_atom_id_at(src, i);
+        AtomId atom_id = space_get_atom_id_at(src, i);
+        if (atom_id == CETTA_ATOM_ID_NONE) {
+            Atom *atom = space_get_at(src, i);
+            atom_id = term_universe_store_atom_id(dst->native.universe, NULL, atom);
+        }
+        if (atom_id != CETTA_ATOM_ID_NONE)
+            dst->native.atom_ids[dst->native.len++] = atom_id;
     }
 
     /* The clone starts with no rebuilt indexes; they must be derived from the
        frozen logical view on first use. */
-    dst->native.eq_idx_dirty = true;
-    dst->native.ty_idx_dirty = true;
-    dst->native.exact_idx_dirty = true;
+    space_mark_derived_state_dirty(dst);
 }
 
 static Space *space_snapshot_clone(Space *src, Arena *a) {

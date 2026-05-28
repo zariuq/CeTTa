@@ -362,8 +362,7 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
 
 CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
     const CettaMorkSpaceHandle *space) {
-    (void)space;
-    return NULL;
+    return space == g_fake_bridge_space ? g_fake_bridge_space : NULL;
 }
 
 bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,

@@ -1,3 +1,5 @@
+(: system:monotonic-ns (-> Number))
+
 (= (system:args)
    (function
      (case (__cetta_lib_system_args ())
@@ -36,4 +38,9 @@
 (= (system:cwd)
    (function
      (case (__cetta_lib_system_cwd ())
+       (($result (return $result))))))
+
+(= (system:monotonic-ns)
+   (function
+     (case (__cetta_lib_system_monotonic_ns ())
        (($result (return $result))))))

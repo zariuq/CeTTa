@@ -220,6 +220,7 @@ typedef struct {
     X(lib_system_is_flag_arg, "__cetta_lib_system_is_flag_arg") \
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
+    X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
     X(lib_fs_read_text, "__cetta_lib_fs_read_text") \
     X(lib_fs_write_text, "__cetta_lib_fs_write_text") \
