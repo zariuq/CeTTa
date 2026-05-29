@@ -1036,19 +1036,22 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             __int128 sum = (__int128)ai + (__int128)bi;
             if (sum >= INT64_MIN && sum <= INT64_MAX)
                 return atom_int(a, (int64_t)sum);
-            return atom_float(a, (double)ai + (double)bi);
+            return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                              atom_symbol(a, "IntegerOverflow"));
         }
         if (head_id == g_builtin_syms.op_minus) {
             __int128 diff = (__int128)ai - (__int128)bi;
             if (diff >= INT64_MIN && diff <= INT64_MAX)
                 return atom_int(a, (int64_t)diff);
-            return atom_float(a, (double)ai - (double)bi);
+            return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                              atom_symbol(a, "IntegerOverflow"));
         }
         if (head_id == g_builtin_syms.op_mul) {
             __int128 prod = (__int128)ai * (__int128)bi;
             if (prod >= INT64_MIN && prod <= INT64_MAX)
                 return atom_int(a, (int64_t)prod);
-            return atom_float(a, (double)ai * (double)bi);
+            return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                              atom_symbol(a, "IntegerOverflow"));
         }
         if (head_id == g_builtin_syms.op_div) {
             if (bi == 0)
