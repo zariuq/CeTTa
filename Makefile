@@ -183,7 +183,7 @@ CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_CANON).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -369,6 +369,30 @@ profile:
 bench-metamath-d5: $(BIN)
 	@./scripts/bench_metamath_d5.sh
 
+bench-rho-fanout: $(BIN)
+	@./benchmarks/rho/fanout/run.sh
+
+bench-rho-hot-frontier: $(BIN)
+	@./benchmarks/rho/hot-frontier/run.sh
+
+bench-rho-pipeline-forward: $(BIN)
+	@./benchmarks/rho/pipeline-forward/run.sh
+
+bench-rho-route-synthesis: $(BIN)
+	@./benchmarks/rho/route-synthesis/run.sh
+
+bench-rho-demand-index: $(BIN)
+	@./benchmarks/rho/demand-index/run.sh
+
+bench-rho-indexed-demand: $(BIN)
+	@./benchmarks/rho/indexed-demand/run.sh
+
+bench-rho-route-policy: $(BIN)
+	@./benchmarks/rho/route-policy/run.sh
+
+bench-rho-certificate-quorum: $(BIN)
+	@./benchmarks/rho/certificate-quorum/run.sh
+
 bench-weird-audit: $(BIN)
 	$(call require_mork_bridge_or_reexec,weird benchmark audit,$@)
 	@./scripts/bench_weird_audit.sh
@@ -502,9 +526,9 @@ test-mork-bridge-contextual-exact-rows:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_bridge_contextual_exact_rows
 	@./runtime/test_mork_bridge_contextual_exact_rows
 
-runtime/test_space_term_universe_membership: tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c $(BUILD_CONFIG_HEADER)
+runtime/test_space_term_universe_membership: tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c -lm
 
 test-space-term-universe-membership: runtime/test_space_term_universe_membership
 	@./runtime/test_space_term_universe_membership
@@ -875,7 +899,7 @@ define require_runtime_stats_or_reexec
 	fi
 endef
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-he-contract-suite test-closed-stream-fastpath
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -955,6 +979,74 @@ endif
 test-light: test test-width-tuple-stack
 
 test-correctness: test
+
+test-parse-depth-guard: $(BIN)
+	@CETTA_BIN="$(abspath $(BIN))" ./scripts/test_parse_depth_guard.sh
+
+test-rhocalc: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/rhocalc/*.mrho tests/rhocalc/*.rho; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		if [ ! -f "$$exp" ]; then continue; fi; \
+		result=$$(./$(BIN) --lang rhocalc "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	result=$$(./$(BIN) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/pure_surface.rho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_to_mrho.expected)" ]; then \
+		echo "PASS: rhocalc translate rho -> mrho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate rho -> mrho"; \
+		diff <(cat tests/rhocalc/translate_rho_to_mrho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/core_comm.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_to_rho.expected)" ]; then \
+		echo "PASS: rhocalc translate mrho -> rho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate mrho -> rho"; \
+		diff <(cat tests/rhocalc/translate_mrho_to_rho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_alpha_to_mrho.expected)" ]; then \
+		echo "PASS: rhocalc translate alpha mrho -> mrho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate alpha mrho -> mrho"; \
+		diff <(cat tests/rhocalc/translate_mrho_alpha_to_mrho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_alpha_to_rho.expected)" ]; then \
+		echo "PASS: rhocalc translate alpha mrho -> rho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate alpha mrho -> rho"; \
+		diff <(cat tests/rhocalc/translate_mrho_alpha_to_rho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$(./$(BIN) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/surface_shadowing.rho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_shadow_to_mrho.expected)" ]; then \
+		echo "PASS: rhocalc translate shadow rho -> mrho"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc translate shadow rho -> mrho"; \
+		diff <(cat tests/rhocalc/translate_rho_shadow_to_mrho.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 probe-core-lane: $(BIN)
 	@for f in $(CORE_PROBE_TESTS); do \
@@ -2337,7 +2429,8 @@ test-runtime-stats-cli: $(BIN)
 test-help-flags: $(BIN)
 	@help_long=$$(./$(BIN) --help 2>&1); \
 	help_short=$$(./$(BIN) -h 2>&1); \
-	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] <file.metta>' && \
+	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
 	   [ "$$help_long" = "$$help_short" ]; then \
 		echo "PASS: cli help flags"; \
@@ -2675,5 +2768,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check test-width-tuple-stack compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

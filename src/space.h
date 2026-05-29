@@ -105,6 +105,9 @@ typedef enum {
 
 #define MATCH_TRIE_THRESHOLD 16
 
+typedef uint64_t CettaCount;
+typedef uint64_t CettaIndex;
+
 typedef struct {
     AtomId *atom_ids;
     uint32_t start;
@@ -165,9 +168,13 @@ bool space_is_stack(const Space *s);
 bool space_is_queue(const Space *s);
 bool space_is_hash(const Space *s);
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
+CettaCount space_length64(const Space *s);
+AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx);
+Atom *space_get_at64(const Space *s, CettaIndex idx);
 Atom *space_get_at(const Space *s, uint32_t idx);
 Atom *space_peek(const Space *s);
 bool space_pop(Space *s, Atom **out);
+bool space_truncate64(Space *s, CettaCount new_len);
 bool space_truncate(Space *s, uint32_t new_len);
 uint32_t space_length(const Space *s);
 static inline uint64_t space_revision(const Space *s) {

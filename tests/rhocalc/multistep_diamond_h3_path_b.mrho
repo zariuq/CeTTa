@@ -1,0 +1,6 @@
+; H3 Diamond confluence — path B intermediate.
+; After recv-b fires in setup, this is the state.
+; One more step (recv-a + send-a) should yield send@{0}(send@{0}(0)) — same as path A.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x (rho:drop $x))
+  (rho:send (rho:quote rho:nil) (rho:send (rho:quote rho:nil) (rho:send (rho:quote rho:nil) rho:nil))))

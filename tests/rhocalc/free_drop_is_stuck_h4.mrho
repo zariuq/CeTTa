@@ -1,0 +1,2 @@
+; A free drop has no reduction rule; only semantic substitution can execute it.
+(rho:drop (rho:quote rho:nil))

@@ -1,0 +1,10 @@
+; MRHO elaboration treats literal quote as static data.
+; The $x inside @{*$x} is free, not captured by the surrounding recv binder.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:send
+      (rho:quote (rho:drop $x))
+      rho:nil))
+  (rho:send
+    (rho:quote rho:nil)
+    (rho:send (rho:quote rho:nil) rho:nil)))

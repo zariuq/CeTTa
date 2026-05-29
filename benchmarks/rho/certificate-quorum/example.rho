@@ -1,0 +1,4 @@
+for (x0 <- @"task0") { @"sink0"!(*x0) } |
+for (x1 <- @"task1") { @"sink1"!(*x1) } |
+@"task0"!(@"cert0"!(Nil)) |
+@"task1"!(@"cert2"!(Nil))

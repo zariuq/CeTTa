@@ -1,0 +1,12 @@
+; Paper example: D(x) | x<D(x)> recreates itself in one COMM step.
+; D(x) = x(y).(*y | x<*y>), with x = @{0}.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $y
+    (rho:par
+      (rho:drop $y)
+      (rho:send (rho:quote rho:nil) (rho:drop $y))))
+  (rho:send (rho:quote rho:nil)
+    (rho:recv (rho:quote rho:nil) $y
+      (rho:par
+        (rho:drop $y)
+        (rho:send (rho:quote rho:nil) (rho:drop $y))))))

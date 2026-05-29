@@ -1,0 +1,8 @@
+(rho:par
+  (rho:send $bcast rho:nil)
+  (rho:recv $bcast $msg
+    (rho:par
+      (rho:send $c0 (rho:drop $msg))
+      (rho:send $c1 (rho:drop $msg))))
+  (rho:recv $c0 $sink rho:nil)
+  (rho:recv $c1 $sink rho:nil))

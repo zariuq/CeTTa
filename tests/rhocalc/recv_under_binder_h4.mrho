@@ -1,0 +1,9 @@
+; H4.2 Substitution descends into a nested-binder body with par.
+; for($x <- @{0}) { for($y <- @{0}) { *$x | *$y } } | @{0}!(0)
+; After COMM: $x → @{nil}; *$x reduces to nil; nil drops out of par; body becomes *$y.
+; Verifies that substitution under a non-shadowing inner binder works correctly.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:recv (rho:quote rho:nil) $y
+      (rho:par (rho:drop $x) (rho:drop $y))))
+  (rho:send (rho:quote rho:nil) rho:nil))
