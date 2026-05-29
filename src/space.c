@@ -756,6 +756,17 @@ static bool space_tracks_atom_ids(const Space *s) {
     return s && s->native.universe != NULL;
 }
 
+static void space_note_atom_id_storage_peak(const Space *s) {
+    if (!s || !space_tracks_atom_ids(s))
+        return;
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_SPACE_ATOM_ID_LIVE_BYTES_PEAK,
+        (uint64_t)s->native.len * (uint64_t)sizeof(AtomId));
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_SPACE_ATOM_ID_CAPACITY_BYTES_PEAK,
+        (uint64_t)s->native.cap * (uint64_t)sizeof(AtomId));
+}
+
 static void space_reserve_linear(Space *s, uint32_t min_cap) {
     if (s->native.cap >= min_cap)
         return;
@@ -765,6 +776,7 @@ static void space_reserve_linear(Space *s, uint32_t min_cap) {
     s->native.atom_ids =
         cetta_realloc(s->native.atom_ids, sizeof(AtomId) * new_cap);
     s->native.cap = new_cap;
+    space_note_atom_id_storage_peak(s);
 }
 
 void space_linearize(Space *s) {
@@ -911,6 +923,19 @@ static void ensure_non_exact_atom_count(Space *s) {
     }
 }
 
+void space_begin_secondary_index_deferral(Space *s) {
+    if (!s)
+        return;
+    s->native.secondary_index_deferral_depth++;
+    space_mark_indexes_dirty(s);
+}
+
+void space_end_secondary_index_deferral(Space *s) {
+    if (!s || s->native.secondary_index_deferral_depth == 0)
+        return;
+    s->native.secondary_index_deferral_depth--;
+}
+
 static bool space_sync_exact_membership_from_backend(Space *s) {
     if (!s || !space_engine_uses_pathmap(s->match_backend.kind))
         return true;
@@ -939,6 +964,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.exact_idx_dirty = false;
     s->native.non_exact_atoms = 0;
     s->native.non_exact_atoms_dirty = false;
+    s->native.secondary_index_deferral_depth = 0;
 }
 
 static void space_move_storage_and_backend(Space *dst, Space *src) {
@@ -985,6 +1011,7 @@ void space_free(Space *s) {
     space_match_backend_free(s);
     s->native.non_exact_atoms = 0;
     s->native.non_exact_atoms_dirty = false;
+    s->native.secondary_index_deferral_depth = 0;
 }
 
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
@@ -1151,7 +1178,9 @@ static void space_bump_revision(Space *s) {
 }
 
 static bool space_defer_incremental_secondary_indices(const Space *s) {
-    return s && s->match_backend.kind == SPACE_ENGINE_PATHMAP;
+    return s &&
+           (s->match_backend.kind == SPACE_ENGINE_PATHMAP ||
+            s->native.secondary_index_deferral_depth > 0);
 }
 
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
@@ -1175,6 +1204,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         s->native.atom_ids[s->native.len] = atom_id;
     }
     s->native.len++;
+    space_note_atom_id_storage_peak(s);
     space_bump_revision(s);
     if (queue_gap) {
         space_mark_indexes_dirty(s);
@@ -1757,6 +1787,40 @@ AtomId space_get_atom_id_at(const Space *s, uint32_t idx) {
     return space_match_backend_get_atom_id_at(s, idx);
 }
 
+CettaCount space_length64(const Space *s) {
+    return (CettaCount)space_length(s);
+}
+
+static bool cetta_index64_try_u32(CettaIndex idx, uint32_t *out_idx) {
+    if (!out_idx || idx > UINT32_MAX)
+        return false;
+    *out_idx = (uint32_t)idx;
+    return true;
+}
+
+static bool cetta_count64_try_u32(CettaCount count, uint32_t *out_count) {
+    if (!out_count || count > UINT32_MAX)
+        return false;
+    *out_count = (uint32_t)count;
+    return true;
+}
+
+AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx) {
+    uint32_t legacy_idx;
+
+    if (!cetta_index64_try_u32(idx, &legacy_idx))
+        return CETTA_ATOM_ID_NONE;
+    return space_get_atom_id_at(s, legacy_idx);
+}
+
+Atom *space_get_at64(const Space *s, CettaIndex idx) {
+    uint32_t legacy_idx;
+
+    if (!cetta_index64_try_u32(idx, &legacy_idx))
+        return NULL;
+    return space_get_at(s, legacy_idx);
+}
+
 Atom *space_get_at(const Space *s, uint32_t idx) {
     return space_match_backend_get_at(s, idx);
 }
@@ -1820,6 +1884,14 @@ bool space_truncate(Space *s, uint32_t new_len) {
     space_match_backend_note_remove(s);
     space_bump_revision(s);
     return true;
+}
+
+bool space_truncate64(Space *s, CettaCount new_len) {
+    uint32_t legacy_len;
+
+    if (!cetta_count64_try_u32(new_len, &legacy_len))
+        return false;
+    return space_truncate(s, legacy_len);
 }
 
 uint32_t space_length(const Space *s) {

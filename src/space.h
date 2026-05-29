@@ -105,6 +105,9 @@ typedef enum {
 
 #define MATCH_TRIE_THRESHOLD 16
 
+typedef uint64_t CettaCount;
+typedef uint64_t CettaIndex;
+
 typedef struct {
     AtomId *atom_ids;
     uint32_t start;
@@ -118,6 +121,7 @@ typedef struct {
     bool exact_idx_dirty;
     uint32_t non_exact_atoms;
     bool non_exact_atoms_dirty;
+    uint32_t secondary_index_deferral_depth;
 } SpaceNativeStorage;
 
 typedef struct Space {
@@ -136,6 +140,7 @@ typedef struct Space {
             bool exact_idx_dirty;
             uint32_t non_exact_atoms;
             bool non_exact_atoms_dirty;
+            uint32_t secondary_index_deferral_depth;
         };
     };
     SpaceKind kind;
@@ -162,9 +167,13 @@ bool space_is_stack(const Space *s);
 bool space_is_queue(const Space *s);
 bool space_is_hash(const Space *s);
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
+CettaCount space_length64(const Space *s);
+AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx);
+Atom *space_get_at64(const Space *s, CettaIndex idx);
 Atom *space_get_at(const Space *s, uint32_t idx);
 Atom *space_peek(const Space *s);
 bool space_pop(Space *s, Atom **out);
+bool space_truncate64(Space *s, CettaCount new_len);
 bool space_truncate(Space *s, uint32_t new_len);
 uint32_t space_length(const Space *s);
 static inline uint64_t space_revision(const Space *s) {
@@ -174,6 +183,8 @@ bool space_contains_exact(Space *s, Atom *atom);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
 bool space_atom_is_exact_indexable(Atom *atom);
+void space_begin_secondary_index_deferral(Space *s);
+void space_end_secondary_index_deferral(Space *s);
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
