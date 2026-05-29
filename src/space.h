@@ -121,6 +121,7 @@ typedef struct {
     bool exact_idx_dirty;
     bool has_non_exact_atoms;
     bool has_non_exact_atoms_dirty;
+    uint32_t secondary_index_deferral_depth;
 } SpaceNativeStorage;
 
 typedef struct Space {
@@ -139,6 +140,7 @@ typedef struct Space {
             bool exact_idx_dirty;
             bool has_non_exact_atoms;
             bool has_non_exact_atoms_dirty;
+            uint32_t secondary_index_deferral_depth;
         };
     };
     SpaceKind kind;
@@ -184,6 +186,8 @@ bool space_contains_exact(Space *s, Atom *atom);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
 bool space_atom_is_exact_indexable(Atom *atom);
+void space_begin_secondary_index_deferral(Space *s);
+void space_end_secondary_index_deferral(Space *s);
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
 
