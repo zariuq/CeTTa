@@ -291,6 +291,7 @@ static Atom *mork_handle_surface_error(Arena *a, Atom *call,
 }
 
 static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os);
 static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
                                     Atom *surface_atom, uint32_t nargs,
                                     Atom **args, bool evaluate_rows, int fuel,
@@ -629,35 +630,12 @@ static void eval_query_episode_note_answer_promotion(Arena *arena,
     }
 }
 
-static bool bindings_promote_atoms_to_arena(Arena *dst, Bindings *bindings) {
-    if (!dst || !bindings)
-        return true;
-    for (uint32_t i = 0; i < bindings->len; i++) {
-        Atom *promoted = atom_deep_copy(dst, bindings->entries[i].val);
-        if (bindings->entries[i].val && !promoted)
-            return false;
-        bindings->entries[i].val = promoted;
-    }
-    for (uint32_t i = 0; i < bindings->eq_len; i++) {
-        Atom *lhs = atom_deep_copy(dst, bindings->constraints[i].lhs);
-        Atom *rhs = atom_deep_copy(dst, bindings->constraints[i].rhs);
-        if ((bindings->constraints[i].lhs && !lhs) ||
-            (bindings->constraints[i].rhs && !rhs)) {
-            return false;
-        }
-        bindings->constraints[i].lhs = lhs;
-        bindings->constraints[i].rhs = rhs;
-    }
-    bindings->lookup_cache_count = 0;
-    bindings->lookup_cache_next = 0;
-    return true;
-}
-
 static bool eval_query_episode_promote_bindings(EvalQueryEpisode *episode,
                                                 Bindings *bindings) {
     if (!episode || !episode->active || !episode->survivor_arena || !bindings)
         return true;
-    return bindings_promote_atoms_to_arena(episode->survivor_arena, bindings);
+    return bindings_promote_atoms_to_arena(bindings,
+                                           episode->survivor_arena);
 }
 
 static Atom *eval_store_atom(Arena *dst, Atom *src) {
@@ -1261,7 +1239,7 @@ static bool outcome_set_add_promoted_existing(Arena *a, OutcomeSet *os,
     }
     bindings_assert_no_private_variant_slots(&src->env);
     if (!bindings_clone(&slot->env, &src->env) ||
-        !bindings_promote_atoms_to_arena(payload_arena, &slot->env) ||
+        !bindings_promote_atoms_to_arena(&slot->env, payload_arena) ||
         !variant_instance_clone(&slot->variant, &src->variant) ||
         !variant_instance_promote_atoms_to_arena(payload_arena, &slot->variant)) {
         outcome_free_fields(slot);
@@ -3103,7 +3081,6 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
 
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel,
                             OutcomeSet *os);
-
 static void emit_singleton_visible_witness(Space *s, Arena *a, Atom *atom,
                                            Atom *expr, int fuel, OutcomeSet *os) {
     Bindings _empty;
@@ -3125,8 +3102,7 @@ static void emit_singleton_visible_witness(Space *s, Arena *a, Atom *atom,
             continue;
 
         Bindings visible;
-        if (!bindings_project_body_visible_env(a, expr, &inner.items[i].env,
-                                               &visible)) {
+        if (!bindings_project_body_visible_env(a, expr, &inner.items[i].env, &visible)) {
             bindings_free(&shared_visible);
             rb_set_free(&inner);
             return;
@@ -7191,6 +7167,180 @@ typedef struct {
     uint32_t cap;
 } MatchResultSnapshot;
 
+typedef struct {
+    Space **items;
+    uint32_t len;
+    uint32_t cap;
+} DeferredSpaceSet;
+
+typedef struct {
+    Arena arena;
+    bool ready;
+} MatchResultDirectEvalScratch;
+
+static bool match_result_snapshot_push(MatchResultSnapshot *snapshot,
+                                       Atom *atom);
+
+static void deferred_space_set_free(DeferredSpaceSet *set) {
+    if (!set)
+        return;
+    for (uint32_t i = 0; i < set->len; i++)
+        space_end_secondary_index_deferral(set->items[i]);
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+}
+
+static bool deferred_space_set_add(DeferredSpaceSet *set, Space *space) {
+    if (!set || !space)
+        return false;
+    for (uint32_t i = 0; i < set->len; i++) {
+        if (set->items[i] == space)
+            return true;
+    }
+    if (set->len >= set->cap) {
+        uint32_t next_cap = set->cap ? set->cap * 2 : 4;
+        set->items = cetta_realloc(set->items, sizeof(Space *) * next_cap);
+        set->cap = next_cap;
+    }
+    space_begin_secondary_index_deferral(space);
+    set->items[set->len++] = space;
+    return true;
+}
+
+static void
+match_result_direct_eval_scratch_free(MatchResultDirectEvalScratch *scratch) {
+    if (!scratch || !scratch->ready)
+        return;
+    arena_free(&scratch->arena);
+    scratch->ready = false;
+}
+
+static Arena *match_result_direct_eval_scratch_arena(
+    MatchResultDirectEvalScratch *scratch,
+    const Arena *seed) {
+    (void)seed;
+    if (!scratch)
+        return NULL;
+    if (!scratch->ready) {
+        arena_init(&scratch->arena);
+        arena_set_runtime_kind(&scratch->arena,
+                               CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        /* Direct-effect scratch terms are consumed immediately or promoted
+           explicitly. Keep them out of the global hash-cons table so huge FC
+           bodies do not pay recursive hash-stability costs just to be reset. */
+        arena_set_hashcons(&scratch->arena, NULL);
+        scratch->ready = true;
+    }
+    return &scratch->arena;
+}
+
+static void match_chain_note_eval_live_peak(const Arena *a,
+                                            CettaRuntimeCounter counter) {
+    if (!a)
+        return;
+    cetta_runtime_stats_update_max(counter, (uint64_t)a->live_bytes);
+}
+
+static void match_chain_note_eval_live_delta(const Arena *a,
+                                             CettaRuntimeCounter counter,
+                                             size_t before_bytes) {
+    if (!a || a->live_bytes <= before_bytes)
+        return;
+    cetta_runtime_stats_update_max(counter,
+                                   (uint64_t)(a->live_bytes - before_bytes));
+}
+
+static void match_chain_note_size_delta(size_t after_bytes,
+                                        size_t before_bytes,
+                                        CettaRuntimeCounter counter) {
+    if (after_bytes <= before_bytes)
+        return;
+    cetta_runtime_stats_update_max(counter,
+                                   (uint64_t)(after_bytes - before_bytes));
+}
+
+static Space *match_result_target_space(Atom *result, Arena *a) {
+    if (!result || result->kind != ATOM_EXPR || result->expr.len < 2)
+        return NULL;
+
+    SymbolId head_id = atom_head_symbol_id(result);
+    if (!(head_id == g_builtin_syms.add_atom ||
+          head_id == g_builtin_syms.add_atom_nodup ||
+          head_id == g_builtin_syms.remove_atom ||
+          head_id == g_builtin_syms.mork_add_atom ||
+          head_id == g_builtin_syms.mork_add_atoms ||
+          head_id == g_builtin_syms.mork_remove_atom ||
+          head_id == g_builtin_syms.space_set_backend_bang ||
+          head_id == g_builtin_syms.space_set_match_backend_bang)) {
+        return NULL;
+    }
+
+    Atom *space_ref = resolve_registry_refs(a, expr_arg(result, 0));
+    return g_registry ? resolve_space(g_registry, space_ref) : NULL;
+}
+
+static bool match_result_targets_any_query_space(Space *target,
+                                                 Space **query_spaces,
+                                                 uint32_t nquery_spaces) {
+    if (!target || !query_spaces || nquery_spaces == 0)
+        return false;
+    for (uint32_t i = 0; i < nquery_spaces; i++) {
+        if (query_spaces[i] == target)
+            return true;
+    }
+    return false;
+}
+
+static void match_result_apply_emit_or_snapshot(
+    Space *s, Arena *a, int fuel, OutcomeSet *os,
+    MatchResultSnapshot *snapshot,
+    DeferredSpaceSet *deferred_spaces,
+    MatchResultDirectEvalScratch *direct_scratch,
+    const Bindings *projected,
+    Atom *template,
+    Space **query_spaces,
+    uint32_t nquery_spaces) {
+    Bindings empty;
+    Arena *scratch = match_result_direct_eval_scratch_arena(direct_scratch, a);
+    Arena *apply_arena = scratch ? scratch : a;
+    ArenaMark mark = scratch ? arena_mark(scratch) : (ArenaMark){0};
+    Atom *result = bindings_apply_if_vars(projected, apply_arena, template);
+    Space *target = match_result_target_space(result, apply_arena);
+    bindings_init(&empty);
+    if (!match_result_targets_any_query_space(target, query_spaces,
+                                              nquery_spaces)) {
+        OutcomeSet generated;
+        outcome_set_init(&generated);
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_STREAM_COUNT);
+        (void)deferred_space_set_add(deferred_spaces, target);
+        eval_for_caller(s, apply_arena, NULL, result, fuel, &empty, false,
+                        &generated);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_GENERATED_OUTCOME_COUNT,
+            generated.len);
+        cetta_runtime_stats_update_max(
+            CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_GENERATED_OUTCOME_PEAK,
+            generated.len);
+        outcome_set_append_promoted(a, os, &generated, false);
+        outcome_set_free(&generated);
+        if (scratch)
+            arena_reset(scratch, mark);
+        return;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_RESULT_SNAPSHOT_COUNT);
+    if (scratch) {
+        Atom *promoted = atom_deep_copy(a, result);
+        if (promoted)
+            (void)match_result_snapshot_push(snapshot, promoted);
+        arena_reset(scratch, mark);
+        return;
+    }
+    (void)match_result_snapshot_push(snapshot, result);
+}
+
 static bool match_result_snapshot_push(MatchResultSnapshot *snapshot,
                                        Atom *atom) {
     if (!snapshot)
@@ -7766,6 +7916,10 @@ static __attribute__((noinline)) bool
 handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
              OutcomeSet *os) {
     Bindings _empty; bindings_init(&_empty);
+    __attribute__((cleanup(deferred_space_set_free)))
+    DeferredSpaceSet deferred_spaces = {0};
+    __attribute__((cleanup(match_result_direct_eval_scratch_free)))
+    MatchResultDirectEvalScratch direct_scratch = {0};
     uint32_t nargs = expr_nargs(atom);
     if (atom_head_symbol_id(atom) != g_builtin_syms.match || nargs != 3) return false;
 
@@ -7810,6 +7964,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                 NULL, &matches);
         if (!preserve_bindings) {
             MatchResultSnapshot snapshot = {0};
+            Space *query_spaces[] = { ms };
             for (uint32_t bi = 0; bi < matches.len; bi++) {
                 Bindings projected;
                 if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
@@ -7817,8 +7972,10 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     continue;
                 }
                 cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
-                Atom *result = bindings_apply_if_vars(&projected, a, template);
-                (void)match_result_snapshot_push(&snapshot, result);
+                match_result_apply_emit_or_snapshot(
+                    s, a, fuel, os, &snapshot, &deferred_spaces,
+                    &direct_scratch, &projected, template,
+                    query_spaces, 1);
                 bindings_free(&projected);
             }
             match_result_snapshot_eval(s, a, &snapshot, fuel, os);
@@ -7880,6 +8037,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 space_query_conjunction(ms, a, same_space_patterns, nsame, NULL, &matches);
                 if (!preserve_bindings) {
                     MatchResultSnapshot snapshot = {0};
+                    Space *query_spaces[] = { ms };
                     for (uint32_t bi = 0; bi < matches.len; bi++) {
                         Bindings projected;
                         if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
@@ -7887,8 +8045,10 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                             continue;
                         }
                         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
-                        Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
-                        (void)match_result_snapshot_push(&snapshot, result);
+                        match_result_apply_emit_or_snapshot(
+                            s, a, fuel, os, &snapshot, &deferred_spaces,
+                            &direct_scratch, &projected, residual_body,
+                            query_spaces, 1);
                         bindings_free(&projected);
                     }
                     match_result_snapshot_eval(s, a, &snapshot, fuel, os);
@@ -8029,6 +8189,8 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         Bindings *cur_binds = cetta_malloc(sizeof(Bindings));
         uint32_t ncur = 1;
         bindings_init(&cur_binds[0]);
+        cetta_runtime_stats_update_max(
+            CETTA_RUNTIME_COUNTER_MATCH_CHAIN_FRONTIER_BINDINGS_PEAK, ncur);
 
         uint32_t accum_steps = (nsteps > 1) ? nsteps - 1 : nsteps;
         for (uint32_t si = 0; si < accum_steps; si++) {
@@ -8037,19 +8199,64 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             uint32_t nnext = 0, cnext = 0;
             for (uint32_t bi = 0; bi < ncur; bi++) {
                 cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_STEP);
-                Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, step->pattern);
+                size_t grounded_before = a ? a->live_bytes : 0;
+                Atom *grounded =
+                    bindings_apply_if_vars(&cur_binds[bi], a, step->pattern);
+                match_chain_note_eval_live_delta(
+                    a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_GROUNDED_DELTA_BYTES_PEAK,
+                    grounded_before);
+                match_chain_note_eval_live_peak(
+                    a,
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
                 SubstMatchSet smr;
                 smset_init(&smr);
+                size_t query_before = a ? a->live_bytes : 0;
+                size_t query_entry_before = bindings_entry_active_bytes();
+                size_t query_constraint_before =
+                    bindings_constraint_active_bytes();
                 space_subst_query(step->space, a, grounded, &smr);
+                match_chain_note_eval_live_delta(
+                    a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_DELTA_BYTES_PEAK,
+                    query_before);
+                match_chain_note_size_delta(
+                    bindings_entry_active_bytes(), query_entry_before,
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_ENTRY_DELTA_PEAK);
+                match_chain_note_size_delta(
+                    bindings_constraint_active_bytes(),
+                    query_constraint_before,
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_CONSTRAINT_DELTA_PEAK);
+                cetta_runtime_stats_update_max(
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBST_RESULTS_PEAK,
+                    smr.len);
+                cetta_runtime_stats_update_max(
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBSTMATCHSET_BYTES_PEAK,
+                    (uint64_t)smr.cap * (uint64_t)sizeof(SubstMatch));
+                match_chain_note_eval_live_peak(
+                    a,
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
                 for (uint32_t ci = 0; ci < smr.len; ci++) {
                     Bindings mb;
-                    if (space_subst_match_with_seed(step->space, grounded, &smr.items[ci],
+                    size_t merge_entry_before = bindings_entry_active_bytes();
+                    size_t merge_constraint_before =
+                        bindings_constraint_active_bytes();
+                    if (space_subst_match_with_seed(step->space, grounded,
+                                                    &smr.items[ci],
                                                     &cur_binds[bi], a, &mb)) {
+                        match_chain_note_size_delta(
+                            bindings_entry_active_bytes(), merge_entry_before,
+                            CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_ENTRY_DELTA_PEAK);
+                        match_chain_note_size_delta(
+                            bindings_constraint_active_bytes(),
+                            merge_constraint_before,
+                            CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
                         if (nnext >= cnext) {
                             cnext = cnext ? cnext * 2 : 8;
                             next_binds = cetta_realloc(next_binds, sizeof(Bindings) * cnext);
                         }
                         bindings_move(&next_binds[nnext++], &mb);
+                        cetta_runtime_stats_update_max(
+                            CETTA_RUNTIME_COUNTER_MATCH_CHAIN_FRONTIER_BINDINGS_PEAK,
+                            nnext);
                     }
                 }
                 smset_free(&smr);
@@ -8065,25 +8272,81 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             static uint64_t g_chain_progress = 0;
             if (!preserve_bindings) {
                 MatchResultSnapshot snapshot = {0};
+                Space *query_spaces[MAX_CHAIN];
+                uint32_t nquery_spaces = nsteps;
+                for (uint32_t qi = 0; qi < nsteps; qi++)
+                    query_spaces[qi] = steps[qi].space;
                 for (uint32_t bi = 0; bi < ncur; bi++) {
                     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
-                    Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
+                    size_t grounded_before = a ? a->live_bytes : 0;
+                    Atom *grounded =
+                        bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
+                    match_chain_note_eval_live_delta(
+                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_GROUNDED_DELTA_BYTES_PEAK,
+                        grounded_before);
+                    match_chain_note_eval_live_peak(
+                        a,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
                     SubstMatchSet smr;
                     smset_init(&smr);
+                    size_t query_before = a ? a->live_bytes : 0;
+                    size_t query_entry_before = bindings_entry_active_bytes();
+                    size_t query_constraint_before =
+                        bindings_constraint_active_bytes();
                     space_subst_query(last->space, a, grounded, &smr);
+                    match_chain_note_eval_live_delta(
+                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_DELTA_BYTES_PEAK,
+                        query_before);
+                    match_chain_note_size_delta(
+                        bindings_entry_active_bytes(), query_entry_before,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_ENTRY_DELTA_PEAK);
+                    match_chain_note_size_delta(
+                        bindings_constraint_active_bytes(),
+                        query_constraint_before,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_CONSTRAINT_DELTA_PEAK);
+                    cetta_runtime_stats_update_max(
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBST_RESULTS_PEAK,
+                        smr.len);
+                    cetta_runtime_stats_update_max(
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBSTMATCHSET_BYTES_PEAK,
+                        (uint64_t)smr.cap * (uint64_t)sizeof(SubstMatch));
+                    match_chain_note_eval_live_peak(
+                        a,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
                     for (uint32_t ci = 0; ci < smr.len; ci++) {
                         Bindings mb;
-                        if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
+                        size_t merge_entry_before = bindings_entry_active_bytes();
+                        size_t merge_constraint_before =
+                            bindings_constraint_active_bytes();
+                        if (space_subst_match_with_seed(last->space, grounded,
+                                                        &smr.items[ci],
                                                         &cur_binds[bi], a, &mb)) {
+                            match_chain_note_size_delta(
+                                bindings_entry_active_bytes(),
+                                merge_entry_before,
+                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_ENTRY_DELTA_PEAK);
+                            match_chain_note_size_delta(
+                                bindings_constraint_active_bytes(),
+                                merge_constraint_before,
+                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
                             Bindings projected;
+                            size_t project_before = a ? a->live_bytes : 0;
                             if (!project_match_visible_bindings(a, &visible, &mb,
                                                                 &projected)) {
                                 bindings_free(&mb);
                                 continue;
                             }
+                            match_chain_note_eval_live_delta(
+                                a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
+                                project_before);
+                            match_chain_note_eval_live_peak(
+                                a,
+                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
                             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                            Atom *result = bindings_apply_if_vars(&projected, a, body);
-                            (void)match_result_snapshot_push(&snapshot, result);
+                            match_result_apply_emit_or_snapshot(
+                                s, a, fuel, os, &snapshot, &deferred_spaces,
+                                &direct_scratch, &projected, body,
+                                query_spaces, nquery_spaces);
                             bindings_free(&projected);
                             bindings_free(&mb);
                             g_chain_progress++;
@@ -8101,20 +8364,70 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             } else {
                 for (uint32_t bi = 0; bi < ncur; bi++) {
                     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
-                    Atom *grounded = bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
+                    size_t grounded_before = a ? a->live_bytes : 0;
+                    Atom *grounded =
+                        bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
+                    match_chain_note_eval_live_delta(
+                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_GROUNDED_DELTA_BYTES_PEAK,
+                        grounded_before);
+                    match_chain_note_eval_live_peak(
+                        a,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
                     SubstMatchSet smr;
                     smset_init(&smr);
+                    size_t query_before = a ? a->live_bytes : 0;
+                    size_t query_entry_before = bindings_entry_active_bytes();
+                    size_t query_constraint_before =
+                        bindings_constraint_active_bytes();
                     space_subst_query(last->space, a, grounded, &smr);
+                    match_chain_note_eval_live_delta(
+                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_DELTA_BYTES_PEAK,
+                        query_before);
+                    match_chain_note_size_delta(
+                        bindings_entry_active_bytes(), query_entry_before,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_ENTRY_DELTA_PEAK);
+                    match_chain_note_size_delta(
+                        bindings_constraint_active_bytes(),
+                        query_constraint_before,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_CONSTRAINT_DELTA_PEAK);
+                    cetta_runtime_stats_update_max(
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBST_RESULTS_PEAK,
+                        smr.len);
+                    cetta_runtime_stats_update_max(
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBSTMATCHSET_BYTES_PEAK,
+                        (uint64_t)smr.cap * (uint64_t)sizeof(SubstMatch));
+                    match_chain_note_eval_live_peak(
+                        a,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
                     for (uint32_t ci = 0; ci < smr.len; ci++) {
                         Bindings mb;
-                        if (space_subst_match_with_seed(last->space, grounded, &smr.items[ci],
+                        size_t merge_entry_before = bindings_entry_active_bytes();
+                        size_t merge_constraint_before =
+                            bindings_constraint_active_bytes();
+                        if (space_subst_match_with_seed(last->space, grounded,
+                                                        &smr.items[ci],
                                                         &cur_binds[bi], a, &mb)) {
+                            match_chain_note_size_delta(
+                                bindings_entry_active_bytes(),
+                                merge_entry_before,
+                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_ENTRY_DELTA_PEAK);
+                            match_chain_note_size_delta(
+                                bindings_constraint_active_bytes(),
+                                merge_constraint_before,
+                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
                             Bindings projected;
+                            size_t project_before = a ? a->live_bytes : 0;
                             if (!project_match_visible_bindings(a, &visible, &mb,
                                                                 &projected)) {
                                 bindings_free(&mb);
                                 continue;
                             }
+                            match_chain_note_eval_live_delta(
+                                a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
+                                project_before);
+                            match_chain_note_eval_live_peak(
+                                a,
+                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
                             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
                             Atom *result = bindings_apply_if_vars(&projected, a, body);
                             eval_for_caller(s, a, NULL, result, fuel, &projected,
@@ -8135,15 +8448,28 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         } else {
             if (!preserve_bindings) {
                 MatchResultSnapshot snapshot = {0};
+                Space *query_spaces[MAX_CHAIN];
+                uint32_t nquery_spaces = nsteps;
+                for (uint32_t qi = 0; qi < nsteps; qi++)
+                    query_spaces[qi] = steps[qi].space;
                 for (uint32_t bi = 0; bi < ncur; bi++) {
                     Bindings projected;
+                    size_t project_before = a ? a->live_bytes : 0;
                     if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
                                                         &projected)) {
                         continue;
                     }
+                    match_chain_note_eval_live_delta(
+                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
+                        project_before);
+                    match_chain_note_eval_live_peak(
+                        a,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
                     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                    Atom *result = bindings_apply_if_vars(&projected, a, body);
-                    (void)match_result_snapshot_push(&snapshot, result);
+                    match_result_apply_emit_or_snapshot(
+                        s, a, fuel, os, &snapshot, &deferred_spaces,
+                        &direct_scratch, &projected, body,
+                        query_spaces, nquery_spaces);
                     bindings_free(&projected);
                 }
                 match_result_snapshot_eval(s, a, &snapshot, fuel, os);
@@ -8151,10 +8477,17 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             } else {
                 for (uint32_t bi = 0; bi < ncur; bi++) {
                     Bindings projected;
+                    size_t project_before = a ? a->live_bytes : 0;
                     if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
                                                         &projected)) {
                         continue;
                     }
+                    match_chain_note_eval_live_delta(
+                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
+                        project_before);
+                    match_chain_note_eval_live_peak(
+                        a,
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
                     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
                     Atom *result = bindings_apply_if_vars(&projected, a, body);
                     eval_for_caller(s, a, NULL, result, fuel, &projected,

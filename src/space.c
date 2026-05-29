@@ -756,6 +756,17 @@ static bool space_tracks_atom_ids(const Space *s) {
     return s && s->native.universe != NULL;
 }
 
+static void space_note_atom_id_storage_peak(const Space *s) {
+    if (!s || !space_tracks_atom_ids(s))
+        return;
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_SPACE_ATOM_ID_LIVE_BYTES_PEAK,
+        (uint64_t)s->native.len * (uint64_t)sizeof(AtomId));
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_SPACE_ATOM_ID_CAPACITY_BYTES_PEAK,
+        (uint64_t)s->native.cap * (uint64_t)sizeof(AtomId));
+}
+
 static void space_reserve_linear(Space *s, uint32_t min_cap) {
     if (s->native.cap >= min_cap)
         return;
@@ -765,6 +776,7 @@ static void space_reserve_linear(Space *s, uint32_t min_cap) {
     s->native.atom_ids =
         cetta_realloc(s->native.atom_ids, sizeof(AtomId) * new_cap);
     s->native.cap = new_cap;
+    space_note_atom_id_storage_peak(s);
 }
 
 void space_linearize(Space *s) {
@@ -1006,6 +1018,19 @@ static bool ensure_has_non_exact_atoms(Space *s) {
     return !s->native.has_non_exact_atoms_dirty;
 }
 
+void space_begin_secondary_index_deferral(Space *s) {
+    if (!s)
+        return;
+    s->native.secondary_index_deferral_depth++;
+    space_mark_indexes_dirty(s);
+}
+
+void space_end_secondary_index_deferral(Space *s) {
+    if (!s || s->native.secondary_index_deferral_depth == 0)
+        return;
+    s->native.secondary_index_deferral_depth--;
+}
+
 static bool space_sync_exact_membership_from_backend(Space *s) {
     if (!s || !space_engine_uses_pathmap(s->match_backend.kind))
         return true;
@@ -1034,6 +1059,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.exact_idx_dirty = false;
     s->native.has_non_exact_atoms = false;
     s->native.has_non_exact_atoms_dirty = false;
+    s->native.secondary_index_deferral_depth = 0;
 }
 
 static void space_move_storage_and_backend(Space *dst, Space *src) {
@@ -1080,6 +1106,7 @@ void space_free(Space *s) {
     space_match_backend_free(s);
     s->native.has_non_exact_atoms = false;
     s->native.has_non_exact_atoms_dirty = false;
+    s->native.secondary_index_deferral_depth = 0;
 }
 
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
@@ -1254,7 +1281,9 @@ void space_note_external_backend_mutation(Space *s) {
 }
 
 static bool space_defer_incremental_secondary_indices(const Space *s) {
-    return s && s->match_backend.kind == SPACE_ENGINE_PATHMAP;
+    return s &&
+           (s->match_backend.kind == SPACE_ENGINE_PATHMAP ||
+            s->native.secondary_index_deferral_depth > 0);
 }
 
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
@@ -1278,6 +1307,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         s->native.atom_ids[s->native.len] = atom_id;
     }
     s->native.len++;
+    space_note_atom_id_storage_peak(s);
     space_bump_revision(s);
     if (queue_gap) {
         space_mark_indexes_dirty(s);

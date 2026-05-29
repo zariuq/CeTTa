@@ -65,6 +65,14 @@ static void bindings_note_constraint_pool_metrics(void) {
         (uint64_t)g_binding_constraint_active_bytes);
 }
 
+size_t bindings_entry_active_bytes(void) {
+    return g_binding_entry_active_bytes;
+}
+
+size_t bindings_constraint_active_bytes(void) {
+    return g_binding_constraint_active_bytes;
+}
+
 static inline bool binding_var_eq(VarId lhs, VarId rhs) {
     return lhs == rhs;
 }
@@ -466,6 +474,30 @@ bool bindings_copy(Bindings *dst, const Bindings *src) {
     if (!bindings_clone(&tmp, src)) return false;
     bindings_free(dst);
     *dst = tmp;
+    return true;
+}
+
+bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
+    if (!bindings || !dst)
+        return true;
+    for (uint32_t i = 0; i < bindings->len; i++) {
+        Atom *promoted = atom_deep_copy(dst, bindings->entries[i].val);
+        if (bindings->entries[i].val && !promoted)
+            return false;
+        bindings->entries[i].val = promoted;
+    }
+    for (uint32_t i = 0; i < bindings->eq_len; i++) {
+        Atom *lhs = atom_deep_copy(dst, bindings->constraints[i].lhs);
+        Atom *rhs = atom_deep_copy(dst, bindings->constraints[i].rhs);
+        if ((bindings->constraints[i].lhs && !lhs) ||
+            (bindings->constraints[i].rhs && !rhs)) {
+            return false;
+        }
+        bindings->constraints[i].lhs = lhs;
+        bindings->constraints[i].rhs = rhs;
+    }
+    bindings->lookup_cache_count = 0;
+    bindings->lookup_cache_next = 0;
     return true;
 }
 
