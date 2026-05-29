@@ -1,0 +1,2 @@
+error: could not parse tests/rhocalc/reject_quoted_payload.rho as rhocalc/rho
+note: expected output after leading name near byte 10

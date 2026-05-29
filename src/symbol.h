@@ -124,6 +124,7 @@ typedef struct {
     X(get_atoms, "get-atoms") \
     X(count_atoms, "count-atoms") \
     X(collapse_bind, "collapse-bind") \
+    X(singleton_visible_witness, "singleton-visible-witness") \
     X(superpose_bind, "superpose-bind") \
     X(metta, "metta") \
     X(evalc, "evalc") \
@@ -171,6 +172,9 @@ typedef struct {
     X(println_bang, "println!") \
     X(trace_bang, "trace!") \
     X(format_args, "format-args") \
+    X(repr, "repr") \
+    X(parse, "parse") \
+    X(parse_first, "parse-first") \
     X(print_alternatives_bang, "print-alternatives!") \
     /* ── Grounded collection/list operations ── */ \
     X(size, "size") \
@@ -236,6 +240,7 @@ typedef struct {
     X(lib_str_starts_with, "__cetta_lib_str_starts_with") \
     X(lib_str_ends_with, "__cetta_lib_str_ends_with") \
     X(lib_str_trim, "__cetta_lib_str_trim") \
+    X(lib_rho_step, "__cetta_lib_rho_step") \
     X(lib_mork_space_new, "__cetta_lib_mork_space_new") \
     X(lib_mork_space_include, "__cetta_lib_mork_space_include") \
     X(lib_mork_space_open_act, "__cetta_lib_mork_space_open_act") \

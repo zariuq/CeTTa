@@ -1,0 +1,18 @@
+; Paper example: input-guarded replication unfolds once, then blocks on u.
+; D(x) | x< u(v).(D(x) | P) >  --->  u(v).(D(x) | P) | x< u(v).(D(x) | P) >
+; Here x = @{0}, u = @{ @{0}!(0) }, and P = 0.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $y
+    (rho:par
+      (rho:drop $y)
+      (rho:send (rho:quote rho:nil) (rho:drop $y))))
+  (rho:send (rho:quote rho:nil)
+    (rho:recv
+      (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+      $v
+      (rho:par
+        (rho:recv (rho:quote rho:nil) $y
+          (rho:par
+            (rho:drop $y)
+            (rho:send (rho:quote rho:nil) (rho:drop $y))))
+        rho:nil))))

@@ -1,0 +1,10 @@
+; H1b Open-name regression, kept under the original audit filename.
+; Full core rho allows free name variables. After the outer COMM step,
+; the result contains a free $b in the send payload beside an input that
+; binds its own $b; those are semantically distinct occurrences.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $a
+    (rho:par
+      (rho:recv (rho:quote rho:nil) $b (rho:drop $a))
+      (rho:send (rho:quote rho:nil) (rho:drop $b))))
+  (rho:send (rho:quote rho:nil) rho:nil))

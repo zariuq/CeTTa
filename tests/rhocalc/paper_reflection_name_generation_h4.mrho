@@ -1,0 +1,10 @@
+; Paper example: reflection and runtime name generation.
+; x(y).(y<0> | *y) | x<P>  --->  @P<0> | P
+; Here x = @{0} and P = @{0}!(0).
+(rho:par
+  (rho:recv (rho:quote rho:nil) $y
+    (rho:par
+      (rho:send $y rho:nil)
+      (rho:drop $y)))
+  (rho:send (rho:quote rho:nil)
+    (rho:send (rho:quote rho:nil) rho:nil)))

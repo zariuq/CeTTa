@@ -1,0 +1,5 @@
+(rho:par
+  (rho:recv $hot $msg (rho:send $out0 (rho:drop $msg)))
+  (rho:recv $hot $msg (rho:send $out1 (rho:drop $msg)))
+  (rho:send $hot (rho:send $p0 rho:nil))
+  (rho:send $hot (rho:send $p1 rho:nil)))

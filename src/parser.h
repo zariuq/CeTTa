@@ -1,6 +1,7 @@
 #ifndef CETTA_PARSER_H
 #define CETTA_PARSER_H
 
+#include <stdbool.h>
 #include "term_universe.h"
 
 /* Parse a .metta file into a list of top-level atoms.
@@ -31,6 +32,14 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos);
 /* Parse a single S-expression directly into the term universe and return its
    canonical AtomId. Returns CETTA_ATOM_ID_NONE on end-of-input or error. */
 AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos);
+
+/* Return whether source text has balanced strings/parentheses/comments under
+   the reader's delimiter rules. */
+bool parser_text_well_formed(const char *text);
+
+/* Advance *pos past delimiters and return whether no non-delimiter text
+   remains. */
+bool parser_rest_is_delimiters(const char *text, size_t *pos);
 
 /* Canonicalize reader sugar for qualified namespaces.
    This rewrites dotted qualified names such as mork.foo, runtime.bar, and

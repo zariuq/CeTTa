@@ -1,0 +1,12 @@
+; H2.4 Channel matching under alpha-equivalence of bound vars inside @{...}.
+; Send channel: @{for($x <- @{0}) {*$x}}
+; Recv channel: @{for($w <- @{0}) {*$w}}
+; Bound-var names differ but de Bruijn keys should match; COMM should fire.
+(rho:par
+  (rho:send
+    (rho:quote (rho:recv (rho:quote rho:nil) $x (rho:drop $x)))
+    rho:nil)
+  (rho:recv
+    (rho:quote (rho:recv (rho:quote rho:nil) $w (rho:drop $w)))
+    $z
+    rho:nil))

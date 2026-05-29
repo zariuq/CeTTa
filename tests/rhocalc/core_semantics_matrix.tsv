@@ -1,0 +1,38 @@
+area	clause	fixture	expectation	source
+syntax	nil/core_comm	core_comm.mrho	0 participates in COMM through send/recv result	Meredith-Radestock 2005 section 2 grammar
+syntax	send_payload_process	pure_surface.rho	N!(P) uses a process payload, not a quoted-name payload	Meredith-Radestock 2005 lift/output grammar
+syntax	reject_quote_as_payload	reject_quoted_payload.rho	.rho rejects N!(@{P}) when payload position expects P	local surface discipline matching lift/output
+strict-boundary	reject_fresh	reject_fresh.mrho	fresh/new is not in strict core	Meredith-Radestock 2005 core grammar
+strict-boundary	reject_join	reject_join.mrho	joined receive is not in strict core	Meredith-Radestock 2005 core grammar
+strict-boundary	no_reduction_under_recv	no_reduction_under_recv_puritanical.mrho	COMM is top-level only in this operational CLI	Meredith-Radestock 2005 COMM relation
+strict-boundary	no_reduction_inside_quote	quoted_process_not_reduced_in_name_eq.mrho	name equality is structural, not behavioral reduction	Meredith-Radestock 2005 sections 2.3-2.4
+open-names	free_name_allowed	open_name_variable_roundtrip_h7.mrho	open name variables are valid names in full core	Meredith-Radestock 2005 free/bound names
+open-names	quoted_free_name_allowed	open_quoted_name_roundtrip_h7.mrho	open variables under literal quote are valid static data	Meredith-Radestock 2005 quote/substitution discussion
+mrho-elaboration	shadow_same_spelling	mrho_shadow_same_spelling.mrho	nested same-spelling recv binders elaborate to distinct binder identities	Chargueraud 2012 locally nameless representation; Meredith-Radestock 2005 input binder
+mrho-elaboration	free_name_same_spelling_binder	mrho_free_name_same_spelling_binder.mrho	free names remain distinct from same-spelling receive binders	Chargueraud 2012 locally nameless representation; Pitts 2023 locally nameless sets
+mrho-elaboration	quote_seals_outer_scope	mrho_quote_seals_outer_binder.mrho	literal quote clears the surrounding mrho binder stack	Meredith-Radestock 2005 quote/substitution boundary; Flatt 2016 scope metadata
+mrho-elaboration	quote_inner_binder_restores_scope	mrho_quote_inner_binder_restores_scope.mrho	binders inside literal quote do not overwrite outer mrho bindings	Meredith-Radestock 2005 quote/substitution boundary; Flatt 2016 scope metadata
+surface	quote_inner_binder_restores_scope	surface_quote_inner_binder_restores_scope.rho	binders inside literal quote do not overwrite outer surface bindings	Meredith-Radestock 2005 quote/substitution boundary
+printer	alpha_mrho	translate_mrho_alpha_to_mrho.expected	mrho printer renames binders whose spelling would capture a free name on reparse	Chargueraud 2012 locally nameless representation; Flatt 2016 scope metadata
+printer	alpha_surface	translate_mrho_alpha_to_rho.expected	rho surface printer renames binders whose spelling would capture a free name on reparse	Chargueraud 2012 locally nameless representation; Flatt 2016 scope metadata
+printer	shadow_roundtrip	translate_rho_shadow_to_mrho.expected	rho-to-mrho translation exposes nested same-spelling binders with alpha-safe display names	standard alpha-conversion discipline
+structural-congruence	par_zero	channel_eq_par_zero_h2.mrho	@{P | 0} matches @{P}	Meredith-Radestock 2005 structural congruence
+structural-congruence	par_comm	channel_eq_par_comm_h2.mrho	@{P | Q} matches @{Q | P}	Meredith-Radestock 2005 structural congruence
+structural-congruence	par_assoc	channel_eq_par_assoc_h2.mrho	@{(P | Q) | R} matches @{P | (Q | R)}	Meredith-Radestock 2005 structural congruence
+structural-congruence	alpha	channel_eq_alpha_h2.mrho	alpha-equivalent quoted inputs match	Meredith-Radestock 2005 alpha-equivalence
+name-equivalence	quote_drop	name_quote_drop.mrho	@{*N} is name-equivalent to N	Meredith-Radestock 2005 quote-drop name equivalence
+name-equivalence	nested_quote_drop	nested_drop_quote_h5.mrho	iterated quote-drop cancellation reaches the same name	Meredith-Radestock 2005 quote-drop name equivalence
+substitution	par	name_pass_basic_h4.mrho	received names substitute into body and can be dropped	Meredith-Radestock 2005 syntactic substitution and COMM
+substitution	nonshadow_recv	recv_under_binder_h4.mrho	substitution descends under non-shadowing receive binders	Meredith-Radestock 2005 substitution input clause
+substitution	shadow_recv	capture_shadow_ok_h1.mrho	substitution stops at a shadowing receive binder	Meredith-Radestock 2005 substitution input clause
+substitution	send_channel	channel_var_h4.mrho	substitution applies in send channel position	Meredith-Radestock 2005 substitution output clause
+substitution	send_payload	paper_reflection_name_generation_h4.mrho	substitution applies in dynamic lift/send payloads	Meredith-Radestock 2005 lift/output clause
+substitution	literal_quote_opaque	quote_substitution_opaque_h7.mrho	substitution does not recur through literal quote	Meredith-Radestock 2005 section 2.0.4 and 2.5
+substitution	quote_drop_sealed	quote_drop_whole_name_substitution_h7.mrho	@{*x} under literal quote normalizes to the free name x when outer scope is sealed	Meredith-Radestock 2005 name equivalence plus quote/substitution boundary
+substitution	capture_avoidance	capture_avoidance_alpha_h7.mrho	substitution alpha-renames an inner binder before capture	Meredith-Radestock 2005 substitution freshness side-condition
+comm	branching	branching_relation.mrho	one-step COMM enumerates all top-level send/recv matches	Meredith-Radestock 2005 reduction relation
+comm	diamond	multistep_diamond_h3_setup.mrho	independent redexes produce both one-step branches	standard process-calculus confluence sanity
+reflection	self_recreation	paper_divergence_self_recreates_h4.mrho	self-recreation is expressible without primitive replication	Meredith-Radestock 2005 replication discussion
+reflection	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.mrho	input-guarded replication unfolds through reflection	Meredith-Radestock 2005 replication discussion
+surface	open_name	surface_open_name_variable.rho	explicit $x is accepted as an open surface name	local surface syntax for full core
+surface	quote_scope	surface_quote_seals_outer_binder.rho	@{...} parses outside the current surface binder scope	Meredith-Radestock 2005 quote/substitution boundary

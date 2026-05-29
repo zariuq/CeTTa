@@ -2,6 +2,16 @@
 #include <ctype.h>
 #include <string.h>
 
+static bool path_has_suffix(const char *path, const char *suffix) {
+    size_t path_len;
+    size_t suffix_len;
+    if (!path || !suffix) return false;
+    path_len = strlen(path);
+    suffix_len = strlen(suffix);
+    if (suffix_len > path_len) return false;
+    return strcmp(path + (path_len - suffix_len), suffix) == 0;
+}
+
 static const CettaLanguageSpec CETTA_LANGUAGES[] = {
     {CETTA_LANGUAGE_HE, "he", "he", true, "Current direct MeTTa/HE evaluator",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
@@ -36,8 +46,8 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
     {CETTA_LANGUAGE_PYASHCORE, "pyashcore", "pyashcore", false,
      "Planned port from mettail-rust inventory",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
-    {CETTA_LANGUAGE_RHOCALC, "rhocalc", "rhocalc", false,
-     "Planned port from mettail-rust inventory",
+    {CETTA_LANGUAGE_RHOCALC, "rhocalc", "rhocalc", true,
+     "Paper-faithful core rho-calculus one-step relation",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
 };
 
@@ -76,6 +86,66 @@ const CettaLanguageSpec *cetta_language_from_id(CettaLanguageId id) {
 const char *cetta_language_canonical_name(CettaLanguageId id) {
     const CettaLanguageSpec *spec = cetta_language_from_id(id);
     return spec ? spec->canonical : "unknown-language";
+}
+
+const char *cetta_syntax_name(CettaSyntaxId syntax) {
+    switch (syntax) {
+    case CETTA_SYNTAX_AUTO:
+        return "auto";
+    case CETTA_SYNTAX_METTA:
+        return "metta";
+    case CETTA_SYNTAX_MRHO:
+        return "mrho";
+    case CETTA_SYNTAX_RHO:
+        return "rho";
+    }
+    return "unknown-syntax";
+}
+
+bool cetta_syntax_from_name(const char *name, CettaSyntaxId *out_syntax) {
+    if (!name) return false;
+    if (ascii_ieq(name, "auto")) {
+        if (out_syntax) *out_syntax = CETTA_SYNTAX_AUTO;
+        return true;
+    }
+    if (ascii_ieq(name, "metta")) {
+        if (out_syntax) *out_syntax = CETTA_SYNTAX_METTA;
+        return true;
+    }
+    if (ascii_ieq(name, "mrho")) {
+        if (out_syntax) *out_syntax = CETTA_SYNTAX_MRHO;
+        return true;
+    }
+    if (ascii_ieq(name, "rho")) {
+        if (out_syntax) *out_syntax = CETTA_SYNTAX_RHO;
+        return true;
+    }
+    return false;
+}
+
+CettaSyntaxId cetta_syntax_default_for_language(CettaLanguageId id) {
+    return id == CETTA_LANGUAGE_RHOCALC ? CETTA_SYNTAX_MRHO
+                                        : CETTA_SYNTAX_METTA;
+}
+
+CettaSyntaxId cetta_syntax_infer_for_path(CettaLanguageId id, const char *path) {
+    if (id == CETTA_LANGUAGE_RHOCALC && path_has_suffix(path, ".rho")) {
+        return CETTA_SYNTAX_RHO;
+    }
+    if (id == CETTA_LANGUAGE_RHOCALC && path_has_suffix(path, ".mrho")) {
+        return CETTA_SYNTAX_MRHO;
+    }
+    return cetta_syntax_default_for_language(id);
+}
+
+bool cetta_language_supports_syntax(CettaLanguageId id, CettaSyntaxId syntax) {
+    if (syntax == CETTA_SYNTAX_AUTO) return true;
+    if (id == CETTA_LANGUAGE_RHOCALC) {
+        return syntax == CETTA_SYNTAX_MRHO ||
+               syntax == CETTA_SYNTAX_RHO ||
+               syntax == CETTA_SYNTAX_METTA;
+    }
+    return syntax == CETTA_SYNTAX_METTA;
 }
 
 const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy) {
