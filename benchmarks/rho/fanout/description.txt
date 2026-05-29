@@ -1,0 +1,18 @@
+fanout
+
+This benchmark is one rho process family: a single broadcast receive fans one
+message out to N sink channels. It stresses substitution into a generated
+parallel body and the cost of the first rho frontier after MeTTa has built the
+process from small helper rules.
+
+Files:
+- sizes.tsv: default sizes for this benchmark only.
+- generate.sh SIZE OUT_DIR: writes fanout_SIZE.metta, fanout_SIZE.mrho, and
+  fanout_SIZE.rho.
+- run.sh: runs only fanout against CeTTa lib_rho, CeTTa --lang rhocalc, and
+  f1r3node rholang-cli.
+
+Semantic caveat: CeTTa rho lanes compute the strict-core one-step successor
+frontier. rholang-cli evaluates Rholang to quiescence.
+
+CeTTa lib_rho prints the full rho:steps reduction frontier; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.

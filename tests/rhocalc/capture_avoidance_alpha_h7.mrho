@@ -1,0 +1,9 @@
+; H7.5 Free names and same-spelling binders are distinct after mrho elaboration.
+; The received payload contains a free $x. Substitution descends under an
+; inner input binder also spelled $x, but the elaborator has already given that
+; binder a distinct identity, so the free name remains free.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $y
+    (rho:recv (rho:quote rho:nil) $x
+      (rho:drop $y)))
+  (rho:send (rho:quote rho:nil) (rho:drop $x)))
