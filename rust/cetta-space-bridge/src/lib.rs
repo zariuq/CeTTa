@@ -877,7 +877,11 @@ fn validate_sexpr_chunk(input: &[u8]) -> Result<usize, String> {
     scratch.add_all_sexpr(input)
 }
 
-fn dump_program_chunks(chunks: &[Vec<u8>]) -> (Vec<u8>, u32) {
+fn checked_packet_count(len: usize, what: &str) -> Result<u32, String> {
+    u32::try_from(len).map_err(|_| format!("{what} exceeds u32 packet limit"))
+}
+
+fn dump_program_chunks(chunks: &[Vec<u8>]) -> Result<(Vec<u8>, u32), String> {
     let mut out = Vec::new();
     let mut count = 0u32;
     for chunk in chunks {
@@ -891,15 +895,17 @@ fn dump_program_chunks(chunks: &[Vec<u8>]) -> (Vec<u8>, u32) {
         if !out.ends_with(b"\n") {
             out.push(b'\n');
         }
-        count = count.saturating_add(1);
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| "program chunk count exceeds u32 packet limit".to_string())?;
     }
-    (out, count)
+    Ok((out, count))
 }
 
 fn merged_context_text(bridge: &BridgeContext) -> Result<Vec<u8>, String> {
     let mut merged = Vec::new();
     bridge.inner.dump_all_sexpr(&mut merged)?;
-    let (program_text, _) = dump_program_chunks(&bridge.program_chunks);
+    let (program_text, _) = dump_program_chunks(&bridge.program_chunks)?;
     if !program_text.is_empty() {
         if !merged.is_empty() && !merged.ends_with(b"\n") {
             merged.push(b'\n');
@@ -2030,7 +2036,7 @@ fn query_bindings_packet(
         return Err(err);
     }
 
-    let row_count = rows.len() as u32;
+    let row_count = checked_packet_count(rows.len(), "query bindings packet row count")?;
     let mut packet = Vec::new();
     append_u32_be(&mut packet, row_count);
     for row in rows {
@@ -2052,7 +2058,10 @@ fn query_bindings_query_only_v2_packet(
     let mut packet = Vec::new();
     let (row_count, pending_rows): (u32, Vec<Vec<u8>>) = if bridge_uses_counted_storage(space) {
         let rows = counted_query_only_packet_rows(&space.inner, &pattern_bytes)?;
-        (rows.len() as u32, rows)
+        (
+            checked_packet_count(rows.len(), "query-only v2 packet row count")?,
+            rows,
+        )
     } else {
         let mut error: Option<String> = None;
         let mut row_count = 0u32;
@@ -2069,7 +2078,16 @@ fn query_bindings_query_only_v2_packet(
             };
             match append_result {
                 Ok(()) => {
-                    row_count += 1;
+                    row_count = match row_count.checked_add(1) {
+                        Some(next) => next,
+                        None => {
+                            error = Some(
+                                "query-only v2 packet row count exceeds u32 packet limit"
+                                    .to_string(),
+                            );
+                            return false;
+                        }
+                    };
                     pending_rows.push(row);
                     true
                 }
@@ -2108,7 +2126,10 @@ fn query_bindings_multi_ref_v3_packet(
         let detailed_packet_rows =
             counted_query_rows_detailed_packet_rows(&space.inner, &pattern_bytes)?;
         factor_count = detailed_packet_rows.factor_count;
-        row_count = detailed_packet_rows.rows.len() as u32;
+        row_count = checked_packet_count(
+            detailed_packet_rows.rows.len(),
+            "multi-ref v3 packet row count",
+        )?;
         pending_rows = detailed_packet_rows.rows;
     } else {
         return Err(
@@ -4878,8 +4899,10 @@ pub extern "C" fn mork_program_dump(program: *mut MorkProgram) -> MorkBuffer {
                 );
             }
         };
-        let (text, count) = dump_program_chunks(&bridge.expr_chunks);
-        MorkBuffer::ok(text, count)
+        match dump_program_chunks(&bridge.expr_chunks) {
+            Ok((text, count)) => MorkBuffer::ok(text, count),
+            Err(err) => MorkBuffer::err(MorkStatusCode::Internal, err.into_bytes()),
+        }
     })
 }
 
@@ -5045,7 +5068,10 @@ pub extern "C" fn mork_context_dump(context: *mut MorkContext) -> MorkBuffer {
             Ok(view) => {
                 let mut text = Vec::new();
                 match view.dump_all_sexpr(&mut text) {
-                    Ok(count) => MorkBuffer::ok(text, count as u32),
+                    Ok(count) => match checked_packet_count(count, "context dump row count") {
+                        Ok(row_count) => MorkBuffer::ok(text, row_count),
+                        Err(err) => MorkBuffer::err(MorkStatusCode::Internal, err.into_bytes()),
+                    },
                     Err(err) => MorkBuffer::err(MorkStatusCode::Internal, err.into_bytes()),
                 }
             }

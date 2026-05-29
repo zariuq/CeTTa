@@ -200,6 +200,7 @@ tests/test_include_missing.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_include_mm2_space_target.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_include_space_target.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_include_space_target_error.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_integer_overflow_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_intersection_atom.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_isinf_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_isnan_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-

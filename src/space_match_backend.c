@@ -65,7 +65,8 @@ static void space_query_conjunction_default(Space *s, Arena *a,
 static void imported_projection_clear(ImportedBridgeState *st);
 static bool imported_storage_ensure_projection(Space *s);
 static bool imported_shadow_refresh_from_projection(Space *s);
-static uint32_t bridge_space_logical_len(const ImportedBridgeState *st);
+static bool bridge_space_logical_len_u32(const ImportedBridgeState *st,
+                                         uint32_t *out_logical);
 static bool pathmap_local_ensure_bridge_live(Space *s);
 static void imported_mark_bridge_untrusted(Space *s);
 static bool pathmap_local_apply_text_chunk_direct(Space *s,
@@ -885,9 +886,11 @@ static uint32_t imported_logical_len(const Space *s) {
         if (st->projection_valid)
             return st->projected_len;
         {
-            uint32_t logical = bridge_space_logical_len(st);
-            if (logical != UINT32_MAX)
+            uint32_t logical = 0;
+            if (bridge_space_logical_len_u32(st, &logical))
                 return logical;
+            if (st->bridge_active && st->bridge_space)
+                return UINT32_MAX;
         }
     }
     return s->native.len;
@@ -912,23 +915,35 @@ static uint32_t imported_storage_logical_len(const Space *s) {
     return imported_logical_len(s);
 }
 
-static uint32_t bridge_space_logical_len(const ImportedBridgeState *st) {
+static bool bridge_space_logical_len_u32(const ImportedBridgeState *st,
+                                         uint32_t *out_logical) {
     uint64_t logical = 0;
-    if (!st || !st->bridge_active || !st->bridge_space)
-        return UINT32_MAX;
+    if (out_logical)
+        *out_logical = 0;
+    if (!out_logical || !st || !st->bridge_active || !st->bridge_space)
+        return false;
     if (!cetta_mork_bridge_space_size(
             (const CettaMorkSpaceHandle *)st->bridge_space, &logical))
-        return UINT32_MAX;
-    return logical > UINT32_MAX ? UINT32_MAX : (uint32_t)logical;
+        return false;
+    if (logical > UINT32_MAX)
+        return false;
+    *out_logical = (uint32_t)logical;
+    return true;
 }
 
-static uint32_t bridge_handle_logical_len(CettaMorkSpaceHandle *bridge) {
+static bool bridge_handle_logical_len_u32(CettaMorkSpaceHandle *bridge,
+                                          uint32_t *out_logical) {
     uint64_t logical = 0;
-    if (!bridge)
-        return UINT32_MAX;
+    if (out_logical)
+        *out_logical = 0;
+    if (!out_logical || !bridge)
+        return false;
     if (!cetta_mork_bridge_space_size(bridge, &logical))
-        return UINT32_MAX;
-    return logical > UINT32_MAX ? UINT32_MAX : (uint32_t)logical;
+        return false;
+    if (logical > UINT32_MAX)
+        return false;
+    *out_logical = (uint32_t)logical;
+    return true;
 }
 
 /* Transitional pathmap/mork projection moves through an explicit
@@ -5362,8 +5377,6 @@ static bool transfer_mark_bridge_destination(Space *dst, uint64_t added,
         st->bridge_unavailable = false;
         st->built = false;
         st->dirty = false;
-        if (logical == UINT32_MAX)
-            return false;
         if (mst) {
             mst->attached_compiled = true;
             mst->attached_count = logical;
@@ -5426,8 +5439,7 @@ static SpaceTransferResult transfer_bridge_logical_rows_direct(Space *dst, Space
     }
 
     if (dst->match_backend.kind == SPACE_ENGINE_MORK) {
-        logical = bridge_handle_logical_len(dst_clone);
-        if (logical == UINT32_MAX) {
+        if (!bridge_handle_logical_len_u32(dst_clone, &logical)) {
             cetta_mork_bridge_space_free(dst_clone);
             return SPACE_TRANSFER_ERROR;
         }
