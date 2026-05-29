@@ -10650,6 +10650,13 @@ tail_call: ;
                 &_empty);
             return;
         }
+        if ((uint64_t)idx_atom->ground.ival > UINT32_MAX) {
+            free(idx_rs.items);
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IndexTooLarge")),
+                &_empty);
+            return;
+        }
         uint32_t idx = (uint32_t)idx_atom->ground.ival;
         free(idx_rs.items);
         if (is_get) {
