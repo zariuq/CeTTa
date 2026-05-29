@@ -312,8 +312,12 @@ int main(void) {
     assert(tu_sym(&universe, pair_head_id) == pair_sym);
     assert(term_universe_get_atom(&universe, pair_lhs_id)->ground.ival == 1);
     assert(term_universe_get_atom(&universe, pair_rhs_id)->ground.ival == 2);
+    assert(space_length64(&left) == 1);
+    assert(space_get_atom_id_at64(&left, 0) == pair_id);
     assert(space_get_at(&left, 0) ==
            term_universe_get_atom(&universe, left.atom_ids[0]));
+    assert(space_get_at64(&left, 0) == space_get_at(&left, 0));
+    assert(space_get_at64(&left, (CettaIndex)UINT32_MAX + 1u) == NULL);
 
     space_add(&right, pair_b);
     assert(universe.len == 4);
@@ -330,6 +334,8 @@ int main(void) {
     assert(universe.len == 5);
     assert(left.atom_ids[1] == boxed_id);
     assert(space_get_at(&left, 1) == stored_boxed);
+    assert(space_length64(&left) == 2);
+    assert(space_get_atom_id_at64(&left, 1) == boxed_id);
 
     Space *clone = space_heap_clone_shallow(&left);
     assert(clone != NULL);
@@ -340,6 +346,10 @@ int main(void) {
     assert(clone->atom_ids[1] == left.atom_ids[1]);
     assert(space_get_at(clone, 0) == space_get_at(&left, 0));
     assert(space_get_at(clone, 1) == space_get_at(&left, 1));
+    assert(space_truncate64(clone, 1));
+    assert(space_length64(clone) == 1);
+    assert(space_get_atom_id_at64(clone, 0) == left.atom_ids[0]);
+    assert(!space_truncate64(clone, (CettaCount)UINT32_MAX + 1u));
 
     space_free(clone);
     free(clone);

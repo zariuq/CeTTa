@@ -124,6 +124,7 @@ typedef struct {
     X(get_atoms, "get-atoms") \
     X(count_atoms, "count-atoms") \
     X(collapse_bind, "collapse-bind") \
+    X(singleton_visible_witness, "singleton-visible-witness") \
     X(superpose_bind, "superpose-bind") \
     X(metta, "metta") \
     X(evalc, "evalc") \
