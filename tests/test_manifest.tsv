@@ -337,10 +337,6 @@ tests/test_remove_equation_updates_index.metta	he	metta	he-extended	main	native	
 tests/test_remove_type_annotation_updates_index.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rho_lib_hygiene_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rho_lib_surface.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_rho_step_generated_process_regression.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
-tests/test_rho_step_inert_without_import_regression.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
-tests/test_rho_step_threaded.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_rho_step_threaded_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_round_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_runtime_stats_surface.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_runtime_surface_docs.metta	he	metta	he-extended	main	native	test	golden	-

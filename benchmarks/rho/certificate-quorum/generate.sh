@@ -31,6 +31,7 @@ esac
 mkdir -p "$out_dir"
 name="certificate_quorum_${n}_${required}"
 metta="$out_dir/$name.metta"
+mrho="$out_dir/$name.mrho"
 rho="$out_dir/$name.rho"
 
 cert_status() {
@@ -83,8 +84,29 @@ cert_status() {
         printf '(audit task%s $task%s $sink%s)' "$task" "$task" "$i"
     done
     printf ')))\n'
-    printf '  (rho.step $program))\n'
+    printf '  $program)\n'
 } > "$metta"
+
+{
+    printf '(rho:par\n'
+    first=1
+    for i in $(seq 0 $((n - 1))); do
+        task=$((i % 4))
+        printf '  (rho:recv $task%s $msg (rho:send $sink%s (rho:drop $msg)))\n' \
+            "$task" "$i"
+        first=0
+    done
+    for i in $(seq 0 $((n - 1))); do
+        task=$((i % 4))
+        status="$(cert_status "$i")"
+        if [ "$status" != "$required" ]; then
+            continue
+        fi
+        printf '  (rho:send $task%s (rho:send $cert%s rho:nil))\n' "$task" "$i"
+        first=0
+    done
+    printf ')\n'
+} > "$mrho"
 
 first=1
 {
@@ -111,4 +133,4 @@ first=1
     printf '\n'
 } > "$rho"
 
-printf '%s\t%s\t%s\n' "$name" "$metta" "$rho"
+printf '%s\t%s\t%s\t%s\n' "$name" "$metta" "$mrho" "$rho"

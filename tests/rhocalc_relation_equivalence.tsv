@@ -1,0 +1,13 @@
+# name	depth	lhs_syntax	lhs_fixture	rhs_syntax	rhs_fixture
+# This matrix stays within the exact-depth successor-image subset that the
+# tiny independent semantics currently models faithfully.
+pure-surface-vs-core-comm	1	rho	tests/rhocalc/pure_surface.rho	mrho	tests/rhocalc/core_comm.mrho
+surface-reflection-vs-core-reflection	1	rho	tests/rhocalc/paper_reflection_name_generation_h4.rho	mrho	tests/rhocalc/paper_reflection_name_generation_h4.mrho
+surface-input-guarded-vs-core-input-guarded	1	rho	tests/rhocalc/paper_input_guarded_replication_unfold_h4.rho	mrho	tests/rhocalc/paper_input_guarded_replication_unfold_h4.mrho
+surface-rotating-witness-vs-core-rotating-witness	2	rho	tests/rhocalc/rotating_scheduler_persistent_branch.rho	mrho	tests/rhocalc/rotating_scheduler_persistent_branch.mrho
+surface-primed-diamond-vs-core-primed-diamond	3	rho	tests/rhocalc/rotating_scheduler_primed_diamond.rho	mrho	tests/rhocalc/rotating_scheduler_primed_diamond.mrho
+core-comm-vs-quote-drop-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/name_quote_drop.mrho
+core-comm-vs-par-zero-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/channel_eq_par_zero_h2.mrho
+core-comm-vs-par-comm-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/channel_eq_par_comm_h2.mrho
+core-comm-vs-par-assoc-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/channel_eq_par_assoc_h2.mrho
+diamond-path-a-vs-path-b	2	mrho	tests/rhocalc/multistep_diamond_h3_path_a.mrho	mrho	tests/rhocalc/multistep_diamond_h3_path_b.mrho

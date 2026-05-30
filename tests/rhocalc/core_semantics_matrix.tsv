@@ -2,10 +2,12 @@ area	clause	fixture	expectation	source
 syntax	nil/core_comm	core_comm.mrho	0 participates in COMM through send/recv result	Meredith-Radestock 2005 section 2 grammar
 syntax	send_payload_process	pure_surface.rho	N!(P) uses a process payload, not a quoted-name payload	Meredith-Radestock 2005 lift/output grammar
 syntax	reject_quote_as_payload	reject_quoted_payload.rho	.rho rejects N!(@{P}) when payload position expects P	local surface discipline matching lift/output
+syntax	reject_send_continuation	reject_send_continuation.mrho	strict-core rho:send rejects a continuation slot and remains asynchronous	Meredith-Radestock 2005 lift/output grammar
 strict-boundary	reject_fresh	reject_fresh.mrho	fresh/new is not in strict core	Meredith-Radestock 2005 core grammar
 strict-boundary	reject_join	reject_join.mrho	joined receive is not in strict core	Meredith-Radestock 2005 core grammar
 strict-boundary	no_reduction_under_recv	no_reduction_under_recv_puritanical.mrho	COMM is top-level only in this operational CLI	Meredith-Radestock 2005 COMM relation
 strict-boundary	no_reduction_inside_quote	quoted_process_not_reduced_in_name_eq.mrho	name equality is structural, not behavioral reduction	Meredith-Radestock 2005 sections 2.3-2.4
+strict-boundary	free_drop_is_stuck	free_drop_is_stuck_h4.mrho	a lone drop has no reduction rule outside semantic substitution	Meredith-Radestock 2005 drop and substitution clauses
 open-names	free_name_allowed	open_name_variable_roundtrip_h7.mrho	open name variables are valid names in full core	Meredith-Radestock 2005 free/bound names
 open-names	quoted_free_name_allowed	open_quoted_name_roundtrip_h7.mrho	open variables under literal quote are valid static data	Meredith-Radestock 2005 quote/substitution discussion
 mrho-elaboration	shadow_same_spelling	mrho_shadow_same_spelling.mrho	nested same-spelling recv binders elaborate to distinct binder identities	Chargueraud 2012 locally nameless representation; Meredith-Radestock 2005 input binder
@@ -30,9 +32,16 @@ substitution	send_payload	paper_reflection_name_generation_h4.mrho	substitution 
 substitution	literal_quote_opaque	quote_substitution_opaque_h7.mrho	substitution does not recur through literal quote	Meredith-Radestock 2005 section 2.0.4 and 2.5
 substitution	quote_drop_sealed	quote_drop_whole_name_substitution_h7.mrho	@{*x} under literal quote normalizes to the free name x when outer scope is sealed	Meredith-Radestock 2005 name equivalence plus quote/substitution boundary
 substitution	capture_avoidance	capture_avoidance_alpha_h7.mrho	substitution alpha-renames an inner binder before capture	Meredith-Radestock 2005 substitution freshness side-condition
+comm	channel_discrimination	channel_discrimination_survives_after_comm.mrho	unrelated sends/receives on different channels remain after a valid COMM	Meredith-Radestock 2005 channel matching in the reduction relation
+comm	common_fragment_chain	comm_par_chain_h1.mrho	one COMM can leave a nontrivial par residual without relying on DROP contraction or nil-elimination	shared strict-core COMM/par fragment for CeTTa-vs-Lean audits
 comm	branching	branching_relation.mrho	one-step COMM enumerates all top-level send/recv matches	Meredith-Radestock 2005 reduction relation
 comm	diamond	multistep_diamond_h3_setup.mrho	independent redexes produce both one-step branches	standard process-calculus confluence sanity
 reflection	self_recreation	paper_divergence_self_recreates_h4.mrho	self-recreation is expressible without primitive replication	Meredith-Radestock 2005 replication discussion
 reflection	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.mrho	input-guarded replication unfolds through reflection	Meredith-Radestock 2005 replication discussion
+scheduler	primed_diamond	rotating_scheduler_primed_diamond.mrho	a unique seed COMM can expose a later canonical-vs-rotating split and eventual reconvergence	operational control choice over the same one-step relation image
+scheduler	primed_diamond_surface	rotating_scheduler_primed_diamond.rho	surface rho preserves the primed-diamond scheduler split/reconvergence witness	operational control choice over the same one-step relation image
+surface	reflection_name_generation	paper_reflection_name_generation_h4.rho	surface rho preserves reflection-driven name generation through one COMM	Meredith-Radestock 2005 reflection via quote/drop
+surface	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.rho	surface rho preserves input-guarded unfolding through one COMM	Meredith-Radestock 2005 replication discussion
+surface	rotating_witness	rotating_scheduler_persistent_branch.rho	surface rho preserves the recreating-vs-one-shot scheduler witness shape	operational control choice over the same one-step relation image
 surface	open_name	surface_open_name_variable.rho	explicit $x is accepted as an open surface name	local surface syntax for full core
 surface	quote_scope	surface_quote_seals_outer_binder.rho	@{...} parses outside the current surface binder scope	Meredith-Radestock 2005 quote/substitution boundary

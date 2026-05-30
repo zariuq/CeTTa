@@ -1,0 +1,5 @@
+// Surface rho pipeline: one message traverses two forwarders and is then consumed.
+@{0}!(0) |
+for ($msg <- @{0}) {@{@{0}!(0)}!(*$msg)} |
+for ($msg <- @{@{0}!(0)}) {@{for ($done <- @{0}) {0}}!(*$msg)} |
+for ($done <- @{for ($done <- @{0}) {0}}) {0}

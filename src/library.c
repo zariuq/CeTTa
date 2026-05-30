@@ -292,7 +292,6 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->loaded_module_len = 0;
     ctx->native_handle_len = 0;
     ctx->native_handle_next_id = 1;
-    ctx->rho_step_threads = 1u;
     ctx->foreign_runtime = cetta_foreign_runtime_new();
 }
 
@@ -370,44 +369,6 @@ void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
                           ctx->cmdline_arg_len < CETTA_MAX_CMDLINE_ARGS; i++) {
         ctx->cmdline_args[ctx->cmdline_arg_len++] = argv[i];
     }
-}
-
-static uint32_t library_threads_from_option(CettaEvalOptionValueKind kind,
-                                            const char *repr,
-                                            int64_t int_value,
-                                            uint32_t default_value) {
-    if (kind == CETTA_EVAL_OPTION_VALUE_INT) {
-        if (int_value <= 0) return 1u;
-        if (int_value > 1024) return 1024u;
-        return (uint32_t)int_value;
-    }
-    if (repr &&
-        (strcmp(repr, "off") == 0 ||
-         strcmp(repr, "false") == 0 ||
-         strcmp(repr, "disabled") == 0)) {
-        return 1u;
-    }
-    if (repr &&
-        (strcmp(repr, "on") == 0 ||
-         strcmp(repr, "true") == 0 ||
-         strcmp(repr, "threaded") == 0 ||
-         strcmp(repr, "parallel") == 0)) {
-        return 2u;
-    }
-    return default_value;
-}
-
-void cetta_library_context_set_rho_step_threads(CettaLibraryContext *ctx,
-                                                CettaEvalOptionValueKind kind,
-                                                const char *repr,
-                                                int64_t int_value) {
-    if (!ctx) return;
-    ctx->rho_step_threads =
-        library_threads_from_option(kind, repr, int_value, ctx->rho_step_threads);
-}
-
-uint32_t cetta_library_context_rho_step_threads(const CettaLibraryContext *ctx) {
-    return ctx && ctx->rho_step_threads > 0 ? ctx->rho_step_threads : 1u;
 }
 
 bool cetta_library_context_rho_active(const CettaLibraryContext *ctx) {

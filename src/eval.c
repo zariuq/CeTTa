@@ -4306,231 +4306,6 @@ static uint32_t metta_eval_bind_visit(Space *s, Arena *a, Atom *atom, int fuel,
     return visited;
 }
 
-static bool rho_surface_symbol_named(Atom *atom, const char *name) {
-    return atom && atom->kind == ATOM_SYMBOL &&
-           strcmp(atom_name_cstr(atom), name) == 0;
-}
-
-static bool rho_surface_head_named(Atom *atom, const char *name) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0 &&
-           atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           strcmp(atom_name_cstr(atom->expr.elems[0]), name) == 0;
-}
-
-static bool rho_surface_head_is_core_constructor(Atom *atom) {
-    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0 ||
-        !atom->expr.elems[0] || atom->expr.elems[0]->kind != ATOM_SYMBOL) {
-        return false;
-    }
-    const char *head = atom_name_cstr(atom->expr.elems[0]);
-    return strcmp(head, "rho:par") == 0 ||
-           strcmp(head, "rho:send") == 0 ||
-           strcmp(head, "rho:recv") == 0 ||
-           strcmp(head, "rho:quote") == 0 ||
-           strcmp(head, "rho:drop") == 0;
-}
-
-static void rho_step_resolve_proc_arg(Space *s, Arena *a, const Bindings *env,
-                                      Atom *atom, int fuel, ResultSet *out);
-static void rho_step_resolve_name_arg(Space *s, Arena *a, const Bindings *env,
-                                      Atom *atom, int fuel, ResultSet *out);
-
-static void rho_step_add_rebuilt(Arena *a, const char *head,
-                                 Atom *const *args, uint32_t nargs,
-                                 ResultSet *out) {
-    Atom **elems = arena_alloc(a, sizeof(Atom *) * (size_t)(nargs + 1));
-    elems[0] = atom_symbol(a, head);
-    for (uint32_t i = 0; i < nargs; i++) {
-        elems[i + 1] = args[i];
-    }
-    result_set_add(out, atom_expr(a, elems, nargs + 1));
-}
-
-static void rho_step_add_child_errors(ResultSet *out, ResultSet *children) {
-    for (uint32_t i = 0; i < children->len; i++) {
-        if (atom_is_error(children->items[i])) {
-            result_set_add(out, children->items[i]);
-        }
-    }
-}
-
-static void rho_step_resolve_host_arg(Space *s, Arena *a, const Bindings *env,
-                                      Atom *atom, int fuel,
-                                      bool name_position, ResultSet *out) {
-    Atom *bound = env ? bindings_apply_if_vars(env, a, atom) : atom;
-    OutcomeSet vals;
-    outcome_set_init(&vals);
-    metta_eval_bind(s, a, bound, fuel, &vals);
-    for (uint32_t i = 0; i < vals.len; i++) {
-        Atom *value = outcome_atom_materialize(a, &vals.items[i]);
-        if (!value || atom_is_empty(value)) {
-            continue;
-        }
-        if (atom_is_error(value) || atom_eq(value, bound)) {
-            result_set_add(out, value);
-            continue;
-        }
-        if (name_position) {
-            rho_step_resolve_name_arg(s, a, env, value, fuel, out);
-        } else {
-            rho_step_resolve_proc_arg(s, a, env, value, fuel, out);
-        }
-    }
-    outcome_set_free(&vals);
-}
-
-static void rho_step_resolve_par_rec(Arena *a, Atom **prefix,
-                                     ResultSet *children, uint32_t child_count,
-                                     uint32_t index, ResultSet *out) {
-    if (index == child_count) {
-        rho_step_add_rebuilt(a, "rho:par", prefix, child_count, out);
-        return;
-    }
-    for (uint32_t i = 0; i < children[index].len; i++) {
-        Atom *child = children[index].items[i];
-        if (atom_is_error(child)) {
-            result_set_add(out, child);
-            continue;
-        }
-        prefix[index] = child;
-        rho_step_resolve_par_rec(a, prefix, children, child_count, index + 1,
-                                 out);
-    }
-}
-
-static void rho_step_resolve_proc_arg(Space *s, Arena *a, const Bindings *env,
-                                      Atom *atom, int fuel, ResultSet *out) {
-    if (!atom) return;
-
-    if (atom->kind == ATOM_VAR) {
-        Atom *bound = env ? bindings_apply_if_vars(env, a, atom) : atom;
-        if (!atom_eq(bound, atom)) {
-            rho_step_resolve_proc_arg(s, a, env, bound, fuel, out);
-        } else {
-            result_set_add(out, atom);
-        }
-        return;
-    }
-
-    if (rho_surface_symbol_named(atom, "rho:nil")) {
-        result_set_add(out, atom);
-        return;
-    }
-
-    if (rho_surface_head_named(atom, "rho:quote")) {
-        result_set_add(out, atom);
-        return;
-    }
-
-    if (rho_surface_head_named(atom, "rho:par")) {
-        uint32_t child_count = expr_nargs(atom);
-        ResultSet *children = arena_alloc(a, sizeof(ResultSet) *
-                                             (child_count ? child_count : 1));
-        Atom **prefix = arena_alloc(a, sizeof(Atom *) *
-                                       (child_count ? child_count : 1));
-        for (uint32_t i = 0; i < child_count; i++) {
-            result_set_init(&children[i]);
-            rho_step_resolve_proc_arg(s, a, env, expr_arg(atom, i), fuel,
-                                      &children[i]);
-        }
-        rho_step_resolve_par_rec(a, prefix, children, child_count, 0, out);
-        for (uint32_t i = 0; i < child_count; i++) {
-            result_set_free(&children[i]);
-        }
-        return;
-    }
-
-    if (rho_surface_head_named(atom, "rho:send") && expr_nargs(atom) == 2) {
-        ResultSet names;
-        ResultSet payloads;
-        result_set_init(&names);
-        result_set_init(&payloads);
-        rho_step_resolve_name_arg(s, a, env, expr_arg(atom, 0), fuel, &names);
-        rho_step_resolve_proc_arg(s, a, env, expr_arg(atom, 1), fuel, &payloads);
-        rho_step_add_child_errors(out, &names);
-        rho_step_add_child_errors(out, &payloads);
-        for (uint32_t ni = 0; ni < names.len; ni++) {
-            if (atom_is_error(names.items[ni])) continue;
-            for (uint32_t pi = 0; pi < payloads.len; pi++) {
-                if (atom_is_error(payloads.items[pi])) continue;
-                Atom *args[2] = {names.items[ni], payloads.items[pi]};
-                rho_step_add_rebuilt(a, "rho:send", args, 2, out);
-            }
-        }
-        result_set_free(&names);
-        result_set_free(&payloads);
-        return;
-    }
-
-    if (rho_surface_head_named(atom, "rho:recv") && expr_nargs(atom) == 3) {
-        ResultSet names;
-        ResultSet bodies;
-        result_set_init(&names);
-        result_set_init(&bodies);
-        rho_step_resolve_name_arg(s, a, env, expr_arg(atom, 0), fuel, &names);
-        rho_step_resolve_proc_arg(s, a, env, expr_arg(atom, 2), fuel, &bodies);
-        rho_step_add_child_errors(out, &names);
-        rho_step_add_child_errors(out, &bodies);
-        for (uint32_t ni = 0; ni < names.len; ni++) {
-            if (atom_is_error(names.items[ni])) continue;
-            for (uint32_t bi = 0; bi < bodies.len; bi++) {
-                if (atom_is_error(bodies.items[bi])) continue;
-                Atom *args[3] = {names.items[ni], expr_arg(atom, 1),
-                                 bodies.items[bi]};
-                rho_step_add_rebuilt(a, "rho:recv", args, 3, out);
-            }
-        }
-        result_set_free(&names);
-        result_set_free(&bodies);
-        return;
-    }
-
-    if (rho_surface_head_named(atom, "rho:drop") && expr_nargs(atom) == 1) {
-        ResultSet names;
-        result_set_init(&names);
-        rho_step_resolve_name_arg(s, a, env, expr_arg(atom, 0), fuel, &names);
-        rho_step_add_child_errors(out, &names);
-        for (uint32_t ni = 0; ni < names.len; ni++) {
-            if (atom_is_error(names.items[ni])) continue;
-            Atom *args[1] = {names.items[ni]};
-            rho_step_add_rebuilt(a, "rho:drop", args, 1, out);
-        }
-        result_set_free(&names);
-        return;
-    }
-
-    if (rho_surface_head_is_core_constructor(atom)) {
-        result_set_add(out, atom);
-        return;
-    }
-
-    rho_step_resolve_host_arg(s, a, env, atom, fuel, false, out);
-}
-
-static void rho_step_resolve_name_arg(Space *s, Arena *a, const Bindings *env,
-                                      Atom *atom, int fuel, ResultSet *out) {
-    if (!atom) return;
-
-    if (atom->kind == ATOM_VAR) {
-        Atom *bound = env ? bindings_apply_if_vars(env, a, atom) : atom;
-        if (!atom_eq(bound, atom)) {
-            rho_step_resolve_name_arg(s, a, env, bound, fuel, out);
-        } else {
-            result_set_add(out, atom);
-        }
-        return;
-    }
-
-    if (rho_surface_head_named(atom, "rho:quote") ||
-        rho_surface_symbol_named(atom, "rho:nil") ||
-        rho_surface_head_is_core_constructor(atom)) {
-        result_set_add(out, atom);
-        return;
-    }
-
-    rho_step_resolve_host_arg(s, a, env, atom, fuel, true, out);
-}
-
 typedef struct {
     Atom **items;
     uint32_t len;
@@ -9726,7 +9501,6 @@ tail_call: ;
     uint32_t nargs = expr_nargs(atom);
     const SymbolId head_id = atom_head_symbol_id(atom);
     Atom *head = atom->expr.elems[0];
-    const char *head_name = head ? atom_name_cstr(head) : NULL;
 
     if (g_hyperpose_thread_unsafe_requested &&
         hyperpose_effectful_head(head_id, head)) {
@@ -9736,67 +9510,6 @@ tail_call: ;
     }
 
     /* ── Special forms (arguments NOT pre-evaluated) ───────────────────── */
-
-    /* ── rho:step ──────────────────────────────────────────────────────── */
-    if (head_name && strcmp(head_name, "rho:step") == 0) {
-        if (!cetta_library_context_rho_active(g_library_context)) {
-            outcome_set_add(os, atom, &_empty);
-            return;
-        }
-        if (nargs != 1) {
-            outcome_set_add(os,
-                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
-                &_empty);
-            return;
-        }
-        ResultSet proc_values;
-        result_set_init(&proc_values);
-        rho_step_resolve_proc_arg(s, a, CURRENT_ENV, expr_arg(atom, 0), fuel,
-                                  &proc_values);
-        for (uint32_t pi = 0; pi < proc_values.len; pi++) {
-            Atom *proc_value = proc_values.items[pi];
-            if (atom_is_empty(proc_value)) {
-                continue;
-            }
-            if (atom_is_error(proc_value)) {
-                outcome_set_add(os, proc_value, &_empty);
-                continue;
-            }
-            Atom *proc = rhocalc_elaborate_mrho_atom(a, proc_value);
-            if (!proc) {
-                const char *detail = rhocalc_last_parse_error();
-                outcome_set_add(os,
-                    atom_error(a, atom,
-                               atom_string(a, detail ? detail
-                                                     : "could not elaborate rhocalc/mrho binders")),
-                    &_empty);
-                continue;
-            }
-            RhoStepSet steps = {0};
-            uint32_t thread_count =
-                cetta_library_context_rho_step_threads(g_library_context);
-            if (!rhocalc_one_step_with_threads(a, proc, thread_count, &steps)) {
-                const char *detail = rhocalc_last_validation_error();
-                char message[320];
-                if (detail && *detail) {
-                    snprintf(message, sizeof(message),
-                             "invalid rhocalc core process: %s", detail);
-                } else {
-                    snprintf(message, sizeof(message), "invalid rhocalc core process");
-                }
-                free(steps.items);
-                outcome_set_add(os, atom_error(a, atom, atom_string(a, message)),
-                                &_empty);
-                continue;
-            }
-            for (uint32_t i = 0; i < steps.len; i++) {
-                outcome_set_add(os, steps.items[i], &_empty);
-            }
-            free(steps.items);
-        }
-        result_set_free(&proc_values);
-        return;
-    }
 
     /* ── superpose / hyperpose ─────────────────────────────────────────── */
     if (head_id == g_builtin_syms.superpose) {
@@ -12234,8 +11947,7 @@ tail_call: ;
             char int_buf[32];
             const char *key_name = atom_name_cstr(key);
             bool strict_thread_count =
-                strcmp(key_name, "hyperpose-threads") == 0 ||
-                strcmp(key_name, "rho-step-threads") == 0;
+                strcmp(key_name, "hyperpose-threads") == 0;
 
             if (strict_thread_count) {
                 const char *reason = validate_thread_count_pragma_value(value);
@@ -12262,11 +11974,6 @@ tail_call: ;
             }
             handled = cetta_eval_session_record_generic_setting(
                 session, key_name, value_kind, value_repr, int_value);
-            if (handled && g_library_context &&
-                strcmp(key_name, "rho-step-threads") == 0) {
-                cetta_library_context_set_rho_step_threads(
-                    g_library_context, value_kind, value_repr, int_value);
-            }
         }
 
         outcome_set_add(os, handled ? atom_unit(a) : atom, &_empty);

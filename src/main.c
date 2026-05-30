@@ -32,6 +32,8 @@ static void handle_sigsegv(int sig) {
 static bool g_count_only = false;
 static bool g_quiet_results = false;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
+static const uint32_t CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT = 100000u;
+static const int CETTA_RHOCALC_EXIT_REDUCTION_LIMIT_EXHAUSTED = 3;
 
 typedef enum {
     CETTA_DISPLAY_VARS_AUTO = 0,
@@ -644,11 +646,24 @@ static bool endpoint_supports_syntax(const CettaCliEndpoint *endpoint,
     return false;
 }
 
+static bool rho_scheduler_policy_from_name(const char *name,
+                                           RhoSchedulerPolicy *out) {
+    if (!name || !out) return false;
+    if (strcmp(name, "canonical") == 0) {
+        *out = RHO_SCHEDULER_CANONICAL;
+        return true;
+    }
+    if (strcmp(name, "rotating") == 0) {
+        *out = RHO_SCHEDULER_ROTATING;
+        return true;
+    }
+    return false;
+}
+
 static int run_rhocalc_cli(const char *filename,
                            const char *inline_text,
                            CettaSyntaxId syntax,
-                           bool count_only,
-                           uint32_t rho_step_threads) {
+                           const RhoRuntimeProfile *profile) {
     int rc = 0;
     int n = 0;
     Atom **atoms = NULL;
@@ -681,29 +696,27 @@ static int run_rhocalc_cli(const char *filename,
     }
 
     for (int i = 0; i < n; i++) {
-        RhoStepSet steps = {0};
-        if (!rhocalc_one_step_with_threads(&arena, atoms[i],
-                                           rho_step_threads, &steps)) {
+        RhoReductionResult reduction = {0};
+        if (!rhocalc_reduce_to_quiescence_with_profile(&arena, atoms[i],
+                                                       profile, &reduction)) {
             const char *detail = rhocalc_last_validation_error();
             fprintf(stderr, "error: invalid rhocalc core process");
             if (detail) fprintf(stderr, ": %s", detail);
             fputc('\n', stderr);
-            free(steps.items);
             rc = 1;
             goto done;
         }
-        if (count_only) {
-            printf("%u\n", steps.len);
-            free(steps.items);
-            continue;
+        rhocalc_print_atom_syntax(reduction.residual, syntax, stdout);
+        fputc('\n', stdout);
+        if (reduction.status == RHOCALC_REDUCTION_LIMIT_EXHAUSTED) {
+            fflush(stdout);
+            fprintf(stderr,
+                    "warning: rhocalc reduction limit exhausted after %u COMM %s\n",
+                    reduction.reductions_taken,
+                    reduction.reductions_taken == 1 ? "reduction" : "reductions");
+            rc = CETTA_RHOCALC_EXIT_REDUCTION_LIMIT_EXHAUSTED;
+            goto done;
         }
-        ResultSet rs = {
-            .items = steps.items,
-            .len = steps.len,
-            .cap = steps.len,
-        };
-        write_results(stdout, &rs);
-        free(steps.items);
     }
 
 done:
@@ -797,7 +810,8 @@ static void print_usage(FILE *out) {
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --hyperpose-threads <n> <file.metta> # enable OS-threaded hyperpose scheduling when n > 1\n", out);
-    fputs("       cetta --rho-step-threads <n> <file>       # enable OS-threaded rho COMM frontier enumeration when n > 1\n", out);
+    fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
+    fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
     fputs("       cetta [--lang <name>] --list-profiles\n", out);
@@ -1066,7 +1080,10 @@ int main(int argc, char **argv) {
     uint32_t lang_occurrences = 0;
     int fuel_override = -1;
     int64_t hyperpose_threads_override = -1;
-    int64_t rho_step_threads_override = -1;
+    uint32_t rho_reduction_limit = CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT;
+    bool rho_reduction_limit_requested = false;
+    RhoSchedulerPolicy rho_scheduler = RHO_SCHEDULER_CANONICAL;
+    bool rho_scheduler_requested = false;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
 
@@ -1087,8 +1104,7 @@ int main(int argc, char **argv) {
             cetta_language_print_inventory(stdout);
             return 0;
         }
-        if (strcmp(argv[i], "--list-space-engines") == 0 ||
-            strcmp(argv[i], "--list-space-match-backends") == 0) {
+        if (strcmp(argv[i], "--list-space-engines") == 0) {
             space_match_backend_print_inventory(stdout);
             return 0;
         }
@@ -1151,6 +1167,35 @@ int main(int argc, char **argv) {
             fuel_override = (int)parsed;
             continue;
         }
+        if (strcmp(argv[i], "--rho-reduction-limit") == 0) {
+            char *endp = NULL;
+            unsigned long long parsed;
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            parsed = strtoull(argv[++i], &endp, 10);
+            if (!endp || *endp != '\0' || parsed == 0 ||
+                parsed > 100000000ULL) {
+                fprintf(stderr, "error: invalid rhocalc reduction limit '%s'\n", argv[i]);
+                return 2;
+            }
+            rho_reduction_limit = (uint32_t)parsed;
+            rho_reduction_limit_requested = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--rho-scheduler") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!rho_scheduler_policy_from_name(argv[++i], &rho_scheduler)) {
+                fprintf(stderr, "error: unknown rho scheduler '%s'\n", argv[i]);
+                return 2;
+            }
+            rho_scheduler_requested = true;
+            continue;
+        }
         if (strcmp(argv[i], "--hyperpose-threads") == 0) {
             char *endp = NULL;
             long long parsed;
@@ -1164,21 +1209,6 @@ int main(int argc, char **argv) {
                 return 2;
             }
             hyperpose_threads_override = (int64_t)parsed;
-            continue;
-        }
-        if (strcmp(argv[i], "--rho-step-threads") == 0) {
-            char *endp = NULL;
-            long long parsed;
-            if (i + 1 >= argc) {
-                print_usage(stderr);
-                return 1;
-            }
-            parsed = strtoll(argv[++i], &endp, 10);
-            if (!endp || *endp != '\0' || parsed < 0 || parsed > 1024) {
-                fprintf(stderr, "error: invalid rho step thread count '%s'\n", argv[i]);
-                return 2;
-            }
-            rho_step_threads_override = (int64_t)parsed;
             continue;
         }
         if (strcmp(argv[i], "--steps") == 0) {
@@ -1196,8 +1226,7 @@ int main(int argc, char **argv) {
             mm2_step_limit = (uint64_t)parsed;
             continue;
         }
-        if (strcmp(argv[i], "--space-engine") == 0 ||
-            strcmp(argv[i], "--space-match-backend") == 0) {
+        if (strcmp(argv[i], "--space-engine") == 0) {
             if (i + 1 >= argc) {
                 print_usage(stderr);
                 return 1;
@@ -1328,6 +1357,11 @@ int main(int argc, char **argv) {
     }
 
     if (translate_mode) {
+        if (rho_reduction_limit_requested || rho_scheduler_requested) {
+            fprintf(stderr, "error: rhocalc runtime flags do not combine with --translate\n");
+            free(inline_buf);
+            return 2;
+        }
         CettaSyntaxId output_syntax =
             endpoint_effective_syntax(&target_endpoint, NULL);
         if (!endpoint_supports_syntax(&target_endpoint, output_syntax, "target")) {
@@ -1352,19 +1386,39 @@ int main(int argc, char **argv) {
     }
 
     if (lang->id == CETTA_LANGUAGE_RHOCALC) {
+        RhoRuntimeProfile rho_profile = {
+            .scheduler_policy = rho_scheduler,
+            .reduction_limit = rho_reduction_limit,
+        };
         if (compile_mode || compile_stdlib_mode) {
             fprintf(stderr, "error: compile modes are not supported with --lang rhocalc\n");
             free(inline_buf);
             return 2;
         }
-        uint32_t rho_threads = rho_step_threads_override > 0
-            ? (uint32_t)rho_step_threads_override
-            : 1u;
-        int rho_rc =
-            run_rhocalc_cli(filename, inline_text, syntax, count_only,
-                            rho_threads);
+        if (count_only) {
+            fprintf(stderr,
+                    "error: --count-only is not supported with --lang rhocalc\n");
+            free(inline_buf);
+            return 2;
+        }
+        if (emit_runtime_stats) {
+            cetta_runtime_stats_reset();
+            cetta_runtime_stats_enable();
+        }
+        int rho_rc = run_rhocalc_cli(filename, inline_text, syntax, &rho_profile);
+        if (emit_runtime_stats) {
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            cetta_runtime_stats_print(stderr, &stats);
+        }
         free(inline_buf);
         return rho_rc;
+    }
+
+    if (rho_reduction_limit_requested || rho_scheduler_requested) {
+        fprintf(stderr, "error: rhocalc runtime flags require --lang rhocalc\n");
+        free(inline_buf);
+        return 2;
     }
 
     /* --compile-stdlib: parse .metta file, emit C blob header, exit */
@@ -1500,17 +1554,6 @@ int main(int argc, char **argv) {
         cetta_eval_session_record_generic_setting(
             &libraries.session, "hyperpose-threads",
             CETTA_EVAL_OPTION_VALUE_INT, repr, hyperpose_threads_override);
-    }
-    if (rho_step_threads_override >= 0) {
-        char repr[32];
-        snprintf(repr, sizeof(repr), "%lld",
-                 (long long)rho_step_threads_override);
-        cetta_eval_session_record_generic_setting(
-            &libraries.session, "rho-step-threads",
-            CETTA_EVAL_OPTION_VALUE_INT, repr, rho_step_threads_override);
-        cetta_library_context_set_rho_step_threads(
-            &libraries, CETTA_EVAL_OPTION_VALUE_INT, repr,
-            rho_step_threads_override);
     }
     eval_set_library_context(&libraries);
 

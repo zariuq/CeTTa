@@ -1,30 +1,38 @@
 certificate-quorum
 
-This benchmark models the first delivery frontier of a certificate quorum
-workflow. The source is authored as MeTTa data: certificate facts carry a task
-tag, rho task channel name, validity status, and certificate channel; auditor
-rows subscribe sinks to task tags and task channel names. MeTTa filters valid
-certificates, synthesizes certificate sends and auditor receives, and calls
-rho.step.
+This benchmark models a certificate quorum network reduced under strict-core
+rho runtime semantics. The source is authored as MeTTa data: certificate facts
+carry a task tag, rho task channel name, validity status, and certificate
+channel; auditor rows subscribe sinks to task tags and task channel names.
+MeTTa filters valid certificates, synthesizes certificate sends and auditor
+receives, and can emit the resulting rho process as data.
 
 The task tag is symbolic policy data; the task channel name is the rho
 communication identity. Auditors are emitted unconditionally; CERT_STATUS
 selects only which certificate sends enter the synthesized rho network.
 
 Strict-core rho does not have joins or threshold aggregation, so this benchmark
-does not implement the final quorum decision. It measures the communication
-frontier that a higher layer would consume while keeping the rho kernel pure.
---lang rhocalc can run the synthesized network, but it cannot interpret the
+does not implement the final quorum decision. It measures runtime reduction of
+the synthesized communication network while keeping the rho kernel pure.
+`--lang rhocalc` can run the synthesized network, but it cannot interpret the
 certificate/auditor tables and validity policy.
 
 Files:
 - sizes.tsv: certificate/auditor table sizes for this benchmark only.
-- generate.sh SIZE OUT_DIR: writes certificate_quorum_SIZE.metta and
-  certificate_quorum_SIZE.rho.
-- run.sh: runs only certificate-quorum against CeTTa lib_rho and f1r3node
-  rholang-cli.
+- generate.sh SIZE OUT_DIR: writes certificate_quorum_SIZE.metta,
+  certificate_quorum_SIZE.mrho, and certificate_quorum_SIZE.rho.
+- run.sh: runs only certificate-quorum against CeTTa --lang rhocalc and
+  f1r3node rholang-cli.
+
+The generated `.mrho` file is CeTTa's strict-core rho concrete syntax; the
+generated `.rho` file is the surface rho/Rholang spelling used for
+cross-engine runs.
 
 Use CERT_STATUS=valid or CERT_STATUS=stale to select which certificates are
 emitted. The default is valid.
 
-CeTTa lib_rho prints the full reduction frontier as ordinary CeTTa results; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
+CeTTa prints the residual process after deterministic reduction;
+rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured
+wall time therefore includes asymmetric output-formatting cost. Treat these
+rows as engine-end-to-end measurements, not scheduler-to-scheduler
+measurements.

@@ -2,7 +2,7 @@
 ; Send channel: @{0 | send@{0}(0)} — syntactically distinct from recv channel.
 ; Recv channel: @{send@{0}(0)}.
 ; Both normalize to @{send@{0}(0)}; COMM should fire.
-; If COMM fires: the one-step frontier contains rho:nil; if not: it is empty.
+; If COMM fires: the one-step successor set contains rho:nil; if not: it is empty.
 (rho:par
   (rho:send
     (rho:quote (rho:par rho:nil (rho:send (rho:quote rho:nil) rho:nil)))

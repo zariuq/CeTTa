@@ -1,0 +1,5 @@
+// Surface rho mirror of the rotating scheduler witness with one recreating and one one-shot branch.
+for ($z <- @{0}) {0} |
+@{0}!(0) |
+for ($y <- @{@{0}!(0)}) {*$y | @{@{0}!(0)}!(*$y)} |
+@{@{0}!(0)}!(for ($y <- @{@{0}!(0)}) {*$y | @{@{0}!(0)}!(*$y)})

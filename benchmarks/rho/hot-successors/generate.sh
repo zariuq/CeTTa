@@ -20,7 +20,7 @@ case "$n" in
 esac
 
 mkdir -p "$out_dir"
-name="hot_frontier_$n"
+name="hot_successors_$n"
 mrho="$out_dir/$name.mrho"
 metta="$out_dir/$name.metta"
 rho="$out_dir/$name.rho"
@@ -42,15 +42,17 @@ rho="$out_dir/$name.rho"
     printf '   (rho.recv $chan $msg (rho.send $out (rho.drop $msg))))\n\n'
     printf '(= (hot-send $chan $payload)\n'
     printf '   (rho.send $chan (rho.send $payload rho.nil)))\n\n'
-    printf '!(rho.step\n'
-    printf '  (rho.par\n'
+    printf '!(let $program\n'
+    printf '  (eval\n'
+    printf '    (rho.par\n'
     for i in $(seq 0 $((n - 1))); do
-        printf '    (hot-recv $hot $out%s)\n' "$i"
+        printf '      (hot-recv $hot $out%s)\n' "$i"
     done
     for i in $(seq 0 $((n - 1))); do
-        printf '    (hot-send $hot $p%s)\n' "$i"
+        printf '      (hot-send $hot $p%s)\n' "$i"
     done
-    printf '  ))\n'
+    printf '    ))\n'
+    printf '  $program)\n'
 } > "$metta"
 
 {

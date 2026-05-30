@@ -47,7 +47,7 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
      "Planned port from mettail-rust inventory",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
     {CETTA_LANGUAGE_RHOCALC, "rhocalc", "rhocalc", true,
-     "Paper-faithful core rho-calculus one-step relation",
+     "Strict-core rho-calculus reducer to quiescence",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
 };
 
