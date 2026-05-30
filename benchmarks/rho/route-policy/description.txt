@@ -3,7 +3,8 @@ route-policy
 This benchmark extends route-synthesis with a simple policy field. The source
 is a MeTTa route table of (edge src dst tag) facts. MeTTa filters the table to
 one required tag, synthesizes only the allowed rho forwarders and signals, and
-then calls rho.step.
+then emits the resulting rho process as data. The benchmark runner executes
+that generated process through `--lang rhocalc` and through rholang-cli.
 
 The route tag is symbolic policy data, while src and dst are rho name atoms used
 for communication.
@@ -15,12 +16,20 @@ filtered network for cross-engine timing.
 
 Files:
 - sizes.tsv: route-table sizes for this benchmark only.
-- generate.sh SIZE OUT_DIR: writes route_policy_SIZE.metta and
-  route_policy_SIZE.rho.
-- run.sh: runs only route-policy against CeTTa lib_rho and f1r3node
-  rholang-cli.
+- generate.sh SIZE OUT_DIR: writes route_policy_SIZE.metta,
+  route_policy_SIZE.mrho, and route_policy_SIZE.rho.
+- run.sh: runs only route-policy against CeTTa --lang rhocalc and
+  f1r3node rholang-cli.
+
+The generated `.mrho` file is CeTTa's strict-core rho concrete syntax; the
+generated `.rho` file is the surface rho/Rholang spelling used for
+cross-engine runs.
 
 Use ROUTE_POLICY=trusted or ROUTE_POLICY=backup to select the allowed edge tag.
 The default is trusted.
 
-CeTTa lib_rho prints the full reduction frontier as ordinary CeTTa results; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
+CeTTa prints the residual process after deterministic reduction;
+rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured
+wall time therefore includes asymmetric output-formatting cost. Treat these
+rows as engine-end-to-end measurements, not scheduler-to-scheduler
+measurements.

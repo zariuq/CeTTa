@@ -1,0 +1,11 @@
+; H7.3 Free whole-name quote-drop normalization can yield a drop-typed
+; strict-core COMM residual. The receive binder is unused; the quoted drop on
+; free $x normalizes from *(@(*$x)) to *$x.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $z
+    (rho:drop
+      (rho:quote
+        (rho:drop $x))))
+  (rho:send
+    (rho:quote rho:nil)
+    rho:nil))

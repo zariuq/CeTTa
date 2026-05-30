@@ -5,9 +5,8 @@ BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$BENCH_DIR/../../.." && pwd)"
 CETTA_BIN="${CETTA_BIN:-$ROOT/cetta}"
 RHOLANG_CLI="${RHOLANG_CLI:-$(command -v rholang-cli || true)}"
-OUT_DIR="${OUT_DIR:-$ROOT/runtime/benchmarks/rho/hot-frontier}"
+OUT_DIR="${OUT_DIR:-$ROOT/runtime/benchmarks/rho/hot-successors}"
 REPEATS="${REPEATS:-3}"
-RHO_STEP_THREADS="${RHO_STEP_THREADS:-2}"
 RHOLANG_MAP_SIZE="${RHOLANG_MAP_SIZE:-268435456}"
 
 if [ ! -x "$CETTA_BIN" ]; then
@@ -49,7 +48,7 @@ time_case() {
     fi
     read -r seconds max_rss < <(tail -n 1 "$time_file")
     stdout_bytes="$(wc -c < "$stem.out" | tr -d '[:space:]')"
-    printf 'hot-frontier\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'hot-successors\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$size" "$engine" "$repeat" "$status" "$seconds" "$max_rss" \
         "$stdout_bytes" >> "$RESULTS"
     return "$status"
@@ -63,11 +62,10 @@ sizes() {
     fi
 }
 
-printf '== rho hot-frontier benchmark ==\n'
+printf '== rho hot-successors benchmark ==\n'
 printf 'CeTTa:      %s\n' "$CETTA_BIN"
 printf 'Rholang:    %s\n' "$RHOLANG_CLI"
 printf 'Repeats:    %s\n' "$REPEATS"
-printf 'Rho threads: %s\n' "$RHO_STEP_THREADS"
 printf 'Output dir: %s\n' "$OUT_DIR"
 
 for size in $(sizes); do
@@ -78,14 +76,8 @@ for size in $(sizes); do
     rho="$(printf '%s' "$generated" | cut -f4)"
     printf 'case=%s size=%s\n' "$case_name" "$size"
     for rep in $(seq 1 "$REPEATS"); do
-        time_case "$size" "cetta-lib-rho" "$case_name" "$rep" "$CETTA_BIN" --quiet "$metta"
-        time_case "$size" "cetta-lib-rho-threaded" "$case_name" "$rep" \
-            "$CETTA_BIN" --quiet --rho-step-threads "$RHO_STEP_THREADS" "$metta"
-        time_case "$size" "cetta-rhocalc-cli" "$case_name" "$rep" \
+        time_case "$size" "cetta-rhocalc-run" "$case_name" "$rep" \
             "$CETTA_BIN" --quiet --lang rhocalc --syntax mrho "$mrho"
-        time_case "$size" "cetta-rhocalc-cli-threaded" "$case_name" "$rep" \
-            "$CETTA_BIN" --quiet --rho-step-threads "$RHO_STEP_THREADS" \
-            --lang rhocalc --syntax mrho "$mrho"
         data_dir="$DATA_ROOT/$case_name/$rep"
         mkdir -p "$(dirname "$data_dir")"
         time_case "$size" "f1r3node-rholang-cli" "$case_name" "$rep" \

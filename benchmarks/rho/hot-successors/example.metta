@@ -6,9 +6,11 @@
 (= (hot-send $chan $payload)
    (rho.send $chan (rho.send $payload rho.nil)))
 
-!(rho.step
-  (rho.par
-    (hot-recv $hot $out0)
-    (hot-recv $hot $out1)
-    (hot-send $hot $p0)
-    (hot-send $hot $p1)))
+!(let $program
+  (eval
+    (rho.par
+      (hot-recv $hot $out0)
+      (hot-recv $hot $out1)
+      (hot-send $hot $p0)
+      (hot-send $hot $p1)))
+  $program)

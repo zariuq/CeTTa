@@ -27,4 +27,4 @@
      (edge $c1 $c2)
      (edge $c2 $c3))
     $payload))
-  (rho.step $program))
+  $program)

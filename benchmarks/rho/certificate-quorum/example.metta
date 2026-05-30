@@ -30,4 +30,4 @@
           ((audit task0 $task0 $sink0)
            (audit task1 $task1 $sink1))))
         (rho.par $cert-procs $audit-procs))))
-  (rho.step $program))
+  $program)

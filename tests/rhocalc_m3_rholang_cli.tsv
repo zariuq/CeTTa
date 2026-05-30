@@ -1,0 +1,6 @@
+# name	cetta_syntax	cetta_fixture	rholang_fixture	expected_channels
+# First actual cross-implementation overlap subset against local f1r3node rholang-cli.
+# Contract: both engines expose the same top-level unmatched-send channel set.
+pipeline-forward-empty	mrho	benchmarks/rho/pipeline-forward/example.mrho	benchmarks/rho/pipeline-forward/example.rho	empty
+fanout-empty	mrho	benchmarks/rho/fanout/example.mrho	benchmarks/rho/fanout/example.rho	empty
+hot-successors-two-outputs	mrho	benchmarks/rho/hot-successors/example.mrho	benchmarks/rho/hot-successors/example.rho	out0,out1

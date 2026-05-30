@@ -172,10 +172,6 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "hyperpose-cancel-request",
     "hyperpose-cancel-observed",
     "hyperpose-select-k-run",
-    "rho-step-threaded-run",
-    "rho-step-worker-started",
-    "rho-step-thread-candidate",
-    "rho-step-thread-fallback",
 };
 
 static int64_t clamp_counter(uint64_t value) {

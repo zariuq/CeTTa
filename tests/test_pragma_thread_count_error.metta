@@ -5,6 +5,3 @@
 !(assertEqualToResult
   (pragma! hyperpose-threads 2048)
   ((Error (pragma! hyperpose-threads 2048) ThreadCountOutOfRange)))
-!(assertEqualToResult
-  (pragma! rho-step-threads threaded)
-  ((Error (pragma! rho-step-threads threaded) UnsignedIntegerIsExpected)))

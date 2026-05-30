@@ -1,0 +1,24 @@
+; A one-shot branch on the smaller channel key coexists with a self-recreating
+; branch on a larger channel key. Canonical keeps choosing the smallest
+; residual; the rotating scheduler rotates across the successor set on later rounds.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $z rho:nil)
+  (rho:send (rho:quote rho:nil) rho:nil)
+  (rho:recv
+    (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+    $y
+    (rho:par
+      (rho:drop $y)
+      (rho:send
+        (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+        (rho:drop $y))))
+  (rho:send
+    (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+    (rho:recv
+      (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+      $y
+      (rho:par
+        (rho:drop $y)
+        (rho:send
+          (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+          (rho:drop $y))))))

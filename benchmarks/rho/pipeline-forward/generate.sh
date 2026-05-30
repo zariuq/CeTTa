@@ -44,15 +44,17 @@ rho="$out_dir/$name.rho"
     printf '   (rho.recv $chan $done rho.nil))\n\n'
     printf '(= (fwd $src $dst)\n'
     printf '   (rho.recv $src $msg (rho.send $dst (rho.drop $msg))))\n\n'
-    printf '!(rho.step\n'
-    printf '  (rho.par\n'
-    printf '    (pipeline-source $c0)\n'
+    printf '!(let $program\n'
+    printf '  (eval\n'
+    printf '    (rho.par\n'
+    printf '      (pipeline-source $c0)\n'
     for i in $(seq 0 $((n - 1))); do
         next=$((i + 1))
-        printf '    (fwd $c%s $c%s)\n' "$i" "$next"
+        printf '      (fwd $c%s $c%s)\n' "$i" "$next"
     done
-    printf '    (pipeline-sink $c%s)\n' "$n"
-    printf '  ))\n'
+    printf '      (pipeline-sink $c%s)\n' "$n"
+    printf '    ))\n'
+    printf '  $program)\n'
 } > "$metta"
 
 {

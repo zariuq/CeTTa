@@ -1,0 +1,12 @@
+; One top-level COMM on @{0} leaves a nontrivial parallel residual whose shape
+; is shared cleanly by CeTTa's public one-step reducer and the Lean engine.
+(rho:par
+  (rho:send (rho:quote rho:nil) rho:nil)
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:send
+      (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+      rho:nil))
+  (rho:recv
+    (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
+    $y
+    rho:nil))

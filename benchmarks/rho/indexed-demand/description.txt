@@ -6,7 +6,8 @@ topics. Each row carries both a symbolic topic tag for MeTTa filtering and a rho
 name for communication. This is a semantic split, not syntax ambiguity: bare
 topic symbols are policy data, while `$topic...` atoms are rho name identities.
 MeTTa filters those tables to one selected topic, synthesizes the rho network,
-and calls rho.step.
+and emits that process as data. The benchmark runner executes the generated
+process through `--lang rhocalc` and through rholang-cli.
 
 The point is algorithmic: --lang rhocalc can run the already-synthesized
 process, but it cannot consume the watcher/fact tables, choose a topic index,
@@ -15,11 +16,19 @@ equivalent filtered network for cross-engine timing.
 
 Files:
 - sizes.tsv: table sizes for this benchmark only.
-- generate.sh SIZE OUT_DIR: writes indexed_demand_SIZE.metta and
-  indexed_demand_SIZE.rho.
-- run.sh: runs only indexed-demand against CeTTa lib_rho and f1r3node
-  rholang-cli.
+- generate.sh SIZE OUT_DIR: writes indexed_demand_SIZE.metta,
+  indexed_demand_SIZE.mrho, and indexed_demand_SIZE.rho.
+- run.sh: runs only indexed-demand against CeTTa --lang rhocalc and
+  f1r3node rholang-cli.
+
+The generated `.mrho` file is CeTTa's strict-core rho concrete syntax; the
+generated `.rho` file is the surface rho/Rholang spelling used for
+cross-engine runs.
 
 Use TARGET_TOPIC=0..3 to select the indexed topic. The default is 0.
 
-CeTTa lib_rho prints the full reduction frontier as ordinary CeTTa results; rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured wall time therefore includes asymmetric output-formatting cost. Treat these rows as engine-end-to-end measurements, not scheduler-to-scheduler measurements.
+CeTTa prints the residual process after deterministic reduction;
+rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured
+wall time therefore includes asymmetric output-formatting cost. Treat these
+rows as engine-end-to-end measurements, not scheduler-to-scheduler
+measurements.
