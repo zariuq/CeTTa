@@ -16,7 +16,7 @@
 #include "symbol.h"
 
 #define IMPORTED_MORK_QUERY_ONLY_V2_MAGIC 0x43544252u
-#define IMPORTED_MORK_QUERY_ONLY_V2_VERSION 2u
+#define IMPORTED_MORK_QUERY_ONLY_V2_VERSION 5u
 #define IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY 0x0001u
 #define IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES 0x0002u
 #define IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS 0x0010u
@@ -232,6 +232,22 @@ static bool read_u32_be(const uint8_t *packet, size_t len, size_t *off,
     return true;
 }
 
+static bool read_u64_be(const uint8_t *packet, size_t len, size_t *off,
+                        uint64_t *out) {
+    if (*off + 8 > len)
+        return false;
+    *out = ((uint64_t)packet[*off] << 56) |
+           ((uint64_t)packet[*off + 1] << 48) |
+           ((uint64_t)packet[*off + 2] << 40) |
+           ((uint64_t)packet[*off + 3] << 32) |
+           ((uint64_t)packet[*off + 4] << 24) |
+           ((uint64_t)packet[*off + 5] << 16) |
+           ((uint64_t)packet[*off + 6] << 8) |
+           (uint64_t)packet[*off + 7];
+    *off += 8;
+    return true;
+}
+
 static bool read_u16_be(const uint8_t *packet, size_t len, size_t *off,
                         uint16_t *out) {
     if (*off + 2 > len)
@@ -435,7 +451,7 @@ static bool scan_v2_packet(const uint8_t *packet,
     uint32_t magic = 0;
     uint16_t version = 0;
     uint16_t flags = 0;
-    uint32_t parsed_rows = 0;
+    uint64_t parsed_rows = 0;
     QueryPacketSummary local = {0};
     Arena decode_scratch;
     bool wide_tokens = false;
@@ -446,7 +462,7 @@ static bool scan_v2_packet(const uint8_t *packet,
     if (!read_u32_be(packet, packet_len, &off, &magic) ||
         !read_u16_be(packet, packet_len, &off, &version) ||
         !read_u16_be(packet, packet_len, &off, &flags) ||
-        !read_u32_be(packet, packet_len, &off, &parsed_rows)) {
+        !read_u64_be(packet, packet_len, &off, &parsed_rows)) {
         if (decode_values)
             arena_free(&decode_scratch);
         return false;
@@ -474,7 +490,7 @@ static bool scan_v2_packet(const uint8_t *packet,
     }
 
     local.rows = parsed_rows;
-    for (uint32_t row = 0; row < parsed_rows; row++) {
+    for (uint64_t row = 0; row < parsed_rows; row++) {
         uint32_t ref_count = 0;
         uint32_t binding_count = 0;
         if (!read_u32_be(packet, packet_len, &off, &ref_count) ||
@@ -558,7 +574,7 @@ static double run_v1_packet_only(CettaMorkSpaceHandle *space,
     for (int rep = 0; rep < repeat; rep++) {
         uint8_t *packet = NULL;
         size_t packet_len = 0;
-        uint32_t rows = 0;
+        uint64_t rows = 0;
         uint64_t started = monotonic_ns();
         if (!cetta_mork_bridge_space_query_bindings_text(space,
                                                          scenario->query,
@@ -569,7 +585,7 @@ static double run_v1_packet_only(CettaMorkSpaceHandle *space,
         }
         uint64_t finished = monotonic_ns();
         if (rows != scenario->expected_rows) {
-            fprintf(stderr, "error: v1 packet rows mismatch for %s: expected %" PRIu64 ", got %" PRIu32 "\n",
+            fprintf(stderr, "error: v1 packet rows mismatch for %s: expected %" PRIu64 ", got %" PRIu64 "\n",
                     scenario->name, scenario->expected_rows, rows);
             exit(1);
         }
@@ -592,7 +608,7 @@ static double run_v2_packet_only(CettaMorkSpaceHandle *space,
     for (int rep = 0; rep < repeat; rep++) {
         uint8_t *packet = NULL;
         size_t packet_len = 0;
-        uint32_t rows = 0;
+        uint64_t rows = 0;
         uint64_t started = monotonic_ns();
         if (!cetta_mork_bridge_space_query_bindings_query_only_v2(space,
                                                                   (const uint8_t *)scenario->query,
@@ -604,7 +620,7 @@ static double run_v2_packet_only(CettaMorkSpaceHandle *space,
         }
         uint64_t finished = monotonic_ns();
         if (rows != scenario->expected_rows) {
-            fprintf(stderr, "error: v2 packet rows mismatch for %s: expected %" PRIu64 ", got %" PRIu32 "\n",
+            fprintf(stderr, "error: v2 packet rows mismatch for %s: expected %" PRIu64 ", got %" PRIu64 "\n",
                     scenario->name, scenario->expected_rows, rows);
             exit(1);
         }
@@ -630,7 +646,7 @@ static double run_v2_scan_mode(CettaMorkSpaceHandle *space,
     for (int rep = 0; rep < repeat; rep++) {
         uint8_t *packet = NULL;
         size_t packet_len = 0;
-        uint32_t rows = 0;
+        uint64_t rows = 0;
         QueryPacketSummary summary = {0};
         uint64_t started = monotonic_ns();
         if (!cetta_mork_bridge_space_query_bindings_query_only_v2(space,
@@ -653,7 +669,7 @@ static double run_v2_scan_mode(CettaMorkSpaceHandle *space,
         }
         uint64_t finished = monotonic_ns();
         if (rows != scenario->expected_rows) {
-            fprintf(stderr, "error: v2 %s rows mismatch for %s: expected %" PRIu64 ", got %" PRIu32 "\n",
+            fprintf(stderr, "error: v2 %s rows mismatch for %s: expected %" PRIu64 ", got %" PRIu64 "\n",
                     decode_values ? "decode" : "scan",
                     scenario->name, scenario->expected_rows, rows);
             exit(1);

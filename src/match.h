@@ -37,8 +37,10 @@ typedef struct {
 
 typedef struct {
     Bindings *items;
-    uint32_t len, cap;
+    CettaCount len, cap;
 } BindingSet;
+
+#define CETTA_BINDING_SET_MAX_ROWS UINT64_MAX
 
 typedef struct {
     uint32_t len;
@@ -92,7 +94,7 @@ bool      bindings_from_atom(Atom *atom, Bindings *out);
 void      binding_set_init(BindingSet *bs);
 void      binding_set_free(BindingSet *bs);
 bool      binding_set_push(BindingSet *bs, const Bindings *b);
-void      binding_set_push_move(BindingSet *bs, Bindings *b);
+bool      binding_set_push_move(BindingSet *bs, Bindings *b);
 bool      bindings_builder_init(BindingsBuilder *bb, const Bindings *base);
 void      bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned);
 void      bindings_builder_free(BindingsBuilder *bb);

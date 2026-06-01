@@ -84,7 +84,7 @@ static bool atom_contains_private_variant_var(const Atom *atom) {
     case ATOM_VAR:
         return variant_private_var_id(atom->var_id);
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (atom_contains_private_variant_var(atom->expr.elems[i]))
                 return true;
         }
@@ -303,7 +303,7 @@ static bool atom_contains_unbound_var(Bindings *b, Atom *atom, uint32_t depth) {
     case ATOM_VAR:
         return true;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (atom_contains_unbound_var(b, atom->expr.elems[i], depth + 1))
                 return true;
         }
@@ -327,7 +327,7 @@ static bool atom_eq_under_bindings(Bindings *b, Atom *lhs, Atom *rhs, uint32_t d
         return atom_eq(lhs, rhs);
     case ATOM_EXPR:
         if (lhs->expr.len != rhs->expr.len) return false;
-        for (uint32_t i = 0; i < lhs->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < lhs->expr.len; i++) {
             if (!atom_eq_under_bindings(b, lhs->expr.elems[i], rhs->expr.elems[i], depth + 1))
                 return false;
         }
@@ -881,7 +881,7 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
     }
     case ATOM_EXPR: {
         Atom **new_elems = NULL;
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *child = atom->expr.elems[i];
             Atom *next = atom_has_vars(child)
                 ? bindings_apply_seen_with_rewrite(b, a, child,
@@ -892,7 +892,7 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
                 return NULL;
             if (!new_elems && next != atom->expr.elems[i]) {
                 new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                for (uint32_t j = 0; j < i; j++)
+                for (CettaExprIndex j = 0; j < i; j++)
                     new_elems[j] = atom->expr.elems[j];
             }
             if (new_elems)
@@ -968,7 +968,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
     }
     case ATOM_EXPR: {
         Atom **new_elems = NULL;
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *child = atom->expr.elems[i];
             Atom *next = atom_has_vars(child)
                 ? bindings_apply_seen_epoch(b, a, child, epoch, original_side,
@@ -1056,7 +1056,7 @@ bool bindings_from_atom(Atom *atom, Bindings *out) {
         return false;
     }
 
-    for (uint32_t i = 0; i < assigns->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < assigns->expr.len; i++) {
         Atom *assign = assigns->expr.elems[i];
         if (assign->kind != ATOM_EXPR || assign->expr.len != 2) {
             bindings_free(out);
@@ -1086,7 +1086,7 @@ bool bindings_from_atom(Atom *atom, Bindings *out) {
         }
     }
 
-    for (uint32_t i = 0; i < equalities->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < equalities->expr.len; i++) {
         Atom *pair = equalities->expr.elems[i];
         if (pair->kind != ATOM_EXPR || pair->expr.len != 2) {
             bindings_free(out);
@@ -1113,7 +1113,7 @@ void binding_set_init(BindingSet *bs) {
 }
 
 void binding_set_free(BindingSet *bs) {
-    for (uint32_t i = 0; i < bs->len; i++)
+    for (CettaIndex i = 0; i < bs->len; i++)
         bindings_free(&bs->items[i]);
     free(bs->items);
     bs->items = NULL;
@@ -1121,24 +1121,52 @@ void binding_set_free(BindingSet *bs) {
     bs->cap = 0;
 }
 
+static CettaCount binding_set_capacity_limit(void) {
+    size_t limit = SIZE_MAX / sizeof(Bindings);
+    if ((uint64_t)limit > CETTA_BINDING_SET_MAX_ROWS)
+        return CETTA_BINDING_SET_MAX_ROWS;
+    return (CettaCount)limit;
+}
+
+static bool binding_set_ensure_one(BindingSet *bs) {
+    CettaCount limit;
+    CettaCount need;
+    CettaCount next;
+    if (!bs)
+        return false;
+    limit = binding_set_capacity_limit();
+    if (bs->len >= limit)
+        return false;
+    if (bs->len < bs->cap)
+        return true;
+    need = bs->len + 1u;
+    next = bs->cap ? bs->cap * 2u : 8u;
+    if (next <= bs->cap || next < need)
+        next = need;
+    if (next > limit)
+        next = limit;
+    if (next < need)
+        return false;
+    bs->items = cetta_realloc(bs->items, sizeof(Bindings) * (size_t)next);
+    bs->cap = next;
+    return true;
+}
+
 bool binding_set_push(BindingSet *bs, const Bindings *b) {
-    if (bs->len >= bs->cap) {
-        bs->cap = bs->cap ? bs->cap * 2 : 8;
-        bs->items = cetta_realloc(bs->items, sizeof(Bindings) * bs->cap);
-    }
+    if (!b || !binding_set_ensure_one(bs))
+        return false;
     if (!bindings_clone(&bs->items[bs->len], b))
         return false;
     bs->len++;
     return true;
 }
 
-void binding_set_push_move(BindingSet *bs, Bindings *b) {
-    if (bs->len >= bs->cap) {
-        bs->cap = bs->cap ? bs->cap * 2 : 8;
-        bs->items = cetta_realloc(bs->items, sizeof(Bindings) * bs->cap);
-    }
+bool binding_set_push_move(BindingSet *bs, Bindings *b) {
+    if (!b || !binding_set_ensure_one(bs))
+        return false;
     bindings_move(&bs->items[bs->len], b);
     bs->len++;
+    return true;
 }
 
 /* ── BindingsBuilder (branch-local speculative bindings) ───────────────── */
@@ -1496,7 +1524,7 @@ static void collect_var_ids(Atom *atom, VarIdSet *set) {
         var_id_set_add(set, atom->var_id);
         return;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++)
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++)
             collect_var_ids(atom->expr.elems[i], set);
         return;
     default:
@@ -1552,11 +1580,11 @@ static Atom *rename_vars_except_rec(Arena *a, Atom *atom,
     }
     case ATOM_EXPR: {
         Atom **new_elems = NULL;
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *next = rename_vars_except_rec(a, atom->expr.elems[i], ignore, map);
             if (!new_elems && next != atom->expr.elems[i]) {
                 new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                for (uint32_t j = 0; j < i; j++)
+                for (CettaExprIndex j = 0; j < i; j++)
                     new_elems[j] = atom->expr.elems[j];
             }
             if (new_elems)
@@ -1579,11 +1607,11 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
     }
     case ATOM_EXPR: {
         Atom **new_elems = NULL;
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *next = rename_vars(a, atom->expr.elems[i], suffix);
             if (!new_elems && next != atom->expr.elems[i]) {
                 new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                for (uint32_t j = 0; j < i; j++)
+                for (CettaExprIndex j = 0; j < i; j++)
                     new_elems[j] = atom->expr.elems[j];
             }
             if (new_elems)
@@ -1631,6 +1659,12 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
         case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
         case GV_STRING: return strcmp(pattern->ground.sval, target->ground.sval) == 0;
+        case GV_BIGINT:
+            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
+                                            atom_bigint_cstr(target)) == 0;
+        case GV_RATIONAL:
+            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
+                                               atom_rational_cstr(target)) == 0;
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
@@ -1641,7 +1675,7 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
 
     case ATOM_EXPR:
         if (pattern->expr.len != target->expr.len) return false;
-        for (uint32_t i = 0; i < pattern->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < pattern->expr.len; i++) {
             if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b))
                 return false;
         }
@@ -1674,6 +1708,12 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
         case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
         case GV_STRING: return strcmp(pattern->ground.sval, target->ground.sval) == 0;
+        case GV_BIGINT:
+            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
+                                            atom_bigint_cstr(target)) == 0;
+        case GV_RATIONAL:
+            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
+                                               atom_rational_cstr(target)) == 0;
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
@@ -1685,7 +1725,7 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
     case ATOM_EXPR:
         if (pattern->expr.len != target->expr.len)
             return false;
-        for (uint32_t i = 0; i < pattern->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < pattern->expr.len; i++) {
             if (!simple_match_builder_rec(pattern->expr.elems[i],
                                           target->expr.elems[i], bb)) {
                 return false;
@@ -1757,7 +1797,7 @@ static bool bindings_atom_has_loop(const Bindings *b, Atom *atom,
         return bindings_entry_has_loop(b, (uint32_t)idx, state, depth + 1);
     }
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (bindings_atom_has_loop(b, atom->expr.elems[i], state, depth + 1))
                 return true;
         }
@@ -1938,7 +1978,7 @@ static bool atom_alpha_eq_rec(Atom *left, Atom *right, AlphaPairSet *pairs) {
     case ATOM_EXPR:
         if (left->expr.len != right->expr.len)
             return false;
-        for (uint32_t i = 0; i < left->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
             if (!atom_alpha_eq_rec(left->expr.elems[i], right->expr.elems[i], pairs))
                 return false;
         }
@@ -1985,7 +2025,7 @@ static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {
     /* Expression/Expression → recursive element-wise */
     if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
         if (left->expr.len != right->expr.len) return false;
-        for (uint32_t i = 0; i < left->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
             if (!match_atoms_depth(left->expr.elems[i], right->expr.elems[i], b, depth - 1))
                 return false;
         }
@@ -2024,7 +2064,7 @@ static bool match_atoms_builder_depth(Atom *left, Atom *right, BindingsBuilder *
     }
     if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
         if (left->expr.len != right->expr.len) return false;
-        for (uint32_t i = 0; i < left->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
             if (!match_atoms_builder_depth(left->expr.elems[i], right->expr.elems[i],
                                            bb, depth - 1))
                 return false;
@@ -2074,7 +2114,7 @@ static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena 
     }
     if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
         if (left->expr.len != right->expr.len) return false;
-        for (uint32_t i = 0; i < left->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
             if (!match_atoms_epoch_depth(left->expr.elems[i], right->expr.elems[i], b, a,
                                          epoch, right_original, depth - 1))
                 return false;
@@ -2118,7 +2158,7 @@ static bool match_atoms_bound_atom_id_depth(Atom *left, Atom *right, Bindings *b
     if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
         if (left->expr.len != right->expr.len)
             return false;
-        for (uint32_t i = 0; i < left->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
             if (!match_atoms_bound_atom_id_depth(left->expr.elems[i],
                                                  right->expr.elems[i], b, a,
                                                  depth - 1)) {
@@ -2219,6 +2259,16 @@ static bool match_atoms_atom_id_epoch_depth(Atom *left,
             return tu_ground_kind(candidate_universe, right_id) == GV_STRING &&
                    rhs && strcmp(left->ground.sval, rhs) == 0;
         }
+        case GV_BIGINT: {
+            const char *rhs = tu_bigint_cstr(candidate_universe, right_id);
+            return tu_ground_kind(candidate_universe, right_id) == GV_BIGINT &&
+                   rhs && cetta_bigint_compare_cstr(atom_bigint_cstr(left), rhs) == 0;
+        }
+        case GV_RATIONAL: {
+            const char *rhs = tu_rational_cstr(candidate_universe, right_id);
+            return tu_ground_kind(candidate_universe, right_id) == GV_RATIONAL &&
+                   rhs && cetta_rational_compare_cstr(atom_rational_cstr(left), rhs) == 0;
+        }
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
@@ -2231,7 +2281,7 @@ static bool match_atoms_atom_id_epoch_depth(Atom *left,
             left->expr.len != tu_arity(candidate_universe, right_id)) {
             return false;
         }
-        for (uint32_t i = 0; i < left->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
             if (!match_atoms_atom_id_epoch_depth(
                     left->expr.elems[i], candidate_universe,
                     tu_child(candidate_universe, right_id, i), b, a, epoch,

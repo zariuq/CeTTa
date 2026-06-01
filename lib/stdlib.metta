@@ -5,6 +5,7 @@
 ; ── Type declarations ─────────────────────────────────────────────────
 (: id (-> $t $t))
 (: if (-> Bool Atom Atom $t))
+(: if (-> Bool Atom %Undefined%))
 (: noeval (-> Atom Atom))
 (: atom-subst (-> Atom Variable Atom Atom))
 (: car-atom (-> Expression Atom))
@@ -15,6 +16,7 @@
 (: if-error (-> Atom Atom Atom %Undefined%))
 (: return-on-error (-> Atom Atom %Undefined%))
 (: filter-atom (-> Expression Variable Atom Expression))
+(: filter-atom (-> Expression Atom Expression))
 (: map-atom (-> Expression Variable Atom Expression))
 (: empty (-> Atom))
 (: unique (-> Atom %Undefined%))
@@ -397,6 +399,8 @@
 ; and executable.
 (= (if True $then $else) $then)
 (= (if False $then $else) $else)
+(= (if True $then) $then)
+(= (if False $then) (empty))
 
 ; `noeval` preserves syntax through ordinary function application, and
 ; `atom-subst` uses it to substitute into templates without reducing the
@@ -684,6 +688,9 @@
                   (chain (cons-atom $head $tail-filtered) $res (return $res))
                   (return $tail-filtered) ))))))
       (return ()) ))))
+
+(= (filter-atom $list $filter)
+  (filter-atom $list $__filter_atom_item (eval ($filter $__filter_atom_item))))
 
 (= (map-atom $list $var $map)
   (function (chain (decons-atom $list) $ht

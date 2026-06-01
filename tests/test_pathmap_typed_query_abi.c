@@ -98,7 +98,7 @@ int main(void) {
     fact_id = term_universe_store_atom_id(&universe, NULL, fact);
     assert(fact_id != CETTA_ATOM_ID_NONE);
     space_add_atom_id(&space, fact_id);
-    assert(space_length(&space) == 1);
+    assert(space_length64(&space) == 1);
 
     smset_init(&matches);
     space_subst_query(&space, &arena, query, &matches);
@@ -108,7 +108,7 @@ int main(void) {
     smset_free(&matches);
 
     assert(space_remove_atom_id(&space, fact_id));
-    assert(space_length(&space) == 0);
+    assert(space_length64(&space) == 0);
 
     smset_init(&matches);
     space_subst_query(&space, &arena, query, &matches);

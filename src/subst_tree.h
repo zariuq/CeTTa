@@ -55,7 +55,7 @@ typedef struct SubstNode {
     uint32_t nvars, cvars;
 
     /* Expression branches (arity → child) */
-    struct { uint32_t arity; struct SubstNode *child; } *expr;
+    struct { CettaExprLen arity; struct SubstNode *child; } *expr;
     uint32_t nexpr, cexpr;
 
     /* Grounded int branches */
@@ -63,8 +63,8 @@ typedef struct SubstNode {
     uint32_t nints, cints;
 
     /* Leaves: (space atom index, epoch for standardization apart) */
-    struct { uint32_t idx; uint32_t epoch; } *leaves;
-    uint32_t nleaves, cleaves;
+    struct { CettaIndex idx; uint32_t epoch; } *leaves;
+    CettaIndex nleaves, cleaves;
 } SubstNode;
 
 /* ── SubstTree (head-partitioned) ──────────────────────────────────────── */
@@ -73,7 +73,7 @@ typedef struct SubstNode {
 
 typedef struct {
     SubstNode *root;
-    uint32_t count;
+    CettaIndex count;
 } SubstBucket;
 
 typedef struct {
@@ -84,7 +84,7 @@ typedef struct {
 /* ── Query Result ──────────────────────────────────────────────────────── */
 
 typedef struct {
-    uint32_t atom_idx;      /* index into the logical space atom sequence */
+    CettaIndex atom_idx;    /* index into the logical space atom sequence */
     uint32_t epoch;         /* standardization-apart epoch for this indexed atom */
     Bindings bindings;      /* epoch-tagged, ready for bindings_apply */
     bool exact;             /* backend already proved this match exactly */
@@ -92,7 +92,7 @@ typedef struct {
 
 typedef struct {
     SubstMatch *items;
-    uint32_t len, cap;
+    CettaIndex len, cap;
 } SubstMatchSet;
 
 /* ── API ───────────────────────────────────────────────────────────────── */
@@ -102,14 +102,14 @@ void       snode_free(SubstNode *n);
 
 void stree_init(SubstTree *t);
 void stree_free(SubstTree *t);
-void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx);
+void stree_insert(SubstTree *t, Atom *atom, CettaIndex atom_idx);
 bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
-                     AtomId atom_id, uint32_t atom_idx);
+                     AtomId atom_id, CettaIndex atom_idx);
 void stree_bucket_init(SubstBucket *bucket);
 void stree_bucket_free(SubstBucket *bucket);
-void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx);
+void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx);
 bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
-                            AtomId atom_id, uint32_t atom_idx);
+                            AtomId atom_id, CettaIndex atom_idx);
 
 /* Full unification retrieval: walk tree with query, produce bindings.
    Caller must free(out->items). */

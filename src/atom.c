@@ -1,10 +1,39 @@
 #define _GNU_SOURCE
 #include "atom.h"
 #include "stats.h"
+#include <ctype.h>
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+struct CettaBigInt {
+    const char *text;
+#if CETTA_BUILD_WITH_GMP
+    mpz_t value;
+    bool has_value;
+#endif
+};
+
+struct CettaRational {
+    const char *text;
+#if CETTA_BUILD_WITH_GMP
+    mpq_t value;
+    bool has_value;
+#endif
+};
+
+struct ArenaFinalizer {
+    void (*fn)(void *);
+    void *ptr;
+    struct ArenaFinalizer *next;
+};
+
+static CettaBigInt *cetta_bigint_clone_owned(const CettaBigInt *src);
+static void cetta_bigint_free_owned(CettaBigInt *big);
+static CettaRational *cetta_rational_clone_owned(const CettaRational *src);
+static void cetta_rational_free_owned(CettaRational *rat);
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
@@ -106,9 +135,30 @@ void arena_init(Arena *a) {
     a->reserved_bytes = 0;
     a->block_count = 0;
     a->runtime_kind = CETTA_ARENA_RUNTIME_KIND_OTHER;
+    a->finalizers = NULL;
 }
 
+static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
+    while (a->finalizers != stop) {
+        ArenaFinalizer *node = a->finalizers;
+        a->finalizers = node->next;
+        node->fn(node->ptr);
+        free(node);
+    }
+}
+
+#if CETTA_BUILD_WITH_GMP
+static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
+    ArenaFinalizer *node = cetta_malloc(sizeof(ArenaFinalizer));
+    node->fn = fn;
+    node->ptr = ptr;
+    node->next = a->finalizers;
+    a->finalizers = node;
+}
+#endif
+
 void arena_free(Arena *a) {
+    arena_run_finalizers_until(a, NULL);
     ArenaBlock *b = a->head;
     while (b) {
         ArenaBlock *next = b->next;
@@ -119,6 +169,7 @@ void arena_free(Arena *a) {
     a->live_bytes = 0;
     a->reserved_bytes = 0;
     a->block_count = 0;
+    a->finalizers = NULL;
 }
 
 void arena_set_hashcons(Arena *a, HashConsTable *hc) {
@@ -142,11 +193,13 @@ ArenaMark arena_mark(const Arena *a) {
     mark.live_bytes = a->live_bytes;
     mark.reserved_bytes = a->reserved_bytes;
     mark.block_count = a->block_count;
+    mark.finalizers = a->finalizers;
     return mark;
 }
 
 void arena_reset(Arena *a, ArenaMark mark) {
     if (!a) return;
+    arena_run_finalizers_until(a, mark.finalizers);
     while (a->head && a->head != mark.head) {
         ArenaBlock *next = a->head->next;
         free(a->head);
@@ -192,6 +245,16 @@ static uint32_t atom_hash_compute(Atom *a) {
                 h = ((h << 5) + h) ^ (uint32_t)*p;
             break;
         }
+        case GV_BIGINT: {
+            for (const char *p = atom_bigint_cstr(a); p && *p; p++)
+                h = ((h << 5) + h) ^ (uint32_t)*p;
+            break;
+        }
+        case GV_RATIONAL: {
+            for (const char *p = atom_rational_cstr(a); p && *p; p++)
+                h = ((h << 5) + h) ^ (uint32_t)*p;
+            break;
+        }
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
@@ -200,8 +263,9 @@ static uint32_t atom_hash_compute(Atom *a) {
         }
         break;
     case ATOM_EXPR:
-        h = ((h << 5) + h) ^ a->expr.len;
-        for (uint32_t i = 0; i < a->expr.len; i++)
+        h = ((h << 5) + h) ^ (uint32_t)(a->expr.len & 0xFFFFFFFFu);
+        h = ((h << 5) + h) ^ (uint32_t)(a->expr.len >> 32);
+        for (CettaExprIndex i = 0; i < a->expr.len; i++)
             h = ((h << 5) + h) ^ atom_hash(a->expr.elems[i]);
         break;
     }
@@ -237,8 +301,15 @@ void hashcons_free(HashConsTable *hc) {
     for (uint32_t i = 0; i < hc->size; i++) {
         Atom *atom = hc->table[i];
         if (!atom) continue;
-        if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING)
+        if (atom->kind == ATOM_GROUNDED &&
+            atom->ground.gkind == GV_STRING)
             free((void *)atom->ground.sval);
+        if (atom->kind == ATOM_GROUNDED &&
+            atom->ground.gkind == GV_BIGINT)
+            cetta_bigint_free_owned(atom->ground.bigint);
+        if (atom->kind == ATOM_GROUNDED &&
+            atom->ground.gkind == GV_RATIONAL)
+            cetta_rational_free_owned(atom->ground.rational);
         if (atom->kind == ATOM_EXPR)
             free(atom->expr.elems);
         free(atom);
@@ -261,6 +332,8 @@ static bool atom_is_hash_stable(const Atom *atom) {
         case GV_FLOAT:
         case GV_BOOL:
         case GV_STRING:
+        case GV_BIGINT:
+        case GV_RATIONAL:
             return true;
         case GV_SPACE:
         case GV_STATE:
@@ -270,7 +343,7 @@ static bool atom_is_hash_stable(const Atom *atom) {
         }
         return false;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!atom_is_hash_stable(atom->expr.elems[i]))
                 return false;
         }
@@ -291,7 +364,7 @@ static bool atom_can_hashcons(const Atom *atom) {
         return false;
     if (atom->kind != ATOM_EXPR)
         return true;
-    for (uint32_t i = 0; i < atom->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
         if (!atom_can_hashcons(atom->expr.elems[i]))
             return false;
     }
@@ -338,17 +411,28 @@ static Atom *hashcons_intern(HashConsTable *hc, Atom *atom);
 static Atom *hashcons_alloc_owned(const Atom *atom) {
     Atom *owned = cetta_malloc(sizeof(Atom));
     *owned = *atom;
-    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+    if (atom->kind == ATOM_GROUNDED &&
+        atom->ground.gkind == GV_STRING) {
         owned->ground.sval = strdup(atom->ground.sval);
         if (!owned->ground.sval)
             cetta_oom(strlen(atom->ground.sval) + 1);
+    } else if (atom->kind == ATOM_GROUNDED &&
+               atom->ground.gkind == GV_BIGINT) {
+        owned->ground.bigint = cetta_bigint_clone_owned(atom->ground.bigint);
+    } else if (atom->kind == ATOM_GROUNDED &&
+               atom->ground.gkind == GV_RATIONAL) {
+        owned->ground.rational =
+            cetta_rational_clone_owned(atom->ground.rational);
     } else if (atom->kind == ATOM_EXPR) {
         if (atom->expr.len == 0) {
             owned->expr.elems = NULL;
         } else {
-            owned->expr.elems = cetta_malloc(sizeof(Atom *) * atom->expr.len);
+            if (!cetta_expr_len_mul_fits_size(atom->expr.len, sizeof(Atom *)))
+                cetta_oom(SIZE_MAX);
+            owned->expr.elems =
+                cetta_malloc((size_t)atom->expr.len * sizeof(Atom *));
             memcpy(owned->expr.elems, atom->expr.elems,
-                   sizeof(Atom *) * atom->expr.len);
+                   (size_t)atom->expr.len * sizeof(Atom *));
         }
     }
     return owned;
@@ -539,6 +623,333 @@ char *arena_strdup(Arena *a, const char *s) {
     return dst;
 }
 
+char *cetta_bigint_canonicalize_owned(const char *text) {
+    if (!text || !*text)
+        return NULL;
+    const unsigned char *p = (const unsigned char *)text;
+    bool neg = false;
+    if (*p == '+' || *p == '-') {
+        neg = (*p == '-');
+        p++;
+    }
+    if (!isdigit(*p))
+        return NULL;
+    while (*p == '0')
+        p++;
+    const unsigned char *digits = p;
+    while (isdigit(*p))
+        p++;
+    if (*p != '\0')
+        return NULL;
+    if (digits == p) {
+        char *zero = cetta_malloc(2);
+        zero[0] = '0';
+        zero[1] = '\0';
+        return zero;
+    }
+    size_t ndigits = (size_t)(p - digits);
+    char *out = cetta_malloc(ndigits + (neg ? 2u : 1u));
+    size_t pos = 0;
+    if (neg)
+        out[pos++] = '-';
+    memcpy(out + pos, digits, ndigits);
+    out[pos + ndigits] = '\0';
+    return out;
+}
+
+bool cetta_bigint_text_fits_i64(const char *text, int64_t *out) {
+    if (!text)
+        return false;
+    char *endp = NULL;
+    errno = 0;
+    long long value = strtoll(text, &endp, 10);
+    if (errno != 0 || !endp || *endp != '\0')
+        return false;
+    if (out)
+        *out = (int64_t)value;
+    return true;
+}
+
+int cetta_bigint_compare_cstr(const char *lhs, const char *rhs) {
+    char *lc = cetta_bigint_canonicalize_owned(lhs);
+    char *rc = cetta_bigint_canonicalize_owned(rhs);
+    if (!lc || !rc) {
+        const unsigned char *lp = (const unsigned char *)(lhs ? lhs : "");
+        const unsigned char *rp = (const unsigned char *)(rhs ? rhs : "");
+        while (*lp && *lp == *rp) {
+            lp++;
+            rp++;
+        }
+        int result = (*lp > *rp) - (*lp < *rp);
+        free(lc);
+        free(rc);
+        return result;
+    }
+
+    bool lneg = lc[0] == '-';
+    bool rneg = rc[0] == '-';
+    int result = 0;
+    if (lneg != rneg) {
+        result = lneg ? -1 : 1;
+    } else {
+        const char *ld = lneg ? lc + 1 : lc;
+        const char *rd = rneg ? rc + 1 : rc;
+        size_t llen = strlen(ld);
+        size_t rlen = strlen(rd);
+        if (llen != rlen) {
+            result = llen < rlen ? -1 : 1;
+        } else {
+            int raw = memcmp(ld, rd, llen);
+            result = raw;
+            if (result < 0)
+                result = -1;
+            else if (result > 0)
+                result = 1;
+        }
+        if (lneg)
+            result = -result;
+    }
+
+    free(lc);
+    free(rc);
+    return result;
+}
+
+#if CETTA_BUILD_WITH_GMP
+static void cetta_bigint_clear_value(void *ptr) {
+    CettaBigInt *big = ptr;
+    if (big && big->has_value) {
+        mpz_clear(big->value);
+        big->has_value = false;
+    }
+}
+#endif
+
+static CettaBigInt *cetta_bigint_new_arena(Arena *a, const char *canonical) {
+    CettaBigInt *big = arena_alloc(a, sizeof(CettaBigInt));
+    big->text = arena_strdup(a, canonical);
+#if CETTA_BUILD_WITH_GMP
+    mpz_init_set_str(big->value, canonical, 10);
+    big->has_value = true;
+    arena_register_finalizer(a, cetta_bigint_clear_value, big);
+#endif
+    return big;
+}
+
+static CettaBigInt *cetta_bigint_new_owned_from_text(const char *canonical) {
+    CettaBigInt *big = cetta_malloc(sizeof(CettaBigInt));
+    big->text = strdup(canonical);
+    if (!big->text)
+        cetta_oom(strlen(canonical) + 1);
+#if CETTA_BUILD_WITH_GMP
+    mpz_init_set_str(big->value, canonical, 10);
+    big->has_value = true;
+#endif
+    return big;
+}
+
+#if CETTA_BUILD_WITH_GMP
+static CettaBigInt *cetta_bigint_new_owned_from_mpz(const char *canonical,
+                                                   const mpz_t value) {
+    CettaBigInt *big = cetta_malloc(sizeof(CettaBigInt));
+    big->text = strdup(canonical);
+    if (!big->text)
+        cetta_oom(strlen(canonical) + 1);
+    mpz_init_set(big->value, value);
+    big->has_value = true;
+    return big;
+}
+#endif
+
+static CettaBigInt *cetta_bigint_clone_owned(const CettaBigInt *src) {
+    if (!src)
+        return NULL;
+#if CETTA_BUILD_WITH_GMP
+    if (src->has_value)
+        return cetta_bigint_new_owned_from_mpz(src->text, src->value);
+#endif
+    return cetta_bigint_new_owned_from_text(src->text);
+}
+
+static void cetta_bigint_free_owned(CettaBigInt *big) {
+    if (!big)
+        return;
+#if CETTA_BUILD_WITH_GMP
+    if (big->has_value)
+        mpz_clear(big->value);
+#endif
+    free((void *)big->text);
+    free(big);
+}
+
+#if CETTA_BUILD_WITH_GMP
+static void gmp_free_string(char *text) {
+    if (!text)
+        return;
+    void (*free_func)(void *, size_t) = NULL;
+    mp_get_memory_functions(NULL, NULL, &free_func);
+    free_func(text, strlen(text) + 1);
+}
+
+static bool mpq_set_canonical_text(mpq_t out, const char *text) {
+    const char *slash = text ? strchr(text, '/') : NULL;
+    if (!slash || strchr(slash + 1, '/'))
+        return false;
+    size_t nlen = (size_t)(slash - text);
+    size_t dlen = strlen(slash + 1);
+    if (nlen == 0 || dlen == 0)
+        return false;
+
+    char *num_text = cetta_malloc(nlen + 1);
+    char *den_text = cetta_malloc(dlen + 1);
+    memcpy(num_text, text, nlen);
+    num_text[nlen] = '\0';
+    memcpy(den_text, slash + 1, dlen + 1);
+
+    mpz_t num, den;
+    mpz_inits(num, den, NULL);
+    bool ok = mpz_set_str(num, num_text, 10) == 0 &&
+              mpz_set_str(den, den_text, 10) == 0 &&
+              mpz_sgn(den) != 0;
+    if (ok) {
+        mpq_set_num(out, num);
+        mpq_set_den(out, den);
+        mpq_canonicalize(out);
+    }
+    mpz_clears(num, den, NULL);
+    free(num_text);
+    free(den_text);
+    return ok;
+}
+#endif
+
+char *cetta_rational_canonicalize_owned(const char *text) {
+#if CETTA_BUILD_WITH_GMP
+    if (!text || !*text)
+        return NULL;
+    mpq_t q;
+    mpq_init(q);
+    if (!mpq_set_canonical_text(q, text)) {
+        mpq_clear(q);
+        return NULL;
+    }
+    char *num = mpz_get_str(NULL, 10, mpq_numref(q));
+    char *den = mpz_get_str(NULL, 10, mpq_denref(q));
+    size_t nlen = strlen(num);
+    size_t dlen = strlen(den);
+    char *out = cetta_malloc(nlen + dlen + 2);
+    memcpy(out, num, nlen);
+    out[nlen] = '/';
+    memcpy(out + nlen + 1, den, dlen + 1);
+    gmp_free_string(num);
+    gmp_free_string(den);
+    mpq_clear(q);
+    return out;
+#else
+    (void)text;
+    return NULL;
+#endif
+}
+
+int cetta_rational_compare_cstr(const char *lhs, const char *rhs) {
+    char *lc = cetta_rational_canonicalize_owned(lhs);
+    char *rc = cetta_rational_canonicalize_owned(rhs);
+    if (!lc || !rc) {
+        const unsigned char *lp = (const unsigned char *)(lhs ? lhs : "");
+        const unsigned char *rp = (const unsigned char *)(rhs ? rhs : "");
+        while (*lp && *lp == *rp) {
+            lp++;
+            rp++;
+        }
+        int result = (*lp > *rp) - (*lp < *rp);
+        free(lc);
+        free(rc);
+        return result;
+    }
+    const unsigned char *lp = (const unsigned char *)lc;
+    const unsigned char *rp = (const unsigned char *)rc;
+    while (*lp && *lp == *rp) {
+        lp++;
+        rp++;
+    }
+    int result = (*lp > *rp) - (*lp < *rp);
+    free(lc);
+    free(rc);
+    return result;
+}
+
+#if CETTA_BUILD_WITH_GMP
+static void cetta_rational_clear_value(void *ptr) {
+    CettaRational *rat = ptr;
+    if (rat && rat->has_value) {
+        mpq_clear(rat->value);
+        rat->has_value = false;
+    }
+}
+#endif
+
+static CettaRational *cetta_rational_new_arena(Arena *a, const char *canonical)
+    __attribute__((unused));
+static CettaRational *cetta_rational_new_arena(Arena *a, const char *canonical) {
+    CettaRational *rat = arena_alloc(a, sizeof(CettaRational));
+    rat->text = arena_strdup(a, canonical);
+#if CETTA_BUILD_WITH_GMP
+    mpq_init(rat->value);
+    mpq_set_canonical_text(rat->value, canonical);
+    rat->has_value = true;
+    arena_register_finalizer(a, cetta_rational_clear_value, rat);
+#endif
+    return rat;
+}
+
+static CettaRational *cetta_rational_new_owned_from_text(const char *canonical) {
+    CettaRational *rat = cetta_malloc(sizeof(CettaRational));
+    rat->text = strdup(canonical);
+    if (!rat->text)
+        cetta_oom(strlen(canonical) + 1);
+#if CETTA_BUILD_WITH_GMP
+    mpq_init(rat->value);
+    mpq_set_canonical_text(rat->value, canonical);
+    rat->has_value = true;
+#endif
+    return rat;
+}
+
+#if CETTA_BUILD_WITH_GMP
+static CettaRational *cetta_rational_new_owned_from_mpq(const char *canonical,
+                                                       const mpq_t value) {
+    CettaRational *rat = cetta_malloc(sizeof(CettaRational));
+    rat->text = strdup(canonical);
+    if (!rat->text)
+        cetta_oom(strlen(canonical) + 1);
+    mpq_init(rat->value);
+    mpq_set(rat->value, value);
+    rat->has_value = true;
+    return rat;
+}
+#endif
+
+static CettaRational *cetta_rational_clone_owned(const CettaRational *src) {
+    if (!src)
+        return NULL;
+#if CETTA_BUILD_WITH_GMP
+    if (src->has_value)
+        return cetta_rational_new_owned_from_mpq(src->text, src->value);
+#endif
+    return cetta_rational_new_owned_from_text(src->text);
+}
+
+static void cetta_rational_free_owned(CettaRational *rat) {
+    if (!rat)
+        return;
+#if CETTA_BUILD_WITH_GMP
+    if (rat->has_value)
+        mpq_clear(rat->value);
+#endif
+    free((void *)rat->text);
+    free(rat);
+}
+
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
 static Atom *atom_maybe_hashcons(Arena *a, const Atom *temp) {
@@ -555,9 +966,9 @@ static uint8_t atom_flags_for_symbol_id(SymbolId sym_id) {
     return flags;
 }
 
-static uint8_t atom_flags_from_children(Atom **elems, uint32_t len) {
+static uint8_t atom_flags_from_children(Atom **elems, CettaExprLen len) {
     uint8_t flags = 0;
-    for (uint32_t i = 0; i < len; i++) {
+    for (CettaExprIndex i = 0; i < len; i++) {
         if (atom_has_vars(elems[i]))
             flags |= ATOM_FLAG_HAS_VARS;
         if (atom_has_registry_refs(elems[i]))
@@ -623,6 +1034,283 @@ Atom *atom_int(Arena *a, int64_t val) {
     *at = temp;
     return at;
 }
+
+Atom *atom_bigint(Arena *a, const char *val) {
+    char *canonical = cetta_bigint_canonicalize_owned(val);
+    if (!canonical)
+        return NULL;
+    int64_t small = 0;
+    if (cetta_bigint_text_fits_i64(canonical, &small)) {
+        free(canonical);
+        return atom_int(a, small);
+    }
+
+    Atom temp = {0};
+    temp.kind = ATOM_GROUNDED;
+    temp.flags = 0;
+    temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
+    temp.ground.gkind = GV_BIGINT;
+    CettaBigInt temp_big = {0};
+    temp_big.text = canonical;
+    temp.ground.bigint = &temp_big;
+    Atom *shared = atom_maybe_hashcons(a, &temp);
+    if (shared) {
+        free(canonical);
+        return shared;
+    }
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = temp.kind;
+    at->flags = temp.flags;
+    at->var_id = temp.var_id;
+    at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
+    at->ground.gkind = temp.ground.gkind;
+    at->ground.bigint = cetta_bigint_new_arena(a, canonical);
+    free(canonical);
+    return at;
+}
+
+const char *atom_bigint_cstr(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED ||
+        atom->ground.gkind != GV_BIGINT || !atom->ground.bigint)
+        return NULL;
+    return atom->ground.bigint->text;
+}
+
+#if CETTA_BUILD_WITH_GMP
+bool atom_bigint_get_mpz(const Atom *atom, mpz_t out) {
+    if (!atom || atom->kind != ATOM_GROUNDED ||
+        atom->ground.gkind != GV_BIGINT || !atom->ground.bigint)
+        return false;
+    CettaBigInt *big = atom->ground.bigint;
+    if (big->has_value) {
+        mpz_set(out, big->value);
+        return true;
+    }
+    return mpz_set_str(out, big->text, 10) == 0;
+}
+
+Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value) {
+    char *text = mpz_get_str(NULL, 10, value);
+    int64_t small = 0;
+    if (cetta_bigint_text_fits_i64(text, &small)) {
+        void (*free_func)(void *, size_t) = NULL;
+        mp_get_memory_functions(NULL, NULL, &free_func);
+        free_func(text, strlen(text) + 1);
+        return atom_int(a, small);
+    }
+
+    Atom temp = {0};
+    temp.kind = ATOM_GROUNDED;
+    temp.flags = 0;
+    temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
+    temp.ground.gkind = GV_BIGINT;
+    CettaBigInt temp_big = {0};
+    temp_big.text = text;
+    mpz_init_set(temp_big.value, value);
+    temp_big.has_value = true;
+    temp.ground.bigint = &temp_big;
+
+    Atom *shared = atom_maybe_hashcons(a, &temp);
+    if (shared) {
+        mpz_clear(temp_big.value);
+        void (*free_func)(void *, size_t) = NULL;
+        mp_get_memory_functions(NULL, NULL, &free_func);
+        free_func(text, strlen(text) + 1);
+        return shared;
+    }
+
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = temp.kind;
+    at->flags = temp.flags;
+    at->var_id = temp.var_id;
+    at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
+    at->ground.gkind = temp.ground.gkind;
+    at->ground.bigint = cetta_bigint_new_arena(a, text);
+    mpz_set(at->ground.bigint->value, value);
+    mpz_clear(temp_big.value);
+    void (*free_func)(void *, size_t) = NULL;
+    mp_get_memory_functions(NULL, NULL, &free_func);
+    free_func(text, strlen(text) + 1);
+    return at;
+}
+#endif
+
+bool cetta_rational_text_exceeds_digit_limit(const char *text,
+                                             uint64_t max_digits,
+                                             bool *valid_out) {
+    if (valid_out)
+        *valid_out = false;
+#if CETTA_BUILD_WITH_GMP
+    if (!text || !*text)
+        return false;
+    mpq_t q;
+    mpq_init(q);
+    bool ok = mpq_set_canonical_text(q, text);
+    if (valid_out)
+        *valid_out = ok;
+    if (!ok) {
+        mpq_clear(q);
+        return false;
+    }
+    if (max_digits == UINT64_MAX || mpz_cmp_ui(mpq_denref(q), 1u) == 0) {
+        mpq_clear(q);
+        return false;
+    }
+    size_t n_digits = mpz_sizeinbase(mpq_numref(q), 10);
+    size_t d_digits = mpz_sizeinbase(mpq_denref(q), 10);
+    bool too_large = n_digits > UINT64_MAX - d_digits ||
+        (uint64_t)(n_digits + d_digits) > max_digits;
+    mpq_clear(q);
+    return too_large;
+#else
+    (void)text;
+    (void)max_digits;
+    return false;
+#endif
+}
+
+Atom *atom_rational_limited(Arena *a, const char *val, uint64_t max_digits,
+                            bool *too_large_out) {
+    if (too_large_out)
+        *too_large_out = false;
+#if CETTA_BUILD_WITH_GMP
+    if (!a || !val)
+        return NULL;
+    mpq_t q;
+    mpq_init(q);
+    bool ok = mpq_set_canonical_text(q, val);
+    if (!ok) {
+        mpq_clear(q);
+        return NULL;
+    }
+    if (max_digits != UINT64_MAX && mpz_cmp_ui(mpq_denref(q), 1u) != 0) {
+        size_t n_digits = mpz_sizeinbase(mpq_numref(q), 10);
+        size_t d_digits = mpz_sizeinbase(mpq_denref(q), 10);
+        if (n_digits > UINT64_MAX - d_digits ||
+            (uint64_t)(n_digits + d_digits) > max_digits) {
+            if (too_large_out)
+                *too_large_out = true;
+            mpq_clear(q);
+            return NULL;
+        }
+    }
+    Atom *out = atom_rational_from_mpq(a, q);
+    mpq_clear(q);
+    return out;
+#else
+    (void)a;
+    (void)val;
+    (void)max_digits;
+    return NULL;
+#endif
+}
+
+Atom *atom_rational(Arena *a, const char *val) {
+#if CETTA_BUILD_WITH_GMP
+    if (!a || !val)
+        return NULL;
+    mpq_t q;
+    mpq_init(q);
+    bool ok = mpq_set_canonical_text(q, val);
+    if (!ok) {
+        mpq_clear(q);
+        return NULL;
+    }
+    Atom *out = atom_rational_from_mpq(a, q);
+    mpq_clear(q);
+    return out;
+#else
+    (void)a;
+    (void)val;
+    return NULL;
+#endif
+}
+
+const char *atom_rational_cstr(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED ||
+        atom->ground.gkind != GV_RATIONAL || !atom->ground.rational)
+        return NULL;
+    return atom->ground.rational->text;
+}
+
+#if CETTA_BUILD_WITH_GMP
+bool atom_rational_get_mpq(const Atom *atom, mpq_t out) {
+    if (!atom || atom->kind != ATOM_GROUNDED ||
+        atom->ground.gkind != GV_RATIONAL || !atom->ground.rational)
+        return false;
+    CettaRational *rat = atom->ground.rational;
+    if (rat->has_value) {
+        mpq_set(out, rat->value);
+        return true;
+    }
+    return mpq_set_canonical_text(out, rat->text);
+}
+
+Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
+    mpq_t q;
+    mpq_init(q);
+    mpq_set(q, value);
+    mpq_canonicalize(q);
+    if (mpz_cmp_ui(mpq_denref(q), 1u) == 0) {
+        Atom *out = atom_bigint_from_mpz(a, mpq_numref(q));
+        mpq_clear(q);
+        return out;
+    }
+
+    char *num = mpz_get_str(NULL, 10, mpq_numref(q));
+    char *den = mpz_get_str(NULL, 10, mpq_denref(q));
+    size_t nlen = strlen(num);
+    size_t dlen = strlen(den);
+    char *text = cetta_malloc(nlen + dlen + 2);
+    memcpy(text, num, nlen);
+    text[nlen] = '/';
+    memcpy(text + nlen + 1, den, dlen + 1);
+
+    Atom temp = {0};
+    temp.kind = ATOM_GROUNDED;
+    temp.flags = 0;
+    temp.var_id = VAR_ID_NONE;
+    temp.hash_cache = 0;
+    temp.ground.gkind = GV_RATIONAL;
+    CettaRational temp_rat = {0};
+    temp_rat.text = text;
+    mpq_init(temp_rat.value);
+    mpq_set(temp_rat.value, q);
+    temp_rat.has_value = true;
+    temp.ground.rational = &temp_rat;
+
+    Atom *shared = atom_maybe_hashcons(a, &temp);
+    if (shared) {
+        mpq_clear(temp_rat.value);
+        free(text);
+        gmp_free_string(num);
+        gmp_free_string(den);
+        mpq_clear(q);
+        return shared;
+    }
+
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    at->kind = temp.kind;
+    at->flags = temp.flags;
+    at->var_id = temp.var_id;
+    at->sym_id = SYMBOL_ID_NONE;
+    at->hash_cache = 0;
+    at->ground.gkind = temp.ground.gkind;
+    at->ground.rational = cetta_rational_new_arena(a, text);
+    mpq_set(at->ground.rational->value, q);
+
+    mpq_clear(temp_rat.value);
+    free(text);
+    gmp_free_string(num);
+    gmp_free_string(den);
+    mpq_clear(q);
+    return at;
+}
+#endif
 
 Atom *atom_space(Arena *a, void *space_ptr) {
     Atom *at = arena_alloc(a, sizeof(Atom));
@@ -723,8 +1411,12 @@ Atom *atom_string(Arena *a, const char *val) {
     return at;
 }
 
-Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
+Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     Atom temp = {0};
+    size_t elems_bytes = 0;
+    if (len > 0 && !cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
+        cetta_oom(SIZE_MAX);
+    elems_bytes = (size_t)len * sizeof(Atom *);
     temp.kind = ATOM_EXPR;
     temp.flags = atom_flags_from_children(elems, len);
     temp.var_id = VAR_ID_NONE;
@@ -740,12 +1432,12 @@ Atom *atom_expr(Arena *a, Atom **elems, uint32_t len) {
     at->sym_id = SYMBOL_ID_NONE;
     at->hash_cache = 0;
     at->expr.len = len;
-    at->expr.elems = arena_alloc(a, sizeof(Atom *) * len);
-    if (elems) memcpy(at->expr.elems, elems, sizeof(Atom *) * len);
+    at->expr.elems = arena_alloc(a, elems_bytes);
+    if (elems && elems_bytes > 0) memcpy(at->expr.elems, elems, elems_bytes);
     return at;
 }
 
-Atom *atom_expr_shared(Arena *a, Atom **elems, uint32_t len) {
+Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len) {
     return atom_expr(a, elems, len);
 }
 
@@ -864,6 +1556,12 @@ bool atom_eq(Atom *a, Atom *b) {
         case GV_FLOAT:  return a->ground.fval == b->ground.fval;
         case GV_BOOL:   return a->ground.bval == b->ground.bval;
         case GV_STRING: return strcmp(a->ground.sval, b->ground.sval) == 0;
+        case GV_BIGINT:
+            return cetta_bigint_compare_cstr(atom_bigint_cstr(a),
+                                            atom_bigint_cstr(b)) == 0;
+        case GV_RATIONAL:
+            return cetta_rational_compare_cstr(atom_rational_cstr(a),
+                                               atom_rational_cstr(b)) == 0;
         case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
         case GV_CAPTURE: return a->ground.ptr == b->ground.ptr;
         case GV_FOREIGN: return a->ground.ptr == b->ground.ptr;
@@ -876,7 +1574,7 @@ bool atom_eq(Atom *a, Atom *b) {
         return false;
     case ATOM_EXPR:
         if (a->expr.len != b->expr.len) return false;
-        for (uint32_t i = 0; i < a->expr.len; i++)
+        for (CettaExprIndex i = 0; i < a->expr.len; i++)
             if (!atom_eq(a->expr.elems[i], b->expr.elems[i])) return false;
         return true;
     }
@@ -905,6 +1603,12 @@ static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share) {
         case GV_STRING:
             return share && g_hashcons ? hashcons_get(g_hashcons, atom_string(dst, src->ground.sval))
                                        : atom_string(dst, src->ground.sval);
+        case GV_BIGINT:
+            return share && g_hashcons ? hashcons_get(g_hashcons, atom_bigint(dst, atom_bigint_cstr(src)))
+                                       : atom_bigint(dst, atom_bigint_cstr(src));
+        case GV_RATIONAL:
+            return share && g_hashcons ? hashcons_get(g_hashcons, atom_rational(dst, atom_rational_cstr(src)))
+                                       : atom_rational(dst, atom_rational_cstr(src));
         case GV_SPACE:  return atom_space(dst, src->ground.ptr);
         case GV_STATE:  return atom_state(dst, (StateCell *)src->ground.ptr);
         case GV_CAPTURE: return atom_capture(dst, (CaptureClosure *)src->ground.ptr);
@@ -912,8 +1616,11 @@ static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share) {
         }
         return atom_symbol(dst, "?");
     case ATOM_EXPR: {
-        Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
-        for (uint32_t i = 0; i < src->expr.len; i++)
+        if (src->expr.len > 0 &&
+            !cetta_expr_len_mul_fits_size(src->expr.len, sizeof(Atom *)))
+            cetta_oom(SIZE_MAX);
+        Atom **elems = arena_alloc(dst, (size_t)src->expr.len * sizeof(Atom *));
+        for (CettaExprIndex i = 0; i < src->expr.len; i++)
             elems[i] = atom_deep_copy_impl(dst, src->expr.elems[i], share);
         return share ? atom_expr_shared(dst, elems, src->expr.len)
                      : atom_expr(dst, elems, src->expr.len);
@@ -932,6 +1639,27 @@ Atom *atom_deep_copy_shared(Arena *dst, Atom *src) {
 
 /* ── Printing ───────────────────────────────────────────────────────────── */
 
+int cetta_format_float(char *buf, size_t size, double value) {
+    if (isnan(value)) {
+        return snprintf(buf, size, "NaN");
+    } else if (isinf(value)) {
+        return snprintf(buf, size, "%s", signbit(value) ? "-inf" : "inf");
+    } else if (isfinite(value) && floor(value) == value) {
+        if (fabs(value) < 9007199254740992.0)
+            return snprintf(buf, size, "%.1f", value);
+        return snprintf(buf, size, "%.16e", value);
+    } else {
+        return snprintf(buf, size, "%.16g", value);
+    }
+}
+
+static void atom_print_float(double value, FILE *out) {
+    char buf[64];
+    int printed = cetta_format_float(buf, sizeof(buf), value);
+    if (printed > 0)
+        fputs(buf, out);
+}
+
 void atom_print(Atom *a, FILE *out) {
     switch (a->kind) {
     case ATOM_SYMBOL:
@@ -949,16 +1677,11 @@ void atom_print(Atom *a, FILE *out) {
         switch (a->ground.gkind) {
         case GV_INT:    fprintf(out, "%ld", (long)a->ground.ival); break;
         case GV_FLOAT:
-            if (isnan(a->ground.fval))
-                fputs("NaN", out);
-            else if (isinf(a->ground.fval))
-                fputs(signbit(a->ground.fval) ? "-inf" : "inf", out);
-            else if (isfinite(a->ground.fval) && floor(a->ground.fval) == a->ground.fval)
-                fprintf(out, "%.1f", a->ground.fval);
-            else
-                fprintf(out, "%.16g", a->ground.fval);
+            atom_print_float(a->ground.fval, out);
             break;
         case GV_BOOL:   fputs(a->ground.bval ? "True" : "False", out); break;
+        case GV_BIGINT: fputs(atom_bigint_cstr(a), out); break;
+        case GV_RATIONAL: fputs(atom_rational_cstr(a), out); break;
         case GV_STRING: {
             fputc('"', out);
             for (const char *p = a->ground.sval; *p; p++) {
@@ -988,7 +1711,7 @@ void atom_print(Atom *a, FILE *out) {
         break;
     case ATOM_EXPR:
         fputc('(', out);
-        for (uint32_t i = 0; i < a->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < a->expr.len; i++) {
             if (i > 0) fputc(' ', out);
             atom_print(a->expr.elems[i], out);
         }

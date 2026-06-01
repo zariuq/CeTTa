@@ -173,13 +173,13 @@ static double run_space_dump_packet_mode(CettaMorkSpaceHandle *space,
     for (int rep = 0; rep < repeat; rep++) {
         uint8_t *packet = NULL;
         size_t len = 0;
-        uint32_t rows = 0;
+        uint64_t rows = 0;
         uint64_t started = monotonic_ns();
         if (!cetta_mork_bridge_space_dump(space, &packet, &len, &rows))
             fail_bridge("cetta_mork_bridge_space_dump");
         uint64_t finished = monotonic_ns();
         if ((uint64_t)rows != expected_rows || len == 0 || !packet) {
-            fprintf(stderr, "error: dump packet returned rows=%" PRIu32 ", len=%zu\n",
+            fprintf(stderr, "error: dump packet returned rows=%" PRIu64 ", len=%zu\n",
                     rows, len);
             exit(1);
         }

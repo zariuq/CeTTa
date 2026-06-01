@@ -602,6 +602,20 @@ static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
                 out_error);
         case GV_STRING:
             return bridge_emit_string_token(a, buf, atom->ground.sval, out_error);
+        case GV_BIGINT:
+        {
+            const char *text = atom_bigint_cstr(atom);
+            return bridge_expr_buf_push_symbol(
+                buf, (const uint8_t *)text,
+                (uint32_t)strlen(text), out_error);
+        }
+        case GV_RATIONAL:
+        {
+            const char *text = atom_rational_cstr(atom);
+            return bridge_expr_buf_push_symbol(
+                buf, (const uint8_t *)text,
+                (uint32_t)strlen(text), out_error);
+        }
         case GV_SPACE:
             if (out_error)
                 *out_error = "MORK bridge expr-byte ingress does not support grounded Space values";
@@ -702,6 +716,16 @@ static bool bridge_encode_atom_id_rec(Arena *a,
         case GV_STRING:
             return bridge_emit_string_token(a, buf, tu_string_cstr(universe, atom_id),
                                             out_error);
+        case GV_BIGINT: {
+            const char *text = tu_bigint_cstr(universe, atom_id);
+            return bridge_expr_buf_push_symbol(
+                buf, (const uint8_t *)text, (uint32_t)strlen(text), out_error);
+        }
+        case GV_RATIONAL: {
+            const char *text = tu_rational_cstr(universe, atom_id);
+            return bridge_expr_buf_push_symbol(
+                buf, (const uint8_t *)text, (uint32_t)strlen(text), out_error);
+        }
         case GV_SPACE:
             if (out_error)
                 *out_error = "MORK bridge expr-byte ingress does not support grounded Space values";

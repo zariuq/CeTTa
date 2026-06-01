@@ -161,6 +161,7 @@ typedef struct {
     X(op_le, "<=") \
     X(op_ge, ">=") \
     X(op_eq, "==") \
+    X(numeric_eq, "numeric-eq") \
     X(alpha_eq, "=alpha") \
     X(if_equal, "if-equal") \
     X(sealed_text, "sealed") \

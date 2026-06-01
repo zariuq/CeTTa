@@ -11,6 +11,8 @@ extern "C" {
 typedef struct MorkSpace MorkSpace;
 typedef struct MorkProgram MorkProgram;
 typedef struct MorkContext MorkContext;
+typedef struct MorkCursor MorkCursor;
+typedef struct MorkQueryCursor MorkQueryCursor;
 
 typedef enum {
     MORK_STATUS_OK = 0,
@@ -31,7 +33,7 @@ typedef struct {
     int32_t code;
     uint8_t *data;
     size_t len;
-    uint32_t count;
+    uint64_t count;
     uint8_t *message;
     size_t message_len;
 } MorkBuffer;
@@ -66,7 +68,7 @@ Packet/debug exports below are the durable public query seams.
 /*
 Packet format for mork_space_query_bindings():
 
-  u32 rows_be
+  u64 rows_be
   repeated rows:
     u32 ref_count_be
     repeated refs:
@@ -135,12 +137,27 @@ count = logical row count with multiplicities expanded.
 MorkBuffer mork_space_dump_expr_rows(MorkSpace *space);
 
 /*
-Contextual exact-row bridge packet (wire version 4):
+Cursor expr-row stream:
+
+  repeated rows:
+    u32 expr_len_be
+    u8[expr_len] stable bridge expr packet bytes
+
+len = byte length of this batch.
+count = logical row count in this batch.
+A successful batch with count == 0 and len == 0 is EOF.
+*/
+MorkBuffer mork_cursor_next_expr_rows(MorkCursor *cursor,
+                                      uint64_t max_rows,
+                                      uint64_t max_bytes);
+
+/*
+Contextual exact-row bridge packet (wire version 5):
 
   u32 magic_be      // 0x43544252 = "CTBR"
-  u16 version_be    // 4
+  u16 version_be    // 5
   u16 flags_be      // 0 for exact-row packets
-  u32 rows_be       // number of row specs, not expanded logical rows
+  u64 rows_be       // number of row specs, not expanded logical rows
   u32 contexts_be
   repeated contexts:
     u32 context_id_be
@@ -163,18 +180,18 @@ identities.
 */
 MorkBuffer mork_space_dump_contextual_exact_rows(MorkSpace *space);
 
-/* Compatibility v1 text packet export. Prefer the v2/v3 raw-byte packet
-   surfaces for new CeTTa integration work. */
+/* Text binding packet export. Raw-byte query packet surfaces are preferred
+   for CeTTa integration work. */
 MorkBuffer mork_space_query_bindings(MorkSpace *space, const uint8_t *pattern, size_t len);
 
 /*
 Packet format for mork_space_query_bindings_query_only_v2():
 
   u32 magic_be      // 0x43544252 = "CTBR"
-  u16 version_be    // 2
+  u16 version_be    // 5
   u16 flags_be      // bit0=query-side keys only, bit1=stable bridge expr payload,
                     // bit4=wide token lengths in the expr payload
-  u32 rows_be
+  u64 rows_be
   repeated rows:
     u32 ref_count_be
     repeated refs:
@@ -187,7 +204,7 @@ Packet format for mork_space_query_bindings_query_only_v2():
       u32 expr_len_be
       u8  expr_bytes[expr_len]
 
-This export is intentionally stricter than v1:
+This export is intentionally stricter than the text binding packet:
 - binding keys must be query-side only
 - values may be matched-side only if they are ground
 - matched-side variables in values cause the whole call to fail
@@ -201,22 +218,26 @@ symbol payloads are exported as stable symbol text bytes rather than MORK-
 internal symbol handles. That makes the packet meaningful to a C consumer.
 
 This makes it safe as a future fast-path packet for CeTTa's VarId/SymbolId
-decoder while preserving the existing v1 text packet for current integration.
+decoder while preserving a text-oriented packet for inspection/integration
+sites that still need S-expression payloads.
 */
 MorkBuffer mork_space_query_bindings_query_only_v2(MorkSpace *space,
                                                    const uint8_t *pattern,
                                                    size_t len);
+MorkQueryCursor *mork_query_cursor_new_query_only_v2(MorkSpace *space,
+                                                     const uint8_t *pattern,
+                                                     size_t len);
 
 /*
 Packet format for mork_space_query_bindings_multi_ref_v3():
 
   u32 magic_be      // 0x43544252 = "CTBR"
-  u16 version_be    // 3
+  u16 version_be    // 6
   u16 flags_be      // bit0=query-side keys only, bit1=stable bridge expr payload,
                     // bit2=per-factor matched-atom ref groups,
                     // bit4=wide token lengths in the expr payload
   u32 factor_count_be
-  u32 rows_be
+  u64 rows_be
   repeated rows:
     repeated factor groups (factor_count of them):
       u32 factor_ref_count_be
@@ -237,13 +258,20 @@ mirrored atom-index group so CeTTa can preserve joined-query multiplicity.
 MorkBuffer mork_space_query_bindings_multi_ref_v3(MorkSpace *space,
                                                   const uint8_t *pattern,
                                                   size_t len);
+MorkQueryCursor *mork_query_cursor_new_multi_ref_v3(MorkSpace *space,
+                                                   const uint8_t *pattern,
+                                                   size_t len);
+void mork_query_cursor_free(MorkQueryCursor *cursor);
+MorkBuffer mork_query_cursor_next(MorkQueryCursor *cursor,
+                                  uint64_t max_rows,
+                                  uint64_t max_bytes);
 /*
 Packet format for mork_space_query_contextual_rows():
 
   u32 magic_be      // 0x43544252 = "CTBR"
   u16 version_be    // contextual rows wire version
   u16 flags_be      // 0 for contextual query packets
-  u32 rows_be
+  u64 rows_be
   u32 contexts_be
   repeated contexts:
     u32 context_id_be

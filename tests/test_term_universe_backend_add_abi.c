@@ -18,13 +18,20 @@ static CettaMorkSpaceHandle *const g_fake_bridge_space =
 static uint8_t g_fake_bridge_cursor_storage;
 static CettaMorkCursorHandle *const g_fake_bridge_cursor =
     (CettaMorkCursorHandle *)&g_fake_bridge_cursor_storage;
+static uint8_t g_fake_query_cursor_storage;
+static CettaMorkQueryCursorHandle *const g_fake_query_cursor =
+    (CettaMorkQueryCursorHandle *)&g_fake_query_cursor_storage;
 static bool g_bridge_accept_expr = false;
 static char *g_bridge_texts[8];
 static uint32_t g_bridge_text_count = 0;
 static const uint8_t *g_bridge_value_bytes[8];
 static size_t g_bridge_value_lens[8];
 static uint32_t g_bridge_value_count = 0;
+static uint64_t g_bridge_size_override = UINT64_MAX;
+static uint64_t g_bridge_dump_expr_rows_override = UINT64_MAX;
 static uint32_t g_bridge_cursor_pos = UINT32_MAX;
+static bool g_query_cursor_enabled = false;
+static uint32_t g_query_cursor_pos = UINT32_MAX;
 static bool g_bridge_logical_rows_result = false;
 static uint64_t g_bridge_logical_rows_added = 0;
 static uint32_t g_bridge_logical_rows_calls = 0;
@@ -59,7 +66,11 @@ static void reset_bridge_capture(void) {
     memset(g_bridge_value_bytes, 0, sizeof(g_bridge_value_bytes));
     memset(g_bridge_value_lens, 0, sizeof(g_bridge_value_lens));
     g_bridge_value_count = 0;
+    g_bridge_size_override = UINT64_MAX;
+    g_bridge_dump_expr_rows_override = UINT64_MAX;
     g_bridge_cursor_pos = UINT32_MAX;
+    g_query_cursor_enabled = false;
+    g_query_cursor_pos = UINT32_MAX;
     g_bridge_logical_rows_result = false;
     g_bridge_logical_rows_added = 0;
     g_bridge_logical_rows_calls = 0;
@@ -278,6 +289,71 @@ bool cetta_mork_bridge_cursor_path_bytes(const CettaMorkCursorHandle *cursor,
     return true;
 }
 
+bool cetta_mork_bridge_cursor_next_expr_rows(CettaMorkCursorHandle *cursor,
+                                             uint64_t max_rows,
+                                             uint64_t max_bytes,
+                                             uint8_t **out_packet,
+                                             size_t *out_len,
+                                             uint64_t *out_rows) {
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_rows)
+        *out_rows = 0;
+    if (cursor != g_fake_bridge_cursor || max_rows == 0 || max_bytes == 0)
+        return false;
+    if (g_bridge_dump_expr_rows_override != UINT64_MAX) {
+        uint8_t *packet = malloc(1u);
+        assert(packet != NULL);
+        if (out_packet)
+            *out_packet = packet;
+        else
+            free(packet);
+        if (out_rows)
+            *out_rows = g_bridge_dump_expr_rows_override;
+        return true;
+    }
+
+    if (g_bridge_cursor_pos == UINT32_MAX)
+        g_bridge_cursor_pos = 0;
+    if (g_bridge_cursor_pos >= g_bridge_value_count)
+        return true;
+
+    uint64_t rows64 = (uint64_t)g_bridge_value_count - g_bridge_cursor_pos;
+    if (rows64 > max_rows)
+        rows64 = max_rows;
+    uint32_t rows = (uint32_t)rows64;
+    size_t packet_len = 0;
+    for (uint32_t i = 0; i < rows; i++)
+        packet_len += 4u + g_bridge_value_lens[g_bridge_cursor_pos + i];
+
+    uint8_t *packet = malloc(packet_len ? packet_len : 1u);
+    assert(packet != NULL);
+    size_t off = 0;
+    for (uint32_t i = 0; i < rows; i++) {
+        uint32_t len32 = (uint32_t)g_bridge_value_lens[g_bridge_cursor_pos + i];
+        packet[off++] = (uint8_t)(len32 >> 24);
+        packet[off++] = (uint8_t)(len32 >> 16);
+        packet[off++] = (uint8_t)(len32 >> 8);
+        packet[off++] = (uint8_t)len32;
+        if (len32) {
+            memcpy(packet + off, g_bridge_value_bytes[g_bridge_cursor_pos + i], len32);
+            off += len32;
+        }
+    }
+    g_bridge_cursor_pos += rows;
+    if (out_packet)
+        *out_packet = packet;
+    else
+        free(packet);
+    if (out_len)
+        *out_len = packet_len;
+    if (out_rows)
+        *out_rows = rows;
+    return true;
+}
+
 bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len,
@@ -356,7 +432,9 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
     if (space != g_fake_bridge_space)
         return false;
     if (out_size)
-        *out_size = g_bridge_value_count;
+        *out_size = g_bridge_size_override == UINT64_MAX
+            ? (uint64_t)g_bridge_value_count
+            : g_bridge_size_override;
     return true;
 }
 
@@ -368,7 +446,7 @@ CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
 bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
                                             uint8_t **out_packet,
                                             size_t *out_len,
-                                            uint32_t *out_rows) {
+                                            uint64_t *out_rows) {
     if (out_packet)
         *out_packet = NULL;
     if (out_len)
@@ -377,6 +455,17 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
         *out_rows = 0;
     if (space != g_fake_bridge_space)
         return false;
+    if (g_bridge_dump_expr_rows_override != UINT64_MAX) {
+        uint8_t *packet = malloc(1u);
+        assert(packet != NULL);
+        if (out_packet)
+            *out_packet = packet;
+        else
+            free(packet);
+        if (out_rows)
+            *out_rows = g_bridge_dump_expr_rows_override;
+        return true;
+    }
 
     size_t packet_len = 0;
     for (uint32_t i = 0; i < g_bridge_value_count; i++) {
@@ -410,7 +499,7 @@ bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
 bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
                                                uint8_t **out_packet,
                                                size_t *out_len,
-                                               uint32_t *out_rows) {
+                                               uint64_t *out_rows) {
     (void)space;
     if (out_packet)
         *out_packet = NULL;
@@ -424,7 +513,7 @@ bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *sp
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,
-                                  uint32_t *out_rows) {
+                                  uint64_t *out_rows) {
     (void)space;
     if (out_packet)
         *out_packet = NULL;
@@ -462,7 +551,7 @@ bool cetta_mork_bridge_space_query_bindings_query_only_v2(CettaMorkSpaceHandle *
                                                           size_t len,
                                                           uint8_t **out_packet,
                                                           size_t *out_len,
-                                                          uint32_t *out_rows) {
+                                                          uint64_t *out_rows) {
     (void)space;
     (void)pattern;
     (void)len;
@@ -480,7 +569,7 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
                                                          size_t len,
                                                          uint8_t **out_packet,
                                                          size_t *out_len,
-                                                         uint32_t *out_rows) {
+                                                         uint64_t *out_rows) {
     (void)space;
     (void)pattern;
     (void)len;
@@ -493,12 +582,96 @@ bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *s
     return false;
 }
 
+static void test_store_u16_be(uint8_t *dst, uint16_t value) {
+    dst[0] = (uint8_t)(value >> 8);
+    dst[1] = (uint8_t)value;
+}
+
+static void test_store_u32_be(uint8_t *dst, uint32_t value) {
+    dst[0] = (uint8_t)(value >> 24);
+    dst[1] = (uint8_t)(value >> 16);
+    dst[2] = (uint8_t)(value >> 8);
+    dst[3] = (uint8_t)value;
+}
+
+static void test_store_u64_be(uint8_t *dst, uint64_t value) {
+    dst[0] = (uint8_t)(value >> 56);
+    dst[1] = (uint8_t)(value >> 48);
+    dst[2] = (uint8_t)(value >> 40);
+    dst[3] = (uint8_t)(value >> 32);
+    dst[4] = (uint8_t)(value >> 24);
+    dst[5] = (uint8_t)(value >> 16);
+    dst[6] = (uint8_t)(value >> 8);
+    dst[7] = (uint8_t)value;
+}
+
+bool cetta_mork_bridge_query_cursor_new_query_only_v2(
+    CettaMorkSpaceHandle *space, const uint8_t *pattern, size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    (void)pattern;
+    (void)len;
+    if (out_cursor)
+        *out_cursor = NULL;
+    if (space != g_fake_bridge_space || !g_query_cursor_enabled || !out_cursor)
+        return false;
+    g_query_cursor_pos = 0;
+    *out_cursor = g_fake_query_cursor;
+    return true;
+}
+
+bool cetta_mork_bridge_query_cursor_new_multi_ref_v3(
+    CettaMorkSpaceHandle *space, const uint8_t *pattern, size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    (void)space;
+    (void)pattern;
+    (void)len;
+    if (out_cursor)
+        *out_cursor = NULL;
+    return false;
+}
+
+void cetta_mork_bridge_query_cursor_free(CettaMorkQueryCursorHandle *cursor) {
+    (void)cursor;
+}
+
+bool cetta_mork_bridge_query_cursor_next(CettaMorkQueryCursorHandle *cursor,
+                                         uint64_t max_rows,
+                                         uint64_t max_bytes,
+                                         uint8_t **out_packet,
+                                         size_t *out_len,
+                                         uint64_t *out_rows) {
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (out_rows)
+        *out_rows = 0;
+    if (cursor != g_fake_query_cursor || !g_query_cursor_enabled ||
+        max_rows == 0 || max_bytes < 24 || !out_packet || !out_len || !out_rows)
+        return false;
+    if (g_query_cursor_pos++ > 0)
+        return true;
+
+    uint8_t *packet = malloc(24);
+    assert(packet != NULL);
+    test_store_u32_be(packet, 0x43544252u);
+    test_store_u16_be(packet + 4, 5u);
+    test_store_u16_be(packet + 6, 0x0013u);
+    test_store_u64_be(packet + 8, 1u);
+    test_store_u32_be(packet + 16, 0u);
+    test_store_u32_be(packet + 20, 0u);
+    *out_packet = packet;
+    *out_len = 24;
+    *out_rows = 1;
+    return true;
+}
+
 bool cetta_mork_bridge_space_query_contextual_rows(CettaMorkSpaceHandle *space,
                                                    const uint8_t *pattern,
                                                    size_t len,
                                                    uint8_t **out_packet,
                                                    size_t *out_len,
-                                                   uint32_t *out_rows) {
+                                                   uint64_t *out_rows) {
     (void)space;
     (void)pattern;
     (void)len;
@@ -540,6 +713,12 @@ static Atom *expr2(Arena *a, Atom *x0, Atom *x1) {
 static Atom *expr3(Arena *a, Atom *x0, Atom *x1, Atom *x2) {
     Atom *items[3] = {x0, x1, x2};
     return atom_expr(a, items, 3);
+}
+
+static bool count_bindings_visit(const Bindings *bindings, void *ctx) {
+    (void)bindings;
+    (*(uint32_t *)ctx)++;
+    return true;
 }
 
 static void test_native_add_boundary(TermUniverse *universe, Arena *scratch) {
@@ -764,7 +943,7 @@ static void test_imported_chunk_remove_direct_id_boundary(TermUniverse *universe
                                                 (const uint8_t *)seed_text,
                                                 strlen(seed_text), &added));
     assert(added == 2);
-    assert(space_length(&imported_space) == 2);
+    assert(space_length64(&imported_space) == 2);
     CettaTermUniverseDiagnostics add_diag =
         snapshot_term_universe_witnesses(universe);
     assert(add_diag.legacy_top_down_stable_admissions == 0);
@@ -776,7 +955,7 @@ static void test_imported_chunk_remove_direct_id_boundary(TermUniverse *universe
                                                   (const uint8_t *)remove_text,
                                                   strlen(remove_text), &removed));
     assert(removed == 1);
-    assert(space_length(&imported_space) == 1);
+    assert(space_length64(&imported_space) == 1);
     CettaTermUniverseDiagnostics remove_diag =
         snapshot_term_universe_witnesses(universe);
     assert(remove_diag.direct_constructor_leaf_hits > 0);
@@ -823,19 +1002,19 @@ static void test_imported_chunk_switchback_regression(TermUniverse *universe,
                                                 (const uint8_t *)seed_text,
                                                 strlen(seed_text), &added));
     assert(added == 2);
-    assert(space_length(&imported_space) == 2);
+    assert(space_length64(&imported_space) == 2);
 
     assert(space_match_backend_load_sexpr_chunk(&imported_space, scratch,
                                                 (const uint8_t *)grow_text,
                                                 strlen(grow_text), &added));
     assert(added == 1);
-    assert(space_length(&imported_space) == 3);
+    assert(space_length64(&imported_space) == 3);
 
     assert(space_match_backend_remove_sexpr_chunk(&imported_space, scratch,
                                                   (const uint8_t *)remove_text,
                                                   strlen(remove_text), &removed));
     assert(removed == 1);
-    assert(space_length(&imported_space) == 2);
+    assert(space_length64(&imported_space) == 2);
 
     SubstMatchSet keep_matches;
     smset_init(&keep_matches);
@@ -848,7 +1027,7 @@ static void test_imported_chunk_switchback_regression(TermUniverse *universe,
 
     assert(space_match_backend_try_set(&imported_space,
                                        SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
-    assert(space_length(&imported_space) == 2);
+    assert(space_length64(&imported_space) == 2);
 
     SubstMatchSet bc_matches;
     smset_init(&bc_matches);
@@ -1008,7 +1187,7 @@ static void test_parser_direct_add_boundary(TermUniverse *universe, Arena *scrat
     }
     CettaTermUniverseDiagnostics add_diag =
         snapshot_term_universe_witnesses(universe);
-    assert(space_length(&space) == (uint32_t)n);
+    assert(space_length64(&space) == (uint32_t)n);
     assert(space_get_atom_id_at(&space, 0) == ids[0]);
     assert(space_get_atom_id_at(&space, 1) == ids[1]);
     assert(space_get_atom_id_at(&space, 2) == ids[2]);
@@ -1079,7 +1258,7 @@ static void test_bridge_structural_import_boundary(TermUniverse *universe,
                SPACE_TRANSFER_OK);
     }
     assert(loaded == 2);
-    assert(space_length(&imported_space) == 2);
+    assert(space_length64(&imported_space) == 2);
     CettaTermUniverseDiagnostics import_diag =
         snapshot_term_universe_witnesses(universe);
     assert(import_diag.direct_constructor_leaf_hits > 0);
@@ -1124,7 +1303,7 @@ static void test_bridge_structural_import_boundary(TermUniverse *universe,
                SPACE_TRANSFER_OK);
     }
     assert(loaded == 1);
-    assert(space_length(&imported_space) == 3);
+    assert(space_length64(&imported_space) == 3);
     import_diag = snapshot_term_universe_witnesses(universe);
     assert(import_diag.direct_constructor_leaf_hits > 0);
     assert(import_diag.direct_constructor_expr_hits > 0);
@@ -1180,9 +1359,125 @@ static void test_pathmap_no_universe_import_boundary(void) {
                SPACE_TRANSFER_NEEDS_TEXT_FALLBACK);
     }
     assert(loaded == 0);
-    assert(space_length(&imported_space) == 0);
+    assert(space_length64(&imported_space) == 0);
 
     space_free(&imported_space);
+}
+
+static void test_bridge_logical_len64_over_u32_boundary(TermUniverse *universe,
+                                                        Arena *scratch) {
+    Space imported_space;
+    uint64_t huge_len = (uint64_t)UINT32_MAX + 17u;
+    Space *clone = NULL;
+    Atom *query = NULL;
+    uint32_t visited = 0;
+
+    space_init_with_universe(&imported_space, universe);
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
+        printf("SKIP: PATHMAP unavailable in this build\n");
+        space_free(&imported_space);
+        return;
+    }
+
+    reset_bridge_capture();
+    g_bridge_size_override = huge_len;
+    imported_space.match_backend.pathmap.bridge.bridge_active = true;
+    imported_space.match_backend.pathmap.bridge.bridge_space = g_fake_bridge_space;
+    imported_space.match_backend.pathmap.bridge.projection_valid = false;
+
+    assert(space_match_backend_native_materialization_limit() > UINT32_MAX);
+    assert(space_match_backend_packet_materialization_limit() > UINT32_MAX);
+    assert(space_match_backend_logical_len64(&imported_space) == huge_len);
+    assert(space_length64(&imported_space) == huge_len);
+    {
+        uint32_t narrow_len = 7;
+        space_match_backend_clear_error();
+        assert(!space_length_u32_checked(&imported_space, &narrow_len));
+        assert(narrow_len == 0);
+        assert(space_match_backend_last_error_code() ==
+               SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE);
+        assert(strcmp(space_match_backend_last_error(), "NativeSpaceTooLarge") == 0);
+    }
+    space_match_backend_clear_error();
+    clone = space_heap_clone_shallow(&imported_space);
+    assert(clone == NULL);
+    assert(space_match_backend_last_error_code() ==
+           SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE);
+    assert(strcmp(space_match_backend_last_error(), "NativeSpaceTooLarge") == 0);
+
+    g_query_cursor_enabled = true;
+    query = expr3(scratch, sym(scratch, "edge"), var(scratch, "x", 1),
+                  var(scratch, "y", 2));
+    assert(space_match_backend_visit_bindings_direct(
+        &imported_space, scratch, query, count_bindings_visit, &visited));
+    assert(visited == 1);
+    assert(g_query_cursor_pos == 2);
+
+    space_free(&imported_space);
+    reset_bridge_capture();
+}
+
+static void test_bridge_materialize_packet_over_capacity_reports_packet_too_large(
+    TermUniverse *universe) {
+    Space imported_space;
+    uint64_t packet_limit = space_match_backend_packet_materialization_limit();
+
+    space_init_with_universe(&imported_space, universe);
+    if (!space_match_backend_try_set(&imported_space, SPACE_ENGINE_PATHMAP)) {
+        printf("SKIP: PATHMAP unavailable in this build\n");
+        space_free(&imported_space);
+        return;
+    }
+
+    reset_bridge_capture();
+    assert(packet_limit < UINT64_MAX);
+    g_bridge_dump_expr_rows_override = packet_limit + 1u;
+    imported_space.match_backend.pathmap.bridge.bridge_active = true;
+    imported_space.match_backend.pathmap.bridge.bridge_space = g_fake_bridge_space;
+    imported_space.match_backend.pathmap.bridge.projection_valid = false;
+
+    space_match_backend_clear_error();
+    assert(!space_match_backend_materialize_native_storage(&imported_space, NULL));
+    assert(space_match_backend_last_error_code() ==
+           SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+    assert(strcmp(space_match_backend_last_error(), "PacketTooLarge") == 0);
+
+    space_free(&imported_space);
+    reset_bridge_capture();
+}
+
+static void test_binding_set_growth_has_named_ceiling(void) {
+    BindingSet set;
+    Bindings empty;
+    Bindings moved;
+
+    binding_set_init(&set);
+    bindings_init(&empty);
+    assert(CETTA_BINDING_SET_MAX_ROWS == UINT64_MAX);
+    assert(binding_set_push(&set, &empty));
+    assert(set.len == 1);
+    binding_set_free(&set);
+    bindings_free(&empty);
+
+    binding_set_init(&set);
+    bindings_init(&empty);
+    set.len = CETTA_BINDING_SET_MAX_ROWS;
+    set.cap = CETTA_BINDING_SET_MAX_ROWS;
+    assert(!binding_set_push(&set, &empty));
+    set.len = 0;
+    set.cap = 0;
+    binding_set_free(&set);
+    bindings_free(&empty);
+
+    binding_set_init(&set);
+    bindings_init(&moved);
+    set.len = CETTA_BINDING_SET_MAX_ROWS;
+    set.cap = CETTA_BINDING_SET_MAX_ROWS;
+    assert(!binding_set_push_move(&set, &moved));
+    set.len = 0;
+    set.cap = 0;
+    binding_set_free(&set);
+    bindings_free(&moved);
 }
 
 static void test_space_to_space_bridge_unavailable_falls_back(TermUniverse *universe,
@@ -1213,7 +1508,7 @@ static void test_space_to_space_bridge_unavailable_falls_back(TermUniverse *univ
            SPACE_TRANSFER_OK);
     assert(g_bridge_logical_rows_calls == 0);
     assert(added == 1);
-    assert(space_length(&dst) == 1);
+    assert(space_length64(&dst) == 1);
 
     space_free(&src);
     space_free(&dst);
@@ -1253,7 +1548,7 @@ static void test_space_to_space_bridge_attempt_failure_is_error(TermUniverse *un
            SPACE_TRANSFER_ERROR);
     assert(g_bridge_logical_rows_calls == 1);
     assert(added == 0);
-    assert(space_length(&dst) == 0);
+    assert(space_length64(&dst) == 0);
 
     space_free(&src);
     space_free(&dst);
@@ -1281,7 +1576,7 @@ static void test_space_clone_direct_id_boundary(TermUniverse *universe, Arena *s
     clone = space_heap_clone_shallow(&source);
     assert(clone != NULL);
     assert(clone->universe == universe);
-    assert(space_length(clone) == 3);
+    assert(space_length64(clone) == 3);
     assert(space_get_atom_id_at(clone, 0) == before_ids[0]);
     assert(space_get_atom_id_at(clone, 1) == before_ids[1]);
     assert(space_get_atom_id_at(clone, 2) == before_ids[2]);
@@ -1324,6 +1619,9 @@ int main(void) {
     test_parser_direct_add_boundary(&universe, &scratch);
     test_bridge_structural_import_boundary(&universe, &scratch);
     test_pathmap_no_universe_import_boundary();
+    test_bridge_logical_len64_over_u32_boundary(&universe, &scratch);
+    test_bridge_materialize_packet_over_capacity_reports_packet_too_large(&universe);
+    test_binding_set_growth_has_named_ceiling();
     test_space_to_space_bridge_unavailable_falls_back(&universe, &scratch);
     test_space_to_space_bridge_attempt_failure_is_error(&universe);
     test_space_clone_direct_id_boundary(&universe, &scratch);

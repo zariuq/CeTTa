@@ -5,6 +5,79 @@
 #include <stdlib.h>
 #include <string.h>
 
+static _Thread_local SpaceMatchBackendError g_space_match_backend_error =
+    SPACE_MATCH_BACKEND_ERROR_NONE;
+
+static uint64_t space_match_backend_atom_id_materialization_limit(void) {
+    return (uint64_t)(SIZE_MAX / sizeof(AtomId));
+}
+
+const char *space_match_backend_error_name(SpaceMatchBackendError code) {
+    switch (code) {
+    case SPACE_MATCH_BACKEND_ERROR_NONE:
+        return "None";
+    case SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE:
+        return "NativeSpaceTooLarge";
+    case SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE:
+        return "PacketTooLarge";
+    }
+    return "UnknownSpaceMatchBackendError";
+}
+
+void space_match_backend_clear_error(void) {
+    g_space_match_backend_error = SPACE_MATCH_BACKEND_ERROR_NONE;
+}
+
+void space_match_backend_set_error(SpaceMatchBackendError code) {
+    g_space_match_backend_error = code;
+}
+
+SpaceMatchBackendError space_match_backend_last_error_code(void) {
+    return g_space_match_backend_error;
+}
+
+const char *space_match_backend_last_error(void) {
+    return space_match_backend_error_name(g_space_match_backend_error);
+}
+
+uint64_t space_match_backend_native_materialization_limit(void) {
+    return space_match_backend_atom_id_materialization_limit();
+}
+
+uint64_t space_match_backend_packet_materialization_limit(void) {
+    return space_match_backend_atom_id_materialization_limit();
+}
+
+static uint64_t space_match_backend_limit_for_error(SpaceMatchBackendError error) {
+    switch (error) {
+    case SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE:
+        return space_match_backend_native_materialization_limit();
+    case SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE:
+        return space_match_backend_packet_materialization_limit();
+    case SPACE_MATCH_BACKEND_ERROR_NONE:
+        return UINT64_MAX;
+    }
+    return UINT64_MAX;
+}
+
+bool space_match_backend_u32_bound_checked(uint64_t value,
+                                           SpaceMatchBackendError error,
+                                           uint32_t *out_value) {
+    uint64_t limit = space_match_backend_limit_for_error(error);
+    if (out_value)
+        *out_value = 0;
+    if (limit > UINT32_MAX)
+        limit = UINT32_MAX;
+    if (value > limit) {
+        space_match_backend_set_error(error);
+        return false;
+    }
+    if (out_value)
+        *out_value = (uint32_t)value;
+    space_match_backend_clear_error();
+    return true;
+}
+
 /* ── Discrimination Trie ────────────────────────────────────────────────── */
 
 DiscNode *disc_node_new(void) {
@@ -34,10 +107,10 @@ void disc_node_free(DiscNode *n) {
     free(n);
 }
 
-static void disc_add_leaf(DiscNode *n, uint32_t idx) {
+static void disc_add_leaf(DiscNode *n, CettaIndex idx) {
     if (n->nleaves >= n->cleaves) {
         n->cleaves = n->cleaves ? n->cleaves * 2 : 4;
-        n->leaves = cetta_realloc(n->leaves, sizeof(uint32_t) * n->cleaves);
+        n->leaves = cetta_realloc(n->leaves, sizeof(CettaIndex) * n->cleaves);
     }
     n->leaves[n->nleaves++] = idx;
 }
@@ -171,7 +244,7 @@ static DiscNode *disc_insert_atom(DiscNode *node, Atom *a) {
         return disc_get_var(node); /* treat other grounded as wildcard for now */
     case ATOM_EXPR: {
         DiscNode *cur = disc_get_expr(node, a->expr.len);
-        for (uint32_t i = 0; i < a->expr.len; i++)
+        for (CettaExprIndex i = 0; i < a->expr.len; i++)
             cur = disc_insert_atom(cur, a->expr.elems[i]);
         return cur;
     }
@@ -202,7 +275,7 @@ static bool disc_insert_atom_id(DiscNode *node, const TermUniverse *universe,
         return true;
     case ATOM_EXPR: {
         DiscNode *cur = disc_get_expr(node, tu_arity(universe, atom_id));
-        for (uint32_t i = 0; i < tu_arity(universe, atom_id); i++) {
+        for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
             if (!disc_insert_atom_id(cur, universe, child_id, &cur))
                 return false;
@@ -214,13 +287,13 @@ static bool disc_insert_atom_id(DiscNode *node, const TermUniverse *universe,
     return false;
 }
 
-void disc_insert(DiscNode *root, Atom *lhs, uint32_t eq_idx) {
+void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx) {
     DiscNode *leaf = disc_insert_atom(root, lhs);
     disc_add_leaf(leaf, eq_idx);
 }
 
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
-                    AtomId atom_id, uint32_t eq_idx) {
+                    AtomId atom_id, CettaIndex eq_idx) {
     DiscNode *leaf = NULL;
     if (!disc_insert_atom_id(root, universe, atom_id, &leaf))
         return false;
@@ -340,7 +413,7 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
                 DiscNodeSet cur;
                 dns_init(&cur);
                 dns_push(&cur, node->expr[i].child);
-                for (uint32_t ci = 0; ci < q->expr.len; ci++) {
+                for (CettaExprIndex ci = 0; ci < q->expr.len; ci++) {
                     DiscNodeSet tmp;
                     dns_init(&tmp);
                     for (uint32_t ni = 0; ni < cur.n; ni++)
@@ -360,7 +433,8 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
     }
 }
 
-void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, uint32_t *cout) {
+void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
+                 CettaIndex *nout, CettaIndex *cout) {
     *out = NULL; *nout = 0; *cout = 0;
     /* disc_step from root through the query atom */
     DiscNodeSet final;
@@ -369,10 +443,10 @@ void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, ui
     /* Collect equation indices from all terminal nodes' leaves */
     for (uint32_t i = 0; i < final.n; i++) {
         DiscNode *n = final.nodes[i];
-        for (uint32_t j = 0; j < n->nleaves; j++) {
+        for (CettaIndex j = 0; j < n->nleaves; j++) {
             if (*nout >= *cout) {
                 *cout = *cout ? *cout * 2 : 16;
-                *out = cetta_realloc(*out, sizeof(uint32_t) * *cout);
+                *out = cetta_realloc(*out, sizeof(CettaIndex) * *cout);
             }
             (*out)[(*nout)++] = n->leaves[j];
         }
@@ -392,12 +466,12 @@ static void eq_bucket_init(EqBucket *b) {
     b->subst_safe = true;
 }
 
-static void eq_bucket_add(EqBucket *b, Atom *lhs, uint32_t atom_idx) {
-    uint32_t idx = b->len;
+static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx) {
+    CettaIndex idx = b->len;
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 8;
         b->atom_indices =
-            cetta_realloc(b->atom_indices, sizeof(uint32_t) * b->cap);
+            cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
     }
     b->atom_indices[b->len] = atom_idx;
     b->len++;
@@ -409,7 +483,7 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, uint32_t atom_idx) {
 }
 
 static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
-                             uint32_t atom_idx) {
+                             CettaIndex atom_idx) {
     if (!b || !s || !s->native.universe || lhs_id == CETTA_ATOM_ID_NONE ||
         !tu_hdr(s->native.universe, lhs_id)) {
         Atom *lhs = (s && s->native.universe)
@@ -419,11 +493,11 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
             eq_bucket_add(b, lhs, atom_idx);
         return;
     }
-    uint32_t idx = b->len;
+    CettaIndex idx = b->len;
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 8;
         b->atom_indices =
-            cetta_realloc(b->atom_indices, sizeof(uint32_t) * b->cap);
+            cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
     }
     b->atom_indices[b->len] = atom_idx;
     b->len++;
@@ -462,9 +536,11 @@ static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom) {
         return true;
     case ATOM_GROUNDED:
         return atom->ground.gkind == GV_INT ||
+               atom->ground.gkind == GV_BIGINT ||
+               atom->ground.gkind == GV_RATIONAL ||
                atom->ground.gkind == GV_STRING;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!atom_is_eq_subst_safe(atom->expr.elems[i]))
                 return false;
         }
@@ -487,9 +563,11 @@ static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
         return true;
     case ATOM_GROUNDED:
         return tu_ground_kind(s->native.universe, atom_id) == GV_INT ||
+               tu_ground_kind(s->native.universe, atom_id) == GV_BIGINT ||
+               tu_ground_kind(s->native.universe, atom_id) == GV_RATIONAL ||
                tu_ground_kind(s->native.universe, atom_id) == GV_STRING;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < tu_arity(s->native.universe, atom_id); i++) {
+        for (CettaExprIndex i = 0; i < tu_arity(s->native.universe, atom_id); i++) {
             if (!atom_id_is_eq_subst_safe(s, tu_child(s->native.universe, atom_id, i)))
                 return false;
         }
@@ -526,7 +604,7 @@ static void eq_index_free(EqIndex *idx) {
     eq_bucket_free(&idx->wildcard);
 }
 
-static void eq_index_add(EqIndex *idx, Atom *lhs, uint32_t atom_idx) {
+static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx) {
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
         eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx);
@@ -536,7 +614,7 @@ static void eq_index_add(EqIndex *idx, Atom *lhs, uint32_t atom_idx) {
 }
 
 static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
-                            uint32_t atom_idx) {
+                            CettaIndex atom_idx) {
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
         eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx);
@@ -550,11 +628,11 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
 static void ty_ann_bucket_init(TypeAnnBucket *b) {
     b->atom_indices = NULL; b->len = 0; b->cap = 0;
 }
-static void ty_ann_bucket_add(TypeAnnBucket *b, uint32_t atom_idx) {
+static void ty_ann_bucket_add(TypeAnnBucket *b, CettaIndex atom_idx) {
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 4;
         b->atom_indices =
-            cetta_realloc(b->atom_indices, sizeof(uint32_t) * b->cap);
+            cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
     }
     b->atom_indices[b->len] = atom_idx;
     b->len++;
@@ -597,13 +675,13 @@ static void ty_ann_index_free(TypeAnnIndex *idx) {
     for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
         ty_ann_bucket_free(&idx->buckets[i]);
 }
-static void ty_ann_index_add(TypeAnnIndex *idx, Atom *ann_atom, uint32_t atom_idx) {
+static void ty_ann_index_add(TypeAnnIndex *idx, Atom *ann_atom, CettaIndex atom_idx) {
     uint32_t h = atom_hash_for_index(ann_atom);
     ty_ann_bucket_add(&idx->buckets[h], atom_idx);
 }
 
 static void ty_ann_index_add_id(TypeAnnIndex *idx, const Space *s,
-                                AtomId subject_id, uint32_t atom_idx) {
+                                AtomId subject_id, CettaIndex atom_idx) {
     ty_ann_bucket_add(&idx->buckets[atom_hash_for_index_id(s, subject_id)], atom_idx);
 }
 
@@ -620,10 +698,10 @@ static void exact_atom_bucket_free(ExactAtomBucket *b) {
     b->cap = 0;
 }
 
-static void exact_atom_bucket_add(ExactAtomBucket *b, uint32_t idx) {
+static void exact_atom_bucket_add(ExactAtomBucket *b, CettaIndex idx) {
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 4;
-        b->indices = cetta_realloc(b->indices, sizeof(uint32_t) * b->cap);
+        b->indices = cetta_realloc(b->indices, sizeof(CettaIndex) * b->cap);
     }
     b->indices[b->len++] = idx;
 }
@@ -644,7 +722,7 @@ static bool atom_has_variables(const Atom *atom) {
     case ATOM_VAR:
         return true;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (atom_has_variables(atom->expr.elems[i]))
                 return true;
         }
@@ -667,6 +745,8 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_FLOAT:
         case GV_BOOL:
         case GV_STRING:
+        case GV_BIGINT:
+        case GV_RATIONAL:
             return true;
         case GV_SPACE:
         case GV_STATE:
@@ -676,7 +756,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         }
         return false;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!atom_is_exact_indexable(atom->expr.elems[i]))
                 return false;
         }
@@ -706,6 +786,8 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_FLOAT:
         case GV_BOOL:
         case GV_STRING:
+        case GV_BIGINT:
+        case GV_RATIONAL:
             return true;
         case GV_SPACE:
         case GV_STATE:
@@ -767,10 +849,10 @@ static void space_note_atom_id_storage_peak(const Space *s) {
         (uint64_t)s->native.cap * (uint64_t)sizeof(AtomId));
 }
 
-static void space_reserve_linear(Space *s, uint32_t min_cap) {
+static void space_reserve_linear(Space *s, CettaIndex min_cap) {
     if (s->native.cap >= min_cap)
         return;
-    uint32_t new_cap = s->native.cap ? s->native.cap : 64;
+    CettaIndex new_cap = s->native.cap ? s->native.cap : 64;
     while (new_cap < min_cap)
         new_cap *= 2;
     s->native.atom_ids =
@@ -790,8 +872,8 @@ void space_linearize(Space *s) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUEUE_COMPACT);
 }
 
-static void space_queue_reserve_tail(Space *s, uint32_t extra) {
-    uint32_t tail = s->native.start + s->native.len;
+static void space_queue_reserve_tail(Space *s, CettaIndex extra) {
+    CettaIndex tail = s->native.start + s->native.len;
     if (tail + extra <= s->native.cap)
         return;
     if (s->native.start > 0) {
@@ -976,14 +1058,18 @@ static bool space_remove_atom_via_backend_primary(Space *s, Atom *atom) {
     return true;
 }
 
-static bool space_truncate_via_backend_primary(Space *s, uint32_t new_len) {
+static bool space_truncate_via_backend_primary64(Space *s, CettaCount new_len) {
     if (!s)
         return false;
-    if (!space_match_backend_truncate_direct(s, new_len))
+    if (!space_match_backend_truncate_direct64(s, new_len))
         return false;
     space_mark_indexes_dirty(s);
     space_bump_revision(s);
     return true;
+}
+
+static bool space_truncate_via_backend_primary(Space *s, uint32_t new_len) {
+    return space_truncate_via_backend_primary64(s, new_len);
 }
 
 static void ensure_eq_index(Space *s) {
@@ -1378,6 +1464,16 @@ void space_add(Space *s, Atom *atom) {
     space_add_stored_id(s, atom_id, atom);
 }
 
+static bool space_term_universe_failed(const Space *s) {
+    TermUniverse *universe = s ? s->native.universe : NULL;
+    return term_universe_last_error_code(universe) != TERM_UNIVERSE_ERROR_NONE;
+}
+
+TermUniverseError space_term_universe_last_error_code(const Space *s) {
+    TermUniverse *universe = s ? s->native.universe : NULL;
+    return term_universe_last_error_code(universe);
+}
+
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
     if (!s || !atom)
         return false;
@@ -1394,6 +1490,8 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
             space_add_stored_id(s, atom_id, atom);
             return true;
         }
+        if (space_term_universe_failed(s))
+            return false;
         Atom *stored = space_store_atom(s, fallback, atom);
         if (!stored)
             return false;
@@ -1414,8 +1512,15 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
 }
 
 Space *space_heap_clone_shallow(Space *src) {
-    Space *clone = cetta_malloc(sizeof(Space));
-    uint32_t logical_len = space_length(src);
+    Space *clone;
+    uint32_t logical_len = 0;
+    if (!src)
+        return NULL;
+    clone = cetta_malloc(sizeof(Space));
+    if (!space_length_u32_checked(src, &logical_len)) {
+        free(clone);
+        return NULL;
+    }
     space_init_with_universe(clone, src ? src->native.universe : NULL);
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
@@ -1451,33 +1556,59 @@ void query_results_init(QueryResults *qr) {
     qr->cap = 0;
 }
 
-void query_results_push(QueryResults *qr, Atom *result, Bindings *b) {
-    if (qr->len >= qr->cap) {
-        qr->cap = qr->cap ? qr->cap * 2 : 8;
-        qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * qr->cap);
-    }
-    qr->items[qr->len].result = result;
-    if (!bindings_clone(&qr->items[qr->len].bindings, b))
-        return;
-    qr->len++;
+static CettaCount query_results_capacity_limit(void) {
+    return (CettaCount)(SIZE_MAX / sizeof(QueryResult));
 }
 
-void query_results_push_move(QueryResults *qr, Atom *result, Bindings *b) {
-    if (qr->len >= qr->cap) {
-        qr->cap = qr->cap ? qr->cap * 2 : 8;
-        qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * qr->cap);
-    }
+static bool query_results_ensure_one(QueryResults *qr) {
+    CettaCount limit;
+    CettaCount need;
+    CettaCount next;
+    if (!qr)
+        return false;
+    limit = query_results_capacity_limit();
+    if (qr->len >= limit)
+        return false;
+    if (qr->len < qr->cap)
+        return true;
+    need = qr->len + 1u;
+    next = qr->cap ? qr->cap * 2u : 8u;
+    if (next <= qr->cap || next < need)
+        next = need;
+    if (next > limit)
+        next = limit;
+    if (next < need)
+        return false;
+    qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * (size_t)next);
+    qr->cap = next;
+    return true;
+}
+
+bool query_results_push(QueryResults *qr, Atom *result, Bindings *b) {
+    if (!query_results_ensure_one(qr))
+        return false;
+    qr->items[qr->len].result = result;
+    if (!bindings_clone(&qr->items[qr->len].bindings, b))
+        return false;
+    qr->len++;
+    return true;
+}
+
+bool query_results_push_move(QueryResults *qr, Atom *result, Bindings *b) {
+    if (!query_results_ensure_one(qr))
+        return false;
     qr->items[qr->len].result = result;
     bindings_move(&qr->items[qr->len].bindings, b);
     qr->len++;
+    return true;
 }
 
-uint32_t query_results_visit(const QueryResults *qr, QueryResultVisitor visitor,
-                             void *ctx) {
-    uint32_t visited = 0;
+CettaCount query_results_visit(const QueryResults *qr, QueryResultVisitor visitor,
+                               void *ctx) {
+    CettaCount visited = 0;
     if (!qr || !visitor)
         return 0;
-    for (uint32_t i = 0; i < qr->len; i++) {
+    for (CettaIndex i = 0; i < qr->len; i++) {
         visited++;
         if (!visitor(qr->items[i].result, &qr->items[i].bindings, ctx))
             break;
@@ -1486,7 +1617,7 @@ uint32_t query_results_visit(const QueryResults *qr, QueryResultVisitor visitor,
 }
 
 void query_results_free(QueryResults *qr) {
-    for (uint32_t i = 0; i < qr->len; i++)
+    for (CettaIndex i = 0; i < qr->len; i++)
         bindings_free(&qr->items[i].bindings);
     free(qr->items);
     qr->items = NULL;
@@ -1504,8 +1635,8 @@ typedef struct {
 typedef struct {
     QueryVisibleVar inline_items[QUERY_VISIBLE_INLINE_CAP];
     QueryVisibleVar *items;
-    uint32_t len;
-    uint32_t cap;
+    CettaExprLen len;
+    CettaExprLen cap;
 } QueryVisibleVarSet;
 
 static void query_visible_var_set_init(QueryVisibleVarSet *set) {
@@ -1523,17 +1654,19 @@ static void query_visible_var_set_free(QueryVisibleVarSet *set) {
 }
 
 static bool query_visible_var_set_reserve(QueryVisibleVarSet *set,
-                                          uint32_t needed) {
+                                          CettaExprLen needed) {
     if (needed <= set->cap)
         return true;
-    uint32_t next_cap = set->cap ? set->cap : QUERY_VISIBLE_INLINE_CAP;
+    CettaExprLen next_cap = set->cap ? set->cap : QUERY_VISIBLE_INLINE_CAP;
     while (next_cap < needed)
         next_cap *= 2;
+    if (!cetta_expr_len_mul_fits_size(next_cap, sizeof(QueryVisibleVar)))
+        return false;
     QueryVisibleVar *next = set->items == set->inline_items
-        ? cetta_malloc(sizeof(QueryVisibleVar) * next_cap)
-        : cetta_realloc(set->items, sizeof(QueryVisibleVar) * next_cap);
+        ? cetta_malloc(sizeof(QueryVisibleVar) * (size_t)next_cap)
+        : cetta_realloc(set->items, sizeof(QueryVisibleVar) * (size_t)next_cap);
     if (set->items == set->inline_items && set->len > 0)
-        memcpy(next, set->items, sizeof(QueryVisibleVar) * set->len);
+        memcpy(next, set->items, sizeof(QueryVisibleVar) * (size_t)set->len);
     set->items = next;
     set->cap = next_cap;
     return true;
@@ -1543,7 +1676,7 @@ static bool query_visible_var_set_add(QueryVisibleVarSet *set, VarId var_id,
                                       SymbolId spelling) {
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_VISIBLE_DEDUP_SCAN,
                             set ? set->len : 0);
-    for (uint32_t i = 0; set && i < set->len; i++) {
+    for (CettaExprIndex i = 0; set && i < set->len; i++) {
         if (set->items[i].var_id == var_id)
             return true;
     }
@@ -1557,7 +1690,7 @@ static bool query_visible_var_set_add(QueryVisibleVarSet *set, VarId var_id,
 
 static bool query_visible_var_set_contains(const QueryVisibleVarSet *set,
                                            VarId var_id) {
-    for (uint32_t i = 0; set && i < set->len; i++) {
+    for (CettaExprIndex i = 0; set && i < set->len; i++) {
         if (set->items[i].var_id == var_id)
             return true;
     }
@@ -1572,7 +1705,7 @@ static bool collect_query_visible_vars_rec(Atom *atom, QueryVisibleVarSet *set) 
         return query_visible_var_set_add(set, atom->var_id, atom->sym_id);
     if (atom->kind != ATOM_EXPR)
         return true;
-    for (uint32_t i = 0; i < atom->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
         if (!collect_query_visible_vars_rec(atom->expr.elems[i], set))
             return false;
     }
@@ -1587,7 +1720,7 @@ static bool atom_refs_only_query_visible_vars(Atom *atom,
         return query_visible_var_set_contains(visible, atom->var_id);
     if (atom->kind != ATOM_EXPR)
         return true;
-    for (uint32_t i = 0; i < atom->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
         if (!atom_refs_only_query_visible_vars(atom->expr.elems[i], visible))
             return false;
     }
@@ -1601,7 +1734,7 @@ static const QueryVisibleVar *query_visible_alias_for_var(
     const QueryVisibleVar *found = NULL;
     if (!atom || atom->kind != ATOM_VAR || !visible || !full)
         return NULL;
-    for (uint32_t i = 0; i < visible->len; i++) {
+    for (CettaExprIndex i = 0; i < visible->len; i++) {
         Atom *exact = bindings_lookup_id((Bindings *)full, visible->items[i].var_id);
         if (!exact || exact->kind != ATOM_VAR)
             continue;
@@ -1631,12 +1764,12 @@ static Atom *rewrite_query_visible_aliases(Arena *a, Atom *atom,
         return atom;
 
     Atom **rewritten = NULL;
-    for (uint32_t i = 0; i < atom->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
         Atom *child = atom->expr.elems[i];
         Atom *next = rewrite_query_visible_aliases(a, child, visible, full);
         if (!rewritten && next != child) {
             rewritten = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-            for (uint32_t j = 0; j < i; j++)
+            for (CettaExprIndex j = 0; j < i; j++)
                 rewritten[j] = atom->expr.elems[j];
         }
         if (rewritten)
@@ -1853,9 +1986,11 @@ bool space_remove(Space *s, Atom *atom) {
 }
 
 bool space_contains_atom_id(const Space *s, AtomId atom_id) {
+    uint32_t logical_len = 0;
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
-    uint32_t logical_len = space_length(s);
+    if (!space_length_u32_checked(s, &logical_len))
+        return false;
     for (uint32_t i = 0; i < logical_len; i++) {
         if (space_get_atom_id_at(s, i) == atom_id)
             return true;
@@ -1892,60 +2027,39 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
 }
 
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx) {
-    return space_match_backend_get_atom_id_at(s, idx);
+    return space_get_atom_id_at64(s, idx);
 }
 
 CettaCount space_length64(const Space *s) {
-    return (CettaCount)space_length(s);
-}
-
-static bool cetta_index64_try_u32(CettaIndex idx, uint32_t *out_idx) {
-    if (!out_idx || idx > UINT32_MAX)
-        return false;
-    *out_idx = (uint32_t)idx;
-    return true;
-}
-
-static bool cetta_count64_try_u32(CettaCount count, uint32_t *out_count) {
-    if (!out_count || count > UINT32_MAX)
-        return false;
-    *out_count = (uint32_t)count;
-    return true;
+    return (CettaCount)space_match_backend_logical_len64(s);
 }
 
 AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx) {
-    uint32_t legacy_idx;
-
-    if (!cetta_index64_try_u32(idx, &legacy_idx))
-        return CETTA_ATOM_ID_NONE;
-    return space_get_atom_id_at(s, legacy_idx);
+    return space_match_backend_get_atom_id_at64(s, idx);
 }
 
 Atom *space_get_at64(const Space *s, CettaIndex idx) {
-    uint32_t legacy_idx;
-
-    if (!cetta_index64_try_u32(idx, &legacy_idx))
-        return NULL;
-    return space_get_at(s, legacy_idx);
+    return space_match_backend_get_at64(s, idx);
 }
 
 Atom *space_get_at(const Space *s, uint32_t idx) {
-    return space_match_backend_get_at(s, idx);
+    return space_get_at64(s, idx);
 }
 
 Atom *space_peek(const Space *s) {
-    uint32_t logical_len = space_length(s);
-    if (!s || logical_len == 0) return NULL;
-    return space_get_at(s, space_is_queue(s) ? 0 : (logical_len - 1));
+    CettaCount logical_len = space_length64(s);
+    if (!s || logical_len == 0)
+        return NULL;
+    return space_get_at64(s, space_is_queue(s) ? 0 : (logical_len - 1));
 }
 
 bool space_pop(Space *s, Atom **out) {
-    uint32_t logical_len;
+    CettaCount logical_len;
     Atom *top;
 
     if (!s)
         return false;
-    logical_len = space_length(s);
+    logical_len = space_length64(s);
     if (logical_len == 0)
         return false;
     top = space_peek(s);
@@ -1953,7 +2067,7 @@ bool space_pop(Space *s, Atom **out) {
         return false;
     if (out)
         *out = top;
-    if (space_truncate_via_backend_primary(s, logical_len - 1))
+    if (space_truncate_via_backend_primary64(s, logical_len - 1))
         return true;
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
@@ -1976,7 +2090,8 @@ bool space_truncate(Space *s, uint32_t new_len) {
 
     if (!s)
         return false;
-    logical_len = space_length(s);
+    if (!space_length_u32_checked(s, &logical_len))
+        return false;
     if (new_len > logical_len)
         return false;
     if (space_truncate_via_backend_primary(s, new_len))
@@ -1995,19 +2110,37 @@ bool space_truncate(Space *s, uint32_t new_len) {
 }
 
 bool space_truncate64(Space *s, CettaCount new_len) {
-    uint32_t legacy_len;
+    CettaCount logical_len;
 
-    if (!cetta_count64_try_u32(new_len, &legacy_len))
+    if (!s)
         return false;
-    return space_truncate(s, legacy_len);
+    if (space_truncate_via_backend_primary64(s, new_len))
+        return true;
+    logical_len = space_length64(s);
+    if (new_len > logical_len)
+        return false;
+    if (!space_match_backend_materialize_native_storage(s, NULL))
+        return false;
+    if (new_len == s->native.len)
+        return true;
+    s->native.len = new_len;
+    if (s->native.len == 0)
+        s->native.start = 0;
+    space_mark_indexes_dirty(s);
+    space_match_backend_note_remove(s);
+    space_bump_revision(s);
+    return true;
 }
 
-uint32_t space_length(const Space *s) {
-    return space_match_backend_logical_len(s);
+bool space_length_u32_checked(const Space *s, uint32_t *out_len) {
+    return space_match_backend_u32_bound_checked(
+        space_length64(s), SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE,
+        out_len);
 }
 
-uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
-    *out = NULL;
+CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
+    if (out)
+        *out = NULL;
     /* Exact index is maintained for ALL space kinds - enable for native too */
     if (!s || !atom || atom_has_variables(atom) || !atom_is_exact_indexable(atom))
         return 0;
@@ -2018,13 +2151,13 @@ uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
     ExactAtomBucket *bucket = &s->native.exact_idx.buckets[exact_atom_hash(atom)];
     if (bucket->len == 0)
         return 0;
-    uint32_t *matches = cetta_malloc(sizeof(uint32_t) * bucket->len);
-    uint32_t n = 0;
-    for (uint32_t i = 0; i < bucket->len; i++) {
-        uint32_t idx = bucket->indices[i];
+    CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * bucket->len);
+    CettaIndex n = 0;
+    for (CettaIndex i = 0; i < bucket->len; i++) {
+        CettaIndex idx = bucket->indices[i];
         if (idx >= s->native.len)
             continue;
-        AtomId candidate_id = space_get_atom_id_at(s, idx);
+        AtomId candidate_id = space_get_atom_id_at64(s, idx);
         if (candidate_id == CETTA_ATOM_ID_NONE)
             continue;
         Atom *candidate = term_universe_get_atom(s->native.universe, candidate_id);
@@ -2036,13 +2169,46 @@ uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
         return 0;
     }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT, n);
-    *out = matches;
+    if (out)
+        *out = matches;
     return n;
 }
 
+uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
+    CettaIndex *wide = NULL;
+    CettaIndex n64 = space_exact_match_indices64(s, atom, &wide);
+    uint32_t n32 = 0;
+
+    if (out)
+        *out = NULL;
+    if (!space_match_backend_u32_bound_checked(
+            n64, SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE, &n32)) {
+        free(wide);
+        return 0;
+    }
+    if (n32 == 0) {
+        free(wide);
+        return 0;
+    }
+    uint32_t *narrow = cetta_malloc(sizeof(uint32_t) * n32);
+    for (uint32_t i = 0; i < n32; i++) {
+        if (!space_match_backend_u32_bound_checked(
+                wide[i], SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE,
+                &narrow[i])) {
+            free(narrow);
+            free(wide);
+            return 0;
+        }
+    }
+    free(wide);
+    if (out)
+        *out = narrow;
+    return n32;
+}
+
 bool space_contains_exact(Space *s, Atom *atom) {
-    uint32_t *matches = NULL;
-    uint32_t n = space_exact_match_indices(s, atom, &matches);
+    CettaIndex *matches = NULL;
+    CettaIndex n = space_exact_match_indices64(s, atom, &matches);
     free(matches);
     return n > 0;
 }
@@ -2068,7 +2234,7 @@ static Atom *normalize_type_expr(Arena *a, Atom *ty) {
     /* First normalize children */
     Atom **new_elems = arena_alloc(a, sizeof(Atom *) * ty->expr.len);
     bool changed = false;
-    for (uint32_t i = 0; i < ty->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < ty->expr.len; i++) {
         new_elems[i] = normalize_type_expr(a, ty->expr.elems[i]);
         if (new_elems[i] != ty->expr.elems[i]) changed = true;
     }
@@ -2114,6 +2280,8 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
     if (atom->kind != ATOM_GROUNDED) return atom_undefined_type(a);
     switch (atom->ground.gkind) {
     case GV_INT:    return atom_symbol(a, "Number");
+    case GV_BIGINT: return atom_symbol(a, "Number");
+    case GV_RATIONAL: return atom_symbol(a, "Number");
     case GV_FLOAT:  return atom_symbol(a, "Number");
     case GV_BOOL:   return atom_symbol(a, "Bool");
     case GV_STRING: return atom_symbol(a, "String");
@@ -2160,11 +2328,11 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     TypeAnnBucket *bucket = &s->native.ty_idx.buckets[h];
     Atom **types = NULL;
     uint32_t count = 0, cap = 0;
-    for (uint32_t i = 0; i < bucket->len; i++) {
-        uint32_t idx = bucket->atom_indices[i];
+    for (CettaIndex i = 0; i < bucket->len; i++) {
+        CettaIndex idx = bucket->atom_indices[i];
         if (idx >= s->native.len)
             continue;
-        AtomId annotation_id = space_get_atom_id_at(s, idx);
+        AtomId annotation_id = space_get_atom_id_at64(s, idx);
         AtomId subject_id = CETTA_ATOM_ID_NONE;
         AtomId type_id = CETTA_ATOM_ID_NONE;
         if (space_type_annotation_child_ids_at_id(s, annotation_id,
@@ -2258,10 +2426,10 @@ typedef struct {
 
 #define CETTA_TUPLE_VALUE_TYPE_INFERENCE_CAP 64u
 
-static void tuple_type_choices_free(TupleTypeChoices *choices, uint32_t len) {
+static void tuple_type_choices_free(TupleTypeChoices *choices, CettaExprLen len) {
     if (!choices)
         return;
-    for (uint32_t i = 0; i < len; i++)
+    for (CettaExprIndex i = 0; i < len; i++)
         free(choices[i].items);
     free(choices);
 }
@@ -2273,12 +2441,12 @@ static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
         return 0;
     }
 
-    uint32_t len = atom->expr.len;
+    CettaExprLen len = atom->expr.len;
     TupleTypeChoices *choices = cetta_malloc(sizeof(TupleTypeChoices) * len);
     memset(choices, 0, sizeof(TupleTypeChoices) * len);
     uint64_t total = 1;
 
-    for (uint32_t i = 0; i < len; i++) {
+    for (CettaExprIndex i = 0; i < len; i++) {
         choices[i].len = get_tuple_value_part_types(s, a, atom->expr.elems[i],
                                                     i == 0, &choices[i].items);
         if (choices[i].len == 0 ||
@@ -2295,7 +2463,7 @@ static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
     for (uint64_t n = 0; n < total; n++) {
         uint64_t rem = n;
         Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
-        for (uint32_t pos = len; pos > 0; pos--) {
+        for (CettaExprIndex pos = len; pos > 0; pos--) {
             uint32_t idx = (uint32_t)(rem % choices[pos - 1].len);
             rem /= choices[pos - 1].len;
             elems[pos - 1] = choices[pos - 1].items[idx];
@@ -2382,7 +2550,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                     Bindings tb;
                     bindings_init(&tb);
                     bool all_ok = true;
-                    for (uint32_t ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
+                    for (CettaExprIndex ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
                         /* Apply accumulated bindings to resolve type vars from earlier args */
                         Atom *arg_type_decl =
                             bindings_apply_if_vars(&tb, &scratch, fresh_ft->expr.elems[ai + 1]);
@@ -2466,7 +2634,7 @@ typedef struct QueryResultSink {
     QueryResults *results;
     QueryResultVisitor visitor;
     void *visitor_ctx;
-    uint32_t emitted;
+    CettaCount emitted;
     bool stop;
 } QueryResultSink;
 
@@ -2507,7 +2675,8 @@ static bool query_result_sink_emit(QueryResultSink *sink, Atom *result,
     if (!sink || sink->stop)
         return false;
     if (sink->results) {
-        query_results_push_move(sink->results, result, bindings);
+        if (!query_results_push_move(sink->results, result, bindings))
+            return false;
         sink->emitted++;
         return true;
     }
@@ -2528,17 +2697,17 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
     if (!sink || sink->stop)
         return;
     if (bucket->trie && bucket->len > 4) {
-        uint32_t *candidates = NULL;
-        uint32_t ncand = 0, ccand = 0;
-        uint32_t considered = 0;
+        CettaIndex *candidates = NULL;
+        CettaIndex ncand = 0, ccand = 0;
+        CettaIndex considered = 0;
         disc_lookup(bucket->trie, query, &candidates, &ncand, &ccand);
-        for (uint32_t ci = 0; ci < ncand; ci++) {
-            uint32_t i = candidates[ci];
+        for (CettaIndex ci = 0; ci < ncand; ci++) {
+            CettaIndex i = candidates[ci];
             if (i >= bucket->len) continue;
-            uint32_t atom_idx = bucket->atom_indices[i];
+            CettaIndex atom_idx = bucket->atom_indices[i];
             if (atom_idx >= s->native.len)
                 continue;
-            AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+            AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
             AtomId lhs_id = CETTA_ATOM_ID_NONE;
             AtomId rhs_id = CETTA_ATOM_ID_NONE;
             if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
@@ -2578,11 +2747,11 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
     }
 
     uint32_t considered = 0;
-    for (uint32_t i = 0; i < bucket->len; i++) {
-        uint32_t atom_idx = bucket->atom_indices[i];
+    for (CettaIndex i = 0; i < bucket->len; i++) {
+        CettaIndex atom_idx = bucket->atom_indices[i];
         if (atom_idx >= s->native.len)
             continue;
-        AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
@@ -2697,7 +2866,7 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
                          const QueryVisibleVarSet *visible, Arena *a,
                          QueryResultSink *sink) {
     SymbolId query_head = eq_head_symbol(query);
-    uint32_t emitted_before;
+    CettaCount emitted_before;
     if (!bucket || bucket->len == 0 || !sink || sink->stop)
         return;
     emitted_before = sink->emitted;
@@ -2710,14 +2879,14 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
     uint32_t considered = 0;
     smset_init(&matches);
     stree_query_bucket(&bucket->subst, a, query, NULL, &matches);
-    for (uint32_t mi = 0; mi < matches.len; mi++) {
+    for (CettaIndex mi = 0; mi < matches.len; mi++) {
         const SubstMatch *sm = &matches.items[mi];
         if (sm->atom_idx >= bucket->len)
             continue;
-        uint32_t atom_idx = bucket->atom_indices[sm->atom_idx];
+        CettaIndex atom_idx = bucket->atom_indices[sm->atom_idx];
         if (atom_idx >= s->native.len)
             continue;
-        AtomId equation_id = space_get_atom_id_at(s, atom_idx);
+        AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
@@ -2772,8 +2941,8 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
     }
 }
 
-static uint32_t query_equations_core(Space *s, Atom *query, Arena *a,
-                                     QueryResultSink *sink) {
+static CettaCount query_equations_core(Space *s, Atom *query, Arena *a,
+                                       QueryResultSink *sink) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
     ensure_eq_index(s);
     QueryVisibleVarSet visible;
@@ -2800,8 +2969,8 @@ static uint32_t query_equations_core(Space *s, Atom *query, Arena *a,
     return sink->emitted;
 }
 
-uint32_t query_equations_visit(Space *s, Atom *query, Arena *a,
-                               QueryResultVisitor visitor, void *ctx) {
+CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
+                                 QueryResultVisitor visitor, void *ctx) {
     QueryResultSink sink;
     query_result_sink_init_visit(&sink, visitor, ctx);
     return query_equations_core(s, query, a, &sink);

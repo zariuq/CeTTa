@@ -9,7 +9,7 @@
 
 enum {
     CTBR_MAGIC = 0x43544252u,
-    CTBR_VERSION = 4u,
+    CTBR_VERSION = 5u,
     CTBR_EXACT_ROWS_FLAGS = 0u,
     CTBR_QUERY_ROWS_FLAGS = 0u,
     CTBR_OPEN_REF_EXACT = 0u,
@@ -74,7 +74,7 @@ static void assert_dump_contains(CettaMorkSpaceHandle *space,
                                  bool expected) {
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     char *text = NULL;
     bool found = false;
 
@@ -146,7 +146,7 @@ static void add_contextual_edge_xx(CettaMorkSpaceHandle *space) {
 static void assert_contextual_exact_dump_succeeds(CettaMorkSpaceHandle *space) {
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
 
     if (!cetta_mork_bridge_space_dump_contextual_exact_rows(space, &packet, &len, &rows))
         fail_bridge("cetta_mork_bridge_space_dump_contextual_exact_rows");
@@ -159,7 +159,7 @@ static void assert_contextual_exact_dump_succeeds(CettaMorkSpaceHandle *space) {
 static void assert_contextual_exact_dump_missing_context(CettaMorkSpaceHandle *space) {
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
 
     assert(!cetta_mork_bridge_space_dump_contextual_exact_rows(space, &packet, &len, &rows));
     assert(error_contains("opening context"));
@@ -172,7 +172,7 @@ static void test_ground_counted_exact_rows(void) {
     CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     uint32_t expr_len = 0;
 
     assert(space != NULL);
@@ -189,15 +189,15 @@ static void test_ground_counted_exact_rows(void) {
     assert(read_u32_be(packet, 0) == CTBR_MAGIC);
     assert(read_u16_be(packet, 4) == CTBR_VERSION);
     assert(read_u16_be(packet, 6) == CTBR_EXACT_ROWS_FLAGS);
-    assert(read_u32_be(packet, 8) == 1);
-    assert(read_u32_be(packet, 12) == 1);
-    assert(read_u32_be(packet, 16) == 0);
+    assert(read_u64_be(packet, 8) == 1);
+    assert(read_u32_be(packet, 16) == 1);
     assert(read_u32_be(packet, 20) == 0);
     assert(read_u32_be(packet, 24) == 0);
-    assert(read_u32_be(packet, 28) == 3);
-    expr_len = read_u32_be(packet, 32);
-    assert(len == 36u + (size_t)expr_len);
-    assert(packet[36] == BRIDGE_EXPR_TAG_ARITY);
+    assert(read_u32_be(packet, 28) == 0);
+    assert(read_u32_be(packet, 32) == 3);
+    expr_len = read_u32_be(packet, 36);
+    assert(len == 40u + (size_t)expr_len);
+    assert(packet[40] == BRIDGE_EXPR_TAG_ARITY);
 
     cetta_mork_bridge_bytes_free(packet, len);
     cetta_mork_bridge_space_free(space);
@@ -207,7 +207,7 @@ static void test_variable_rows_require_opening_context(void) {
     CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     const char *err = NULL;
 
     assert(space != NULL);
@@ -228,7 +228,7 @@ static void test_variable_rows_with_opening_context(void) {
     CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     size_t off = 0;
     uint32_t expr_len = 0;
     uint64_t added = 0;
@@ -265,10 +265,10 @@ static void test_variable_rows_with_opening_context(void) {
     assert(read_u32_be(packet, 0) == CTBR_MAGIC);
     assert(read_u16_be(packet, 4) == CTBR_VERSION);
     assert(read_u16_be(packet, 6) == CTBR_QUERY_ROWS_FLAGS);
-    assert(read_u32_be(packet, 8) == 1);
-    assert(read_u32_be(packet, 12) == 1);
+    assert(read_u64_be(packet, 8) == 1);
+    assert(read_u32_be(packet, 16) == 1);
 
-    off = 16;
+    off = 20;
     assert(read_u32_be(packet, off) == 0); off += 4;
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u16_be(packet, off) == 0); off += 2;
@@ -293,7 +293,7 @@ static void test_contextual_exact_remove_keeps_requested_identity(void) {
     CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     size_t off = 0;
     uint32_t expr_len = 0;
     uint64_t changed = 0;
@@ -341,10 +341,10 @@ static void test_contextual_exact_remove_keeps_requested_identity(void) {
 
     assert(rows == 1);
     assert(packet != NULL);
-    assert(read_u32_be(packet, 8) == 1);
-    assert(read_u32_be(packet, 12) == 1);
+    assert(read_u64_be(packet, 8) == 1);
+    assert(read_u32_be(packet, 16) == 1);
 
-    off = 16;
+    off = 20;
     assert(read_u32_be(packet, off) == 0); off += 4;
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u16_be(packet, off) == 0); off += 2;
@@ -383,7 +383,7 @@ static void test_contextual_query_rows_open_exact_value_refs(void) {
     CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     size_t off = 0;
     uint32_t expr_len = 0;
     uint64_t changed = 0;
@@ -418,10 +418,10 @@ static void test_contextual_query_rows_open_exact_value_refs(void) {
     assert(read_u32_be(packet, 0) == CTBR_MAGIC);
     assert(read_u16_be(packet, 4) == CTBR_VERSION);
     assert(read_u16_be(packet, 6) == CTBR_QUERY_ROWS_FLAGS);
-    assert(read_u32_be(packet, 8) == 1);
-    assert(read_u32_be(packet, 12) == 1);
+    assert(read_u64_be(packet, 8) == 1);
+    assert(read_u32_be(packet, 16) == 1);
 
-    off = 16;
+    off = 20;
     assert(read_u32_be(packet, off) == 0); off += 4;
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u16_be(packet, off) == 0); off += 2;
@@ -449,7 +449,7 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
     CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     size_t off = 0;
     uint32_t expr_len = 0;
     uint64_t changed = 0;
@@ -495,10 +495,10 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
     assert(read_u32_be(packet, 0) == CTBR_MAGIC);
     assert(read_u16_be(packet, 4) == CTBR_VERSION);
     assert(read_u16_be(packet, 6) == CTBR_QUERY_ROWS_FLAGS);
-    assert(read_u32_be(packet, 8) == 2);
-    assert(read_u32_be(packet, 12) == 2);
+    assert(read_u64_be(packet, 8) == 2);
+    assert(read_u32_be(packet, 16) == 2);
 
-    off = 16;
+    off = 20;
     assert(read_u32_be(packet, off) == 0); off += 4;
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u16_be(packet, off) == 0); off += 2;
@@ -544,7 +544,7 @@ static void test_contextual_query_rows_emit_query_slot_refs(void) {
     CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new_pathmap();
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     size_t off = 0;
     bool found_query_ref = false;
     const char *query = "(pair $x (wrap $y))";
@@ -581,9 +581,9 @@ static void test_contextual_query_rows_emit_query_slot_refs(void) {
     assert(read_u16_be(packet, 4) == CTBR_VERSION);
     assert(read_u16_be(packet, 6) == CTBR_QUERY_ROWS_FLAGS);
 
-    off = 16;
+    off = 20;
     {
-        uint32_t context_count = read_u32_be(packet, 12);
+        uint32_t context_count = read_u32_be(packet, 16);
         for (uint32_t ci = 0; ci < context_count; ci++) {
             uint32_t entry_count = 0;
             assert(off + 8 <= len);
@@ -806,7 +806,7 @@ static void test_logical_row_transfer_between_raw_and_counted_spaces(void) {
     uint64_t size = 0;
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
 
     assert(raw_src != NULL);
     assert(counted_dst != NULL);
