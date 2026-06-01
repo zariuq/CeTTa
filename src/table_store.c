@@ -9,8 +9,8 @@
 
 typedef struct {
     AnswerRef *items;
-    uint32_t len;
-    uint32_t cap;
+    CettaCount len;
+    CettaCount cap;
 } TableStoredAnswers;
 
 struct TableStoreEntry {
@@ -64,17 +64,34 @@ static void table_stored_answers_free(TableStoredAnswers *answers) {
     answers->cap = 0;
 }
 
-static bool table_stored_answers_reserve(TableStoredAnswers *answers, uint32_t needed) {
+static CettaCount table_stored_answers_capacity_limit(void) {
+    size_t limit = SIZE_MAX / sizeof(AnswerRef);
+    if ((uint64_t)limit > CETTA_ANSWER_BANK_MAX_RECORDS)
+        return CETTA_ANSWER_BANK_MAX_RECORDS;
+    return (CettaCount)limit;
+}
+
+static bool table_stored_answers_reserve(TableStoredAnswers *answers,
+                                         CettaCount needed) {
+    CettaCount next_cap;
+    CettaCount limit;
     if (!answers)
+        return false;
+    limit = table_stored_answers_capacity_limit();
+    if (needed > limit)
         return false;
     if (needed <= answers->cap)
         return true;
-    uint32_t next_cap = answers->cap ? answers->cap * 2 : 8;
+    next_cap = answers->cap ? answers->cap * 2 : 8;
     while (next_cap < needed)
         next_cap *= 2;
+    if (next_cap > limit)
+        next_cap = limit;
+    if (next_cap < needed)
+        return false;
     answers->items = answers->items
-        ? cetta_realloc(answers->items, sizeof(AnswerRef) * next_cap)
-        : cetta_malloc(sizeof(AnswerRef) * next_cap);
+        ? cetta_realloc(answers->items, sizeof(AnswerRef) * (size_t)next_cap)
+        : cetta_malloc(sizeof(AnswerRef) * (size_t)next_cap);
     answers->cap = next_cap;
     return true;
 }
@@ -436,8 +453,7 @@ typedef struct {
 static bool query_results_collect_visit(Atom *result, const Bindings *bindings,
                                         void *ctx) {
     QueryResultsCollectCtx *collect = ctx;
-    query_results_push(collect->results, result, (Bindings *)bindings);
-    return true;
+    return query_results_push(collect->results, result, (Bindings *)bindings);
 }
 
 static bool table_store_materialize_visit(Atom *result,
@@ -554,16 +570,14 @@ done:
     return ok;
 }
 
-static uint32_t table_store_entry_visit_delayed(const TableStoreEntry *entry,
-                                                const AnswerBank *answer_bank,
-                                                Arena *out_arena,
-                                                const CettaVarMap *goal_instantiation,
-                                                TableDelayedResultVisitor visitor,
-                                                void *ctx) {
-    uint32_t visited = 0;
+static CettaCount table_store_entry_visit_delayed(
+    const TableStoreEntry *entry, const AnswerBank *answer_bank,
+    Arena *out_arena, const CettaVarMap *goal_instantiation,
+    TableDelayedResultVisitor visitor, void *ctx) {
+    CettaCount visited = 0;
     if (!entry || !visitor)
         return 0;
-    for (uint32_t i = 0; i < entry->results.len; i++) {
+    for (CettaIndex i = 0; i < entry->results.len; i++) {
         Atom *result = NULL;
         Bindings materialized;
         VariantInstance replay_variant;
@@ -591,7 +605,7 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
                                       Atom *query, Arena *out_arena,
                                       TableDelayedResultVisitor visitor,
                                       void *ctx,
-                                      uint32_t *visited_out) {
+                                      CettaCount *visited_out) {
     if (visited_out)
         *visited_out = 0;
     if (!store || store->mode != CETTA_TABLE_MODE_VARIANT || !space || !query ||
@@ -625,10 +639,9 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
         return false;
     }
     TableStoreEntry *entry = match.exact;
-    uint32_t visited = table_store_entry_visit_delayed(entry, store->answer_bank,
-                                                       out_arena,
-                                                       &goal_instantiation,
-                                                       visitor, ctx);
+    CettaCount visited = table_store_entry_visit_delayed(
+        entry, store->answer_bank, out_arena, &goal_instantiation, visitor,
+        ctx);
 
     cetta_var_map_free(&probe_map);
     cetta_var_map_free(&goal_instantiation);
@@ -645,7 +658,7 @@ bool table_store_lookup_visit_ref(TableStore *store, Space *space,
                                   Arena *goal_owner,
                                   TableAnswerRefVisitor visitor,
                                   void *ctx,
-                                  uint32_t *visited_out) {
+                                  CettaCount *visited_out) {
     if (visited_out)
         *visited_out = 0;
     if (!store || store->mode != CETTA_TABLE_MODE_VARIANT || !space || !query ||
@@ -683,9 +696,9 @@ bool table_store_lookup_visit_ref(TableStore *store, Space *space,
         arena_free(&probe_arena);
         return false;
     }
-    uint32_t visited = 0;
+    CettaCount visited = 0;
     TableStoreEntry *entry = match.exact;
-    for (uint32_t i = 0; i < entry->results.len; i++) {
+    for (CettaIndex i = 0; i < entry->results.len; i++) {
         visited++;
         if (!visitor(store->answer_bank, entry->results.items[i], &goal_snapshot, ctx))
             break;
@@ -704,7 +717,7 @@ bool table_store_lookup_visit_ref(TableStore *store, Space *space,
 bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision,
                               Atom *query, Arena *out_arena,
                               QueryResultVisitor visitor, void *ctx,
-                              uint32_t *visited_out) {
+                              CettaCount *visited_out) {
     TableMaterializeVisitorCtx materialize = {
         .out_arena = out_arena,
         .visitor = visitor,
@@ -739,7 +752,7 @@ bool table_store_put(TableStore *store, Space *space, uint64_t revision,
     if (!table_store_begin_query(store, space, revision, query, &handle))
         return false;
 
-    for (uint32_t i = 0; i < results->len; i++) {
+    for (CettaIndex i = 0; i < results->len; i++) {
         if (!table_store_add_answer(&handle, results->items[i].result,
                                     &results->items[i].bindings, NULL)) {
             table_store_abort_query(&handle);

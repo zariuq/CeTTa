@@ -17,17 +17,33 @@ static void answer_record_free(AnswerRecord *record) {
     record->result = NULL;
 }
 
-static bool answer_bank_reserve(AnswerBank *bank, uint32_t needed) {
+static CettaCount answer_bank_capacity_limit(void) {
+    size_t limit = SIZE_MAX / sizeof(AnswerRecord);
+    if ((uint64_t)limit > CETTA_ANSWER_BANK_MAX_RECORDS)
+        return CETTA_ANSWER_BANK_MAX_RECORDS;
+    return (CettaCount)limit;
+}
+
+static bool answer_bank_reserve(AnswerBank *bank, CettaCount needed) {
+    CettaCount next_cap;
+    CettaCount limit;
     if (!bank)
+        return false;
+    limit = answer_bank_capacity_limit();
+    if (needed > limit)
         return false;
     if (needed <= bank->cap)
         return true;
-    uint32_t next_cap = bank->cap ? bank->cap * 2 : 16;
+    next_cap = bank->cap ? bank->cap * 2 : 16;
     while (next_cap < needed)
         next_cap *= 2;
+    if (next_cap > limit)
+        next_cap = limit;
+    if (next_cap < needed)
+        return false;
     bank->items = bank->items
-        ? cetta_realloc(bank->items, sizeof(AnswerRecord) * next_cap)
-        : cetta_malloc(sizeof(AnswerRecord) * next_cap);
+        ? cetta_realloc(bank->items, sizeof(AnswerRecord) * (size_t)next_cap)
+        : cetta_malloc(sizeof(AnswerRecord) * (size_t)next_cap);
     bank->cap = next_cap;
     return true;
 }
@@ -70,7 +86,7 @@ void answer_bank_init(AnswerBank *bank) {
 void answer_bank_free(AnswerBank *bank) {
     if (!bank)
         return;
-    for (uint32_t i = 0; i < bank->len; i++)
+    for (CettaIndex i = 0; i < bank->len; i++)
         answer_record_free(&bank->items[i]);
     free(bank->items);
     bank->items = NULL;
@@ -85,7 +101,8 @@ bool answer_bank_add(AnswerBank *bank, Atom *result,
                      AnswerRef *out_ref) {
     if (out_ref)
         *out_ref = CETTA_ANSWER_REF_NONE;
-    if (!bank || !result || !answer_bank_reserve(bank, bank->len + 1))
+    if (!bank || !result || bank->len >= CETTA_ANSWER_BANK_MAX_RECORDS ||
+        !answer_bank_reserve(bank, bank->len + 1))
         return false;
 
     AnswerRecord staged;

@@ -146,7 +146,7 @@ static SubstNode *snode_get_var(SubstNode *n, VarId var_id, SymbolId spelling) {
     return child;
 }
 
-static SubstNode *snode_get_expr(SubstNode *n, uint32_t arity) {
+static SubstNode *snode_get_expr(SubstNode *n, CettaExprLen arity) {
     for (uint32_t i = 0; i < n->nexpr; i++)
         if (n->expr[i].arity == arity) return n->expr[i].child;
     if (n->nexpr >= n->cexpr) {
@@ -174,7 +174,7 @@ static SubstNode *snode_get_int(SubstNode *n, int64_t val) {
     return child;
 }
 
-static void snode_add_leaf(SubstNode *n, uint32_t idx, uint32_t epoch) {
+static void snode_add_leaf(SubstNode *n, CettaIndex idx, uint32_t epoch) {
     if (n->nleaves >= n->cleaves) {
         n->cleaves = n->cleaves ? n->cleaves * 2 : 4;
         n->leaves = cetta_realloc(n->leaves, sizeof(n->leaves[0]) * n->cleaves);
@@ -192,8 +192,14 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
     case ATOM_VAR:    return snode_get_var(node, a->var_id, a->sym_id);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT) return snode_get_int(node, a->ground.ival);
-        if (a->ground.gkind == GV_STRING) {
-            SymbolId string_id = symbol_intern_cstr(g_symbols, a->ground.sval);
+        if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
+            a->ground.gkind == GV_RATIONAL) {
+            const char *text = a->ground.gkind == GV_STRING
+                ? a->ground.sval
+                : (a->ground.gkind == GV_BIGINT
+                       ? atom_bigint_cstr(a)
+                       : atom_rational_cstr(a));
+            SymbolId string_id = symbol_intern_cstr(g_symbols, text);
             return snode_get_sym(node, string_id);
         }
         return snode_get_var(node,
@@ -203,7 +209,7 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
                              symbol_intern_cstr(g_symbols, "__grounded__"));
     case ATOM_EXPR: {
         SubstNode *cur = snode_get_expr(node, a->expr.len);
-        for (uint32_t i = 0; i < a->expr.len; i++)
+        for (CettaExprIndex i = 0; i < a->expr.len; i++)
             cur = snode_insert_atom(cur, a->expr.elems[i]);
         return cur;
     }
@@ -228,9 +234,16 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
     case ATOM_GROUNDED:
         if (tu_ground_kind(universe, atom_id) == GV_INT)
             return snode_get_int(node, tu_int(universe, atom_id));
-        if (tu_ground_kind(universe, atom_id) == GV_STRING) {
+        if (tu_ground_kind(universe, atom_id) == GV_STRING ||
+            tu_ground_kind(universe, atom_id) == GV_BIGINT ||
+            tu_ground_kind(universe, atom_id) == GV_RATIONAL) {
+            const char *text = tu_ground_kind(universe, atom_id) == GV_STRING
+                ? tu_string_cstr(universe, atom_id)
+                : (tu_ground_kind(universe, atom_id) == GV_BIGINT
+                       ? tu_bigint_cstr(universe, atom_id)
+                       : tu_rational_cstr(universe, atom_id));
             SymbolId string_id =
-                symbol_intern_cstr(g_symbols, tu_string_cstr(universe, atom_id));
+                symbol_intern_cstr(g_symbols, text);
             return snode_get_sym(node, string_id);
         }
         return snode_get_var(node,
@@ -240,7 +253,7 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
                              symbol_intern_cstr(g_symbols, "__grounded__"));
     case ATOM_EXPR: {
         SubstNode *cur = snode_get_expr(node, tu_arity(universe, atom_id));
-        for (uint32_t i = 0; i < tu_arity(universe, atom_id); i++) {
+        for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
             cur = snode_insert_atom_id(cur, universe, child_id);
             if (!cur)
@@ -290,7 +303,7 @@ void stree_bucket_free(SubstBucket *bucket) {
     bucket->count = 0;
 }
 
-void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx) {
+void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
     uint32_t epoch = stree_next_epoch();
     if (!bucket->root) bucket->root = snode_new();
     SubstNode *leaf = snode_insert_atom(bucket->root, atom);
@@ -299,7 +312,7 @@ void stree_bucket_insert(SubstBucket *bucket, Atom *atom, uint32_t atom_idx) {
 }
 
 bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
-                            AtomId atom_id, uint32_t atom_idx) {
+                            AtomId atom_id, CettaIndex atom_idx) {
     if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
     uint32_t epoch = stree_next_epoch();
@@ -313,7 +326,7 @@ bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
     return true;
 }
 
-void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx) {
+void stree_insert(SubstTree *t, Atom *atom, CettaIndex atom_idx) {
     SymbolId head = atom_head_sym(atom);
     SubstBucket *bucket = head != SYMBOL_ID_NONE
                         ? &t->buckets[stree_head_hash(head)]
@@ -322,7 +335,7 @@ void stree_insert(SubstTree *t, Atom *atom, uint32_t atom_idx) {
 }
 
 bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
-                     AtomId atom_id, uint32_t atom_idx) {
+                     AtomId atom_id, CettaIndex atom_idx) {
     if (!t || !universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
     SymbolId head = tu_head_sym(universe, atom_id);
@@ -337,7 +350,7 @@ bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
 void smset_init(SubstMatchSet *s) { s->items = NULL; s->len = 0; s->cap = 0; }
 
 void smset_free(SubstMatchSet *s) {
-    for (uint32_t i = 0; i < s->len; i++)
+    for (CettaIndex i = 0; i < s->len; i++)
         bindings_free(&s->items[i].bindings);
     free(s->items);
     s->items = NULL;
@@ -345,7 +358,7 @@ void smset_free(SubstMatchSet *s) {
     s->cap = 0;
 }
 
-static void smset_push_move(SubstMatchSet *s, uint32_t atom_idx, uint32_t epoch,
+static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, uint32_t epoch,
                             Bindings *b) {
     if (s->len >= s->cap) {
         s->cap = s->cap ? s->cap * 2 : 8;
@@ -376,21 +389,19 @@ static void smset_push_move(SubstMatchSet *s, uint32_t atom_idx, uint32_t epoch,
  * any leaf-time extraction.                                              */
 
 /* Flat token for depth-first query encoding */
-#define MAX_FLAT 256
-
 typedef struct {
     enum { FT_SYM, FT_VAR, FT_EXPR, FT_INT, FT_GROUNDED_OTHER } kind;
-    union { SymbolId sym_id; uint32_t arity; int64_t ival; };
+    union { SymbolId sym_id; CettaExprLen arity; int64_t ival; };
     VarId var_id;
     Atom *original;
 } FlatToken;
 
 /* Forward declarations for mutual recursion */
-static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
-                         uint32_t idx, BindingsBuilder *bb, Arena *a,
+static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
+                         CettaIndex idx, BindingsBuilder *bb, Arena *a,
                          Atom **atoms, SubstMatchSet *out);
-static void st_flat_skip(SubstNode *node, uint32_t remaining,
-                         FlatToken *flat, uint32_t nflat, uint32_t resume_idx,
+static void st_flat_skip(SubstNode *node, CettaIndex remaining,
+                         FlatToken *flat, CettaIndex nflat, CettaIndex resume_idx,
                          BindingsBuilder *bb, Arena *a, Atom **atoms,
                          SubstMatchSet *out);
 
@@ -400,7 +411,7 @@ static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
     (void)atoms;
     (void)a;
     const Bindings *current = bindings_builder_bindings(bb);
-    for (uint32_t li = 0; li < node->nleaves; li++) {
+    for (CettaIndex li = 0; li < node->nleaves; li++) {
         Bindings tagged;
         if (!bindings_clone(&tagged, current))
             continue;
@@ -417,9 +428,23 @@ static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
 
 /* ── Flat-sequence retrieval ──────────────────────────────────────────── */
 
+static bool flat_token_count(Atom *a, CettaIndex *count) {
+    if (!a || !count)
+        return false;
+    if (*count == UINT64_MAX)
+        return false;
+    (*count)++;
+    if (a->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0; i < a->expr.len; i++) {
+        if (!flat_token_count(a->expr.elems[i], count))
+            return false;
+    }
+    return true;
+}
+
 /* Flatten query atom depth-first into tokens */
-static uint32_t flatten_atom(Atom *a, FlatToken *buf, uint32_t pos) {
-    if (pos >= MAX_FLAT) return pos;
+static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
     switch (a->kind) {
     case ATOM_SYMBOL:
         buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = a->sym_id, .original = a};
@@ -433,8 +458,14 @@ static uint32_t flatten_atom(Atom *a, FlatToken *buf, uint32_t pos) {
             buf[pos] = (FlatToken){.kind = FT_INT, .ival = a->ground.ival, .original = a};
             return pos + 1;
         }
-        if (a->ground.gkind == GV_STRING) {
-            SymbolId string_id = symbol_intern_cstr(g_symbols, a->ground.sval);
+        if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
+            a->ground.gkind == GV_RATIONAL) {
+            const char *text = a->ground.gkind == GV_STRING
+                ? a->ground.sval
+                : (a->ground.gkind == GV_BIGINT
+                       ? atom_bigint_cstr(a)
+                       : atom_rational_cstr(a));
+            SymbolId string_id = symbol_intern_cstr(g_symbols, text);
             buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = string_id, .original = a};
             return pos + 1;
         }
@@ -443,7 +474,7 @@ static uint32_t flatten_atom(Atom *a, FlatToken *buf, uint32_t pos) {
     case ATOM_EXPR:
         buf[pos] = (FlatToken){.kind = FT_EXPR, .arity = a->expr.len, .original = a};
         pos++;
-        for (uint32_t i = 0; i < a->expr.len && pos < MAX_FLAT; i++)
+        for (CettaExprIndex i = 0; i < a->expr.len; i++)
             pos = flatten_atom(a->expr.elems[i], buf, pos);
         return pos;
     }
@@ -452,8 +483,8 @@ static uint32_t flatten_atom(Atom *a, FlatToken *buf, uint32_t pos) {
 
 /* Walk flat token sequence through the tree. idx = current position in flat[].
    When idx == nflat, we've matched the full query — collect leaves. */
-static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
-                         uint32_t idx, BindingsBuilder *bb, Arena *a,
+static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
+                         CettaIndex idx, BindingsBuilder *bb, Arena *a,
                          Atom **atoms, SubstMatchSet *out) {
     if (!node) return;
     if (idx == nflat) {
@@ -546,8 +577,8 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
                     bb, node->vars[i].var_id, node->vars[i].spelling,
                     tok->original)) {
                 /* Skip past all tokens of this expression */
-                uint32_t skip_end = idx + 1;
-                uint32_t depth = tok->arity;
+                CettaIndex skip_end = idx + 1;
+                CettaIndex depth = tok->arity;
                 while (depth > 0 && skip_end < nflat) {
                     if (flat[skip_end].kind == FT_EXPR) depth += flat[skip_end].arity;
                     depth--;
@@ -577,8 +608,8 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, uint32_t nflat,
 }
 
 /* Skip `remaining` indexed sub-terms in the flat walk, then resume */
-static void st_flat_skip(SubstNode *node, uint32_t remaining,
-                         FlatToken *flat, uint32_t nflat, uint32_t resume_idx,
+static void st_flat_skip(SubstNode *node, CettaIndex remaining,
+                         FlatToken *flat, CettaIndex nflat, CettaIndex resume_idx,
                          BindingsBuilder *bb, Arena *a, Atom **atoms,
                          SubstMatchSet *out) {
     if (!node) return;
@@ -613,11 +644,18 @@ static void st_flat_skip(SubstNode *node, uint32_t remaining,
 void stree_query_bucket(SubstBucket *bucket, Arena *a, Atom *query,
                         Atom **space_atoms, SubstMatchSet *out) {
     if (!bucket->root || bucket->count == 0) return;
-    FlatToken flat[MAX_FLAT];
-    uint32_t nflat = flatten_atom(query, flat, 0);
-    BindingsBuilder bb;
-    if (!bindings_builder_init(&bb, NULL))
+    CettaIndex nflat = 0;
+    if (!flat_token_count(query, &nflat) || nflat == 0)
         return;
+    FlatToken *flat =
+        cetta_malloc(sizeof(FlatToken) * (size_t)(nflat ? nflat : 1));
+    flatten_atom(query, flat, 0);
+    BindingsBuilder bb;
+    if (!bindings_builder_init(&bb, NULL)) {
+        free(flat);
+        return;
+    }
     st_flat_walk(bucket->root, flat, nflat, 0, &bb, a, space_atoms, out);
     bindings_builder_free(&bb);
+    free(flat);
 }

@@ -210,7 +210,7 @@ static bool cetta_library_pack_mork_expr_batch_from_ids(
     Arena *scratch,
     const TermUniverse *universe,
     const AtomId *items,
-    uint32_t item_count,
+    CettaCount item_count,
     uint8_t **packet_out,
     size_t *packet_len_out,
     const char **error_out
@@ -229,7 +229,7 @@ static bool cetta_library_pack_mork_expr_batch_from_ids(
         *error_out = NULL;
 
     cetta_sb_init(&packet);
-    for (uint32_t i = 0; i < item_count; i++) {
+    for (CettaIndex i = 0; i < item_count; i++) {
         uint8_t *expr_bytes = NULL;
         size_t expr_len = 0;
         const char *encode_error = NULL;
@@ -251,6 +251,11 @@ static bool cetta_library_pack_mork_expr_batch_from_ids(
     *packet_out = (uint8_t *)packet.buf;
     *packet_len_out = packet.len;
     return true;
+}
+
+static bool library_atom_expr_len_checked(CettaCount len, uint32_t *out_len) {
+    return space_match_backend_u32_bound_checked(
+        len, SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE, out_len);
 }
 
 static bool ascii_ieq(const char *lhs, const char *rhs) {
@@ -297,6 +302,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->import_space_alias_len = 0;
     ctx->cmdline_arg_len = 0;
     ctx->loaded_module_len = 0;
+    memset(ctx->native_handles, 0, sizeof(ctx->native_handles));
     ctx->native_handle_len = 0;
     ctx->native_handle_next_id = 1;
     ctx->foreign_runtime = cetta_foreign_runtime_new();
@@ -1690,7 +1696,7 @@ static Atom *rho_step_native(Arena *a, Atom *head, Atom **args,
 
 static bool library_expr_of_texts(Atom *arg) {
     if (!arg || arg->kind != ATOM_EXPR) return false;
-    for (uint32_t i = 0; i < arg->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < arg->expr.len; i++) {
         if (!library_text_arg(arg->expr.elems[i])) return false;
     }
     return true;
@@ -1839,7 +1845,7 @@ static Atom *library_byte_list_atom(Arena *a, const uint8_t *bytes, size_t len) 
             elems[i] = atom_int(a, (int64_t)bytes[i]);
         }
     }
-    return atom_expr(a, elems, (uint32_t)len);
+    return atom_expr(a, elems, (CettaExprLen)len);
 }
 
 static Atom *library_u64_be_list_atom(Arena *a, const uint8_t *bytes, size_t len) {
@@ -1863,7 +1869,7 @@ static Atom *library_u64_be_list_atom(Arena *a, const uint8_t *bytes, size_t len
             elems[i] = atom_int(a, (int64_t)value);
         }
     }
-    return atom_expr(a, elems, (uint32_t)count);
+    return atom_expr(a, elems, (CettaExprLen)count);
 }
 
 static bool library_read_text_file(const char *path, CettaStringBuf *out,
@@ -2327,7 +2333,7 @@ static Atom *str_join(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                                        "expected separator and expression of text");
     }
     cetta_sb_init(&out);
-    for (uint32_t i = 0; i < args[1]->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < args[1]->expr.len; i++) {
         if (i > 0) cetta_sb_append(&out, sep);
         cetta_sb_append(&out, library_text_arg(args[1]->expr.elems[i]));
     }
@@ -2505,6 +2511,15 @@ static Atom *library_mork_bridge_error(Arena *a, Atom *head, Atom **args,
     return atom_error(a, library_call_expr(a, head, args, nargs), atom_string(a, buf));
 }
 
+static Atom *library_space_backend_error(Arena *a, Atom *head, Atom **args,
+                                         uint32_t nargs) {
+    SpaceMatchBackendError code = space_match_backend_last_error_code();
+    if (code == SPACE_MATCH_BACKEND_ERROR_NONE)
+        return NULL;
+    return atom_error(a, library_call_expr(a, head, args, nargs),
+                      atom_symbol(a, space_match_backend_error_name(code)));
+}
+
 static CettaMorkSpaceResource *library_explicit_mork_space_arg(CettaLibraryContext *ctx,
                                                                Atom *atom) {
     CettaMorkSpaceResource *resource = library_mork_space_resource(ctx, atom);
@@ -2607,7 +2622,7 @@ static __attribute__((unused)) bool library_mork_materialize_temp_space(CettaLib
                                                                         Atom **error_out) {
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t packet_rows = 0;
+    uint64_t packet_rows = 0;
     Arena *persistent_arena;
     bool ok = false;
 
@@ -2683,6 +2698,7 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
     *out_bridge = NULL;
     if (out_unique_count)
         *out_unique_count = 0;
+    space_match_backend_clear_error();
 
     if (!space_match_backend_materialize_attached(
             space, eval_current_persistent_arena())) {
@@ -2696,14 +2712,19 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
     if (!bridge)
         goto fail;
 
-    uint32_t n = space_length(space);
+    CettaCount logical_len = space_length64(space);
+    CettaCount n = logical_len;
+    if (logical_len > space_match_backend_native_materialization_limit()) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE);
+        goto fail;
+    }
     if (space->native.universe) {
-        AtomId *atom_ids = arena_alloc(&scratch, sizeof(AtomId) * (n ? n : 1u));
+        AtomId *atom_ids = arena_alloc(&scratch, sizeof(AtomId) * (size_t)(n ? n : 1u));
         uint8_t *packet = NULL;
         size_t packet_len = 0;
         const char *pack_error = NULL;
-        for (uint32_t i = 0; i < n; i++)
-            atom_ids[i] = space_get_atom_id_at(space, i);
+        for (CettaIndex i = 0; i < n; i++)
+            atom_ids[i] = space_get_atom_id_at64(space, i);
         if (cetta_library_pack_mork_expr_batch_from_ids(
                 &scratch, space->native.universe, atom_ids, n,
                 &packet, &packet_len, &pack_error) &&
@@ -2716,13 +2737,13 @@ static __attribute__((unused)) bool library_mork_build_space_bridge_snapshot(
             goto fail;
         }
     } else {
-        for (uint32_t i = 0; i < n; i++) {
+        for (CettaIndex i = 0; i < n; i++) {
             ArenaMark mark = arena_mark(&scratch);
             uint8_t *expr_bytes = NULL;
             size_t expr_len = 0;
             const char *encode_error = NULL;
             bool ok = cetta_mm2_atom_to_bridge_expr_bytes(
-                &scratch, space_get_at(space, i), &expr_bytes, &expr_len,
+                &scratch, space_get_at64(space, i), &expr_bytes, &expr_len,
                 &encode_error) &&
                 cetta_mork_bridge_space_add_expr_bytes(
                     bridge, expr_bytes, expr_len, NULL);
@@ -3002,6 +3023,93 @@ static Atom *mork_space_clone_native(CettaLibraryContext *ctx, Arena *a,
                                           "MORK clone handle allocation failed");
 }
 
+typedef struct {
+    Arena *arena;
+    Atom *template_atom;
+    Atom **items;
+    CettaCount len;
+    CettaCount cap;
+} LibraryMorkMatchRows;
+
+static CettaCount library_mork_atom_rows_capacity_limit(void) {
+    return (CettaCount)(SIZE_MAX / sizeof(Atom *));
+}
+
+static bool library_mork_match_rows_push(LibraryMorkMatchRows *rows,
+                                         Atom *atom) {
+    CettaCount limit;
+    CettaCount next;
+    if (!rows || !atom)
+        return false;
+    limit = library_mork_atom_rows_capacity_limit();
+    if (rows->len >= limit) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    if (rows->len >= rows->cap) {
+        next = rows->cap ? rows->cap * 2u : 8u;
+        if (next <= rows->cap || next < rows->len + 1u)
+            next = rows->len + 1u;
+        if (next > limit)
+            next = limit;
+        if (next < rows->len + 1u) {
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+            return false;
+        }
+        rows->items = cetta_realloc(rows->items, sizeof(Atom *) * (size_t)next);
+        rows->cap = next;
+    }
+    rows->items[rows->len++] = atom;
+    return true;
+}
+
+static bool library_mork_match_visit_row(const Bindings *bindings, void *ctx) {
+    LibraryMorkMatchRows *rows = ctx;
+    if (!rows || !bindings)
+        return false;
+    Atom *applied = bindings_apply_if_vars(bindings, rows->arena,
+                                           rows->template_atom);
+    return library_mork_match_rows_push(rows,
+                                        library_quote_atom(rows->arena, applied));
+}
+
+typedef struct {
+    Atom **items;
+    CettaCount len;
+    CettaCount cap;
+} LibraryMorkAtomRows;
+
+static bool library_mork_atom_rows_push(LibraryMorkAtomRows *rows, Atom *atom) {
+    CettaCount limit;
+    CettaCount next;
+    if (!rows || !atom)
+        return false;
+    limit = library_mork_atom_rows_capacity_limit();
+    if (rows->len >= limit) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    if (rows->len >= rows->cap) {
+        next = rows->cap ? rows->cap * 2u : 8u;
+        if (next <= rows->cap || next < rows->len + 1u)
+            next = rows->len + 1u;
+        if (next > limit)
+            next = limit;
+        if (next < rows->len + 1u) {
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+            return false;
+        }
+        rows->items = cetta_realloc(rows->items, sizeof(Atom *) * (size_t)next);
+        rows->cap = next;
+    }
+    rows->items[rows->len++] = atom;
+    return true;
+}
+
+static bool library_mork_atoms_visit_row(Atom *atom, void *ctx) {
+    return library_mork_atom_rows_push((LibraryMorkAtomRows *)ctx, atom);
+}
+
 static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
                                        Arena *a, Atom *head, Atom **args,
                                        uint32_t nargs, SymbolId which) {
@@ -3009,10 +3117,13 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
     CettaMorkSpaceHandle *bridge = NULL;
 
     if (which == g_builtin_syms.lib_mork_space_match) {
-        Atom **results = NULL;
-        uint32_t len = 0;
-        uint32_t cap = 0;
-        uint64_t logical_size = 0;
+        LibraryMorkMatchRows rows = {
+            .arena = a,
+            .template_atom = NULL,
+            .items = NULL,
+            .len = 0,
+            .cap = 0,
+        };
 
         if (nargs != 3) {
             return library_signature_error(a, head, args, nargs,
@@ -3026,50 +3137,48 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
 
         Atom *pattern = args[1];
         Atom *template = args[2];
-        BindingSet matches;
-        binding_set_init(&matches);
+        rows.template_atom = template;
         if (!library_mork_space_bridge(target, &bridge) || !bridge) {
+            Atom *space_error = library_space_backend_error(a, head, args, nargs);
+            if (space_error)
+                return space_error;
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK match bridge unavailable: ");
-        }
-        if (!cetta_mork_bridge_space_unique_size(bridge, &logical_size) ||
-            logical_size > UINT32_MAX) {
-            return library_mork_bridge_error(a, head, args, nargs,
-                                             "MORK match size query failed: ");
         }
         bool direct_ok = false;
         if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
             atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
-            direct_ok = space_match_backend_mork_query_conjunction_direct(
+            direct_ok = space_match_backend_mork_visit_conjunction_direct(
                     bridge, a, pattern->expr.elems + 1,
-                    pattern->expr.len - 1, NULL, &matches);
+                    pattern->expr.len - 1, NULL,
+                    library_mork_match_visit_row, &rows);
         } else {
-            direct_ok = space_match_backend_mork_query_bindings_direct(
-                bridge, a, pattern, &matches);
+            direct_ok = space_match_backend_mork_visit_bindings_direct(
+                bridge, a, pattern, library_mork_match_visit_row, &rows);
         }
 
         if (!direct_ok) {
-            binding_set_free(&matches);
+            Atom *space_error = library_space_backend_error(a, head, args, nargs);
+            free(rows.items);
+            if (space_error)
+                return space_error;
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK direct match failed: ");
         }
-        for (uint32_t i = 0; i < matches.len; i++) {
-            if (len >= cap) {
-                cap = cap ? cap * 2 : 8;
-                results = cetta_realloc(results, sizeof(Atom *) * cap);
-            }
-            results[len++] = library_quote_atom(
-                a, bindings_apply(&matches.items[i], a, template));
-        }
-        binding_set_free(&matches);
 
         Atom *result = atom_expr(a, NULL, 0);
-        if (len > 0) {
-            Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
-            memcpy(elems, results, sizeof(Atom *) * len);
-            result = atom_expr(a, elems, len);
+        if (rows.len > 0) {
+            uint32_t result_len = 0;
+            if (!library_atom_expr_len_checked(rows.len, &result_len)) {
+                free(rows.items);
+                return atom_error(a, library_call_expr(a, head, args, nargs),
+                                  atom_symbol(a, space_match_backend_last_error()));
+            }
+            Atom **elems = arena_alloc(a, sizeof(Atom *) * rows.len);
+            memcpy(elems, rows.items, sizeof(Atom *) * rows.len);
+            result = atom_expr(a, elems, result_len);
         }
-        free(results);
+        free(rows.items);
         return library_quote_atom(a, result);
     }
 
@@ -3341,11 +3450,9 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
     if (which == g_builtin_syms.lib_mork_space_atoms) {
         uint8_t *packet = NULL;
         size_t len = 0;
-        uint32_t rows = 0;
+        uint64_t rows = 0;
+        LibraryMorkAtomRows atom_rows = {0};
 
-        /* Intentional textual inspection/export surface: callers here asked to
-           see the bridge dump as atoms, not to reuse the structural import
-           seam that PATHMAP/MORK materialization uses internally. */
         if (nargs != 1) {
             return library_signature_error(a, head, args, nargs,
                                            "expected MorkSpace");
@@ -3354,9 +3461,47 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK get-atoms bridge unavailable: ");
         }
+        Arena *persistent = eval_current_persistent_arena();
+        TermUniverse *universe = cetta_library_space_universe(ctx, persistent);
+        if (universe) {
+            Arena scratch;
+            arena_init(&scratch);
+            arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+            bool ok = space_match_backend_mork_visit_atoms_direct(
+                bridge, universe, &scratch, library_mork_atoms_visit_row,
+                &atom_rows);
+            arena_free(&scratch);
+            if (!ok) {
+                Atom *space_error = library_space_backend_error(a, head, args, nargs);
+                free(atom_rows.items);
+                if (space_error)
+                    return space_error;
+                return library_mork_bridge_error(a, head, args, nargs,
+                                                 "MORK get-atoms failed: ");
+            }
+            Atom *result = atom_expr(a, NULL, 0);
+            if (atom_rows.len > 0) {
+                uint32_t result_len = 0;
+                if (!library_atom_expr_len_checked(atom_rows.len, &result_len)) {
+                    free(atom_rows.items);
+                    return atom_error(a, library_call_expr(a, head, args, nargs),
+                                      atom_symbol(a, space_match_backend_last_error()));
+                }
+                Atom **elems = arena_alloc(a, sizeof(Atom *) * atom_rows.len);
+                memcpy(elems, atom_rows.items, sizeof(Atom *) * atom_rows.len);
+                result = atom_expr(a, elems, result_len);
+            }
+            free(atom_rows.items);
+            return library_quote_atom(a, result);
+        }
         if (!cetta_mork_bridge_space_dump(bridge, &packet, &len, &rows)) {
             return library_mork_bridge_error(a, head, args, nargs,
                                              "MORK get-atoms failed: ");
+        }
+        if (!library_atom_expr_len_checked(rows, NULL)) {
+            cetta_mork_bridge_bytes_free(packet, len);
+            return atom_error(a, library_call_expr(a, head, args, nargs),
+                              atom_symbol(a, space_match_backend_last_error()));
         }
         Atom *result = library_atoms_from_text(
             a, packet, len, library_call_expr(a, head, args, nargs));
@@ -3950,7 +4095,7 @@ static Atom *mork_product_zipper_bytes_native(CettaLibraryContext *ctx, Arena *a
     CettaMorkProductCursorResource *resource;
     uint8_t *bytes = NULL;
     size_t len = 0;
-    uint32_t count = 0;
+    uint64_t count = 0;
     Atom *result;
 
     if (nargs != 1) {
@@ -5029,7 +5174,7 @@ static Atom *mm2_program_atoms_native(CettaLibraryContext *ctx, Arena *a,
     CettaMorkProgramHandle *program;
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     Atom *result;
     if (nargs != 1) {
         return library_signature_error(a, head, args, nargs,
@@ -5221,7 +5366,7 @@ static Atom *mm2_context_atoms_native(CettaLibraryContext *ctx, Arena *a,
     CettaMorkContextHandle *context;
     uint8_t *packet = NULL;
     size_t len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     Atom *result;
     if (nargs != 1) {
         return library_signature_error(a, head, args, nargs,
@@ -5395,7 +5540,7 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
     Space imported;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     bool imported_init = false;
     bool ok = false;
 
@@ -5438,8 +5583,16 @@ static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
     switch (space_match_backend_transfer_resolved_result(import_dst, import_src,
                                                          persistent_arena, NULL)) {
     case SPACE_TRANSFER_OK:
-        for (uint32_t i = 0, n = space_length(&imported); i < n; i++) {
-            space_add_atom_id(work_space, space_get_atom_id_at(&imported, i));
+        {
+            uint32_t n = 0;
+            if (!space_length_u32_checked(&imported, &n)) {
+                *error_out = module_reason(
+                    ctx, eval_arena, space_match_backend_last_error(), path);
+                goto cleanup;
+            }
+            for (uint32_t i = 0; i < n; i++) {
+                space_add_atom_id(work_space, space_get_atom_id_at(&imported, i));
+            }
         }
         break;
     case SPACE_TRANSFER_NEEDS_TEXT_FALLBACK:
@@ -5483,7 +5636,7 @@ static bool load_module_act_file_pathmap_materialized(CettaLibraryContext *ctx,
         *error_out = module_reason(ctx, eval_arena, "ModuleCompiledOrderedSpaceUnsupported", path);
         return false;
     }
-    if (space_match_backend_logical_len(target_space) != 0) {
+    if (space_match_backend_logical_len64(target_space) != 0) {
         *error_out = module_reason(ctx, eval_arena, "ModuleCompiledAttachRequiresFreshSpace", path);
         return false;
     }

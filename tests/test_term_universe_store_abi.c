@@ -11,6 +11,10 @@
 #include "symbol.h"
 #include "tests/test_runtime_stats_stubs.h"
 
+static void init_test_symbols(SymbolTable *symbols);
+static CettaTermUniverseDiagnostics
+snapshot_term_universe_witnesses(const TermUniverse *universe);
+
 static void reset_test_counters(void) {
     test_runtime_stats_reset_counters();
 }
@@ -19,9 +23,277 @@ static uint64_t test_counter(CettaRuntimeCounter counter) {
     return test_runtime_stats_counter(counter);
 }
 
+static size_t test_term_entry_align_up(size_t n) {
+    return (n + 7u) & ~(size_t)7u;
+}
+
+static void assert_bigint_fact_atom(Atom *atom) {
+    assert(atom != NULL);
+    assert(atom->kind == ATOM_EXPR);
+    assert(atom->expr.len == 2);
+    assert(atom_is_symbol(atom->expr.elems[0], "n"));
+    assert(atom->expr.elems[1]->kind == ATOM_GROUNDED);
+    assert(atom->expr.elems[1]->ground.gkind == GV_BIGINT);
+    assert(strcmp(atom_bigint_cstr(atom->expr.elems[1]),
+                  "354224848179261915075") == 0);
+}
+
 static void reset_term_universe_witnesses(TermUniverse *universe) {
     reset_test_counters();
     term_universe_diag_reset(universe);
+}
+
+static void test_store_format_contract(void) {
+    assert(sizeof(CettaAtomId) == 8);
+    assert(sizeof(AtomId) == sizeof(CettaAtomId));
+    assert(CETTA_ATOM_ID_NONE == UINT64_MAX);
+    assert(CETTA_ATOM_ID_MAX == (AtomId)(UINT64_MAX - 1u));
+    assert(CETTA_ATOM_ID_MAX < CETTA_ATOM_ID_NONE);
+
+    TermUniverse universe;
+    term_universe_init(&universe);
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
+    assert(strcmp(term_universe_store_format_name(
+                      term_universe_store_format(&universe)),
+                  "Compact32V1") == 0);
+    assert(term_universe_store_format_version(
+               term_universe_store_format(&universe)) == 1u);
+    assert(term_universe_store_format_atom_id_width_bits(
+               term_universe_store_format(&universe)) == 32u);
+    assert(term_universe_atom_id_capacity(&universe) == (uint64_t)UINT32_MAX);
+    term_universe_free(&universe);
+
+    assert(term_universe_init_with_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
+    assert(strcmp(term_universe_store_format_name(
+                      term_universe_store_format(&universe)),
+                  "Wide64V1") == 0);
+    assert(term_universe_store_format_atom_id_width_bits(
+               term_universe_store_format(&universe)) == 64u);
+    assert(term_universe_atom_id_capacity(&universe) == UINT64_MAX);
+    term_universe_free(&universe);
+}
+
+static void test_store_format_migration_contract(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    SymbolId pair_sym = symbol_intern_cstr(g_symbols, "pair");
+    SymbolId a_sym = symbol_intern_cstr(g_symbols, "A");
+    SymbolId b_sym = symbol_intern_cstr(g_symbols, "B");
+    Atom *expr_items[3] = {
+        atom_symbol_id(&scratch, pair_sym),
+        atom_symbol_id(&scratch, a_sym),
+        atom_symbol_id(&scratch, b_sym),
+    };
+    Atom *expr = atom_expr(&scratch, expr_items, 3);
+    AtomId expr_id = term_universe_store_atom_id(&universe, NULL, expr);
+    assert(expr_id != CETTA_ATOM_ID_NONE);
+    assert(universe.entries[expr_id].byte_len ==
+           test_term_entry_align_up(sizeof(CettaTermHdr) + 3u * sizeof(uint32_t)));
+
+    assert(term_universe_migrate_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
+    assert(universe.entries[expr_id].byte_len ==
+           test_term_entry_align_up(sizeof(CettaTermHdr) + 3u * sizeof(uint64_t)));
+    Atom *wide_expr = term_universe_get_atom(&universe, expr_id);
+    assert(wide_expr != NULL);
+    assert(atom_eq(wide_expr, expr));
+
+    assert(term_universe_migrate_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
+    assert(universe.entries[expr_id].byte_len ==
+           test_term_entry_align_up(sizeof(CettaTermHdr) + 3u * sizeof(uint32_t)));
+    Atom *compact_expr = term_universe_get_atom(&universe, expr_id);
+    assert(compact_expr != NULL);
+    assert(atom_eq(compact_expr, expr));
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+static void test_compact_ceiling_migrate_then_continue_witness(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_diag_set_atom_id_capacity_override(&universe, 4);
+
+    for (int i = 0; i < 3; i++) {
+        AtomId id = term_universe_store_atom_id(&universe, NULL,
+                                                atom_int(&scratch, i));
+        assert(id != CETTA_ATOM_ID_NONE);
+    }
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
+    AtomId widened =
+        term_universe_store_atom_id(&universe, NULL, atom_int(&scratch, 3));
+    assert(widened != CETTA_ATOM_ID_NONE);
+    assert(widened == 3u);
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
+    assert(term_universe_last_error_code(&universe) ==
+           TERM_UNIVERSE_ERROR_NONE);
+    CettaTermUniverseDiagnostics diag =
+        snapshot_term_universe_witnesses(&universe);
+    assert(diag.store_format_migrations == 1u);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+static void test_compact_ceiling_migrate_on_expr_insert_witness(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_diag_set_atom_id_capacity_override(&universe, 4);
+
+    SymbolId head_sym = symbol_intern_cstr(g_symbols, "threshold-expr");
+    AtomId head_id = tu_intern_symbol(&universe, head_sym);
+    AtomId one_id = tu_intern_int(&universe, 1);
+    AtomId two_id = tu_intern_int(&universe, 2);
+    AtomId child_ids[3] = {head_id, one_id, two_id};
+
+    assert(head_id != CETTA_ATOM_ID_NONE);
+    assert(one_id != CETTA_ATOM_ID_NONE);
+    assert(two_id != CETTA_ATOM_ID_NONE);
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
+
+    AtomId expr_id = tu_expr_from_ids(&universe, child_ids, 3);
+    assert(expr_id != CETTA_ATOM_ID_NONE);
+    assert(term_universe_store_format(&universe) ==
+           TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
+    assert(term_universe_last_error_code(&universe) ==
+           TERM_UNIVERSE_ERROR_NONE);
+    assert(tu_kind(&universe, expr_id) == ATOM_EXPR);
+    assert(tu_arity(&universe, expr_id) == 3);
+    assert(tu_child(&universe, expr_id, 0) == head_id);
+    assert(tu_child(&universe, expr_id, 1) == one_id);
+    assert(tu_child(&universe, expr_id, 2) == two_id);
+
+    Atom *roundtrip = term_universe_get_atom(&universe, expr_id);
+    Atom *roundtrip_again = term_universe_get_atom(&universe, expr_id);
+    Atom *expr_elems[3] = {
+        atom_symbol_id(&scratch, head_sym),
+        atom_int(&scratch, 1),
+        atom_int(&scratch, 2),
+    };
+    Atom *expr = atom_expr(&scratch, expr_elems, 3);
+    assert(roundtrip != NULL);
+    assert(roundtrip_again == roundtrip);
+    assert(atom_eq(roundtrip, expr));
+
+    CettaTermUniverseDiagnostics diag =
+        snapshot_term_universe_witnesses(&universe);
+    assert(diag.store_format_migrations == 1u);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+static void test_wide_logical_id_gt_u32_round_trip_witness(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space space;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    assert(term_universe_init_with_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_diag_set_logical_atom_id_base_override(
+        &universe, (uint64_t)UINT32_MAX + 17u);
+
+    SymbolId pair_sym = symbol_intern_cstr(g_symbols, "pair-wide");
+    Atom *items[2] = {
+        atom_symbol_id(&scratch, pair_sym),
+        atom_int(&scratch, 42),
+    };
+    Atom *expr = atom_expr(&scratch, items, 2);
+    AtomId expr_id = term_universe_store_atom_id(&universe, NULL, expr);
+    assert(expr_id > (uint64_t)UINT32_MAX);
+    assert(term_universe_atom_id_eq(&universe, expr_id, expr));
+    Atom *roundtrip = term_universe_get_atom(&universe, expr_id);
+    assert(roundtrip != NULL);
+    assert(atom_eq(roundtrip, expr));
+
+    space_init_with_universe(&space, &universe);
+    space.kind = SPACE_KIND_HASH;
+    space_add_atom_id(&space, expr_id);
+    assert(space_contains_atom_id(&space, expr_id));
+    Atom *space_atom = space_get_at64(&space, 0);
+    assert(space_atom != NULL);
+    assert(atom_eq(space_atom, expr));
+    space_free(&space);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+static void test_atom_id_exhaustion_contract(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space space;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    assert(term_universe_init_with_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    universe.len = SIZE_MAX;
+    AtomId id = term_universe_store_atom_id(&universe, NULL,
+                                            atom_int(&scratch, 123));
+    assert(id == CETTA_ATOM_ID_NONE);
+    assert(term_universe_last_error_code(&universe) ==
+           TERM_UNIVERSE_ERROR_ATOM_ID_EXHAUSTED);
+    assert(strcmp(term_universe_error_name(term_universe_last_error_code(&universe)),
+                  "TermUniverseAtomIdExhausted") == 0);
+
+    term_universe_clear_error(&universe);
+    assert(term_universe_last_error_code(&universe) ==
+           TERM_UNIVERSE_ERROR_NONE);
+
+    space_init_with_universe(&space, &universe);
+    universe.len = SIZE_MAX;
+    assert(!space_admit_atom(&space, &scratch, atom_int(&scratch, 456)));
+    assert(space_term_universe_last_error_code(&space) ==
+           TERM_UNIVERSE_ERROR_ATOM_ID_EXHAUSTED);
+    space_free(&space);
+
+    universe.len = 0;
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
 }
 
 static CettaTermUniverseDiagnostics
@@ -65,7 +337,7 @@ static void test_file_ingress_workload_witness(void) {
 
     CettaTermUniverseDiagnostics load_diag =
         snapshot_term_universe_witnesses(&universe);
-    assert(space_length(&workload_space) == loaded_atoms);
+    assert(space_length64(&workload_space) == loaded_atoms);
     assert(loaded_atoms > 0);
     assert(bang_pairs == 1);
     assert(load_diag.direct_constructor_leaf_hits > 0);
@@ -123,7 +395,7 @@ bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id) {
 }
 
 void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
-                                  uint32_t atom_idx) {
+                                  CettaIndex atom_idx) {
     (void)s;
     (void)atom_id;
     (void)atom;
@@ -132,6 +404,15 @@ void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
 
 void space_match_backend_note_remove(Space *s) {
     (void)s;
+}
+
+CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
+                                            CettaIndex **out) {
+    (void)s;
+    (void)pattern;
+    if (out)
+        *out = NULL;
+    return 0;
 }
 
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out) {
@@ -249,6 +530,12 @@ bool space_match_backend_truncate_direct(Space *s, uint32_t new_len) {
     return false;
 }
 
+bool space_match_backend_truncate_direct64(Space *s, uint64_t new_len) {
+    if (new_len > UINT32_MAX)
+        return false;
+    return space_match_backend_truncate_direct(s, (uint32_t)new_len);
+}
+
 bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
                                           const uint8_t *text, size_t len,
                                           uint64_t *out_added) {
@@ -295,7 +582,7 @@ bool space_match_backend_bridge_space(Space *s, CettaMorkSpaceHandle **out_bridg
     return false;
 }
 
-uint32_t space_match_backend_logical_len(const Space *s) {
+uint64_t space_match_backend_logical_len64(const Space *s) {
     return s ? s->len : 0;
 }
 
@@ -305,11 +592,23 @@ AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
     return s->atom_ids[s->start + idx];
 }
 
+AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
+    if (idx > UINT32_MAX)
+        return CETTA_ATOM_ID_NONE;
+    return space_match_backend_get_atom_id_at(s, (uint32_t)idx);
+}
+
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
     AtomId atom_id = space_match_backend_get_atom_id_at(s, idx);
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return NULL;
     return term_universe_get_atom(s->native.universe, atom_id);
+}
+
+Atom *space_match_backend_get_at64(const Space *s, uint64_t idx) {
+    if (idx > UINT32_MAX)
+        return NULL;
+    return space_match_backend_get_at(s, (uint32_t)idx);
 }
 
 bool space_match_backend_mork_query_bindings_direct(
@@ -363,6 +662,12 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_store_format_contract();
+    test_store_format_migration_contract();
+    test_compact_ceiling_migrate_then_continue_witness();
+    test_compact_ceiling_migrate_on_expr_insert_witness();
+    test_wide_logical_id_gt_u32_round_trip_witness();
+    test_atom_id_exhaustion_contract();
     test_file_ingress_workload_witness();
     arena_init(&persistent);
     arena_init(&scratch);
@@ -500,6 +805,40 @@ int main(void) {
     assert(direct_expr_legacy == direct_expr_id);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 2);
 
+    reset_test_counters();
+    Atom *bigint = atom_bigint(&scratch, "000354224848179261915075");
+    assert(bigint != NULL);
+    assert(bigint->kind == ATOM_GROUNDED);
+    assert(bigint->ground.gkind == GV_BIGINT);
+#if CETTA_BUILD_WITH_GMP
+    mpz_t cached_bigint;
+    mpz_t expected_bigint;
+    mpz_inits(cached_bigint, expected_bigint, NULL);
+    assert(atom_bigint_get_mpz(bigint, cached_bigint));
+    assert(mpz_set_str(expected_bigint, "354224848179261915075", 10) == 0);
+    assert(mpz_cmp(cached_bigint, expected_bigint) == 0);
+    Atom *bigint_from_mpz = atom_bigint_from_mpz(&scratch, cached_bigint);
+    assert(bigint_from_mpz->kind == ATOM_GROUNDED);
+    assert(bigint_from_mpz->ground.gkind == GV_BIGINT);
+    assert(strcmp(atom_bigint_cstr(bigint_from_mpz),
+                  "354224848179261915075") == 0);
+    mpz_clears(cached_bigint, expected_bigint, NULL);
+#endif
+    AtomId bigint_id = term_universe_store_atom_id(&universe, NULL, bigint);
+    assert(bigint_id != CETTA_ATOM_ID_NONE);
+    assert(tu_ground_kind(&universe, bigint_id) == GV_BIGINT);
+    assert(strcmp(tu_bigint_cstr(&universe, bigint_id),
+                  "354224848179261915075") == 0);
+    assert(strcmp(term_universe_atom_to_parseable_string(&scratch, &universe,
+                                                         bigint_id),
+                  "354224848179261915075") == 0);
+    AtomId bigint_id_direct =
+        tu_intern_bigint(&universe, "354224848179261915075");
+    assert(bigint_id_direct == bigint_id);
+    assert(tu_intern_bigint(&universe, "17") == int_id);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 1);
+
     reset_term_universe_witnesses(&universe);
     SymbolId diag_head_sym = symbol_intern_cstr(&symbols, "diag-head");
     AtomId diag_head_id = tu_intern_symbol(&universe, diag_head_sym);
@@ -542,7 +881,7 @@ int main(void) {
     stdlib_load(&stdlib_space, &persistent);
     CettaTermUniverseDiagnostics stdlib_diag =
         snapshot_term_universe_witnesses(&universe);
-    assert(space_length(&stdlib_space) > 0);
+    assert(space_length64(&stdlib_space) > 0);
     assert(stdlib_diag.direct_constructor_leaf_hits > 0);
     assert(stdlib_diag.direct_constructor_expr_hits > 0);
     assert(stdlib_diag.legacy_top_down_stable_admissions == 0);
@@ -566,7 +905,7 @@ int main(void) {
         reset_term_universe_witnesses(&universe);
         assert(stdlib_load_blob_bytes(&scoped_space, &persistent,
                                       scoped_blob, sizeof(scoped_blob)));
-        assert(space_length(&scoped_space) == 2);
+        assert(space_length64(&scoped_space) == 2);
         AtomId scoped0 = space_get_atom_id_at(&scoped_space, 0);
         AtomId scoped1 = space_get_atom_id_at(&scoped_space, 1);
         assert(scoped0 != CETTA_ATOM_ID_NONE);
@@ -589,6 +928,26 @@ int main(void) {
         assert(scoped_atom0->expr.elems[0]->var_id !=
                scoped_atom1->expr.elems[0]->var_id);
         space_free(&scoped_space);
+    }
+    {
+        static const unsigned char bigint_blob[] = {
+            'C','S','T','D',
+            0x01,0x00,
+            0x02,0x00,
+            0x18,0x00,0x00,0x00,
+            'n',0x00,
+            '3','5','4','2','2','4','8','4','8','1','7','9','2','6','1','9','1','5','0','7','5',0x00,
+            0x01,0x00,
+            0x03,0x02,0x00, 0x01,0x00,0x00, 0x08,0x02,0x00,
+        };
+        Space bigint_blob_space;
+        space_init_with_universe(&bigint_blob_space, &universe);
+        reset_term_universe_witnesses(&universe);
+        assert(stdlib_load_blob_bytes(&bigint_blob_space, &persistent,
+                                      bigint_blob, sizeof(bigint_blob)));
+        assert(space_length64(&bigint_blob_space) == 1);
+        assert_bigint_fact_atom(space_get_at(&bigint_blob_space, 0));
+        space_free(&bigint_blob_space);
     }
 #endif
 
@@ -680,7 +1039,7 @@ int main(void) {
     assert(tu_hash32(&universe, seen_id) == atom_hash(seen_atom));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
     assert(lookup_diag.lazy_decode_count == 0);
-    assert(lookup_diag.legacy_hash_recompute_count == 1);
+    assert(lookup_diag.legacy_hash_recompute_count == seen_atom->expr.len);
 
     Space admit_space;
     space_init_with_universe(&admit_space, &universe);
@@ -701,9 +1060,9 @@ int main(void) {
 
     DiscNode *disc = disc_node_new();
     assert(disc_insert_id(disc, &universe, seen_id, 77));
-    uint32_t *disc_matches = NULL;
-    uint32_t disc_nmatches = 0;
-    uint32_t disc_cap = 0;
+    CettaIndex *disc_matches = NULL;
+    CettaIndex disc_nmatches = 0;
+    CettaIndex disc_cap = 0;
     disc_lookup(disc, seen_atom, &disc_matches, &disc_nmatches, &disc_cap);
     assert(disc_nmatches == 1);
     assert(disc_cap >= disc_nmatches);

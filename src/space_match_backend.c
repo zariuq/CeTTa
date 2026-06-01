@@ -13,9 +13,9 @@
 
 #define IMPORTED_COREF_LIMIT 144
 #define IMPORTED_MORK_QUERY_ONLY_V2_MAGIC 0x43544252u
-#define IMPORTED_MORK_QUERY_ONLY_V2_VERSION 2u
-#define IMPORTED_MORK_MULTI_REF_V3_VERSION 3u
-#define IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION 4u
+#define IMPORTED_MORK_QUERY_ONLY_V2_VERSION 5u
+#define IMPORTED_MORK_MULTI_REF_V3_VERSION 6u
+#define IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION 5u
 #define IMPORTED_MORK_CONTEXTUAL_EXACT_ROWS_FLAGS 0x0000u
 #define IMPORTED_MORK_CONTEXTUAL_QUERY_ROWS_FLAGS 0x0000u
 #define IMPORTED_MORK_OPEN_REF_EXACT 0u
@@ -34,16 +34,20 @@
 #define IMPORTED_MORK_WIDE_TAG_NEWVAR 0x02u
 #define IMPORTED_MORK_WIDE_TAG_VARREF 0x03u
 #define IMPORTED_CONJUNCTION_PATTERN_LIMIT 32u
+#define IMPORTED_MORK_CURSOR_EXPR_ROW_BATCH_ROWS 65536u
+#define IMPORTED_MORK_CURSOR_EXPR_ROW_BATCH_BYTES (8u * 1024u * 1024u)
+#define IMPORTED_MORK_QUERY_ROW_BATCH_ROWS 65536u
+#define IMPORTED_MORK_QUERY_ROW_BATCH_BYTES (8u * 1024u * 1024u)
 
-static int cmp_uint32(const void *a, const void *b) {
-    uint32_t va = *(const uint32_t *)a, vb = *(const uint32_t *)b;
+static int cmp_cetta_index(const void *a, const void *b) {
+    CettaIndex va = *(const CettaIndex *)a, vb = *(const CettaIndex *)b;
     return (va > vb) - (va < vb);
 }
 
 static bool pathmap_local_ensure_bridge_space(PathmapLocalState *st);
 static bool mork_imported_ensure_bridge_space(MorkImportedState *st);
 static bool backend_rebuild_bridge(Space *s);
-static uint32_t imported_logical_len(const Space *s);
+static uint64_t imported_logical_len(const Space *s);
 static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
                                          SubstMatchSet *out);
 static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
@@ -65,8 +69,8 @@ static void space_query_conjunction_default(Space *s, Arena *a,
 static void imported_projection_clear(ImportedBridgeState *st);
 static bool imported_storage_ensure_projection(Space *s);
 static bool imported_shadow_refresh_from_projection(Space *s);
-static bool bridge_space_logical_len_u32(const ImportedBridgeState *st,
-                                         uint32_t *out_logical);
+static bool bridge_space_logical_len64(const ImportedBridgeState *st,
+                                       uint64_t *out_logical);
 static bool pathmap_local_ensure_bridge_live(Space *s);
 static void imported_mark_bridge_untrusted(Space *s);
 static bool pathmap_local_apply_text_chunk_direct(Space *s,
@@ -75,12 +79,12 @@ static bool pathmap_local_apply_text_chunk_direct(Space *s,
                                                   bool remove_atoms,
                                                   uint64_t *out_changed);
 
-static uint32_t sort_unique_uint32(uint32_t *items, uint32_t len) {
+static CettaIndex sort_unique_cetta_index(CettaIndex *items, CettaIndex len) {
     if (!items || len <= 1)
         return len;
-    qsort(items, len, sizeof(uint32_t), cmp_uint32);
-    uint32_t w = 1;
-    for (uint32_t r = 1; r < len; r++) {
+    qsort(items, len, sizeof(CettaIndex), cmp_cetta_index);
+    CettaIndex w = 1;
+    for (CettaIndex r = 1; r < len; r++) {
         if (items[r] != items[r - 1])
             items[w++] = items[r];
     }
@@ -146,21 +150,21 @@ static bool native_atom_id_insertable(const TermUniverse *universe,
     return true;
 }
 
-static void native_insert_match_trie_entry(Space *s, uint32_t atom_idx) {
+static void native_insert_match_trie_entry(Space *s, CettaIndex atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
-    AtomId atom_id = space_get_atom_id_at(s, atom_idx);
+    AtomId atom_id = space_get_atom_id_at64(s, atom_idx);
     if (native_atom_id_insertable(s->native.universe, atom_id) &&
         disc_insert_id(st->match_trie, s->native.universe, atom_id, atom_idx)) {
         return;
     }
-    Atom *atom = space_get_at(s, atom_idx);
+    Atom *atom = space_get_at64(s, atom_idx);
     if (atom)
         disc_insert(st->match_trie, atom, atom_idx);
 }
 
-static void native_insert_stree_entry(Space *s, uint32_t atom_idx) {
+static void native_insert_stree_entry(Space *s, CettaIndex atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
-    Atom *atom = space_get_at(s, atom_idx);
+    Atom *atom = space_get_at64(s, atom_idx);
     if (atom)
         stree_insert(st->stree, atom, atom_idx);
 }
@@ -172,7 +176,7 @@ static __attribute__((unused)) bool imported_atom_has_vars(const Atom *atom) {
     case ATOM_VAR:
         return true;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (imported_atom_has_vars(atom->expr.elems[i]))
                 return true;
         }
@@ -189,7 +193,7 @@ static bool imported_atom_has_epoch_vars(const Atom *atom) {
     case ATOM_VAR:
         return var_epoch_suffix(atom->var_id) != 0;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (imported_atom_has_epoch_vars(atom->expr.elems[i]))
                 return true;
         }
@@ -212,7 +216,7 @@ static bool imported_atom_has_bridge_vars(const Atom *atom) {
                 strncmp(text, "$$__mork_", 9) == 0);
     }
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (imported_atom_has_bridge_vars(atom->expr.elems[i]))
                 return true;
         }
@@ -239,7 +243,7 @@ static bool subst_match_same(const SubstMatch *a, const SubstMatch *b) {
            bindings_eq((Bindings *)&a->bindings, (Bindings *)&b->bindings);
 }
 
-static void subst_matchset_push(SubstMatchSet *out, uint32_t atom_idx,
+static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
                                 uint32_t epoch, const Bindings *bindings,
                                 bool exact) {
     if (out->len >= out->cap) {
@@ -341,7 +345,8 @@ static void native_free(Space *s) {
     st->stree_dirty = false;
 }
 
-static void native_note_add(Space *s, AtomId atom_id, Atom *atom, uint32_t atom_idx) {
+static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
+                            CettaIndex atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (st->match_trie) {
         if (!(native_atom_id_insertable(s->native.universe, atom_id) &&
@@ -366,11 +371,11 @@ static void native_note_remove(Space *s) {
     st->stree_dirty = true;
 }
 
-static bool match_space_atom_epoch(Space *s, uint32_t atom_idx, Atom *query,
+static bool match_space_atom_epoch(Space *s, CettaIndex atom_idx, Atom *query,
                                    Bindings *b, Arena *a, uint32_t epoch) {
     if (!s || !query || !b || atom_idx >= s->native.len)
         return false;
-    AtomId atom_id = space_get_atom_id_at(s, atom_idx);
+    AtomId atom_id = space_get_atom_id_at64(s, atom_idx);
     return match_atoms_atom_id_epoch(query, s->native.universe, atom_id, b, a, epoch);
 }
 
@@ -598,22 +603,18 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
         subst_matchset_push(out, 0, 0, &matches->items[i], true);
 }
 
-static uint32_t native_candidates(Space *s, Atom *pattern, uint32_t **out) {
+static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (s->native.len <= MATCH_TRIE_THRESHOLD) {
-        *out = cetta_malloc(sizeof(uint32_t) * (s->native.len ? s->native.len : 1));
-        for (uint32_t i = 0; i < s->native.len; i++) (*out)[i] = i;
+        *out = cetta_malloc(sizeof(CettaIndex) * (s->native.len ? s->native.len : 1));
+        for (CettaIndex i = 0; i < s->native.len; i++) (*out)[i] = i;
         return s->native.len;
     }
     native_ensure_match_trie(s);
-    uint32_t ncand = 0, ccand = 0;
+    CettaIndex ncand = 0, ccand = 0;
     disc_lookup(st->match_trie, pattern, out, &ncand, &ccand);
     if (ncand > 1) {
-        qsort(*out, ncand, sizeof(uint32_t), cmp_uint32);
-        uint32_t w = 1;
-        for (uint32_t r = 1; r < ncand; r++)
-            if ((*out)[r] != (*out)[r - 1]) (*out)[w++] = (*out)[r];
-        ncand = w;
+        ncand = sort_unique_cetta_index(*out, ncand);
     }
     return ncand;
 }
@@ -623,7 +624,7 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     smset_init(out);
     if (s->native.len == 0) return;
     if (s->native.len <= MATCH_TRIE_THRESHOLD) {
-        for (uint32_t i = 0; i < s->native.len; i++) {
+        for (CettaIndex i = 0; i < s->native.len; i++) {
             uint32_t epoch = fresh_var_suffix();
             Bindings b;
             bindings_init(&b);
@@ -784,6 +785,11 @@ static Atom *imported_bridge_parse_token_bytes(Arena *a,
                                                uint32_t len,
                                                bool exact_len_reliable,
                                                bool *ok);
+static bool imported_bridge_parse_integer_token_id(TermUniverse *universe,
+                                                   const char *tok,
+                                                   AtomId *out_id);
+static Atom *imported_bridge_parse_integer_token_atom(Arena *a,
+                                                      const char *tok);
 static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id(
     TermUniverse *universe,
     Arena *scratch,
@@ -877,7 +883,7 @@ static void imported_state_free(ImportedBridgeState *st) {
     st->dirty = false;
 }
 
-static uint32_t imported_logical_len(const Space *s) {
+static uint64_t imported_logical_len(const Space *s) {
     const MorkImportedState *mork = mork_imported_state_const(s);
     const ImportedBridgeState *st = backend_bridge_state_const(s);
     if (backend_uses_bridge_adapter(s) && mork && mork->attached_compiled)
@@ -886,37 +892,38 @@ static uint32_t imported_logical_len(const Space *s) {
         if (st->projection_valid)
             return st->projected_len;
         {
-            uint32_t logical = 0;
-            if (bridge_space_logical_len_u32(st, &logical))
+            uint64_t logical = 0;
+            if (bridge_space_logical_len64(st, &logical))
                 return logical;
             if (st->bridge_active && st->bridge_space)
-                return UINT32_MAX;
+                return s->native.len;
         }
     }
     return s->native.len;
 }
 
-static uint32_t shadow_storage_logical_len(const Space *s) {
+static uint64_t shadow_storage_logical_len(const Space *s) {
     return s ? s->native.len : 0;
 }
 
-static AtomId shadow_storage_get_atom_id_at(const Space *s, uint32_t idx) {
-    if (!s || idx >= s->native.len)
+static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
+    if (!s || idx > UINT32_MAX || idx >= s->native.len)
         return CETTA_ATOM_ID_NONE;
-    return s->native.atom_ids[space_is_queue(s) ? (s->native.start + idx) : idx];
+    uint32_t idx32 = (uint32_t)idx;
+    return s->native.atom_ids[space_is_queue(s) ? (s->native.start + idx32) : idx32];
 }
 
-static Atom *shadow_storage_get_at(const Space *s, uint32_t idx) {
+static Atom *shadow_storage_get_at(const Space *s, uint64_t idx) {
     AtomId atom_id = shadow_storage_get_atom_id_at(s, idx);
     return term_universe_get_atom(s ? s->native.universe : NULL, atom_id);
 }
 
-static uint32_t imported_storage_logical_len(const Space *s) {
+static uint64_t imported_storage_logical_len(const Space *s) {
     return imported_logical_len(s);
 }
 
-static bool bridge_space_logical_len_u32(const ImportedBridgeState *st,
-                                         uint32_t *out_logical) {
+static bool bridge_space_logical_len64(const ImportedBridgeState *st,
+                                       uint64_t *out_logical) {
     uint64_t logical = 0;
     if (out_logical)
         *out_logical = 0;
@@ -925,14 +932,12 @@ static bool bridge_space_logical_len_u32(const ImportedBridgeState *st,
     if (!cetta_mork_bridge_space_size(
             (const CettaMorkSpaceHandle *)st->bridge_space, &logical))
         return false;
-    if (logical > UINT32_MAX)
-        return false;
-    *out_logical = (uint32_t)logical;
+    *out_logical = logical;
     return true;
 }
 
-static bool bridge_handle_logical_len_u32(CettaMorkSpaceHandle *bridge,
-                                          uint32_t *out_logical) {
+static bool bridge_handle_logical_len64(CettaMorkSpaceHandle *bridge,
+                                        uint64_t *out_logical) {
     uint64_t logical = 0;
     if (out_logical)
         *out_logical = 0;
@@ -940,27 +945,25 @@ static bool bridge_handle_logical_len_u32(CettaMorkSpaceHandle *bridge,
         return false;
     if (!cetta_mork_bridge_space_size(bridge, &logical))
         return false;
-    if (logical > UINT32_MAX)
-        return false;
-    *out_logical = (uint32_t)logical;
+    *out_logical = logical;
     return true;
 }
 
 /* Transitional pathmap/mork projection moves through an explicit
    backend-derived snapshot when possible, falling back to the legacy shadow
    only while the ownership migration is still incomplete. */
-static AtomId imported_storage_get_atom_id_at(const Space *s, uint32_t idx) {
+static AtomId imported_storage_get_atom_id_at(const Space *s, uint64_t idx) {
     Space *mutable_space = (Space *)s;
     ImportedBridgeState *st = backend_bridge_state(mutable_space);
     if (st && imported_storage_ensure_projection(mutable_space)) {
         if (idx >= st->projected_len)
             return CETTA_ATOM_ID_NONE;
-        return st->projected_atom_ids[idx];
+        return st->projected_atom_ids[(size_t)idx];
     }
     return shadow_storage_get_atom_id_at(s, idx);
 }
 
-static Atom *imported_storage_get_at(const Space *s, uint32_t idx) {
+static Atom *imported_storage_get_at(const Space *s, uint64_t idx) {
     AtomId atom_id = imported_storage_get_atom_id_at(s, idx);
     return term_universe_get_atom(s ? s->native.universe : NULL, atom_id);
 }
@@ -1266,6 +1269,61 @@ static ImportedBridgeExprDecodeResult imported_bridge_packet_expr_to_atom_id_cac
     return result;
 }
 
+static bool imported_bridge_parse_integer_token_id(TermUniverse *universe,
+                                                   const char *tok,
+                                                   AtomId *out_id) {
+    if (!universe || !tok || !out_id)
+        return false;
+
+    char *canonical = cetta_bigint_canonicalize_owned(tok);
+    if (!canonical)
+        return false;
+
+    int64_t small = 0;
+    if (cetta_bigint_text_fits_i64(canonical, &small))
+        *out_id = tu_intern_int(universe, small);
+    else
+        *out_id = tu_intern_bigint(universe, canonical);
+    free(canonical);
+    return *out_id != CETTA_ATOM_ID_NONE;
+}
+
+static Atom *imported_bridge_parse_integer_token_atom(Arena *a,
+                                                      const char *tok) {
+    if (!a || !tok)
+        return NULL;
+
+    char *canonical = cetta_bigint_canonicalize_owned(tok);
+    if (!canonical)
+        return NULL;
+
+    int64_t small = 0;
+    Atom *out = cetta_bigint_text_fits_i64(canonical, &small)
+        ? atom_int(a, small)
+        : atom_bigint(a, canonical);
+    free(canonical);
+    return out;
+}
+
+static bool imported_bridge_parse_rational_token_id(TermUniverse *universe,
+                                                    const char *tok,
+                                                    AtomId *out_id) {
+    if (!universe || !tok || !out_id)
+        return false;
+    AtomId id = tu_intern_rational(universe, tok);
+    if (id == CETTA_ATOM_ID_NONE)
+        return false;
+    *out_id = id;
+    return true;
+}
+
+static Atom *imported_bridge_parse_rational_token_atom(Arena *a,
+                                                       const char *tok) {
+    if (!a || !tok)
+        return NULL;
+    return atom_rational(a, tok);
+}
+
 static ImportedBridgeExprDecodeResult imported_bridge_token_to_atom_id(
     TermUniverse *universe,
     Arena *scratch,
@@ -1326,13 +1384,12 @@ static ImportedBridgeExprDecodeResult imported_bridge_token_to_atom_id(
         return IMPORTED_BRIDGE_EXPR_DECODE_OK;
     }
 
-    char *endp = NULL;
-    errno = 0;
-    long long ival = strtoll(tok, &endp, 10);
-    if (*endp == '\0' && errno == 0) {
-        *out_id = tu_intern_int(universe, (int64_t)ival);
+    if (imported_bridge_parse_integer_token_id(universe, tok, out_id))
         return IMPORTED_BRIDGE_EXPR_DECODE_OK;
-    }
+
+    if (strchr(tok, '/') &&
+        imported_bridge_parse_rational_token_id(universe, tok, out_id))
+        return IMPORTED_BRIDGE_EXPR_DECODE_OK;
 
     if (strchr(tok, '.')) {
         char *fendp = NULL;
@@ -1941,7 +1998,7 @@ static bool imported_bridge_visit_contextual_query_rows_packet(
     Arena *a,
     const uint8_t *packet,
     size_t packet_len,
-    uint32_t row_count,
+    uint64_t row_count,
     ImportedBridgeVarMap *query_vars,
     const Bindings *seed,
     CettaMorkBindingsVisitor visitor,
@@ -1950,7 +2007,7 @@ static bool imported_bridge_visit_contextual_query_rows_packet(
     uint32_t magic = 0;
     uint16_t version = 0;
     uint16_t flags = 0;
-    uint32_t parsed_rows = 0;
+    uint64_t parsed_rows = 0;
     uint32_t context_count = 0;
     ImportedOpeningContext *contexts = NULL;
     bool success = true;
@@ -1961,7 +2018,7 @@ static bool imported_bridge_visit_contextual_query_rows_packet(
     if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
         !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
         !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
-        !imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows) ||
+        !imported_bridge_read_u64(packet, packet_len, &off, &parsed_rows) ||
         !imported_bridge_read_u32(packet, packet_len, &off, &context_count))
         return false;
     if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
@@ -1974,7 +2031,7 @@ static bool imported_bridge_visit_contextual_query_rows_packet(
             packet, packet_len, &off, context_count, true, &contexts))
         return false;
 
-    for (uint32_t row = 0; row < parsed_rows && success; row++) {
+    for (uint64_t row = 0; row < parsed_rows && success; row++) {
         uint32_t binding_count = 0;
         Bindings merged;
         bool merged_inited = false;
@@ -2047,22 +2104,37 @@ static bool imported_bridge_visit_contextual_query_rows_packet(
 }
 
 static bool imported_bridge_contextual_exact_rows_append_atom(AtomId **items,
-                                                   uint32_t *len,
-                                                   uint32_t *cap,
-                                                   AtomId atom_id,
-                                                   uint32_t multiplicity) {
+                                                              CettaCount *len,
+                                                              CettaCount *cap,
+                                                              AtomId atom_id,
+                                                              uint32_t multiplicity) {
+    CettaCount limit;
+    CettaCount needed;
+    CettaCount next;
     if (!items || !len || !cap || atom_id == CETTA_ATOM_ID_NONE ||
-        multiplicity == 0 || *len > UINT32_MAX - multiplicity)
+        multiplicity == 0)
         return false;
-    if (*len + multiplicity > *cap) {
-        uint32_t next = *cap ? *cap : 8u;
-        while (next < *len + multiplicity) {
-            if (next > UINT32_MAX / 2u)
-                next = *len + multiplicity;
+    limit = (CettaCount)space_match_backend_packet_materialization_limit();
+    if (*len > limit || (CettaCount)multiplicity > limit - *len) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    needed = *len + (CettaCount)multiplicity;
+    if (needed > *cap) {
+        next = *cap ? *cap : 8u;
+        while (next < needed) {
+            if (next > limit / 2u)
+                next = needed;
             else
                 next *= 2u;
         }
-        *items = cetta_realloc(*items, sizeof(AtomId) * next);
+        if (next > limit)
+            next = limit;
+        if (next < needed) {
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+            return false;
+        }
+        *items = cetta_realloc(*items, sizeof(AtomId) * (size_t)next);
         *cap = next;
     }
     for (uint32_t i = 0; i < multiplicity; i++)
@@ -2077,17 +2149,17 @@ static bool imported_bridge_decode_contextual_exact_rows(
     const uint8_t *packet,
     size_t packet_len,
     AtomId **out_items,
-    uint32_t *out_len) {
+    CettaCount *out_len) {
     size_t off = 0;
     uint32_t magic = 0;
     uint16_t version = 0;
     uint16_t flags = 0;
-    uint32_t row_count = 0;
+    uint64_t row_count = 0;
     uint32_t context_count = 0;
     ImportedOpeningContext *contexts = NULL;
     AtomId *items = NULL;
-    uint32_t len = 0;
-    uint32_t cap = 0;
+    CettaCount len = 0;
+    CettaCount cap = 0;
     bool ok = false;
     (void)memo;
 
@@ -2101,14 +2173,19 @@ static bool imported_bridge_decode_contextual_exact_rows(
     if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
         !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
         !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
-        !imported_bridge_read_u32(packet, packet_len, &off, &row_count) ||
+        !imported_bridge_read_u64(packet, packet_len, &off, &row_count) ||
         !imported_bridge_read_u32(packet, packet_len, &off, &context_count))
         goto done;
 
     if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
         version != IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION ||
-        flags != IMPORTED_MORK_CONTEXTUAL_EXACT_ROWS_FLAGS ||
-        (row_count == 0 && context_count != 0) ||
+        flags != IMPORTED_MORK_CONTEXTUAL_EXACT_ROWS_FLAGS)
+        goto done;
+    if (row_count > space_match_backend_packet_materialization_limit()) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        goto done;
+    }
+    if ((row_count == 0 && context_count != 0) ||
         (row_count != 0 && context_count == 0))
         goto done;
 
@@ -2149,7 +2226,7 @@ static bool imported_bridge_decode_contextual_exact_rows(
         }
     }
 
-    for (uint32_t row = 0; row < row_count; row++) {
+    for (uint64_t row = 0; row < row_count; row++) {
         ArenaMark scratch_mark = arena_mark(scratch);
         uint32_t context_id = 0;
         uint32_t multiplicity = 0;
@@ -2196,6 +2273,339 @@ done:
     imported_opening_contexts_free(contexts, context_count);
     free(items);
     return ok;
+}
+
+static bool imported_bridge_decode_expr_row_packet_append(
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeExprMemo *memo,
+    const uint8_t *packet,
+    size_t packet_len,
+    uint64_t packet_rows,
+    AtomId **items,
+    CettaCount *len,
+    CettaCount *cap) {
+    size_t off = 0;
+    uint64_t decoded_rows = 0;
+    uint64_t limit = space_match_backend_packet_materialization_limit();
+
+    if (!universe || !scratch || !memo || !items || !len || !cap)
+        return false;
+    if (packet_rows == 0)
+        return packet_len == 0;
+    if (!packet)
+        return false;
+    if ((uint64_t)*len > limit || packet_rows > limit - (uint64_t)*len) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+
+    while (off < packet_len) {
+        ArenaMark scratch_mark = arena_mark(scratch);
+        AtomId atom_id = CETTA_ATOM_ID_NONE;
+        uint32_t expr_len = 0;
+        ImportedBridgeExprDecodeResult result;
+
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
+            off + expr_len > packet_len) {
+            arena_reset(scratch, scratch_mark);
+            return false;
+        }
+        result = imported_bridge_packet_expr_to_atom_id_cached(
+            universe, scratch, memo, packet + off, expr_len, &atom_id);
+        off += expr_len;
+        if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK ||
+            atom_id == CETTA_ATOM_ID_NONE ||
+            !imported_bridge_contextual_exact_rows_append_atom(
+                items, len, cap, atom_id, 1)) {
+            arena_reset(scratch, scratch_mark);
+            return false;
+        }
+        decoded_rows++;
+        arena_reset(scratch, scratch_mark);
+    }
+
+    return decoded_rows == packet_rows;
+}
+
+static bool imported_bridge_decode_expr_rows_from_cursor(
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeExprMemo *memo,
+    CettaMorkSpaceHandle *bridge,
+    AtomId **out_items,
+    CettaCount *out_len) {
+    CettaMorkCursorHandle *cursor = NULL;
+    AtomId *items = NULL;
+    CettaCount len = 0;
+    CettaCount cap = 0;
+    bool ok = true;
+
+    if (out_items)
+        *out_items = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (!universe || !scratch || !memo || !bridge || !out_items || !out_len)
+        return false;
+
+    cursor = cetta_mork_bridge_cursor_new(bridge);
+    if (!cursor)
+        return false;
+
+    while (ok) {
+        uint8_t *packet = NULL;
+        size_t packet_len = 0;
+        uint64_t packet_rows = 0;
+
+        ok = cetta_mork_bridge_cursor_next_expr_rows(
+            cursor,
+            IMPORTED_MORK_CURSOR_EXPR_ROW_BATCH_ROWS,
+            IMPORTED_MORK_CURSOR_EXPR_ROW_BATCH_BYTES,
+            &packet, &packet_len, &packet_rows);
+        if (ok && packet_rows == 0) {
+            ok = packet_len == 0;
+            cetta_mork_bridge_bytes_free(packet, packet_len);
+            break;
+        }
+        if (ok) {
+            ok = imported_bridge_decode_expr_row_packet_append(
+                universe, scratch, memo, packet, packet_len, packet_rows,
+                &items, &len, &cap);
+        }
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+    }
+
+    cetta_mork_bridge_cursor_free(cursor);
+    if (!ok) {
+        free(items);
+        return false;
+    }
+
+    *out_items = items;
+    *out_len = len;
+    return true;
+}
+
+static bool imported_bridge_visit_atoms_dump(
+    CettaMorkSpaceHandle *bridge,
+    TermUniverse *universe,
+    Arena *scratch,
+    CettaMorkAtomVisitor visitor,
+    void *ctx) {
+    uint8_t *packet = NULL;
+    size_t packet_len = 0;
+    uint64_t packet_rows = 0;
+    char *text = NULL;
+    size_t pos = 0;
+    uint64_t decoded_rows = 0;
+    bool ok = false;
+
+    if (!bridge || !universe || !scratch || !visitor)
+        return false;
+    if (!cetta_mork_bridge_space_dump(bridge, &packet, &packet_len, &packet_rows))
+        return false;
+    if (packet_rows == 0) {
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+        return packet_len == 0;
+    }
+    if (!packet || packet_len == 0) {
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+        return false;
+    }
+
+    text = arena_alloc(scratch, packet_len + 1u);
+    memcpy(text, packet, packet_len);
+    text[packet_len] = '\0';
+    cetta_mork_bridge_bytes_free(packet, packet_len);
+    packet = NULL;
+
+    while (text[pos]) {
+        size_t before = pos;
+        AtomId atom_id = parse_sexpr_to_id(universe, text, &pos);
+        Atom *atom = NULL;
+
+        if (atom_id == CETTA_ATOM_ID_NONE) {
+            while (text[pos] && isspace((unsigned char)text[pos]))
+                pos++;
+            ok = (text[pos] == '\0');
+            return ok && decoded_rows == packet_rows;
+        }
+        if (pos == before)
+            return false;
+
+        atom = term_universe_get_atom(universe, atom_id);
+        if (!atom || !visitor(atom, ctx))
+            return false;
+        decoded_rows++;
+    }
+
+    return decoded_rows == packet_rows;
+}
+
+typedef struct {
+    Atom **items;
+    CettaCount len;
+    CettaCount cap;
+} ImportedBridgeAtomRows;
+
+static CettaCount imported_bridge_atom_rows_capacity_limit(void) {
+    return (CettaCount)(SIZE_MAX / sizeof(Atom *));
+}
+
+static bool imported_bridge_atom_rows_push(ImportedBridgeAtomRows *rows, Atom *atom) {
+    CettaCount limit;
+    CettaCount next;
+    if (!rows || !atom)
+        return false;
+    limit = imported_bridge_atom_rows_capacity_limit();
+    if (rows->len >= limit) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    if (rows->len >= rows->cap) {
+        next = rows->cap ? rows->cap * 2u : 8u;
+        if (next <= rows->cap || next < rows->len + 1u)
+            next = rows->len + 1u;
+        if (next > limit)
+            next = limit;
+        if (next < rows->len + 1u) {
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+            return false;
+        }
+        rows->items = cetta_realloc(rows->items, sizeof(Atom *) * (size_t)next);
+        rows->cap = next;
+    }
+    rows->items[rows->len++] = atom;
+    return true;
+}
+
+static void imported_bridge_atom_rows_free(ImportedBridgeAtomRows *rows) {
+    if (!rows)
+        return;
+    free(rows->items);
+    rows->items = NULL;
+    rows->len = 0;
+    rows->cap = 0;
+}
+
+static bool imported_bridge_collect_atom(Atom *atom, void *ctx) {
+    return imported_bridge_atom_rows_push((ImportedBridgeAtomRows *)ctx, atom);
+}
+
+static bool imported_bridge_visit_expr_row_packet(
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeExprMemo *memo,
+    const uint8_t *packet,
+    size_t packet_len,
+    uint64_t packet_rows,
+    CettaMorkAtomVisitor visitor,
+    void *ctx) {
+    size_t off = 0;
+    uint64_t decoded_rows = 0;
+
+    if (!universe || !scratch || !memo || !visitor)
+        return false;
+    if (packet_rows == 0)
+        return packet_len == 0;
+    if (!packet)
+        return false;
+
+    while (off < packet_len) {
+        ArenaMark scratch_mark = arena_mark(scratch);
+        AtomId atom_id = CETTA_ATOM_ID_NONE;
+        Atom *atom = NULL;
+        uint32_t expr_len = 0;
+        ImportedBridgeExprDecodeResult result;
+
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
+            off + expr_len > packet_len) {
+            arena_reset(scratch, scratch_mark);
+            return false;
+        }
+        result = imported_bridge_packet_expr_to_atom_id_cached(
+            universe, scratch, memo, packet + off, expr_len, &atom_id);
+        off += expr_len;
+        if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK ||
+            atom_id == CETTA_ATOM_ID_NONE) {
+            arena_reset(scratch, scratch_mark);
+            return false;
+        }
+        atom = term_universe_get_atom(universe, atom_id);
+        arena_reset(scratch, scratch_mark);
+        if (!atom || !visitor(atom, ctx))
+            return false;
+        decoded_rows++;
+    }
+
+    return decoded_rows == packet_rows;
+}
+
+static bool imported_bridge_collect_atoms_cursor(
+    CettaMorkSpaceHandle *bridge,
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeAtomRows *rows) {
+    CettaMorkCursorHandle *cursor = NULL;
+    ImportedBridgeExprMemo memo;
+    bool ok = true;
+
+    if (!bridge || !universe || !scratch || !rows)
+        return false;
+    cursor = cetta_mork_bridge_cursor_new(bridge);
+    if (!cursor)
+        return false;
+
+    imported_bridge_expr_memo_init(&memo);
+    while (ok) {
+        uint8_t *packet = NULL;
+        size_t packet_len = 0;
+        uint64_t packet_rows = 0;
+
+        ok = cetta_mork_bridge_cursor_next_expr_rows(
+            cursor, IMPORTED_MORK_CURSOR_EXPR_ROW_BATCH_ROWS,
+            IMPORTED_MORK_CURSOR_EXPR_ROW_BATCH_BYTES,
+            &packet, &packet_len, &packet_rows);
+        if (ok && packet_rows == 0) {
+            ok = packet_len == 0;
+            cetta_mork_bridge_bytes_free(packet, packet_len);
+            break;
+        }
+        if (ok) {
+            ok = imported_bridge_visit_expr_row_packet(
+                universe, scratch, &memo, packet, packet_len, packet_rows,
+                imported_bridge_collect_atom, rows);
+        }
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+    }
+
+    imported_bridge_expr_memo_free(&memo);
+    cetta_mork_bridge_cursor_free(cursor);
+    return ok;
+}
+
+bool space_match_backend_mork_visit_atoms_direct(
+    CettaMorkSpaceHandle *bridge,
+    TermUniverse *universe,
+    Arena *scratch,
+    CettaMorkAtomVisitor visitor,
+    void *ctx) {
+    ImportedBridgeAtomRows staged = {0};
+    bool ok = imported_bridge_collect_atoms_cursor(
+        bridge, universe, scratch, &staged);
+    if (ok) {
+        for (uint32_t i = 0; i < staged.len; i++) {
+            if (!visitor(staged.items[i], ctx)) {
+                imported_bridge_atom_rows_free(&staged);
+                return false;
+            }
+        }
+        imported_bridge_atom_rows_free(&staged);
+        return true;
+    }
+    imported_bridge_atom_rows_free(&staged);
+    return imported_bridge_visit_atoms_dump(
+        bridge, universe, scratch, visitor, ctx);
 }
 
 SpaceBridgeImportResult space_match_backend_import_bridge_space(
@@ -2298,7 +2708,7 @@ static bool imported_materialize_bridge_space(Space *dst,
 
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t rows = 0;
+    uint64_t rows = 0;
     bool ok = cetta_mork_bridge_space_dump(bridge, &packet, &packet_len, &rows) &&
               imported_parse_dump_text_into_space(dst, persistent_arena, packet, packet_len);
     cetta_mork_bridge_bytes_free(packet, packet_len);
@@ -2317,7 +2727,7 @@ bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *o
         return false;
     if (s->match_backend.kind != SPACE_ENGINE_MORK)
         return false;
-    if (space_is_ordered(s) || space_length(s) != 0)
+    if (space_is_ordered(s) || space_match_backend_logical_len64(s) != 0)
         return false;
 
     mst = mork_imported_state(s);
@@ -2343,14 +2753,9 @@ bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *o
                                                &loaded)) {
         return false;
     }
-    if (loaded > UINT32_MAX) {
-        cetta_mork_bridge_space_clear((CettaMorkSpaceHandle *)st->bridge_space);
-        return false;
-    }
-
     st->bridge_active = true;
     mst->attached_compiled = true;
-    mst->attached_count = (uint32_t)loaded;
+    mst->attached_count = loaded;
     st->built = true;
     st->dirty = false;
     space_discard_native_logical_view(s);
@@ -2370,7 +2775,7 @@ static bool native_materialize_native_storage(Space *s, Arena *persistent_arena)
 static bool pathmap_materialize_native_storage(Space *s, Arena *persistent_arena) {
     ImportedBridgeState *st;
 #if CETTA_BUILD_WITH_RUNTIME_STATS
-    uint32_t logical = 0;
+    uint64_t logical = 0;
 #endif
     bool ok;
 
@@ -2403,7 +2808,7 @@ static bool mork_materialize_native_storage(Space *s, Arena *persistent_arena) {
     ImportedBridgeState *st;
     Space *fresh = NULL;
 #if CETTA_BUILD_WITH_RUNTIME_STATS
-    uint32_t logical_count = 0;
+    uint64_t logical_count = 0;
 #endif
     bool ok = false;
 
@@ -2547,6 +2952,10 @@ bool space_match_backend_remove_atom_direct(Space *s, Atom *atom) {
 }
 
 bool space_match_backend_truncate_direct(Space *s, uint32_t new_len) {
+    return space_match_backend_truncate_direct64(s, new_len);
+}
+
+bool space_match_backend_truncate_direct64(Space *s, uint64_t new_len) {
     if (!s || !s->match_backend.ops || !s->match_backend.ops->truncate_direct)
         return false;
     return s->match_backend.ops->truncate_direct(s, new_len);
@@ -2597,7 +3006,13 @@ bool space_match_backend_contains_atom_structural_direct(Space *s,
     return ok;
 }
 
-uint32_t space_match_backend_logical_len(const Space *s) {
+bool space_match_backend_logical_len_u32_checked(const Space *s, uint32_t *out_len) {
+    return space_match_backend_u32_bound_checked(
+        space_match_backend_logical_len64(s),
+        SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE, out_len);
+}
+
+uint64_t space_match_backend_logical_len64(const Space *s) {
     if (!s)
         return 0;
     if (s->match_backend.ops && s->match_backend.ops->logical_len)
@@ -2613,12 +3028,135 @@ AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
     return shadow_storage_get_atom_id_at(s, idx);
 }
 
+AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
+    if (!s)
+        return CETTA_ATOM_ID_NONE;
+    if (s->match_backend.ops && s->match_backend.ops->get_atom_id_at)
+        return s->match_backend.ops->get_atom_id_at(s, idx);
+    return shadow_storage_get_atom_id_at(s, idx);
+}
+
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
     if (!s)
         return NULL;
     if (s->match_backend.ops && s->match_backend.ops->get_at)
         return s->match_backend.ops->get_at(s, idx);
     return shadow_storage_get_at(s, idx);
+}
+
+Atom *space_match_backend_get_at64(const Space *s, uint64_t idx) {
+    if (!s)
+        return NULL;
+    if (s->match_backend.ops && s->match_backend.ops->get_at)
+        return s->match_backend.ops->get_at(s, idx);
+    return shadow_storage_get_at(s, idx);
+}
+
+static bool imported_bridge_visit_query_only_v2_packet(
+    Arena *a,
+    const uint8_t *packet,
+    size_t packet_len,
+    uint64_t row_count,
+    ImportedBridgeVarMap *query_vars,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx) {
+    size_t off = 0;
+    uint32_t magic = 0;
+    uint16_t version = 0;
+    uint16_t flags = 0;
+    uint64_t parsed_rows = 0;
+    bool wide_tokens = false;
+
+    if (!a || !packet || !query_vars || !visitor)
+        return false;
+    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
+        !imported_bridge_read_u64(packet, packet_len, &off, &parsed_rows)) {
+        return false;
+    }
+    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
+        version != IMPORTED_MORK_QUERY_ONLY_V2_VERSION ||
+        parsed_rows != row_count) {
+        return false;
+    }
+    wide_tokens =
+        (flags & IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS) != 0;
+    if ((flags & ~(IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
+                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS)) != 0 ||
+        (flags & (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) !=
+            (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+             IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) {
+        return false;
+    }
+
+    for (uint64_t row = 0; row < parsed_rows; row++) {
+        uint32_t ref_count = 0;
+        uint32_t binding_count = 0;
+        Bindings row_bindings;
+        bool row_ok = true;
+        bindings_init(&row_bindings);
+
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
+            off + (size_t)ref_count * 4u > packet_len) {
+            bindings_free(&row_bindings);
+            return false;
+        }
+        off += (size_t)ref_count * 4u;
+
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
+            bindings_free(&row_bindings);
+            return false;
+        }
+
+        for (uint32_t bi = 0; bi < binding_count && row_ok; bi++) {
+            uint16_t query_slot = 0;
+            uint8_t value_env = 0;
+            uint8_t value_flags = 0;
+            uint32_t expr_len = 0;
+            if (!imported_bridge_read_u16(packet, packet_len, &off, &query_slot) ||
+                off + 2 > packet_len) {
+                row_ok = false;
+                break;
+            }
+            value_env = packet[off++];
+            value_flags = packet[off++];
+            if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
+                off + expr_len > packet_len) {
+                row_ok = false;
+                break;
+            }
+            ImportedBridgeVarSlot *key_slot =
+                imported_bridge_varmap_lookup(query_vars, query_slot);
+            if (!key_slot) {
+                row_ok = false;
+                break;
+            }
+            bool value_ok = true;
+            Atom *value = imported_bridge_parse_value_raw_query_only_v2(
+                a, packet + off, expr_len, value_env, value_flags,
+                wide_tokens, &value_ok);
+            off += expr_len;
+            if (!value_ok ||
+                !bindings_add_id(&row_bindings, key_slot->var_id,
+                                 key_slot->spelling, value)) {
+                row_ok = false;
+                break;
+            }
+        }
+
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_DIRECT_ROW);
+        if (!row_ok || bindings_has_loop(&row_bindings) ||
+            !visitor(&row_bindings, ctx)) {
+            bindings_free(&row_bindings);
+            return false;
+        }
+        bindings_free(&row_bindings);
+    }
+
+    return off == packet_len;
 }
 
 bool space_match_backend_mork_visit_bindings_direct(
@@ -2630,15 +3168,10 @@ bool space_match_backend_mork_visit_bindings_direct(
     Arena scratch;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t row_count = 0;
+    uint64_t row_count = 0;
+    CettaMorkQueryCursorHandle *query_cursor = NULL;
     ImportedBridgeVarMap query_vars;
     bool success = true;
-    size_t off = 0;
-    uint32_t magic = 0;
-    uint16_t version = 0;
-    uint16_t flags = 0;
-    uint32_t parsed_rows = 0;
-    bool wide_tokens = false;
 
     if (!bridge || !a || !query || !visitor)
         return false;
@@ -2670,6 +3203,36 @@ bool space_match_backend_mork_visit_bindings_direct(
     packet_len = 0;
     row_count = 0;
 
+    if (cetta_mork_bridge_query_cursor_new_query_only_v2(
+            bridge, (const uint8_t *)pattern_text, strlen(pattern_text),
+            &query_cursor)) {
+        arena_free(&scratch);
+        while (success) {
+            packet = NULL;
+            packet_len = 0;
+            row_count = 0;
+            if (!cetta_mork_bridge_query_cursor_next(
+                    query_cursor, IMPORTED_MORK_QUERY_ROW_BATCH_ROWS,
+                    IMPORTED_MORK_QUERY_ROW_BATCH_BYTES, &packet, &packet_len,
+                    &row_count)) {
+                success = false;
+                cetta_mork_bridge_bytes_free(packet, packet_len);
+                break;
+            }
+            if (row_count == 0) {
+                success = packet_len == 0;
+                cetta_mork_bridge_bytes_free(packet, packet_len);
+                break;
+            }
+            success = imported_bridge_visit_query_only_v2_packet(
+                a, packet, packet_len, row_count, &query_vars, visitor, ctx);
+            cetta_mork_bridge_bytes_free(packet, packet_len);
+        }
+        cetta_mork_bridge_query_cursor_free(query_cursor);
+        imported_bridge_varmap_free(&query_vars);
+        return success;
+    }
+
     bool ok = cetta_mork_bridge_space_query_bindings_query_only_v2(
         bridge, (const uint8_t *)pattern_text, strlen(pattern_text),
         &packet, &packet_len, &row_count);
@@ -2679,103 +3242,199 @@ bool space_match_backend_mork_visit_bindings_direct(
         return false;
     }
 
-    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
-        !imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows)) {
-        success = false;
-        goto cleanup;
-    }
-    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
-        version != IMPORTED_MORK_QUERY_ONLY_V2_VERSION ||
-        parsed_rows != row_count) {
-        success = false;
-        goto cleanup;
-    }
-    wide_tokens =
-        (flags & IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS) != 0;
-    if ((flags & ~(IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
-                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS)) != 0 ||
-        (flags & (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) !=
-            (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-             IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) {
-        success = false;
-        goto cleanup;
-    }
-
-    for (uint32_t row = 0; row < parsed_rows && success; row++) {
-        uint32_t ref_count = 0;
-        uint32_t binding_count = 0;
-        Bindings row_bindings;
-        bindings_init(&row_bindings);
-
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
-            off + (size_t)ref_count * 4u > packet_len) {
-            bindings_free(&row_bindings);
-            success = false;
-            break;
-        }
-        off += (size_t)ref_count * 4u;
-
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
-            bindings_free(&row_bindings);
-            success = false;
-            break;
-        }
-
-        for (uint32_t bi = 0; bi < binding_count && success; bi++) {
-            uint16_t query_slot = 0;
-            uint8_t value_env = 0;
-            uint8_t value_flags = 0;
-            uint32_t expr_len = 0;
-            if (!imported_bridge_read_u16(packet, packet_len, &off, &query_slot) ||
-                off + 2 > packet_len) {
-                success = false;
-                break;
-            }
-            value_env = packet[off++];
-            value_flags = packet[off++];
-            if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
-                off + expr_len > packet_len) {
-                success = false;
-                break;
-            }
-            ImportedBridgeVarSlot *key_slot =
-                imported_bridge_varmap_lookup(&query_vars, query_slot);
-            if (!key_slot) {
-                success = false;
-                break;
-            }
-            bool value_ok = true;
-            Atom *value = imported_bridge_parse_value_raw_query_only_v2(
-                a, packet + off, expr_len, value_env, value_flags,
-                wide_tokens, &value_ok);
-            off += expr_len;
-            if (!value_ok ||
-                !bindings_add_id(&row_bindings, key_slot->var_id, key_slot->spelling, value)) {
-                success = false;
-                break;
-            }
-        }
-
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_DIRECT_ROW);
-        if (success && !bindings_has_loop(&row_bindings) &&
-            !visitor(&row_bindings, ctx)) {
-            success = false;
-        }
-        bindings_free(&row_bindings);
-    }
-
-cleanup:
+    success = imported_bridge_visit_query_only_v2_packet(
+        a, packet, packet_len, row_count, &query_vars, visitor, ctx);
     imported_bridge_varmap_free(&query_vars);
     cetta_mork_bridge_bytes_free(packet, packet_len);
     return success;
 }
 
 static bool mork_query_collect_bindings(const Bindings *bindings, void *ctx) {
-    return binding_set_push((BindingSet *)ctx, bindings);
+    BindingSet *set = (BindingSet *)ctx;
+    if (!set)
+        return false;
+    if (set->len >= CETTA_BINDING_SET_MAX_ROWS) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    return binding_set_push(set, bindings);
+}
+
+static bool imported_bridge_visit_multi_ref_v3_packet(
+    Arena *a,
+    const uint8_t *packet,
+    size_t packet_len,
+    uint64_t row_count,
+    uint32_t expected_factor_count,
+    ImportedBridgeVarMap *query_vars,
+    const Bindings *seed,
+    bool repeat_multiplicity,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx,
+    bool count_direct_rows) {
+    size_t off = 0;
+    uint32_t magic = 0;
+    uint16_t version = 0;
+    uint16_t flags = 0;
+    uint32_t factor_count = 0;
+    uint64_t parsed_rows = 0;
+    bool multi_ref_groups = false;
+    bool direct_multiplicities = false;
+    bool wide_tokens = false;
+
+    if (!a || !packet || !query_vars || !visitor)
+        return false;
+    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
+        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
+        !imported_bridge_read_u32(packet, packet_len, &off, &factor_count) ||
+        !imported_bridge_read_u64(packet, packet_len, &off, &parsed_rows)) {
+        return false;
+    }
+    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
+        version != IMPORTED_MORK_MULTI_REF_V3_VERSION) {
+        return false;
+    }
+    multi_ref_groups =
+        (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) != 0;
+    direct_multiplicities =
+        (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES) != 0;
+    wide_tokens =
+        (flags & IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS) != 0;
+    if ((flags & (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) !=
+            (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+             IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES) ||
+        (flags & ~(IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
+                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
+                   IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS |
+                   IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES |
+                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS)) != 0 ||
+        multi_ref_groups == direct_multiplicities ||
+        factor_count != expected_factor_count ||
+        parsed_rows != row_count) {
+        return false;
+    }
+
+    for (uint64_t row = 0; row < parsed_rows; row++) {
+        uint64_t multiplicity = 1;
+        ImportedBridgeValueVarMap value_vars;
+        bool merged_inited = false;
+        Bindings merged;
+        imported_bridge_value_varmap_init(&value_vars);
+
+        for (uint32_t fi = 0; fi < factor_count; fi++) {
+            uint64_t factor_multiplicity = 1;
+            if (direct_multiplicities) {
+                uint32_t count = 0;
+                if (!imported_bridge_read_u32(packet, packet_len, &off, &count) ||
+                    count == 0) {
+                    imported_bridge_value_varmap_free(&value_vars);
+                    return false;
+                }
+                factor_multiplicity = count;
+            } else {
+                uint32_t ref_count = 0;
+                if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
+                    off + (size_t)ref_count * 4u > packet_len ||
+                    (repeat_multiplicity && ref_count == 0)) {
+                    imported_bridge_value_varmap_free(&value_vars);
+                    return false;
+                }
+                factor_multiplicity = ref_count ? ref_count : 1u;
+                off += (size_t)ref_count * 4u;
+            }
+            if (repeat_multiplicity) {
+                if (multiplicity > UINT64_MAX / factor_multiplicity) {
+                    imported_bridge_value_varmap_free(&value_vars);
+                    return false;
+                }
+                multiplicity *= factor_multiplicity;
+            }
+        }
+
+        uint32_t binding_count = 0;
+        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
+            imported_bridge_value_varmap_free(&value_vars);
+            return false;
+        }
+
+        if (seed) {
+            if (!bindings_clone(&merged, seed)) {
+                imported_bridge_value_varmap_free(&value_vars);
+                return false;
+            }
+        } else {
+            bindings_init(&merged);
+        }
+        merged_inited = true;
+
+        for (uint32_t bi = 0; bi < binding_count; bi++) {
+            uint16_t query_slot = 0;
+            uint8_t value_env = 0;
+            uint8_t value_flags = 0;
+            uint32_t expr_len = 0;
+            if (!imported_bridge_read_u16(packet, packet_len, &off, &query_slot) ||
+                off + 2 > packet_len) {
+                if (merged_inited)
+                    bindings_free(&merged);
+                imported_bridge_value_varmap_free(&value_vars);
+                return false;
+            }
+            value_env = packet[off++];
+            value_flags = packet[off++];
+            if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
+                off + expr_len > packet_len) {
+                if (merged_inited)
+                    bindings_free(&merged);
+                imported_bridge_value_varmap_free(&value_vars);
+                return false;
+            }
+            ImportedBridgeVarSlot *slot =
+                imported_bridge_varmap_lookup(query_vars, query_slot);
+            if (!slot) {
+                if (merged_inited)
+                    bindings_free(&merged);
+                imported_bridge_value_varmap_free(&value_vars);
+                return false;
+            }
+            bool value_ok = true;
+            Atom *value = imported_bridge_parse_value_raw_multi_ref_v3(
+                a, packet + off, expr_len, value_env, value_flags,
+                wide_tokens, &value_vars, &value_ok);
+            off += expr_len;
+            if (!value_ok ||
+                !bindings_add_id(&merged, slot->var_id, slot->spelling, value)) {
+                if (merged_inited)
+                    bindings_free(&merged);
+                imported_bridge_value_varmap_free(&value_vars);
+                return false;
+            }
+        }
+
+        if (count_direct_rows)
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_CONJ_DIRECT);
+        if (!bindings_has_loop(&merged)) {
+            if (repeat_multiplicity) {
+                for (uint64_t rep = 0; rep < multiplicity; rep++) {
+                    if (!visitor(&merged, ctx)) {
+                        bindings_free(&merged);
+                        imported_bridge_value_varmap_free(&value_vars);
+                        return false;
+                    }
+                }
+            } else if (!visitor(&merged, ctx)) {
+                bindings_free(&merged);
+                imported_bridge_value_varmap_free(&value_vars);
+                return false;
+            }
+        }
+        if (merged_inited)
+            bindings_free(&merged);
+        imported_bridge_value_varmap_free(&value_vars);
+    }
+
+    return off == packet_len;
 }
 
 bool space_match_backend_mork_query_bindings_direct(
@@ -2909,8 +3568,13 @@ static bool mork_query_conjunction_iterative(
                     break;
                 }
                 cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_CONJ_MERGE);
-                if (!bindings_has_loop(&merged))
-                    binding_set_push_move(&next, &merged);
+                if (!bindings_has_loop(&merged) &&
+                    !binding_set_push_move(&next, &merged)) {
+                    space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+                    success = false;
+                    bindings_free(&merged);
+                    break;
+                }
                 bindings_free(&merged);
             }
             binding_set_free(&matches);
@@ -2969,11 +3633,8 @@ bool space_match_backend_mork_visit_conjunction_direct(
     bool success = true;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t row_count = 0;
-    uint32_t factor_count = 0;
-    bool multi_ref_groups = false;
-    bool direct_multiplicities = false;
-    bool wide_tokens = false;
+    uint64_t row_count = 0;
+    CettaMorkQueryCursorHandle *query_cursor = NULL;
 
     for (uint32_t i = 0; i < npatterns; i++) {
         grounded[i] = seed ? bindings_apply_if_vars(seed, &scratch, patterns[i])
@@ -3013,6 +3674,35 @@ bool space_match_backend_mork_visit_conjunction_direct(
     packet_len = 0;
     row_count = 0;
 
+    if (cetta_mork_bridge_query_cursor_new_multi_ref_v3(
+            bridge, (const uint8_t *)query_text, strlen(query_text),
+            &query_cursor)) {
+        while (success) {
+            packet = NULL;
+            packet_len = 0;
+            row_count = 0;
+            if (!cetta_mork_bridge_query_cursor_next(
+                    query_cursor, IMPORTED_MORK_QUERY_ROW_BATCH_ROWS,
+                    IMPORTED_MORK_QUERY_ROW_BATCH_BYTES, &packet, &packet_len,
+                    &row_count)) {
+                success = false;
+                cetta_mork_bridge_bytes_free(packet, packet_len);
+                break;
+            }
+            if (row_count == 0) {
+                success = packet_len == 0;
+                cetta_mork_bridge_bytes_free(packet, packet_len);
+                break;
+            }
+            success = imported_bridge_visit_multi_ref_v3_packet(
+                a, packet, packet_len, row_count, npatterns, &query_vars, seed,
+                false, visitor, ctx, true);
+            cetta_mork_bridge_bytes_free(packet, packet_len);
+        }
+        cetta_mork_bridge_query_cursor_free(query_cursor);
+        goto cleanup;
+    }
+
     if (!cetta_mork_bridge_space_query_bindings_multi_ref_v3(
             bridge, (const uint8_t *)query_text, strlen(query_text),
             &packet, &packet_len, &row_count)) {
@@ -3028,134 +3718,9 @@ bool space_match_backend_mork_visit_conjunction_direct(
         return ok;
     }
 
-    size_t off = 0;
-    uint32_t magic = 0;
-    uint16_t version = 0;
-    uint16_t flags = 0;
-    uint32_t parsed_rows = 0;
-    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
-        !imported_bridge_read_u32(packet, packet_len, &off, &factor_count) ||
-        !imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows)) {
-        success = false;
-        goto cleanup;
-    }
-    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
-        version != IMPORTED_MORK_MULTI_REF_V3_VERSION) {
-        success = false;
-        goto cleanup;
-    }
-    multi_ref_groups = (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) != 0;
-    direct_multiplicities =
-        (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES) != 0;
-    wide_tokens =
-        (flags & IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS) != 0;
-    if ((flags & (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) !=
-            (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-             IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES) ||
-        (flags & ~(IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
-                   IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS |
-                   IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES |
-                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS)) != 0 ||
-        multi_ref_groups == direct_multiplicities ||
-        factor_count != npatterns || parsed_rows != row_count) {
-        success = false;
-        goto cleanup;
-    }
-
-    for (uint32_t row = 0; row < parsed_rows && success; row++) {
-        ImportedBridgeValueVarMap value_vars;
-        imported_bridge_value_varmap_init(&value_vars);
-        bool merged_inited = false;
-        for (uint32_t fi = 0; fi < factor_count; fi++) {
-            if (direct_multiplicities) {
-                uint32_t factor_multiplicity = 0;
-                if (!imported_bridge_read_u32(packet, packet_len, &off,
-                                              &factor_multiplicity) ||
-                    factor_multiplicity == 0) {
-                    success = false;
-                    break;
-                }
-            } else {
-                uint32_t ref_count = 0;
-                if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
-                    off + (size_t)ref_count * 4u > packet_len) {
-                    success = false;
-                    break;
-                }
-                off += (size_t)ref_count * 4u;
-            }
-        }
-        if (!success) {
-            imported_bridge_value_varmap_free(&value_vars);
-            break;
-        }
-
-        uint32_t binding_count = 0;
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
-            success = false;
-            imported_bridge_value_varmap_free(&value_vars);
-            break;
-        }
-
-        Bindings merged;
-        if (seed) {
-            if (!bindings_clone(&merged, seed)) {
-                success = false;
-                imported_bridge_value_varmap_free(&value_vars);
-                break;
-            }
-        } else {
-            bindings_init(&merged);
-        }
-        merged_inited = true;
-
-        for (uint32_t bi = 0; bi < binding_count && success; bi++) {
-            uint16_t query_slot = 0;
-            uint8_t value_env = 0;
-            uint8_t value_flags = 0;
-            uint32_t expr_len = 0;
-            if (!imported_bridge_read_u16(packet, packet_len, &off, &query_slot) ||
-                off + 2 > packet_len) {
-                success = false;
-                break;
-            }
-            value_env = packet[off++];
-            value_flags = packet[off++];
-            if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
-                off + expr_len > packet_len) {
-                success = false;
-                break;
-            }
-            ImportedBridgeVarSlot *slot =
-                imported_bridge_varmap_lookup(&query_vars, query_slot);
-            if (!slot) {
-                success = false;
-                break;
-            }
-            bool value_ok = true;
-            Atom *value = imported_bridge_parse_value_raw_multi_ref_v3(
-                a, packet + off, expr_len, value_env, value_flags,
-                wide_tokens, &value_vars, &value_ok);
-            off += expr_len;
-            if (!value_ok ||
-                !bindings_add_id(&merged, slot->var_id, slot->spelling, value)) {
-                success = false;
-                break;
-            }
-        }
-
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_MORK_CONJ_DIRECT);
-        if (success && !bindings_has_loop(&merged) && !visitor(&merged, ctx)) {
-            success = false;
-        }
-        if (merged_inited)
-            bindings_free(&merged);
-        imported_bridge_value_varmap_free(&value_vars);
-    }
+    success = imported_bridge_visit_multi_ref_v3_packet(
+        a, packet, packet_len, row_count, npatterns, &query_vars, seed, false,
+        visitor, ctx, true);
 
 cleanup:
     imported_bridge_varmap_free(&query_vars);
@@ -3223,6 +3788,12 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
         } else if (atom->ground.gkind == GV_STRING) {
             tok.kind = IMPORTED_FLAT_STRING;
             tok.sym_id = symbol_intern_cstr(g_symbols, atom->ground.sval);
+        } else if (atom->ground.gkind == GV_BIGINT) {
+            tok.kind = IMPORTED_FLAT_BIGINT;
+            tok.sym_id = symbol_intern_cstr(g_symbols, atom_bigint_cstr(atom));
+        } else if (atom->ground.gkind == GV_RATIONAL) {
+            tok.kind = IMPORTED_FLAT_RATIONAL;
+            tok.sym_id = symbol_intern_cstr(g_symbols, atom_rational_cstr(atom));
         } else {
             tok.kind = IMPORTED_FLAT_GROUNDED_OTHER;
         }
@@ -3232,7 +3803,7 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
         tok.kind = IMPORTED_FLAT_EXPR;
         tok.arity = atom->expr.len;
         imported_builder_push(b, tok);
-        for (uint32_t i = 0; i < atom->expr.len; i++)
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++)
             imported_flatten_atom(b, atom->expr.elems[i]);
         b->items[start].span = b->len - start;
         return;
@@ -3278,6 +3849,14 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
         case GV_STRING:
             tok.kind = IMPORTED_FLAT_STRING;
             tok.sym_id = symbol_intern_cstr(g_symbols, tu_string_cstr(universe, atom_id));
+            break;
+        case GV_BIGINT:
+            tok.kind = IMPORTED_FLAT_BIGINT;
+            tok.sym_id = symbol_intern_cstr(g_symbols, tu_bigint_cstr(universe, atom_id));
+            break;
+        case GV_RATIONAL:
+            tok.kind = IMPORTED_FLAT_RATIONAL;
+            tok.sym_id = symbol_intern_cstr(g_symbols, tu_rational_cstr(universe, atom_id));
             break;
         case GV_SPACE:
         case GV_STATE:
@@ -3341,6 +3920,10 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     case IMPORTED_FLAT_BOOL:
         return lhs->bval == rhs->bval;
     case IMPORTED_FLAT_STRING:
+        return lhs->sym_id == rhs->sym_id;
+    case IMPORTED_FLAT_BIGINT:
+        return lhs->sym_id == rhs->sym_id;
+    case IMPORTED_FLAT_RATIONAL:
         return lhs->sym_id == rhs->sym_id;
     case IMPORTED_FLAT_GROUNDED_OTHER:
         if (lhs->origin_id != CETTA_ATOM_ID_NONE &&
@@ -3424,7 +4007,7 @@ static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map) 
             return true;
         return imported_bridge_varmap_add(map, atom->var_id, atom->sym_id);
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!imported_bridge_collect_vars(atom->expr.elems[i], map))
                 return false;
         }
@@ -3537,11 +4120,15 @@ static Atom *imported_bridge_parse_token_bytes(Arena *a,
     if (strcmp(tok, "PI") == 0)    return atom_float(a, 3.14159265358979323846);
     if (strcmp(tok, "EXP") == 0)   return atom_float(a, 2.71828182845904523536);
 
-    char *endp = NULL;
-    errno = 0;
-    long long ival = strtoll(tok, &endp, 10);
-    if (*endp == '\0' && errno == 0)
-        return atom_int(a, (int64_t)ival);
+    Atom *integer = imported_bridge_parse_integer_token_atom(a, tok);
+    if (integer)
+        return integer;
+
+    if (strchr(tok, '/')) {
+        Atom *rational = imported_bridge_parse_rational_token_atom(a, tok);
+        if (rational)
+            return rational;
+    }
 
     if (strchr(tok, '.')) {
         char *fendp = NULL;
@@ -4087,7 +4674,7 @@ static bool imported_materialize_bindings(const ImportedCorefState *refs,
 
 static void imported_bucket_push_builder(ImportedFlatBucket *bucket,
                                          ImportedFlatBuilder *builder,
-                                         uint32_t atom_idx, uint32_t epoch) {
+                                         CettaIndex atom_idx, uint32_t epoch) {
     if (!bucket || !builder)
         return;
     if (bucket->len >= bucket->cap) {
@@ -4103,7 +4690,7 @@ static void imported_bucket_push_builder(ImportedFlatBucket *bucket,
 }
 
 static void imported_bucket_add_entry(ImportedFlatBucket *bucket, Atom *atom,
-                                      uint32_t atom_idx, uint32_t epoch) {
+                                      CettaIndex atom_idx, uint32_t epoch) {
     ImportedFlatBuilder b = {0};
     imported_flatten_atom(&b, atom);
     imported_bucket_push_builder(bucket, &b, atom_idx, epoch);
@@ -4256,7 +4843,8 @@ static bool imported_projection_capture_from_bridge(Space *s,
     AtomId *snapshot = NULL;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t rows = 0;
+    uint64_t packet_rows = 0;
+    CettaCount rows = 0;
 
     if (!s || !st || !st->bridge_space || !s->native.universe)
         return false;
@@ -4265,7 +4853,7 @@ static bool imported_projection_capture_from_bridge(Space *s,
     imported_bridge_expr_memo_init(&memo);
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
         ok = cetta_mork_bridge_space_dump_contextual_exact_rows(
-            (CettaMorkSpaceHandle *)st->bridge_space, &packet, &packet_len, &rows);
+            (CettaMorkSpaceHandle *)st->bridge_space, &packet, &packet_len, &packet_rows);
         if (ok) {
             ok = imported_bridge_decode_contextual_exact_rows(
                 s->native.universe, &scratch, &memo, packet, packet_len,
@@ -4274,52 +4862,10 @@ static bool imported_projection_capture_from_bridge(Space *s,
         cetta_mork_bridge_bytes_free(packet, packet_len);
 
         if (!ok) {
-            packet = NULL;
-            packet_len = 0;
-            rows = 0;
-            ok = cetta_mork_bridge_space_dump_expr_rows(
-                (CettaMorkSpaceHandle *)st->bridge_space, &packet, &packet_len, &rows);
-            if (ok && rows > 0) {
-                snapshot = cetta_malloc(sizeof(AtomId) * rows);
-                size_t off = 0;
-                for (uint32_t i = 0; i < rows; i++) {
-                    ArenaMark scratch_mark = arena_mark(&scratch);
-                    AtomId atom_id = CETTA_ATOM_ID_NONE;
-                    if (off + 4u > packet_len) {
-                        ok = false;
-                        arena_reset(&scratch, scratch_mark);
-                        break;
-                    }
-                    uint32_t expr_len =
-                        ((uint32_t)packet[off] << 24) |
-                        ((uint32_t)packet[off + 1u] << 16) |
-                        ((uint32_t)packet[off + 2u] << 8) |
-                        (uint32_t)packet[off + 3u];
-                    off += 4u;
-                    if (off + expr_len > packet_len) {
-                        ok = false;
-                        arena_reset(&scratch, scratch_mark);
-                        break;
-                    }
-                    ImportedBridgeExprDecodeResult result =
-                        imported_bridge_packet_expr_to_atom_id_cached(
-                            s->native.universe, &scratch, &memo, packet + off, expr_len, &atom_id);
-                    if (result != IMPORTED_BRIDGE_EXPR_DECODE_OK ||
-                        atom_id == CETTA_ATOM_ID_NONE) {
-                        ok = false;
-                        arena_reset(&scratch, scratch_mark);
-                        break;
-                    }
-                    snapshot[i] = atom_id;
-                    off += expr_len;
-                    arena_reset(&scratch, scratch_mark);
-                }
-                if (ok && off != packet_len)
-                    ok = false;
-            } else if (ok && packet_len != 0) {
-                ok = false;
-            }
-            cetta_mork_bridge_bytes_free(packet, packet_len);
+            ok = imported_bridge_decode_expr_rows_from_cursor(
+                s->native.universe, &scratch, &memo,
+                (CettaMorkSpaceHandle *)st->bridge_space,
+                &snapshot, &rows);
         }
     } else {
         Space staged;
@@ -4417,7 +4963,7 @@ bool space_match_backend_step(Space *s, Arena *persistent_arena,
     Space *fresh = NULL;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t packet_rows = 0;
+    uint64_t packet_rows = 0;
     uint64_t performed = 0;
     bool ok = false;
 
@@ -4495,7 +5041,7 @@ bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
     Space *fresh = NULL;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t packet_rows = 0;
+    uint64_t packet_rows = 0;
     uint64_t added = 0;
     bool ok = false;
 
@@ -4581,7 +5127,7 @@ bool space_match_backend_remove_sexpr_chunk(Space *s, Arena *persistent_arena,
     Space *fresh = NULL;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t packet_rows = 0;
+    uint64_t packet_rows = 0;
     uint64_t removed = 0;
     bool ok = false;
 
@@ -4781,6 +5327,16 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
         *qnext = qi + 1;
         *cnext = ci + 1;
         return IMPORTED_COREF_EXACT;
+    case IMPORTED_FLAT_BIGINT:
+        if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return IMPORTED_COREF_EXACT;
+    case IMPORTED_FLAT_RATIONAL:
+        if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return IMPORTED_COREF_EXACT;
     case IMPORTED_FLAT_GROUNDED_OTHER:
         if (!ct->origin || !atom_eq(qt->origin, ct->origin))
             return IMPORTED_COREF_FAIL;
@@ -4884,6 +5440,16 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
         *qnext = qi + 1;
         *cnext = ci + 1;
         return true;
+    case IMPORTED_FLAT_BIGINT:
+        if (qt->sym_id != ct->sym_id) return false;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return true;
+    case IMPORTED_FLAT_RATIONAL:
+        if (qt->sym_id != ct->sym_id) return false;
+        *qnext = qi + 1;
+        *cnext = ci + 1;
+        return true;
     case IMPORTED_FLAT_GROUNDED_OTHER:
         if (!atom_eq(qt->origin, imported_token_atom(ct, candidate_universe)))
             return false;
@@ -4957,48 +5523,48 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
     }
 }
 
-static __attribute__((unused)) uint32_t
-imported_candidates_flat(Space *s, Atom *pattern, uint32_t **out) {
+static __attribute__((unused)) CettaIndex
+imported_candidates_flat(Space *s, Atom *pattern, CettaIndex **out) {
     ImportedBridgeState *st = backend_bridge_state(s);
     *out = NULL;
     if (!st)
         return 0;
-    uint32_t len = 0, cap = 0;
+    CettaIndex len = 0, cap = 0;
     SymbolId head = atom_head_sym(pattern);
     if (head != SYMBOL_ID_NONE) {
         ImportedFlatBucket *bucket = &st->buckets[stree_head_hash(head)];
-        for (uint32_t i = 0; i < bucket->len; i++) {
+        for (CettaIndex i = 0; i < bucket->len; i++) {
             if (len >= cap) {
                 cap = cap ? cap * 2 : 8;
-                *out = cetta_realloc(*out, sizeof(uint32_t) * cap);
+                *out = cetta_realloc(*out, sizeof(CettaIndex) * cap);
             }
             (*out)[len++] = bucket->entries[i].atom_idx;
         }
     } else {
         for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++) {
             ImportedFlatBucket *bucket = &st->buckets[bi];
-            for (uint32_t i = 0; i < bucket->len; i++) {
+            for (CettaIndex i = 0; i < bucket->len; i++) {
                 if (len >= cap) {
                     cap = cap ? cap * 2 : 8;
-                    *out = cetta_realloc(*out, sizeof(uint32_t) * cap);
+                    *out = cetta_realloc(*out, sizeof(CettaIndex) * cap);
                 }
                 (*out)[len++] = bucket->entries[i].atom_idx;
             }
         }
     }
-    for (uint32_t i = 0; i < st->wildcard.len; i++) {
+    for (CettaIndex i = 0; i < st->wildcard.len; i++) {
         if (len >= cap) {
             cap = cap ? cap * 2 : 8;
-            *out = cetta_realloc(*out, sizeof(uint32_t) * cap);
+            *out = cetta_realloc(*out, sizeof(CettaIndex) * cap);
         }
         (*out)[len++] = st->wildcard.entries[i].atom_idx;
     }
     if (len > 1)
-        len = sort_unique_uint32(*out, len);
+        len = sort_unique_cetta_index(*out, len);
     return len;
 }
 
-static uint32_t imported_candidates(Space *s, Atom *pattern, uint32_t **out) {
+static CettaIndex imported_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     MorkImportedState *mst = mork_imported_state(s);
     if (backend_uses_bridge_adapter(s) && mst && mst->attached_compiled) {
         Arena scratch;
@@ -5105,7 +5671,7 @@ static void imported_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) 
 }
 
 static void imported_note_add(Space *s, AtomId atom_id, Atom *atom,
-                              uint32_t atom_idx) {
+                              CettaIndex atom_idx) {
     MorkImportedState *mst = mork_imported_state(s);
     ImportedBridgeState *st = mst ? &mst->bridge : NULL;
     if (!mst || !st)
@@ -5221,15 +5787,16 @@ static bool pathmap_local_ensure_bridge_live(Space *s) {
     return backend_rebuild_bridge(s);
 }
 
-static uint32_t pathmap_local_candidates(Space *s, Atom *pattern, uint32_t **out) {
-    uint32_t n;
+static CettaIndex pathmap_local_candidates(Space *s, Atom *pattern,
+                                           CettaIndex **out) {
+    CettaIndex n;
     (void)pattern;
     if (!out) {
         return 0;
     }
     n = imported_logical_len(s);
-    *out = cetta_malloc(sizeof(uint32_t) * (n ? n : 1u));
-    for (uint32_t i = 0; i < n; i++)
+    *out = cetta_malloc(sizeof(CettaIndex) * (n ? n : 1u));
+    for (CettaIndex i = 0; i < n; i++)
         (*out)[i] = i;
     return n;
 }
@@ -5359,7 +5926,7 @@ static bool transfer_ensure_bridge_live(Space *s,
 }
 
 static bool transfer_mark_bridge_destination(Space *dst, uint64_t added,
-                                             uint32_t logical) {
+                                             uint64_t logical) {
     ImportedBridgeState *st = backend_bridge_state(dst);
     MorkImportedState *mst = mork_imported_state(dst);
 
@@ -5407,7 +5974,7 @@ static SpaceTransferResult transfer_bridge_logical_rows_direct(Space *dst, Space
     CettaMorkSpaceHandle *dst_bridge = NULL;
     CettaMorkSpaceHandle *dst_clone = NULL;
     CettaMorkSpaceHandle *src_bridge = NULL;
-    uint32_t logical = 0;
+    uint64_t logical = 0;
     uint64_t added = 0;
 
     if (!transfer_space_can_try_bridge_rows(dst) ||
@@ -5439,7 +6006,7 @@ static SpaceTransferResult transfer_bridge_logical_rows_direct(Space *dst, Space
     }
 
     if (dst->match_backend.kind == SPACE_ENGINE_MORK) {
-        if (!bridge_handle_logical_len_u32(dst_clone, &logical)) {
+        if (!bridge_handle_logical_len64(dst_clone, &logical)) {
             cetta_mork_bridge_space_free(dst_clone);
             return SPACE_TRANSFER_ERROR;
         }
@@ -5460,13 +6027,14 @@ static SpaceTransferResult transfer_bridge_logical_rows_direct(Space *dst, Space
 static bool transfer_atom_ids_direct(Space *dst, Space *src,
                                      Arena *persistent_arena,
                                      uint64_t *out_added) {
-    uint32_t len;
+    uint32_t len = 0;
     uint64_t added = 0;
 
     if (!dst || !src)
         return false;
 
-    len = space_length(src);
+    if (!space_length_u32_checked(src, &len))
+        return false;
     for (uint32_t i = 0; i < len; i++) {
         AtomId atom_id = space_get_atom_id_at(src, i);
         if (atom_id != CETTA_ATOM_ID_NONE &&
@@ -5837,10 +6405,10 @@ static bool pathmap_local_remove_atom_direct(Space *s, Atom *atom) {
     return true;
 }
 
-static bool pathmap_local_truncate_direct(Space *s, uint32_t new_len) {
+static bool pathmap_local_truncate_direct(Space *s, uint64_t new_len) {
     ImportedBridgeState *st;
     CettaMorkSpaceHandle *clone = NULL;
-    uint32_t logical_len;
+    uint64_t logical_len;
     bool ok = true;
 
     if (!s || s->match_backend.kind != SPACE_ENGINE_PATHMAP || space_is_ordered(s))
@@ -5853,6 +6421,11 @@ static bool pathmap_local_truncate_direct(Space *s, uint32_t new_len) {
         return false;
     if (new_len == logical_len)
         return true;
+    if (new_len > UINT32_MAX || (logical_len > UINT32_MAX && new_len != 0)) {
+        space_match_backend_set_error(
+            SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE);
+        return false;
+    }
 
     st = &s->match_backend.pathmap.bridge;
     if (!(st->bridge_active && st->bridge_space) &&
@@ -5874,14 +6447,16 @@ static bool pathmap_local_truncate_direct(Space *s, uint32_t new_len) {
 
     if (!imported_storage_ensure_projection(s))
         return false;
-    if (st->projected_len != logical_len)
+    if ((uint64_t)st->projected_len != logical_len)
         return false;
 
     clone = cetta_mork_bridge_space_clone((CettaMorkSpaceHandle *)st->bridge_space);
     if (!clone)
         return false;
 
-    for (uint32_t i = logical_len; i > new_len; i--) {
+    uint32_t logical_len32 = (uint32_t)logical_len;
+    uint32_t new_len32 = (uint32_t)new_len;
+    for (uint32_t i = logical_len32; i > new_len32; i--) {
         Arena scratch;
         uint64_t removed = 0;
         AtomId atom_id = st->projected_atom_ids[i - 1];
@@ -5914,7 +6489,7 @@ static bool pathmap_local_truncate_direct(Space *s, uint32_t new_len) {
 }
 
 static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
-                                   uint32_t atom_idx) {
+                                   CettaIndex atom_idx) {
     ImportedBridgeState *st = &s->match_backend.pathmap.bridge;
     (void)atom_idx;
     imported_projection_clear(st);
@@ -6061,10 +6636,10 @@ static void imported_free_backend(Space *s) {
     s->match_backend.mork.attached_count = 0;
 }
 
-static uint32_t all_linear_candidates(Space *s, uint32_t **out) {
-    uint32_t len = s ? s->native.len : 0;
-    *out = cetta_malloc(sizeof(uint32_t) * (len ? len : 1u));
-    for (uint32_t i = 0; i < len; i++)
+static CettaIndex all_linear_candidates(Space *s, CettaIndex **out) {
+    CettaIndex len = s ? s->native.len : 0;
+    *out = cetta_malloc(sizeof(CettaIndex) * (len ? len : 1u));
+    for (CettaIndex i = 0; i < len; i++)
         (*out)[i] = i;
     return len;
 }
@@ -6073,14 +6648,14 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
                                          SubstMatchSet *out) {
     smset_init(out);
     if (s->native.len == 0) return;
-    uint32_t *candidates = NULL;
-    uint32_t ncand =
+    CettaIndex *candidates = NULL;
+    CettaIndex ncand =
         (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
          s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)
             ? native_candidates(s, query, &candidates)
             : all_linear_candidates(s, &candidates);
-    for (uint32_t ci = 0; ci < ncand; ci++) {
-        uint32_t idx = candidates[ci];
+    for (CettaIndex ci = 0; ci < ncand; ci++) {
+        CettaIndex idx = candidates[ci];
         if (idx >= s->native.len) continue;
         uint32_t epoch = fresh_var_suffix();
         Bindings b;
@@ -6124,10 +6699,10 @@ static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
 typedef struct {
     Atom *pattern;
     uint32_t idx;
-    uint32_t estimate;
+    CettaIndex estimate;
 } ImportedConjStep;
 
-static uint32_t imported_pattern_estimate(Space *s, Atom *pattern) {
+static CettaIndex imported_pattern_estimate(Space *s, Atom *pattern) {
     ImportedBridgeState *st = backend_bridge_state(s);
     const MorkImportedState *mst = mork_imported_state_const(s);
     if (s && s->match_backend.kind == SPACE_ENGINE_PATHMAP)
@@ -6140,7 +6715,7 @@ static uint32_t imported_pattern_estimate(Space *s, Atom *pattern) {
     SymbolId head = atom_head_sym(pattern);
     if (head != SYMBOL_ID_NONE)
         return st->buckets[stree_head_hash(head)].len + st->wildcard.len;
-    uint32_t total = st->wildcard.len;
+    CettaIndex total = st->wildcard.len;
     for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++)
         total += st->buckets[bi].len;
     return total;
@@ -6157,23 +6732,33 @@ static int imported_cmp_conj_step(const void *lhs, const void *rhs) {
 static void space_query_conjunction_default(Space *s, Arena *a,
                                             Atom **patterns, uint32_t npatterns,
                                             const Bindings *seed, BindingSet *out) {
+    bool success = true;
     binding_set_init(out);
     if (npatterns == 0) {
-        if (seed) binding_set_push(out, seed);
+        if (seed && !binding_set_push(out, seed))
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
         return;
     }
 
     BindingSet cur;
     binding_set_init(&cur);
     if (seed) {
-        binding_set_push(&cur, seed);
+        if (!binding_set_push(&cur, seed))
+            success = false;
     } else {
         Bindings empty;
         bindings_init(&empty);
-        binding_set_push(&cur, &empty);
+        if (!binding_set_push(&cur, &empty))
+            success = false;
+        bindings_free(&empty);
+    }
+    if (!success) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        binding_set_free(&cur);
+        return;
     }
 
-    for (uint32_t pi = 0; pi < npatterns; pi++) {
+    for (uint32_t pi = 0; pi < npatterns && success; pi++) {
         BindingSet next;
         binding_set_init(&next);
         for (uint32_t bi = 0; bi < cur.len; bi++) {
@@ -6186,13 +6771,25 @@ static void space_query_conjunction_default(Space *s, Arena *a,
                 Bindings merged;
                 if (space_subst_match_with_seed(s, grounded, &smr.items[mi],
                                                 &cur.items[bi], a, &merged)) {
-                    binding_set_push_move(&next, &merged);
+                    if (!binding_set_push_move(&next, &merged)) {
+                        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+                        success = false;
+                        bindings_free(&merged);
+                        break;
+                    }
                     bindings_free(&merged);
                 }
             }
             smset_free(&smr);
+            if (!success)
+                break;
         }
         binding_set_free(&cur);
+        if (!success) {
+            binding_set_free(&next);
+            binding_set_init(out);
+            return;
+        }
         cur = next;
         if (cur.len == 0) break;
     }
@@ -6233,11 +6830,8 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
     bool success = true;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
-    uint32_t row_count = 0;
-    uint32_t factor_count = 0;
-    bool multi_ref_groups = false;
-    bool direct_multiplicities = false;
-    bool wide_tokens = false;
+    uint64_t row_count = 0;
+    CettaMorkQueryCursorHandle *query_cursor = NULL;
 
     for (uint32_t i = 0; i < npatterns; i++) {
         if (seed)
@@ -6274,6 +6868,36 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
     packet_len = 0;
     row_count = 0;
 
+    if (cetta_mork_bridge_query_cursor_new_multi_ref_v3(
+            (CettaMorkSpaceHandle *)backend_bridge_state(s)->bridge_space,
+            (const uint8_t *)query_text, strlen(query_text), &query_cursor)) {
+        while (success) {
+            packet = NULL;
+            packet_len = 0;
+            row_count = 0;
+            if (!cetta_mork_bridge_query_cursor_next(
+                    query_cursor, IMPORTED_MORK_QUERY_ROW_BATCH_ROWS,
+                    IMPORTED_MORK_QUERY_ROW_BATCH_BYTES, &packet, &packet_len,
+                    &row_count)) {
+                success = false;
+                cetta_mork_bridge_bytes_free(packet, packet_len);
+                break;
+            }
+            if (row_count == 0) {
+                success = packet_len == 0;
+                cetta_mork_bridge_bytes_free(packet, packet_len);
+                break;
+            }
+            success = imported_bridge_visit_multi_ref_v3_packet(
+                a, packet, packet_len, row_count, npatterns, &query_vars, seed,
+                true, mork_query_collect_bindings, out, false);
+            cetta_mork_bridge_bytes_free(packet, packet_len);
+        }
+        cetta_mork_bridge_query_cursor_free(query_cursor);
+        query_cursor = NULL;
+        goto cleanup;
+    }
+
     if (!cetta_mork_bridge_space_query_bindings_multi_ref_v3(
             (CettaMorkSpaceHandle *)backend_bridge_state(s)->bridge_space,
             (const uint8_t *)query_text, strlen(query_text),
@@ -6282,165 +6906,13 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
         goto cleanup;
     }
 
-    size_t off = 0;
-    uint32_t magic = 0;
-    uint16_t version = 0;
-    uint16_t flags = 0;
-    uint32_t parsed_rows = 0;
-    if (!imported_bridge_read_u32(packet, packet_len, &off, &magic) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &version) ||
-        !imported_bridge_read_u16(packet, packet_len, &off, &flags) ||
-        !imported_bridge_read_u32(packet, packet_len, &off, &factor_count)) {
-        success = false;
-        goto cleanup;
-    }
-    if (!imported_bridge_read_u32(packet, packet_len, &off, &parsed_rows)) {
-        success = false;
-        goto cleanup;
-    }
-    if (magic != IMPORTED_MORK_QUERY_ONLY_V2_MAGIC ||
-        version != IMPORTED_MORK_MULTI_REF_V3_VERSION) {
-        success = false;
-        goto cleanup;
-    }
-    multi_ref_groups = (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS) != 0;
-    direct_multiplicities =
-        (flags & IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES) != 0;
-    wide_tokens =
-        (flags & IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS) != 0;
-    if ((flags & (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                  IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES)) !=
-            (IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-             IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES) ||
-        (flags & ~(IMPORTED_MORK_QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY |
-                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES |
-                   IMPORTED_MORK_MULTI_REF_V3_FLAG_MULTI_REF_GROUPS |
-                   IMPORTED_MORK_MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES |
-                   IMPORTED_MORK_QUERY_ONLY_V2_FLAG_WIDE_TOKENS)) != 0 ||
-        multi_ref_groups == direct_multiplicities ||
-        factor_count != npatterns || parsed_rows != row_count) {
-        success = false;
-        goto cleanup;
-    }
-
-    for (uint32_t row = 0; row < parsed_rows && success; row++) {
-        uint64_t multiplicity = 1;
-        ImportedBridgeValueVarMap value_vars;
-        imported_bridge_value_varmap_init(&value_vars);
-        bool merged_inited = false;
-        for (uint32_t fi = 0; fi < factor_count; fi++) {
-            uint64_t factor_multiplicity = 0;
-            if (direct_multiplicities) {
-                uint32_t count = 0;
-                if (!imported_bridge_read_u32(packet, packet_len, &off, &count) ||
-                    count == 0) {
-                    success = false;
-                    break;
-                }
-                factor_multiplicity = count;
-            } else {
-                uint32_t ref_count = 0;
-                if (!imported_bridge_read_u32(packet, packet_len, &off, &ref_count) ||
-                    ref_count == 0 ||
-                    off + (size_t)ref_count * 4u > packet_len) {
-                    success = false;
-                    break;
-                }
-                factor_multiplicity = ref_count;
-                for (uint32_t ri = 0; ri < ref_count; ri++) {
-                    uint32_t atom_idx = ((uint32_t)packet[off] << 24) |
-                                        ((uint32_t)packet[off + 1] << 16) |
-                                        ((uint32_t)packet[off + 2] << 8) |
-                                        (uint32_t)packet[off + 3];
-                    if (atom_idx >= imported_logical_len(s)) {
-                        success = false;
-                        break;
-                    }
-                    off += 4u;
-                }
-                if (!success)
-                    break;
-            }
-            if (multiplicity > UINT64_MAX / factor_multiplicity) {
-                success = false;
-                break;
-            }
-            multiplicity *= factor_multiplicity;
-        }
-        if (!success) {
-            imported_bridge_value_varmap_free(&value_vars);
-            break;
-        }
-
-        uint32_t binding_count = 0;
-        if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
-            success = false;
-            imported_bridge_value_varmap_free(&value_vars);
-            break;
-        }
-
-        Bindings merged;
-        if (seed) {
-            if (!bindings_clone(&merged, seed)) {
-                success = false;
-                imported_bridge_value_varmap_free(&value_vars);
-                break;
-            }
-        } else {
-            bindings_init(&merged);
-        }
-        merged_inited = true;
-
-        for (uint32_t bi = 0; bi < binding_count && success; bi++) {
-            uint16_t query_slot = 0;
-            uint8_t value_env = 0;
-            uint8_t value_flags = 0;
-            uint32_t expr_len = 0;
-            if (!imported_bridge_read_u16(packet, packet_len, &off, &query_slot) ||
-                off + 2 > packet_len) {
-                success = false;
-                break;
-            }
-            value_env = packet[off++];
-            value_flags = packet[off++];
-            if (!imported_bridge_read_u32(packet, packet_len, &off, &expr_len) ||
-                off + expr_len > packet_len) {
-                success = false;
-                break;
-            }
-            const uint8_t *expr = packet + off;
-            off += expr_len;
-
-            ImportedBridgeVarSlot *slot =
-                imported_bridge_varmap_lookup(&query_vars, query_slot);
-            if (!slot) {
-                success = false;
-                break;
-            }
-
-            bool value_ok = true;
-            Atom *value = imported_bridge_parse_value_raw_multi_ref_v3(
-                a, expr, expr_len, value_env, value_flags,
-                wide_tokens, &value_vars, &value_ok);
-            if (!value_ok ||
-                !bindings_add_id(&merged, slot->var_id, slot->spelling, value)) {
-                success = false;
-                break;
-            }
-        }
-
-        if (success) {
-            for (uint64_t rep = 0; rep < multiplicity && success; rep++) {
-                if (!binding_set_push(out, &merged))
-                    success = false;
-            }
-        }
-        if (merged_inited)
-            bindings_free(&merged);
-        imported_bridge_value_varmap_free(&value_vars);
-    }
+    success = imported_bridge_visit_multi_ref_v3_packet(
+        a, packet, packet_len, row_count, npatterns, &query_vars, seed, true,
+        mork_query_collect_bindings, out, false);
 
 cleanup:
+    if (query_cursor)
+        cetta_mork_bridge_query_cursor_free(query_cursor);
     if (!success) {
         binding_set_free(out);
         binding_set_init(out);
@@ -6454,9 +6926,11 @@ cleanup:
 static void imported_query_conjunction_flat(Space *s, Arena *a, Atom **patterns,
                                             uint32_t npatterns, const Bindings *seed,
                                             BindingSet *out) {
+    bool success = true;
     if (npatterns == 0) {
         binding_set_init(out);
-        if (seed) binding_set_push(out, seed);
+        if (seed && !binding_set_push(out, seed))
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
         return;
     }
 
@@ -6476,14 +6950,23 @@ static void imported_query_conjunction_flat(Space *s, Arena *a, Atom **patterns,
     BindingSet cur;
     binding_set_init(&cur);
     if (seed) {
-        binding_set_push(&cur, seed);
+        if (!binding_set_push(&cur, seed))
+            success = false;
     } else {
         Bindings empty;
         bindings_init(&empty);
-        binding_set_push(&cur, &empty);
+        if (!binding_set_push(&cur, &empty))
+            success = false;
+        bindings_free(&empty);
+    }
+    if (!success) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        binding_set_free(&cur);
+        binding_set_init(out);
+        return;
     }
 
-    for (uint32_t pi = 0; pi < npatterns; pi++) {
+    for (uint32_t pi = 0; pi < npatterns && success; pi++) {
         BindingSet next;
         binding_set_init(&next);
         for (uint32_t bi = 0; bi < cur.len; bi++) {
@@ -6495,13 +6978,25 @@ static void imported_query_conjunction_flat(Space *s, Arena *a, Atom **patterns,
                 Bindings merged;
                 if (space_subst_match_with_seed(s, grounded, &smr.items[mi],
                                                 &cur.items[bi], a, &merged)) {
-                    binding_set_push_move(&next, &merged);
+                    if (!binding_set_push_move(&next, &merged)) {
+                        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+                        success = false;
+                        bindings_free(&merged);
+                        break;
+                    }
                     bindings_free(&merged);
                 }
             }
             smset_free(&smr);
+            if (!success)
+                break;
         }
         binding_set_free(&cur);
+        if (!success) {
+            binding_set_free(&next);
+            binding_set_init(out);
+            return;
+        }
         cur = next;
         if (cur.len == 0) break;
     }
@@ -6690,7 +7185,7 @@ bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id) {
 }
 
 void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
-                                  uint32_t atom_idx) {
+                                  CettaIndex atom_idx) {
     if (s->match_backend.ops && s->match_backend.ops->note_add)
         s->match_backend.ops->note_add(s, atom_id, atom, atom_idx);
 }
@@ -6700,13 +7195,46 @@ void space_match_backend_note_remove(Space *s) {
         s->match_backend.ops->note_remove(s);
 }
 
-uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out) {
+CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
+                                            CettaIndex **out) {
     if (!s->match_backend.ops || !s->match_backend.ops->candidates) {
-        *out = NULL;
+        if (out)
+            *out = NULL;
         return 0;
     }
     space_linearize(s);
     return s->match_backend.ops->candidates(s, pattern, out);
+}
+
+uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out) {
+    CettaIndex *wide = NULL;
+    CettaIndex n64 = space_match_backend_candidates64(s, pattern, &wide);
+    uint32_t n32 = 0;
+    if (out)
+        *out = NULL;
+    if (!space_match_backend_u32_bound_checked(
+            n64, SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE, &n32)) {
+        free(wide);
+        return 0;
+    }
+    if (n32 == 0) {
+        free(wide);
+        return 0;
+    }
+    uint32_t *narrow = cetta_malloc(sizeof(uint32_t) * n32);
+    for (uint32_t i = 0; i < n32; i++) {
+        if (!space_match_backend_u32_bound_checked(
+                wide[i], SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE,
+                &narrow[i])) {
+            free(narrow);
+            free(wide);
+            return 0;
+        }
+    }
+    free(wide);
+    if (out)
+        *out = narrow;
+    return n32;
 }
 
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
@@ -6781,6 +7309,10 @@ void space_match_backend_print_inventory(FILE *out) {
     fprintf(out, "  native-candidate-exact diagnostic native exact-matcher lane\n");
 }
 
+CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out) {
+    return space_match_backend_candidates64(s, pattern, out);
+}
+
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out) {
     return space_match_backend_candidates(s, pattern, out);
 }
@@ -6789,12 +7321,12 @@ void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     bool use_exact_shortcut =
         !s || s->match_backend.kind != SPACE_ENGINE_PATHMAP;
     if (use_exact_shortcut) {
-        uint32_t *exact = NULL;
-        uint32_t nexact = space_exact_match_indices(s, query, &exact);
+        CettaIndex *exact = NULL;
+        CettaIndex nexact = space_exact_match_indices64(s, query, &exact);
         if (nexact > 0) {
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SUBST_QUERY_EXACT_SHORTCUT);
             smset_init(out);
-            for (uint32_t i = 0; i < nexact; i++) {
+            for (CettaIndex i = 0; i < nexact; i++) {
                 Bindings empty;
                 bindings_init(&empty);
                 subst_matchset_push(out, exact[i], 0, &empty, true);

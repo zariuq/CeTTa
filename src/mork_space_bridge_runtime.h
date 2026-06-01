@@ -9,6 +9,7 @@ typedef struct CettaMorkSpaceHandle CettaMorkSpaceHandle;
 typedef struct CettaMorkProgramHandle CettaMorkProgramHandle;
 typedef struct CettaMorkContextHandle CettaMorkContextHandle;
 typedef struct CettaMorkCursorHandle CettaMorkCursorHandle;
+typedef struct CettaMorkQueryCursorHandle CettaMorkQueryCursorHandle;
 typedef struct CettaMorkProductCursorHandle CettaMorkProductCursorHandle;
 typedef struct CettaMorkOverlayCursorHandle CettaMorkOverlayCursorHandle;
 
@@ -110,15 +111,15 @@ bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,
-                                  uint32_t *out_rows);
+                                  uint64_t *out_rows);
 bool cetta_mork_bridge_space_dump_expr_rows(CettaMorkSpaceHandle *space,
                                             uint8_t **out_packet,
                                             size_t *out_len,
-                                            uint32_t *out_rows);
+                                            uint64_t *out_rows);
 bool cetta_mork_bridge_space_dump_contextual_exact_rows(CettaMorkSpaceHandle *space,
                                                uint8_t **out_packet,
                                                size_t *out_len,
-                                               uint32_t *out_rows);
+                                               uint64_t *out_rows);
 bool cetta_mork_bridge_space_join_into(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
@@ -192,6 +193,12 @@ bool cetta_mork_bridge_cursor_next_step(CettaMorkCursorHandle *cursor,
                                         bool *out_moved);
 bool cetta_mork_bridge_cursor_next_val(CettaMorkCursorHandle *cursor,
                                        bool *out_moved);
+bool cetta_mork_bridge_cursor_next_expr_rows(CettaMorkCursorHandle *cursor,
+                                             uint64_t max_rows,
+                                             uint64_t max_bytes,
+                                             uint8_t **out_packet,
+                                             size_t *out_len,
+                                             uint64_t *out_rows);
 CettaMorkCursorHandle *cetta_mork_bridge_cursor_fork(
     const CettaMorkCursorHandle *cursor);
 CettaMorkSpaceHandle *cetta_mork_bridge_cursor_make_map(
@@ -235,7 +242,7 @@ bool cetta_mork_bridge_product_cursor_path_indices(
     const CettaMorkProductCursorHandle *cursor,
     uint8_t **out_bytes,
     size_t *out_len,
-    uint32_t *out_count);
+    uint64_t *out_count);
 bool cetta_mork_bridge_product_cursor_reset(CettaMorkProductCursorHandle *cursor);
 bool cetta_mork_bridge_product_cursor_ascend(
     CettaMorkProductCursorHandle *cursor,
@@ -358,30 +365,47 @@ bool cetta_mork_bridge_space_query_bindings(CettaMorkSpaceHandle *space,
                                            size_t len,
                                            uint8_t **out_packet,
                                            size_t *out_len,
-                                           uint32_t *out_rows);
+                                           uint64_t *out_rows);
 bool cetta_mork_bridge_space_query_bindings_text(CettaMorkSpaceHandle *space,
                                                  const char *pattern_text,
                                                  uint8_t **out_packet,
                                                  size_t *out_len,
-                                                 uint32_t *out_rows);
+                                                 uint64_t *out_rows);
 bool cetta_mork_bridge_space_query_bindings_query_only_v2(CettaMorkSpaceHandle *space,
-                                                          const uint8_t *pattern,
-                                                          size_t len,
-                                                          uint8_t **out_packet,
-                                                          size_t *out_len,
-                                                          uint32_t *out_rows);
+                                          const uint8_t *pattern,
+                                          size_t len,
+                                          uint8_t **out_packet,
+                                          size_t *out_len,
+                                          uint64_t *out_rows);
+bool cetta_mork_bridge_query_cursor_new_query_only_v2(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor);
 bool cetta_mork_bridge_space_query_bindings_multi_ref_v3(CettaMorkSpaceHandle *space,
-                                                         const uint8_t *pattern,
-                                                         size_t len,
-                                                         uint8_t **out_packet,
-                                                         size_t *out_len,
-                                                         uint32_t *out_rows);
+                                          const uint8_t *pattern,
+                                          size_t len,
+                                          uint8_t **out_packet,
+                                          size_t *out_len,
+                                          uint64_t *out_rows);
+bool cetta_mork_bridge_query_cursor_new_multi_ref_v3(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor);
+void cetta_mork_bridge_query_cursor_free(CettaMorkQueryCursorHandle *cursor);
+bool cetta_mork_bridge_query_cursor_next(CettaMorkQueryCursorHandle *cursor,
+                                         uint64_t max_rows,
+                                         uint64_t max_bytes,
+                                         uint8_t **out_packet,
+                                         size_t *out_len,
+                                         uint64_t *out_rows);
 bool cetta_mork_bridge_space_query_contextual_rows(CettaMorkSpaceHandle *space,
-                                                   const uint8_t *pattern,
-                                                   size_t len,
+                                          const uint8_t *pattern,
+                                          size_t len,
                                                    uint8_t **out_packet,
                                                    size_t *out_len,
-                                                   uint32_t *out_rows);
+                                                   uint64_t *out_rows);
 
 CettaMorkProgramHandle *cetta_mork_bridge_program_new(void);
 void cetta_mork_bridge_program_free(CettaMorkProgramHandle *program);
@@ -393,7 +417,7 @@ bool cetta_mork_bridge_program_size(const CettaMorkProgramHandle *program,
                                     uint64_t *out_size);
 bool cetta_mork_bridge_program_dump(CettaMorkProgramHandle *program,
                                     uint8_t **out_packet, size_t *out_len,
-                                    uint32_t *out_rows);
+                                    uint64_t *out_rows);
 
 CettaMorkContextHandle *cetta_mork_bridge_context_new(void);
 void cetta_mork_bridge_context_free(CettaMorkContextHandle *context);
@@ -413,7 +437,7 @@ bool cetta_mork_bridge_context_run(CettaMorkContextHandle *context,
                                    uint64_t steps, uint64_t *out_performed);
 bool cetta_mork_bridge_context_dump(CettaMorkContextHandle *context,
                                     uint8_t **out_packet, size_t *out_len,
-                                    uint32_t *out_rows);
+                                    uint64_t *out_rows);
 
 void cetta_mork_bridge_bytes_free(uint8_t *data, size_t len);
 

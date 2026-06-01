@@ -84,13 +84,13 @@ int main(void) {
     space_add_atom_id(&space, id_bc);
     space_add_atom_id(&space, id_cd);
     space_add_atom_id(&space, id_de);
-    assert(space_length(&space) == 4);
+    assert(space_length64(&space) == 4);
 
     assert(space_pop(&space, &popped));
     assert(popped != NULL);
     popped_id = term_universe_lookup_atom_id(&universe, popped);
     assert(popped_id != CETTA_ATOM_ID_NONE);
-    assert(space_length(&space) == 3);
+    assert(space_length64(&space) == 3);
     assert(!space_contains_atom_id(&space, popped_id));
 
     kept0 = space_get_atom_id_at(&space, 0);
@@ -99,27 +99,27 @@ int main(void) {
     assert(kept1 != CETTA_ATOM_ID_NONE);
 
     assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
-    assert(space_length(&space) == 3);
+    assert(space_length64(&space) == 3);
     assert(!space_contains_atom_id(&space, popped_id));
     assert(space_contains_atom_id(&space, kept0));
     assert(space_contains_atom_id(&space, kept1));
 
     assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
     assert(space_truncate(&space, 1));
-    assert(space_length(&space) == 1);
+    assert(space_length64(&space) == 1);
     survivor = space_get_atom_id_at(&space, 0);
     assert(survivor != CETTA_ATOM_ID_NONE);
 
     assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
-    assert(space_length(&space) == 1);
+    assert(space_length64(&space) == 1);
     assert(space_get_atom_id_at(&space, 0) == survivor);
 
     assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
     assert(space_truncate(&space, 0));
-    assert(space_length(&space) == 0);
+    assert(space_length64(&space) == 0);
 
     assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
-    assert(space_length(&space) == 0);
+    assert(space_length64(&space) == 0);
 
     space_free(&space);
     arena_free(&arena);

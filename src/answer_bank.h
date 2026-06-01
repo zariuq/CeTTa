@@ -4,9 +4,10 @@
 #include "match.h"
 #include "variant_instance.h"
 
-typedef uint32_t AnswerRef;
+typedef uint64_t AnswerRef;
 
-#define CETTA_ANSWER_REF_NONE ((AnswerRef)UINT32_MAX)
+#define CETTA_ANSWER_REF_NONE ((AnswerRef)UINT64_MAX)
+#define CETTA_ANSWER_BANK_MAX_RECORDS ((CettaCount)CETTA_ANSWER_REF_NONE)
 
 typedef struct {
     Atom *result;
@@ -17,8 +18,8 @@ typedef struct {
 typedef struct {
     Arena arena;
     AnswerRecord *items;
-    uint32_t len;
-    uint32_t cap;
+    CettaCount len;
+    CettaCount cap;
 } AnswerBank;
 
 void answer_bank_init(AnswerBank *bank);

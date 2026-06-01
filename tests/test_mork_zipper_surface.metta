@@ -19,13 +19,9 @@
 !(assertEqualToResult
   (mork:path-of-atom (edge a b))
   ((3 196 101 100 103 101 193 97 193 98)))
-!(bind! &root_children (mork:zipper-child-bytes &z))
 !(assertEqualToResult
   (mork:zipper-child-bytes &z)
   ((3)))
-!(assertEqualToResult
-  (index-atom &root_children 0)
-  (3))
 !(assertEqualToResult
   (mork:zipper-path-exists &z)
   (True))

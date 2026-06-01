@@ -50,9 +50,8 @@ bool cetta_native_handle_alloc(struct CettaLibraryContext *ctx, const char *kind
         if (ctx->native_handle_len >= CETTA_MAX_NATIVE_HANDLES) return false;
         slot = (int)ctx->native_handle_len++;
     }
-    if (ctx->native_handles[slot].id == 0) {
-        ctx->native_handles[slot].id = ctx->native_handle_next_id++;
-    }
+    if (ctx->native_handle_next_id == 0) return false;
+    ctx->native_handles[slot].id = ctx->native_handle_next_id++;
     ctx->native_handles[slot].kind = kind;
     ctx->native_handles[slot].resource = resource;
     ctx->native_handles[slot].free_resource = free_resource;

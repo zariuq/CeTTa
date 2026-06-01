@@ -640,6 +640,63 @@ static bool python_emit_many(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
     return python_emit_single(rt, a, obj, rs, error_out);
 }
 
+static char *python_long_text_owned(PyObject *obj) {
+    if (!obj || !PyLong_Check(obj))
+        return NULL;
+    PyObject *text_obj = PyObject_Str(obj);
+    if (!text_obj)
+        return NULL;
+    const char *text = PyUnicode_AsUTF8(text_obj);
+    char *out = text ? strdup(text) : NULL;
+    Py_DECREF(text_obj);
+    return out;
+}
+
+static Atom *python_fraction_to_atom(Arena *a, PyObject *obj) {
+    PyObject *num_obj = PyObject_GetAttrString(obj, "numerator");
+    if (!num_obj) {
+        PyErr_Clear();
+        return NULL;
+    }
+    PyObject *den_obj = PyObject_GetAttrString(obj, "denominator");
+    if (!den_obj) {
+        Py_DECREF(num_obj);
+        PyErr_Clear();
+        return NULL;
+    }
+    if (!PyLong_Check(num_obj) || !PyLong_Check(den_obj)) {
+        Py_DECREF(num_obj);
+        Py_DECREF(den_obj);
+        return NULL;
+    }
+
+    char *num = python_long_text_owned(num_obj);
+    char *den = python_long_text_owned(den_obj);
+    Py_DECREF(num_obj);
+    Py_DECREF(den_obj);
+    if (!num || !den) {
+        free(num);
+        free(den);
+        return NULL;
+    }
+    size_t nlen = strlen(num);
+    size_t dlen = strlen(den);
+    char *text = cetta_malloc(nlen + dlen + 2);
+    memcpy(text, num, nlen);
+    text[nlen] = '/';
+    memcpy(text + nlen + 1, den, dlen + 1);
+    bool too_large = false;
+    Atom *out = atom_rational_limited(
+        a, text, eval_current_max_rational_digits(), &too_large);
+    if (too_large)
+        out = atom_error(a, atom_symbol(a, "PythonFraction"),
+                         atom_symbol(a, "RationalTooLarge"));
+    free(text);
+    free(num);
+    free(den);
+    return out;
+}
+
 static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
                                ResultSet *rs, Atom **error_out) {
     if (obj == Py_None) {
@@ -696,11 +753,32 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         return true;
     }
     if (PyLong_Check(obj)) {
-        result_set_add(rs, atom_int(a, PyLong_AsLongLong(obj)));
+        long long value = PyLong_AsLongLong(obj);
+        if (PyErr_Occurred()) {
+            if (!PyErr_ExceptionMatches(PyExc_OverflowError))
+                return false;
+            PyErr_Clear();
+            PyObject *text_obj = PyObject_Str(obj);
+            if (!text_obj)
+                return false;
+            const char *text = PyUnicode_AsUTF8(text_obj);
+            Atom *big = text ? atom_bigint(a, text) : NULL;
+            Py_DECREF(text_obj);
+            if (!big)
+                return false;
+            result_set_add(rs, big);
+            return true;
+        }
+        result_set_add(rs, atom_int(a, (int64_t)value));
         return true;
     }
     if (PyFloat_Check(obj)) {
         result_set_add(rs, atom_float(a, PyFloat_AsDouble(obj)));
+        return true;
+    }
+    Atom *fraction = python_fraction_to_atom(a, obj);
+    if (fraction) {
+        result_set_add(rs, fraction);
         return true;
     }
     if (PyUnicode_Check(obj)) {
@@ -718,6 +796,46 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
     return true;
 }
 
+static PyObject *python_fraction_from_atom(Atom *atom) {
+    const char *text = atom_rational_cstr(atom);
+    const char *slash = text ? strchr(text, '/') : NULL;
+    if (!slash)
+        return NULL;
+    size_t nlen = (size_t)(slash - text);
+    char *num_text = malloc(nlen + 1);
+    if (!num_text)
+        return PyErr_NoMemory();
+    memcpy(num_text, text, nlen);
+    num_text[nlen] = '\0';
+
+    PyObject *num = PyLong_FromString(num_text, NULL, 10);
+    PyObject *den = PyLong_FromString((char *)(slash + 1), NULL, 10);
+    free(num_text);
+    if (!num || !den) {
+        Py_XDECREF(num);
+        Py_XDECREF(den);
+        return NULL;
+    }
+    PyObject *fractions = PyImport_ImportModule("fractions");
+    if (!fractions) {
+        Py_DECREF(num);
+        Py_DECREF(den);
+        return NULL;
+    }
+    PyObject *fraction_cls = PyObject_GetAttrString(fractions, "Fraction");
+    Py_DECREF(fractions);
+    if (!fraction_cls) {
+        Py_DECREF(num);
+        Py_DECREF(den);
+        return NULL;
+    }
+    PyObject *out = PyObject_CallFunctionObjArgs(fraction_cls, num, den, NULL);
+    Py_DECREF(fraction_cls);
+    Py_DECREF(num);
+    Py_DECREF(den);
+    return out;
+}
+
 static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
     if (!unwrap) {
         return python_wrap_atom(atom, a);
@@ -733,6 +851,10 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
             return PyBool_FromLong(atom->ground.bval ? 1 : 0);
         case GV_STRING:
             return PyUnicode_FromString(atom->ground.sval);
+        case GV_BIGINT:
+            return PyLong_FromString((char *)atom_bigint_cstr(atom), NULL, 10);
+        case GV_RATIONAL:
+            return python_fraction_from_atom(atom);
         case GV_FOREIGN: {
             CettaForeignValue *value = (CettaForeignValue *)atom->ground.ptr;
             if (value && value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
@@ -1222,7 +1344,10 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
         Atom *call_expr = args[0];
         Atom *call_head = call_expr->expr.elems[0];
         Atom **call_args = call_expr->expr.elems + 1;
-        uint32_t call_nargs = call_expr->expr.len - 1;
+        if (!cetta_expr_len_fits_u32(call_expr->expr.len - 1)) {
+            return atom_error(a, call_expr, atom_symbol(a, "ArityTooLarge"));
+        }
+        uint32_t call_nargs = (uint32_t)(call_expr->expr.len - 1);
 
         Atom *callable_atom = NULL;
         ResultSet tmp;

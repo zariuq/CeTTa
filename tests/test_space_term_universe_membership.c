@@ -30,7 +30,7 @@ bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id) {
 }
 
 void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
-                                  uint32_t atom_idx) {
+                                  CettaIndex atom_idx) {
     (void)s;
     (void)atom_id;
     (void)atom;
@@ -39,6 +39,15 @@ void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
 
 void space_match_backend_note_remove(Space *s) {
     (void)s;
+}
+
+CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
+                                            CettaIndex **out) {
+    (void)s;
+    (void)pattern;
+    if (out)
+        *out = NULL;
+    return 0;
 }
 
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out) {
@@ -156,6 +165,12 @@ bool space_match_backend_truncate_direct(Space *s, uint32_t new_len) {
     return false;
 }
 
+bool space_match_backend_truncate_direct64(Space *s, uint64_t new_len) {
+    if (new_len > UINT32_MAX)
+        return false;
+    return space_match_backend_truncate_direct(s, (uint32_t)new_len);
+}
+
 bool space_match_backend_load_sexpr_chunk(Space *s, Arena *persistent_arena,
                                           const uint8_t *text, size_t len,
                                           uint64_t *out_added) {
@@ -202,7 +217,7 @@ bool space_match_backend_bridge_space(Space *s, CettaMorkSpaceHandle **out_bridg
     return false;
 }
 
-uint32_t space_match_backend_logical_len(const Space *s) {
+uint64_t space_match_backend_logical_len64(const Space *s) {
     return s ? s->len : 0;
 }
 
@@ -212,11 +227,23 @@ AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
     return s->atom_ids[s->start + idx];
 }
 
+AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
+    if (idx > UINT32_MAX)
+        return CETTA_ATOM_ID_NONE;
+    return space_match_backend_get_atom_id_at(s, (uint32_t)idx);
+}
+
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
     AtomId atom_id = space_match_backend_get_atom_id_at(s, idx);
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return NULL;
     return term_universe_get_atom(s->native.universe, atom_id);
+}
+
+Atom *space_match_backend_get_at64(const Space *s, uint64_t idx) {
+    if (idx > UINT32_MAX)
+        return NULL;
+    return space_match_backend_get_at(s, (uint32_t)idx);
 }
 
 bool space_match_backend_mork_query_bindings_direct(
@@ -319,11 +346,15 @@ int main(void) {
     assert(term_universe_get_atom(&universe, pair_lhs_id)->ground.ival == 1);
     assert(term_universe_get_atom(&universe, pair_rhs_id)->ground.ival == 2);
     assert(space_length64(&left) == 1);
+    assert(space_match_backend_logical_len64(&left) == 1);
     assert(space_get_atom_id_at64(&left, 0) == pair_id);
+    assert(space_match_backend_get_atom_id_at64(&left, 0) == pair_id);
     assert(space_get_at(&left, 0) ==
            term_universe_get_atom(&universe, left.atom_ids[0]));
     assert(space_get_at64(&left, 0) == space_get_at(&left, 0));
+    assert(space_match_backend_get_at64(&left, 0) == space_get_at(&left, 0));
     assert(space_get_at64(&left, (CettaIndex)UINT32_MAX + 1u) == NULL);
+    assert(space_match_backend_get_at64(&left, (uint64_t)UINT32_MAX + 1u) == NULL);
 
     space_add(&right, pair_b);
     assert(universe.len == 4);
@@ -356,6 +387,7 @@ int main(void) {
     assert(space_length64(clone) == 1);
     assert(space_get_atom_id_at64(clone, 0) == left.atom_ids[0]);
     assert(!space_truncate64(clone, (CettaCount)UINT32_MAX + 1u));
+    assert(!space_match_backend_truncate_direct64(clone, (uint64_t)UINT32_MAX + 1u));
 
     space_free(clone);
     free(clone);
