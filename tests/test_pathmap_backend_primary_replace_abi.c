@@ -85,49 +85,49 @@ int main(void) {
 
     space_add_atom_id(&target, id_ab);
     space_add_atom_id(&target, id_bc);
-    assert(space_length(&target) == 2);
+    assert(space_length64(&target) == 2);
     assert(space_contains_atom_id(&target, id_ab));
     assert(space_contains_atom_id(&target, id_bc));
 
     work = space_heap_clone_shallow(&target);
     assert(work != NULL);
     assert(work->match_backend.kind == SPACE_ENGINE_PATHMAP);
-    assert(space_length(work) == 2);
+    assert(space_length64(work) == 2);
 
     assert(space_match_backend_load_sexpr_chunk(
         work, &persistent, add_chunk, sizeof(add_chunk) - 1u, &added));
     assert(added == 2);
-    assert(space_length(work) == 4);
+    assert(space_length64(work) == 4);
     assert(space_contains_atom_id(work, id_cd));
     assert(space_contains_atom_id(work, id_de));
 
     assert(space_match_backend_remove_sexpr_chunk(
         work, &persistent, remove_chunk, sizeof(remove_chunk) - 1u, &removed));
     assert(removed == 1);
-    assert(space_length(work) == 3);
+    assert(space_length64(work) == 3);
     assert(!space_contains_atom_id(work, id_ab));
     assert(space_contains_atom_id(work, id_bc));
     assert(space_contains_atom_id(work, id_cd));
     assert(space_contains_atom_id(work, id_de));
 
-    assert(space_length(&target) == 2);
+    assert(space_length64(&target) == 2);
     assert(space_contains_atom_id(&target, id_ab));
     assert(space_contains_atom_id(&target, id_bc));
 
     space_replace_contents(&target, work);
     assert(target.match_backend.kind == SPACE_ENGINE_PATHMAP);
-    assert(space_length(&target) == 3);
+    assert(space_length64(&target) == 3);
     assert(!space_contains_atom_id(&target, id_ab));
     assert(space_contains_atom_id(&target, id_bc));
     assert(space_contains_atom_id(&target, id_cd));
     assert(space_contains_atom_id(&target, id_de));
 
     assert(work->match_backend.kind == SPACE_ENGINE_NATIVE);
-    assert(space_length(work) == 0);
+    assert(space_length64(work) == 0);
     assert(work->kind == SPACE_KIND_ATOM);
 
     assert(space_match_backend_try_set(&target, SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
-    assert(space_length(&target) == 3);
+    assert(space_length64(&target) == 3);
     assert(!space_contains_atom_id(&target, id_ab));
     assert(space_contains_atom_id(&target, id_bc));
     assert(space_contains_atom_id(&target, id_cd));
@@ -135,11 +135,11 @@ int main(void) {
 
     assert(space_match_backend_try_set(&target, SPACE_ENGINE_PATHMAP));
     space_add_atom_id(&target, id_ab);
-    assert(space_length(&target) == 4);
+    assert(space_length64(&target) == 4);
     assert(space_contains_atom_id(&target, id_ab));
 
     assert(space_match_backend_try_set(&target, SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
-    assert(space_length(&target) == 4);
+    assert(space_length64(&target) == 4);
     assert(space_contains_atom_id(&target, id_ab));
     assert(space_contains_atom_id(&target, id_bc));
     assert(space_contains_atom_id(&target, id_cd));

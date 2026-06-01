@@ -89,20 +89,20 @@ bool table_store_lookup(TableStore *store, Space *space, uint64_t revision,
 bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision,
                               Atom *query, Arena *out_arena,
                               QueryResultVisitor visitor, void *ctx,
-                              uint32_t *visited_out);
+                              CettaCount *visited_out);
 bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
                                       uint64_t revision,
                                       Atom *query, Arena *out_arena,
                                       TableDelayedResultVisitor visitor,
                                       void *ctx,
-                                      uint32_t *visited_out);
+                                      CettaCount *visited_out);
 bool table_store_lookup_visit_ref(TableStore *store, Space *space,
                                   uint64_t revision,
                                   Atom *query,
                                   Arena *goal_owner,
                                   TableAnswerRefVisitor visitor,
                                   void *ctx,
-                                  uint32_t *visited_out);
+                                  CettaCount *visited_out);
 bool table_store_put(TableStore *store, Space *space, uint64_t revision,
                      Atom *query, const QueryResults *results);
 

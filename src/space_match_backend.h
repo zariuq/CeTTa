@@ -41,7 +41,9 @@ typedef enum {
     IMPORTED_FLAT_FLOAT = 4,
     IMPORTED_FLAT_BOOL = 5,
     IMPORTED_FLAT_STRING = 6,
-    IMPORTED_FLAT_GROUNDED_OTHER = 7,
+    IMPORTED_FLAT_BIGINT = 7,
+    IMPORTED_FLAT_RATIONAL = 8,
+    IMPORTED_FLAT_GROUNDED_OTHER = 9,
 } ImportedFlatTokenKind;
 
 typedef struct {
@@ -60,7 +62,7 @@ typedef struct {
 } ImportedFlatToken;
 
 typedef struct {
-    uint32_t atom_idx;
+    CettaIndex atom_idx;
     uint32_t epoch;
     ImportedFlatToken *tokens;
     uint32_t len;
@@ -68,7 +70,7 @@ typedef struct {
 
 typedef struct {
     ImportedFlatEntry *entries;
-    uint32_t len, cap;
+    CettaIndex len, cap;
 } ImportedFlatBucket;
 
 typedef struct {
@@ -80,7 +82,7 @@ typedef struct {
     bool bridge_unavailable;
     void *bridge_space;
     AtomId *projected_atom_ids;
-    uint32_t projected_len;
+    CettaIndex projected_len;
     bool projection_valid;
 } ImportedBridgeState;
 
@@ -91,7 +93,7 @@ typedef struct {
 typedef struct {
     ImportedBridgeState bridge;
     bool attached_compiled;
-    uint32_t attached_count;
+    uint64_t attached_count;
 } MorkImportedState;
 
 typedef struct SpaceMatchBackendOps {
@@ -112,16 +114,16 @@ typedef struct SpaceMatchBackendOps {
     bool (*store_atom_id_direct)(Space *s, AtomId atom_id, Atom *atom);
     bool (*remove_atom_id_direct)(Space *s, AtomId atom_id);
     bool (*remove_atom_direct)(Space *s, Atom *atom);
-    bool (*truncate_direct)(Space *s, uint32_t new_len);
-    uint32_t (*logical_len)(const Space *s);
-    AtomId (*get_atom_id_at)(const Space *s, uint32_t idx);
-    Atom *(*get_at)(const Space *s, uint32_t idx);
+    bool (*truncate_direct)(Space *s, uint64_t new_len);
+    uint64_t (*logical_len)(const Space *s);
+    AtomId (*get_atom_id_at)(const Space *s, uint64_t idx);
+    Atom *(*get_at)(const Space *s, uint64_t idx);
     bool (*materialize_native_storage)(Space *s, Arena *persistent_arena);
     bool supports_direct_bindings;
     void (*free)(Space *s);
-    void (*note_add)(Space *s, AtomId atom_id, Atom *atom, uint32_t atom_idx);
+    void (*note_add)(Space *s, AtomId atom_id, Atom *atom, CettaIndex atom_idx);
     void (*note_remove)(Space *s);
-    uint32_t (*candidates)(Space *s, Atom *pattern, uint32_t **out);
+    CettaIndex (*candidates)(Space *s, Atom *pattern, CettaIndex **out);
     void (*query)(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
     void (*query_conjunction)(Space *s, Arena *a, Atom **patterns, uint32_t npatterns,
                               const Bindings *seed, BindingSet *out);
@@ -136,6 +138,7 @@ typedef struct {
 } SpaceMatchBackend;
 
 typedef bool (*CettaMorkBindingsVisitor)(const Bindings *bindings, void *ctx);
+typedef bool (*CettaMorkAtomVisitor)(Atom *atom, void *ctx);
 
 typedef enum {
     SPACE_BRIDGE_IMPORT_ERROR = 0,
@@ -163,13 +166,32 @@ typedef enum {
     SPACE_TRANSFER_NEEDS_TEXT_FALLBACK = 2,
 } SpaceTransferResult;
 
+typedef enum {
+    SPACE_MATCH_BACKEND_ERROR_NONE = 0,
+    SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE = 1,
+    SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE = 2,
+} SpaceMatchBackendError;
+
+void space_match_backend_clear_error(void);
+void space_match_backend_set_error(SpaceMatchBackendError code);
+SpaceMatchBackendError space_match_backend_last_error_code(void);
+const char *space_match_backend_last_error(void);
+const char *space_match_backend_error_name(SpaceMatchBackendError code);
+uint64_t space_match_backend_native_materialization_limit(void);
+uint64_t space_match_backend_packet_materialization_limit(void);
+bool space_match_backend_u32_bound_checked(uint64_t value,
+                                           SpaceMatchBackendError error,
+                                           uint32_t *out_value);
+
 void space_match_backend_init(Space *s);
 void space_match_backend_free(Space *s);
 bool space_match_backend_try_set(Space *s, SpaceEngine kind);
 bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id);
 void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
-                                  uint32_t atom_idx);
+                                  CettaIndex atom_idx);
 void space_match_backend_note_remove(Space *s);
+CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
+                                            CettaIndex **out);
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out);
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 const char *space_match_backend_name(const Space *s);
@@ -213,9 +235,13 @@ SpaceTransferResult space_match_backend_transfer_resolved_result(
 bool space_match_backend_contains_atom_structural_direct(Space *s,
                                                          Atom *atom,
                                                          bool *out_found);
-uint32_t space_match_backend_logical_len(const Space *s);
+bool space_match_backend_truncate_direct64(Space *s, uint64_t new_len);
+bool space_match_backend_logical_len_u32_checked(const Space *s, uint32_t *out_len);
+uint64_t space_match_backend_logical_len64(const Space *s);
 AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx);
+AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx);
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx);
+Atom *space_match_backend_get_at64(const Space *s, uint64_t idx);
 /* Internal structural decoder used beneath the endpoint transfer seam.
    Positive example: a ground bridge payload with a live TermUniverse
    materializes directly into canonical AtomIds.
@@ -230,6 +256,12 @@ bool space_match_backend_mork_query_bindings_direct(
     Arena *a,
     Atom *query,
     BindingSet *out);
+bool space_match_backend_mork_visit_atoms_direct(
+    CettaMorkSpaceHandle *bridge,
+    TermUniverse *universe,
+    Arena *scratch,
+    CettaMorkAtomVisitor visitor,
+    void *ctx);
 bool space_match_backend_mork_visit_bindings_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,

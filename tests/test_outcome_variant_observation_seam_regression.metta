@@ -1,6 +1,6 @@
-; Regression: the current composition witness still forces delayed variants
-; primarily through tuple interpretation, while the shallow dispatch fast path
-; avoids eager call-term observation for obviously data-like tuples.
+; Regression: this shallow composition witness should not force delayed
+; variant materialization through either tuple interpretation or call-term
+; observation for obviously data-like tuples.
 
 (= (pair-from-space $ss)
    (match $ss (: $x1 $a1)
@@ -34,7 +34,7 @@
 !(assertEqualToResult
   (match &stats
          (runtime-counter outcome-variant-materialize-interpret-tuple $n)
-         (> $n 0))
+         (== $n 0))
   (True))
 !(assertEqualToResult
   (match &stats

@@ -9,11 +9,25 @@
 #include "session.h"
 #include "symbol.h"
 
+#ifndef CETTA_BUILD_WITH_GMP
+#define CETTA_BUILD_WITH_GMP 0
+#endif
+
+#if CETTA_BUILD_WITH_GMP
+#include <gmp.h>
+#endif
+
 typedef struct CettaForeignValue CettaForeignValue;
+typedef struct CettaBigInt CettaBigInt;
+typedef struct CettaRational CettaRational;
 typedef uint64_t VarId;
+typedef uint64_t CettaExprLen;
+typedef uint64_t CettaExprIndex;
 typedef struct HashConsTable HashConsTable;
+typedef struct ArenaFinalizer ArenaFinalizer;
 
 #define VAR_ID_NONE ((VarId)0)
+#define CETTA_RATIONAL_DEFAULT_MAX_DIGITS 4096u
 
 /* ── Atom kinds ─────────────────────────────────────────────────────────── */
 
@@ -29,10 +43,12 @@ typedef enum {
     GV_FLOAT,
     GV_BOOL,
     GV_STRING,
+    GV_BIGINT,
     GV_SPACE,
     GV_STATE,
     GV_CAPTURE,
-    GV_FOREIGN
+    GV_FOREIGN,
+    GV_RATIONAL
 } GroundedKind;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -51,11 +67,19 @@ struct Atom {
     union {
         struct {            /* ATOM_GROUNDED */
             GroundedKind gkind;
-            union { int64_t ival; double fval; const char *sval; bool bval; void *ptr; };
+            union {
+                int64_t ival;
+                double fval;
+                const char *sval;
+                CettaBigInt *bigint;
+                CettaRational *rational;
+                bool bval;
+                void *ptr;
+            };
         } ground;
         struct {            /* ATOM_EXPR */
             Atom **elems;
-            uint32_t len;
+            CettaExprLen len;
         } expr;
     };
 };
@@ -86,6 +110,7 @@ typedef struct {
     size_t reserved_bytes;
     uint32_t block_count;
     CettaArenaRuntimeKind runtime_kind;
+    ArenaFinalizer *finalizers;
 } Arena;
 
 typedef struct {
@@ -94,6 +119,7 @@ typedef struct {
     size_t live_bytes;
     size_t reserved_bytes;
     uint32_t block_count;
+    ArenaFinalizer *finalizers;
 } ArenaMark;
 
 void *cetta_malloc(size_t size);
@@ -106,6 +132,12 @@ ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
+char *cetta_bigint_canonicalize_owned(const char *text);
+bool  cetta_bigint_text_fits_i64(const char *text, int64_t *out);
+int   cetta_bigint_compare_cstr(const char *lhs, const char *rhs);
+char *cetta_rational_canonicalize_owned(const char *text);
+int   cetta_rational_compare_cstr(const char *lhs, const char *rhs);
+int   cetta_format_float(char *buf, size_t size, double value);
 
 /* ── Hash-Consing (structural sharing for immutable atoms) ─────────────── */
 
@@ -156,6 +188,23 @@ Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
 Atom *atom_int(Arena *a, int64_t val);
+Atom *atom_bigint(Arena *a, const char *val);
+const char *atom_bigint_cstr(const Atom *atom);
+#if CETTA_BUILD_WITH_GMP
+bool  atom_bigint_get_mpz(const Atom *atom, mpz_t out);
+Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value);
+#endif
+Atom *atom_rational(Arena *a, const char *val);
+const char *atom_rational_cstr(const Atom *atom);
+bool cetta_rational_text_exceeds_digit_limit(const char *text,
+                                             uint64_t max_digits,
+                                             bool *valid_out);
+Atom *atom_rational_limited(Arena *a, const char *val, uint64_t max_digits,
+                            bool *too_large_out);
+#if CETTA_BUILD_WITH_GMP
+bool  atom_rational_get_mpq(const Atom *atom, mpq_t out);
+Atom *atom_rational_from_mpq(Arena *a, const mpq_t value);
+#endif
 Atom *atom_float(Arena *a, double val);
 Atom *atom_bool(Arena *a, bool val);
 Atom *atom_string(Arena *a, const char *val);
@@ -175,10 +224,10 @@ typedef struct {
 Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
-Atom *atom_expr(Arena *a, Atom **elems, uint32_t len);
+Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
 /* Compatibility wrapper; immutable atoms are shared universally when the
    global hash-cons table is active. */
-Atom *atom_expr_shared(Arena *a, Atom **elems, uint32_t len);
+Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2);
 Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);
 
@@ -239,6 +288,24 @@ static inline bool atom_has_vars(const Atom *atom) {
 
 static inline bool atom_has_registry_refs(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HAS_REGISTRY_REFS) != 0;
+}
+
+static inline bool cetta_expr_len_fits_u32(CettaExprLen len) {
+    return len <= (CettaExprLen)UINT32_MAX;
+}
+
+static inline bool cetta_expr_len_fits_u16(CettaExprLen len) {
+    return len <= (CettaExprLen)UINT16_MAX;
+}
+
+static inline bool cetta_expr_len_fits_size(CettaExprLen len) {
+    return len <= (CettaExprLen)SIZE_MAX;
+}
+
+static inline bool cetta_expr_len_mul_fits_size(CettaExprLen len,
+                                                size_t elem_size) {
+    return elem_size == 0 ||
+           len <= (CettaExprLen)(SIZE_MAX / elem_size);
 }
 
 #endif /* CETTA_ATOM_H */

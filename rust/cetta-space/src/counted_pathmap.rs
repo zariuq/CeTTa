@@ -32,6 +32,8 @@ pub struct CountedEntry {
     pub full_key: Vec<u8>,
 }
 
+pub const COUNTED_PATHMAP_MAX_MULTIPLICITY: u32 = u32::MAX;
+
 #[cfg(feature = "pathmap-space")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CountedDetailedRow {
@@ -678,9 +680,9 @@ fn append_expr_row_packet(out: &mut Vec<u8>, expr_bytes: &[u8]) -> Result<(), St
     Ok(())
 }
 
-pub fn counted_expr_row_packet(space: &Space) -> Result<(Vec<u8>, u32), String> {
+pub fn counted_expr_row_packet(space: &Space) -> Result<(Vec<u8>, u64), String> {
     let mut packet = Vec::new();
-    let mut count = 0u32;
+    let mut count = 0u64;
 
     for entry in counted_entries(space)? {
         for _ in 0..entry.count {
@@ -698,9 +700,9 @@ pub fn counted_expr_row_packet(space: &Space) -> Result<(Vec<u8>, u32), String> 
     Ok((packet, count))
 }
 
-pub fn counted_sexpr_text(space: &Space) -> Result<(Vec<u8>, u32), String> {
+pub fn counted_sexpr_text(space: &Space) -> Result<(Vec<u8>, u64), String> {
     let mut text = Vec::new();
-    let mut count = 0u32;
+    let mut count = 0u64;
 
     for entry in counted_entries(space)? {
         let mut line = Vec::new();
@@ -1335,9 +1337,9 @@ mod tests {
     fn counted_insert_overflow_fails_without_cache_drift() {
         let mut space = Space::new();
         let atom = parse_expr(&mut space, "(dup saturated)");
-        let key =
-            counted_key_for_atom_with_count(&atom, u32::MAX).expect("max-count key should encode");
-        let mut cached_logical_size = u64::from(u32::MAX);
+        let key = counted_key_for_atom_with_count(&atom, COUNTED_PATHMAP_MAX_MULTIPLICITY)
+            .expect("max-count key should encode");
+        let mut cached_logical_size = u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY);
 
         space.btm.insert(&key, ());
 
@@ -1345,15 +1347,18 @@ mod tests {
             .expect_err("max-count insert should fail");
 
         assert!(err.contains("multiplicity overflow"));
-        assert_eq!(cached_logical_size, u64::from(u32::MAX));
+        assert_eq!(cached_logical_size, u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY));
         assert_eq!(
             counted_exact_entry(&space, &atom)
                 .unwrap()
                 .expect("entry should remain")
                 .count,
-            u32::MAX
+            COUNTED_PATHMAP_MAX_MULTIPLICITY
         );
-        assert_eq!(counted_logical_size(&space).unwrap(), u64::from(u32::MAX));
+        assert_eq!(
+            counted_logical_size(&space).unwrap(),
+            u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY)
+        );
     }
 
     #[test]
@@ -1361,9 +1366,9 @@ mod tests {
         let mut space = Space::new();
         let saturated = parse_expr(&mut space, "(dup saturated)");
         let other = parse_expr(&mut space, "(dup other)");
-        let key = counted_key_for_atom_with_count(&saturated, u32::MAX)
+        let key = counted_key_for_atom_with_count(&saturated, COUNTED_PATHMAP_MAX_MULTIPLICITY)
             .expect("max-count key should encode");
-        let mut cached_logical_size = u64::from(u32::MAX);
+        let mut cached_logical_size = u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY);
 
         space.btm.insert(&key, ());
 
@@ -1372,7 +1377,7 @@ mod tests {
             .expect_err("batch containing max-count insert should fail");
 
         assert!(err.contains("multiplicity overflow"));
-        assert_eq!(cached_logical_size, u64::from(u32::MAX));
+        assert_eq!(cached_logical_size, u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY));
         assert!(
             counted_exact_entry(&space, &other).unwrap().is_none(),
             "preflight failure must not partially add earlier batch rows"
@@ -1382,7 +1387,7 @@ mod tests {
                 .unwrap()
                 .expect("saturated entry should remain")
                 .count,
-            u32::MAX
+            COUNTED_PATHMAP_MAX_MULTIPLICITY
         );
     }
 

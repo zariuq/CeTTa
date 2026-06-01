@@ -18,6 +18,18 @@
 #define CETTA_PARSE_DEPTH_LIMIT 4096
 #endif
 
+#if defined(__GNUC__)
+extern uint64_t eval_current_max_rational_digits(void) __attribute__((weak));
+#endif
+
+static uint64_t parser_current_max_rational_digits(void) {
+#if defined(__GNUC__)
+    if (eval_current_max_rational_digits)
+        return eval_current_max_rational_digits();
+#endif
+    return CETTA_RATIONAL_DEFAULT_MAX_DIGITS;
+}
+
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
 static void skip_whitespace_and_comments(const char *text, size_t *pos) {
@@ -279,6 +291,23 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     if (*endp == '\0' && errno == 0) {
         return atom_int(a, (int64_t)val);
     }
+    if (!strchr(tok, '.')) {
+        if (strchr(tok, '/')) {
+            bool too_large = false;
+            Atom *rational = atom_rational_limited(
+                a, tok, parser_current_max_rational_digits(), &too_large);
+            if (rational)
+                return rational;
+            if (too_large)
+                return atom_error(a, atom_symbol(a, tok),
+                                  atom_symbol(a, "RationalTooLarge"));
+        }
+        char *canonical = cetta_bigint_canonicalize_owned(tok);
+        if (canonical) {
+            free(canonical);
+            return atom_bigint(a, tok);
+        }
+    }
 
     /* Float: try to parse (must contain '.') */
     if (strchr(tok, '.')) {
@@ -402,6 +431,22 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
     long long val = strtoll(tok, &endp, 10);
     if (*endp == '\0' && errno == 0)
         return tu_intern_int(universe, (int64_t)val);
+    if (!strchr(tok, '.')) {
+        if (strchr(tok, '/')) {
+            if (cetta_rational_text_exceeds_digit_limit(
+                    tok, parser_current_max_rational_digits(), NULL)) {
+                return CETTA_ATOM_ID_NONE;
+            }
+            AtomId rational_id = tu_intern_rational(universe, tok);
+            if (rational_id != CETTA_ATOM_ID_NONE)
+                return rational_id;
+        }
+        char *canonical = cetta_bigint_canonicalize_owned(tok);
+        if (canonical) {
+            free(canonical);
+            return tu_intern_bigint(universe, tok);
+        }
+    }
 
     if (strchr(tok, '.')) {
         char *fendp;

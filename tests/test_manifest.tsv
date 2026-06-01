@@ -64,6 +64,11 @@ tests/test_arithmetic.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_assert.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bad_type_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_basic_eval.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_bigint_arithmetic_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_bigint_bridge_roundtrip_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_bigint_fib100_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_bigint_print_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_bigint_storage_match_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bind_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bind_partial_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bio_bc_let_hidden_env_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
@@ -128,11 +133,13 @@ tests/test_decons_atom_errors.metta	he	metta	he-extended	main	native	test	golden
 tests/test_decons_atom_extra_args_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_decons_atom_nonexpr_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_decons_atom_wrong_arity_error.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_deep_tail_if_constructor_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_disc_trie.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_dispatch_fastpath_equation_guard_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_effect_append_batch_fastpath.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_empty_car_cdr_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_empty_handling.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_eq_constructor_normal_form_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_equation_query_visible_bindings_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_equation_rhs_binding_propagation_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_equation_var_hygiene.metta	he	metta	he-extended	main	native	test	golden	-
@@ -145,6 +152,7 @@ tests/test_evalc.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_evalc_unknown_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_fc_native_depth3_count_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_fc_selfjoin_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_filter_atom_function_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_float_ops.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_fold.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_fold_by_key.metta	he	metta	he-extended	main	native	test	golden	-
@@ -178,6 +186,7 @@ tests/test_he_nested_binding_substitution_regression.metta	he	metta	he-extended	
 tests/test_if.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_equal.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_equal_arity.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_if_once_witness_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_stdlib.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_stdlib_lazy.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_import_act_module_surface.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
@@ -220,7 +229,9 @@ tests/test_match_chain_cross_space_pathmap_regression.metta	he	metta	he-extended
 tests/test_match_chain_imported_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_coref_fastpath.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_eager_double_apply_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_match_exact_bound_space_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_rule_reunify.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_match_self_mutation_snapshot_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_var_thread.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_var_types.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_math_constants.metta	he	metta	he-extended	main	native	test	golden	-
@@ -238,6 +249,7 @@ tests/test_metta_op.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_min_atom_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_min_atom_nonnumeric_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_min_max_atom.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_min_max_rational_exact_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_minimal_foldl_atom_bad_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_minimal_foldl_atom_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_mm2_kiss_add_remove.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
@@ -262,6 +274,7 @@ tests/test_mork_kiss_examples.metta	he	metta	he-extended	mork	pathmap	test-backe
 tests/test_mork_lib_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_long_string_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_mm2_metta_showcase.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
+tests/test_mork_native_handle_fresh_id_regression.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_nil_parity_regression.metta	he	metta	he-extended	pathmap	pathmap	probe-pathmap-lane	probe	MORK nil parity diagnostic
 tests/test_mork_open_act_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mork_overlay_zipper_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
@@ -282,6 +295,7 @@ tests/test_nondeterminism.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_nondeterministic_types.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_not_reducible.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_numeric_edge_cases.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_numeric_eq_rational_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_once.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_once_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_outcome_variant_composition_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
@@ -323,6 +337,14 @@ tests/test_quote.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_quote_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_quote_substitution_no_reapply_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_range_repeat_atom_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_bridge_roundtrip_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_default_division_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_exact_math_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_ingestion_limit_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_mod_rejection_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_prefer_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_storage_match_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_too_large_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_reduce.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_reduce_docs.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_register_module_arity.metta	he	metta	he-extended	main	native	test	golden	-
@@ -399,6 +421,7 @@ tests/test_table_nodup_no_invalidation.metta	he	metta	he-extended	runtime-stats	
 tests/test_table_reuse_after_stale.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_tail_bindings_direct_value.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_tail_recursion.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_tail_recursion_deep_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_tail_special_forms.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_text_cursor.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_text_stream.metta	he	metta	he-extended	main	native	test	golden	-
@@ -407,6 +430,7 @@ tests/test_tilepuzzle_pathmap.metta	he	metta	he-extended	pathmap	pathmap	test-he
 tests/test_top_level_output_order.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_trace_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_trace_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_tuple_head_effect_probe_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_type_cast.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_type_match_builder_rollback_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_types.metta	he	metta	he-extended	main	native	test	golden	-

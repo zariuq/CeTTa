@@ -113,7 +113,7 @@ Atom *cetta_atom_rewrite_vars(Arena *dst, Atom *src,
         return rewrite_var(dst, src, ctx);
     case ATOM_EXPR: {
         Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
-        for (uint32_t i = 0; i < src->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < src->expr.len; i++) {
             elems[i] = cetta_atom_rewrite_vars(dst, src->expr.elems[i],
                                                rewrite_var, ctx,
                                                share_immutable);

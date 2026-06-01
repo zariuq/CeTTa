@@ -23,8 +23,12 @@ endif
 ENABLE_PYTHON := 0
 ENABLE_MORK_STATIC := 0
 ENABLE_PATHMAP_SPACE := 0
+ENABLE_GMP ?= 1
 ENABLE_RUNTIME_STATS ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
+ifneq ($(filter $(ENABLE_GMP),0 1),$(ENABLE_GMP))
+$(error ENABLE_GMP must be 0 or 1)
+endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
 endif
@@ -157,6 +161,13 @@ PY_CFLAGS =
 PY_LDFLAGS =
 PY_RPATH =
 PYTHON_SRC = src/foreign_stub.c
+ifeq ($(ENABLE_GMP),1)
+GMP_CFLAGS ?= $(shell pkg-config --cflags gmp 2>/dev/null)
+GMP_LDFLAGS ?= $(shell pkg-config --libs gmp 2>/dev/null || printf '%s' -lgmp)
+else
+GMP_CFLAGS =
+GMP_LDFLAGS =
+endif
 ifeq ($(ENABLE_PYTHON),1)
 PYTHON_CONFIG := $(strip $(shell command -v python3-config 2>/dev/null))
 ifeq ($(PYTHON_CONFIG),)
@@ -167,39 +178,43 @@ PY_LDFLAGS = $(shell python3-config --embed --ldflags)
 PY_RPATH = -Wl,-rpath,$(shell python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')
 PYTHON_SRC = src/foreign.c
 endif
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).runtime-stats.h
-BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).runtime-stats.stamp
-else
-BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).h
-BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_CANON).stamp
+BUILD_OBJ_TAG = $(BUILD_CANON)
+ifeq ($(ENABLE_GMP),0)
+BUILD_OBJ_TAG := $(BUILD_CANON).nogmp
 endif
-STAGE0_BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.stage0.$(BUILD_CANON).h
-STAGE0_BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.stage0.$(BUILD_CANON).stamp
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_OBJ_TAG).runtime-stats.h
+BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_OBJ_TAG).runtime-stats.stamp
+else
+BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_OBJ_TAG).h
+BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_OBJ_TAG).stamp
+endif
+STAGE0_BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.stage0.$(BUILD_OBJ_TAG).h
+STAGE0_BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.stage0.$(BUILD_OBJ_TAG).stamp
 VERSION_FILE = VERSION
 CETTA_VERSION := $(strip $(shell cat $(VERSION_FILE) 2>/dev/null))
-CPPFLAGS = -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(GMP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
 
 SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-OBJ = $(SRC:.c=.$(BUILD_CANON).runtime-stats.o)
+OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
-FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_CANON).runtime-stats.o
+FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).runtime-stats.o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)-runtime-stats
 BIN_FORCE =
 else
-OBJ = $(SRC:.c=.$(BUILD_CANON).o)
+OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).o)
 BIN = cetta
-FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_CANON).o
+FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)
 BIN_FORCE = FORCE
 endif
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
-FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_CANON).runtime-stats.o src/main.$(BUILD_CANON).o,$(OBJ))
-STAGE0_BIN = runtime/cetta-stage0-$(BUILD_CANON)
+FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o,$(OBJ))
+STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
 SPACE_ENGINES = native native-candidate-exact
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 SPACE_ENGINES += pathmap
@@ -219,6 +234,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_space_type.metta \
 	tests/test_space_engine_backend.metta \
 	tests/test_add_atom_nodup_pathmap_alpha_regression.metta \
+	tests/test_bigint_bridge_roundtrip_regression.metta \
 	tests/test_import_act_module_surface.metta \
 	tests/test_include_mm2_space_target.metta \
 	tests/test_module_inventory_act_registered_root.metta \
@@ -292,6 +308,7 @@ BACKEND_DEDICATED_TESTS = \
 	tests/test_mork_kiss_examples.metta \
 	tests/test_mork_lib_surface.metta \
 	tests/test_mork_long_string_surface.metta \
+	tests/test_mork_native_handle_fresh_id_regression.metta \
 	tests/test_mork_add_atoms_runtime_stats.metta \
 	tests/test_mm2_match_order_is_unordered.metta \
 	tests/test_mork_mm2_metta_showcase.metta \
@@ -496,7 +513,7 @@ test-symbolid-guard:
 
 runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 test-variant-shape-roundtrip: runtime/test_variant_shape_roundtrip
 	@./runtime/test_variant_shape_roundtrip
@@ -526,9 +543,36 @@ test-mork-bridge-contextual-exact-rows:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_bridge_contextual_exact_rows
 	@./runtime/test_mork_bridge_contextual_exact_rows
 
+runtime/test_mork_cursor_byte_buffer_count_abi: tests/test_mork_cursor_byte_buffer_count_abi.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_mork_cursor_byte_buffer_count_abi.c $(LDFLAGS)
+
+test-mork-cursor-byte-buffer-count-abi:
+	$(call require_pathmap_bridge_or_reexec,mork cursor byte-buffer count ABI,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_cursor_byte_buffer_count_abi
+	@./runtime/test_mork_cursor_byte_buffer_count_abi
+
+runtime/test_mork_cursor_expr_row_stream_abi: tests/test_mork_cursor_expr_row_stream_abi.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_mork_cursor_expr_row_stream_abi.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+test-mork-cursor-expr-row-stream-abi:
+	$(call require_pathmap_bridge_or_reexec,mork cursor expr-row stream ABI,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_cursor_expr_row_stream_abi
+	@./runtime/test_mork_cursor_expr_row_stream_abi
+
+runtime/test_mork_query_row_stream_abi: tests/test_mork_query_row_stream_abi.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_mork_query_row_stream_abi.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+test-mork-query-row-stream-abi:
+	$(call require_pathmap_bridge_or_reexec,mork query row stream ABI,$@)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_query_row_stream_abi
+	@./runtime/test_mork_query_row_stream_abi
+
 runtime/test_space_term_universe_membership: tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(LDFLAGS)
 
 test-space-term-universe-membership: runtime/test_space_term_universe_membership
 	@./runtime/test_space_term_universe_membership
@@ -536,7 +580,7 @@ test-space-term-universe-membership: runtime/test_space_term_universe_membership
 runtime/test_term_universe_store_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
 runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(LDFLAGS)
 
 test-term-universe-store-abi:
 	$(call require_runtime_stats_or_reexec,term universe store ABI,$@)
@@ -546,7 +590,7 @@ test-term-universe-store-abi:
 runtime/test_term_universe_backend_add_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
 runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(LDFLAGS)
 
 test-term-universe-backend-add-abi:
 	$(call require_runtime_stats_or_reexec,term universe backend-add ABI,$@)
@@ -581,7 +625,7 @@ test-pathmap-typed-query-abi:
 	@./runtime/test_pathmap_typed_query_abi
 
 # Stage 0: kernel-only binary (no precompiled stdlib)
-STAGE0_OBJ = $(SRC:.c=.$(BUILD_CANON).stage0.o)
+STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) $(FALLBACK_EVAL_TEST_OBJ:.o=.d)
 
@@ -600,6 +644,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
 	if [ -f "$(BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(BUILD_CONFIG_HEADER)"; then \
@@ -620,6 +665,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING 0\n' >> "$$tmp_cfg"; \
 	if [ -f "$(STAGE0_BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(STAGE0_BUILD_CONFIG_HEADER)"; then \
@@ -629,8 +675,8 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	fi; \
 	touch "$@"
 
-%.$(BUILD_CANON).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(CC) -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
+%.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
+	$(CC) -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -677,16 +723,16 @@ $(FALLBACK_EVAL_TEST_OBJ): $(FALLBACK_EVAL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 # stdlib objects depend on the generated blob header
-src/cetta_stdlib.$(BUILD_CANON).o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(BUILD_CONFIG_HEADER)
+src/cetta_stdlib.$(BUILD_OBJ_TAG).o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-src/cetta_stdlib.$(BUILD_CANON).runtime-stats.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(BUILD_CONFIG_HEADER)
+src/cetta_stdlib.$(BUILD_OBJ_TAG).runtime-stats.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-%.$(BUILD_CANON).o: %.c $(BUILD_CONFIG_HEADER)
+%.$(BUILD_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-%.$(BUILD_CANON).runtime-stats.o: %.c $(BUILD_CONFIG_HEADER)
+%.$(BUILD_OBJ_TAG).runtime-stats.o: %.c $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 clean:
@@ -694,8 +740,10 @@ clean:
 		runtime/cetta-*-runtime-stats runtime/cetta-stage0-* \
 		runtime/test_fallback_eval_session-* runtime/bootstrap/test_fallback_eval_session.*.o \
 		runtime/bootstrap/test_fallback_eval_session.*.d \
-		src/*.runtime-stats.o src/*.runtime-stats.d \
-		native/*.runtime-stats.o native/*.runtime-stats.d \
+			src/*.runtime-stats.o src/*.runtime-stats.d \
+			src/*.nogmp.o src/*.nogmp.d src/*.nogmp.stage0.o src/*.nogmp.stage0.d src/*.nogmp.runtime-stats.o src/*.nogmp.runtime-stats.d \
+			native/*.runtime-stats.o native/*.runtime-stats.d \
+			native/*.nogmp.o native/*.nogmp.d native/*.nogmp.stage0.o native/*.nogmp.stage0.d native/*.nogmp.runtime-stats.o native/*.nogmp.runtime-stats.d \
 		$(STDLIB_BLOB) runtime/bootstrap/mork-bridge.*.stamp \
 		runtime/bootstrap/libcetta_space_bridge.*.a \
 		$(BUILD_CONFIG_HEADER) $(STAGE0_BUILD_CONFIG_HEADER) runtime/bootstrap/build_config.h runtime/bootstrap/build_config.*.h runtime/bootstrap/build_config.stage0.h runtime/bootstrap/build_config.stage0.*.h \
@@ -747,6 +795,42 @@ doctor-bridge:
 		echo "INFO: set PATHMAP_REPO_DIR=/path/to/PathMap and MORK_REPO_DIR=/path/to/MORK"; \
 		exit 1; \
 	fi
+
+doctor-gmp:
+ifeq ($(ENABLE_GMP),0)
+	@echo "PASS: GMP disabled by ENABLE_GMP=0"
+else
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@tmp="$(BOOTSTRAP_TMPDIR)/doctor-gmp"; \
+	if printf '%s\n' '#include <gmp.h>' 'int main(void) { mpz_t z; mpz_init_set_ui(z, 1); mpz_clear(z); return 0; }' | \
+		$(CC) $(GMP_CFLAGS) -x c - -o "$$tmp" $(GMP_LDFLAGS) >/dev/null 2>&1; then \
+		echo "PASS: GMP compile/link probe"; \
+		rm -f "$$tmp"; \
+	else \
+		echo "FAIL: GMP compile/link probe"; \
+		echo "INFO: set GMP_CFLAGS and GMP_LDFLAGS if GMP is installed in a non-default prefix"; \
+		rm -f "$$tmp"; \
+		exit 1; \
+	fi
+endif
+
+test-bigint-no-gmp-fallback:
+	@$(MAKE) -s BUILD=core ENABLE_GMP=0 $(BIN)
+	@set -e; \
+	tmp="$(BOOTSTRAP_TMPDIR)/test-bigint-no-gmp-fallback.out"; \
+	./$(BIN) --profile he-extended --lang he tests/support/test_bigint_no_gmp_fallback.metta > "$$tmp"; \
+	diff -u tests/support/test_bigint_no_gmp_fallback.expected "$$tmp"; \
+	rm -f "$$tmp"; \
+	echo "PASS: bigint no-GMP fallback is loud and parseable"
+
+test-rational-no-gmp-fallback:
+	@$(MAKE) -s BUILD=core ENABLE_GMP=0 $(BIN)
+	@set -e; \
+	tmp="$(BOOTSTRAP_TMPDIR)/test-rational-no-gmp-fallback.out"; \
+	./$(BIN) --profile he-extended --lang he tests/support/test_rational_no_gmp_fallback.metta > "$$tmp"; \
+	diff -u tests/support/test_rational_no_gmp_fallback.expected "$$tmp"; \
+	rm -f "$$tmp"; \
+	echo "PASS: rational no-GMP fallback is loud and default-compatible"
 
 # Fast test: compare CeTTa output against pre-computed .expected files.
 # No oracle invocation — safe and instant.
@@ -1197,7 +1281,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 	mm2_profile_err=$$(./$(BIN) --lang mm2 --profile he-compat -e '()' 2>&1 || true); \
-	if printf '%s\n' "$$mm2_profile_err" | grep -Fq "error: language 'mm2' has no named profiles"; then \
+	if printf '%s\n' "$$mm2_profile_err" | grep -Fq "error: source language 'mm2' has no named profiles"; then \
 		echo "PASS: mm2 rejects foreign profiles"; pass=$$((pass + 1)); \
 	else \
 		echo "FAIL: mm2 rejects foreign profiles"; \
@@ -1651,6 +1735,14 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/profile_he_prime_recursive_search.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
+	result=$$(./$(BIN) --profile he-prime --lang he tests/profile_he_prime_structural_eq.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_structural_eq.expected)" ]; then \
+		echo "PASS: he-prime structural == policy"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime structural == policy"; \
+		diff <(cat tests/profile_he_prime_structural_eq.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
 	compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
 	status=$$?; \
 	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'module-inventory!' is unavailable in profile 'he-compat'"; then \
@@ -1911,6 +2003,9 @@ test-pathmap-lane-body: $(BIN)
 	echo "$$summary"; \
 	[ $$fail -eq 0 ]
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-bridge-contextual-exact-rows
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-cursor-byte-buffer-count-abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-cursor-expr-row-stream-abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-query-row-stream-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-long-string-regression
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-match-chain
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lib-pathmap
@@ -2086,6 +2181,7 @@ test-mork-surface-suite: $(BIN)
 		test_mork_kiss_examples \
 		test_mork_lib_surface \
 		test_mork_mm2_metta_showcase \
+		test_mork_native_handle_fresh_id_regression \
 		test_mork_open_act_surface \
 		test_mork_overlay_zipper_surface \
 		test_mork_product_zipper_surface \
@@ -2433,6 +2529,7 @@ test-help-flags: $(BIN)
 	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --prefer-rationals <file.metta>' && \
 	   [ "$$help_long" = "$$help_short" ]; then \
 		echo "PASS: cli help flags"; \
 	else \
@@ -2788,5 +2885,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

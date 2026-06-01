@@ -1,12 +1,31 @@
 #define _GNU_SOURCE
 #include "grounded.h"
+#include "eval.h"
 #include "match.h"
 #include "parser.h"
 #include "space.h"
+#if CETTA_BUILD_WITH_GMP
+#include <gmp.h>
+#endif
+#include <inttypes.h>
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+bool eval_current_prefer_rationals(void) {
+    return false;
+}
+
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+uint64_t eval_current_max_rational_digits(void) {
+    return 4096u;
+}
 
 typedef struct {
     char *buf;
@@ -125,7 +144,7 @@ static Atom *foldl_bind_step_atom_impl(Arena *a, Atom *atom,
     case ATOM_EXPR: {
         Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
         bool changed = false;
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             elems[i] = foldl_bind_step_atom_impl(a, atom->expr.elems[i],
                                                  acc_spelling, acc_val,
                                                  item_spelling, item_val,
@@ -197,12 +216,17 @@ static Atom *grounded_expr_message_error(Arena *a, Atom *head, Atom **args, uint
                       atom_symbol(a, buf));
 }
 
-static int find_unused_alpha_equal_atom(Atom **elems, bool *used, uint32_t len, Atom *candidate) {
-    for (uint32_t i = 0; i < len; i++) {
-        if (!used[i] && atom_alpha_eq(elems[i], candidate))
-            return (int)i;
+static bool find_unused_alpha_equal_atom(Atom **elems, bool *used,
+                                         CettaExprLen len, Atom *candidate,
+                                         CettaExprIndex *out_index) {
+    for (CettaExprIndex i = 0; i < len; i++) {
+        if (!used[i] && atom_alpha_eq(elems[i], candidate)) {
+            if (out_index)
+                *out_index = i;
+            return true;
+        }
     }
-    return -1;
+    return false;
 }
 
 bool is_grounded_op(SymbolId id) {
@@ -223,6 +247,7 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.op_mod || id == g_builtin_syms.op_lt ||
            id == g_builtin_syms.op_gt || id == g_builtin_syms.op_le ||
            id == g_builtin_syms.op_ge || id == g_builtin_syms.op_eq ||
+           id == g_builtin_syms.numeric_eq ||
            id == g_builtin_syms.alpha_eq ||
            id == g_builtin_syms.if_equal ||
            id == g_builtin_syms.sealed_text ||
@@ -273,7 +298,11 @@ bool is_grounded_op(SymbolId id) {
 typedef struct {
     double val;
     int64_t ival;
+    Atom *bigint;
+    Atom *rational;
     bool is_float;
+    bool is_bigint;
+    bool is_rational;
 } NumArg;
 
 static bool get_numeric_arg(Atom *a, NumArg *out) {
@@ -281,17 +310,343 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
     if (a->ground.gkind == GV_INT) {
         out->val = (double)a->ground.ival;
         out->ival = a->ground.ival;
+        out->bigint = NULL;
+        out->rational = NULL;
         out->is_float = false;
+        out->is_bigint = false;
+        out->is_rational = false;
+        return true;
+    }
+    if (a->ground.gkind == GV_BIGINT) {
+        out->val = strtod(atom_bigint_cstr(a), NULL);
+        out->ival = 0;
+        out->bigint = a;
+        out->rational = NULL;
+        out->is_float = false;
+        out->is_bigint = true;
+        out->is_rational = false;
+        return true;
+    }
+    if (a->ground.gkind == GV_RATIONAL) {
+#if CETTA_BUILD_WITH_GMP
+        mpq_t q;
+        mpq_init(q);
+        bool ok = atom_rational_get_mpq(a, q);
+        out->val = ok ? mpq_get_d(q) : 0.0;
+        mpq_clear(q);
+#else
+        out->val = 0.0;
+#endif
+        out->ival = 0;
+        out->bigint = NULL;
+        out->rational = a;
+        out->is_float = false;
+        out->is_bigint = false;
+        out->is_rational = true;
         return true;
     }
     if (a->ground.gkind == GV_FLOAT) {
         out->val = a->ground.fval;
         out->ival = 0;
+        out->bigint = NULL;
+        out->rational = NULL;
         out->is_float = true;
+        out->is_bigint = false;
+        out->is_rational = false;
         return true;
     }
     return false;
 }
+
+#if CETTA_BUILD_WITH_GMP
+static bool num_arg_to_mpz(const NumArg *arg, mpz_t out) {
+    if (!arg || arg->is_float || arg->is_rational)
+        return false;
+    if (arg->is_bigint)
+        return atom_bigint_get_mpz(arg->bigint, out);
+    uint64_t magnitude = arg->ival < 0
+        ? (uint64_t)(-(arg->ival + 1)) + 1u
+        : (uint64_t)arg->ival;
+    mpz_import(out, 1, -1, sizeof(magnitude), 0, 0, &magnitude);
+    if (arg->ival < 0)
+        mpz_neg(out, out);
+    return true;
+}
+
+static Atom *atom_from_mpz(Arena *a, const mpz_t value) {
+    return atom_bigint_from_mpz(a, value);
+}
+
+static bool num_arg_to_mpq(const NumArg *arg, mpq_t out) {
+    if (!arg || arg->is_float)
+        return false;
+    if (arg->is_rational)
+        return atom_rational_get_mpq(arg->rational, out);
+    mpz_t z;
+    mpz_init(z);
+    bool ok = num_arg_to_mpz(arg, z);
+    if (ok)
+        mpq_set_z(out, z);
+    mpz_clear(z);
+    return ok;
+}
+
+static Atom *atom_from_mpq(Arena *a, const mpq_t value) {
+    return atom_rational_from_mpq(a, value);
+}
+
+static uint64_t rational_decimal_digit_count(const mpq_t value) {
+    size_t n_digits = mpz_sizeinbase(mpq_numref(value), 10);
+    size_t d_digits = mpz_sizeinbase(mpq_denref(value), 10);
+    if (n_digits > UINT64_MAX - d_digits)
+        return UINT64_MAX;
+    return (uint64_t)(n_digits + d_digits);
+}
+
+static Atom *grounded_rational_too_large(Arena *a, Atom *head, Atom **args,
+                                         uint32_t nargs) {
+    return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                      atom_symbol(a, "RationalTooLarge"));
+}
+
+static Atom *grounded_atom_from_mpq(Arena *a, Atom *head, Atom **args,
+                                    uint32_t nargs, const mpq_t value) {
+    mpq_t q;
+    mpq_init(q);
+    mpq_set(q, value);
+    mpq_canonicalize(q);
+    uint64_t limit = eval_current_max_rational_digits();
+    if (mpz_cmp_ui(mpq_denref(q), 1u) != 0 &&
+        limit != UINT64_MAX &&
+        rational_decimal_digit_count(q) > limit) {
+        mpq_clear(q);
+        return grounded_rational_too_large(a, head, args, nargs);
+    }
+    Atom *out = atom_from_mpq(a, q);
+    mpq_clear(q);
+    return out;
+}
+
+static Atom *atom_from_rational_abs(Arena *a, Atom *head, Atom **args,
+                                    uint32_t nargs, const NumArg *arg) {
+    mpq_t q;
+    mpq_init(q);
+    bool ok = num_arg_to_mpq(arg, q);
+    if (ok && mpq_sgn(q) < 0)
+        mpq_neg(q, q);
+    Atom *out = ok ? grounded_atom_from_mpq(a, head, args, nargs, q) : NULL;
+    mpq_clear(q);
+    return out;
+}
+
+static Atom *atom_from_rational_integer_part(Arena *a, const NumArg *arg,
+                                             SymbolId op) {
+    mpq_t q;
+    mpz_t z;
+    mpq_init(q);
+    mpz_init(z);
+    bool ok = num_arg_to_mpq(arg, q);
+    if (ok) {
+        if (op == g_builtin_syms.trunc_math)
+            mpz_tdiv_q(z, mpq_numref(q), mpq_denref(q));
+        else if (op == g_builtin_syms.floor_math)
+            mpz_fdiv_q(z, mpq_numref(q), mpq_denref(q));
+        else
+            mpz_cdiv_q(z, mpq_numref(q), mpq_denref(q));
+    }
+    Atom *out = ok ? atom_from_mpz(a, z) : NULL;
+    mpz_clear(z);
+    mpq_clear(q);
+    return out;
+}
+
+static Atom *atom_from_rational_round(Arena *a, const NumArg *arg) {
+    mpq_t q;
+    mpz_t abs_num, quotient, remainder, twice_remainder;
+    mpq_init(q);
+    mpz_inits(abs_num, quotient, remainder, twice_remainder, NULL);
+    bool ok = num_arg_to_mpq(arg, q);
+    if (ok) {
+        int sign = mpq_sgn(q);
+        mpz_abs(abs_num, mpq_numref(q));
+        mpz_tdiv_qr(quotient, remainder, abs_num, mpq_denref(q));
+        mpz_mul_ui(twice_remainder, remainder, 2u);
+        if (mpz_cmp(twice_remainder, mpq_denref(q)) >= 0)
+            mpz_add_ui(quotient, quotient, 1u);
+        if (sign < 0)
+            mpz_neg(quotient, quotient);
+    }
+    Atom *out = ok ? atom_from_mpz(a, quotient) : NULL;
+    mpz_clears(abs_num, quotient, remainder, twice_remainder, NULL);
+    mpq_clear(q);
+    return out;
+}
+
+static Atom *atom_from_rational_square_root(Arena *a, Atom *head, Atom **args,
+                                            uint32_t nargs, const NumArg *arg,
+                                            bool *was_exact) {
+    mpq_t q;
+    mpz_t num_root, den_root;
+    mpq_init(q);
+    mpz_inits(num_root, den_root, NULL);
+    *was_exact = false;
+    bool ok = num_arg_to_mpq(arg, q);
+    Atom *out = NULL;
+    if (ok && mpq_sgn(q) >= 0 &&
+        mpz_perfect_square_p(mpq_numref(q)) &&
+        mpz_perfect_square_p(mpq_denref(q))) {
+        mpq_t root;
+        mpq_init(root);
+        mpz_sqrt(num_root, mpq_numref(q));
+        mpz_sqrt(den_root, mpq_denref(q));
+        mpq_set_num(root, num_root);
+        mpq_set_den(root, den_root);
+        mpq_canonicalize(root);
+        out = grounded_atom_from_mpq(a, head, args, nargs, root);
+        *was_exact = true;
+        mpq_clear(root);
+    }
+    mpz_clears(num_root, den_root, NULL);
+    mpq_clear(q);
+    return out;
+}
+#endif
+
+static Atom *grounded_division_by_zero(Arena *a, Atom *head, Atom **args,
+                                       uint32_t nargs);
+
+static Atom *grounded_rational_unavailable(Arena *a, Atom *head,
+                                           Atom **args, uint32_t nargs)
+    __attribute__((unused));
+static Atom *grounded_rational_unavailable(Arena *a, Atom *head,
+                                           Atom **args, uint32_t nargs) {
+    return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                      atom_symbol(a, "RationalArithmeticUnavailable"));
+}
+
+#if CETTA_BUILD_WITH_GMP
+static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
+                                     Atom **args, uint32_t nargs,
+                                     const NumArg *na, const NumArg *nb,
+                                     bool prefer_rationals) {
+    bool wants_rational = na->is_rational || nb->is_rational ||
+                          (prefer_rationals && head_id == g_builtin_syms.op_div);
+    if (wants_rational) {
+        mpq_t ai, bi, ri;
+        mpq_inits(ai, bi, ri, NULL);
+        bool ok = num_arg_to_mpq(na, ai) && num_arg_to_mpq(nb, bi);
+        if (!ok) {
+            mpq_clears(ai, bi, ri, NULL);
+            return NULL;
+        }
+        Atom *result = NULL;
+        if (head_id == g_builtin_syms.op_plus) {
+            mpq_add(ri, ai, bi);
+            result = grounded_atom_from_mpq(a, head, args, nargs, ri);
+        } else if (head_id == g_builtin_syms.op_minus) {
+            mpq_sub(ri, ai, bi);
+            result = grounded_atom_from_mpq(a, head, args, nargs, ri);
+        } else if (head_id == g_builtin_syms.op_mul) {
+            mpq_mul(ri, ai, bi);
+            result = grounded_atom_from_mpq(a, head, args, nargs, ri);
+        } else if (head_id == g_builtin_syms.op_div) {
+            if (mpq_sgn(bi) == 0)
+                result = grounded_division_by_zero(a, head, args, nargs);
+            else {
+                mpq_div(ri, ai, bi);
+                result = grounded_atom_from_mpq(a, head, args, nargs, ri);
+            }
+        } else if (head_id == g_builtin_syms.op_mod) {
+            if (mpq_sgn(bi) == 0)
+                result = grounded_division_by_zero(a, head, args, nargs);
+            else {
+                int bad_idx = na->is_rational ? 1 : 2;
+                result = grounded_bad_arg_type(a, head, args, nargs,
+                                               bad_idx, atom_symbol(a, "Number"),
+                                               args[bad_idx - 1]);
+            }
+        } else {
+            int cmp = mpq_cmp(ai, bi);
+            if (head_id == g_builtin_syms.op_lt)
+                result = cmp < 0 ? atom_true(a) : atom_false(a);
+            else if (head_id == g_builtin_syms.op_gt)
+                result = cmp > 0 ? atom_true(a) : atom_false(a);
+            else if (head_id == g_builtin_syms.op_le)
+                result = cmp <= 0 ? atom_true(a) : atom_false(a);
+            else if (head_id == g_builtin_syms.op_ge)
+                result = cmp >= 0 ? atom_true(a) : atom_false(a);
+        }
+        mpq_clears(ai, bi, ri, NULL);
+        return result;
+    }
+
+    mpz_t ai, bi, ri;
+    mpz_inits(ai, bi, ri, NULL);
+    bool ok = num_arg_to_mpz(na, ai) && num_arg_to_mpz(nb, bi);
+    if (!ok) {
+        mpz_clears(ai, bi, ri, NULL);
+        return NULL;
+    }
+
+    Atom *result = NULL;
+    if (head_id == g_builtin_syms.op_plus) {
+        mpz_add(ri, ai, bi);
+        result = atom_from_mpz(a, ri);
+    } else if (head_id == g_builtin_syms.op_minus) {
+        mpz_sub(ri, ai, bi);
+        result = atom_from_mpz(a, ri);
+    } else if (head_id == g_builtin_syms.op_mul) {
+        mpz_mul(ri, ai, bi);
+        result = atom_from_mpz(a, ri);
+    } else if (head_id == g_builtin_syms.op_div) {
+        if (mpz_sgn(bi) == 0) {
+            result = grounded_division_by_zero(a, head, args, nargs);
+        } else if (mpz_divisible_p(ai, bi)) {
+            mpz_tdiv_q(ri, ai, bi);
+            result = atom_from_mpz(a, ri);
+        } else {
+            result = atom_float(a, mpz_get_d(ai) / mpz_get_d(bi));
+        }
+    } else if (head_id == g_builtin_syms.op_mod) {
+        if (mpz_sgn(bi) == 0) {
+            result = grounded_division_by_zero(a, head, args, nargs);
+        } else {
+            mpz_tdiv_r(ri, ai, bi);
+            result = atom_from_mpz(a, ri);
+        }
+    } else {
+        int cmp = mpz_cmp(ai, bi);
+        if (head_id == g_builtin_syms.op_lt)
+            result = cmp < 0 ? atom_true(a) : atom_false(a);
+        else if (head_id == g_builtin_syms.op_gt)
+            result = cmp > 0 ? atom_true(a) : atom_false(a);
+        else if (head_id == g_builtin_syms.op_le)
+            result = cmp <= 0 ? atom_true(a) : atom_false(a);
+        else if (head_id == g_builtin_syms.op_ge)
+            result = cmp >= 0 ? atom_true(a) : atom_false(a);
+    }
+    mpz_clears(ai, bi, ri, NULL);
+    return result;
+}
+#else
+static Atom *grounded_bigint_unavailable(Arena *a, Atom *head, Atom **args,
+                                         uint32_t nargs) {
+    return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                      atom_symbol(a, "BigintArithmeticUnavailable"));
+}
+
+static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
+                                     Atom **args, uint32_t nargs,
+                                     const NumArg *na, const NumArg *nb,
+                                     bool prefer_rationals) {
+    (void)na;
+    (void)nb;
+    if (prefer_rationals && head_id == g_builtin_syms.op_div)
+        return grounded_rational_unavailable(a, head, args, nargs);
+    (void)head_id;
+    return grounded_bigint_unavailable(a, head, args, nargs);
+}
+#endif
 
 /* Return int if both inputs were int and result is exact, otherwise float */
 static Atom *make_numeric(Arena *a, double val, bool any_float) {
@@ -393,7 +748,7 @@ static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t n
     Atom *list = args[0];
     const char **strings = arena_alloc(a, sizeof(const char *) * list->expr.len);
     Atom **sorted = arena_alloc(a, sizeof(Atom *) * list->expr.len);
-    for (uint32_t i = 0; i < list->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < list->expr.len; i++) {
         Atom *elem = list->expr.elems[i];
         if (!(elem->kind == ATOM_GROUNDED && elem->ground.gkind == GV_STRING)) {
             return grounded_string_error(a, head, args, nargs,
@@ -403,7 +758,7 @@ static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t n
     }
 
     qsort(strings, list->expr.len, sizeof(const char *), grounded_sort_strings_cmp);
-    for (uint32_t i = 0; i < list->expr.len; i++)
+    for (CettaExprIndex i = 0; i < list->expr.len; i++)
         sorted[i] = atom_string(a, strings[i]);
     return atom_expr(a, sorted, list->expr.len);
 }
@@ -464,7 +819,7 @@ static Atom *grounded_collapse_add_next(Arena *a, Atom *head, Atom **args, uint3
 
     Atom *list = args[0];
     Atom **elems = arena_alloc(a, sizeof(Atom *) * (list->expr.len + 1));
-    for (uint32_t i = 0; i < list->expr.len; i++)
+    for (CettaExprIndex i = 0; i < list->expr.len; i++)
         elems[i] = list->expr.elems[i];
     elems[list->expr.len] = next_atom;
     return atom_expr(a, elems, list->expr.len + 1);
@@ -566,15 +921,14 @@ static Atom *grounded_range_atom(Arena *a, Atom *head, Atom **args, uint32_t nar
     if (end <= start)
         return atom_expr(a, NULL, 0);
 
-    uint64_t len64 = (uint64_t)(end - start);
-    if (len64 > UINT32_MAX) {
+    CettaExprLen len = (CettaExprLen)(end - start);
+    if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *))) {
         return atom_error(a, grounded_call_expr(a, head, args, nargs),
                           atom_symbol(a, "RangeTooLarge"));
     }
 
-    uint32_t len = (uint32_t)len64;
-    Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
-    for (uint32_t i = 0; i < len; i++)
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (size_t)len);
+    for (CettaExprIndex i = 0; i < len; i++)
         elems[i] = atom_int(a, start + (int64_t)i);
     return atom_expr(a, elems, len);
 }
@@ -593,14 +947,14 @@ static Atom *grounded_repeat_atom(Arena *a, Atom *head, Atom **args, uint32_t na
     int64_t count = args[0]->ground.ival;
     if (count <= 0)
         return atom_expr(a, NULL, 0);
-    if ((uint64_t)count > UINT32_MAX) {
+    if (!cetta_expr_len_mul_fits_size((CettaExprLen)count, sizeof(Atom *))) {
         return atom_error(a, grounded_call_expr(a, head, args, nargs),
                           atom_symbol(a, "RepeatTooLarge"));
     }
 
-    uint32_t len = (uint32_t)count;
-    Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
-    for (uint32_t i = 0; i < len; i++)
+    CettaExprLen len = (CettaExprLen)count;
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (size_t)len);
+    for (CettaExprIndex i = 0; i < len; i++)
         elems[i] = args[1];
     return atom_expr(a, elems, len);
 }
@@ -684,8 +1038,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (args[1]->kind != ATOM_EXPR)
             return grounded_string_error(a, head, args, nargs, "Atom is not an ExpressionAtom");
         char *label = atom_to_string(a, args[0]);
-        printf("%u %s:\n", args[1]->expr.len, label);
-        for (uint32_t i = 0; i < args[1]->expr.len; i++) {
+        printf("%" PRIu64 " %s:\n", (uint64_t)args[1]->expr.len, label);
+        for (CettaExprIndex i = 0; i < args[1]->expr.len; i++) {
             char *rendered = atom_to_string(a, args[1]->expr.elems[i]);
             printf("    %s\n", rendered);
         }
@@ -790,31 +1144,107 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             if (input.val < 0.0)
                 return grounded_math_domain_error(a, head, args, nargs, 1,
                                                   "NonNegativeReal");
+#if CETTA_BUILD_WITH_GMP
+            if (input.is_rational) {
+                bool was_exact = false;
+                Atom *exact = atom_from_rational_square_root(a, head, args, nargs,
+                                                             &input, &was_exact);
+                if (was_exact)
+                    return exact;
+            }
+#endif
             return atom_float(a, sqrt(input.val));
         }
         if (head_id == g_builtin_syms.abs_math) {
-            if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
+            if (args[0]->kind == ATOM_GROUNDED &&
+                args[0]->ground.gkind == GV_INT) {
+                if (args[0]->ground.ival == INT64_MIN) {
+#if CETTA_BUILD_WITH_GMP
+                    mpz_t z;
+                    mpz_init(z);
+                    NumArg min_arg = {
+                        .ival = args[0]->ground.ival,
+                        .bigint = NULL,
+                        .is_float = false,
+                        .is_bigint = false,
+                    };
+                    num_arg_to_mpz(&min_arg, z);
+                    mpz_abs(z, z);
+                    Atom *out = atom_from_mpz(a, z);
+                    mpz_clear(z);
+                    return out;
+#else
+                    return atom_bigint(a, "9223372036854775808");
+#endif
+                }
                 return atom_int(a, llabs(args[0]->ground.ival));
+            }
+            if (args[0]->kind == ATOM_GROUNDED &&
+                args[0]->ground.gkind == GV_BIGINT) {
+#if CETTA_BUILD_WITH_GMP
+                mpz_t z;
+                mpz_init(z);
+                atom_bigint_get_mpz(args[0], z);
+                mpz_abs(z, z);
+                Atom *out = atom_from_mpz(a, z);
+                mpz_clear(z);
+                return out;
+#else
+                const char *text = atom_bigint_cstr(args[0]);
+                return atom_bigint(a, text && text[0] == '-' ? text + 1 : text);
+#endif
+            }
+#if CETTA_BUILD_WITH_GMP
+            if (input.is_rational)
+                return atom_from_rational_abs(a, head, args, nargs, &input);
+#endif
             return atom_float(a, fabs(input.val));
         }
         if (head_id == g_builtin_syms.trunc_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
+            if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
+                return atom_bigint(a, atom_bigint_cstr(args[0]));
+#if CETTA_BUILD_WITH_GMP
+            if (input.is_rational)
+                return atom_from_rational_integer_part(a, &input,
+                                                       g_builtin_syms.trunc_math);
+#endif
             return atom_float(a, trunc(input.val));
         }
         if (head_id == g_builtin_syms.ceil_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
+            if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
+                return atom_bigint(a, atom_bigint_cstr(args[0]));
+#if CETTA_BUILD_WITH_GMP
+            if (input.is_rational)
+                return atom_from_rational_integer_part(a, &input,
+                                                       g_builtin_syms.ceil_math);
+#endif
             return atom_float(a, ceil(input.val));
         }
         if (head_id == g_builtin_syms.floor_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
+            if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
+                return atom_bigint(a, atom_bigint_cstr(args[0]));
+#if CETTA_BUILD_WITH_GMP
+            if (input.is_rational)
+                return atom_from_rational_integer_part(a, &input,
+                                                       g_builtin_syms.floor_math);
+#endif
             return atom_float(a, floor(input.val));
         }
         if (head_id == g_builtin_syms.round_math) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
+            if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
+                return atom_bigint(a, atom_bigint_cstr(args[0]));
+#if CETTA_BUILD_WITH_GMP
+            if (input.is_rational)
+                return atom_from_rational_round(a, &input);
+#endif
             return atom_float(a, round(input.val));
         }
         if (head_id == g_builtin_syms.sin_math)
@@ -852,14 +1282,52 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (args[0]->expr.len == 0)
             return grounded_string_error(a, head, args, nargs, "Empty expression");
 
-        double acc = want_max ? -INFINITY : INFINITY;
-        for (uint32_t i = 0; i < args[0]->expr.len; i++) {
+        bool has_float = false;
+        bool has_exact_extended = false;
+        for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
             NumArg n;
             if (!get_numeric_arg(args[0]->expr.elems[i], &n))
                 return grounded_expr_message_error(
                     a, head, args, nargs,
                     "Only numbers are allowed in expression: ",
                     args[0]);
+            has_float = has_float || n.is_float;
+            has_exact_extended = has_exact_extended || n.is_bigint || n.is_rational;
+        }
+
+#if CETTA_BUILD_WITH_GMP
+        if (has_exact_extended && !has_float) {
+            mpq_t best_q, cur_q;
+            mpq_inits(best_q, cur_q, NULL);
+            Atom *best_atom = NULL;
+            for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
+                NumArg n;
+                if (!get_numeric_arg(args[0]->expr.elems[i], &n) ||
+                    !num_arg_to_mpq(&n, cur_q)) {
+                    mpq_clears(best_q, cur_q, NULL);
+                    return grounded_expr_message_error(
+                        a, head, args, nargs,
+                        "Only numbers are allowed in expression: ",
+                        args[0]);
+                }
+                if (!best_atom ||
+                    (want_max ? mpq_cmp(cur_q, best_q) > 0
+                              : mpq_cmp(cur_q, best_q) < 0)) {
+                    mpq_set(best_q, cur_q);
+                    best_atom = args[0]->expr.elems[i];
+                }
+            }
+            mpq_clears(best_q, cur_q, NULL);
+            return best_atom;
+        }
+#else
+        (void)has_exact_extended;
+#endif
+
+        double acc = want_max ? -INFINITY : INFINITY;
+        for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
+            NumArg n;
+            (void)get_numeric_arg(args[0]->expr.elems[i], &n);
             acc = want_max ? fmax(acc, n.val) : fmin(acc, n.val);
         }
         return atom_float(a, acc);
@@ -872,7 +1340,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (head_id == g_builtin_syms.size &&
             args[0]->kind == ATOM_GROUNDED &&
             args[0]->ground.gkind == GV_SPACE) {
-            return atom_int(a, (int64_t)space_length((Space *)args[0]->ground.ptr));
+            return atom_int(a, (int64_t)space_length64((Space *)args[0]->ground.ptr));
         }
         if (args[0]->kind == ATOM_GROUNDED) {
             Atom *expected = (head_id == g_builtin_syms.size_atom)
@@ -910,6 +1378,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                                              atom_expression_type(a), args[0]);
             return NULL;
         }
+        if (!cetta_expr_len_fits_u32(args[0]->expr.len))
+            return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                              atom_symbol(a, "ArityTooLarge"));
         Atom **uniq = arena_alloc(a, sizeof(Atom *) * args[0]->expr.len);
         uint32_t table_cap = next_pow2_u32(args[0]->expr.len > 0
             ? args[0]->expr.len * 2
@@ -917,8 +1388,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         uint32_t *ground_slots = arena_alloc(a, sizeof(uint32_t) * table_cap);
         for (uint32_t i = 0; i < table_cap; i++)
             ground_slots[i] = UINT32_MAX;
-        uint32_t out_len = 0;
-        for (uint32_t i = 0; i < args[0]->expr.len; i++) {
+        CettaExprLen out_len = 0;
+        for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
             Atom *candidate = args[0]->expr.elems[i];
             bool seen = false;
             bool candidate_has_vars = atom_has_vars(candidate);
@@ -937,12 +1408,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                 }
                 if (!seen) {
                     uniq[out_len] = candidate;
-                    ground_slots[slot] = out_len;
+                    ground_slots[slot] = (uint32_t)out_len;
                     out_len++;
                 }
                 continue;
             }
-            for (uint32_t j = 0; j < out_len; j++) {
+            for (CettaExprIndex j = 0; j < out_len; j++) {
                 if (atom_alpha_eq(uniq[j], candidate)) {
                     seen = true;
                     break;
@@ -967,12 +1438,13 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         Atom **out = arena_alloc(a, sizeof(Atom *) * args[0]->expr.len);
         bool *rhs_used = arena_alloc(a, sizeof(bool) * args[1]->expr.len);
         memset(rhs_used, 0, sizeof(bool) * args[1]->expr.len);
-        uint32_t out_len = 0;
-        for (uint32_t i = 0; i < args[0]->expr.len; i++) {
+        CettaExprLen out_len = 0;
+        for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
             Atom *candidate = args[0]->expr.elems[i];
-            int match_idx = find_unused_alpha_equal_atom(args[1]->expr.elems, rhs_used,
-                                                         args[1]->expr.len, candidate);
-            if (match_idx >= 0) {
+            CettaExprIndex match_idx = 0;
+            if (find_unused_alpha_equal_atom(args[1]->expr.elems, rhs_used,
+                                             args[1]->expr.len, candidate,
+                                             &match_idx)) {
                 rhs_used[match_idx] = true;
                 out[out_len++] = candidate;
             }
@@ -993,12 +1465,13 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         Atom **out = arena_alloc(a, sizeof(Atom *) * args[0]->expr.len);
         bool *rhs_used = arena_alloc(a, sizeof(bool) * args[1]->expr.len);
         memset(rhs_used, 0, sizeof(bool) * args[1]->expr.len);
-        uint32_t out_len = 0;
-        for (uint32_t i = 0; i < args[0]->expr.len; i++) {
+        CettaExprLen out_len = 0;
+        for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
             Atom *candidate = args[0]->expr.elems[i];
-            int match_idx = find_unused_alpha_equal_atom(args[1]->expr.elems, rhs_used,
-                                                         args[1]->expr.len, candidate);
-            if (match_idx >= 0) {
+            CettaExprIndex match_idx = 0;
+            if (find_unused_alpha_equal_atom(args[1]->expr.elems, rhs_used,
+                                             args[1]->expr.len, candidate,
+                                             &match_idx)) {
                 rhs_used[match_idx] = true;
                 continue;
             }
@@ -1053,8 +1526,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                      head_id == g_builtin_syms.op_mul || head_id == g_builtin_syms.op_div ||
                      head_id == g_builtin_syms.op_mod || head_id == g_builtin_syms.op_lt ||
                      head_id == g_builtin_syms.op_gt || head_id == g_builtin_syms.op_le ||
-                     head_id == g_builtin_syms.op_ge);
-    NumArg na = {0, false}, nb = {0, false};
+                     head_id == g_builtin_syms.op_ge ||
+                     head_id == g_builtin_syms.numeric_eq);
+    NumArg na = {0}, nb = {0};
     bool na_ok = get_numeric_arg(args[0], &na);
     bool nb_ok = get_numeric_arg(args[1], &nb);
     if (is_arith && (!na_ok || !nb_ok)) {
@@ -1073,7 +1547,40 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (!na_ok || !nb_ok)
         return NULL;
     /* Both args are numeric from here */
+    if (head_id == g_builtin_syms.numeric_eq) {
+        if (na.is_float || nb.is_float)
+            return na.val == nb.val ? atom_true(a) : atom_false(a);
+#if CETTA_BUILD_WITH_GMP
+        if (na.is_bigint || nb.is_bigint ||
+            na.is_rational || nb.is_rational) {
+            mpq_t ai, bi;
+            mpq_inits(ai, bi, NULL);
+            bool ok = num_arg_to_mpq(&na, ai) && num_arg_to_mpq(&nb, bi);
+            bool eq = ok && mpq_cmp(ai, bi) == 0;
+            mpq_clears(ai, bi, NULL);
+            return eq ? atom_true(a) : atom_false(a);
+        }
+#else
+        if (na.is_bigint || nb.is_bigint || na.is_rational || nb.is_rational)
+            return atom_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+#endif
+        return na.ival == nb.ival ? atom_true(a) : atom_false(a);
+    }
+    if (head_id == g_builtin_syms.op_mod &&
+        (na.is_rational || nb.is_rational)) {
+        int bad_idx = na.is_rational ? 1 : 2;
+        return grounded_bad_arg_type(a, head, args, nargs,
+                                     bad_idx, atom_symbol(a, "Number"),
+                                     args[bad_idx - 1]);
+    }
     bool fl = na.is_float || nb.is_float;
+    bool prefer_rationals = eval_current_prefer_rationals();
+
+    if (!fl && (na.is_bigint || nb.is_bigint ||
+                na.is_rational || nb.is_rational)) {
+        return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
+                                       prefer_rationals);
+    }
 
     if (!fl) {
         int64_t ai = na.ival;
@@ -1083,33 +1590,41 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             __int128 sum = (__int128)ai + (__int128)bi;
             if (sum >= INT64_MIN && sum <= INT64_MAX)
                 return atom_int(a, (int64_t)sum);
-            return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                              atom_symbol(a, "IntegerOverflow"));
+            return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
+                                           prefer_rationals);
         }
         if (head_id == g_builtin_syms.op_minus) {
             __int128 diff = (__int128)ai - (__int128)bi;
             if (diff >= INT64_MIN && diff <= INT64_MAX)
                 return atom_int(a, (int64_t)diff);
-            return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                              atom_symbol(a, "IntegerOverflow"));
+            return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
+                                           prefer_rationals);
         }
         if (head_id == g_builtin_syms.op_mul) {
             __int128 prod = (__int128)ai * (__int128)bi;
             if (prod >= INT64_MIN && prod <= INT64_MAX)
                 return atom_int(a, (int64_t)prod);
-            return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                              atom_symbol(a, "IntegerOverflow"));
+            return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
+                                           prefer_rationals);
         }
         if (head_id == g_builtin_syms.op_div) {
             if (bi == 0)
                 return grounded_division_by_zero(a, head, args, nargs);
+            if (ai == INT64_MIN && bi == -1)
+                return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
+                                               prefer_rationals);
             if (ai % bi == 0)
                 return atom_int(a, ai / bi);
+            if (prefer_rationals)
+                return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
+                                               prefer_rationals);
             return atom_float(a, (double)ai / (double)bi);
         }
         if (head_id == g_builtin_syms.op_mod) {
             if (bi == 0)
                 return grounded_division_by_zero(a, head, args, nargs);
+            if (ai == INT64_MIN && bi == -1)
+                return atom_int(a, 0);
             return atom_int(a, ai % bi);
         }
         if (head_id == g_builtin_syms.op_lt)  return ai < bi  ? atom_true(a) : atom_false(a);

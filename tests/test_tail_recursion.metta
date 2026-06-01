@@ -24,6 +24,6 @@
    (if (>= $idx (size-atom $expr)) scanned
      (let $tok (index-atom $expr $idx)
        (scan-expr $expr (+ $idx 1)))))
-; Note: scan-expr with 26 elements needs equation-dispatch TCO (handle_dispatch
-; extraction). Currently reduced to 10 elements pending full TCO restoration.
-!(assertEqual (scan-expr (a b c) 0) scanned)
+!(assertEqual
+  (scan-expr (a b c d e f g h i j k l m n o p q r s t u v w x y z) 0)
+  scanned)

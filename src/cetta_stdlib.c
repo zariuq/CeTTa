@@ -23,6 +23,8 @@
      0x05 FLOAT   + double LE
      0x06 BOOL    + uint8
      0x07 STRING  + uint16 string offset
+     0x08 BIGINT  + uint16 canonical decimal string offset
+     0x09 RATIONAL + uint16 canonical num/den string offset
    ──────────────────────────────────────────────────────────────────── */
 
 #define BLOB_TAG_SYMBOL 0x01
@@ -32,6 +34,8 @@
 #define BLOB_TAG_FLOAT  0x05
 #define BLOB_TAG_BOOL   0x06
 #define BLOB_TAG_STRING 0x07
+#define BLOB_TAG_BIGINT 0x08
+#define BLOB_TAG_RATIONAL 0x09
 
 /* ══════════════════════════════════════════════════════════════════════
    SERIALIZER  (--compile-stdlib)
@@ -49,20 +53,32 @@ static void strtab_init(StringTable *st) {
     st->len = 0; st->cap = 0; st->total_bytes = 0;
 }
 
-static uint16_t strtab_add(StringTable *st, const char *name) {
+static bool strtab_add(StringTable *st, const char *name, uint16_t *out_off) {
     for (uint32_t i = 0; i < st->len; i++)
-        if (strcmp(st->names[i], name) == 0) return st->offsets[i];
+        if (strcmp(st->names[i], name) == 0) {
+            if (out_off)
+                *out_off = st->offsets[i];
+            return true;
+        }
     if (st->len >= st->cap) {
         st->cap = st->cap ? st->cap * 2 : 32;
         st->names = cetta_realloc(st->names, sizeof(const char *) * st->cap);
         st->offsets = cetta_realloc(st->offsets, sizeof(uint16_t) * st->cap);
     }
+    if (st->len >= UINT16_MAX)
+        return false;
+    size_t name_bytes = strlen(name) + 1;
+    if (st->total_bytes > UINT16_MAX ||
+        name_bytes > (size_t)(UINT16_MAX - st->total_bytes))
+        return false;
     uint16_t off = (uint16_t)st->total_bytes;
     st->offsets[st->len] = off;
     st->names[st->len] = name;
     st->len++;
-    st->total_bytes += (uint32_t)(strlen(name) + 1);
-    return off;
+    st->total_bytes += (uint32_t)name_bytes;
+    if (out_off)
+        *out_off = off;
+    return true;
 }
 
 static void strtab_free(StringTable *st) {
@@ -72,21 +88,28 @@ static void strtab_free(StringTable *st) {
 }
 
 /* Collect all strings from atom trees */
-static void collect_strings(Atom *atom, StringTable *st) {
+static bool collect_strings(Atom *atom, StringTable *st) {
+    uint16_t ignored = 0;
     switch (atom->kind) {
     case ATOM_SYMBOL:
     case ATOM_VAR:
-        strtab_add(st, atom_name_cstr(atom));
-        break;
+        return strtab_add(st, atom_name_cstr(atom), &ignored);
     case ATOM_GROUNDED:
         if (atom->ground.gkind == GV_STRING)
-            strtab_add(st, atom->ground.sval);
-        break;
+            return strtab_add(st, atom->ground.sval, &ignored);
+        if (atom->ground.gkind == GV_BIGINT)
+            return strtab_add(st, atom_bigint_cstr(atom), &ignored);
+        if (atom->ground.gkind == GV_RATIONAL)
+            return strtab_add(st, atom_rational_cstr(atom), &ignored);
+        return true;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++)
-            collect_strings(atom->expr.elems[i], st);
-        break;
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+            if (!collect_strings(atom->expr.elems[i], st))
+                return false;
+        }
+        return true;
     }
+    return true;
 }
 
 /* Write binary data to a dynamic buffer */
@@ -94,6 +117,77 @@ typedef struct {
     unsigned char *data;
     uint32_t len, cap;
 } ByteBuf;
+
+static void buf_u8(ByteBuf *b, uint8_t v);
+static void buf_u16(ByteBuf *b, uint16_t v);
+static void buf_i64(ByteBuf *b, int64_t v);
+static void buf_f64(ByteBuf *b, double v);
+
+static bool serialize_atom(Atom *atom, StringTable *st, ByteBuf *b) {
+    uint16_t off = 0;
+    switch (atom->kind) {
+    case ATOM_SYMBOL:
+        if (!strtab_add(st, atom_name_cstr(atom), &off))
+            return false;
+        buf_u8(b, BLOB_TAG_SYMBOL);
+        buf_u16(b, off);
+        return true;
+    case ATOM_VAR:
+        if (!strtab_add(st, atom_name_cstr(atom), &off))
+            return false;
+        buf_u8(b, BLOB_TAG_VAR);
+        buf_u16(b, off);
+        return true;
+    case ATOM_GROUNDED:
+        switch (atom->ground.gkind) {
+        case GV_INT:
+            buf_u8(b, BLOB_TAG_INT);
+            buf_i64(b, atom->ground.ival);
+            return true;
+        case GV_FLOAT:
+            buf_u8(b, BLOB_TAG_FLOAT);
+            buf_f64(b, atom->ground.fval);
+            return true;
+        case GV_BOOL:
+            buf_u8(b, BLOB_TAG_BOOL);
+            buf_u8(b, atom->ground.bval ? 1 : 0);
+            return true;
+        case GV_STRING:
+            if (!strtab_add(st, atom->ground.sval, &off))
+                return false;
+            buf_u8(b, BLOB_TAG_STRING);
+            buf_u16(b, off);
+            return true;
+        case GV_BIGINT:
+            if (!strtab_add(st, atom_bigint_cstr(atom), &off))
+                return false;
+            buf_u8(b, BLOB_TAG_BIGINT);
+            buf_u16(b, off);
+            return true;
+        case GV_RATIONAL:
+            if (!strtab_add(st, atom_rational_cstr(atom), &off))
+                return false;
+            buf_u8(b, BLOB_TAG_RATIONAL);
+            buf_u16(b, off);
+            return true;
+        case GV_FOREIGN:
+        default:
+            fprintf(stderr, "stdlib_compile: cannot serialize grounded kind %d\n", atom->ground.gkind);
+            return false;
+        }
+    case ATOM_EXPR:
+        if (!cetta_expr_len_fits_u16(atom->expr.len))
+            return false;
+        break;
+    }
+    buf_u8(b, BLOB_TAG_EXPR);
+    buf_u16(b, (uint16_t)atom->expr.len);
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+        if (!serialize_atom(atom->expr.elems[i], st, b))
+            return false;
+    }
+    return true;
+}
 
 static void buf_init(ByteBuf *b) { b->data = NULL; b->len = 0; b->cap = 0; }
 
@@ -112,37 +206,6 @@ static void buf_u32(ByteBuf *b, uint32_t v) { buf_write(b, &v, 4); }
 static void buf_i64(ByteBuf *b, int64_t v) { buf_write(b, &v, 8); }
 static void buf_f64(ByteBuf *b, double v) { buf_write(b, &v, 8); }
 
-static void serialize_atom(Atom *atom, StringTable *st, ByteBuf *b) {
-    switch (atom->kind) {
-    case ATOM_SYMBOL:
-        buf_u8(b, BLOB_TAG_SYMBOL);
-        buf_u16(b, strtab_add(st, atom_name_cstr(atom)));
-        break;
-    case ATOM_VAR:
-        buf_u8(b, BLOB_TAG_VAR);
-        buf_u16(b, strtab_add(st, atom_name_cstr(atom)));
-        break;
-    case ATOM_GROUNDED:
-        switch (atom->ground.gkind) {
-        case GV_INT:    buf_u8(b, BLOB_TAG_INT);    buf_i64(b, atom->ground.ival); break;
-        case GV_FLOAT:  buf_u8(b, BLOB_TAG_FLOAT);  buf_f64(b, atom->ground.fval); break;
-        case GV_BOOL:   buf_u8(b, BLOB_TAG_BOOL);   buf_u8(b, atom->ground.bval ? 1 : 0); break;
-        case GV_STRING: buf_u8(b, BLOB_TAG_STRING);  buf_u16(b, strtab_add(st, atom->ground.sval)); break;
-        case GV_FOREIGN:
-        default:
-            fprintf(stderr, "stdlib_compile: cannot serialize grounded kind %d\n", atom->ground.gkind);
-            break;
-        }
-        break;
-    case ATOM_EXPR:
-        buf_u8(b, BLOB_TAG_EXPR);
-        buf_u16(b, (uint16_t)atom->expr.len);
-        for (uint32_t i = 0; i < atom->expr.len; i++)
-            serialize_atom(atom->expr.elems[i], st, b);
-        break;
-    }
-}
-
 int stdlib_compile(const char *metta_path, Arena *a, FILE *out) {
     Atom **atoms = NULL;
     int n = parse_metta_file(metta_path, a, &atoms);
@@ -154,20 +217,40 @@ int stdlib_compile(const char *metta_path, Arena *a, FILE *out) {
     /* Build string table */
     StringTable st;
     strtab_init(&st);
-    for (int i = 0; i < n; i++)
-        collect_strings(atoms[i], &st);
+    for (int i = 0; i < n; i++) {
+        if (!collect_strings(atoms[i], &st)) {
+            fprintf(stderr, "stdlib_compile: stdlib blob exceeds 16-bit string table limits\n");
+            free(atoms);
+            strtab_free(&st);
+            return -1;
+        }
+    }
 
     /* Serialize atoms */
     ByteBuf ab;
     buf_init(&ab);
-    for (int i = 0; i < n; i++)
-        serialize_atom(atoms[i], &st, &ab);
+    for (int i = 0; i < n; i++) {
+        if (!serialize_atom(atoms[i], &st, &ab)) {
+            fprintf(stderr, "stdlib_compile: stdlib blob exceeds 16-bit atom format limits\n");
+            free(ab.data);
+            free(atoms);
+            strtab_free(&st);
+            return -1;
+        }
+    }
 
     /* Build complete blob: header + string table + atoms */
     ByteBuf blob;
     buf_init(&blob);
 
     /* Header */
+    if (st.len > UINT16_MAX || n > UINT16_MAX) {
+        fprintf(stderr, "stdlib_compile: stdlib blob exceeds 16-bit header limits\n");
+        free(ab.data);
+        free(atoms);
+        strtab_free(&st);
+        return -1;
+    }
     buf_write(&blob, "CSTD", 4);
     buf_u16(&blob, 0x0001);
     buf_u16(&blob, (uint16_t)st.len);
@@ -323,6 +406,10 @@ static AtomId deserialize_atom_id_scoped(BlobReader *r, TermUniverse *universe,
         return tu_intern_bool(universe, rd_u8(r) != 0);
     case BLOB_TAG_STRING:
         return tu_intern_string(universe, rd_str(r, rd_u16(r)));
+    case BLOB_TAG_BIGINT:
+        return tu_intern_bigint(universe, rd_str(r, rd_u16(r)));
+    case BLOB_TAG_RATIONAL:
+        return tu_intern_rational(universe, rd_str(r, rd_u16(r)));
     case BLOB_TAG_EXPR: {
         uint16_t count = rd_u16(r);
         AtomId *child_ids = cetta_malloc(sizeof(AtomId) * count);
@@ -357,6 +444,17 @@ static Atom *deserialize_atom_scoped(BlobReader *r, Arena *a,
     case BLOB_TAG_FLOAT:  return atom_float(a, rd_f64(r));
     case BLOB_TAG_BOOL:   return atom_bool(a, rd_u8(r) != 0);
     case BLOB_TAG_STRING: return atom_string(a, rd_str(r, rd_u16(r)));
+    case BLOB_TAG_BIGINT: return atom_bigint(a, rd_str(r, rd_u16(r)));
+    case BLOB_TAG_RATIONAL: {
+        const char *text = rd_str(r, rd_u16(r));
+        bool too_large = false;
+        Atom *out = atom_rational_limited(
+            a, text, CETTA_RATIONAL_DEFAULT_MAX_DIGITS, &too_large);
+        if (too_large)
+            return atom_error(a, atom_symbol(a, text),
+                              atom_symbol(a, "RationalTooLarge"));
+        return out;
+    }
     case BLOB_TAG_EXPR: {
         uint16_t count = rd_u16(r);
         Atom **elems = arena_alloc(a, sizeof(Atom *) * count);

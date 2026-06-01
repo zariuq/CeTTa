@@ -176,7 +176,7 @@ static bool display_var_collect_atom(CettaDisplayVarMap *map, Atom *atom) {
         }
         return true;
     case ATOM_EXPR:
-        for (uint32_t i = 0; i < atom->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!display_var_collect_atom(map, atom->expr.elems[i])) return false;
         }
         return true;
@@ -303,6 +303,10 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
             return atom_bool(dst, src->ground.bval);
         case GV_STRING:
             return atom_string(dst, src->ground.sval);
+        case GV_BIGINT:
+            return atom_bigint(dst, atom_bigint_cstr(src));
+        case GV_RATIONAL:
+            return atom_rational(dst, atom_rational_cstr(src));
         case GV_SPACE:
             return atom_space(dst, src->ground.ptr);
         case GV_CAPTURE:
@@ -323,7 +327,7 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
         break;
     case ATOM_EXPR: {
         Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
-        for (uint32_t i = 0; i < src->expr.len; i++) {
+        for (CettaExprIndex i = 0; i < src->expr.len; i++) {
             elems[i] = display_atom_copy(dst, src->expr.elems[i], map,
                                          pretty_namespaces);
         }
@@ -390,7 +394,7 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
     uint64_t size = 0;
     uint8_t *dump = NULL;
     size_t dump_len = 0;
-    uint32_t dump_rows = 0;
+    uint64_t dump_rows = 0;
     int rc = 0;
 
     if (!cetta_mork_bridge_is_available()) {
@@ -463,7 +467,7 @@ static int run_mm2_file_via_mork(const char *filepath, bool count_only,
     uint64_t size = 0;
     uint8_t *dump = NULL;
     size_t dump_len = 0;
-    uint32_t dump_rows = 0;
+    uint64_t dump_rows = 0;
     int rc = 0;
 
     if (!cetta_mork_bridge_is_available()) {
@@ -791,6 +795,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --raw-vars <file.metta>          # print raw internal var epochs\n", out);
     fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mork./runtime. namespace sugar\n", out);
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
+    fputs("       cetta --prefer-rationals <file.metta>  # exact rational division for exact numbers\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
@@ -835,7 +840,7 @@ static const char *find_profile_blocked_surface(CettaLanguageId language_id,
         }
     }
 
-    for (uint32_t i = 1; i < atom->expr.len; i++) {
+    for (CettaExprIndex i = 1; i < atom->expr.len; i++) {
         const char *blocked = find_profile_blocked_surface(language_id, profile,
                                                            atom->expr.elems[i]);
         if (blocked) return blocked;
@@ -1161,6 +1166,7 @@ int main(int argc, char **argv) {
     bool list_profiles = false;
     bool translate_mode = false;
     uint32_t lang_occurrences = 0;
+    bool prefer_rationals_cli = false;
     int fuel_override = -1;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
@@ -1229,6 +1235,10 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--raw-namespaces") == 0) {
             g_display_namespaces_mode = CETTA_DISPLAY_NAMESPACES_RAW;
+            continue;
+        }
+        if (strcmp(argv[i], "--prefer-rationals") == 0) {
+            prefer_rationals_cli = true;
             continue;
         }
         if (strcmp(argv[i], "--fuel") == 0) {
@@ -1552,6 +1562,11 @@ int main(int argc, char **argv) {
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
     if (import_mode_overridden) {
         cetta_eval_session_set_relative_module_policy(&libraries.session, import_mode);
+    }
+    if (prefer_rationals_cli) {
+        cetta_eval_session_record_generic_setting(
+            &libraries.session, "prefer-rationals",
+            CETTA_EVAL_OPTION_VALUE_SYMBOL, "true", 0);
     }
     eval_set_library_context(&libraries);
 

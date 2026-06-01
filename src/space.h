@@ -41,17 +41,18 @@ typedef struct DiscNode {
     struct { int64_t val; struct DiscNode *child; } *ints;
     uint32_t nints, cints;
     /* Leaf data: indices of equations that match this path */
-    uint32_t *leaves;
-    uint32_t nleaves, cleaves;
+    CettaIndex *leaves;
+    CettaIndex nleaves, cleaves;
 } DiscNode;
 
 DiscNode *disc_node_new(void);
 void disc_node_free(DiscNode *n);
-void disc_insert(DiscNode *root, Atom *lhs, uint32_t eq_idx);
+void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx);
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
-                    AtomId atom_id, uint32_t eq_idx);
+                    AtomId atom_id, CettaIndex eq_idx);
 /* Collect all matching equation indices into result array */
-void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, uint32_t *cout);
+void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
+                 CettaIndex *nout, CettaIndex *cout);
 
 #include "space_match_backend.h"
 
@@ -60,8 +61,8 @@ void disc_lookup(DiscNode *root, Atom *query, uint32_t **out, uint32_t *nout, ui
 #define EQ_INDEX_BUCKETS 256
 
 typedef struct {
-    uint32_t *atom_indices; /* indices into the logical atom sequence */
-    uint32_t len, cap;
+    CettaIndex *atom_indices; /* indices into the logical atom sequence */
+    CettaIndex len, cap;
     DiscNode *trie; /* discrimination trie over LHS patterns */
     SubstBucket subst; /* epoch-tagged substitution tree over LHS patterns */
     bool subst_safe; /* all LHS atoms are safe for the subst-tree fast path */
@@ -75,8 +76,8 @@ typedef struct {
 /* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */
 
 typedef struct {
-    uint32_t *atom_indices;  /* indices into the logical atom sequence */
-    uint32_t len, cap;
+    CettaIndex *atom_indices;  /* indices into the logical atom sequence */
+    CettaIndex len, cap;
 } TypeAnnBucket;
 
 typedef struct {
@@ -86,8 +87,8 @@ typedef struct {
 #define EXACT_INDEX_BUCKETS 4096
 
 typedef struct {
-    uint32_t *indices;
-    uint32_t len, cap;
+    CettaIndex *indices;
+    CettaIndex len, cap;
 } ExactAtomBucket;
 
 typedef struct {
@@ -105,13 +106,10 @@ typedef enum {
 
 #define MATCH_TRIE_THRESHOLD 16
 
-typedef uint64_t CettaCount;
-typedef uint64_t CettaIndex;
-
 typedef struct {
     AtomId *atom_ids;
-    uint32_t start;
-    uint32_t len, cap;
+    CettaIndex start;
+    CettaIndex len, cap;
     TermUniverse *universe;
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
@@ -129,8 +127,8 @@ typedef struct Space {
         SpaceNativeStorage native;
         struct {
             AtomId *atom_ids;
-            uint32_t start;
-            uint32_t len, cap;
+            CettaIndex start;
+            CettaIndex len, cap;
             TermUniverse *universe;
             EqIndex eq_idx;
             TypeAnnIndex ty_idx;
@@ -157,6 +155,7 @@ Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_add_atom_id(Space *s, AtomId atom_id);
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
+TermUniverseError space_term_universe_last_error_code(const Space *s);
 void space_linearize(Space *s);
 void space_mark_derived_state_dirty(Space *s);
 void space_discard_native_logical_view(Space *s);
@@ -178,11 +177,12 @@ Atom *space_peek(const Space *s);
 bool space_pop(Space *s, Atom **out);
 bool space_truncate64(Space *s, CettaCount new_len);
 bool space_truncate(Space *s, uint32_t new_len);
-uint32_t space_length(const Space *s);
+bool space_length_u32_checked(const Space *s, uint32_t *out_len);
 static inline uint64_t space_revision(const Space *s) {
     return s ? s->revision : 0;
 }
 bool space_contains_exact(Space *s, Atom *atom);
+CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
 bool space_atom_is_exact_indexable(Atom *atom);
@@ -200,19 +200,19 @@ typedef struct {
 
 typedef struct {
     QueryResult *items;
-    uint32_t len, cap;
+    CettaCount len, cap;
 } QueryResults;
 
 typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
                                    void *ctx);
 
 void query_results_init(QueryResults *qr);
-void query_results_push(QueryResults *qr, Atom *result, Bindings *b);
-void query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
-uint32_t query_equations_visit(Space *s, Atom *query, Arena *a,
+bool query_results_push(QueryResults *qr, Atom *result, Bindings *b);
+bool query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
+CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
+                                 QueryResultVisitor visitor, void *ctx);
+CettaCount query_results_visit(const QueryResults *qr,
                                QueryResultVisitor visitor, void *ctx);
-uint32_t query_results_visit(const QueryResults *qr, QueryResultVisitor visitor,
-                             void *ctx);
 void query_results_free(QueryResults *qr);
 
 /* Find all (= lhs rhs) in space where lhs matches query (bidirectional).
@@ -254,6 +254,7 @@ bool space_remove_atom_id(Space *s, AtomId atom_id);
 /* Return candidate atom indices for a match pattern via discrimination trie.
    For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
    Caller must free(*out). Returns count. */
+CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
 
 /* ── Substitution Tree Query ────────────────────────────────────────────── */
