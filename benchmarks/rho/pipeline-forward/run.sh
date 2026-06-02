@@ -76,8 +76,7 @@ for size in $(sizes); do
     rho="$(printf '%s' "$generated" | cut -f4)"
     printf 'case=%s size=%s\n' "$case_name" "$size"
     for rep in $(seq 1 "$REPEATS"); do
-        time_case "$size" "cetta-lib-rho" "$case_name" "$rep" "$CETTA_BIN" --quiet "$metta"
-        time_case "$size" "cetta-rhocalc-cli" "$case_name" "$rep" \
+        time_case "$size" "cetta-rhocalc-run" "$case_name" "$rep" \
             "$CETTA_BIN" --quiet --lang rhocalc --syntax mrho "$mrho"
         data_dir="$DATA_ROOT/$case_name/$rep"
         mkdir -p "$(dirname "$data_dir")"

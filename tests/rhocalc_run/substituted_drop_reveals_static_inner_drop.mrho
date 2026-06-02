@@ -1,0 +1,9 @@
+; COMM substitutes a quoted process into the outer drop target, so the outer
+; drop fires. The revealed inner literal drop was not itself substitution-
+; matched and must remain inert.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:drop $x))
+  (rho:send
+    (rho:quote rho:nil)
+    (rho:drop (rho:quote (rho:send (rho:quote rho:nil) rho:nil)))))

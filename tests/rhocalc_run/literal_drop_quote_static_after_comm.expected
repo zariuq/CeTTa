@@ -1,0 +1,1 @@
+(rho:drop (rho:quote (rho:send (rho:quote rho:nil) rho:nil)))

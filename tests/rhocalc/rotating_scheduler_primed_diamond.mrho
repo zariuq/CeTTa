@@ -1,0 +1,14 @@
+; A unique seed COMM reveals the H3 diamond after round 1.
+; Canonical and rotating therefore agree at reduction limit 1, diverge at reduction limit 2,
+; and reconverge at reduction limit 3 when the two independent branches meet again.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $seed
+    (rho:drop $seed))
+  (rho:send (rho:quote rho:nil)
+    (rho:par
+      (rho:recv (rho:quote rho:nil) $x (rho:drop $x))
+      (rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $y (rho:drop $y))
+      (rho:send (rho:quote rho:nil)
+        (rho:send (rho:quote rho:nil)
+          (rho:send (rho:quote rho:nil) rho:nil)))
+      (rho:send (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) rho:nil))))

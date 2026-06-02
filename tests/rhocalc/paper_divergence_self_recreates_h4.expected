@@ -1,1 +1,1 @@
-(rho:steps (rho:par (rho:recv (rho:quote rho:nil) $y (rho:par (rho:drop $y) (rho:send (rho:quote rho:nil) (rho:drop $y)))) (rho:send (rho:quote rho:nil) (rho:recv (rho:quote rho:nil) $y (rho:par (rho:drop $y) (rho:send (rho:quote rho:nil) (rho:drop $y)))))))
+[(rho:par (rho:recv (rho:quote rho:nil) $y (rho:par (rho:drop $y) (rho:send (rho:quote rho:nil) (rho:drop $y)))) (rho:send (rho:quote rho:nil) (rho:recv (rho:quote rho:nil) $y (rho:par (rho:drop $y) (rho:send (rho:quote rho:nil) (rho:drop $y))))))]

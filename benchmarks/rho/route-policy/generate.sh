@@ -31,6 +31,7 @@ esac
 mkdir -p "$out_dir"
 name="route_policy_${n}_${policy}"
 metta="$out_dir/$name.metta"
+mrho="$out_dir/$name.mrho"
 rho="$out_dir/$name.rho"
 
 edge_tag() {
@@ -77,8 +78,28 @@ edge_tag() {
     done
     printf ')\n'
     printf '    $payload))\n'
-    printf '  (rho.step $program))\n'
+    printf '  $program)\n'
 } > "$metta"
+
+{
+    printf '(rho:par\n'
+    for i in $(seq 0 $((n - 1))); do
+        tag="$(edge_tag "$i")"
+        if [ "$tag" != "$policy" ]; then
+            continue
+        fi
+        next=$((i + 1))
+        printf '  (rho:recv $c%s $msg (rho:send $c%s (rho:drop $msg)))\n' "$i" "$next"
+    done
+    for i in $(seq 0 $((n - 1))); do
+        tag="$(edge_tag "$i")"
+        if [ "$tag" != "$policy" ]; then
+            continue
+        fi
+        printf '  (rho:send $c%s (rho:send $payload rho:nil))\n' "$i"
+    done
+    printf ')\n'
+} > "$mrho"
 
 first=1
 {
@@ -108,4 +129,4 @@ first=1
     printf '\n'
 } > "$rho"
 
-printf '%s\t%s\t%s\n' "$name" "$metta" "$rho"
+printf '%s\t%s\t%s\t%s\n' "$name" "$metta" "$mrho" "$rho"

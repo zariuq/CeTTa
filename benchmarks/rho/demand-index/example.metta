@@ -28,4 +28,4 @@
      (watch $topic1 $sink2))
     ((fact $topic0 $payload0)
      (fact $topic1 $payload1))))
-  (rho.step $program))
+  $program)

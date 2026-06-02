@@ -1,0 +1,2 @@
+[()]
+[((lts:rho:cost:step (rho:cost:sig-mul alice bob) (rho:cost:signed rho:nil cont)))]

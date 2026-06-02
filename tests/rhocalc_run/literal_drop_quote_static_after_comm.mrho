@@ -1,0 +1,7 @@
+; A literal drop of a quoted process is not executed merely because an
+; unrelated COMM substitution happened around it. Only substituting a matching
+; name into a drop can request execution of the received process.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:drop (rho:quote (rho:send (rho:quote rho:nil) rho:nil))))
+  (rho:send (rho:quote rho:nil) rho:nil))

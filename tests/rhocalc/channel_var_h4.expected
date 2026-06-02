@@ -1,1 +1,1 @@
-(rho:steps (rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $y (rho:drop $y)))
+[(rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $y (rho:drop $y))]

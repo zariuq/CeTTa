@@ -1,0 +1,3 @@
+MeTTa performs a registry-style key lookup, constructs a pure rho client on
+the resolved channel, and the payload-aware parity harness checks the same
+observable output as the direct rholang core program.

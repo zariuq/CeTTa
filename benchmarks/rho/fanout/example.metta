@@ -9,12 +9,14 @@
 (= (fanout-send $chan $msg)
    (rho.send $chan (rho.drop $msg)))
 
-!(rho.step
-  (rho.par
-    (fanout-source $bcast rho.nil)
-    (rho.recv $bcast $msg
-      (rho.par
-        (fanout-send $c0 $msg)
-        (fanout-send $c1 $msg)))
-    (fanout-sink $c0)
-    (fanout-sink $c1)))
+!(let $program
+  (eval
+    (rho.par
+      (fanout-source $bcast rho.nil)
+      (rho.recv $bcast $msg
+        (rho.par
+          (fanout-send $c0 $msg)
+          (fanout-send $c1 $msg)))
+      (fanout-sink $c0)
+      (fanout-sink $c1)))
+  $program)

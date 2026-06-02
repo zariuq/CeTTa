@@ -1,1 +1,1 @@
-(rho:steps (rho:send $x rho:nil))
+[(rho:send $x rho:nil)]
