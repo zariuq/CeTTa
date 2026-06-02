@@ -1,0 +1,3 @@
+(rho:par
+  (rho:send (rho:quote rho:nil) rho:nil)
+  (rho:recv (rho:quote rho:nil) $x (rho:drop $x)))

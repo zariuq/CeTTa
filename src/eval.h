@@ -62,6 +62,7 @@ void result_set_free(ResultSet *rs);
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
+void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
 void eval_release_temporary_spaces(void);
 void eval_set_default_fuel(int fuel);

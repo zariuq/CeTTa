@@ -1,0 +1,2 @@
+for (code <- @"loader") { *code } |
+@"loader"!(@"out"!(@"payload"!(Nil)))

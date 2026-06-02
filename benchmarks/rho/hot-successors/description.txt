@@ -1,0 +1,21 @@
+hot-successors
+
+This benchmark is one rho process family: N receives and N sends all compete
+on the same channel, so the strict-core rho runtime must repeatedly choose
+among many enabled COMM reactions before reaching quiescence.
+
+Files:
+- sizes.tsv: default sizes for this benchmark only.
+- generate.sh SIZE OUT_DIR: writes hot_successors_SIZE.metta,
+  hot_successors_SIZE.mrho, and hot_successors_SIZE.rho.
+- run.sh: runs only hot-successors against CeTTa --lang rhocalc runtime
+  evaluation and f1r3node rholang-cli.
+
+The `.mrho` file is CeTTa's strict-core rho concrete syntax; the `.rho` file
+is the surface rho/Rholang spelling used for cross-engine runs.
+
+CeTTa runtime runs print the residual process after deterministic reduction;
+rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured
+wall time therefore includes asymmetric output-formatting cost. Treat these
+rows as engine end-to-end measurements, not scheduler-to-scheduler
+measurements.

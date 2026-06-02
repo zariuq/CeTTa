@@ -1,16 +1,23 @@
-; Strict-core rho-calculus helper surface.
+; Strict-core rho surface.
 ; Canonical terms use the rho: namespace. Dotted rho. spelling is reader
 ; sugar for the same symbols.
-
-(: rho:step (-> Atom Atom))
-
-(@doc rho:step
-  (@desc "Runs one strict rho-calculus COMM step over a rho:* process and returns the rho:steps result set. The input is elaborated with the same binder discipline as --lang rhocalc/mrho before validation and reduction.")
-  (@params (
-    (@param "Strict-core rho process built from rho:nil, rho:par, rho:send, rho:recv, rho:quote, and rho:drop")))
-  (@return "A rho:steps expression containing all one-step successors"))
-
-(= (rho:step $process)
-   (function
-     (case (__cetta_lib_rho_step $process)
-       (($result (return $result))))))
+;
+; Importing rho only provides constructor-level surface vocabulary for building
+; strict-core rho terms in MeTTa.
+;
+; It does not validate constructor arity or well-formedness at import time:
+; malformed rho constructor shapes remain inert surface syntax here. Structural
+; validation belongs to rhocalc execution and the lts:rho / lts:rho:cost
+; frontiers, not to lib/rho. The dotted rho. reader sugar does not bypass this:
+; malformed dotted constructor forms remain the same inert syntax too.
+;
+; It must not expose evaluator or relation helpers such as:
+;   rho:step
+;   rho:frontier
+;   rho:reduce
+;   rho:eval
+; The dotted rho. reader sugar does not bypass this boundary either: dotted
+; helper names remain plain syntax unless some other library defines them.
+;
+; Program execution belongs to:
+;   cetta --lang rhocalc [--rho-reduction-limit N] [--rho-scheduler NAME] <file>

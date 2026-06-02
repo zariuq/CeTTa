@@ -1,0 +1,15 @@
+# name	fixture
+core-comm	tests/rhocalc/core_comm.mrho
+branching-relation	tests/rhocalc/branching_relation.mrho
+multistep-diamond-setup	tests/rhocalc/multistep_diamond_h3_setup.mrho
+multistep-diamond-path-a	tests/rhocalc/multistep_diamond_h3_path_a.mrho
+multistep-diamond-path-b	tests/rhocalc/multistep_diamond_h3_path_b.mrho
+self-recreation	tests/rhocalc/paper_divergence_self_recreates_h4.mrho
+no-reduction-under-recv	tests/rhocalc/no_reduction_under_recv_puritanical.mrho
+no-reduction-inside-quote	tests/rhocalc/quoted_process_not_reduced_in_name_eq.mrho
+open-name-variable	tests/rhocalc/open_name_variable_roundtrip_h7.mrho
+open-quoted-name	tests/rhocalc/open_quoted_name_roundtrip_h7.mrho
+free-drop-is-stuck	tests/rhocalc/free_drop_is_stuck_h4.mrho
+quiescent-nil	tests/rhocalc_run/quiescent_nil_core.mrho
+stuck-pending-send	tests/rhocalc_run/stuck_pending_send.mrho
+stuck-pending-receive	tests/rhocalc_run/stuck_pending_receive.mrho

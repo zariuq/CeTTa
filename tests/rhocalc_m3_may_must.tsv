@@ -1,0 +1,28 @@
+# name	cetta_syntax	cetta_fixture	expected_output_sets
+# Full terminating normal-form output frontiers for the strict-core rho term.
+# Nondeterministic alternatives are separated by semicolons.
+pipeline-forward-empty	mrho	benchmarks/rho/pipeline-forward/example.mrho	empty
+fanout-empty	mrho	benchmarks/rho/fanout/example.mrho	empty
+hot-successors-two-outputs	mrho	benchmarks/rho/hot-successors/example.mrho	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
+metta-certificate-quorum	metta	benchmarks/rho/certificate-quorum/example.metta	sink0=send(cert0 nil),sink1=send(cert2 nil)
+metta-demand-index	metta	benchmarks/rho/demand-index/example.metta	sink0=send(payload0 nil),sink2=send(payload1 nil);sink1=send(payload0 nil),sink2=send(payload1 nil)
+metta-fanout	metta	benchmarks/rho/fanout/example.metta	empty
+metta-hot-successors	metta	benchmarks/rho/hot-successors/example.metta	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
+metta-indexed-demand	metta	benchmarks/rho/indexed-demand/example.metta	sink0=send(payload0 nil)
+metta-pipeline-forward	metta	benchmarks/rho/pipeline-forward/example.metta	empty
+metta-route-policy	metta	benchmarks/rho/route-policy/example.metta	c1=send(payload nil)
+metta-route-synthesis	metta	benchmarks/rho/route-synthesis/example.metta	c1=nil,c2=nil,c3=nil
+metta-registry-lookup	metta	benchmarks/rho/registry-lookup/example.metta	resolved=send(payload nil)
+metta-conditional-route	metta	benchmarks/rho/conditional-route/example.metta	fast=send(payload nil)
+metta-computed-payload	metta	benchmarks/rho/computed-payload/example.metta	out=send(head send(tail nil))
+metta-iterated-workload	metta	benchmarks/rho/iterated-workload/example.metta	sink0=send(payload0 nil),sink1=send(payload1 nil),sink2=send(payload2 nil)
+metta-private-channel	metta	benchmarks/rho/private-channel/example.metta	out=send(payload nil)
+metta-fresh-extrusion	metta	benchmarks/rho/fresh-extrusion/example.metta	out=drop(fresh0)
+metta-private-session	metta	benchmarks/rho/private-session/example.metta	out=send(payload nil)
+metta-space-registry	metta	benchmarks/rho/space-registry/example.metta	resolved=send(payload nil)
+metta-threshold-quorum	metta	benchmarks/rho/threshold-quorum/example.metta	approved=send(quorum nil)
+metta-reflection-loader	metta	benchmarks/rho/reflection-loader/example.metta	out=send(payload nil)
+metta-finite-replication	metta	benchmarks/rho/finite-replication/example.metta	sink0=send(payload0 nil),sink1=send(payload1 nil),sink2=send(payload2 nil);sink0=send(payload0 nil),sink1=send(payload2 nil),sink2=send(payload1 nil);sink0=send(payload1 nil),sink1=send(payload0 nil),sink2=send(payload2 nil);sink0=send(payload1 nil),sink1=send(payload2 nil),sink2=send(payload0 nil);sink0=send(payload2 nil),sink1=send(payload0 nil),sink2=send(payload1 nil);sink0=send(payload2 nil),sink1=send(payload1 nil),sink2=send(payload0 nil)
+metta-private-no-leak	metta	benchmarks/rho/private-no-leak/example.metta	out=nil
+paper-reflection-name-generation	mrho	tests/rhocalc/paper_reflection_name_generation_h4.mrho	quote(nil)=nil,quote(send(quote(nil) nil))=nil
+paper-input-guarded-replication	mrho	tests/rhocalc/paper_input_guarded_replication_unfold_h4.mrho	quote(nil)=recv(quote(send(quote(nil) nil)) recv(quote(nil) par(drop(y)|send(quote(nil) drop(y)))))

@@ -1,0 +1,7 @@
+# name	contract	depth	rho_fixture	core_fixture
+# First strict-core overlap subset for future cross-implementation work.
+# These fixtures stay within the public rho surface and strict-core semantics,
+# and already have an explicit CeTTa-side equivalence contract.
+basic-comm	bisim	1	tests/rhocalc/pure_surface.rho	tests/rhocalc/core_comm.mrho
+reflection-name-generation	bisim	1	tests/rhocalc/paper_reflection_name_generation_h4.rho	tests/rhocalc/paper_reflection_name_generation_h4.mrho
+input-guarded-unfold	bisim	1	tests/rhocalc/paper_input_guarded_replication_unfold_h4.rho	tests/rhocalc/paper_input_guarded_replication_unfold_h4.mrho

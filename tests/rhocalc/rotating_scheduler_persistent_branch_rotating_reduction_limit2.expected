@@ -1,0 +1,2 @@
+(rho:par (rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $y (rho:par (rho:drop $y) (rho:send (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) (rho:drop $y)))) (rho:send (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) (rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $y (rho:par (rho:drop $y) (rho:send (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) (rho:drop $y))))))
+warning: rhocalc reduction limit exhausted after 2 COMM reductions

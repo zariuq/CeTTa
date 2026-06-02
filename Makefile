@@ -262,8 +262,10 @@ endef
 CETTA_BIN_INVOKE = $(call cetta_exec,./$(BIN))
 ifeq ($(ASAN_REPEATABLE),1)
 CETTA_SCRIPT_RUN_ENV = CETTA_ASAN_REPEATABLE=1 CETTA_BIN="$(abspath $(CETTA_EXEC_WRAPPER))" CETTA_WRAPPED_BIN="$(abspath $(BIN))"
+CETTA_SCRIPT_BIN = $(abspath $(CETTA_EXEC_WRAPPER))
 else
 CETTA_SCRIPT_RUN_ENV = CETTA_BIN="$(abspath $(BIN))"
+CETTA_SCRIPT_BIN = $(abspath $(BIN))
 endif
 GIT_TEST_FIXTURE_ROOT = $(CURDIR)/runtime/git_module_fixture
 GIT_TEST_CACHE_DIR = $(CURDIR)/runtime/test-git-module-cache
@@ -434,6 +436,9 @@ bench-rho-fanout: $(BIN)
 
 bench-rho-hot-frontier: $(BIN)
 	@./benchmarks/rho/hot-frontier/run.sh
+
+bench-rho-hot-successors: $(BIN)
+	@./benchmarks/rho/hot-successors/run.sh
 
 bench-rho-pipeline-forward: $(BIN)
 	@./benchmarks/rho/pipeline-forward/run.sh
@@ -1122,7 +1127,7 @@ test-asan-mork:
 
 test-rhocalc: $(BIN)
 	@pass=0; fail=0; \
-	for f in tests/rhocalc/*.mrho tests/rhocalc/*.rho; do \
+	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
 		[ -f "$$f" ] || continue; \
 		exp="$${f%.*}.expected"; \
 		if [ ! -f "$$exp" ]; then continue; fi; \
@@ -1136,6 +1141,311 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	for f in tests/rhocalc_cost_run/*.mrho tests/rhocalc_cost_run/*.rho; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		if [ ! -f "$$exp" ]; then continue; fi; \
+		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc --profile cost "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	result=$$($(CETTA_BIN_INVOKE) --rho-reduction-limit 4 --lang rhocalc --syntax mrho tests/rhocalc/paper_divergence_self_recreates_h4.mrho 2>&1); \
+	status=$$?; \
+	if [ "$$status" -eq 3 ] && [ "$$result" = "$$(cat tests/rhocalc_run/paper_divergence_self_recreates_reduction_limit.expected)" ]; then \
+		echo "PASS: rhocalc run reduction-limit exhaustion"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc run reduction-limit exhaustion"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	for f in tests/rhocalc/reject_fresh.mrho \
+	         tests/rhocalc/reject_join.mrho \
+	         tests/rhocalc/reject_quoted_payload.rho \
+	         tests/rhocalc/reject_send_continuation.mrho; do \
+		exp="$${f%.*}.expected"; \
+		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc "$$f" 2>&1); \
+		status=$$?; \
+		if [ "$$status" -eq 1 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: rhocalc strict-boundary reject $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc strict-boundary reject $$f"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	for f in tests/rhocalc_cost/reject_dequote.rho; do \
+		exp="$${f%.*}.expected"; \
+		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc --profile cost "$$f" 2>&1); \
+		status=$$?; \
+		if [ "$$status" -eq 1 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: rhocalc cost reject $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc cost reject $$f"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	for f in tests/rhocalc/no_reduction_under_recv_puritanical.mrho \
+	         tests/rhocalc/quoted_process_not_reduced_in_name_eq.mrho \
+	         tests/rhocalc/open_name_variable_roundtrip_h7.mrho \
+	         tests/rhocalc/open_quoted_name_roundtrip_h7.mrho \
+	         tests/rhocalc/free_drop_is_stuck_h4.mrho \
+	         tests/rhocalc/surface_open_name_variable.rho; do \
+		exp="$${f%.*}.expected"; \
+		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc "$$f" 2>&1); \
+		status=$$?; \
+		if [ "$$status" -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: rhocalc quiescent/open-name contract $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc quiescent/open-name contract $$f"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	for f in tests/rhocalc/*.mrho; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		[ -f "$$exp" ] || continue; \
+		first=$$(python3 scripts/extract_first_rhocalc_successor_item.py "$$exp"); \
+		[ -n "$$first" ] || continue; \
+		result=$$($(CETTA_BIN_INVOKE) --rho-reduction-limit 1 --lang rhocalc --syntax mrho "$$f" 2>/dev/null || true); \
+		if [ "$$result" = "$$first" ]; then \
+			echo "PASS: rhocalc canonical single-reduction parity $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc canonical single-reduction parity $$f"; \
+			diff <(printf '%s\n' "$$first") <(printf '%s\n' "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	result=$$($(CETTA_BIN_INVOKE) --rho-reduction-limit 2 --lang rhocalc --syntax mrho tests/rhocalc/rotating_scheduler_persistent_branch.mrho 2>&1); \
+	status=$$?; \
+	if [ "$$status" -eq 3 ] && [ "$$result" = "$$(cat tests/rhocalc/rotating_scheduler_persistent_branch_canonical_reduction_limit2.expected)" ]; then \
+		echo "PASS: rhocalc canonical scheduler witness"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc canonical scheduler witness"; \
+		diff <(cat tests/rhocalc/rotating_scheduler_persistent_branch_canonical_reduction_limit2.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --rho-reduction-limit 2 --rho-scheduler rotating --lang rhocalc --syntax mrho tests/rhocalc/rotating_scheduler_persistent_branch.mrho 2>&1); \
+	status=$$?; \
+	if [ "$$status" -eq 3 ] && [ "$$result" = "$$(cat tests/rhocalc/rotating_scheduler_persistent_branch_rotating_reduction_limit2.expected)" ]; then \
+		echo "PASS: rhocalc rotating scheduler witness"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc rotating scheduler witness"; \
+		diff <(cat tests/rhocalc/rotating_scheduler_persistent_branch_rotating_reduction_limit2.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	while IFS=$$(printf '\t') read -r name syntax depth policy fixture; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_bounded_reachability.py "$(CETTA_SCRIPT_BIN)" "$$syntax" "$$depth" "$$policy" "$$fixture"; then \
+			echo "PASS: rhocalc scheduler reachability $$name"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc scheduler reachability $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_scheduler_membership.tsv; \
+	while IFS=$$(printf '\t') read -r name depth lhs_syntax lhs_fixture rhs_syntax rhs_fixture; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_bounded_relation_equivalence.py "$(CETTA_SCRIPT_BIN)" "$$depth" "$$lhs_syntax" "$$lhs_fixture" "$$rhs_syntax" "$$rhs_fixture"; then \
+			echo "PASS: rhocalc bounded relation equivalence $$name"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc bounded relation equivalence $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_relation_equivalence.tsv; \
+	if ! $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_bounded_relation_equivalence.py "$(CETTA_SCRIPT_BIN)" 1 mrho tests/rhocalc/core_comm.mrho mrho tests/rhocalc/literal_drop_quote_static_after_comm.mrho >/dev/null 2>&1; then \
+		echo "PASS: rhocalc bounded relation inequivalence literal-static-drop"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc bounded relation inequivalence literal-static-drop"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	while IFS=$$(printf '\t') read -r name depth lhs_syntax lhs_fixture rhs_syntax rhs_fixture expect; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_bounded_bisimulation.py "$(CETTA_SCRIPT_BIN)" "$$depth" "$$lhs_syntax" "$$lhs_fixture" "$$rhs_syntax" "$$rhs_fixture" "$$expect"; then \
+			echo "PASS: rhocalc bounded bisimulation $$name"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc bounded bisimulation $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_bisimulation.tsv; \
+	while IFS=$$(printf '\t') read -r name contract depth rho_fixture core_fixture; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		case "$$contract" in \
+			bisim) \
+				if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_bounded_bisimulation.py "$(CETTA_SCRIPT_BIN)" "$$depth" rho "$$rho_fixture" mrho "$$core_fixture" yes; then \
+					echo "PASS: rhocalc M3 overlap $$name"; \
+					pass=$$((pass + 1)); \
+				else \
+					echo "FAIL: rhocalc M3 overlap $$name"; \
+					fail=$$((fail + 1)); \
+				fi ;; \
+			relation) \
+				if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_bounded_relation_equivalence.py "$(CETTA_SCRIPT_BIN)" "$$depth" rho "$$rho_fixture" mrho "$$core_fixture"; then \
+					echo "PASS: rhocalc M3 overlap $$name"; \
+					pass=$$((pass + 1)); \
+				else \
+					echo "FAIL: rhocalc M3 overlap $$name"; \
+					fail=$$((fail + 1)); \
+				fi ;; \
+			*) \
+				echo "FAIL: rhocalc M3 overlap $$name"; \
+				echo "unknown overlap contract: $$contract"; \
+				fail=$$((fail + 1)) ;; \
+		esac; \
+	done < tests/rhocalc_m3_overlap.tsv; \
+	if python3 scripts/rhocalc_m3_rholang_cli_compare_selftest.py; then \
+		echo "PASS: rhocalc M3 rholang-cli parser/oracle selftest"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc M3 rholang-cli parser/oracle selftest"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	while IFS=$$(printf '\t') read -r name cetta_syntax cetta_fixture expected_outputs; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_m3_may_must.py "$(CETTA_SCRIPT_BIN)" "$$cetta_syntax" "$$cetta_fixture" "$$expected_outputs"; then \
+			echo "PASS: rhocalc M3 may/must frontier $$name"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc M3 may/must frontier $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_m3_may_must.tsv; \
+	rholang_cli="$${RHOLANG_CLI:-$$(command -v rholang-cli || true)}"; \
+	if [ -z "$$rholang_cli" ] && [ -x ../f1r3node/target/release/rholang-cli ]; then \
+		rholang_cli=../f1r3node/target/release/rholang-cli; \
+	fi; \
+	if [ -x "$$rholang_cli" ]; then \
+		while IFS=$$(printf '\t') read -r name cetta_syntax cetta_fixture rholang_fixture expected_outputs; do \
+			[ -n "$$name" ] || continue; \
+			case "$$name" in \#*) continue ;; esac; \
+			if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_m3_rholang_cli_compare.py "$(CETTA_SCRIPT_BIN)" "$$rholang_cli" "$$cetta_syntax" "$$cetta_fixture" "$$rholang_fixture" "$$expected_outputs"; then \
+				echo "PASS: rhocalc M3 rholang-cli overlap $$name"; \
+				pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: rhocalc M3 rholang-cli overlap $$name"; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done < tests/rhocalc_m3_rholang_cli.tsv; \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_m3_rholang_cli_compare.py "$(CETTA_SCRIPT_BIN)" "$$rholang_cli" metta benchmarks/rho/route-policy/example.metta benchmarks/rho/route-policy/example.rho 'c1=nil' >/dev/null 2>&1; then \
+			echo "FAIL: rhocalc M3 rholang-cli rejects wrong payload"; \
+			fail=$$((fail + 1)); \
+		else \
+			echo "PASS: rhocalc M3 rholang-cli rejects wrong payload"; \
+			pass=$$((pass + 1)); \
+		fi; \
+	else \
+		echo "SKIP: rhocalc M3 rholang-cli overlap (set RHOLANG_CLI or install rholang-cli)"; \
+	fi; \
+	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta; do \
+		exp="$${f%.metta}.expected"; \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: rhocalc lib/rho surface $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc lib/rho surface $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	while IFS=$$(printf '\t') read -r name fixture; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_tiny_oracle_check.py "$(CETTA_SCRIPT_BIN)" "$$fixture"; then \
+			echo "PASS: rhocalc tiny oracle $$name"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc tiny oracle $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_tiny_oracle.tsv; \
+	mettapedia_root="$${METTAPEDIA_ROOT:-../../lean-projects/mettapedia}"; \
+	if [ -d "$$mettapedia_root" ]; then \
+		while IFS=$$(printf '\t') read -r name fixture expected_count mode expected_file lean_file anchor; do \
+			[ -n "$$name" ] || continue; \
+			case "$$name" in \#*) continue ;; esac; \
+			if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_lean_trace_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_count" "$$mode" "$$expected_file" "$$lean_file" "$$anchor"; then \
+				echo "PASS: rhocalc lean trace bridge $$name"; \
+				pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: rhocalc lean trace bridge $$name"; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done < tests/rhocalc_lean_trace_bridge.tsv; \
+		while IFS=$$(printf '\t') read -r name fixture expected_file lean_file anchor; do \
+			[ -n "$$name" ] || continue; \
+			case "$$name" in \#*) continue ;; esac; \
+			if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_lean_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_file" "$$lean_file" "$$anchor"; then \
+				echo "PASS: rhocalc cost lean bridge $$name"; \
+				pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: rhocalc cost lean bridge $$name"; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done < tests/rhocalc_cost_lean_bridge.tsv; \
+		if python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean; then \
+			echo "PASS: rhocalc lean microcheck"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc lean microcheck"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	else \
+		echo "SKIP: rhocalc lean trace bridge (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
+		echo "SKIP: rhocalc cost lean bridge (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
+		echo "SKIP: rhocalc lean microcheck (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
+	fi; \
+	if python3 -c "from pathlib import Path; import re, sys; lines = Path('lib/rho.metta').read_text().splitlines(); pat = re.compile(r'^\\s*\\((=|:)\\s+\\((rho[.:](step|frontier|reduce|eval))\\b'); sys.exit(1 if any((not line.lstrip().startswith(';')) and pat.search(line) for line in lines) else 0)" >/dev/null; then \
+		echo "PASS: rhocalc lib/rho hygiene"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc lib/rho hygiene"; \
+		python3 -c "from pathlib import Path; import re; lines = Path('lib/rho.metta').read_text().splitlines(); pat = re.compile(r'^\\s*\\((=|:)\\s+\\((rho[.:](step|frontier|reduce|eval))\\b'); [print(f'{i}:{line}') for i, line in enumerate(lines, 1) if (not line.lstrip().startswith(';')) and pat.search(line)]" || true; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if ! rg -n 'rhocalc_one_step|rhocalc_steps_atom|RHO_STEPS|rho:steps' src lib tests scripts >/dev/null; then \
+		echo "PASS: rhocalc old step surface purged"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc old step surface purged"; \
+		rg -n 'rhocalc_one_step|rhocalc_steps_atom|RHO_STEPS|rho:steps' src lib tests scripts || true; \
+		fail=$$((fail + 1)); \
+	fi; \
+	expected_allow_files=$$(printf '%s\n' lib/rho.metta tests/test_rho_lib_hygiene_surface.metta | sort); \
+	actual_allow_files=$$(rg -l 'rho:step\\b|rho:frontier|rho:reduce|rho:eval' lib tests src scripts | sort); \
+	if [ "$$actual_allow_files" = "$$expected_allow_files" ]; then \
+		echo "PASS: rhocalc de-step allow-list surface"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc de-step allow-list surface"; \
+		printf '%s\n' '--- expected files ---'; \
+		printf '%s\n' "$$expected_allow_files"; \
+		printf '%s\n' '--- actual files ---'; \
+		printf '%s\n' "$$actual_allow_files"; \
+		fail=$$((fail + 1)); \
+	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/pure_surface.rho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_to_mrho.expected)" ]; then \
 		echo "PASS: rhocalc translate rho -> mrho"; \
@@ -1236,6 +1546,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-term-universe-store-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-term-universe-backend-add-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-cli
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-rhocalc-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-closed-stream-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-metta-suite
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
@@ -1339,6 +1650,39 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 	else \
 		echo "FAIL: mm2 rejects foreign profiles"; \
 		printf '%s\n' "$$mm2_profile_err"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	rhocalc_profiles=$$($(CETTA_BIN_INVOKE) --lang rhocalc --list-profiles 2>&1); \
+	if printf '%s\n' "$$rhocalc_profiles" | grep -Eq '^strict-core[[:space:]]' && \
+	   printf '%s\n' "$$rhocalc_profiles" | grep -Eq '^cost[[:space:]]'; then \
+		echo "PASS: rhocalc profile inventory"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc profile inventory"; \
+		printf '%s\n' "$$rhocalc_profiles"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	rhocalc_strict=$$($(CETTA_BIN_INVOKE) --lang rhocalc --profile strict-core -e 'rho:nil' 2>&1); \
+	if [ "$$rhocalc_strict" = "rho:nil" ]; then \
+		echo "PASS: rhocalc strict-core profile"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc strict-core profile"; \
+		printf '%s\n' "$$rhocalc_strict"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	rhocalc_cost=$$($(CETTA_BIN_INVOKE) --lang rhocalc --profile cost --syntax rho -e '{for ($$m <- pay) {{0}cont}}alice | {pay!({0}payload)}bob | alice : () | bob : ()' 2>&1); \
+	if [ "$$rhocalc_cost" = "{0}cont" ]; then \
+		echo "PASS: rhocalc cost profile slice"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc cost profile slice"; \
+		printf '%s\n' "$$rhocalc_cost"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	he_lts=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_lts_he_surface.metta 2>&1); \
+	if [ "$$he_lts" = "$$(cat tests/test_lts_he_surface.expected)" ]; then \
+		echo "PASS: he-extended lts:he surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-extended lts:he surface"; \
+		diff <(cat tests/test_lts_he_surface.expected) <(echo "$$he_lts") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
 	for profile in he-compat he-extended he-prime; do \
@@ -2576,11 +2920,28 @@ test-runtime-stats-cli: $(BIN)
 		exit 1; \
 	fi
 
+test-rhocalc-runtime-stats: $(BIN)
+	$(call require_runtime_stats_or_reexec,rhocalc public runtime stats,$@)
+	@result=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --quiet --lang rhocalc tests/rhocalc_run/core_comm_run.mrho 2>&1 >/dev/null); \
+	if printf '%s\n' "$$result" | grep -Fq 'runtime-counter ' && \
+	   ! printf '%s\n' "$$result" | grep -Fq '[ok]'; then \
+		echo "PASS: rhocalc public runtime stats"; \
+	else \
+		echo "FAIL: rhocalc public runtime stats"; \
+		printf '%s\n' "$$result"; \
+		exit 1; \
+	fi
+
 test-help-flags: $(BIN)
 	@help_long=$$($(CETTA_BIN_INVOKE) --help 2>&1); \
 	help_short=$$($(CETTA_BIN_INVOKE) -h 2>&1); \
+	lang_list=$$($(CETTA_BIN_INVOKE) --list-languages 2>&1); \
 	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-reduction-limit <n> <file>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-scheduler <canonical|rotating> <file>' && \
+	   HELP_TEXT="$$help_long" python3 -c "from pathlib import Path; import os, re, sys; text = Path('src/main.c').read_text(); accepted = sorted(set(re.findall(r'strcmp\\(argv\\[i\\],\\s*\\\"(--[^\\\"= ]+)\\\"\\)\\s*==\\s*0', text))); documented = sorted(set(re.findall(r'--[A-Za-z0-9-]+', os.environ['HELP_TEXT']))); sys.exit(0 if accepted == documented else 1)" >/dev/null && \
+	   printf '%s\n' "$$lang_list" | grep -Fq 'Strict-core rho-calculus reducer to quiescence' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --prefer-rationals <file.metta>' && \
 	   [ "$$help_long" = "$$help_short" ]; then \
@@ -2589,6 +2950,8 @@ test-help-flags: $(BIN)
 		echo "FAIL: cli help flags"; \
 		printf '%s\n' '--- --help ---'; \
 		printf '%s\n' "$$help_long"; \
+		printf '%s\n' '--- --list-languages ---'; \
+		printf '%s\n' "$$lang_list"; \
 		printf '%s\n' '--- -h ---'; \
 		printf '%s\n' "$$help_short"; \
 		exit 1; \
@@ -2938,5 +3301,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-hot-successors bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

@@ -1,0 +1,5 @@
+Threshold/quorum construction in MeTTa with pure rho output.
+
+MeTTa counts valid certificates and emits the rho approval signal only when the
+threshold is met. The rho calculus receives a pure constructed term; counting
+remains outside the core calculus.

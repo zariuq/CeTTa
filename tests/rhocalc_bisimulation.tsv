@@ -1,0 +1,16 @@
+# name	depth	lhs_syntax	lhs_fixture	rhs_syntax	rhs_fixture	expect
+pure-surface-vs-core-comm	1	rho	tests/rhocalc/pure_surface.rho	mrho	tests/rhocalc/core_comm.mrho	yes
+surface-reflection-vs-core-reflection	1	rho	tests/rhocalc/paper_reflection_name_generation_h4.rho	mrho	tests/rhocalc/paper_reflection_name_generation_h4.mrho	yes
+surface-input-guarded-vs-core-input-guarded	1	rho	tests/rhocalc/paper_input_guarded_replication_unfold_h4.rho	mrho	tests/rhocalc/paper_input_guarded_replication_unfold_h4.mrho	yes
+surface-rotating-witness-vs-core-rotating-witness	2	rho	tests/rhocalc/rotating_scheduler_persistent_branch.rho	mrho	tests/rhocalc/rotating_scheduler_persistent_branch.mrho	yes
+surface-primed-diamond-vs-core-primed-diamond	3	rho	tests/rhocalc/rotating_scheduler_primed_diamond.rho	mrho	tests/rhocalc/rotating_scheduler_primed_diamond.mrho	yes
+core-comm-vs-quote-drop-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/name_quote_drop.mrho	yes
+scheduler-persistent-limit1-canonical-vs-rotating	1	mrho	tests/rhocalc/rotating_scheduler_persistent_branch_canonical_reduction_limit1_residual.mrho	mrho	tests/rhocalc/rotating_scheduler_persistent_branch_rotating_reduction_limit1_residual.mrho	yes
+scheduler-primed-diamond-limit3-canonical-vs-rotating	2	mrho	tests/rhocalc/rotating_scheduler_primed_diamond_canonical_reduction_limit3_residual.mrho	mrho	tests/rhocalc/rotating_scheduler_primed_diamond_rotating_reduction_limit3_residual.mrho	yes
+core-comm-vs-alpha-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/channel_eq_alpha_h2.mrho	no
+core-comm-vs-par-zero-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/channel_eq_par_zero_h2.mrho	no
+core-comm-vs-par-comm-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/channel_eq_par_comm_h2.mrho	no
+core-comm-vs-par-assoc-name-equivalence	1	mrho	tests/rhocalc/core_comm.mrho	mrho	tests/rhocalc/channel_eq_par_assoc_h2.mrho	no
+diamond-path-a-vs-path-b	2	mrho	tests/rhocalc/multistep_diamond_h3_path_a.mrho	mrho	tests/rhocalc/multistep_diamond_h3_path_b.mrho	no
+scheduler-persistent-limit2-canonical-vs-rotating	2	mrho	tests/rhocalc/rotating_scheduler_persistent_branch_canonical_reduction_limit2_residual.mrho	mrho	tests/rhocalc/rotating_scheduler_persistent_branch_rotating_reduction_limit2_residual.mrho	no
+scheduler-primed-diamond-limit2-canonical-vs-rotating	2	mrho	tests/rhocalc/rotating_scheduler_primed_diamond_canonical_reduction_limit2_residual.mrho	mrho	tests/rhocalc/rotating_scheduler_primed_diamond_rotating_reduction_limit2_residual.mrho	no

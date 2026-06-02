@@ -31,4 +31,4 @@
           ((fact topic0 $topic0 $payload0)
            (fact topic1 $topic1 $payload1))))
         (rho.par $watch-procs $fact-procs))))
-  (rho.step $program))
+  $program)

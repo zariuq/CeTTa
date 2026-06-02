@@ -1,0 +1,341 @@
+CeTTa rhocalc threaded execution design note and CLI contract
+Date: 2026-06-02
+
+Status
+======
+
+This is a design note, not an implementation.  The current CeTTa
+strict-core rhocalc engine is still the sequential reducer in
+src/rhocalc_core.c.  It enumerates the one-step successor frontier, then
+selects one successor with the current scheduler policy:
+
+- canonical: the stable first successor
+- rotating: round-robin over the current frontier
+
+The goal of this note is to prepare the next implementation tranche:
+OS-threaded execution for pure, strict-core --lang rhocalc, without
+changing the calculus and without claiming that any single threaded
+scheduler is the semantic truth.
+
+
+What the Rholang/F1R3node implementations show
+==============================================
+
+The inspected code paths are:
+
+- /home/zar/claude/hyperon/f1r3node/rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
+- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpaceOps.scala
+- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpace.scala
+- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/MultiLock.scala
+- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/TwoStepLock.scala
+- /home/zar/claude/hyperon/f1r3node-rust/rholang/src/rust/interpreter/reduce.rs
+- /home/zar/claude/hyperon/f1r3node-rust/rspace++/src/rspace/rspace.rs
+- /home/zar/claude/hyperon/f1r3node-rust/rspace++/src/rspace/hot_store.rs
+
+Useful observations:
+
+1. Scala Rholang parallelizes term evaluation at the reducer layer.
+
+   Reduce.scala says that Par evaluation is "at the mercy of `Parallel`"
+   and uses parTraverseSafe over top-level terms.  This is the right
+   abstraction boundary: parallelism is an execution policy for independent
+   pieces of a Par, not a new calculus rule.
+
+2. Scala RSpace protects COMM by locking only the relevant channels.
+
+   RSpaceOps.scala uses ConcurrentTwoStepLockF keyed by stable channel
+   hashes.  consume locks the channels it waits on; produce first locks the
+   produced channel, then also locks join-related channels fetched from the
+   store.  This is the main pattern to learn from: serialize rendezvous only
+   at the affected names/channels, not globally.
+
+3. Scala RSpace treats matching as speculative until the locks are held.
+
+   RSpace.scala builds channel-to-indexed-data snapshots for matching,
+   then mutates the store only inside lockedConsume/lockedProduce.  The
+   equivalent CeTTa design should let workers discover possible endpoints
+   freely, but only claim a COMM while holding the relevant channel bucket.
+
+4. Rust Rholang has async parallel structure, but its current store access is
+   coarser.
+
+   f1r3node-rust/rholang/src/rust/interpreter/reduce.rs builds futures and
+   join_all's them for top-level terms, but produce_inner locks the whole
+   RSpace with self.space.try_lock() before calling produce.  This is safe
+   and useful as a first compatibility model, but it should not be the final
+   CeTTa target if we want rho parallelism to scale.
+
+5. Rust rspace++ moved store contents into DashMap-shaped structures, but
+   still has coarse Mutexes around hot store state snapshots/history.
+
+   This is useful for incremental porting: start with simple locks that are
+   obviously correct; narrow the lock granularity after the behavior is
+   nailed down by may/must tests.
+
+6. Existing CeTTa HE hyperpose threading is a useful local precedent, but it
+   is not the rho design.
+
+   src/eval.c already has --hyperpose-threads, pthread workers, thread-local
+   branch resources, and fallback on thread-unsafe branches.  Rho threading is
+   different: the central shared object is the name/channel rendezvous table.
+   Reuse the CLI validation style and worker-pool discipline, not the branch
+   cloning model as-is.
+
+
+Core semantic contract
+======================
+
+Threaded rhocalc execution must implement the same strict-core reduction
+relation as the existing reducer.
+
+Required guarantee:
+
+- Every successful threaded COMM is a legal strict-core COMM step.
+- The printed residual is reachable from the input by Reduces*.
+- No output order or branch choice is promised unless the user explicitly
+  asks for sequential execution.
+
+Non-guarantees in threaded mode:
+
+- No promise that canonical order is preserved.
+- No promise that rotating order is preserved.
+- No promise that a race-sensitive program will choose the same receiver or
+  sender on repeated runs.
+- No promise that all possible branches are sampled during one run.
+
+This is intentional.  The calculus is underdetermined at the scheduler
+level.  A threaded executor is a realization of the relation, not the
+definition of the relation.
+
+
+User responsibility boundary
+============================
+
+Users are responsible for race-sensitive rho programs in threaded mode.
+
+Positive example:
+
+  rho:par(
+    rho:send x p0,
+    rho:recv x y body0,
+    rho:send z p1,
+    rho:recv z w body1
+  )
+
+The x and z communications are independent.  A threaded executor may run
+them on different workers, and the residual should be structurally
+congruent to the sequential residual.
+
+Negative example:
+
+  rho:par(
+    rho:send hot payload,
+    rho:recv hot x body0,
+    rho:recv hot x body1
+  )
+
+Only one receiver can consume the single send.  A threaded run may choose
+body0 or body1.  A user who needs a deterministic result must avoid this
+race, use unique channels, or run with --rho-threads 1.
+
+Positive testing example:
+
+- Use lts:rho to enumerate the complete frontier.
+- Use a may/must contract to state all accepted observable outcomes.
+- Check that each threaded run lands inside that frontier.
+
+Negative testing example:
+
+- Do not compare a threaded result against one canonical golden residual.
+  That rejects legitimate interleavings and teaches the wrong semantics.
+
+
+Proposed CLI contract
+=====================
+
+Existing flags stay unchanged:
+
+  cetta --lang rhocalc --rho-reduction-limit <n> <file>
+  cetta --lang rhocalc --rho-scheduler <canonical|rotating> <file>
+
+New flag:
+
+  cetta --lang rhocalc --rho-threads <n> <file>
+
+Validation:
+
+- Only accepted with --lang rhocalc.
+- Valid integer range: 0..1024, matching the existing
+  --hyperpose-threads discipline.
+- 0 and 1 mean sequential execution and preserve the exact current
+  behavior.
+- n > 1 enables the threaded strict-core executor.
+- The first implementation should reject --profile cost with
+  --rho-threads n>1.  Cost threading should wait for dedicated cost
+  frontier tests.
+
+Scheduler interaction:
+
+- With --rho-threads 0 or 1, --rho-scheduler is exactly the current
+  sequential policy.
+- With --rho-threads n>1, --rho-scheduler must not be advertised as a
+  determinism guarantee.  It may be used only as a local tie-breaker for
+  queue order, fallback, or replay tooling.
+- If deterministic replay is needed later, add explicit trace flags such as
+  --rho-trace-out and --rho-trace-in.  Do not overload --rho-scheduler to
+  mean replay.
+
+Reduction limit:
+
+- --rho-reduction-limit counts successful COMM claims globally.
+- In threaded mode the counter is atomic.
+- Once the limit is reached, workers stop admitting new COMM claims and the
+  engine prints the residual of the current shared state.
+- The residual at limit exhaustion must still be reachable by exactly the
+  reported number of COMM steps.
+
+Exit/output:
+
+- Quiescent threaded execution prints one residual, as the sequential
+  reducer does.
+- A threaded residual is judged by reachability/observations, not literal
+  equality with the canonical scheduler result.
+- Runtime errors must fail closed.  If worker creation, arena ownership, or
+  lock initialization fails, return an error rather than silently falling
+  back to a different semantic mode.
+
+
+Implementation path
+===================
+
+Phase 0: CLI plumbing with no behavior change
+
+- Add RhoRuntimeProfile.threads.
+- Parse --rho-threads.
+- Validate it only with --lang rhocalc.
+- For 0/1, call the current reducer.
+- For n>1, initially return a clear "threaded rhocalc is not implemented"
+  error until Phase 1 lands.
+- Add help-flag and rejection tests.
+
+Phase 1: safe threaded strict-core executor
+
+- Keep the current parser, normalizer, and endpoint matching semantics.
+- Split the input Par into runnable components.
+- Use a fixed pthread worker pool, following the local
+  --hyperpose-threads pattern for bounded worker counts.
+- Maintain a shared channel table keyed by the same normalized name keys
+  used by rho_collect_successors.
+- Each channel bucket stores pending sends and receives.
+- Each bucket has a mutex.  Join-style multi-channel support is not part of
+  strict-core rhocalc, but the design should keep sorted multi-key locking
+  available for future profiles.
+- A worker publishes an endpoint, tries to claim a matching opposite
+  endpoint while holding that channel bucket, and enqueues the residual body
+  after a successful COMM.
+- Claiming a redex must remove exactly the consumed endpoints, unless a
+  future profile explicitly adds persistence.
+
+Phase 1 should prioritize correctness over fine-grained performance.  A
+global arena/allocation mutex is acceptable at first if Atom/Arena
+thread-safety is not yet audited.  The important part is that COMM claims
+and endpoint ownership are correct.
+
+Phase 2: narrow locks and improve scaling
+
+- Replace any whole-engine lock with channel-bucket locks.
+- Keep sorted lock acquisition for any operation touching multiple names.
+- Consider per-worker arenas plus a final materialization/merge step if
+  global allocation becomes a bottleneck.
+- Study libdill/libmill channel rendezvous for the COMM handshake shape.
+- Study C-Thread-Pool for bounded pthread worker loops.
+- Study ck only after the mutex version is correct; lock-free structures are
+  an optimization, not the first proof of life.
+
+Phase 3: replay/tracing
+
+- Add explicit trace output only after the threaded executor is correct.
+- A trace item should identify the normalized channel key and enough
+  endpoint identity to replay a legal COMM sequence.
+- Replay should be a separate mode from ordinary threaded execution.
+
+
+Testing contract
+================
+
+Keep these oracles separate:
+
+1. lts:rho frontier tests
+
+   Primary correctness oracle.  These enumerate all one-step successors with
+   full payload structure.  They prove the may/must frontier that threaded
+   runs must stay inside.
+
+2. rholang-cli parity tests
+
+   External faithfulness oracle.  These compare observations against the
+   reference implementation, but should remain payload-aware and
+   nondeterminism-aware.
+
+3. threaded sampling tests
+
+   Regression oracle for the executor.  Run selected race programs with
+   --rho-threads 2 and --rho-threads 4 repeatedly.  Every result must be
+   accepted by the lts:rho may/must frontier.  For known race fixtures,
+   repeated runs should try to witness more than one branch, but that is a
+   coverage signal, not the proof of correctness.
+
+Required first threaded fixtures:
+
+- independent-two-comms: two disjoint channels, deterministic observation
+- hot-successors: one shared hot channel, scheduler-sensitive observation
+- demand-index: receiver race, accepted may outcomes
+- payload-race: same channel set, different payloads, catches barb-only bugs
+- reduction-limit-threaded: limit stops after exactly n successful claims
+
+
+Open design choices
+===================
+
+1. Shared-state shape
+
+   Conservative first choice: mutex-protected channel buckets plus a global
+   allocation lock.
+
+   More ambitious later choice: per-worker arenas and lock-free queues.
+
+2. Work distribution
+
+   Conservative first choice: fixed worker pool pulling process components
+   and residual tasks from a central queue.
+
+   More ambitious later choice: work-stealing deques once task granularity is
+   well understood.
+
+3. User-facing determinism
+
+   Conservative first choice: deterministic sequential mode remains the
+   replay/debug mode; threaded mode is explicitly nondeterministic.
+
+   More ambitious later choice: trace-in/trace-out replay for threaded
+   executions.
+
+4. Cost profile
+
+   Conservative first choice: reject threaded cost profile.
+
+   More ambitious later choice: add cost-thread tests only after the
+   strict-core threaded executor is stable.
+
+
+Definition of done for the next tranche
+=======================================
+
+The threaded-rho preparation tranche is done when:
+
+- the F1R3node/Rholang concurrency inspection is recorded;
+- the CLI contract is explicit;
+- the first implementation target is strict-core only;
+- users are told that threaded races are their responsibility;
+- lts:rho may/must tests are the primary threaded correctness oracle;
+- no public claim suggests that a particular OS scheduler is the semantics.
