@@ -1,0 +1,5 @@
+Reflection-as-data loader.
+
+A process is transmitted as a name, received, and dropped by the loader. This is
+the small benchmark that proves the payload is executable code, not just an
+opaque token.

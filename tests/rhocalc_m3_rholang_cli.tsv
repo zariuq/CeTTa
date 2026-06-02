@@ -1,6 +1,27 @@
-# name	cetta_syntax	cetta_fixture	rholang_fixture	expected_channels
+# name	cetta_syntax	cetta_fixture	rholang_fixture	expected_output_sets
 # First actual cross-implementation overlap subset against local f1r3node rholang-cli.
-# Contract: both engines expose the same top-level unmatched-send channel set.
+# Contract: each engine exposes one allowed top-level unmatched-send output set.
+# Nondeterministic alternatives are separated by semicolons.
 pipeline-forward-empty	mrho	benchmarks/rho/pipeline-forward/example.mrho	benchmarks/rho/pipeline-forward/example.rho	empty
 fanout-empty	mrho	benchmarks/rho/fanout/example.mrho	benchmarks/rho/fanout/example.rho	empty
-hot-successors-two-outputs	mrho	benchmarks/rho/hot-successors/example.mrho	benchmarks/rho/hot-successors/example.rho	out0,out1
+hot-successors-two-outputs	mrho	benchmarks/rho/hot-successors/example.mrho	benchmarks/rho/hot-successors/example.rho	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
+metta-certificate-quorum	metta	benchmarks/rho/certificate-quorum/example.metta	benchmarks/rho/certificate-quorum/example.rho	sink0=send(cert0 nil),sink1=send(cert2 nil)
+metta-demand-index	metta	benchmarks/rho/demand-index/example.metta	benchmarks/rho/demand-index/example.rho	sink0=send(payload0 nil),sink2=send(payload1 nil);sink1=send(payload0 nil),sink2=send(payload1 nil)
+metta-fanout	metta	benchmarks/rho/fanout/example.metta	benchmarks/rho/fanout/example.rho	empty
+metta-hot-successors	metta	benchmarks/rho/hot-successors/example.metta	benchmarks/rho/hot-successors/example.rho	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
+metta-indexed-demand	metta	benchmarks/rho/indexed-demand/example.metta	benchmarks/rho/indexed-demand/example.rho	sink0=send(payload0 nil)
+metta-pipeline-forward	metta	benchmarks/rho/pipeline-forward/example.metta	benchmarks/rho/pipeline-forward/example.rho	empty
+metta-route-policy	metta	benchmarks/rho/route-policy/example.metta	benchmarks/rho/route-policy/example.rho	c1=send(payload nil)
+metta-route-synthesis	metta	benchmarks/rho/route-synthesis/example.metta	benchmarks/rho/route-synthesis/example.rho	c1=nil,c2=nil,c3=nil
+metta-registry-lookup	metta	benchmarks/rho/registry-lookup/example.metta	benchmarks/rho/registry-lookup/example.rho	resolved=send(payload nil)
+metta-conditional-route	metta	benchmarks/rho/conditional-route/example.metta	benchmarks/rho/conditional-route/example.rho	fast=send(payload nil)
+metta-computed-payload	metta	benchmarks/rho/computed-payload/example.metta	benchmarks/rho/computed-payload/example.rho	out=send(head send(tail nil))
+metta-iterated-workload	metta	benchmarks/rho/iterated-workload/example.metta	benchmarks/rho/iterated-workload/example.rho	sink0=send(payload0 nil),sink1=send(payload1 nil),sink2=send(payload2 nil)
+metta-private-channel	metta	benchmarks/rho/private-channel/example.metta	benchmarks/rho/private-channel/example.rho	out=send(payload nil)
+metta-fresh-extrusion	metta	benchmarks/rho/fresh-extrusion/example.metta	benchmarks/rho/fresh-extrusion/example.rho	out=drop(fresh0)
+metta-private-session	metta	benchmarks/rho/private-session/example.metta	benchmarks/rho/private-session/example.rho	out=send(payload nil)
+metta-space-registry	metta	benchmarks/rho/space-registry/example.metta	benchmarks/rho/space-registry/example.rho	resolved=send(payload nil)
+metta-threshold-quorum	metta	benchmarks/rho/threshold-quorum/example.metta	benchmarks/rho/threshold-quorum/example.rho	approved=send(quorum nil)
+metta-reflection-loader	metta	benchmarks/rho/reflection-loader/example.metta	benchmarks/rho/reflection-loader/example.rho	out=send(payload nil)
+metta-finite-replication	metta	benchmarks/rho/finite-replication/example.metta	benchmarks/rho/finite-replication/example.rho	sink0=send(payload0 nil),sink1=send(payload1 nil),sink2=send(payload2 nil);sink0=send(payload0 nil),sink1=send(payload2 nil),sink2=send(payload1 nil);sink0=send(payload1 nil),sink1=send(payload0 nil),sink2=send(payload2 nil);sink0=send(payload1 nil),sink1=send(payload2 nil),sink2=send(payload0 nil);sink0=send(payload2 nil),sink1=send(payload0 nil),sink2=send(payload1 nil);sink0=send(payload2 nil),sink1=send(payload1 nil),sink2=send(payload0 nil)
+metta-private-no-leak	metta	benchmarks/rho/private-no-leak/example.metta	benchmarks/rho/private-no-leak/example.rho	out=nil

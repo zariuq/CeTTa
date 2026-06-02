@@ -2,14 +2,20 @@ import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Reduction
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.MultiStep
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Engine
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge
+import Mettapedia.Languages.ProcessCalculi.RhoCalculus.PresentMoment
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.SemanticSubstitution
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Soundness
+import Mettapedia.GSLT.Meredith.InteractiveGSLT
+import Mettapedia.GSLT.Meredith.InteractiveCostBridge
 
 namespace CeTTa.RhocalcLeanMicrocheck
 
+open Mettapedia.GSLT
 open Mettapedia.OSLF.MeTTaIL.Syntax
 open Mettapedia.OSLF.MeTTaIL.Substitution
+open Mettapedia.GSLT.Meredith.RhoExample
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus
+open Mettapedia.Languages.ProcessCalculi.RhoCalculus.PresentMoment
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Reduction
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Soundness
@@ -24,6 +30,20 @@ def channel : Pattern := .fvar "c"
 def payload : Pattern := emptyBag
 
 def body : Pattern := .apply "PDrop" [.bvar 0]
+
+def costSpentExample : Pattern :=
+  .apply "rho:cost:sig-mul" [.fvar "alice", .fvar "bob"]
+
+def costSpentExampleSecond : Pattern :=
+  .fvar "carol"
+
+def costChannel : Pattern := .fvar "pay"
+
+def costPayloadTerm : Pattern := .fvar "payload"
+
+def costBodyTerm : Pattern := .fvar "cont"
+
+def zeroCostGrade : RhoLedger := 0
 
 def commInput : Pattern :=
   .collection .hashBag
@@ -58,6 +78,49 @@ def commParChain : Pattern :=
 
 def commParChainReduct : Pattern :=
   .collection .hashBag [semanticCommSubst chainSend payload, chainRecv] none
+
+/-- Source-side quote-drop channel normalization example: the output channel is
+`@(*(@0))`, the input channel is `@0`, and the engine should still match them
+the same way the live C runtime does. -/
+def quoteDropChannelNorm : Pattern :=
+  .apply "NQuote" [emptyBag]
+
+def quoteDropChannelAlias : Pattern :=
+  .apply "NQuote" [.apply "PDrop" [quoteDropChannelNorm]]
+
+def quoteDropChannelComm : Pattern :=
+  .collection .hashBag
+    [.apply "POutput" [quoteDropChannelAlias, payload],
+     .apply "PInput" [quoteDropChannelNorm, .lambda none body]]
+    none
+
+def quoteDropChannelCommReduct : Pattern :=
+  .collection .hashBag [semanticCommSubst body payload] none
+
+/-- "Racing senders" frontier example: two sends compete for one receive on the
+same channel, producing two distinct one-step COMM successors. -/
+def branchingPayload : Pattern :=
+  .apply "POutput" [channel, payload]
+
+def branchingNestedSend : Pattern :=
+  .apply "POutput" [channel, branchingPayload]
+
+def branchingBody : Pattern :=
+  .apply "PDrop" [.bvar 0]
+
+def branchingElems : List Pattern :=
+  [.apply "POutput" [channel, payload],
+   branchingNestedSend,
+   .apply "PInput" [channel, .lambda none branchingBody]]
+
+def branchingComm : Pattern :=
+  .collection .hashBag branchingElems none
+
+def branchingReductReceiveEmpty : Pattern :=
+  .collection .hashBag [emptyBag, branchingNestedSend] none
+
+def branchingReductReceiveNested : Pattern :=
+  .collection .hashBag [branchingPayload, branchingPayload] none
 
 theorem commInput_canStep : CanStep commInput := by
   rcases comm_reduces (n := channel) (q := payload) (p := body) with ⟨r, h⟩
@@ -160,6 +223,69 @@ theorem commParChain_engine_sound :
 theorem commParChain_engine_complete_for_expected_reduct :
     commParChainReduct ∈ Engine.reduceStep commParChain 1 := by
   simp [commParChain_engine_reduces_exactly]
+
+theorem quoteDropChannelComm_engine_reduces_exactly :
+    Engine.reduceStep quoteDropChannelComm 1 = [quoteDropChannelCommReduct] := by
+  native_decide
+
+theorem quoteDropChannelComm_engine_complete_for_expected_reduct :
+    quoteDropChannelCommReduct ∈ Engine.reduceStep quoteDropChannelComm 1 := by
+  simp [quoteDropChannelComm_engine_reduces_exactly]
+
+theorem quoteDropChannelComm_presentMoment_contains_expected_reduct :
+    quoteDropChannelCommReduct ∈ Spice.presentMoment quoteDropChannelComm := by
+  exact reduceStep_mem_presentMoment
+    quoteDropChannelComm_engine_complete_for_expected_reduct
+
+theorem branchingComm_engine_has_receiveEmpty :
+    branchingReductReceiveEmpty ∈ Engine.reduceStep branchingComm 1 := by
+  native_decide
+
+theorem branchingComm_engine_has_receiveNested :
+    branchingReductReceiveNested ∈ Engine.reduceStep branchingComm 1 := by
+  native_decide
+
+theorem branchingComm_engine_reduces_exactly :
+    Engine.reduceStep branchingComm 1 =
+      [branchingReductReceiveEmpty, branchingReductReceiveNested] := by
+  native_decide
+
+theorem branchingComm_engine_reduces_two_successors :
+    (Engine.reduceStep branchingComm 1).length = 2 := by
+  native_decide
+
+theorem branchingComm_engine_successors_distinct :
+    branchingReductReceiveEmpty ≠ branchingReductReceiveNested := by
+  native_decide
+
+theorem branchingElems_hasDualRace : hasDualRace branchingElems channel := by
+  refine ⟨?_, ?_⟩
+  · exact ⟨branchingBody, by simp [branchingElems, branchingNestedSend, branchingBody, channel]⟩
+  · refine ⟨payload, branchingPayload, ?_, ?_, ?_⟩
+    · simp [branchingElems, branchingNestedSend, branchingPayload, payload, channel]
+    · simp [branchingElems, branchingNestedSend, branchingPayload, payload, channel]
+    · decide
+
+theorem branchingElems_nodup : branchingElems.Nodup := by
+  decide
+
+theorem branchingComm_semantic_nondeterminism :
+    ∃ r₁ r₂,
+      Nonempty (Reduces branchingComm r₁) ∧
+      Nonempty (Reduces branchingComm r₂) ∧
+      r₁ ≠ r₂ := by
+  simpa [branchingComm, branchingElems] using
+    Mettapedia.Languages.ProcessCalculi.RhoCalculus.PresentMoment.dualRace_nondeterminism
+      (h_race := branchingElems_hasDualRace)
+      (h_nodup := branchingElems_nodup)
+
+theorem branchingComm_presentMoment_contains_receiveEmpty :
+    branchingReductReceiveEmpty ∈ Spice.presentMoment branchingComm := by
+  exact reduceStep_mem_presentMoment branchingComm_engine_has_receiveEmpty
+
+theorem branchingComm_presentMoment_contains_receiveNested :
+    branchingReductReceiveNested ∈ Spice.presentMoment branchingComm := by
+  exact reduceStep_mem_presentMoment branchingComm_engine_has_receiveNested
 
 theorem emptyBag_zero_step : Nonempty (emptyBag ⇝[0] emptyBag) := by
   exact ⟨ReducesN.zero _⟩
@@ -324,6 +450,1030 @@ theorem commInput_semantic_transport_to_representative :
       (semanticCommRepresentative body payload) := by
   simpa [body, payload] using
     semanticCommSubst_transport_to_representative body payload
+
+theorem costSurface_semantic_subst_body_ignores_payload :
+    semanticCommSubst costBodyTerm costPayloadTerm = costBodyTerm := by
+  native_decide
+
+theorem costSpentExample_account_is_two :
+    rhoSpentSyntaxAccount costSpentExample = rhoCostUnits 2 + rhoTemporalUnits 1 := by
+  rw [costSpentExample, rhoSpentSyntaxAccount_sig_mul]
+  simp [rhoSignatureSyntaxWidth]
+
+theorem costSurface_continued_contract_records_intrinsic_spent :
+    (rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }).spent
+      = rhoIntrinsicCommLedger costChannel costPayloadTerm := by
+  simpa using
+    rhoContinuedCutPresentation_spent
+      costChannel costChannel
+      { term := costBodyTerm, grade := zeroCostGrade }
+      { term := costPayloadTerm, grade := zeroCostGrade }
+
+theorem costSurface_continued_contract_spent_shadow :
+    rhoLedgerShadow
+      ((rhoContinuedCutPresentation.contractWrapped
+          costChannel costChannel
+          { term := costBodyTerm, grade := zeroCostGrade }
+          { term := costPayloadTerm, grade := zeroCostGrade }).spent) =
+        rhoIntrinsicCommAccount costChannel costPayloadTerm := by
+  simpa using
+    rhoContinuedCutPresentation_spent_shadow
+      costChannel costChannel
+      { term := costBodyTerm, grade := zeroCostGrade }
+      { term := costPayloadTerm, grade := zeroCostGrade }
+
+theorem costSurface_continued_contract_spent_syntax_eq_shadow :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax
+        ((rhoContinuedCutPresentation.contractWrapped
+            costChannel costChannel
+            { term := costBodyTerm, grade := zeroCostGrade }
+            { term := costPayloadTerm, grade := zeroCostGrade }).spent)) =
+        rhoLedgerShadow
+          ((rhoContinuedCutPresentation.contractWrapped
+              costChannel costChannel
+              { term := costBodyTerm, grade := zeroCostGrade }
+              { term := costPayloadTerm, grade := zeroCostGrade }).spent) := by
+  simpa using
+    rhoContinuedCutPresentation_spent_syntax_eq_shadow
+      costChannel costChannel
+      { term := costBodyTerm, grade := zeroCostGrade }
+      { term := costPayloadTerm, grade := zeroCostGrade }
+
+theorem costSurface_continued_contract_left_term :
+    (rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }).left.term
+      = costBodyTerm := by
+  have hfst :=
+    rhoContinuedCutPresentation.contractWrapped_fst_term
+      costChannel costChannel
+      { term := costBodyTerm, grade := zeroCostGrade }
+      { term := costPayloadTerm, grade := zeroCostGrade }
+  simpa [costSurface_semantic_subst_body_ignores_payload] using hfst
+
+theorem costSurface_continued_contract_spent_and_left_term :
+    let step :=
+      rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }
+    step.spent = rhoIntrinsicCommLedger costChannel costPayloadTerm ∧
+      rhoLedgerShadow step.spent = rhoIntrinsicCommAccount costChannel costPayloadTerm ∧
+      step.left.term = costBodyTerm := by
+  constructor
+  · exact costSurface_continued_contract_records_intrinsic_spent
+  · constructor
+    · exact costSurface_continued_contract_spent_shadow
+    · exact costSurface_continued_contract_left_term
+
+theorem costSurface_continued_contract_preserves_wrapped_structure :
+    let step : Mettapedia.GSLT.Meredith.AccountedCutStep Pattern RhoLedger RhoLedger :=
+      rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }
+    step.left.term = costBodyTerm ∧
+      step.right.term = .apply "PZero" [] ∧
+      step.left.grade = zeroCostGrade ∧
+      step.right.grade = zeroCostGrade ∧
+      RhoLedger.WellFormedSpent step.spent := by
+  simpa [costSurface_semantic_subst_body_ignores_payload, zeroCostGrade] using
+    rhoContinuedCutPresentation_preserves_wrapped_structure
+      costChannel costChannel
+      { term := costBodyTerm, grade := zeroCostGrade }
+      { term := costPayloadTerm, grade := zeroCostGrade }
+
+theorem costSurface_continued_contract_preserves_direct_witness :
+    let step : Mettapedia.GSLT.Meredith.AccountedCutStep Pattern RhoLedger RhoLedger :=
+      rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }
+    let direct := RhoDirectCutWitness.ofAccountedStep step
+    direct.left.body = costBodyTerm ∧
+      direct.left.sig.toSignature = zeroCostGrade.spatial ∧
+    direct.right.body = .apply "PZero" [] ∧
+      direct.right.sig.toSignature = zeroCostGrade.spatial ∧
+      direct.spent.toLedger = step.spent ∧
+      direct.spent.depth = step.spent.temporalList.length := by
+  have hdirect :=
+    rhoContinuedCutPresentation_preserves_direct_witness
+      costChannel costChannel
+      { term := costBodyTerm, grade := zeroCostGrade }
+      { term := costPayloadTerm, grade := zeroCostGrade }
+  have hwrap := costSurface_continued_contract_preserves_wrapped_structure
+  constructor
+  · exact hwrap.1
+  · constructor
+    · calc
+        (RhoDirectCutWitness.ofAccountedStep
+            (rhoContinuedCutPresentation.contractWrapped
+              costChannel costChannel
+              { term := costBodyTerm, grade := zeroCostGrade }
+              { term := costPayloadTerm, grade := zeroCostGrade })).left.sig.toSignature =
+            (rhoContinuedCutPresentation.contractWrapped
+              costChannel costChannel
+              { term := costBodyTerm, grade := zeroCostGrade }
+              { term := costPayloadTerm, grade := zeroCostGrade }).left.grade.spatial := by
+                simp [RhoDirectCutWitness.ofAccountedStep]
+        _ = zeroCostGrade.spatial := by
+              exact congrArg RhoLedger.spatial hwrap.2.2.1
+    · constructor
+      · exact hwrap.2.1
+      · constructor
+        · calc
+            (RhoDirectCutWitness.ofAccountedStep
+                (rhoContinuedCutPresentation.contractWrapped
+                  costChannel costChannel
+                  { term := costBodyTerm, grade := zeroCostGrade }
+                  { term := costPayloadTerm, grade := zeroCostGrade })).right.sig.toSignature =
+                (rhoContinuedCutPresentation.contractWrapped
+                  costChannel costChannel
+                  { term := costBodyTerm, grade := zeroCostGrade }
+                  { term := costPayloadTerm, grade := zeroCostGrade }).right.grade.spatial := by
+                    simp [RhoDirectCutWitness.ofAccountedStep]
+            _ = zeroCostGrade.spatial := by
+                  exact congrArg RhoLedger.spatial hwrap.2.2.2.1
+        · constructor
+          · simpa [costSurface_semantic_subst_body_ignores_payload, zeroCostGrade] using
+              hdirect.2.2.2.2.1
+          · simpa [zeroCostGrade] using hdirect.2.2.2.2.2
+
+theorem costSurface_continued_no_leak :
+    let step : Mettapedia.GSLT.Meredith.AccountedCutStep Pattern RhoLedger RhoLedger :=
+      rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }
+    step.left.grade + step.right.grade = zeroCostGrade ∧
+      step.spent = rhoIntrinsicCommLedger costChannel costPayloadTerm ∧
+      RhoLedger.WellFormedSpent step.spent ∧
+      rhoLedgerShadow step.spent = rhoIntrinsicCommAccount costChannel costPayloadTerm := by
+  simpa [zeroCostGrade] using
+    rhoContinuedCutPresentation_balance_no_leak
+      costChannel costChannel
+      { term := costBodyTerm, grade := zeroCostGrade }
+      { term := costPayloadTerm, grade := zeroCostGrade }
+
+theorem costSurface_continued_totalAction_shadow_eq_totalCost_oneStepPath :
+    rhoLedgerShadow
+      (totalAction rhoIntrinsicLedgerAction
+        (continuedCommPath costChannel costPayloadTerm costBodyTerm)) =
+        totalCost rhoIntrinsicCostMap
+          (continuedCommPath costChannel costPayloadTerm costBodyTerm) := by
+  simpa using
+    continuedCommTotalAction_shadow_eq_totalCost_oneStepPath
+      costChannel costPayloadTerm costBodyTerm
+
+theorem costSurface_continued_totalAction_spentSyntax_eq_totalCost_oneStepPath :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction
+          (continuedCommPath costChannel costPayloadTerm costBodyTerm))) =
+        totalCost rhoIntrinsicCostMap
+          (continuedCommPath costChannel costPayloadTerm costBodyTerm) := by
+  simpa using
+    continuedCommTotalAction_spentSyntax_eq_totalCost_oneStepPath
+      costChannel costPayloadTerm costBodyTerm
+
+theorem costSurface_continued_totalAction_temporalLength_eq_path_length :
+    (totalAction rhoIntrinsicLedgerAction
+      (continuedCommPath costChannel costPayloadTerm costBodyTerm)).temporalList.length =
+        (continuedCommPath costChannel costPayloadTerm costBodyTerm).length := by
+  simpa using
+    continuedCommTotalAction_temporalLength_eq_length
+      costChannel costPayloadTerm costBodyTerm
+
+theorem costSurface_continued_traceAccount_eq_totalCost_oneStepPath :
+    traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+      (continuedCommTrace costChannel costPayloadTerm costBodyTerm) =
+        totalCost rhoIntrinsicCostMap
+          (continuedCommPath costChannel costPayloadTerm costBodyTerm) := by
+  simpa using
+    continuedCommTraceAccount_eq_totalCost_oneStepPath
+      costChannel costPayloadTerm costBodyTerm
+
+theorem costSurface_continued_trace_ticks_is_one :
+    traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+      (continuedCommTrace costChannel costPayloadTerm costBodyTerm) 1 = 1 := by
+  simpa using
+    continuedCommTraceAccount_ticks
+      costChannel costPayloadTerm costBodyTerm
+
+theorem costSurface_continued_trace_ticks_eq_path_length :
+    traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+      (continuedCommTrace costChannel costPayloadTerm costBodyTerm) 1 =
+        (continuedCommPath costChannel costPayloadTerm costBodyTerm).length := by
+  simpa using
+    continuedCommTraceAccount_ticks_eq_length
+      costChannel costPayloadTerm costBodyTerm
+
+theorem costSurface_two_step_traceAccount_eq_totalCost :
+    traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+      continuedTwoStepTrace =
+        totalCost rhoIntrinsicCostMap
+          continuedTwoStepPath := by
+  simpa using continuedTwoStepTraceAccount_eq_totalCost
+
+theorem costSurface_two_step_trace_ticks_is_two :
+    traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+      continuedTwoStepTrace 1 = 2 := by
+  simpa using continuedTwoStepTraceAccount_ticks
+
+theorem costSurface_two_step_trace_ticks_eq_path_length :
+    traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+      continuedTwoStepTrace 1 =
+        continuedTwoStepPath.length := by
+  simpa using continuedTwoStepTraceAccount_ticks_eq_length
+
+theorem costSurface_two_step_totalAction_eq_stepSpentSum :
+    totalAction rhoIntrinsicLedgerAction continuedTwoStepPath =
+      rhoIntrinsicStepLedger continuedTwoStepFirstStep +
+        rhoIntrinsicStepLedger continuedTwoStepSecondStep := by
+  simpa using continuedTwoStepTotalAction_eq_stepSpentSum
+
+theorem costSurface_two_step_totalAction_shadow_eq_totalCost :
+    rhoLedgerShadow (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) =
+      totalCost rhoIntrinsicCostMap continuedTwoStepPath := by
+  simpa using continuedTwoStepTotalAction_shadow_eq_totalCost
+
+theorem costSurface_two_step_totalAction_spentSyntax_eq_totalCost :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath := by
+  simpa using continuedTwoStepTotalAction_spentSyntax_eq_totalCost
+
+theorem costSurface_two_step_totalAction_publicSpentSyntax_width_eq_spatialCard :
+    rhoSpentSyntaxWidth
+      (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath).spatial.card := by
+  simpa using continuedTwoStepTotalAction_publicSpentSyntax_width_eq_spatialCard
+
+theorem costSurface_two_step_totalAction_publicSpentSyntax_ticks_eq_path_length :
+    rhoSpentSyntaxTicks
+      (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+        continuedTwoStepPath.length := by
+  simpa using continuedTwoStepTotalAction_publicSpentSyntax_ticks_eq_length
+
+theorem costSurface_two_step_totalAction_publicSpentSyntax_width_eq_totalCost_zero :
+    rhoSpentSyntaxWidth
+      (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 := by
+  simpa using continuedTwoStepTotalAction_publicSpentSyntax_width_eq_totalCost_zero
+
+theorem costSurface_two_step_totalAction_publicSpentSyntax_ticks_eq_totalCost_one :
+    rhoSpentSyntaxTicks
+      (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 := by
+  simpa using continuedTwoStepTotalAction_publicSpentSyntax_ticks_eq_totalCost_one
+
+theorem costSurface_two_step_totalAction_publicSpentSyntax_modulus :
+    rhoSpentSyntaxWidth
+      (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          continuedTwoStepPath.length := by
+  simpa using continuedTwoStepTotalAction_publicSpentSyntax_modulus
+
+theorem costSurface_two_step_totalAction_shadow_eq_traceAccount :
+    rhoLedgerShadow (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) =
+      traceAccount (S := rhoGSLT) (A := Nat) (k := 2) continuedTwoStepTrace := by
+  simpa using continuedTwoStepTotalAction_shadow_eq_traceAccount
+
+theorem costSurface_two_step_totalAction_temporalLength_eq_path_length :
+    (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath).temporalList.length =
+      continuedTwoStepPath.length := by
+  simpa using continuedTwoStepTotalAction_temporalLength_eq_length
+
+theorem costSurface_two_step_directSpent_toLedger :
+    continuedTwoStepDirectSpent.toLedger =
+      totalAction rhoIntrinsicLedgerAction continuedTwoStepPath := by
+  simpa using continuedTwoStepDirectSpent_toLedger
+
+theorem costSurface_two_step_directSpent_shadow_eq_totalCost :
+    rhoLedgerShadow continuedTwoStepDirectSpent.toLedger =
+      totalCost rhoIntrinsicCostMap continuedTwoStepPath := by
+  simpa using continuedTwoStepDirectSpent_shadow_eq_totalCost
+
+theorem costSurface_two_step_directSpent_depth_eq_path_length :
+    continuedTwoStepDirectSpent.depth = continuedTwoStepPath.length := by
+  simpa using continuedTwoStepDirectSpent_depth_eq_length
+
+theorem costSurface_two_step_directSpent_spentSyntax_eq_totalCost :
+    rhoSpentSyntaxAccount continuedTwoStepDirectSpent.toPattern =
+      totalCost rhoIntrinsicCostMap continuedTwoStepPath := by
+  simpa using continuedTwoStepDirectSpent_spentSyntax_eq_totalCost
+
+theorem costSurface_two_step_directSpent_ticks_eq_path_length :
+    rhoSpentSyntaxTicks continuedTwoStepDirectSpent.toPattern =
+      continuedTwoStepPath.length := by
+  simpa using continuedTwoStepDirectSpent_ticks_eq_length
+
+theorem costSurface_two_step_directSpent_eq_append_steps :
+    continuedTwoStepDirectSpent =
+      RhoDirectStack.append
+        (rhoIntrinsicDirectSpentStack
+          (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))
+        (rhoIntrinsicDirectSpentStack
+          (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)) := by
+  simpa using continuedTwoStepDirectSpent_eq_append_steps
+
+theorem costSurface_two_step_directSpent_eq_traceSteps :
+    continuedTwoStepDirectSpent =
+      RhoDirectStack.append
+        (rhoIntrinsicDirectStepSpent continuedTwoStepFirstStep)
+        (rhoIntrinsicDirectStepSpent continuedTwoStepSecondStep) := by
+  simpa using continuedTwoStepDirectSpent_eq_traceSteps
+
+theorem costSurface_two_step_directSpentTrace_eq_traceSteps :
+    rhoIntrinsicDirectSpentTrace continuedTwoStepPath =
+      RhoDirectStack.append
+        (rhoIntrinsicDirectStepSpent continuedTwoStepFirstStep)
+        (rhoIntrinsicDirectStepSpent continuedTwoStepSecondStep) := by
+  simpa using continuedTwoStepDirectSpentTrace_eq_traceSteps
+
+theorem costSurface_two_step_directSpentTrace_account_eq_publicSpentSyntax :
+    rhoSpentSyntaxAccount
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+        rhoSpentSyntaxAccount
+          (rhoLedgerToSpentSyntax
+            (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) := by
+  simpa using continuedTwoStepDirectSpentTrace_account_eq_publicSpentSyntax
+
+theorem costSurface_two_step_directSpentTrace_width_eq_totalCost_zero :
+    rhoSpentSyntaxWidth (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+      totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 := by
+  simpa using continuedTwoStepDirectSpentTrace_width_eq_totalCost_zero
+
+theorem costSurface_two_step_directSpentTrace_ticks_eq_totalCost_one :
+    rhoSpentSyntaxTicks (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+      totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 := by
+  simpa using continuedTwoStepDirectSpentTrace_ticks_eq_totalCost_one
+
+theorem costSurface_two_step_directSpentTrace_modulus :
+    rhoSpentSyntaxWidth (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+      totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 ∧
+      rhoSpentSyntaxTicks (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 ∧
+      rhoSpentSyntaxTicks (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+        continuedTwoStepPath.length := by
+  simpa using continuedTwoStepDirectSpentTrace_modulus
+
+theorem costSurface_two_step_publicSpentSyntax_no_leak_append :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          rhoSpentSyntaxAccount
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction
+                (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+          rhoSpentSyntaxAccount
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction
+                (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            rhoSpentSyntaxWidth
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+            rhoSpentSyntaxWidth
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            rhoSpentSyntaxTicks
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+            rhoSpentSyntaxTicks
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) := by
+  simpa using continuedTwoStepPublicSpentSyntax_no_leak_append
+
+theorem costSurface_two_step_directSpentTrace_no_leak_append :
+    rhoSpentSyntaxAccount
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+        rhoSpentSyntaxAccount
+          (rhoIntrinsicDirectSpentTrace
+            (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+        rhoSpentSyntaxAccount
+          (rhoIntrinsicDirectSpentTrace
+            (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxWidth
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxWidth
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxTicks
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxTicks
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      RhoLedger.TraceCoherent
+        ((rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toLedger) := by
+  simpa using continuedTwoStepDirectSpentTrace_no_leak_append
+
+theorem costSurface_two_step_publicSpentSyntax_semantics :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            continuedTwoStepPath.length ∧
+      RhoLedger.TraceCoherent
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) := by
+  simpa using continuedTwoStepPublicSpentSyntax_semantics
+
+theorem costSurface_two_step_directSpentTrace_semantics :
+    (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).SurfaceLike ∧
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toLedger =
+        totalAction rhoIntrinsicLedgerAction continuedTwoStepPath ∧
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPublicPattern =
+        rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) ∧
+      RhoLedger.TraceCoherent
+        ((rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toLedger) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxAccount
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxWidth
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxTicks
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          continuedTwoStepPath.length := by
+  simpa using continuedTwoStepDirectSpentTrace_semantics
+
+theorem costSurface_two_step_directSpentTrace_toPublicPattern_eq_publicSpentSyntax :
+    (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPublicPattern =
+      rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) := by
+  simpa using continuedTwoStepDirectSpentTrace_toPublicPattern_eq_publicSpentSyntax
+
+theorem costSurface_two_step_publicSpentSyntax_modulus_reducesN :
+    rhoSpentSyntaxWidth
+      (rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN))) =
+            totalCost rhoIntrinsicCostMap
+              (rhoRewritePathOfReducesN continuedTwoStepReducesN) 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN continuedTwoStepReducesN))) =
+              totalCost rhoIntrinsicCostMap
+                (rhoRewritePathOfReducesN continuedTwoStepReducesN) 1 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN continuedTwoStepReducesN))) =
+              2 := by
+  simpa using continuedTwoStepPublicSpentSyntax_modulus_reducesN
+
+theorem costSurface_two_step_directSpentTrace_modulus_reducesN :
+    rhoSpentSyntaxWidth
+      (rhoIntrinsicDirectSpentTrace
+        (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+          totalCost rhoIntrinsicCostMap
+            (rhoRewritePathOfReducesN continuedTwoStepReducesN) 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            totalCost rhoIntrinsicCostMap
+              (rhoRewritePathOfReducesN continuedTwoStepReducesN) 1 ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            2 := by
+  simpa using continuedTwoStepDirectSpentTrace_modulus_reducesN
+
+theorem costSurface_two_step_first_reducesN_path_eq :
+    rhoRewritePathOfReducesN continuedTwoStepFirstReducesN =
+      oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep := by
+  simpa using continuedTwoStepFirstReducesN_path_eq
+
+theorem costSurface_two_step_second_reducesN_path_eq :
+    rhoRewritePathOfReducesN continuedTwoStepSecondReducesN =
+      oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep := by
+  simpa using continuedTwoStepSecondReducesN_path_eq
+
+theorem costSurface_two_step_publicSpentSyntax_semantics_reducesN :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN))) =
+            totalCost rhoIntrinsicCostMap
+              (rhoRewritePathOfReducesN continuedTwoStepReducesN) ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN continuedTwoStepReducesN))) =
+              totalCost rhoIntrinsicCostMap
+                (rhoRewritePathOfReducesN continuedTwoStepReducesN) 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN continuedTwoStepReducesN))) =
+              totalCost rhoIntrinsicCostMap
+                (rhoRewritePathOfReducesN continuedTwoStepReducesN) 1 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN continuedTwoStepReducesN))) =
+              2 ∧
+      RhoLedger.TraceCoherent
+        (totalAction rhoIntrinsicLedgerAction
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)) := by
+  simpa using continuedTwoStepPublicSpentSyntax_semantics_reducesN
+
+theorem costSurface_two_step_directSpentTrace_semantics_reducesN :
+    (rhoIntrinsicDirectSpentTrace
+      (rhoRewritePathOfReducesN continuedTwoStepReducesN)).SurfaceLike ∧
+      (rhoIntrinsicDirectSpentTrace
+        (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toLedger =
+          totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN continuedTwoStepReducesN) ∧
+      (rhoIntrinsicDirectSpentTrace
+        (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPublicPattern =
+          rhoLedgerToSpentSyntax
+            (totalAction rhoIntrinsicLedgerAction
+              (rhoRewritePathOfReducesN continuedTwoStepReducesN)) ∧
+      RhoLedger.TraceCoherent
+        ((rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toLedger) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            rhoSpentSyntaxAccount
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (rhoRewritePathOfReducesN continuedTwoStepReducesN))) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            totalCost rhoIntrinsicCostMap
+              (rhoRewritePathOfReducesN continuedTwoStepReducesN) ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            rhoSpentSyntaxWidth
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (rhoRewritePathOfReducesN continuedTwoStepReducesN))) ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            totalCost rhoIntrinsicCostMap
+              (rhoRewritePathOfReducesN continuedTwoStepReducesN) 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            rhoSpentSyntaxTicks
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (rhoRewritePathOfReducesN continuedTwoStepReducesN))) ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            totalCost rhoIntrinsicCostMap
+              (rhoRewritePathOfReducesN continuedTwoStepReducesN) 1 ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN continuedTwoStepReducesN)).toPattern =
+            2 := by
+  simpa using continuedTwoStepDirectSpentTrace_semantics_reducesN
+
+theorem costSurface_two_step_publicSpentSyntax_no_leak_reducesN_concat :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN)))) =
+              rhoSpentSyntaxAccount
+                (rhoLedgerToSpentSyntax
+                  (totalAction rhoIntrinsicLedgerAction
+                    (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+              rhoSpentSyntaxAccount
+                (rhoLedgerToSpentSyntax
+                  (totalAction rhoIntrinsicLedgerAction
+                    (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN
+              (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN)))) =
+                rhoSpentSyntaxWidth
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+                rhoSpentSyntaxWidth
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN
+              (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN)))) =
+                rhoSpentSyntaxTicks
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+                rhoSpentSyntaxTicks
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) := by
+  simpa using continuedTwoStepPublicSpentSyntax_no_leak_reducesN_concat
+
+theorem costSurface_two_step_directSpentTrace_no_leak_reducesN_concat :
+    rhoSpentSyntaxAccount
+      (rhoIntrinsicDirectSpentTrace
+        (rhoRewritePathOfReducesN
+          (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toPattern =
+            rhoSpentSyntaxAccount
+              (rhoIntrinsicDirectSpentTrace
+                (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+            rhoSpentSyntaxAccount
+              (rhoIntrinsicDirectSpentTrace
+                (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toPattern =
+              rhoSpentSyntaxWidth
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+              rhoSpentSyntaxWidth
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toPattern =
+              rhoSpentSyntaxTicks
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+              rhoSpentSyntaxTicks
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      RhoLedger.TraceCoherent
+        ((rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toLedger) := by
+  simpa using continuedTwoStepDirectSpentTrace_no_leak_reducesN_concat
+
+theorem costSurface_two_step_publicSpentSyntax_semantics_reducesN_concat :
+    rhoSpentSyntaxAccount
+      (rhoLedgerToSpentSyntax
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          rhoSpentSyntaxAccount
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction
+                (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+          rhoSpentSyntaxAccount
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction
+                (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            rhoSpentSyntaxWidth
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+            rhoSpentSyntaxWidth
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            rhoSpentSyntaxTicks
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+            rhoSpentSyntaxTicks
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            2 ∧
+      RhoLedger.TraceCoherent
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) := by
+  simpa using continuedTwoStepPublicSpentSyntax_semantics_reducesN_concat
+
+theorem costSurface_two_step_directSpentTrace_semantics_reducesN_concat :
+    (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).SurfaceLike ∧
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toLedger =
+        totalAction rhoIntrinsicLedgerAction continuedTwoStepPath ∧
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPublicPattern =
+        rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) ∧
+      RhoLedger.TraceCoherent
+        ((rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toLedger) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxAccount
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxAccount
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxWidth
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxWidth
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxTicks
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxTicks
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          2 := by
+  simpa using continuedTwoStepDirectSpentTrace_semantics_reducesN_concat
+
+theorem costSurface_two_step_semantic_bridge :
+    traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+      continuedTwoStepTrace =
+        totalCost rhoIntrinsicCostMap
+          continuedTwoStepPath ∧
+      rhoLedgerShadow (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath ∧
+      rhoSpentSyntaxAccount
+        (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath).spatial.card ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          continuedTwoStepPath.length ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+          totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 ∧
+      rhoLedgerShadow (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) =
+        traceAccount (S := rhoGSLT) (A := Nat) (k := 2) continuedTwoStepTrace ∧
+      continuedTwoStepDirectSpent.toLedger =
+        totalAction rhoIntrinsicLedgerAction continuedTwoStepPath ∧
+      rhoLedgerShadow continuedTwoStepDirectSpent.toLedger =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath ∧
+      continuedTwoStepDirectSpent.depth = continuedTwoStepPath.length ∧
+      rhoSpentSyntaxAccount continuedTwoStepDirectSpent.toPattern =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath ∧
+      rhoSpentSyntaxTicks continuedTwoStepDirectSpent.toPattern =
+        continuedTwoStepPath.length ∧
+      continuedTwoStepDirectSpent =
+        RhoDirectStack.append
+          (rhoIntrinsicDirectSpentStack
+            (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))
+          (rhoIntrinsicDirectSpentStack
+            (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)) ∧
+      continuedTwoStepDirectSpent =
+        RhoDirectStack.append
+          (rhoIntrinsicDirectStepSpent continuedTwoStepFirstStep)
+          (rhoIntrinsicDirectStepSpent continuedTwoStepSecondStep) ∧
+      rhoIntrinsicDirectSpentTrace continuedTwoStepPath =
+        RhoDirectStack.append
+          (rhoIntrinsicDirectStepSpent continuedTwoStepFirstStep)
+          (rhoIntrinsicDirectStepSpent continuedTwoStepSecondStep) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxAccount
+            (rhoLedgerToSpentSyntax
+              (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) ∧
+      rhoSpentSyntaxWidth (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath 0 ∧
+      rhoSpentSyntaxTicks (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+        totalCost rhoIntrinsicCostMap continuedTwoStepPath 1 ∧
+      rhoSpentSyntaxAccount
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN
+              (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN)))) =
+                rhoSpentSyntaxAccount
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+                rhoSpentSyntaxAccount
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN
+              (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN)))) =
+                rhoSpentSyntaxWidth
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+                rhoSpentSyntaxWidth
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction
+            (rhoRewritePathOfReducesN
+              (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN)))) =
+                rhoSpentSyntaxTicks
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+                rhoSpentSyntaxTicks
+                  (rhoLedgerToSpentSyntax
+                    (totalAction rhoIntrinsicLedgerAction
+                      (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toPattern =
+              rhoSpentSyntaxAccount
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+              rhoSpentSyntaxAccount
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toPattern =
+              rhoSpentSyntaxWidth
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+              rhoSpentSyntaxWidth
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toPattern =
+              rhoSpentSyntaxTicks
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+              rhoSpentSyntaxTicks
+                (rhoIntrinsicDirectSpentTrace
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      RhoLedger.TraceCoherent
+        ((rhoIntrinsicDirectSpentTrace
+          (rhoRewritePathOfReducesN
+            (reducesN_concat continuedTwoStepFirstReducesN continuedTwoStepSecondReducesN))).toLedger) ∧
+      rhoSpentSyntaxAccount
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            rhoSpentSyntaxAccount
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+            rhoSpentSyntaxAccount
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxWidth
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            rhoSpentSyntaxWidth
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+            rhoSpentSyntaxWidth
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            rhoSpentSyntaxTicks
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep))) +
+            rhoSpentSyntaxTicks
+              (rhoLedgerToSpentSyntax
+                (totalAction rhoIntrinsicLedgerAction
+                  (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep))) ∧
+      rhoSpentSyntaxTicks
+        (rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath)) =
+            2 ∧
+      RhoLedger.TraceCoherent
+        (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) ∧
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).SurfaceLike ∧
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toLedger =
+        totalAction rhoIntrinsicLedgerAction continuedTwoStepPath ∧
+      (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPublicPattern =
+        rhoLedgerToSpentSyntax
+          (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath) ∧
+      RhoLedger.TraceCoherent
+        ((rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toLedger) ∧
+      rhoSpentSyntaxAccount
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxAccount
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxAccount
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxWidth
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxWidth
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxWidth
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          rhoSpentSyntaxTicks
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepFirstStep)).toPattern +
+          rhoSpentSyntaxTicks
+            (rhoIntrinsicDirectSpentTrace
+              (oneStepPath (S := rhoGSLT) continuedTwoStepSecondStep)).toPattern ∧
+      rhoSpentSyntaxTicks
+        (rhoIntrinsicDirectSpentTrace continuedTwoStepPath).toPattern =
+          2 ∧
+      (totalAction rhoIntrinsicLedgerAction continuedTwoStepPath).temporalList.length =
+        continuedTwoStepPath.length ∧
+      traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+        continuedTwoStepTrace 1 = 2 ∧
+      traceAccount (S := rhoGSLT) (A := Nat) (k := 2)
+        continuedTwoStepTrace 1 =
+          continuedTwoStepPath.length := by
+  simpa using continuedTwoStepSemanticBridge
+
+theorem commInput_continued_contract_transport_to_representative :
+    ProcResidualEquiv
+      (rhoContinuedCutPresentation.contractWrapped
+          channel channel
+          { term := body, grade := zeroCostGrade }
+          { term := payload, grade := zeroCostGrade }).left.term
+      (semanticCommRepresentative body payload) := by
+  simpa [body, payload] using
+    rhoContinuedCutPresentation_contract_fst_transport_to_representative
+      channel channel
+      { term := body, grade := zeroCostGrade }
+      { term := payload, grade := zeroCostGrade }
 
 theorem commInput_representative_typed :
     HasType TypingContext.empty (semanticCommRepresentative body payload)

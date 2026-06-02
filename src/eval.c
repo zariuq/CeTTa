@@ -12475,6 +12475,390 @@ tail_call: ;
 
 /* ── Top-level evaluation ───────────────────────────────────────────────── */
 
+static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
+                                ResultSet *rs);
+
+static void metta_eval_one_step_chain(Space *s, Arena *a, Atom *atom,
+                                      Atom *to_eval, Atom *var,
+                                      Atom *body, ResultSet *rs) {
+    ResultSet inner;
+    bool emitted = false;
+
+    if (var->kind != ATOM_VAR) {
+        result_set_add(rs, call_signature_error(
+                               a, atom,
+                               "(chain <nested> (: <var> Variable) <templ>)"));
+        return;
+    }
+
+    result_set_init(&inner);
+    metta_eval_one_step(s, a, NULL, to_eval, &inner);
+
+    for (uint32_t i = 0; i < inner.len; i++) {
+        Atom *next = inner.items[i];
+        if (atom_is_empty(next)) {
+            emitted = true;
+            continue;
+        }
+        if (atom_is_error(next)) {
+            result_set_add(rs, next);
+            emitted = true;
+            continue;
+        }
+        if (atom_eq(next, to_eval))
+            continue;
+        Atom **elems = arena_alloc(a, sizeof(Atom *) * 4);
+        elems[0] = atom_symbol_id(a, g_builtin_syms.chain);
+        elems[1] = next;
+        elems[2] = var;
+        elems[3] = body;
+        result_set_add(rs, atom_expr(a, elems, 4));
+        emitted = true;
+    }
+    result_set_free(&inner);
+    if (emitted)
+        return;
+
+    if (atom_is_empty(to_eval)) {
+        result_set_add(rs, atom_empty(a));
+        return;
+    }
+    if (atom_is_error(to_eval)) {
+        result_set_add(rs, to_eval);
+        return;
+    }
+
+    Bindings empty;
+    bindings_init(&empty);
+    BindingsBuilder b;
+    if (!bindings_builder_init(&b, &empty))
+        return;
+    if (!bindings_builder_add_var_fresh(&b, var, to_eval)) {
+        bindings_builder_free(&b);
+        return;
+    }
+    const Bindings *bb = bindings_builder_bindings(&b);
+    Bindings visible;
+    if (!bindings_project_body_visible_env(a, body, bb, &visible)) {
+        bindings_builder_free(&b);
+        return;
+    }
+    Atom *subst = bindings_apply_projected_body_visible(&visible, a, body);
+    result_set_add(rs, subst);
+    bindings_free(&visible);
+    bindings_builder_free(&b);
+}
+
+static void metta_eval_one_step_let(Space *s, Arena *a, Atom *val_expr,
+                                    Atom *pat, Atom *body,
+                                    ResultSet *rs) {
+    ResultSet inner;
+    bool emitted = false;
+
+    result_set_init(&inner);
+    metta_eval_one_step(s, a, NULL, val_expr, &inner);
+
+    for (uint32_t i = 0; i < inner.len; i++) {
+        Atom *next = inner.items[i];
+        if (atom_is_empty(next)) {
+            emitted = true;
+            continue;
+        }
+        if (atom_is_error(next)) {
+            result_set_add(rs, next);
+            emitted = true;
+            continue;
+        }
+        if (atom_eq(next, val_expr))
+            continue;
+        Atom **elems = arena_alloc(a, sizeof(Atom *) * 4);
+        elems[0] = atom_symbol_id(a, g_builtin_syms.let);
+        elems[1] = pat;
+        elems[2] = next;
+        elems[3] = body;
+        result_set_add(rs, atom_expr(a, elems, 4));
+        emitted = true;
+    }
+    result_set_free(&inner);
+    if (emitted)
+        return;
+
+    if (atom_is_empty(val_expr)) {
+        result_set_add(rs, atom_empty(a));
+        return;
+    }
+    if (atom_is_error(val_expr)) {
+        result_set_add(rs, val_expr);
+        return;
+    }
+
+    Bindings empty;
+    bindings_init(&empty);
+    BindingsBuilder b;
+    if (!bindings_builder_init(&b, &empty))
+        return;
+    bool ok = pat->kind == ATOM_VAR
+        ? bindings_builder_add_var_fresh(&b, pat, val_expr)
+        : simple_match_builder(pat, val_expr, &b);
+    if (!ok) {
+        bindings_builder_free(&b);
+        return;
+    }
+    const Bindings *bb = bindings_builder_bindings(&b);
+    Bindings visible;
+    if (!bindings_project_body_visible_env(a, body, bb, &visible)) {
+        bindings_builder_free(&b);
+        return;
+    }
+    Atom *subst = bindings_apply_projected_body_visible(&visible, a, body);
+    result_set_add(rs, subst);
+    bindings_free(&visible);
+    bindings_builder_free(&b);
+}
+
+static void metta_eval_one_step_let_star(Arena *a, Atom *binding_list,
+                                         Atom *body, ResultSet *rs) {
+    if (binding_list->kind != ATOM_EXPR)
+        return;
+    if (binding_list->expr.len == 0) {
+        result_set_add(rs, body);
+        return;
+    }
+
+    Atom *first = binding_list->expr.elems[0];
+    if (first->kind != ATOM_EXPR || first->expr.len != 2)
+        return;
+
+    Atom *rest =
+        atom_expr(a, binding_list->expr.elems + 1, binding_list->expr.len - 1);
+    Atom *inner =
+        atom_expr3(a, atom_symbol_id(a, g_builtin_syms.let_star), rest, body);
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * 4);
+    elems[0] = atom_symbol_id(a, g_builtin_syms.let);
+    elems[1] = first->expr.elems[0];
+    elems[2] = first->expr.elems[1];
+    elems[3] = inner;
+    result_set_add(rs, atom_expr(a, elems, 4));
+}
+
+static void metta_eval_one_step_case(Space *s, Arena *a, Atom *atom,
+                                     Atom *scrutinee, Atom *branches,
+                                     ResultSet *rs) {
+    ResultSet inner;
+    bool emitted = false;
+
+    result_set_init(&inner);
+    metta_eval_one_step(s, a, NULL, scrutinee, &inner);
+
+    for (uint32_t i = 0; i < inner.len; i++) {
+        Atom *next = inner.items[i];
+        if (atom_is_empty(next)) {
+            emitted = true;
+            continue;
+        }
+        if (atom_is_error(next)) {
+            result_set_add(rs, next);
+            emitted = true;
+            continue;
+        }
+        if (atom_eq(next, scrutinee))
+            continue;
+        Atom **elems = arena_alloc(a, sizeof(Atom *) * 3);
+        elems[0] = atom_symbol_id(a, g_builtin_syms.case_text);
+        elems[1] = next;
+        elems[2] = branches;
+        result_set_add(rs, atom_expr(a, elems, 3));
+        emitted = true;
+    }
+    result_set_free(&inner);
+    if (emitted)
+        return;
+
+    if (atom_is_empty(scrutinee)) {
+        result_set_add(rs, atom_empty(a));
+        return;
+    }
+    if (atom_is_error(scrutinee)) {
+        result_set_add(rs, scrutinee);
+        return;
+    }
+
+    if (branches->kind != ATOM_EXPR)
+        return;
+    for (uint32_t i = 0; i < branches->expr.len; i++) {
+        Atom *branch = branches->expr.elems[i];
+        if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
+            BindingsBuilder b;
+            if (!bindings_builder_init(&b, NULL))
+                return;
+            if (simple_match_builder(branch->expr.elems[0], scrutinee, &b)) {
+                const Bindings *bb = bindings_builder_bindings(&b);
+                Atom *next =
+                    bindings_apply_if_vars(bb, a, branch->expr.elems[1]);
+                result_set_add(rs, next);
+                bindings_builder_free(&b);
+                return;
+            }
+            bindings_builder_free(&b);
+        }
+    }
+}
+
+static void metta_eval_one_step_switch(Arena *a, Atom *scrutinee,
+                                       Atom *branches, ResultSet *rs) {
+    if (branches->kind != ATOM_EXPR)
+        return;
+    for (uint32_t i = 0; i < branches->expr.len; i++) {
+        Atom *branch = branches->expr.elems[i];
+        if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
+            BindingsBuilder b;
+            if (!bindings_builder_init(&b, NULL))
+                return;
+            if (simple_match_builder(branch->expr.elems[0], scrutinee, &b)) {
+                const Bindings *bb = bindings_builder_bindings(&b);
+                Atom *next =
+                    bindings_apply_if_vars(bb, a, branch->expr.elems[1]);
+                result_set_add(rs, next);
+                bindings_builder_free(&b);
+                return;
+            }
+            bindings_builder_free(&b);
+        }
+    }
+}
+
+static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
+                                ResultSet *rs) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard stack_guard = {0};
+    if (eval_cancel_check())
+        return;
+    if (!eval_c_stack_guard_enter(1, &stack_guard)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_EVAL);
+        result_set_add(rs, atom_error(a, atom, atom_symbol(a, "StackOverflow")));
+        return;
+    }
+
+    Atom *etype = type ? type : atom_undefined_type(a);
+
+    Atom *bound = registry_lookup_atom(atom);
+    if (bound) {
+        result_set_add(rs, bound);
+        return;
+    }
+    atom = materialize_runtime_token(s, a, atom);
+
+    if (atom_is_empty(atom) || atom_is_error(atom)) {
+        result_set_add(rs, atom);
+        return;
+    }
+
+    Atom *meta = get_meta_type(a, atom);
+    if (atom_is_symbol_id(etype, g_builtin_syms.atom) || atom_eq(etype, meta) ||
+        atom_is_symbol_id(meta, g_builtin_syms.variable)) {
+        result_set_add(rs, atom);
+        return;
+    }
+
+    if (atom->kind == ATOM_SYMBOL || atom->kind == ATOM_GROUNDED ||
+        (atom->kind == ATOM_EXPR && atom->expr.len == 0)) {
+        type_cast_fn(s, a, atom, etype, 1, rs);
+        return;
+    }
+
+    if (atom->kind == ATOM_VAR) {
+        result_set_add(rs, atom);
+        return;
+    }
+
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0) {
+        result_set_add(rs, atom);
+        return;
+    }
+
+    {
+        Atom *head = atom->expr.elems[0];
+        uint32_t nargs = atom->expr.len - 1;
+        SymbolId head_id = head->kind == ATOM_SYMBOL ? head->sym_id : SYMBOL_ID_NONE;
+
+        if (head_id == g_builtin_syms.eval && nargs == 1) {
+            result_set_add(rs, expr_arg(atom, 0));
+            return;
+        }
+        if (head_id == g_builtin_syms.chain && nargs == 3) {
+            metta_eval_one_step_chain(s, a, atom, expr_arg(atom, 0),
+                                      expr_arg(atom, 1), expr_arg(atom, 2), rs);
+            return;
+        }
+        if (head_id == g_builtin_syms.chain && nargs != 3) {
+            result_set_add(rs,
+                           atom_error(a, atom,
+                                      atom_symbol(a, "IncorrectNumberOfArguments")));
+            return;
+        }
+        if (head_id == g_builtin_syms.let_star && nargs == 2) {
+            metta_eval_one_step_let_star(a, expr_arg(atom, 0), expr_arg(atom, 1), rs);
+            return;
+        }
+        if (head_id == g_builtin_syms.let && nargs == 3) {
+            metta_eval_one_step_let(s, a, expr_arg(atom, 1),
+                                    expr_arg(atom, 0), expr_arg(atom, 2), rs);
+            return;
+        }
+        if (head_id == g_builtin_syms.case_text && nargs == 2) {
+            metta_eval_one_step_case(s, a, atom, expr_arg(atom, 0),
+                                     expr_arg(atom, 1), rs);
+            return;
+        }
+        if (head_id == g_builtin_syms.case_text && nargs != 2) {
+            result_set_add(rs,
+                           atom_error(a, atom,
+                                      atom_symbol(a, "IncorrectNumberOfArguments")));
+            return;
+        }
+        if ((head_id == g_builtin_syms.switch_text ||
+             head_id == g_builtin_syms.switch_minimal) && nargs == 2) {
+            metta_eval_one_step_switch(a, expr_arg(atom, 0), expr_arg(atom, 1), rs);
+            return;
+        }
+        if ((head_id == g_builtin_syms.switch_text ||
+             head_id == g_builtin_syms.switch_minimal) && nargs != 2) {
+            result_set_add(rs,
+                           atom_error(a, atom,
+                                      atom_symbol(a, "IncorrectNumberOfArguments")));
+            return;
+        }
+        if (head->kind == ATOM_SYMBOL && is_grounded_op(head_id)) {
+            Atom *direct = dispatch_native_op(s, a, head, atom->expr.elems + 1, nargs);
+            if (direct) {
+                result_set_add(rs, direct);
+                return;
+            }
+        }
+        {
+            QueryResults qr;
+            query_results_init(&qr);
+            query_equations(s, atom, a, &qr);
+            if (qr.len > 0) {
+                for (uint32_t i = 0; i < qr.len; i++) {
+                    Atom *next =
+                        bindings_apply_if_vars(&qr.items[i].bindings, a, qr.items[i].result);
+                    result_set_add(rs, next);
+                }
+                query_results_free(&qr);
+                return;
+            }
+            query_results_free(&qr);
+        }
+        if (head_id == g_builtin_syms.quote || head_id == g_builtin_syms.return_text) {
+            result_set_add(rs, atom);
+            return;
+        }
+    }
+
+    result_set_add(rs, atom);
+}
+
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
@@ -12484,6 +12868,22 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     term_universe_set_persistent_arena(&g_eval_fallback_universe, NULL);
     eval_release_outcome_variant_bank();
     metta_eval(s, a, NULL, expr, current_eval_fuel_limit(), rs);
+    eval_release_outcome_variant_bank();
+    g_registry = prev_registry;
+    g_eval_root_space = prev_root_space;
+    term_universe_set_persistent_arena(&g_eval_fallback_universe,
+                                       prev_fallback_persistent);
+}
+
+void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
+    Registry *prev_registry = g_registry;
+    Space *prev_root_space = g_eval_root_space;
+    Arena *prev_fallback_persistent = g_eval_fallback_universe.persistent_arena;
+    g_registry = NULL;
+    g_eval_root_space = s;
+    term_universe_set_persistent_arena(&g_eval_fallback_universe, NULL);
+    eval_release_outcome_variant_bank();
+    metta_eval_one_step(s, a, NULL, expr, rs);
     eval_release_outcome_variant_bank();
     g_registry = prev_registry;
     g_eval_root_space = prev_root_space;

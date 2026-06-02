@@ -1,6 +1,7 @@
 # name	fixture	expected_count	mode	expected_file	lean_file	theorem
 core-comm-semantic-collapse	tests/rhocalc/core_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/core_comm.expected	tests/rhocalc_lean_microcheck.lean	semanticCommSubst_collapses_drop_to_payload
 core-comm-transport-to-representative	tests/rhocalc/core_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/core_comm.expected	tests/rhocalc_lean_microcheck.lean	commInput_semantic_transport_to_representative
+core-comm-continued-contract-transport	tests/rhocalc/core_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/core_comm.expected	tests/rhocalc_lean_microcheck.lean	commInput_continued_contract_transport_to_representative
 core-comm-up-to-subject-equiv	tests/rhocalc/core_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/core_comm.expected	tests/rhocalc_lean_microcheck.lean	commInput_semantic_typed_upToSubjectEquiv_via_representative
 core-comm-strict-core-body-up-to-subject-equiv	tests/rhocalc/core_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/core_comm.expected	tests/rhocalc_lean_microcheck.lean	commInput_semantic_typed_upToSubjectEquiv_via_strictCoreCommBody
 core-comm-strict-core-body-saturated-typedAt	tests/rhocalc/core_comm.mrho	1	exact-one-step-match-file	tests/rhocalc/core_comm.expected	tests/rhocalc_lean_microcheck.lean	commInput_semantic_in_saturated_typedAt_via_strictCoreCommBody

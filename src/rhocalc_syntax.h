@@ -6,12 +6,15 @@
 
 #include "atom.h"
 #include "lang.h"
+#include "rhocalc_core.h"
 
 int rhocalc_parse_text(const char *text,
+                       RhocalcSemanticProfileId semantic_profile,
                        CettaSyntaxId syntax,
                        Arena *arena,
                        Atom ***out_atoms);
 int rhocalc_parse_file(const char *path,
+                       RhocalcSemanticProfileId semantic_profile,
                        CettaSyntaxId syntax,
                        Arena *arena,
                        Atom ***out_atoms);

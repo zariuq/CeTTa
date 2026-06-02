@@ -53,6 +53,19 @@ static void rho_parse_clear_error(void) {
     g_rhocalc_parse_error[0] = '\0';
 }
 
+static bool rhocalc_semantic_profile_parse_supported(
+    RhocalcSemanticProfileId profile) {
+    switch (profile) {
+    case RHOCALC_SEMANTIC_PROFILE_STRICT_CORE:
+    case RHOCALC_SEMANTIC_PROFILE_COST:
+        return true;
+    }
+    snprintf(g_rhocalc_parse_error, sizeof(g_rhocalc_parse_error),
+             "unsupported rhocalc semantic profile '%s'",
+             rhocalc_semantic_profile_name(profile));
+    return false;
+}
+
 static void rho_parse_store_error(RhoParser *parser) {
     if (parser && parser->error[0]) {
         snprintf(g_rhocalc_parse_error, sizeof(g_rhocalc_parse_error),
@@ -119,6 +132,26 @@ static Atom *rho_ternary(Arena *arena, const char *head,
     return rho_call(arena, head, args, 3);
 }
 
+static Atom *rho_cost_signed(Arena *arena, Atom *body, Atom *sig) {
+    return rho_binary(arena, "rho:cost:signed", body, sig);
+}
+
+static Atom *rho_cost_sig_mul(Arena *arena, Atom *const *items, uint32_t len) {
+    return rho_call(arena, "rho:cost:sig-mul", items, len);
+}
+
+static Atom *rho_cost_par(Arena *arena, Atom *const *items, uint32_t len) {
+    return rho_call(arena, "rho:cost:par", items, len);
+}
+
+static Atom *rho_cost_stack_empty(Arena *arena) {
+    return atom_symbol(arena, "rho:cost:stack-empty");
+}
+
+static Atom *rho_cost_stack_cons(Arena *arena, Atom *sig, Atom *rest) {
+    return rho_binary(arena, "rho:cost:stack-cons", sig, rest);
+}
+
 static bool rho_expr_head_named(Atom *atom, const char *name) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0 &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
@@ -126,6 +159,26 @@ static bool rho_expr_head_named(Atom *atom, const char *name) {
 }
 
 static bool rhocalc_is_domain_proc_atom(Atom *atom);
+static bool rhocalc_is_cost_term_atom(Atom *atom);
+
+static bool rhocalc_is_cost_signature_atom(Atom *atom) {
+    if (!atom) return false;
+    if (atom->kind == ATOM_VAR) return false;
+    if (atom->kind == ATOM_SYMBOL) {
+        const char *name = atom_name_cstr(atom);
+        return strncmp(name, "rho:", 4) != 0;
+    }
+    if (rho_expr_head_named(atom, "rho:cost:sig-mul")) {
+        if (atom->expr.len < 3) return false;
+        for (uint32_t i = 1; i < atom->expr.len; i++) {
+            if (!rhocalc_is_cost_signature_atom(atom->expr.elems[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
 
 static bool rhocalc_is_domain_name_atom(Atom *atom) {
     if (!atom) return false;
@@ -159,8 +212,63 @@ static bool rhocalc_is_domain_proc_atom(Atom *atom) {
     return false;
 }
 
+static bool rhocalc_is_cost_name_atom(Atom *atom) {
+    if (!atom) return false;
+    if (atom->kind == ATOM_VAR) return true;
+    if (rho_expr_head_named(atom, "rho:quote") && atom->expr.len == 2) {
+        return rhocalc_is_cost_term_atom(atom->expr.elems[1]);
+    }
+    return rhocalc_is_cost_signature_atom(atom);
+}
+
+static bool rhocalc_is_cost_proc_atom(Atom *atom) {
+    if (atom_is_symbol(atom, "rho:nil")) return true;
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0) return false;
+
+    if (rho_expr_head_named(atom, "rho:par")) {
+        for (uint32_t i = 1; i < atom->expr.len; i++) {
+            if (!rhocalc_is_cost_proc_atom(atom->expr.elems[i])) return false;
+        }
+        return true;
+    }
+    if (rho_expr_head_named(atom, "rho:send") && atom->expr.len == 3) {
+        return rhocalc_is_cost_name_atom(atom->expr.elems[1]) &&
+               rhocalc_is_cost_term_atom(atom->expr.elems[2]);
+    }
+    if (rho_expr_head_named(atom, "rho:recv") && atom->expr.len == 4) {
+        return rhocalc_is_cost_name_atom(atom->expr.elems[1]) &&
+               atom->expr.elems[2]->kind == ATOM_VAR &&
+               rhocalc_is_cost_term_atom(atom->expr.elems[3]);
+    }
+    if (rho_expr_head_named(atom, "rho:drop") && atom->expr.len == 2) {
+        return rhocalc_is_cost_name_atom(atom->expr.elems[1]);
+    }
+    return false;
+}
+
+static bool rhocalc_is_cost_term_atom(Atom *atom) {
+    if (atom_is_symbol(atom, "rho:cost:stack-empty")) return true;
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0) return false;
+    if (rho_expr_head_named(atom, "rho:cost:par")) {
+        for (uint32_t i = 1; i < atom->expr.len; i++) {
+            if (!rhocalc_is_cost_term_atom(atom->expr.elems[i])) return false;
+        }
+        return true;
+    }
+    if (rho_expr_head_named(atom, "rho:cost:signed") && atom->expr.len == 3) {
+        return rhocalc_is_cost_proc_atom(atom->expr.elems[1]) &&
+               rhocalc_is_cost_signature_atom(atom->expr.elems[2]);
+    }
+    if (rho_expr_head_named(atom, "rho:cost:stack-cons") && atom->expr.len == 3) {
+        return rhocalc_is_cost_signature_atom(atom->expr.elems[1]) &&
+               rhocalc_is_cost_term_atom(atom->expr.elems[2]);
+    }
+    return false;
+}
+
 bool rhocalc_is_domain_atom(Atom *atom) {
-    return rhocalc_is_domain_proc_atom(atom);
+    return rhocalc_is_domain_proc_atom(atom) ||
+           rhocalc_is_cost_term_atom(atom);
 }
 
 static void rp_skip_ws(RhoParser *parser) {
@@ -485,6 +593,319 @@ static int rhocalc_parse_rho_text(const char *text, Arena *arena,
     return 1;
 }
 
+static Atom *rc_parse_term(RhoParser *parser);
+static Atom *rc_parse_name(RhoParser *parser);
+
+static bool rc_is_signature_start(RhoParser *parser) {
+    rp_skip_ws(parser);
+    return rp_ident_start(parser->text[parser->pos]);
+}
+
+static Atom *rc_parse_signature_atom(RhoParser *parser) {
+    char *name;
+    rp_skip_ws(parser);
+    name = rp_parse_ident(parser);
+    if (!name) {
+        rp_error(parser, "expected ground signature");
+        return NULL;
+    }
+    return atom_symbol(parser->arena, name);
+}
+
+static Atom *rc_parse_signature(RhoParser *parser) {
+    RhoSyntaxVec items;
+    Atom *first;
+    rho_vec_init(&items);
+    first = rc_parse_signature_atom(parser);
+    if (!first) {
+        rho_vec_free(&items);
+        return NULL;
+    }
+    (void)rho_vec_push(&items, first);
+    while (rp_consume_char(parser, '*')) {
+        Atom *next = rc_parse_signature_atom(parser);
+        if (!next) {
+            rho_vec_free(&items);
+            return NULL;
+        }
+        (void)rho_vec_push(&items, next);
+    }
+    if (items.len == 1) {
+        Atom *out = items.items[0];
+        rho_vec_free(&items);
+        return out;
+    }
+    {
+        Atom *out = rho_cost_sig_mul(parser->arena, items.items, items.len);
+        rho_vec_free(&items);
+        return out;
+    }
+}
+
+static Atom *rc_parse_name(RhoParser *parser) {
+    rp_skip_ws(parser);
+    if (parser->text[parser->pos] == '@') {
+        Atom *term;
+        parser->pos++;
+        if (!rp_consume_char(parser, '{')) {
+            rp_error(parser, "expected '{' after '@'");
+            return NULL;
+        }
+        term = rc_parse_term(parser);
+        if (!term) return NULL;
+        if (!rp_consume_char(parser, '}')) {
+            rp_error(parser, "expected '}' after quoted signed term");
+            return NULL;
+        }
+        return rho_unary(parser->arena, "rho:quote", term);
+    }
+    if (parser->text[parser->pos] == '$') {
+        char *name;
+        Atom *var;
+        parser->pos++;
+        name = rp_parse_ident(parser);
+        if (!name) {
+            rp_error(parser, "expected variable name after '$'");
+            return NULL;
+        }
+        var = rp_lookup_binding(parser, name);
+        if (!var) {
+            return atom_var(parser->arena, name);
+        }
+        return var;
+    }
+    if (rp_ident_start(parser->text[parser->pos])) {
+        size_t saved = parser->pos;
+        char *name = rp_parse_ident(parser);
+        Atom *var = rp_lookup_binding(parser, name);
+        if (var) return var;
+        parser->pos = saved;
+        return rc_parse_signature(parser);
+    }
+    rp_error(parser, "expected cost-rho name");
+    return NULL;
+}
+
+static Atom *rc_parse_proc(RhoParser *parser);
+
+static Atom *rc_parse_proc_atom(RhoParser *parser) {
+    rp_skip_ws(parser);
+    if (rp_consume_char(parser, '{')) {
+        Atom *inner = rc_parse_proc(parser);
+        if (!inner) return NULL;
+        if (!rp_consume_char(parser, '}')) {
+            rp_error(parser, "expected '}'");
+            return NULL;
+        }
+        return inner;
+    }
+    if (rp_consume_char(parser, '0')) {
+        return rho_nil(parser->arena);
+    }
+    if (rp_consume_keyword(parser, "for")) {
+        char *binder_name;
+        Atom *binder;
+        Atom *channel;
+        Atom *body;
+        uint32_t mark;
+        if (!rp_consume_char(parser, '(')) {
+            rp_error(parser, "expected '(' after for");
+            return NULL;
+        }
+        if (rp_consume_char(parser, '$')) {
+            binder_name = rp_parse_ident(parser);
+        } else {
+            binder_name = rp_parse_ident(parser);
+        }
+        if (!binder_name) {
+            rp_error(parser, "expected input binder");
+            return NULL;
+        }
+        if (!rp_consume_span(parser, "<-")) {
+            rp_error(parser, "expected '<-' in input");
+            return NULL;
+        }
+        channel = rc_parse_name(parser);
+        if (!channel) return NULL;
+        if (!rp_consume_char(parser, ')')) {
+            rp_error(parser, "expected ')' after input channel");
+            return NULL;
+        }
+        if (!rp_consume_char(parser, '{')) {
+            rp_error(parser, "expected input body block");
+            return NULL;
+        }
+        binder = atom_var_with_id(parser->arena, binder_name, fresh_var_id());
+        mark = rp_binding_mark(parser);
+        if (!rp_push_binding(parser, binder_name, binder)) {
+            rp_error(parser, "could not record input binder");
+            return NULL;
+        }
+        body = rc_parse_term(parser);
+        rp_binding_pop(parser, mark);
+        if (!body) return NULL;
+        if (!rp_consume_char(parser, '}')) {
+            rp_error(parser, "expected '}' after input body");
+            return NULL;
+        }
+        return rho_ternary(parser->arena, "rho:recv", channel, binder, body);
+    }
+    if (rp_consume_char(parser, '*')) {
+        Atom *name = rc_parse_name(parser);
+        if (!name) return NULL;
+        return rho_unary(parser->arena, "rho:drop", name);
+    }
+    {
+        Atom *channel = rc_parse_name(parser);
+        Atom *payload;
+        if (!channel) return NULL;
+        if (!rp_consume_char(parser, '!')) {
+            rp_error(parser, "expected output after leading name");
+            return NULL;
+        }
+        if (!rp_consume_char(parser, '(')) {
+            rp_error(parser, "expected '(' after '!'");
+            return NULL;
+        }
+        payload = rc_parse_term(parser);
+        if (!payload) return NULL;
+        if (!rp_consume_char(parser, ')')) {
+            rp_error(parser, "expected ')' after output payload");
+            return NULL;
+        }
+        return rho_binary(parser->arena, "rho:send", channel, payload);
+    }
+}
+
+static Atom *rc_parse_proc(RhoParser *parser) {
+    RhoSyntaxVec items;
+    Atom *first;
+    rho_vec_init(&items);
+    first = rc_parse_proc_atom(parser);
+    if (!first) {
+        rho_vec_free(&items);
+        return NULL;
+    }
+    (void)rho_vec_push(&items, first);
+    while (rp_consume_char(parser, '|')) {
+        Atom *next = rc_parse_proc_atom(parser);
+        if (!next) {
+            rho_vec_free(&items);
+            return NULL;
+        }
+        (void)rho_vec_push(&items, next);
+    }
+    if (items.len == 1) {
+        Atom *out = items.items[0];
+        rho_vec_free(&items);
+        return out;
+    }
+    {
+        Atom *out = rho_call(parser->arena, "rho:par", items.items, items.len);
+        rho_vec_free(&items);
+        return out;
+    }
+}
+
+static Atom *rc_parse_stack(RhoParser *parser) {
+    Atom *sig;
+    Atom *rest;
+    if (rp_consume_span(parser, "()")) {
+        return rho_cost_stack_empty(parser->arena);
+    }
+    sig = rc_parse_signature(parser);
+    if (!sig) return NULL;
+    if (!rp_consume_char(parser, ':')) {
+        rp_error(parser, "expected ':' in token stack");
+        return NULL;
+    }
+    rest = rc_parse_stack(parser);
+    if (!rest) return NULL;
+    return rho_cost_stack_cons(parser->arena, sig, rest);
+}
+
+static Atom *rc_parse_term_atom(RhoParser *parser) {
+    rp_skip_ws(parser);
+    if (strncmp(parser->text + parser->pos, "()", 2) == 0) {
+        return rc_parse_stack(parser);
+    }
+    if (parser->text[parser->pos] == '{') {
+        Atom *proc;
+        Atom *sig;
+        parser->pos++;
+        proc = rc_parse_proc(parser);
+        if (!proc) return NULL;
+        if (!rp_consume_char(parser, '}')) {
+            rp_error(parser, "expected '}' after signed process body");
+            return NULL;
+        }
+        if (!rc_is_signature_start(parser)) {
+            rp_error(parser, "expected signature after signed process");
+            return NULL;
+        }
+        sig = rc_parse_signature(parser);
+        if (!sig) return NULL;
+        return rho_cost_signed(parser->arena, proc, sig);
+    }
+    if (rc_is_signature_start(parser)) {
+        return rc_parse_stack(parser);
+    }
+    rp_error(parser, "expected cost-rho signed term");
+    return NULL;
+}
+
+static Atom *rc_parse_term(RhoParser *parser) {
+    RhoSyntaxVec items;
+    Atom *first;
+    rho_vec_init(&items);
+    first = rc_parse_term_atom(parser);
+    if (!first) {
+        rho_vec_free(&items);
+        return NULL;
+    }
+    (void)rho_vec_push(&items, first);
+    while (rp_consume_char(parser, '|')) {
+        Atom *next = rc_parse_term_atom(parser);
+        if (!next) {
+            rho_vec_free(&items);
+            return NULL;
+        }
+        (void)rho_vec_push(&items, next);
+    }
+    if (items.len == 1) {
+        Atom *out = items.items[0];
+        rho_vec_free(&items);
+        return out;
+    }
+    {
+        Atom *out = rho_cost_par(parser->arena, items.items, items.len);
+        rho_vec_free(&items);
+        return out;
+    }
+}
+
+static int rhocalc_parse_rho_cost_text(const char *text, Arena *arena,
+                                       Atom ***out_atoms) {
+    RhoParser parser = {0};
+    Atom *atom;
+    rho_parse_clear_error();
+    parser.text = text ? text : "";
+    parser.arena = arena;
+    atom = rc_parse_term(&parser);
+    rp_skip_ws(&parser);
+    if (!atom || parser.error[0] || parser.text[parser.pos] != '\0') {
+        if (!parser.error[0]) rp_error(&parser, "unexpected trailing input");
+        rho_parse_store_error(&parser);
+        free(parser.bindings);
+        *out_atoms = NULL;
+        return -1;
+    }
+    *out_atoms = cetta_malloc(sizeof(Atom *));
+    (*out_atoms)[0] = atom;
+    free(parser.bindings);
+    return 1;
+}
+
 static char *rhocalc_read_file(const char *path) {
     FILE *fp = fopen(path, "rb");
     long size;
@@ -672,20 +1093,27 @@ Atom *rhocalc_elaborate_mrho_atom(Arena *arena, Atom *atom) {
 }
 
 int rhocalc_parse_text(const char *text,
+                       RhocalcSemanticProfileId semantic_profile,
                        CettaSyntaxId syntax,
                        Arena *arena,
                        Atom ***out_atoms) {
     if (!out_atoms) return -1;
     *out_atoms = NULL;
+    rho_parse_clear_error();
+    if (!rhocalc_semantic_profile_parse_supported(semantic_profile)) {
+        return -1;
+    }
     if (syntax == CETTA_SYNTAX_METTA) syntax = CETTA_SYNTAX_MRHO;
     if (syntax == CETTA_SYNTAX_MRHO) {
         int n;
-        rho_parse_clear_error();
         n = parse_metta_text(text, arena, out_atoms);
         if (n < 0) return n;
         return rhocalc_elaborate_mrho_atoms(arena, *out_atoms, n);
     }
     if (syntax == CETTA_SYNTAX_RHO) {
+        if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_COST) {
+            return rhocalc_parse_rho_cost_text(text, arena, out_atoms);
+        }
         return rhocalc_parse_rho_text(text, arena, out_atoms);
     }
     snprintf(g_rhocalc_parse_error, sizeof(g_rhocalc_parse_error),
@@ -694,15 +1122,19 @@ int rhocalc_parse_text(const char *text,
 }
 
 int rhocalc_parse_file(const char *path,
+                       RhocalcSemanticProfileId semantic_profile,
                        CettaSyntaxId syntax,
                        Arena *arena,
                        Atom ***out_atoms) {
     if (!out_atoms) return -1;
     *out_atoms = NULL;
+    rho_parse_clear_error();
+    if (!rhocalc_semantic_profile_parse_supported(semantic_profile)) {
+        return -1;
+    }
     if (syntax == CETTA_SYNTAX_METTA) syntax = CETTA_SYNTAX_MRHO;
     if (syntax == CETTA_SYNTAX_MRHO) {
         int n;
-        rho_parse_clear_error();
         n = parse_metta_file(path, arena, out_atoms);
         if (n < 0) return n;
         return rhocalc_elaborate_mrho_atoms(arena, *out_atoms, n);
@@ -715,7 +1147,9 @@ int rhocalc_parse_file(const char *path,
                      "could not read %s", path ? path : "<null>");
             return -1;
         }
-        n = rhocalc_parse_rho_text(text, arena, out_atoms);
+        n = semantic_profile == RHOCALC_SEMANTIC_PROFILE_COST
+                ? rhocalc_parse_rho_cost_text(text, arena, out_atoms)
+                : rhocalc_parse_rho_text(text, arena, out_atoms);
         free(text);
         return n;
     }
@@ -914,8 +1348,38 @@ static void rho_print_ctx_free(RhoPrintCtx *ctx) {
 }
 
 static void rho_print_mrho_atom(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+static void rho_print_surface_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out);
 static void rho_print_surface_name(RhoPrintCtx *ctx, Atom *atom, FILE *out);
 static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+static void rho_print_surface_term(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+
+static bool rho_cost_stack_empty_atom(Atom *atom) {
+    return atom_is_symbol(atom, "rho:cost:stack-empty");
+}
+
+static bool rho_cost_signature_atom(Atom *atom) {
+    return rhocalc_is_cost_signature_atom(atom);
+}
+
+static bool rho_cost_term_atom(Atom *atom) {
+    return rhocalc_is_cost_term_atom(atom);
+}
+
+static void rho_print_surface_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+    (void)ctx;
+    if (atom && atom->kind == ATOM_SYMBOL) {
+        atom_print(atom, out);
+        return;
+    }
+    if (rho_expr_head_named(atom, "rho:cost:sig-mul")) {
+        for (uint32_t i = 1; i < atom->expr.len; i++) {
+            if (i > 1) fputs(" * ", out);
+            rho_print_surface_signature(ctx, atom->expr.elems[i], out);
+        }
+        return;
+    }
+    rho_print_mrho_atom(ctx, atom, out);
+}
 
 static void rho_print_mrho_var(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     const char *name = rho_print_lookup(ctx, atom->var_id);
@@ -987,12 +1451,56 @@ static void rho_print_surface_name(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
         inner.binding_len = 0;
         inner.binding_cap = 0;
         fputs("@{", out);
-        rho_print_surface_proc(&inner, atom->expr.elems[1], out);
+        if (rho_cost_term_atom(atom->expr.elems[1])) {
+            rho_print_surface_term(&inner, atom->expr.elems[1], out);
+        } else {
+            rho_print_surface_proc(&inner, atom->expr.elems[1], out);
+        }
         ctx->fresh_counter = inner.fresh_counter;
         if (inner.failed) ctx->failed = true;
         rho_print_binding_pop(&inner, 0);
         free(inner.bindings);
         fputs("}", out);
+        return;
+    }
+    if (rho_cost_signature_atom(atom)) {
+        rho_print_surface_signature(ctx, atom, out);
+        return;
+    }
+    rho_print_mrho_atom(ctx, atom, out);
+}
+
+static void rho_print_surface_term(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+    if (rho_cost_stack_empty_atom(atom)) {
+        fputs("()", out);
+        return;
+    }
+    if (rho_expr_head_named(atom, "rho:cost:stack-cons") && atom->expr.len == 3) {
+        rho_print_surface_name(ctx, atom->expr.elems[1], out);
+        fputs(" : ", out);
+        rho_print_surface_term(ctx, atom->expr.elems[2], out);
+        return;
+    }
+    if (rho_expr_head_named(atom, "rho:cost:signed") && atom->expr.len == 3) {
+        fputc('{', out);
+        if (rhocalc_is_cost_proc_atom(atom->expr.elems[1])) {
+            rho_print_surface_proc(ctx, atom->expr.elems[1], out);
+        } else {
+            rho_print_surface_term(ctx, atom->expr.elems[1], out);
+        }
+        fputc('}', out);
+        rho_print_surface_name(ctx, atom->expr.elems[2], out);
+        return;
+    }
+    if (rho_expr_head_named(atom, "rho:cost:par")) {
+        for (uint32_t i = 1; i < atom->expr.len; i++) {
+            if (i > 1) fputs(" | ", out);
+            rho_print_surface_term(ctx, atom->expr.elems[i], out);
+        }
+        return;
+    }
+    if (rhocalc_is_cost_proc_atom(atom)) {
+        rho_print_surface_proc(ctx, atom, out);
         return;
     }
     rho_print_mrho_atom(ctx, atom, out);
@@ -1015,7 +1523,11 @@ static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     if (rho_expr_head_named(atom, "rho:send") && atom->expr.len == 3) {
         rho_print_surface_name(ctx, atom->expr.elems[1], out);
         fputs("!(", out);
-        rho_print_surface_proc(ctx, atom->expr.elems[2], out);
+        if (rho_cost_term_atom(atom->expr.elems[2])) {
+            rho_print_surface_term(ctx, atom->expr.elems[2], out);
+        } else {
+            rho_print_surface_proc(ctx, atom->expr.elems[2], out);
+        }
         fputs(")", out);
         return;
     }
@@ -1032,7 +1544,11 @@ static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
         fputs(" <- ", out);
         rho_print_surface_name(ctx, atom->expr.elems[1], out);
         fputs(") {", out);
-        rho_print_surface_proc(ctx, atom->expr.elems[3], out);
+        if (rho_cost_term_atom(atom->expr.elems[3])) {
+            rho_print_surface_term(ctx, atom->expr.elems[3], out);
+        } else {
+            rho_print_surface_proc(ctx, atom->expr.elems[3], out);
+        }
         rho_print_binding_pop(ctx, mark);
         fputc('}', out);
         return;
@@ -1056,7 +1572,11 @@ void rhocalc_print_atom_syntax(Atom *atom, CettaSyntaxId syntax, FILE *out) {
         return;
     }
     if (syntax == CETTA_SYNTAX_RHO) {
-        rho_print_surface_proc(&ctx, atom, out);
+        if (rho_cost_term_atom(atom)) {
+            rho_print_surface_term(&ctx, atom, out);
+        } else {
+            rho_print_surface_proc(&ctx, atom, out);
+        }
     } else {
         rho_print_mrho_atom(&ctx, atom, out);
     }

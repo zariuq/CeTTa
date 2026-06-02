@@ -23,6 +23,7 @@
 
 # Local tool/session debris
 /.codex
+/_refs/
 /.generated/
 /.translator_pln_stage/
 /.oruzhi_*/

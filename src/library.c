@@ -27,8 +27,9 @@ enum {
     CETTA_LIBRARY_SYSTEM = 1u << 0,
     CETTA_LIBRARY_FS = 1u << 1,
     CETTA_LIBRARY_STR = 1u << 2,
-    CETTA_LIBRARY_MORK = 1u << 3,
-    CETTA_LIBRARY_RHO = 1u << 4
+    CETTA_LIBRARY_LTS = 1u << 3,
+    CETTA_LIBRARY_MORK = 1u << 4,
+    CETTA_LIBRARY_RHO = 1u << 5
 };
 
 typedef struct {
@@ -40,6 +41,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"system", CETTA_LIBRARY_SYSTEM},
     {"fs", CETTA_LIBRARY_FS},
     {"str", CETTA_LIBRARY_STR},
+    {"lts", CETTA_LIBRARY_LTS},
     {"mork", CETTA_LIBRARY_MORK},
     {"rho", CETTA_LIBRARY_RHO},
 };
@@ -1364,32 +1366,52 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
 
     switch (spec->kind) {
     case CETTA_MODULE_SPEC_REGISTERED_ROOT: {
-        if (!cetta_module_policy_allows(&ctx->session.module_policy,
-                                          CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
-            *error_out = atom_symbol(eval_arena, "registered module roots disabled");
-            return false;
-        }
         const CettaModuleMount *mount = cetta_library_find_module_mount(ctx, spec->namespace_name);
-        if (!mount) {
-            *error_out = atom_symbol(eval_arena, "unknown module root");
-            return false;
-        }
-        plan->provider_kind = mount->provider_kind;
-        if (spec->path_or_member[0] == '\0') {
-            int n = snprintf(candidate, sizeof(candidate), "%s", mount->root_path);
-            if (!(n > 0 && (size_t)n < sizeof(candidate))) {
-                *error_out = atom_symbol(eval_arena, "module path too long");
+        if (mount) {
+            if (!cetta_module_policy_allows(&ctx->session.module_policy,
+                                              CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
+                *error_out = atom_symbol(eval_arena, "registered module roots disabled");
                 return false;
             }
-        } else {
-            int n = snprintf(candidate, sizeof(candidate), "%s/%s",
-                             mount->root_path, spec->path_or_member);
-            if (!(n > 0 && (size_t)n < sizeof(candidate))) {
-                *error_out = atom_symbol(eval_arena, "module path too long");
-                return false;
+            plan->provider_kind = mount->provider_kind;
+            if (spec->path_or_member[0] == '\0') {
+                int n = snprintf(candidate, sizeof(candidate), "%s", mount->root_path);
+                if (!(n > 0 && (size_t)n < sizeof(candidate))) {
+                    *error_out = atom_symbol(eval_arena, "module path too long");
+                    return false;
+                }
+            } else {
+                int n = snprintf(candidate, sizeof(candidate), "%s/%s",
+                                 mount->root_path, spec->path_or_member);
+                if (!(n > 0 && (size_t)n < sizeof(candidate))) {
+                    *error_out = atom_symbol(eval_arena, "module path too long");
+                    return false;
+                }
+            }
+            break;
+        }
+
+        if (cetta_module_policy_allows(&ctx->session.module_policy,
+                                         CETTA_MODULE_PROVIDER_STDLIB)) {
+            char nested_name[PATH_MAX];
+            int n;
+
+            if (spec->path_or_member[0] == '\0') {
+                n = snprintf(nested_name, sizeof(nested_name), "%s",
+                             spec->namespace_name);
+            } else {
+                n = snprintf(nested_name, sizeof(nested_name), "%s/%s",
+                             spec->namespace_name, spec->path_or_member);
+            }
+            if (n > 0 && (size_t)n < sizeof(nested_name) &&
+                build_library_path(ctx, nested_name, candidate, sizeof(candidate))) {
+                plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
+                break;
             }
         }
-        break;
+
+        *error_out = atom_symbol(eval_arena, "unknown module root");
+        return false;
     }
     case CETTA_MODULE_SPEC_RELATIVE_FILE: {
         if (!cetta_module_policy_allows(&ctx->session.module_policy,
@@ -2014,14 +2036,153 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
     return NULL;
 }
 
-static Atom *cetta_library_dispatch_rho(const CettaLibraryContext *ctx,
-                                        Arena *a, Atom *head,
+static Atom *lts_rho_transitions_call_expr(Arena *a, Atom **args, uint32_t nargs) {
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
+    elems[0] = atom_symbol(a, "lts:rho:transitions");
+    for (uint32_t i = 0; i < nargs; i++) elems[i + 1] = args[i];
+    return atom_expr(a, elems, nargs + 1);
+}
+
+static Atom *lts_rho_transitions_error(Arena *a, Atom **args, uint32_t nargs,
+                                       Atom *reason) {
+    return atom_error(a, lts_rho_transitions_call_expr(a, args, nargs), reason);
+}
+
+static Atom *lts_he_transitions_call_expr(Arena *a, Atom **args,
+                                          uint32_t nargs) {
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
+    elems[0] = atom_symbol(a, "lts:he:transitions");
+    for (uint32_t i = 0; i < nargs; i++) elems[i + 1] = args[i];
+    return atom_expr(a, elems, nargs + 1);
+}
+
+static Atom *lts_he_transitions_error(Arena *a, Atom **args, uint32_t nargs,
+                                      Atom *reason) {
+    return atom_error(a, lts_he_transitions_call_expr(a, args, nargs), reason);
+}
+
+static Atom *lts_rho_cost_steps_call_expr(Arena *a, Atom **args,
+                                          uint32_t nargs) {
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
+    elems[0] = atom_symbol(a, "lts:rho:cost:steps");
+    for (uint32_t i = 0; i < nargs; i++) elems[i + 1] = args[i];
+    return atom_expr(a, elems, nargs + 1);
+}
+
+static Atom *lts_rho_cost_steps_error(Arena *a, Atom **args, uint32_t nargs,
+                                      Atom *reason) {
+    return atom_error(a, lts_rho_cost_steps_call_expr(a, args, nargs), reason);
+}
+
+static Atom *lts_he_transitions_frontier(Arena *a, Atom *state,
+                                         ResultSet *results) {
+    Atom *first_error = NULL;
+    Atom **changed = NULL;
+    uint32_t changed_len = 0;
+
+    if (results->len > 0) {
+        changed = arena_alloc(a, sizeof(Atom *) * results->len);
+    }
+
+    for (uint32_t i = 0; i < results->len; i++) {
+        Atom *candidate = results->items[i];
+        if (atom_is_error(candidate)) {
+            if (!first_error) first_error = candidate;
+            continue;
+        }
+        if (atom_eq(candidate, state))
+            continue;
+        changed[changed_len++] =
+            atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote), candidate);
+    }
+
+    if (changed_len == 0) {
+        if (first_error)
+            return first_error;
+        return atom_expr2(a, atom_symbol_id(a, g_builtin_syms.superpose),
+                          atom_expr(a, changed, 0));
+    }
+    if (changed_len == 1)
+        return changed[0];
+    return atom_expr2(a, atom_symbol_id(a, g_builtin_syms.superpose),
+                      atom_expr(a, changed, changed_len));
+}
+
+static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
+                                        Space *space, Arena *a, Atom *head,
                                         Atom **args, uint32_t nargs) {
     (void)ctx;
-    (void)a;
-    (void)args;
-    (void)nargs;
     if (head->kind != ATOM_SYMBOL) return NULL;
+    if (head->sym_id == g_builtin_syms.lib_lts_rho_transitions) {
+        Atom *result;
+        const char *detail;
+
+        if (nargs != 1) {
+            return lts_rho_transitions_error(
+                a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
+        }
+        if (!rhocalc_process_well_formed(args[0])) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_transitions_error(
+                a, args, nargs,
+                atom_string(a, detail ? detail : "expected strict-core rho process"));
+        }
+        result = rhocalc_successor_frontier_expr(a, args[0]);
+        if (!result) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_transitions_error(
+                a, args, nargs,
+                atom_string(a, detail ? detail : "rho successor frontier construction failed"));
+        }
+        return result;
+    }
+    if (head->sym_id == g_builtin_syms.lib_lts_he_transitions) {
+        ResultSet results;
+        Atom *frontier;
+        Atom *raw_state;
+
+        if (nargs != 1) {
+            return lts_he_transitions_error(
+                a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
+        }
+
+        raw_state = args[0];
+        if (raw_state->kind == ATOM_EXPR &&
+            raw_state->expr.len == 2 &&
+            atom_is_symbol_id(raw_state->expr.elems[0], g_builtin_syms.quote)) {
+            raw_state = raw_state->expr.elems[1];
+        }
+
+        result_set_init(&results);
+        eval_top_one_step(space, a, raw_state, &results);
+        frontier = lts_he_transitions_frontier(a, raw_state, &results);
+        result_set_free(&results);
+        return frontier;
+    }
+    if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_steps) {
+        Atom *result;
+        const char *detail;
+
+        if (nargs != 1) {
+            return lts_rho_cost_steps_error(
+                a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
+        }
+        if (!rhocalc_process_well_formed_with_semantic_profile(
+                args[0], RHOCALC_SEMANTIC_PROFILE_COST)) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_cost_steps_error(
+                a, args, nargs,
+                atom_string(a, detail ? detail : "expected cost-profile rho term"));
+        }
+        result = rhocalc_cost_step_frontier_expr(a, args[0]);
+        if (!result) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_cost_steps_error(
+                a, args, nargs,
+                atom_string(a, detail ? detail : "rho cost step frontier construction failed"));
+        }
+        return result;
+    }
     return NULL;
 }
 
@@ -6404,8 +6565,8 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
         Atom *result = cetta_library_dispatch_str(a, head, args, nargs);
         if (result) return result;
     }
-    if (ctx->active_mask & CETTA_LIBRARY_RHO) {
-        Atom *result = cetta_library_dispatch_rho(ctx, a, head, args, nargs);
+    if (ctx->active_mask & CETTA_LIBRARY_LTS) {
+        Atom *result = cetta_library_dispatch_lts(ctx, space, a, head, args, nargs);
         if (result) return result;
     }
     {

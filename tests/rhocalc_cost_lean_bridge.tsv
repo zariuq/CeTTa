@@ -1,0 +1,2 @@
+# name	fixture	expected_file	lean_file	theorem
+cost-surface-two-step-semantic-bridge	tests/lts_rho_cost_bridge_step.metta	tests/lts_rho_cost_bridge_step.expected	tests/rhocalc_lean_microcheck.lean	costSurface_two_step_semantic_bridge
