@@ -35,7 +35,7 @@ typedef struct Outcome {
 
 typedef struct OutcomeSet {
     Outcome *items;
-    uint32_t len, cap;
+    CettaCount len, cap;
     Arena *payload_owner;
 } OutcomeSet;
 
@@ -52,7 +52,7 @@ void outcome_set_free(OutcomeSet *os);
 
 typedef struct ResultSet {
     Atom **items;
-    uint32_t len, cap;
+    CettaCount len, cap;
 } ResultSet;
 
 void result_set_init(ResultSet *rs);

@@ -16,11 +16,16 @@
 
 static bool term_universe_intern_reserve(TermUniverse *universe,
                                          size_t min_slots);
+static bool term_universe_ptr_reserve(TermUniverse *universe,
+                                      size_t min_slots);
 static bool term_universe_insert_stable_id(TermUniverse *universe, AtomId id);
+static bool term_universe_insert_ptr_id(TermUniverse *universe, AtomId id);
 static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
                                              Atom *src);
 static AtomId term_universe_lookup_ptr_id(const TermUniverse *universe,
                                           Atom *src);
+static const TermEntry *term_universe_entry(const TermUniverse *universe,
+                                            AtomId id);
 static bool term_universe_entry_has_blob(const TermEntry *entry);
 static uint64_t term_universe_logical_atom_id_base(
     const TermUniverse *universe);
@@ -30,8 +35,17 @@ static bool term_universe_atom_id_to_physical_index(
     const TermUniverse *universe, AtomId id, size_t *out_index);
 static size_t term_universe_atom_id_storage_width_bytes(
     const TermUniverse *universe);
+static size_t term_universe_slot_storage_width_bytes(
+    const TermUniverse *universe);
 static AtomId term_universe_load_stored_atom_id(const TermUniverse *universe,
                                                 const uint8_t *src);
+static uint64_t term_universe_load_slot_value(const TermUniverse *universe,
+                                              const uint8_t *slots,
+                                              size_t idx);
+static bool term_universe_store_slot_value(TermUniverseStoreFormat format,
+                                           uint8_t *slots,
+                                           size_t idx,
+                                           uint64_t value);
 static bool term_universe_encode_expr_payload(const TermUniverse *universe,
                                               const AtomId *child_ids,
                                               uint32_t arity,
@@ -49,6 +63,10 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
                                               const CettaTermHdr *hdr,
                                               const uint8_t *payload,
                                               size_t payload_len);
+static bool term_universe_notify_store_format_observers(
+    TermUniverse *universe,
+    TermUniverseStoreFormat old_format,
+    TermUniverseStoreFormat new_format);
 
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
 #define TU_DIAG_INC(universe, field)                                             \
@@ -80,6 +98,23 @@ static void term_universe_set_error(TermUniverse *universe,
                                     TermUniverseError error) {
     if (universe && error != TERM_UNIVERSE_ERROR_NONE)
         universe->last_error = error;
+}
+
+static bool term_universe_expr_arity_checked(TermUniverse *universe,
+                                             CettaExprLen arity,
+                                             uint32_t *out_arity) {
+    if (!out_arity)
+        return false;
+    if (!cetta_expr_len_fits_u32(arity)) {
+        term_universe_set_error(universe, TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
+        return false;
+    }
+    if (arity > (CettaExprLen)CETTA_TERM_HDR_DATA_MASK) {
+        term_universe_set_error(universe, TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
+        return false;
+    }
+    *out_arity = (uint32_t)arity;
+    return true;
 }
 
 void term_universe_clear_error(TermUniverse *universe) {
@@ -144,15 +179,61 @@ uint32_t term_universe_store_format_atom_id_width_bits(TermUniverseStoreFormat f
     return 0;
 }
 
+bool term_universe_add_store_format_observer(
+    TermUniverse *universe,
+    TermUniverseStoreFormatObserver fn,
+    void *ctx) {
+    size_t next_cap = 0;
+    TermUniverseStoreFormatObserverEntry *next = NULL;
+    if (!universe || !fn)
+        return false;
+    for (size_t i = 0; i < universe->observer_len; i++) {
+        if (universe->observers[i].fn == fn &&
+            universe->observers[i].ctx == ctx) {
+            return true;
+        }
+    }
+    if (universe->observer_len < universe->observer_cap) {
+        universe->observers[universe->observer_len++] =
+            (TermUniverseStoreFormatObserverEntry){.fn = fn, .ctx = ctx};
+        return true;
+    }
+    next_cap = universe->observer_cap ? universe->observer_cap * 2u : 8u;
+    next = cetta_realloc(universe->observers, sizeof(*next) * next_cap);
+    if (!next) {
+        term_universe_set_error(universe,
+                                TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+        return false;
+    }
+    universe->observers = next;
+    universe->observer_cap = next_cap;
+    universe->observers[universe->observer_len++] =
+        (TermUniverseStoreFormatObserverEntry){.fn = fn, .ctx = ctx};
+    return true;
+}
+
+void term_universe_remove_store_format_observer(
+    TermUniverse *universe,
+    TermUniverseStoreFormatObserver fn,
+    void *ctx) {
+    if (!universe || !fn)
+        return;
+    for (size_t i = 0; i < universe->observer_len; i++) {
+        if (universe->observers[i].fn != fn ||
+            universe->observers[i].ctx != ctx) {
+            continue;
+        }
+        universe->observer_len--;
+        if (i != universe->observer_len)
+            universe->observers[i] = universe->observers[universe->observer_len];
+        return;
+    }
+}
+
 static size_t
 term_universe_store_format_atom_id_width_bytes(TermUniverseStoreFormat format) {
-    switch (format) {
-    case TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1:
-        return sizeof(uint32_t);
-    case TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1:
-        return sizeof(uint64_t);
-    }
-    return 0;
+    return cetta_atom_id_storage_width_bytes_from_bits(
+        term_universe_store_format_atom_id_width_bits(format));
 }
 
 static bool term_universe_store_format_supported(TermUniverseStoreFormat format) {
@@ -162,6 +243,25 @@ static bool term_universe_store_format_supported(TermUniverseStoreFormat format)
         return true;
     }
     return false;
+}
+
+static bool term_universe_notify_store_format_observers(
+    TermUniverse *universe,
+    TermUniverseStoreFormat old_format,
+    TermUniverseStoreFormat new_format) {
+    if (!universe)
+        return false;
+    for (size_t i = 0; i < universe->observer_len; i++) {
+        TermUniverseStoreFormatObserverEntry observer = universe->observers[i];
+        if (!observer.fn)
+            continue;
+        if (!observer.fn(universe, old_format, new_format, observer.ctx)) {
+            term_universe_set_error(
+                universe, TERM_UNIVERSE_ERROR_STORE_FORMAT_MIGRATION_FAILED);
+            return false;
+        }
+    }
+    return true;
 }
 
 static uint64_t
@@ -199,17 +299,6 @@ static bool term_universe_atom_id_to_physical_index(
         return false;
     *out_index = (size_t)physical;
     return true;
-}
-
-static bool term_universe_atom_id_fits_store_format(TermUniverseStoreFormat format,
-                                                    AtomId id) {
-    switch (format) {
-    case TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1:
-        return id <= (AtomId)UINT32_MAX - 1u;
-    case TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1:
-        return id != CETTA_ATOM_ID_NONE;
-    }
-    return false;
 }
 
 uint64_t term_universe_atom_id_capacity(const TermUniverse *universe) {
@@ -474,6 +563,9 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
+    universe->observers = NULL;
+    universe->observer_len = 0;
+    universe->observer_cap = 0;
     universe->last_error = TERM_UNIVERSE_ERROR_NONE;
     universe->store_format = format;
     term_universe_diag_reset(universe);
@@ -489,6 +581,10 @@ void term_universe_free(TermUniverse *universe) {
     if (!universe)
         return;
     term_universe_clear_storage(universe);
+    free(universe->observers);
+    universe->observers = NULL;
+    universe->observer_len = 0;
+    universe->observer_cap = 0;
     universe->persistent_arena = NULL;
 }
 
@@ -505,6 +601,7 @@ void term_universe_set_persistent_arena(TermUniverse *universe,
 
 bool term_universe_migrate_store_format(TermUniverse *universe,
                                         TermUniverseStoreFormat format) {
+    TermUniverseStoreFormat old_format;
     if (!universe)
         return false;
     if (!term_universe_store_format_supported(format)) {
@@ -512,6 +609,7 @@ bool term_universe_migrate_store_format(TermUniverse *universe,
                                 TERM_UNIVERSE_ERROR_UNSUPPORTED_STORE_FORMAT);
         return false;
     }
+    old_format = universe->store_format;
     if (universe->store_format == format)
         return true;
     if (format == TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1 &&
@@ -603,12 +701,94 @@ bool term_universe_migrate_store_format(TermUniverse *universe,
         free(expr_payload);
     }
 
+    TermUniverse shadow = *universe;
+    shadow.store_format = format;
+    shadow.blob_pool = staging.blob_pool;
+    shadow.blob_len = staging.blob_len;
+    shadow.blob_cap = staging.blob_cap;
+    shadow.entries = rewritten;
+    shadow.intern_slots = NULL;
+    shadow.intern_mask = 0;
+    shadow.intern_used = 0;
+    shadow.ptr_slots = NULL;
+    shadow.ptr_mask = 0;
+    shadow.ptr_used = 0;
+
+    if (universe->len != 0) {
+        size_t min_intern_slots =
+            universe->intern_slots ? (universe->intern_mask + 1u) : 1024u;
+        if (!term_universe_intern_reserve(&shadow, min_intern_slots)) {
+            term_universe_set_error(universe, shadow.last_error);
+            free(rewritten);
+            free(staging.blob_pool);
+            return false;
+        }
+        for (size_t i = 0; i < universe->len; i++) {
+            AtomId id = term_universe_physical_index_to_atom_id(&shadow, i);
+            if (id == CETTA_ATOM_ID_NONE)
+                continue;
+            if (term_universe_entry_has_blob(&rewritten[i]) &&
+                !term_universe_insert_stable_id(&shadow, id)) {
+                term_universe_set_error(
+                    universe, TERM_UNIVERSE_ERROR_STORE_FORMAT_MIGRATION_FAILED);
+                free(rewritten);
+                free(staging.blob_pool);
+                free(shadow.intern_slots);
+                free(shadow.ptr_slots);
+                return false;
+            }
+        }
+
+        size_t min_ptr_slots =
+            universe->ptr_slots ? (universe->ptr_mask + 1u) : 1024u;
+        if (!term_universe_ptr_reserve(&shadow, min_ptr_slots)) {
+            term_universe_set_error(universe, shadow.last_error);
+            free(rewritten);
+            free(staging.blob_pool);
+            free(shadow.intern_slots);
+            free(shadow.ptr_slots);
+            return false;
+        }
+        for (size_t i = 0; i < universe->len; i++) {
+            AtomId id = term_universe_physical_index_to_atom_id(&shadow, i);
+            const TermEntry *entry = term_universe_entry(&shadow, id);
+            if (!entry || !entry->decoded_cache)
+                continue;
+            if (!term_universe_insert_ptr_id(&shadow, id)) {
+                term_universe_set_error(
+                    universe, TERM_UNIVERSE_ERROR_STORE_FORMAT_MIGRATION_FAILED);
+                free(rewritten);
+                free(staging.blob_pool);
+                free(shadow.intern_slots);
+                free(shadow.ptr_slots);
+                return false;
+            }
+        }
+    }
+
+    if (!term_universe_notify_store_format_observers(universe, old_format,
+                                                     format)) {
+        free(rewritten);
+        free(staging.blob_pool);
+        free(shadow.intern_slots);
+        free(shadow.ptr_slots);
+        return false;
+    }
+
     free(universe->blob_pool);
+    free(universe->intern_slots);
+    free(universe->ptr_slots);
     universe->blob_pool = staging.blob_pool;
     universe->blob_len = staging.blob_len;
     universe->blob_cap = staging.blob_cap;
     for (size_t i = 0; i < universe->len; i++)
         universe->entries[i] = rewritten[i];
+    universe->intern_slots = shadow.intern_slots;
+    universe->intern_mask = shadow.intern_mask;
+    universe->intern_used = shadow.intern_used;
+    universe->ptr_slots = shadow.ptr_slots;
+    universe->ptr_mask = shadow.ptr_mask;
+    universe->ptr_used = shadow.ptr_used;
     universe->store_format = format;
     universe->last_error = TERM_UNIVERSE_ERROR_NONE;
     TU_DIAG_INC(universe, store_format_migrations);
@@ -786,6 +966,11 @@ static size_t term_universe_atom_id_storage_width_bytes(
         term_universe_store_format(universe));
 }
 
+static size_t term_universe_slot_storage_width_bytes(
+    const TermUniverse *universe) {
+    return term_universe_atom_id_storage_width_bytes(universe);
+}
+
 static bool term_universe_expr_payload_len_for_format(
     TermUniverseStoreFormat format, uint32_t arity, size_t *out_len) {
     if (!out_len)
@@ -815,26 +1000,32 @@ static double term_universe_load_double(const uint8_t *src) {
     return value;
 }
 
-static AtomId term_universe_load_atom_id(const uint8_t *src) {
-    AtomId value = CETTA_ATOM_ID_NONE;
-    memcpy(&value, src, sizeof(value));
-    return value;
-}
-
 static AtomId term_universe_load_stored_atom_id(const TermUniverse *universe,
                                                 const uint8_t *src) {
-    if (!src)
-        return CETTA_ATOM_ID_NONE;
+    return cetta_atom_id_storage_load_bits(
+        src,
+        term_universe_store_format_atom_id_width_bits(
+            term_universe_store_format(universe)));
+}
+
+static uint64_t term_universe_load_slot_value(const TermUniverse *universe,
+                                              const uint8_t *slots,
+                                              size_t idx) {
+    size_t width = term_universe_slot_storage_width_bytes(universe);
+    const uint8_t *src = NULL;
+    if (!slots || width == 0)
+        return 0;
+    src = slots + (idx * width);
     switch (term_universe_store_format(universe)) {
     case TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1: {
-        uint32_t value = UINT32_MAX;
+        uint32_t value = 0;
         memcpy(&value, src, sizeof(value));
-        return (AtomId)value;
+        return value;
     }
     case TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1:
-        return term_universe_load_atom_id(src);
+        return term_universe_load_u64(src);
     }
-    return CETTA_ATOM_ID_NONE;
+    return 0;
 }
 
 static void term_universe_store_u64(uint8_t *dst, uint64_t value) {
@@ -851,8 +1042,23 @@ static void term_universe_store_double(uint8_t *dst, double value) {
 
 static bool term_universe_store_stored_atom_id(TermUniverseStoreFormat format,
                                                uint8_t *dst, AtomId value) {
-    if (!dst || !term_universe_atom_id_fits_store_format(format, value))
+    return cetta_atom_id_storage_store_bits(
+        dst, term_universe_store_format_atom_id_width_bits(format), value);
+}
+
+static bool term_universe_store_slot_value(TermUniverseStoreFormat format,
+                                           uint8_t *slots,
+                                           size_t idx,
+                                           uint64_t value) {
+    size_t width = term_universe_store_format_atom_id_width_bytes(format);
+    uint8_t *dst = NULL;
+    if (!slots || width == 0)
         return false;
+    if (format == TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1 &&
+        value > UINT32_MAX) {
+        return false;
+    }
+    dst = slots + (idx * width);
     switch (format) {
     case TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1: {
         uint32_t narrowed = (uint32_t)value;
@@ -1115,7 +1321,8 @@ static AtomId term_universe_lookup_record_id(const TermUniverse *universe,
     uint32_t h = hdr->hash32;
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
         size_t idx = ((size_t)h + probe) & universe->intern_mask;
-        AtomId slot = universe->intern_slots[idx];
+        uint64_t slot = term_universe_load_slot_value(
+            universe, universe->intern_slots, idx);
         if (slot == 0) {
             TU_DIAG_INC((TermUniverse *)universe, direct_lookup_misses);
             return CETTA_ATOM_ID_NONE;
@@ -1243,10 +1450,11 @@ AtomKind tu_kind(const TermUniverse *universe, AtomId id) {
                                            : ATOM_SYMBOL;
 }
 
-uint32_t tu_arity(const TermUniverse *universe, AtomId id) {
+CettaExprLen tu_arity(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr)
-        return hdr->tag == ATOM_EXPR ? term_universe_aux_data(hdr) : 0u;
+        return hdr->tag == ATOM_EXPR ? (CettaExprLen)term_universe_aux_data(hdr)
+                                     : 0u;
     const TermEntry *entry = term_universe_entry(universe, id);
     return (entry && entry->decoded_cache &&
             entry->decoded_cache->kind == ATOM_EXPR)
@@ -1417,12 +1625,12 @@ const char *tu_rational_cstr(const TermUniverse *universe, AtomId id) {
                : NULL;
 }
 
-AtomId tu_child(const TermUniverse *universe, AtomId id, uint32_t idx) {
+AtomId tu_child(const TermUniverse *universe, AtomId id, CettaExprIndex idx) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (!hdr || hdr->tag != ATOM_EXPR)
         return CETTA_ATOM_ID_NONE;
     uint32_t len = term_universe_aux_data(hdr);
-    if (idx >= len)
+    if (idx >= (CettaExprIndex)len)
         return CETTA_ATOM_ID_NONE;
     size_t atom_id_width = term_universe_atom_id_storage_width_bytes(universe);
     return term_universe_load_stored_atom_id(
@@ -1584,15 +1792,18 @@ AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
 }
 
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
-                        uint32_t arity) {
+                        CettaExprLen arity) {
+    uint32_t arity32 = 0;
     if (!universe)
+        return CETTA_ATOM_ID_NONE;
+    if (!term_universe_expr_arity_checked(universe, arity, &arity32))
         return CETTA_ATOM_ID_NONE;
     if (arity > 0 && !child_ids)
         return CETTA_ATOM_ID_NONE;
 
     bool has_vars = false;
     SymbolId head_sym = SYMBOL_ID_NONE;
-    for (uint32_t i = 0; i < arity; i++) {
+    for (uint32_t i = 0; i < arity32; i++) {
         const CettaTermHdr *child_hdr;
         if (child_ids[i] == CETTA_ATOM_ID_NONE)
             return CETTA_ATOM_ID_NONE;
@@ -1607,16 +1818,16 @@ AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
 
     CettaTermHdr hdr = {0};
     hdr.tag = (uint8_t)ATOM_EXPR;
-    hdr.arity_or_len = arity > UINT16_MAX ? UINT16_MAX : (uint16_t)arity;
+    hdr.arity_or_len = arity32 > UINT16_MAX ? UINT16_MAX : (uint16_t)arity32;
     hdr.sym_or_head = head_sym;
-    hdr.aux32 = term_universe_aux_make(arity, has_vars);
-    hdr.hash32 = term_universe_hash_expr_ids(universe, child_ids, arity);
+    hdr.aux32 = term_universe_aux_make(arity32, has_vars);
+    hdr.hash32 = term_universe_hash_expr_ids(universe, child_ids, arity32);
     TU_DIAG_INC(universe, direct_constructor_expr_hits);
     TermUniverseStoreFormat encoded_format = term_universe_store_format(universe);
     uint8_t *payload = NULL;
     size_t payload_len = 0;
     AtomId id = CETTA_ATOM_ID_NONE;
-    if (!term_universe_encode_expr_payload(universe, child_ids, arity,
+    if (!term_universe_encode_expr_payload(universe, child_ids, arity32,
                                            &payload, &payload_len))
         return CETTA_ATOM_ID_NONE;
     id = term_universe_lookup_record_id(universe, &hdr, payload, payload_len);
@@ -1632,7 +1843,7 @@ AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
         free(payload);
         payload = NULL;
         payload_len = 0;
-        if (!term_universe_encode_expr_payload(universe, child_ids, arity,
+        if (!term_universe_encode_expr_payload(universe, child_ids, arity32,
                                                &payload, &payload_len))
             return CETTA_ATOM_ID_NONE;
     }
@@ -1709,16 +1920,19 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
 
 static AtomId term_universe_expr_id_from_ids(TermUniverse *universe,
                                              const AtomId *child_ids,
-                                             uint32_t arity, bool insert) {
+                                             CettaExprLen arity, bool insert) {
+    uint32_t arity32 = 0;
     if (insert)
         return tu_expr_from_ids(universe, child_ids, arity);
+    if (!term_universe_expr_arity_checked(universe, arity, &arity32))
+        return CETTA_ATOM_ID_NONE;
     if (!universe || (arity > 0 && !child_ids)) {
         return CETTA_ATOM_ID_NONE;
     }
 
     bool has_vars = false;
     SymbolId head_sym = SYMBOL_ID_NONE;
-    for (uint32_t i = 0; i < arity; i++) {
+    for (uint32_t i = 0; i < arity32; i++) {
         const CettaTermHdr *child_hdr;
         if (child_ids[i] == CETTA_ATOM_ID_NONE)
             return CETTA_ATOM_ID_NONE;
@@ -1733,14 +1947,14 @@ static AtomId term_universe_expr_id_from_ids(TermUniverse *universe,
 
     CettaTermHdr hdr = {0};
     hdr.tag = (uint8_t)ATOM_EXPR;
-    hdr.arity_or_len = arity > UINT16_MAX ? UINT16_MAX : (uint16_t)arity;
+    hdr.arity_or_len = arity32 > UINT16_MAX ? UINT16_MAX : (uint16_t)arity32;
     hdr.sym_or_head = head_sym;
-    hdr.aux32 = term_universe_aux_make(arity, has_vars);
-    hdr.hash32 = term_universe_hash_expr_ids(universe, child_ids, arity);
+    hdr.aux32 = term_universe_aux_make(arity32, has_vars);
+    hdr.hash32 = term_universe_hash_expr_ids(universe, child_ids, arity32);
     uint8_t *payload = NULL;
     size_t payload_len = 0;
     AtomId id = CETTA_ATOM_ID_NONE;
-    if (!term_universe_encode_expr_payload(universe, child_ids, arity,
+    if (!term_universe_encode_expr_payload(universe, child_ids, arity32,
                                            &payload, &payload_len))
         return CETTA_ATOM_ID_NONE;
     id = term_universe_lookup_record_id(universe, &hdr, payload, payload_len);
@@ -1983,7 +2197,8 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
         return;
     case ATOM_EXPR:
         term_universe_sb_append_char(sb, '(');
-        for (uint32_t i = 0; i < tu_arity(universe, id); i++) {
+        CettaExprLen len = tu_arity(universe, id);
+        for (CettaExprIndex i = 0; i < len; i++) {
             if (i != 0)
                 term_universe_sb_append_char(sb, ' ');
             term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
@@ -2039,9 +2254,9 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         }
         return NULL;
     case ATOM_EXPR: {
-        uint32_t len = tu_arity(universe, id);
-        Atom **elems = arena_alloc(dst, sizeof(Atom *) * len);
-        for (uint32_t i = 0; i < len; i++) {
+        CettaExprLen len = tu_arity(universe, id);
+        Atom **elems = arena_alloc(dst, sizeof(Atom *) * (size_t)len);
+        for (CettaExprIndex i = 0; i < len; i++) {
             elems[i] = term_universe_copy_atom_impl(universe, dst,
                                                     tu_child(universe, id, i),
                                                     epoch, rename_epoch_vars);
@@ -2101,10 +2316,17 @@ char *term_universe_atom_to_parseable_string(Arena *a,
 
 static bool term_universe_intern_reserve(TermUniverse *universe,
                                          size_t min_slots) {
+    size_t width = 0;
     if (!universe)
         return false;
     if (universe->intern_slots && universe->intern_mask + 1 >= min_slots)
         return true;
+    width = term_universe_slot_storage_width_bytes(universe);
+    if (width == 0) {
+        term_universe_set_error(universe,
+                                TERM_UNIVERSE_ERROR_UNSUPPORTED_STORE_FORMAT);
+        return false;
+    }
     size_t size = 1024;
     while (size < min_slots) {
         if (size > SIZE_MAX / 2u) {
@@ -2114,22 +2336,23 @@ static bool term_universe_intern_reserve(TermUniverse *universe,
         }
         size <<= 1;
     }
-    if (size > SIZE_MAX / sizeof(*universe->intern_slots)) {
+    if (size > SIZE_MAX / width) {
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
         return false;
     }
-    AtomId *next = cetta_malloc(sizeof(*next) * size);
+    uint8_t *next = cetta_malloc(width * size);
     if (!next) {
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
         return false;
     }
-    memset(next, 0, sizeof(*next) * size);
+    memset(next, 0, width * size);
     size_t next_mask = size - 1;
     if (universe->intern_slots) {
         for (size_t i = 0; i <= universe->intern_mask; i++) {
-            AtomId slot = universe->intern_slots[i];
+            uint64_t slot = term_universe_load_slot_value(
+                universe, universe->intern_slots, i);
             if (slot == 0)
                 continue;
             AtomId id = slot - 1;
@@ -2137,8 +2360,9 @@ static bool term_universe_intern_reserve(TermUniverse *universe,
             uint32_t h = hdr ? hdr->hash32 : 0u;
             for (size_t probe = 0; probe < size; probe++) {
                 size_t idx = ((size_t)h + probe) & next_mask;
-                if (next[idx] == 0) {
-                    next[idx] = slot;
+                if (term_universe_load_slot_value(universe, next, idx) == 0) {
+                    (void)term_universe_store_slot_value(
+                        term_universe_store_format(universe), next, idx, slot);
                     break;
                 }
             }
@@ -2160,10 +2384,17 @@ static uint32_t term_universe_ptr_hash(Atom *atom) {
 
 static bool term_universe_ptr_reserve(TermUniverse *universe,
                                       size_t min_slots) {
+    size_t width = 0;
     if (!universe)
         return false;
     if (universe->ptr_slots && universe->ptr_mask + 1 >= min_slots)
         return true;
+    width = term_universe_slot_storage_width_bytes(universe);
+    if (width == 0) {
+        term_universe_set_error(universe,
+                                TERM_UNIVERSE_ERROR_UNSUPPORTED_STORE_FORMAT);
+        return false;
+    }
     size_t size = 1024;
     while (size < min_slots) {
         if (size > SIZE_MAX / 2u) {
@@ -2173,22 +2404,23 @@ static bool term_universe_ptr_reserve(TermUniverse *universe,
         }
         size <<= 1;
     }
-    if (size > SIZE_MAX / sizeof(*universe->ptr_slots)) {
+    if (size > SIZE_MAX / width) {
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
         return false;
     }
-    AtomId *next = cetta_malloc(sizeof(*next) * size);
+    uint8_t *next = cetta_malloc(width * size);
     if (!next) {
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
         return false;
     }
-    memset(next, 0, sizeof(*next) * size);
+    memset(next, 0, width * size);
     size_t next_mask = size - 1;
     if (universe->ptr_slots) {
         for (size_t i = 0; i <= universe->ptr_mask; i++) {
-            AtomId slot = universe->ptr_slots[i];
+            uint64_t slot =
+                term_universe_load_slot_value(universe, universe->ptr_slots, i);
             if (slot == 0)
                 continue;
             AtomId id = slot - 1;
@@ -2199,8 +2431,9 @@ static bool term_universe_ptr_reserve(TermUniverse *universe,
             uint32_t h = term_universe_ptr_hash(atom);
             for (size_t probe = 0; probe < size; probe++) {
                 size_t idx = ((size_t)h + probe) & next_mask;
-                if (next[idx] == 0) {
-                    next[idx] = slot;
+                if (term_universe_load_slot_value(universe, next, idx) == 0) {
+                    (void)term_universe_store_slot_value(
+                        term_universe_store_format(universe), next, idx, slot);
                     break;
                 }
             }
@@ -2219,7 +2452,8 @@ static AtomId term_universe_lookup_ptr_id(const TermUniverse *universe,
     uint32_t h = term_universe_ptr_hash(src);
     for (size_t probe = 0; probe <= universe->ptr_mask; probe++) {
         size_t idx = ((size_t)h + probe) & universe->ptr_mask;
-        AtomId slot = universe->ptr_slots[idx];
+        uint64_t slot =
+            term_universe_load_slot_value(universe, universe->ptr_slots, idx);
         if (slot == 0)
             return CETTA_ATOM_ID_NONE;
         AtomId id = slot - 1;
@@ -2240,9 +2474,13 @@ static bool term_universe_insert_ptr_id(TermUniverse *universe, AtomId id) {
     uint32_t h = term_universe_ptr_hash(atom);
     for (size_t probe = 0; probe <= universe->ptr_mask; probe++) {
         size_t idx = ((size_t)h + probe) & universe->ptr_mask;
-        AtomId slot = universe->ptr_slots[idx];
+        uint64_t slot =
+            term_universe_load_slot_value(universe, universe->ptr_slots, idx);
         if (slot == 0) {
-            universe->ptr_slots[idx] = id + 1;
+            if (!term_universe_store_slot_value(term_universe_store_format(universe),
+                                                universe->ptr_slots, idx,
+                                                (uint64_t)id + 1u))
+                return false;
             universe->ptr_used++;
             return true;
         }
@@ -2336,7 +2574,8 @@ static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
     uint32_t h = atom_hash(src);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
         size_t idx = ((size_t)h + probe) & universe->intern_mask;
-        AtomId slot = universe->intern_slots[idx];
+        uint64_t slot = term_universe_load_slot_value(
+            universe, universe->intern_slots, idx);
         if (slot == 0)
             return CETTA_ATOM_ID_NONE;
         AtomId id = slot - 1;
@@ -2383,9 +2622,13 @@ static bool term_universe_insert_stable_id(TermUniverse *universe, AtomId id) {
     uint32_t h = hdr->hash32;
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
         size_t idx = ((size_t)h + probe) & universe->intern_mask;
-        AtomId slot = universe->intern_slots[idx];
+        uint64_t slot = term_universe_load_slot_value(
+            universe, universe->intern_slots, idx);
         if (slot == 0) {
-            universe->intern_slots[idx] = id + 1;
+            if (!term_universe_store_slot_value(term_universe_store_format(universe),
+                                                universe->intern_slots, idx,
+                                                (uint64_t)id + 1u))
+                return false;
             universe->intern_used++;
             return true;
         }
@@ -2510,7 +2753,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
                 }
             }
         }
-        id = tu_expr_from_ids(universe, child_ids, (uint32_t)src->expr.len);
+        id = tu_expr_from_ids(universe, child_ids, src->expr.len);
         free(child_ids);
         return id;
     }

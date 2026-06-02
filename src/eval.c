@@ -40,7 +40,7 @@ static bool g_fallback_eval_session_ready = false;
 
 typedef struct {
     Space **items;
-    uint32_t len, cap;
+    CettaCount len, cap;
 } TempSpaceSet;
 
 static TempSpaceSet g_temp_spaces = {0};
@@ -234,7 +234,7 @@ static bool atom_resolves_to_mork_handle(Space *s, Arena *a, Atom *space_expr,
     ResultSet rs;
     result_set_init(&rs);
     metta_eval(s, a, NULL, space_expr, fuel, &rs);
-    for (uint32_t i = 0; i < rs.len; i++) {
+    for (CettaCount i = 0; i < rs.len; i++) {
         if (cetta_native_handle_arg(rs.items[i], "mork-space", &id)) {
             free(rs.items);
             return true;
@@ -262,7 +262,7 @@ static bool resolve_explicit_mork_bridge_arg(Space *s, Arena *a,
     ResultSet rs;
     result_set_init(&rs);
     metta_eval(s, a, NULL, space_expr, fuel, &rs);
-    for (uint32_t i = 0; i < rs.len; i++) {
+    for (CettaCount i = 0; i < rs.len; i++) {
         if (cetta_library_lookup_explicit_mork_bridge(g_library_context,
                                                       rs.items[i],
                                                       out_bridge) &&
@@ -511,6 +511,44 @@ static void eval_release_outcome_variant_bank(void) {
 
 /* ── Result Set ─────────────────────────────────────────────────────────── */
 
+static CettaCount eval_array_capacity_limit(size_t elem_size) {
+    return elem_size == 0 ? (CettaCount)SIZE_MAX
+                          : (CettaCount)(SIZE_MAX / elem_size);
+}
+
+static bool eval_next_capacity(CettaCount current, CettaCount needed,
+                               size_t elem_size, CettaCount *out_next) {
+    CettaCount limit;
+    CettaCount next;
+    if (!out_next)
+        return false;
+    limit = eval_array_capacity_limit(elem_size);
+    if (needed > limit)
+        return false;
+    next = current ? current * 2u : 8u;
+    if (next <= current || next < needed)
+        next = needed;
+    if (next > limit)
+        next = limit;
+    if (next < needed)
+        return false;
+    *out_next = next;
+    return true;
+}
+
+static bool result_set_ensure_one(ResultSet *rs) {
+    CettaCount next_cap;
+    if (!rs)
+        return false;
+    if (rs->len < rs->cap)
+        return true;
+    if (!eval_next_capacity(rs->cap, rs->len + 1u, sizeof(Atom *), &next_cap))
+        return false;
+    rs->items = cetta_realloc(rs->items, sizeof(Atom *) * (size_t)next_cap);
+    rs->cap = next_cap;
+    return true;
+}
+
 void result_set_init(ResultSet *rs) {
     rs->items = NULL;
     rs->len = 0;
@@ -518,10 +556,8 @@ void result_set_init(ResultSet *rs) {
 }
 
 void result_set_add(ResultSet *rs, Atom *atom) {
-    if (rs->len >= rs->cap) {
-        rs->cap = rs->cap ? rs->cap * 2 : 8;
-        rs->items = cetta_realloc(rs->items, sizeof(Atom *) * rs->cap);
-    }
+    if (!result_set_ensure_one(rs))
+        return;
     rs->items[rs->len++] = atom;
 }
 
@@ -758,11 +794,22 @@ static void outcome_set_bind_owner_if_missing(OutcomeSet *os, Arena *owner) {
     os->payload_owner = owner;
 }
 
+static bool outcome_set_ensure_one(OutcomeSet *os) {
+    CettaCount next_cap;
+    if (!os)
+        return false;
+    if (os->len < os->cap)
+        return true;
+    if (!eval_next_capacity(os->cap, os->len + 1u, sizeof(Outcome), &next_cap))
+        return false;
+    os->items = cetta_realloc(os->items, sizeof(Outcome) * (size_t)next_cap);
+    os->cap = next_cap;
+    return true;
+}
+
 static Outcome *outcome_set_push_slot(OutcomeSet *os) {
-    if (os->len >= os->cap) {
-        os->cap = os->cap ? os->cap * 2 : 8;
-        os->items = cetta_realloc(os->items, sizeof(Outcome) * os->cap);
-    }
+    if (!outcome_set_ensure_one(os))
+        return NULL;
     return &os->items[os->len++];
 }
 
@@ -1240,6 +1287,8 @@ static void bindings_array_free(Bindings *items, uint32_t len) {
 
 void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env) {
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return;
     outcome_init(slot);
     slot->atom = atom;
     bindings_assert_no_private_variant_slots(env);
@@ -1255,6 +1304,8 @@ void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env) {
 static void outcome_set_add_unfactored(OutcomeSet *os, Atom *atom,
                                        const Bindings *env) {
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return;
     outcome_init(slot);
     slot->atom = atom;
     bindings_assert_no_private_variant_slots(env);
@@ -1268,6 +1319,8 @@ static void outcome_set_add_unfactored(OutcomeSet *os, Atom *atom,
 
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env) {
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return;
     outcome_init(slot);
     slot->atom = atom;
     bindings_assert_no_private_variant_slots(env);
@@ -1278,6 +1331,8 @@ void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env) {
 
 static void outcome_set_add_existing(OutcomeSet *os, const Outcome *src) {
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return;
     bindings_assert_no_private_variant_slots(&src->env);
     if (!outcome_clone(slot, src, outcome_set_payload_arena(os, NULL))) {
         outcome_free_fields(slot);
@@ -1290,6 +1345,8 @@ static void outcome_set_add_existing(OutcomeSet *os, const Outcome *src) {
 
 static void outcome_set_add_existing_move(OutcomeSet *os, Outcome *src) {
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return;
     outcome_init(slot);
     outcome_move(slot, src);
     if (!slot->materialized_atom)
@@ -1301,6 +1358,8 @@ static void outcome_set_add_existing_with_env(Arena *a,
                                               const Outcome *src,
                                               const Bindings *env) {
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return;
     Arena *payload_arena = outcome_set_payload_arena(os, a);
     outcome_init(slot);
     slot->kind = src->kind;
@@ -1330,6 +1389,8 @@ static void outcome_set_add_with_variant(OutcomeSet *os, Atom *atom,
                                          const Bindings *env,
                                          const VariantInstance *variant) {
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return;
     outcome_init(slot);
     slot->atom = atom;
     bindings_assert_no_private_variant_slots(env);
@@ -1351,6 +1412,8 @@ static bool outcome_set_add_promoted_existing(Arena *a, OutcomeSet *os,
     (void)preserve_bindings;
 
     Outcome *slot = outcome_set_push_slot(os);
+    if (!slot)
+        return false;
     outcome_init(slot);
     if (src->kind == CETTA_OUTCOME_ANSWER_REF) {
         slot->kind = CETTA_OUTCOME_ANSWER_REF;
@@ -1393,7 +1456,7 @@ static void outcome_set_append_promoted(Arena *a, OutcomeSet *dst,
                                         bool preserve_bindings) {
     if (!a || !dst || !src)
         return;
-    for (uint32_t i = 0; i < src->len; i++)
+    for (CettaCount i = 0; i < src->len; i++)
         (void)outcome_set_add_promoted_existing(a, dst, &src->items[i],
                                                 preserve_bindings);
 }
@@ -1502,6 +1565,12 @@ static bool outcome_set_add_compacted_variant(Arena *a, OutcomeSet *os,
     }
 
     slot = outcome_set_push_slot(os);
+    if (!slot) {
+        if (effective == &merged)
+            bindings_free(&merged);
+        outcome_free_fields(&inflated);
+        return false;
+    }
     outcome_init(slot);
     slot->atom = effective_src->atom;
     if (effective) {
@@ -1564,7 +1633,7 @@ static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
 
 static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
     bool has_success = false;
-    for (uint32_t i = 0; i < os->len; i++) {
+    for (CettaCount i = 0; i < os->len; i++) {
         if (!outcome_atom_is_error(a, &os->items[i])) {
             has_success = true;
             break;
@@ -1572,8 +1641,8 @@ static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
     }
     if (!has_success) return;
 
-    uint32_t out = 0;
-    for (uint32_t i = 0; i < os->len; i++) {
+    CettaCount out = 0;
+    for (CettaCount i = 0; i < os->len; i++) {
         if (outcome_atom_is_error(a, &os->items[i]))
             continue;
         if (out != i) {
@@ -1583,13 +1652,13 @@ static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
         }
         out++;
     }
-    for (uint32_t i = out; i < os->len; i++)
+    for (CettaCount i = out; i < os->len; i++)
         outcome_free_fields(&os->items[i]);
     os->len = out;
 }
 
 void outcome_set_free(OutcomeSet *os) {
-    for (uint32_t i = 0; i < os->len; i++)
+    for (CettaCount i = 0; i < os->len; i++)
         outcome_free_fields(&os->items[i]);
     free(os->items);
     os->items = NULL;
@@ -1677,7 +1746,7 @@ typedef struct {
     Atom *render_atom;
     const Bindings *env;
     char *key;
-    uint32_t ordinal;
+    CettaCount ordinal;
 } SearchEmitCandidate;
 
 typedef struct {
@@ -3248,7 +3317,7 @@ static void emit_singleton_visible_witness(Space *s, Arena *a, Atom *atom,
     Bindings shared_visible;
     bindings_init(&shared_visible);
 
-    for (uint32_t i = 0; i < inner.len; i++) {
+    for (CettaCount i = 0; i < inner.len; i++) {
         Atom *witness = outcome_atom_materialize(a, &inner.items[i]);
         if (atom_is_empty(witness))
             continue;
@@ -4147,7 +4216,7 @@ eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
 typedef struct {
     OrderedOutcomeVisitor visitor;
     void *ctx;
-    uint32_t *visited;
+    CettaCount *visited;
     bool stopped;
 } DirectWalkVisitorCtx;
 
@@ -4173,7 +4242,7 @@ static bool direct_outcome_walk_mork_match_supported(Arena *a, Atom *atom) {
 static bool direct_outcome_walk_visit_inner(DirectWalkVisitorCtx *walk,
                                             Arena *a,
                                             OutcomeSet *inner) {
-    for (uint32_t i = 0; i < inner->len; i++) {
+    for (CettaCount i = 0; i < inner->len; i++) {
         Atom *r = outcome_atom_materialize(a, &inner->items[i]);
         if (atom_is_empty(r))
             continue;
@@ -4205,7 +4274,7 @@ static bool direct_outcome_walk_mork_row(const Bindings *bindings, void *ctx) {
 
 static bool direct_outcome_walk_mork_match(Space *s, Arena *a, Atom *atom, int fuel,
                                            OrderedOutcomeVisitor visitor, void *ctx,
-                                           uint32_t *visited) {
+                                           CettaCount *visited) {
     if (!direct_outcome_walk_mork_match_supported(a, atom))
         return false;
 
@@ -4234,10 +4303,8 @@ static bool direct_outcome_walk_mork_match(Space *s, Arena *a, Atom *atom, int f
 
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
-        if (!cetta_expr_len_fits_u32(pattern->expr.len - 1))
-            return false;
         return space_match_backend_mork_visit_conjunction_direct(
-            bridge, a, pattern->expr.elems + 1, (uint32_t)(pattern->expr.len - 1), NULL,
+            bridge, a, pattern->expr.elems + 1, pattern->expr.len - 1, NULL,
             direct_outcome_walk_mork_row, &mork);
     }
     return space_match_backend_mork_visit_bindings_direct(
@@ -4321,7 +4388,7 @@ static bool direct_outcome_walk_supported(Space *s, Arena *a, Atom *atom, int fu
 
 static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
                                 OrderedOutcomeVisitor visitor, void *ctx,
-                                uint32_t *visited) {
+                                CettaCount *visited) {
     Bindings empty;
     bindings_init(&empty);
 
@@ -4371,20 +4438,20 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
     return true;
 }
 
-static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
-                                          CettaSearchPolicyOrder order,
-                                          OrderedOutcomeVisitor visitor,
-                                          void *ctx) {
-    uint32_t visited = 0;
+static CettaCount outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
+                                            CettaSearchPolicyOrder order,
+                                            OrderedOutcomeVisitor visitor,
+                                            void *ctx) {
+    CettaCount visited = 0;
     bool sorted_order = order == CETTA_SEARCH_POLICY_ORDER_LEX ||
                         order == CETTA_SEARCH_POLICY_ORDER_SHORTLEX;
 
     if (sorted_order) {
-        uint32_t candidate_cap = inner->len > 0 ? inner->len : 1;
+        CettaCount candidate_cap = inner->len > 0 ? inner->len : 1;
         SearchEmitCandidate *candidates =
-            arena_alloc(a, sizeof(SearchEmitCandidate) * candidate_cap);
-        uint32_t candidate_len = 0;
-        for (uint32_t i = 0; i < inner->len; i++) {
+            arena_alloc(a, sizeof(SearchEmitCandidate) * (size_t)candidate_cap);
+        CettaCount candidate_len = 0;
+        for (CettaCount i = 0; i < inner->len; i++) {
             Atom *r = outcome_atom_materialize(a, &inner->items[i]);
             if (atom_is_empty(r))
                 continue;
@@ -4399,7 +4466,7 @@ static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
               order == CETTA_SEARCH_POLICY_ORDER_LEX
                   ? compare_stream_candidates
                   : compare_stream_candidates_shortlex);
-        for (uint32_t i = 0; i < candidate_len; i++) {
+        for (CettaCount i = 0; i < candidate_len; i++) {
             visited++;
             if (!visitor(a, candidates[i].raw_atom, candidates[i].env, ctx))
                 break;
@@ -4408,7 +4475,7 @@ static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
     }
 
     if (order == CETTA_SEARCH_POLICY_ORDER_REVERSE) {
-        for (uint32_t i = inner->len; i > 0; i--) {
+        for (CettaCount i = inner->len; i > 0; i--) {
             Atom *r = outcome_atom_materialize(a, &inner->items[i - 1]);
             if (atom_is_empty(r))
                 continue;
@@ -4419,7 +4486,7 @@ static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
         return visited;
     }
 
-    for (uint32_t i = 0; i < inner->len; i++) {
+    for (CettaCount i = 0; i < inner->len; i++) {
         Atom *r = outcome_atom_materialize(a, &inner->items[i]);
         if (atom_is_empty(r))
             continue;
@@ -4430,34 +4497,38 @@ static uint32_t outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
     return visited;
 }
 
-static uint32_t metta_eval_bind_visit(Space *s, Arena *a, Atom *atom, int fuel,
-                                      CettaSearchPolicyOrder order,
-                                      OrderedOutcomeVisitor visitor,
-                                      void *ctx) {
+static CettaCount metta_eval_bind_visit(Space *s, Arena *a, Atom *atom, int fuel,
+                                        CettaSearchPolicyOrder order,
+                                        OrderedOutcomeVisitor visitor,
+                                        void *ctx) {
     if (order == CETTA_SEARCH_POLICY_ORDER_NATIVE &&
         direct_outcome_walk_supported(s, a, atom, fuel)) {
-        uint32_t visited = 0;
+        CettaCount visited = 0;
         direct_outcome_walk(s, a, atom, fuel, visitor, ctx, &visited);
         return visited;
     }
     OutcomeSet inner;
     outcome_set_init(&inner);
     metta_eval_bind(s, a, atom, fuel, &inner);
-    uint32_t visited = outcome_set_visit_ordered(a, &inner, order, visitor, ctx);
+    CettaCount visited = outcome_set_visit_ordered(a, &inner, order, visitor, ctx);
     outcome_set_free(&inner);
     return visited;
 }
 
 typedef struct {
     Atom **items;
-    uint32_t len;
-    uint32_t cap;
+    CettaCount len;
+    CettaCount cap;
 } StreamItemBuffer;
 
 static bool stream_item_buffer_push(StreamItemBuffer *buffer, Atom *item) {
     if (buffer->len >= buffer->cap) {
-        uint32_t next_cap = buffer->cap ? buffer->cap * 2 : 8;
-        Atom **next = cetta_realloc(buffer->items, sizeof(Atom *) * next_cap);
+        CettaCount next_cap;
+        Atom **next;
+        if (!eval_next_capacity(buffer->cap, buffer->len + 1u,
+                                sizeof(Atom *), &next_cap))
+            return false;
+        next = cetta_realloc(buffer->items, sizeof(Atom *) * (size_t)next_cap);
         if (!next)
             return false;
         buffer->items = next;
@@ -4586,7 +4657,7 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     metta_eval_bind_visit(s, a, stream_expr, fuel, order, stream_visit_collect, &collect);
 
     Atom **items = arena_alloc(a, sizeof(Atom *) * (collect.buffer.len > 0 ? collect.buffer.len : 1));
-    for (uint32_t i = 0; i < collect.buffer.len; i++)
+    for (CettaCount i = 0; i < collect.buffer.len; i++)
         items[i] = collect.buffer.items[i];
     outcome_set_add(os, atom_expr(a, items, collect.buffer.len), &_empty);
     stream_item_buffer_free(&collect.buffer);
@@ -4598,7 +4669,7 @@ static bool collapse_direct_stream(Space *s, Arena *a, Atom *stream_expr, int fu
         return false;
 
     StreamCollectCtx collect = {0};
-    uint32_t visited = 0;
+    CettaCount visited = 0;
     if (!direct_outcome_walk(s, a, stream_expr, fuel,
                              stream_visit_collect, &collect, &visited)) {
         stream_item_buffer_free(&collect.buffer);
@@ -4606,7 +4677,7 @@ static bool collapse_direct_stream(Space *s, Arena *a, Atom *stream_expr, int fu
     }
 
     bool has_success = false;
-    for (uint32_t i = 0; i < collect.buffer.len; i++) {
+    for (CettaCount i = 0; i < collect.buffer.len; i++) {
         if (!atom_is_error(collect.buffer.items[i])) {
             has_success = true;
             break;
@@ -4616,7 +4687,7 @@ static bool collapse_direct_stream(Space *s, Arena *a, Atom *stream_expr, int fu
     Atom **items = arena_alloc(a, sizeof(Atom *) *
                                   (collect.buffer.len > 0 ? collect.buffer.len : 1));
     uint32_t len = 0;
-    for (uint32_t i = 0; i < collect.buffer.len; i++) {
+    for (CettaCount i = 0; i < collect.buffer.len; i++) {
         if (has_success && atom_is_error(collect.buffer.items[i]))
             continue;
         items[len++] = collect.buffer.items[i];
@@ -4645,7 +4716,7 @@ static bool eval_bound_single_with_scratch(Space *s, Arena *a, Arena *scratch,
     metta_eval_bind(s, scratch, bound_atom, fuel, &results);
 
     Atom *resolved = NULL;
-    for (uint32_t i = 0; i < results.len; i++) {
+    for (CettaCount i = 0; i < results.len; i++) {
         Atom *candidate = outcome_atom_materialize(scratch, &results.items[i]);
         if (atom_is_empty(candidate))
             continue;
@@ -4732,8 +4803,9 @@ static bool reduce_stream_results(Space *s, Arena *a, Arena *work_a, Atom *call,
     arena_init(&reduce.stream_scratch);
     arena_set_runtime_kind(&reduce.stream_scratch,
                            CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-    if (a->hashcons)
-        arena_set_hashcons(&reduce.stream_scratch, a->hashcons);
+    /* Scratch arenas are freed eagerly; they must not seed the long-lived
+       hashcons table with child pointers that outlive the scratch storage. */
+    arena_set_hashcons(&reduce.stream_scratch, NULL);
 
     metta_eval_bind_visit(s, work_a, stream_expr, fuel, order, reduce_stream_visit, &reduce);
 
@@ -4835,8 +4907,7 @@ fold_by_key_stream_results(Space *s, Arena *a, Arena *work_a,
     arena_init(&ctx.stream_scratch);
     arena_set_runtime_kind(&ctx.stream_scratch,
                            CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-    if (a->hashcons)
-        arena_set_hashcons(&ctx.stream_scratch, a->hashcons);
+    arena_set_hashcons(&ctx.stream_scratch, NULL);
 
     metta_eval_bind_visit(s, work_a, stream_expr, fuel, order,
                           fold_by_key_stream_visit, &ctx);
@@ -4952,8 +5023,7 @@ static bool emit_mork_add_atoms_from_stream_source(Space *s, Arena *a,
     uint64_t insert_started_ns = 0;
     arena_init(&ctx.scratch);
     arena_set_runtime_kind(&ctx.scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-    if (a->hashcons)
-        arena_set_hashcons(&ctx.scratch, a->hashcons);
+    arena_set_hashcons(&ctx.scratch, NULL);
     Atom *applied_stream = (!current_env || current_env->len == 0)
         ? stream_source
         : bindings_apply_if_vars(current_env, a, stream_source);
@@ -4964,8 +5034,8 @@ static bool emit_mork_add_atoms_from_stream_source(Space *s, Arena *a,
                                 eval_finished_ns - eval_started_ns);
     }
     insert_started_ns = ctx.emit_timing ? eval_finished_ns : 0;
-    uint32_t total_items = 0;
-    for (uint32_t i = 0; i < stream_items.len; i++) {
+    CettaCount total_items = 0;
+    for (CettaCount i = 0; i < stream_items.len; i++) {
         if (atom_is_error(stream_items.items[i])) {
             ctx.error_atom = stream_items.items[i];
             break;
@@ -5272,7 +5342,7 @@ static bool add_atoms_from_evaluated_source_results(Space *s, Arena *a,
     result_set_init(&rs);
     metta_eval(s, a, NULL, items, fuel, &rs);
 
-    for (uint32_t i = 0; i < rs.len; i++) {
+    for (CettaCount i = 0; i < rs.len; i++) {
         Atom *item = rs.items[i];
         if (atom_is_error(item)) {
             outcome_set_add(os, item, &empty);
@@ -5416,15 +5486,20 @@ static bool let_add_atoms_source_shape(Atom *pat, Atom *val_expr,
 
 static void temp_space_register(Space *space) {
     if (g_temp_spaces.len >= g_temp_spaces.cap) {
-        g_temp_spaces.cap = g_temp_spaces.cap ? g_temp_spaces.cap * 2 : 4;
-        g_temp_spaces.items = cetta_realloc(g_temp_spaces.items, sizeof(Space *) * g_temp_spaces.cap);
+        CettaCount next_cap;
+        if (!eval_next_capacity(g_temp_spaces.cap, g_temp_spaces.len + 1u,
+                                sizeof(Space *), &next_cap))
+            return;
+        g_temp_spaces.items = cetta_realloc(g_temp_spaces.items,
+                                            sizeof(Space *) * (size_t)next_cap);
+        g_temp_spaces.cap = next_cap;
     }
     g_temp_spaces.items[g_temp_spaces.len++] = space;
 }
 
 static bool temp_space_is_registered(Space *space) {
     if (!space) return false;
-    for (uint32_t i = 0; i < g_temp_spaces.len; i++) {
+    for (CettaCount i = 0; i < g_temp_spaces.len; i++) {
         if (g_temp_spaces.items[i] == space)
             return true;
     }
@@ -5460,7 +5535,7 @@ void eval_release_temporary_spaces(void) {
     eval_release_episode_table();
     eval_release_outcome_variant_bank();
     eval_release_episode_survivor_arena();
-    for (uint32_t i = 0; i < g_temp_spaces.len; i++) {
+    for (CettaCount i = 0; i < g_temp_spaces.len; i++) {
         space_free(g_temp_spaces.items[i]);
         free(g_temp_spaces.items[i]);
     }
@@ -5573,16 +5648,16 @@ static Space *resolve_include_destination(Arena *a, Atom *target, Atom **error_o
 
 static void collect_resolved_spaces(Space *s, Arena *a, Atom *space_expr,
                                     int fuel, Space ***spaces_out,
-                                    uint32_t *len_out) {
+                                    CettaCount *len_out) {
     ResultSet rs;
     result_set_init(&rs);
     metta_eval(s, a, NULL, space_expr, fuel, &rs);
 
     Space **spaces = NULL;
-    uint32_t len = 0;
+    CettaCount len = 0;
     if (rs.len > 0) {
-        spaces = cetta_malloc(sizeof(Space *) * rs.len);
-        for (uint32_t i = 0; i < rs.len; i++) {
+        spaces = cetta_malloc(sizeof(Space *) * (size_t)rs.len);
+        for (CettaCount i = 0; i < rs.len; i++) {
             Space *sp = resolve_space(g_registry, rs.items[i]);
             if (sp) spaces[len++] = sp;
         }
@@ -5602,7 +5677,7 @@ static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int
     ResultSet rs;
     result_set_init(&rs);
     metta_eval(s, a, NULL, space_expr, fuel, &rs);
-    for (uint32_t i = 0; i < rs.len; i++) {
+    for (CettaCount i = 0; i < rs.len; i++) {
         sp = resolve_space(g_registry, rs.items[i]);
         if (sp) break;
     }
@@ -5885,12 +5960,12 @@ static bool try_effect_batch_append_let_units(Space *s, Arena *a,
                                 batch_append_let_visit, &ctx);
 
     if (ctx.errors.len > 0 && errors_out) {
-        for (uint32_t i = 0; i < ctx.errors.len; i++)
+        for (CettaCount i = 0; i < ctx.errors.len; i++)
             result_set_add(errors_out, ctx.errors.items[i]);
     } else if (ctx.errors.len > 0 && os && ctx.emitted_units == 0) {
         Bindings empty;
         bindings_init(&empty);
-        for (uint32_t i = 0; i < ctx.errors.len; i++)
+        for (CettaCount i = 0; i < ctx.errors.len; i++)
             outcome_set_add(os, ctx.errors.items[i], &empty);
     } else if (ctx.errors.len > 0 && !os) {
         result_set_free(&ctx.errors);
@@ -5927,7 +6002,7 @@ static bool effect_safe_single_feeder_value(Space *s, Arena *a,
     result_set_init(&vals);
     metta_eval(s, a, NULL, expr, fuel, &vals);
     Atom *single = NULL;
-    for (uint32_t i = 0; i < vals.len; i++) {
+    for (CettaCount i = 0; i < vals.len; i++) {
         if (atom_is_empty(vals.items[i]))
             continue;
         if (atom_is_error(vals.items[i]) || single) {
@@ -5956,7 +6031,7 @@ enum {
 };
 
 static bool collapse_push_result_set(StreamItemBuffer *items, ResultSet *rs) {
-    for (uint32_t i = 0; i < rs->len; i++) {
+    for (CettaCount i = 0; i < rs->len; i++) {
         if (atom_is_empty(rs->items[i]))
             continue;
         if (!stream_item_buffer_push(items, rs->items[i]))
@@ -6022,7 +6097,7 @@ static bool collapse_let_collect(Space *s, Arena *a, Atom *inner, int fuel,
             .has_success = false,
         };
         result_set_init(&ctx.stream_errors);
-        uint32_t visited = 0;
+        CettaCount visited = 0;
         bool ok = direct_outcome_walk(s, a, stream_expr, fuel,
                                       collapse_let_stream_visit, &ctx, &visited);
         if (ok && !ctx.has_success)
@@ -6060,7 +6135,7 @@ static bool collapse_let_stream(Space *s, Arena *a, Atom *inner, int fuel,
 
     Atom **items = arena_alloc(a, sizeof(Atom *) *
                                   (items_buf.len > 0 ? items_buf.len : 1));
-    for (uint32_t i = 0; i < items_buf.len; i++)
+    for (CettaCount i = 0; i < items_buf.len; i++)
         items[i] = items_buf.items[i];
 
     Bindings empty;
@@ -6134,13 +6209,13 @@ static bool try_effect_batch_append_collapse(Space *s, Arena *a,
 
     Bindings empty;
     bindings_init(&empty);
-    uint32_t error_count = unit_count == 0 ? errors.len : 0;
-    uint32_t len = unit_count + error_count;
+    CettaCount error_count = unit_count == 0 ? errors.len : 0;
+    CettaCount len = unit_count + error_count;
     Atom **items = arena_alloc(a, sizeof(Atom *) * (len ? len : 1));
     Atom *unit = atom_unit(a);
-    for (uint32_t i = 0; i < unit_count; i++)
+    for (CettaCount i = 0; i < unit_count; i++)
         items[i] = unit;
-    for (uint32_t i = 0; i < error_count; i++)
+    for (CettaCount i = 0; i < error_count; i++)
         items[unit_count + i] = errors.items[i];
     outcome_set_add(os, atom_expr(a, items, len), &empty);
     result_set_free(&errors);
@@ -6164,7 +6239,7 @@ static Atom *call_signature_error(Arena *a, Atom *call, const char *expected) {
 }
 
 static void result_set_resolve_registry_refs(Arena *a, ResultSet *rs) {
-    for (uint32_t i = 0; i < rs->len; i++) {
+    for (CettaCount i = 0; i < rs->len; i++) {
         rs->items[i] = resolve_registry_refs(a, rs->items[i]);
     }
 }
@@ -6182,11 +6257,6 @@ static bool space_snapshot_copy_logical_view(Space *dst, const Space *src) {
     dst->revision = space_revision(src);
     if (n == 0)
         return true;
-
-    dst->native.atom_ids = cetta_malloc(sizeof(AtomId) * n);
-    dst->native.cap = n;
-    dst->native.len = 0;
-    dst->native.start = 0;
     for (uint32_t i = 0; i < n; i++) {
         AtomId atom_id = space_get_atom_id_at(src, i);
         if (atom_id == CETTA_ATOM_ID_NONE) {
@@ -6194,7 +6264,7 @@ static bool space_snapshot_copy_logical_view(Space *dst, const Space *src) {
             atom_id = term_universe_store_atom_id(dst->native.universe, NULL, atom);
         }
         if (atom_id != CETTA_ATOM_ID_NONE)
-            dst->native.atom_ids[dst->native.len++] = atom_id;
+            space_add_atom_id(dst, atom_id);
     }
 
     /* The clone starts with no rebuilt indexes; they must be derived from the
@@ -6763,7 +6833,7 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
         outcome_set_init(&os);
         metta_call(s, a, atom, etype, fuel > 0 ? fuel - 1 : fuel, false, &os);
         outcome_set_filter_errors_if_success(a, &os);
-        for (uint32_t oi = 0; oi < os.len; oi++)
+        for (CettaCount oi = 0; oi < os.len; oi++)
             result_set_add(rs,
                            outcome_atom_materialize_traced(
                                a, &os.items[oi],
@@ -6860,7 +6930,7 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
         ResultSet rs;
         result_set_init(&rs);
         type_cast_fn(s, a, atom, etype, fuel, &rs);
-        for (uint32_t i = 0; i < rs.len; i++)
+        for (CettaCount i = 0; i < rs.len; i++)
             outcome_set_add(os, rs.items[i], &empty);
         result_set_free(&rs);
         return;
@@ -6881,7 +6951,7 @@ static void eval_with_prefix_bindings(Space *s, Arena *a, Atom *type, Atom *atom
     outcome_set_init(&inner);
     metta_eval_bind_typed(s, a, type, atom, fuel, &inner);
     if (!prefix || prefix->len == 0) {
-        for (uint32_t i = 0; i < inner.len; i++) {
+        for (CettaCount i = 0; i < inner.len; i++) {
             outcome_set_add_existing_move(os, &inner.items[i]);
         }
         outcome_set_free(&inner);
@@ -6892,7 +6962,7 @@ static void eval_with_prefix_bindings(Space *s, Arena *a, Atom *type, Atom *atom
         outcome_set_free(&inner);
         return;
     }
-    for (uint32_t i = 0; i < inner.len; i++) {
+    for (CettaCount i = 0; i < inner.len; i++) {
         BindingsMergeAttempt attempt;
         if (!bindings_builder_merge_or_clone(&merged_builder, prefix,
                                              &inner.items[i].env, &attempt))
@@ -7291,7 +7361,7 @@ static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *s
         BindingsBuilder merged_builder;
         if (!bindings_builder_init(&merged_builder, outer_env))
             return;
-        for (uint32_t i = 0; i < src->len; i++) {
+        for (CettaCount i = 0; i < src->len; i++) {
             BindingsMergeAttempt attempt;
             if (!bindings_builder_merge_or_clone(&merged_builder, outer_env,
                                                  &src->items[i].env, &attempt))
@@ -7302,7 +7372,7 @@ static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst, OutcomeSet *s
         bindings_builder_free(&merged_builder);
         return;
     }
-    for (uint32_t i = 0; i < src->len; i++) {
+    for (CettaCount i = 0; i < src->len; i++) {
         if (preserve_bindings && !bindings_has_any_entries(outer_env)) {
             outcome_set_add_existing(dst, &src->items[i]);
             continue;
@@ -7320,7 +7390,7 @@ static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
         BindingsBuilder merged_builder;
         if (!bindings_builder_init(&merged_builder, outer_env))
             return;
-        for (uint32_t i = 0; i < src->len; i++) {
+        for (CettaCount i = 0; i < src->len; i++) {
             BindingsMergeAttempt attempt;
             if (!bindings_builder_merge_or_clone(&merged_builder, outer_env,
                                                  &src->items[i].env, &attempt))
@@ -7331,7 +7401,7 @@ static void outcome_set_append_prefixed_move(Arena *a, OutcomeSet *dst,
         bindings_builder_free(&merged_builder);
         return;
     }
-    for (uint32_t i = 0; i < src->len; i++) {
+    for (CettaCount i = 0; i < src->len; i++) {
         if (preserve_bindings && !bindings_has_any_entries(outer_env)) {
             outcome_set_add_existing_move(dst, &src->items[i]);
             continue;
@@ -7388,14 +7458,14 @@ static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int
 
 typedef struct {
     Atom **items;
-    uint32_t len;
-    uint32_t cap;
+    CettaCount len;
+    CettaCount cap;
 } MatchResultSnapshot;
 
 typedef struct {
     Space **items;
-    uint32_t len;
-    uint32_t cap;
+    CettaCount len;
+    CettaCount cap;
 } DeferredSpaceSet;
 
 typedef struct {
@@ -7409,7 +7479,7 @@ static bool match_result_snapshot_push(MatchResultSnapshot *snapshot,
 static void deferred_space_set_free(DeferredSpaceSet *set) {
     if (!set)
         return;
-    for (uint32_t i = 0; i < set->len; i++)
+    for (CettaCount i = 0; i < set->len; i++)
         space_end_secondary_index_deferral(set->items[i]);
     free(set->items);
     set->items = NULL;
@@ -7420,13 +7490,17 @@ static void deferred_space_set_free(DeferredSpaceSet *set) {
 static bool deferred_space_set_add(DeferredSpaceSet *set, Space *space) {
     if (!set || !space)
         return false;
-    for (uint32_t i = 0; i < set->len; i++) {
+    for (CettaCount i = 0; i < set->len; i++) {
         if (set->items[i] == space)
             return true;
     }
     if (set->len >= set->cap) {
-        uint32_t next_cap = set->cap ? set->cap * 2 : 4;
-        set->items = cetta_realloc(set->items, sizeof(Space *) * next_cap);
+        CettaCount next_cap;
+        if (!eval_next_capacity(set->cap, set->len + 1u, sizeof(Space *),
+                                &next_cap))
+            return false;
+        set->items =
+            cetta_realloc(set->items, sizeof(Space *) * (size_t)next_cap);
         set->cap = next_cap;
     }
     space_begin_secondary_index_deferral(space);
@@ -7571,9 +7645,12 @@ static bool match_result_snapshot_push(MatchResultSnapshot *snapshot,
     if (!snapshot)
         return false;
     if (snapshot->len >= snapshot->cap) {
-        uint32_t next_cap = snapshot->cap ? snapshot->cap * 2 : 8;
+        CettaCount next_cap;
+        if (!eval_next_capacity(snapshot->cap, snapshot->len + 1u,
+                                sizeof(Atom *), &next_cap))
+            return false;
         snapshot->items =
-            cetta_realloc(snapshot->items, sizeof(Atom *) * next_cap);
+            cetta_realloc(snapshot->items, sizeof(Atom *) * (size_t)next_cap);
         snapshot->cap = next_cap;
     }
     snapshot->items[snapshot->len++] = atom;
@@ -7587,7 +7664,7 @@ static void match_result_snapshot_eval(Space *s, Arena *a,
     bindings_init(&empty);
     if (!snapshot)
         return;
-    for (uint32_t i = 0; i < snapshot->len; i++)
+    for (CettaCount i = 0; i < snapshot->len; i++)
         eval_for_caller(s, a, NULL, snapshot->items[i], fuel, &empty, false, os);
 }
 
@@ -7696,7 +7773,7 @@ static void interpret_function_args(Space *s, Arena *a, Atom *op,
         outcome_set_free(&arg_os);
         return;
     }
-    for (uint32_t i = 0; i < arg_os.len; i++) {
+    for (CettaCount i = 0; i < arg_os.len; i++) {
         BindingsMergeAttempt attempt;
         Atom *arg_atom =
             outcome_atom_materialize_traced(
@@ -7796,7 +7873,7 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
         return true;
     }
 
-    for (uint32_t i = 0; i < rs.len; i++)
+    for (CettaCount i = 0; i < rs.len; i++)
         eval_for_caller(s, a, result_type, rs.items[i], fuel, prefix,
                         preserve_bindings, os);
     result_set_free(&rs);
@@ -7817,7 +7894,7 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
 
     bool saw_capture = false;
     bool saw_other = false;
-    for (uint32_t hi = 0; hi < heads.len; hi++) {
+        for (CettaCount hi = 0; hi < heads.len; hi++) {
         if (outcome_atom_is_empty_or_error(a, &heads.items[hi]))
             continue;
         Atom *head_atom =
@@ -7836,7 +7913,7 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
     }
 
     Atom *exp_type = etype ? etype : atom_undefined_type(a);
-    for (uint32_t hi = 0; hi < heads.len; hi++) {
+    for (CettaCount hi = 0; hi < heads.len; hi++) {
         Atom *head_atom =
             outcome_atom_materialize_traced(
                 a, &heads.items[hi],
@@ -7880,7 +7957,7 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
         interpret_function_args(s, a, head_atom, atom->expr.elems + 1, arg_types,
                                 expr_narg, 0, prefix, head_env, fuel, &call_terms);
 
-        for (uint32_t ci = 0; ci < call_terms.len; ci++) {
+        for (CettaCount ci = 0; ci < call_terms.len; ci++) {
             Atom *call_atom =
                 outcome_atom_materialize_traced(
                     a, &call_terms.items[ci],
@@ -8186,10 +8263,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
         CettaExprLen n_conjuncts = pattern->expr.len - 1;
-        if (!cetta_expr_len_fits_u32(n_conjuncts)) {
-            outcome_set_add(os, expr_arity_too_large_error(a, pattern), &_empty);
-            return true;
-        }
         BindingSet matches;
         MatchVisibleVarSet visible;
         match_visible_var_set_init(&visible);
@@ -8197,12 +8270,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             match_visible_var_set_free(&visible);
             return true;
         }
-        space_query_conjunction(ms, a, pattern->expr.elems + 1, (uint32_t)n_conjuncts,
+        space_query_conjunction(ms, a, pattern->expr.elems + 1, n_conjuncts,
                                 NULL, &matches);
         if (!preserve_bindings) {
             MatchResultSnapshot snapshot = {0};
             Space *query_spaces[] = { ms };
-            for (uint32_t bi = 0; bi < matches.len; bi++) {
+            for (CettaIndex bi = 0; bi < matches.len; bi++) {
                 Bindings projected;
                 if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                     &projected)) {
@@ -8218,7 +8291,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             match_result_snapshot_eval(s, a, &snapshot, fuel, os);
             match_result_snapshot_free(&snapshot);
         } else {
-            for (uint32_t bi = 0; bi < matches.len; bi++) {
+            for (CettaIndex bi = 0; bi < matches.len; bi++) {
                 Bindings projected;
                 if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                     &projected)) {
@@ -8275,7 +8348,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 if (!preserve_bindings) {
                     MatchResultSnapshot snapshot = {0};
                     Space *query_spaces[] = { ms };
-                    for (uint32_t bi = 0; bi < matches.len; bi++) {
+                    for (CettaIndex bi = 0; bi < matches.len; bi++) {
                         Bindings projected;
                         if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                             &projected)) {
@@ -8291,7 +8364,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     match_result_snapshot_eval(s, a, &snapshot, fuel, os);
                     match_result_snapshot_free(&snapshot);
                 } else {
-                    for (uint32_t bi = 0; bi < matches.len; bi++) {
+                    for (CettaIndex bi = 0; bi < matches.len; bi++) {
                         Bindings projected;
                         if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                             &projected)) {
@@ -8483,7 +8556,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 match_chain_note_eval_live_peak(
                     a,
                     CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
-                for (uint32_t ci = 0; ci < smr.len; ci++) {
+                for (CettaIndex ci = 0; ci < smr.len; ci++) {
                     Bindings mb;
                     size_t merge_entry_before = bindings_entry_active_bytes();
                     size_t merge_constraint_before =
@@ -8562,7 +8635,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     match_chain_note_eval_live_peak(
                         a,
                         CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
-                    for (uint32_t ci = 0; ci < smr.len; ci++) {
+                    for (CettaIndex ci = 0; ci < smr.len; ci++) {
                         Bindings mb;
                         size_t merge_entry_before = bindings_entry_active_bytes();
                         size_t merge_constraint_before =
@@ -8648,7 +8721,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     match_chain_note_eval_live_peak(
                         a,
                         CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
-                    for (uint32_t ci = 0; ci < smr.len; ci++) {
+                    for (CettaIndex ci = 0; ci < smr.len; ci++) {
                         Bindings mb;
                         size_t merge_entry_before = bindings_entry_active_bytes();
                         size_t merge_constraint_before =
@@ -8899,15 +8972,8 @@ static bool emit_direct_mork_match_rows(Space *s, Arena *a, Atom *surface_atom,
 
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
-        if (!cetta_expr_len_fits_u32(pattern->expr.len - 1)) {
-            outcome_set_add(os,
-                            atom_error(a, surface_atom,
-                                       atom_string(a, "MORK direct match conjunction arity too large")),
-                            &empty);
-            return true;
-        }
         bool ok = space_match_backend_mork_visit_conjunction_direct(
-            bridge, a, pattern->expr.elems + 1, (uint32_t)(pattern->expr.len - 1), NULL,
+            bridge, a, pattern->expr.elems + 1, pattern->expr.len - 1, NULL,
             direct_mork_emit_row, &emit);
         if (!ok) {
             const char *err = cetta_mork_bridge_last_error();
@@ -9027,10 +9093,8 @@ static bool try_count_mork_match_collapse(Space *s, Arena *a, Atom *match_atom,
 
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
-        if (!cetta_expr_len_fits_u32(pattern->expr.len - 1))
-            return false;
         ok = space_match_backend_mork_visit_conjunction_direct(
-            bridge, a, pattern->expr.elems + 1, (uint32_t)(pattern->expr.len - 1), NULL,
+            bridge, a, pattern->expr.elems + 1, pattern->expr.len - 1, NULL,
             count_mork_match_row, &ctx);
     } else {
         ok = space_match_backend_mork_visit_bindings_direct(
@@ -9119,13 +9183,9 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 3 &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
         BindingSet matches;
-        if (!cetta_expr_len_fits_u32(pattern->expr.len - 1)) {
-            match_visible_var_set_free(&visible);
-            return false;
-        }
         space_query_conjunction(ms, a, pattern->expr.elems + 1,
-                                (uint32_t)(pattern->expr.len - 1), NULL, &matches);
-        for (uint32_t i = 0; i < matches.len && ok; i++) {
+                                pattern->expr.len - 1, NULL, &matches);
+        for (CettaIndex i = 0; i < matches.len && ok; i++) {
             ok = count_projected_template(a, &visible, &matches.items[i],
                                           templ, s, fuel, &count);
         }
@@ -9151,7 +9211,7 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
         }
         smset_init(&matches);
         space_subst_query(ms, a, pattern, &matches);
-        for (uint32_t i = 0; i < matches.len && ok; i++) {
+        for (CettaCount i = 0; i < matches.len && ok; i++) {
             Bindings mb;
             if (space_subst_match_with_seed(ms, pattern, &matches.items[i],
                                             &empty, a, &mb)) {
@@ -9382,7 +9442,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 outcome_set_init(&heads);
                 metta_eval_bind_typed(s, a, fresh_ft, op, fuel, &heads);
 
-                for (uint32_t hi = 0; hi < heads.len; hi++) {
+                for (CettaCount hi = 0; hi < heads.len; hi++) {
                     Atom *head_atom = outcome_atom_materialize(a, &heads.items[hi]);
                     Bindings *head_env = &heads.items[hi].env;
                     if (atom_is_empty_or_error(head_atom) && !atom_eq(head_atom, op)) {
@@ -9399,7 +9459,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     interpret_function_args(s, a, head_atom, atom->expr.elems + 1, arg_types,
                                             expr_narg, 0, prefix, head_env, fuel, &call_terms);
 
-                    for (uint32_t ci = 0; ci < call_terms.len; ci++) {
+                    for (CettaCount ci = 0; ci < call_terms.len; ci++) {
                         Atom *call_atom = outcome_atom_materialize(a, &call_terms.items[ci]);
                         Bindings *combo_ctx = &call_terms.items[ci].env;
                         Atom *inst_ret_type =
@@ -9584,7 +9644,7 @@ query_done:
     free(op_types);
 
     if (func_results.len > 0) {
-        for (uint32_t i = 0; i < func_results.len; i++)
+        for (CettaCount i = 0; i < func_results.len; i++)
             outcome_set_add_existing(os, &func_results.items[i]);
         outcome_set_free(&func_results);
         if (!has_non_func_type) return true;
@@ -9734,7 +9794,7 @@ query_done:
             return true;
         }
 
-        for (uint32_t ti = 0; ti < tuples.len; ti++) {
+        for (CettaCount ti = 0; ti < tuples.len; ti++) {
             if (outcome_skip_call_observation_fast_path(s, &tuples.items[ti])) {
                 outcome_set_add_existing_move(os, &tuples.items[ti]);
                 continue;
@@ -9855,7 +9915,7 @@ tail_call: ;
         ResultSet rs;
         result_set_init(&rs);
         type_cast_fn(s, a, atom, etype, fuel, &rs);
-        for (uint32_t i = 0; i < rs.len; i++)
+        for (CettaCount i = 0; i < rs.len; i++)
             outcome_set_add(os, rs.items[i], &_empty);
         result_set_free(&rs);
         return;
@@ -9910,7 +9970,7 @@ tail_call: ;
             }
         }
 
-        for (uint32_t i = 0; i < conds.len; i++) {
+        for (CettaCount i = 0; i < conds.len; i++) {
             Atom *cond =
                 outcome_atom_materialize_traced(
                     a, &conds.items[i],
@@ -9997,7 +10057,7 @@ tail_call: ;
                 outcome_set_init(&branch);
                 eval_for_current_caller(s, a, etype, list->expr.elems[i], fuel, &_empty,
                                         CURRENT_ENV, preserve_bindings, &branch);
-                for (uint32_t j = 0; j < branch.len; j++) {
+                for (CettaCount j = 0; j < branch.len; j++) {
                     Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
                     if (atom_is_empty(branch_atom))
                         continue;
@@ -10030,10 +10090,10 @@ tail_call: ;
         /* HE treats Empty as an internal no-result sentinel here: collapse
            collects only surviving branches, not literal Empty placeholders. */
         Atom **collected_items = NULL;
-        uint32_t collected_len = 0;
+        CettaExprLen collected_len = 0;
         if (inner.len > 0) {
             collected_items = arena_alloc(a, sizeof(Atom *) * inner.len);
-            for (uint32_t i = 0; i < inner.len; i++) {
+            for (CettaCount i = 0; i < inner.len; i++) {
                 if (atom_is_empty(inner.items[i]))
                     continue;
                 collected_items[collected_len++] = inner.items[i];
@@ -10232,7 +10292,7 @@ tail_call: ;
             free(scrut.items);
             return;
         }
-        for (uint32_t si = 0; si < scrut.len; si++) {
+        for (CettaCount si = 0; si < scrut.len; si++) {
             Atom *sv = scrut.items[si];
             if (branches->kind == ATOM_EXPR) {
                 for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
@@ -10376,7 +10436,7 @@ tail_call: ;
                                         CETTA_SEARCH_POLICY_ORDER_NATIVE,
                                         let_direct_branch_visit, &visit);
             if (!visit.has_success) {
-                for (uint32_t i = 0; i < visit.errors.len; i++)
+                for (CettaCount i = 0; i < visit.errors.len; i++)
                     outcome_set_add(os, visit.errors.items[i], &_empty);
             }
             result_set_free(&visit.errors);
@@ -10385,7 +10445,7 @@ tail_call: ;
         outcome_set_init(&vals);
         metta_eval_bind(s, a, applied_val_expr, fuel, &vals);
         bool all_errors = vals.len > 0;
-        for (uint32_t i = 0; i < vals.len; i++) {
+        for (CettaCount i = 0; i < vals.len; i++) {
             if (!atom_is_error(
                     outcome_atom_materialize_traced(
                         a, &vals.items[i],
@@ -10395,7 +10455,7 @@ tail_call: ;
             }
         }
         if (all_errors) {
-            for (uint32_t i = 0; i < vals.len; i++)
+            for (CettaCount i = 0; i < vals.len; i++)
                 outcome_set_add(os,
                                 outcome_atom_materialize_traced(
                                     a, &vals.items[i],
@@ -10478,7 +10538,7 @@ tail_call: ;
             }
         }
         /* Multi-result: no TCO */
-        for (uint32_t i = 0; i < vals.len; i++) {
+        for (CettaCount i = 0; i < vals.len; i++) {
             Atom *val_atom =
                 outcome_atom_materialize_traced(
                     a, &vals.items[i],
@@ -10625,7 +10685,7 @@ tail_call: ;
             TAIL_REENTER(next_atom);
         }
         /* Multi-result: no TCO */
-        for (uint32_t i = 0; i < inner.len; i++) {
+        for (CettaCount i = 0; i < inner.len; i++) {
             Atom *r =
                 outcome_atom_materialize_traced(
                     a, &inner.items[i],
@@ -10825,8 +10885,7 @@ tail_call: ;
             arena_init(&stream_scratch);
             arena_set_runtime_kind(&stream_scratch,
                                    CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-            if (a->hashcons)
-                arena_set_hashcons(&stream_scratch, a->hashcons);
+            arena_set_hashcons(&stream_scratch, NULL);
             reduce_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
                                   init, acc_var->sym_id, item_var->sym_id,
                                   step_expr, fuel, os);
@@ -10905,8 +10964,7 @@ tail_call: ;
             arena_init(&stream_scratch);
             arena_set_runtime_kind(&stream_scratch,
                                    CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-            if (a->hashcons)
-                arena_set_hashcons(&stream_scratch, a->hashcons);
+            arena_set_hashcons(&stream_scratch, NULL);
             fold_by_key_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
                                        init, acc_var->sym_id, item_var->sym_id,
                                        key_expr, step_expr, fuel, os);
@@ -11032,7 +11090,7 @@ tail_call: ;
         ResultSet inner;
         result_set_init(&inner);
         metta_eval(s, a, NULL,body, fuel, &inner);
-        for (uint32_t i = 0; i < inner.len; i++) {
+        for (CettaCount i = 0; i < inner.len; i++) {
             Atom *r = inner.items[i];
             if (atom_head_symbol_id(r) == g_builtin_syms.return_text && r->expr.len == 2) {
                 outcome_set_add(os, r->expr.elems[1], &_empty);
@@ -11055,7 +11113,7 @@ tail_call: ;
         ResultSet inner;
         result_set_init(&inner);
         metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, &inner);
-        for (uint32_t i = 0; i < inner.len; i++) {
+        for (CettaCount i = 0; i < inner.len; i++) {
             if (is_true_atom(inner.items[i])) {
                 outcome_set_add(os, atom_unit(a), &_empty);
             } else {
@@ -11896,7 +11954,7 @@ tail_call: ;
     /* ── add-reduct ────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.add_reduct && nargs == 2 && g_registry) {
         Space **targets = NULL;
-        uint32_t ntargets = 0;
+        CettaCount ntargets = 0;
         collect_resolved_spaces(s, a, expr_arg(atom, 0), fuel, &targets, &ntargets);
 
         OutcomeSet vals;
@@ -11905,8 +11963,8 @@ tail_call: ;
 
         if (ntargets > 0) {
             Arena *dst = eval_storage_arena(a);
-            for (uint32_t ti = 0; ti < ntargets; ti++) {
-                for (uint32_t vi = 0; vi < vals.len; vi++) {
+            for (CettaCount ti = 0; ti < ntargets; ti++) {
+                for (CettaCount vi = 0; vi < vals.len; vi++) {
                     Atom *stored_val = outcome_atom_materialize(a, &vals.items[vi]);
                     if (!space_admit_atom(targets[ti], dst, stored_val)) {
                         outcome_set_add(os,
@@ -12196,7 +12254,7 @@ tail_call: ;
         uint32_t pair_len = 0;
         if (inner.len > 0)
             pairs = arena_alloc(a, sizeof(Atom *) * inner.len);
-        for (uint32_t i = 0; i < inner.len; i++) {
+        for (CettaCount i = 0; i < inner.len; i++) {
             Atom *result_atom = outcome_atom_materialize(a, &inner.items[i]);
             if (atom_is_empty(result_atom))
                 continue;

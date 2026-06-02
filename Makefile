@@ -26,8 +26,13 @@ ENABLE_PATHMAP_SPACE := 0
 ENABLE_GMP ?= 1
 ENABLE_RUNTIME_STATS ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
+ENABLE_SANITIZERS ?= 0
+SANITIZERS ?= address,undefined
 ifneq ($(filter $(ENABLE_GMP),0 1),$(ENABLE_GMP))
 $(error ENABLE_GMP must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_SANITIZERS),0 1),$(ENABLE_SANITIZERS))
+$(error ENABLE_SANITIZERS must be 0 or 1)
 endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
@@ -178,9 +183,16 @@ PY_LDFLAGS = $(shell python3-config --embed --ldflags)
 PY_RPATH = -Wl,-rpath,$(shell python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')
 PYTHON_SRC = src/foreign.c
 endif
+empty :=
+space := $(empty) $(empty)
+comma := ,
 BUILD_OBJ_TAG = $(BUILD_CANON)
 ifeq ($(ENABLE_GMP),0)
 BUILD_OBJ_TAG := $(BUILD_CANON).nogmp
+endif
+ifeq ($(ENABLE_SANITIZERS),1)
+SANITIZER_TAG := $(subst $(comma),-,$(subst $(space),_,$(SANITIZERS)))
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).sanitize.$(SANITIZER_TAG)
 endif
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_OBJ_TAG).runtime-stats.h
@@ -197,6 +209,10 @@ CPPFLAGS = -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) -include $(BUIL
 CFLAGS = -O3 -Wall -Werror -std=c11
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(GMP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
+ifeq ($(ENABLE_SANITIZERS),1)
+CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11
+LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
+endif
 
 SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -215,6 +231,17 @@ endif
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
 FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o,$(OBJ))
 STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
+VARIANT_SHAPE_TEST_BIN = runtime/test_variant_shape_roundtrip-$(BUILD_OBJ_TAG)
+MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN = runtime/test_mork_bridge_contextual_exact_rows-$(BUILD_OBJ_TAG)
+MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN = runtime/test_mork_cursor_byte_buffer_count_abi-$(BUILD_OBJ_TAG)
+MORK_CURSOR_EXPR_ROW_STREAM_ABI_TEST_BIN = runtime/test_mork_cursor_expr_row_stream_abi-$(BUILD_OBJ_TAG)
+MORK_QUERY_ROW_STREAM_ABI_TEST_BIN = runtime/test_mork_query_row_stream_abi-$(BUILD_OBJ_TAG)
+SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN = runtime/test_space_term_universe_membership-$(BUILD_OBJ_TAG)
+TERM_UNIVERSE_STORE_ABI_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).runtime-stats
+TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN = runtime/test_term_universe_backend_add_abi-$(BUILD_OBJ_TAG).runtime-stats
+PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN = runtime/test_pathmap_backend_primary_destructive_abi-$(BUILD_OBJ_TAG)
+PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN = runtime/test_pathmap_backend_primary_replace_abi-$(BUILD_OBJ_TAG)
+PATHMAP_TYPED_QUERY_ABI_TEST_BIN = runtime/test_pathmap_typed_query_abi-$(BUILD_OBJ_TAG)
 SPACE_ENGINES = native native-candidate-exact
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 SPACE_ENGINES += pathmap
@@ -222,6 +249,22 @@ endif
 D4_PROBE_TIMEOUT ?= 60
 CETTA_BENCH_VMEM_KIB ?=
 CETTA_BENCH_LIMIT_PREFIX = $(if $(strip $(CETTA_BENCH_VMEM_KIB)),ulimit -v $(CETTA_BENCH_VMEM_KIB); )
+ASAN_REPEATABLE := 0
+ifeq ($(ENABLE_SANITIZERS),1)
+ifneq ($(filter address,$(subst $(comma), ,$(SANITIZERS))),)
+ASAN_REPEATABLE := 1
+endif
+endif
+CETTA_EXEC_WRAPPER := ./scripts/cetta_exec.sh
+define cetta_exec
+$(if $(filter 1,$(ASAN_REPEATABLE)),CETTA_ASAN_REPEATABLE=1 $(CETTA_EXEC_WRAPPER) $1,$1)
+endef
+CETTA_BIN_INVOKE = $(call cetta_exec,./$(BIN))
+ifeq ($(ASAN_REPEATABLE),1)
+CETTA_SCRIPT_RUN_ENV = CETTA_ASAN_REPEATABLE=1 CETTA_BIN="$(abspath $(CETTA_EXEC_WRAPPER))" CETTA_WRAPPED_BIN="$(abspath $(BIN))"
+else
+CETTA_SCRIPT_RUN_ENV = CETTA_BIN="$(abspath $(BIN))"
+endif
 GIT_TEST_FIXTURE_ROOT = $(CURDIR)/runtime/git_module_fixture
 GIT_TEST_CACHE_DIR = $(CURDIR)/runtime/test-git-module-cache
 GIT_TEST_URL = file://$(GIT_TEST_FIXTURE_ROOT)
@@ -462,11 +505,12 @@ bench-ffi-friction-heavy:
 perf-runtime-stats:
 	$(call require_runtime_stats_or_reexec,runtime-stats probe,$@)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
-	@CETTA_BIN="$(abspath $(BIN))" ./scripts/bench_runtime_stats_probe.sh
+	@$(CETTA_SCRIPT_RUN_ENV) ./scripts/bench_runtime_stats_probe.sh
 
 probe-epoch-runtime-witness: $(BIN)
 	$(call require_runtime_stats_or_reexec,epoch runtime witness,$@)
-	@bash ./scripts/probe_epoch_runtime_witness.sh ./$(BIN)
+	@$(if $(filter 1,$(ASAN_REPEATABLE)),CETTA_ASAN_REPEATABLE=1 CETTA_WRAPPED_BIN="$(abspath $(BIN))",) \
+		bash ./scripts/probe_epoch_runtime_witness.sh "$(if $(filter 1,$(ASAN_REPEATABLE)),$(abspath $(CETTA_EXEC_WRAPPER)),$(abspath $(BIN)))"
 
 perf-stable: perf-runtime-stats
 
@@ -511,12 +555,12 @@ bench-heavy:
 test-symbolid-guard:
 	@./scripts/check_symbolid_guards.sh
 
-runtime/test_variant_shape_roundtrip: tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+$(VARIANT_SHAPE_TEST_BIN): tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
-test-variant-shape-roundtrip: runtime/test_variant_shape_roundtrip
-	@./runtime/test_variant_shape_roundtrip
+test-variant-shape-roundtrip: $(VARIANT_SHAPE_TEST_BIN)
+	@$(call cetta_exec,./$(VARIANT_SHAPE_TEST_BIN))
 
 runtime/bench_mork_bridge_add: tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -534,95 +578,95 @@ runtime/bench_mork_bridge_space_ops: tests/bench_mork_bridge_space_ops.c src/sym
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_space_ops.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
-runtime/test_mork_bridge_contextual_exact_rows: tests/test_mork_bridge_contextual_exact_rows.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN): tests/test_mork_bridge_contextual_exact_rows.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_mork_bridge_contextual_exact_rows.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-mork-bridge-contextual-exact-rows:
 	$(call require_pathmap_bridge_or_reexec,mork bridge contextual exact rows packet,$@)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_bridge_contextual_exact_rows
-	@./runtime/test_mork_bridge_contextual_exact_rows
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN)
+	@$(call cetta_exec,./$(MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN))
 
-runtime/test_mork_cursor_byte_buffer_count_abi: tests/test_mork_cursor_byte_buffer_count_abi.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN): tests/test_mork_cursor_byte_buffer_count_abi.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_mork_cursor_byte_buffer_count_abi.c $(LDFLAGS)
 
 test-mork-cursor-byte-buffer-count-abi:
 	$(call require_pathmap_bridge_or_reexec,mork cursor byte-buffer count ABI,$@)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_cursor_byte_buffer_count_abi
-	@./runtime/test_mork_cursor_byte_buffer_count_abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN))
 
-runtime/test_mork_cursor_expr_row_stream_abi: tests/test_mork_cursor_expr_row_stream_abi.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(MORK_CURSOR_EXPR_ROW_STREAM_ABI_TEST_BIN): tests/test_mork_cursor_expr_row_stream_abi.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_mork_cursor_expr_row_stream_abi.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-mork-cursor-expr-row-stream-abi:
 	$(call require_pathmap_bridge_or_reexec,mork cursor expr-row stream ABI,$@)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_cursor_expr_row_stream_abi
-	@./runtime/test_mork_cursor_expr_row_stream_abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(MORK_CURSOR_EXPR_ROW_STREAM_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(MORK_CURSOR_EXPR_ROW_STREAM_ABI_TEST_BIN))
 
-runtime/test_mork_query_row_stream_abi: tests/test_mork_query_row_stream_abi.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(MORK_QUERY_ROW_STREAM_ABI_TEST_BIN): tests/test_mork_query_row_stream_abi.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_mork_query_row_stream_abi.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-mork-query-row-stream-abi:
 	$(call require_pathmap_bridge_or_reexec,mork query row stream ABI,$@)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_mork_query_row_stream_abi
-	@./runtime/test_mork_query_row_stream_abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(MORK_QUERY_ROW_STREAM_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(MORK_QUERY_ROW_STREAM_ABI_TEST_BIN))
 
-runtime/test_space_term_universe_membership: tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
+$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(LDFLAGS)
 
-test-space-term-universe-membership: runtime/test_space_term_universe_membership
-	@./runtime/test_space_term_universe_membership
+test-space-term-universe-membership: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN))
 
-runtime/test_term_universe_store_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-runtime/test_term_universe_store_abi: tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
+$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(LDFLAGS)
 
 test-term-universe-store-abi:
 	$(call require_runtime_stats_or_reexec,term universe store ABI,$@)
-	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 runtime/test_term_universe_store_abi
-	@./runtime/test_term_universe_store_abi
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_UNIVERSE_STORE_ABI_TEST_BIN))
 
-runtime/test_term_universe_backend_add_abi: CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-runtime/test_term_universe_backend_add_abi: tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
+$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(LDFLAGS)
 
 test-term-universe-backend-add-abi:
 	$(call require_runtime_stats_or_reexec,term universe backend-add ABI,$@)
-	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 runtime/test_term_universe_backend_add_abi
-	@./runtime/test_term_universe_backend_add_abi
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN))
 
-runtime/test_pathmap_backend_primary_destructive_abi: tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-backend-primary-destructive-abi:
 	$(call require_pathmap_bridge_or_reexec,pathmap backend-primary destructive ABI,$@)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_pathmap_backend_primary_destructive_abi
-	@./runtime/test_pathmap_backend_primary_destructive_abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN))
 
-runtime/test_pathmap_backend_primary_replace_abi: tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-backend-primary-replace-abi:
 	$(call require_pathmap_bridge_or_reexec,pathmap backend-primary replace ABI,$@)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_pathmap_backend_primary_replace_abi
-	@./runtime/test_pathmap_backend_primary_replace_abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN))
 
-runtime/test_pathmap_typed_query_abi: tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-typed-query-abi:
 	$(call require_pathmap_bridge_or_reexec,pathmap typed query ABI,$@)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) runtime/test_pathmap_typed_query_abi
-	@./runtime/test_pathmap_typed_query_abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_TYPED_QUERY_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN))
 
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
@@ -695,7 +739,7 @@ $(STDLIB_BLOB_STAMP): $(STAGE0_BIN) $(STDLIB_SRC)
 	trap 'rm -f "$$tmp_stage0" "$$tmp_blob"' EXIT INT TERM; \
 	cp "$(STAGE0_BIN)" "$$tmp_stage0"; \
 	chmod +x "$$tmp_stage0"; \
-	"$$tmp_stage0" --compile-stdlib $(STDLIB_SRC) > "$$tmp_blob"; \
+	$(call cetta_exec,"$$tmp_stage0") --compile-stdlib $(STDLIB_SRC) > "$$tmp_blob"; \
 	if [ -f "$(STDLIB_BLOB)" ] && cmp -s "$$tmp_blob" "$(STDLIB_BLOB)"; then \
 		rm -f "$$tmp_blob"; \
 	else \
@@ -818,7 +862,7 @@ test-bigint-no-gmp-fallback:
 	@$(MAKE) -s BUILD=core ENABLE_GMP=0 $(BIN)
 	@set -e; \
 	tmp="$(BOOTSTRAP_TMPDIR)/test-bigint-no-gmp-fallback.out"; \
-	./$(BIN) --profile he-extended --lang he tests/support/test_bigint_no_gmp_fallback.metta > "$$tmp"; \
+	$(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/test_bigint_no_gmp_fallback.metta > "$$tmp"; \
 	diff -u tests/support/test_bigint_no_gmp_fallback.expected "$$tmp"; \
 	rm -f "$$tmp"; \
 	echo "PASS: bigint no-GMP fallback is loud and parseable"
@@ -827,7 +871,7 @@ test-rational-no-gmp-fallback:
 	@$(MAKE) -s BUILD=core ENABLE_GMP=0 $(BIN)
 	@set -e; \
 	tmp="$(BOOTSTRAP_TMPDIR)/test-rational-no-gmp-fallback.out"; \
-	./$(BIN) --profile he-extended --lang he tests/support/test_rational_no_gmp_fallback.metta > "$$tmp"; \
+	$(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/test_rational_no_gmp_fallback.metta > "$$tmp"; \
 	diff -u tests/support/test_rational_no_gmp_fallback.expected "$$tmp"; \
 	rm -f "$$tmp"; \
 	echo "PASS: rational no-GMP fallback is loud and default-compatible"
@@ -867,7 +911,7 @@ test-git-module: $(BIN) prepare-git-test-fixture
 		'!(import! &gitdb git_module_fixture)' \
 		'!(assertEqualToResult (match &gitdb (git-root $$x) $$x) (loaded))' \
 		> "$(GIT_TEST_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he-extended --lang he "$(GIT_TEST_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" $(CETTA_BIN_INVOKE) --profile he-extended --lang he "$(GIT_TEST_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: dynamic git-module! fixture"; pass=$$((pass + 1)); \
@@ -887,7 +931,7 @@ test-git-module: $(BIN) prepare-git-test-fixture
 		'!(import! &gitupd git_module_fixture:'"$$update_mod"')' \
 		'!(assertEqualToResult (match &gitupd (git-update $$x) $$x) (fetched))' \
 		> "$(GIT_TEST_COMPAT_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he-extended --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" $(CETTA_BIN_INVOKE) --profile he-extended --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: git-module! cache refresh"; pass=$$((pass + 1)); \
@@ -908,7 +952,7 @@ test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 		'!(import! &gitdb git_module_fixture)' \
 		'!(assertEqualToResult (match &gitdb (git-root $$x) $$x) (loaded))' \
 		> "$(GIT_TEST_COMPAT_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" ./$(BIN) --profile he-compat --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" $(CETTA_BIN_INVOKE) --profile he-compat --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: he-compat git-module! surface"; pass=$$((pass + 1)); \
@@ -1013,7 +1057,7 @@ test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-varia
 			continue; \
 		fi; \
 		if printf '%s\n' $(CORE_XFAIL_TESTS) | grep -Fxq "$$f"; then \
-			result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
+			result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 			if printf '%s\n' "$$result" | grep -Fq "(Error "; then \
 				echo "XFAIL: $$f"; \
 				skip=$$((skip + 1)); \
@@ -1037,7 +1081,7 @@ test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-varia
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat $$exp)" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -1065,7 +1109,16 @@ test-light: test test-width-tuple-stack
 test-correctness: test
 
 test-parse-depth-guard: $(BIN)
-	@CETTA_BIN="$(abspath $(BIN))" ./scripts/test_parse_depth_guard.sh
+	@$(CETTA_SCRIPT_RUN_ENV) ./scripts/test_parse_depth_guard.sh
+
+test-asan:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=address,undefined test
+
+test-asan-main:
+	@$(MAKE) -s BUILD=main ENABLE_SANITIZERS=1 SANITIZERS=address,undefined test
+
+test-asan-mork:
+	@$(MAKE) -s BUILD=mork ENABLE_SANITIZERS=1 SANITIZERS=address,undefined test
 
 test-rhocalc: $(BIN)
 	@pass=0; fail=0; \
@@ -1073,7 +1126,7 @@ test-rhocalc: $(BIN)
 		[ -f "$$f" ] || continue; \
 		exp="$${f%.*}.expected"; \
 		if [ ! -f "$$exp" ]; then continue; fi; \
-		result=$$(./$(BIN) --lang rhocalc "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -1083,7 +1136,7 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$(./$(BIN) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/pure_surface.rho 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/pure_surface.rho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_to_mrho.expected)" ]; then \
 		echo "PASS: rhocalc translate rho -> mrho"; \
 		pass=$$((pass + 1)); \
@@ -1092,7 +1145,7 @@ test-rhocalc: $(BIN)
 		diff <(cat tests/rhocalc/translate_rho_to_mrho.expected) <(echo "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/core_comm.mrho 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/core_comm.mrho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_to_rho.expected)" ]; then \
 		echo "PASS: rhocalc translate mrho -> rho"; \
 		pass=$$((pass + 1)); \
@@ -1101,7 +1154,7 @@ test-rhocalc: $(BIN)
 		diff <(cat tests/rhocalc/translate_mrho_to_rho.expected) <(echo "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_alpha_to_mrho.expected)" ]; then \
 		echo "PASS: rhocalc translate alpha mrho -> mrho"; \
 		pass=$$((pass + 1)); \
@@ -1110,7 +1163,7 @@ test-rhocalc: $(BIN)
 		diff <(cat tests/rhocalc/translate_mrho_alpha_to_mrho.expected) <(echo "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --translate --syntax mrho --lang rhocalc --lang rhocalc --syntax rho tests/rhocalc/mrho_free_name_same_spelling_binder.mrho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc/translate_mrho_alpha_to_rho.expected)" ]; then \
 		echo "PASS: rhocalc translate alpha mrho -> rho"; \
 		pass=$$((pass + 1)); \
@@ -1119,7 +1172,7 @@ test-rhocalc: $(BIN)
 		diff <(cat tests/rhocalc/translate_mrho_alpha_to_rho.expected) <(echo "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/surface_shadowing.rho 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --translate --syntax rho --lang rhocalc --lang rhocalc --syntax mrho tests/rhocalc/surface_shadowing.rho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc/translate_rho_shadow_to_mrho.expected)" ]; then \
 		echo "PASS: rhocalc translate shadow rho -> mrho"; \
 		pass=$$((pass + 1)); \
@@ -1135,7 +1188,7 @@ test-rhocalc: $(BIN)
 probe-core-lane: $(BIN)
 	@for f in $(CORE_PROBE_TESTS); do \
 		echo "PROBE: $$f"; \
-		./$(BIN) --profile he-extended --lang he "$$f"; \
+		$(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f"; \
 	done
 
 test-heavy: $(BIN)
@@ -1147,7 +1200,7 @@ test-heavy: $(BIN)
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -1203,7 +1256,7 @@ test-runtime-stats-metta-suite:
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -1254,7 +1307,7 @@ test-manifest-strict: test-manifest-check
 test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
-	profiles=$$(./$(BIN) --list-profiles 2>&1); \
+	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
 	if printf '%s\n' "$$profiles" | grep -Eq '^he-compat[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-extended[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-prime[[:space:]]'; then \
@@ -1264,7 +1317,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$profiles"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	base_result=$$(./$(BIN) --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
+	base_result=$$($(CETTA_BIN_INVOKE) --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
 	if printf '%s\n' "$$base_result" | grep -Fq "surface once is unavailable in language he"; then \
 		echo "PASS: he base surface uses compat policy"; pass=$$((pass + 1)); \
 	else \
@@ -1272,7 +1325,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$base_result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	mm2_profiles=$$(./$(BIN) --lang mm2 --list-profiles 2>&1); \
+	mm2_profiles=$$($(CETTA_BIN_INVOKE) --lang mm2 --list-profiles 2>&1); \
 	if printf '%s\n' "$$mm2_profiles" | grep -Fq "language 'mm2' has no named profiles"; then \
 		echo "PASS: mm2 has no named profiles"; pass=$$((pass + 1)); \
 	else \
@@ -1280,7 +1333,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$mm2_profiles"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	mm2_profile_err=$$(./$(BIN) --lang mm2 --profile he-compat -e '()' 2>&1 || true); \
+	mm2_profile_err=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile he-compat -e '()' 2>&1 || true); \
 	if printf '%s\n' "$$mm2_profile_err" | grep -Fq "error: source language 'mm2' has no named profiles"; then \
 		echo "PASS: mm2 rejects foreign profiles"; pass=$$((pass + 1)); \
 	else \
@@ -1289,7 +1342,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 	for profile in he-compat he-extended he-prime; do \
-		result=$$(./$(BIN) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \
 			echo "PASS: $$profile import modules"; pass=$$((pass + 1)); \
 		else \
@@ -1298,7 +1351,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_count_atoms.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_count_atoms.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/spec_profile_count_atoms.expected)" ]; then \
 		echo "PASS: he-extended count-atoms extension"; pass=$$((pass + 1)); \
 	else \
@@ -1306,7 +1359,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/spec_profile_count_atoms.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_count_atoms.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_count_atoms.metta 2>&1); \
 	if printf '%s\n' "$$result" | grep -Fq "surface count-atoms is unavailable in profile he-compat"; then \
 		echo "PASS: he-compat count-atoms guard"; pass=$$((pass + 1)); \
 	else \
@@ -1314,7 +1367,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_size_extension.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_size_extension.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/spec_profile_size_extension.expected)" ]; then \
 		echo "PASS: he-extended size extension"; pass=$$((pass + 1)); \
 	else \
@@ -1322,7 +1375,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/spec_profile_size_extension.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_size_extension.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_size_extension.metta 2>&1); \
 	if printf '%s\n' "$$result" | grep -Fq "surface size is unavailable in profile he-compat"; then \
 		echo "PASS: he-compat size guard"; pass=$$((pass + 1)); \
 	else \
@@ -1330,7 +1383,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_size_extension.metta 2>&1 >/dev/null); \
+	compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_size_extension.metta 2>&1 >/dev/null); \
 	if printf '%s\n' "$$compile_output" | grep -Fq "surface 'size' is unavailable in profile 'he-compat'"; then \
 		echo "PASS: he-compat size compile guard"; pass=$$((pass + 1)); \
 	else \
@@ -1338,13 +1391,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$compile_output"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
+	if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
 		echo "PASS: he-extended size compile"; pass=$$((pass + 1)); \
 	else \
 		echo "FAIL: he-extended size compile"; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_foldl_extension.expected)" ]; then \
 			echo "PASS: he-extended foldl-atom-in-space extension"; pass=$$((pass + 1)); \
 		else \
@@ -1352,7 +1405,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/spec_profile_foldl_extension.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface foldl-atom-in-space is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat foldl-atom-in-space guard"; pass=$$((pass + 1)); \
 		else \
@@ -1360,7 +1413,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_foldl_public.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_foldl_public.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_foldl_public.expected)" ]; then \
 			echo "PASS: he-compat foldl-atom public surface"; pass=$$((pass + 1)); \
 		else \
@@ -1368,7 +1421,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_foldl_public.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_collect_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_collect_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_collect_extension.expected)" ]; then \
 			echo "PASS: he-extended collect extension"; pass=$$((pass + 1)); \
 		else \
@@ -1376,7 +1429,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_collect_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_collect_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_collect_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface collect is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat collect guard"; pass=$$((pass + 1)); \
 		else \
@@ -1384,7 +1437,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_select_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_select_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_select_extension.expected)" ]; then \
 			echo "PASS: he-extended select extension"; pass=$$((pass + 1)); \
 		else \
@@ -1392,7 +1445,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_select_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_select_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_select_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface select is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat select guard"; pass=$$((pass + 1)); \
 		else \
@@ -1400,7 +1453,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_fold_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_fold_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fold_extension.expected)" ]; then \
 			echo "PASS: he-extended fold extension"; pass=$$((pass + 1)); \
 		else \
@@ -1408,7 +1461,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_fold_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_fold_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_fold_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface fold is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat fold guard"; pass=$$((pass + 1)); \
 		else \
@@ -1416,7 +1469,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fold_by_key_extension.expected)" ]; then \
 			echo "PASS: he-extended fold-by-key extension"; pass=$$((pass + 1)); \
 		else \
@@ -1424,7 +1477,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_fold_by_key_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface fold-by-key is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat fold-by-key guard"; pass=$$((pass + 1)); \
 		else \
@@ -1432,7 +1485,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_reduce_extension.expected)" ]; then \
 			echo "PASS: he-extended reduce extension"; pass=$$((pass + 1)); \
 		else \
@@ -1440,7 +1493,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_reduce_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface reduce is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat reduce guard"; pass=$$((pass + 1)); \
 		else \
@@ -1448,7 +1501,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_runtime_stats_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_runtime_stats_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_runtime_stats_extension.expected)" ]; then \
 			echo "PASS: he-extended runtime-stats extension"; pass=$$((pass + 1)); \
 		else \
@@ -1456,7 +1509,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_runtime_stats_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/support/profile_runtime_stats_runtime.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_runtime_stats_runtime.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface runtime-stats! is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat runtime-stats guard"; pass=$$((pass + 1)); \
 		else \
@@ -1464,7 +1517,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_once_alias_extension.expected)" ]; then \
 			echo "PASS: he-extended once alias"; pass=$$((pass + 1)); \
 		else \
@@ -1472,7 +1525,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_once_alias_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface once is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat once guard"; pass=$$((pass + 1)); \
 		else \
@@ -1480,7 +1533,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_search_policy_extension.expected)" ]; then \
 			echo "PASS: he-extended search-policy capability"; pass=$$((pass + 1)); \
 		else \
@@ -1488,7 +1541,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_search_policy_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface search-policy is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat search-policy guard"; pass=$$((pass + 1)); \
 		else \
@@ -1496,7 +1549,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_search_policy_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_search_policy_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'search-policy' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile search-policy guard"; pass=$$((pass + 1)); \
@@ -1505,13 +1558,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile search-policy"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile search-policy"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_space_set_match_backend_extension.expected)" ]; then \
 			echo "PASS: he-extended space-set-match-backend! extension"; pass=$$((pass + 1)); \
 		else \
@@ -1519,7 +1572,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_space_set_match_backend_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-compat --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
 		if printf '%s\n' "$$result" | grep -Fq "surface space-set-match-backend! is unavailable in profile he-compat"; then \
 			echo "PASS: he-compat space-set-match-backend! guard"; pass=$$((pass + 1)); \
 		else \
@@ -1527,7 +1580,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_space_set_match_backend_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_space_set_match_backend_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'space-set-match-backend!' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile space-set-match-backend! guard"; pass=$$((pass + 1)); \
@@ -1536,13 +1589,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile space-set-match-backend!"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile space-set-match-backend!"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'count-atoms' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile guard"; pass=$$((pass + 1)); \
@@ -1551,13 +1604,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$compile_output"; \
 		fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile extension"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile extension"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_collect_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_collect_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'collect' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile collect guard"; pass=$$((pass + 1)); \
@@ -1566,13 +1619,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile collect"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile collect"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_select_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_select_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'select' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile select guard"; pass=$$((pass + 1)); \
@@ -1581,13 +1634,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile select"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile select"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_fold_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile fold guard"; pass=$$((pass + 1)); \
@@ -1596,13 +1649,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile fold"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile fold"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_fold_by_key_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_by_key_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold-by-key' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile fold-by-key guard"; pass=$$((pass + 1)); \
@@ -1611,13 +1664,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile fold-by-key"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile fold-by-key"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_reduce_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_reduce_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'reduce' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile reduce guard"; pass=$$((pass + 1)); \
@@ -1626,13 +1679,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile reduce"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile reduce"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_runtime_stats_extension.metta 2>&1 >/dev/null); \
+		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_runtime_stats_extension.metta 2>&1 >/dev/null); \
 		status=$$?; \
 		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'runtime-stats!' is unavailable in profile 'he-compat'"; then \
 			echo "PASS: he-compat compile runtime-stats guard"; pass=$$((pass + 1)); \
@@ -1641,13 +1694,13 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			printf '%s\n' "$$compile_output"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile runtime-stats"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: he-extended compile runtime-stats"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he tests/spec_module_inventory.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_module_inventory.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_module_inventory.expected)" ]; then \
 			echo "PASS: he-extended module-inventory extension"; pass=$$((pass + 1)); \
 		else \
@@ -1655,7 +1708,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/spec_module_inventory.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he-compat --lang he tests/support/profile_module_inventory_runtime.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_module_inventory_runtime.metta 2>&1); \
 	if printf '%s\n' "$$result" | grep -Fq "surface module-inventory! is unavailable in profile he-compat"; then \
 		echo "PASS: he-compat module-inventory guard"; pass=$$((pass + 1)); \
 	else \
@@ -1664,7 +1717,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 	for profile in he-compat he-extended he-prime; do \
-		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_system_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/spec_profile_system_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_system_extension.expected)" ]; then \
 			echo "PASS: $$profile system capability"; pass=$$((pass + 1)); \
 		else \
@@ -1672,7 +1725,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_system_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile "$$profile" --compile tests/support/profile_compile_system_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile "$$profile" --compile tests/support/profile_compile_system_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: $$profile compile system capability"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: $$profile compile system capability"; \
@@ -1680,7 +1733,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fi; \
 	done; \
 	for profile in he-compat he-extended he-prime; do \
-		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_fs_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/spec_profile_fs_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fs_extension.expected)" ]; then \
 			echo "PASS: $$profile fs capability"; pass=$$((pass + 1)); \
 		else \
@@ -1688,7 +1741,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_fs_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile "$$profile" --compile tests/support/profile_compile_fs_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile "$$profile" --compile tests/support/profile_compile_fs_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: $$profile compile fs capability"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: $$profile compile fs capability"; \
@@ -1696,7 +1749,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fi; \
 	done; \
 	for profile in he-compat he-extended he-prime; do \
-		result=$$(./$(BIN) --profile "$$profile" --lang he tests/spec_profile_str_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/spec_profile_str_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_str_extension.expected)" ]; then \
 			echo "PASS: $$profile str capability"; pass=$$((pass + 1)); \
 		else \
@@ -1704,14 +1757,14 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			diff <(cat tests/spec_profile_str_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if ./$(BIN) --profile "$$profile" --compile tests/support/profile_compile_str_extension.metta >/dev/null 2>&1; then \
+		if $(CETTA_BIN_INVOKE) --profile "$$profile" --compile tests/support/profile_compile_str_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: $$profile compile str capability"; pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: $$profile compile str capability"; \
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$(./$(BIN) --profile he-extended --lang he tests/profile_he_prime_dependent_binders_compat.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/profile_he_prime_dependent_binders_compat.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_dependent_binders_compat.expected)" ]; then \
 		echo "PASS: he-extended keeps literal binder-domain behavior"; pass=$$((pass + 1)); \
 	else \
@@ -1719,7 +1772,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/profile_he_prime_dependent_binders_compat.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he-prime --lang he tests/profile_he_prime_dependent_binders.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_dependent_binders.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_dependent_binders.expected)" ]; then \
 		echo "PASS: he-prime dependent binder telescope"; pass=$$((pass + 1)); \
 	else \
@@ -1727,7 +1780,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/profile_he_prime_dependent_binders.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he-prime --lang he tests/profile_he_prime_recursive_search.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_recursive_search.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_recursive_search.expected)" ]; then \
 		echo "PASS: he-prime recursive dependent search"; pass=$$((pass + 1)); \
 	else \
@@ -1735,7 +1788,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/profile_he_prime_recursive_search.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$(./$(BIN) --profile he-prime --lang he tests/profile_he_prime_structural_eq.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_structural_eq.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_structural_eq.expected)" ]; then \
 		echo "PASS: he-prime structural == policy"; pass=$$((pass + 1)); \
 	else \
@@ -1743,7 +1796,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/profile_he_prime_structural_eq.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	compile_output=$$(./$(BIN) --profile he-compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
+	compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
 	status=$$?; \
 	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'module-inventory!' is unavailable in profile 'he-compat'"; then \
 		echo "PASS: he-compat module-inventory compile guard"; pass=$$((pass + 1)); \
@@ -1752,7 +1805,7 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$compile_output"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	if ./$(BIN) --profile he-extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
+	if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
 		echo "PASS: he-extended compile module-inventory"; pass=$$((pass + 1)); \
 	else \
 		echo "FAIL: he-extended compile module-inventory"; \
@@ -1774,7 +1827,7 @@ test-fallback-eval-session: $(FALLBACK_EVAL_TEST_BIN)
 	fi
 
 test-import-modes: $(BIN)
-	@default_result=$$(./$(BIN) --profile he-extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
+	@default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
 	if printf '%s\n' "$$default_result" | grep -Fq "Failed to resolve module Helper"; then \
 		echo "PASS: default relative import mode stays local"; \
 	else \
@@ -1782,7 +1835,7 @@ test-import-modes: $(BIN)
 		printf '%s\n' "$$default_result"; \
 		exit 1; \
 	fi; \
-	ancestor_result=$$(./$(BIN) --profile he-extended --lang he --import-mode ancestor-walk tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
+	ancestor_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --import-mode ancestor-walk tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
 	if [ "$$ancestor_result" = "$$(cat tests/support/import_mode/nested/use_parent_helper.expected)" ]; then \
 		echo "PASS: ancestor-walk import mode finds parent helper"; \
 	else \
@@ -1791,7 +1844,7 @@ test-import-modes: $(BIN)
 		exit 1; \
 	fi; \
 	expected_inventory=$$'[()]\n[()]'; \
-	inventory_result=$$(./$(BIN) --profile he-extended --lang he --import-mode ancestor-walk \
+	inventory_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --import-mode ancestor-walk \
 		-e '!(bind! &mods (module-inventory!))' \
 		-e '!(assertEqualToResult (match &mods (module-import-mode ancestor-walk) ok) (ok))' 2>&1); \
 	if [ "$$inventory_result" = "$$expected_inventory" ]; then \
@@ -1805,7 +1858,7 @@ test-import-modes: $(BIN)
 test-backends: $(BIN)
 	@cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; \
 	CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir" python3 scripts/run_backend_parametric_tests.py \
-		--cetta ./$(BIN) \
+		--cetta $(CETTA_BIN_INVOKE) \
 		--lang he \
 		--profile he-extended \
 		--backends "$(BACKEND_PARAMETRIC_BACKENDS)" \
@@ -1836,7 +1889,7 @@ test-he-contract-suite: $(BIN)
 			fail=$$((fail + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -1909,7 +1962,7 @@ test-mork-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-add-atoms-runtime-stats-body
 
 test-mork-add-atoms-runtime-stats-body: $(BIN)
-	@result=$$(./$(BIN) --profile he-extended --lang he tests/test_mork_add_atoms_runtime_stats.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_mork_add_atoms_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_add_atoms_runtime_stats.expected)" ]; then \
 		echo "PASS: test_mork_add_atoms_runtime_stats"; \
 	else \
@@ -1920,7 +1973,7 @@ test-mork-add-atoms-runtime-stats-body: $(BIN)
 
 test-deprecated-space-engine-mork-guard: $(BIN)
 	@status=0; \
-	result=$$(./$(BIN) --space-engine mork --lang he tests/test_space_type.metta 2>&1) || status=$$?; \
+	result=$$($(CETTA_BIN_INVOKE) --space-engine mork --lang he tests/test_space_type.metta 2>&1) || status=$$?; \
 	if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		pathmap_line="  pathmap                flattened PathMap-style CeTTa engine without bridge rows"; \
 	else \
@@ -1945,7 +1998,7 @@ test-mork-basic-pathmap-guard: $(BIN)
 	@if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		echo "SKIP: mork/basic pathmap guards (pathmap lane enabled)"; \
 	else \
-		result=$$(./$(BIN) --profile he-extended --lang he \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he \
 			-e '!(assertEqualToResult (new-space pathmap) ((Error (new-space pathmap) "generic pathmap-backed spaces require a bridge build (BUILD=mork or BUILD=main)")))' \
 			-e '!(bind! &h (new-space hash))' \
 			-e '!(assertEqualToResult (space-set-backend! &h pathmap) ((Error (space-set-backend! &h pathmap) "generic pathmap-backed spaces require a bridge build (BUILD=mork or BUILD=main)")))' \
@@ -1987,7 +2040,7 @@ test-pathmap-lane-body: $(BIN)
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat $$exp)" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -2032,7 +2085,7 @@ endif
 probe-pathmap-lane-body: $(BIN)
 	@for f in $(PATHMAP_PROBE_TESTS); do \
 		echo "PROBE: $$f"; \
-		./$(BIN) --profile he-extended --lang he "$$f"; \
+		$(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f"; \
 	done
 
 test-pathmap-runtime-stats-lane:
@@ -2061,7 +2114,7 @@ endif
 test-pathmap-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
 	@expected=$$(cat tests/test_pathmap_direct_store_runtime_stats.expected); \
-	result=$$(./$(BIN) --profile he-extended --lang he tests/test_pathmap_direct_store_runtime_stats.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pathmap_direct_store_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap direct-store runtime-stats regression"; \
 	else \
@@ -2077,7 +2130,7 @@ test-mm2-mork-program-space: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 MORK program-space lowering regression,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$(./$(BIN) --lang mm2 tests/support/mm2_mork_program_space.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --lang mm2 tests/support/mm2_mork_program_space.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mm2 MORK program-space lowering regression"; \
 	else \
@@ -2089,7 +2142,7 @@ test-mm2-mork-program-space: $(BIN)
 test-mm2-exec-basic: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 direct execution seam,$@)
 	@ \
-	result=$$(./$(BIN) --lang mm2 tests/mm2_exec_basic.mm2 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --lang mm2 tests/mm2_exec_basic.mm2 2>&1); \
 	if [ "$$result" = "$$(cat tests/mm2_exec_basic.expected)" ]; then \
 		echo "PASS: mm2 direct execution seam"; \
 	else \
@@ -2101,7 +2154,7 @@ test-mm2-exec-basic: $(BIN)
 test-import-mm2-mork-session-lowering: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork-space sugar over explicit handles,$@)
 	@ \
-	result=$$(./$(BIN) --profile he-extended --lang he \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he \
 		tests/test_import_mm2_mork_session_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_import_mm2_mork_session_lowering.expected)" ]; then \
 		echo "PASS: mork-space sugar over explicit handles"; \
@@ -2114,7 +2167,7 @@ test-import-mm2-mork-session-lowering: $(BIN)
 test-mm2-kiss-suite: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 KISS raw example suite,$@)
 	@ \
-	prep=$$(./$(BIN) --quiet --profile he-extended --lang he tests/support/prepare_mm2_kiss_fruit_colors_act.metta 2>&1); \
+	prep=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/support/prepare_mm2_kiss_fruit_colors_act.metta 2>&1); \
 	if [ -n "$$prep" ]; then \
 		echo "FAIL: mm2 KISS ACT prepare"; \
 		printf '%s\n' "$$prep"; \
@@ -2122,7 +2175,7 @@ test-mm2-kiss-suite: $(BIN)
 	fi; \
 	pass=0; fail=0; \
 	for stem in mm2_kiss_add_remove mm2_kiss_priority mm2_kiss_fractal_priority mm2_kiss_count_groupby mm2_kiss_act_join; do \
-		result=$$(./$(BIN) --lang mm2 "tests/$$stem.mm2" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --lang mm2 "tests/$$stem.mm2" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -2132,7 +2185,7 @@ test-mm2-kiss-suite: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	step_result=$$(./$(BIN) --lang mm2 --steps 1 tests/mm2_kiss_fractal_priority.mm2 2>&1); \
+	step_result=$$($(CETTA_BIN_INVOKE) --lang mm2 --steps 1 tests/mm2_kiss_fractal_priority.mm2 2>&1); \
 	if [ "$$step_result" = "$$(cat tests/mm2_kiss_fractal_priority.step1.expected)" ]; then \
 		echo "PASS: mm2_kiss_fractal_priority --steps 1"; \
 		pass=$$((pass + 1)); \
@@ -2142,7 +2195,7 @@ test-mm2-kiss-suite: $(BIN)
 		fail=$$((fail + 1)); \
 	fi; \
 	for stem in test_import_mm2_module_surface; do \
-		result=$$(./$(BIN) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -2154,7 +2207,7 @@ test-mm2-kiss-suite: $(BIN)
 	done; \
 	if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		stem=test_include_mm2_space_target; \
-		result=$$(./$(BIN) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -2188,7 +2241,7 @@ test-mork-surface-suite: $(BIN)
 		test_mork_zipper_surface \
 		test_new_space_mork_surface \
 		test_step_space_surface; do \
-		result=$$(./$(BIN) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -2226,7 +2279,7 @@ test-mork-runtime-stats-isolation:
 	fi
 
 test-mork-runtime-stats-isolation-body: $(BIN)
-	@result=$$(./$(BIN) --profile he-extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_runtime_stats_isolation.expected)" ]; then \
 		echo "PASS: test_mork_runtime_stats_isolation"; \
 	else \
@@ -2236,7 +2289,7 @@ test-mork-runtime-stats-isolation-body: $(BIN)
 	fi
 
 test-closed-stream-fastpath: $(BIN)
-	@result=$$(./$(BIN) --quiet --profile he-extended --lang he tests/test_closed_stream_fastpath.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/test_closed_stream_fastpath.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_closed_stream_fastpath.expected)" ]; then \
 		echo "PASS: test_closed_stream_fastpath"; \
 	else \
@@ -2247,7 +2300,7 @@ test-closed-stream-fastpath: $(BIN)
 
 test-closed-stream-runtime-stats: $(BIN)
 	$(call require_runtime_stats_or_reexec,closed-stream runtime-stats regression,$@)
-	@result=$$(./$(BIN) --quiet --profile he-extended --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_closed_stream_runtime_stats.expected)" ]; then \
 		echo "PASS: test_closed_stream_runtime_stats"; \
 	else \
@@ -2259,7 +2312,7 @@ test-closed-stream-runtime-stats: $(BIN)
 test-mm2-conformance-var-binding: $(BIN)
 	$(call require_mork_bridge_or_reexec,mm2 var-binding conformance seam,$@)
 	@ \
-	result=$$(./$(BIN) --lang mm2 "$(MORK_MM2_TEST3)" 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --lang mm2 "$(MORK_MM2_TEST3)" 2>&1); \
 	if [ "$$result" = "$$(cat tests/mm2_conformance_var_binding.expected)" ]; then \
 		echo "PASS: mm2 var-binding conformance seam"; \
 	else \
@@ -2281,7 +2334,7 @@ test-mm2-conformance-lean-suite: $(BIN)
 		"$(MORK_MM2_TEST9):tests/mm2_conformance_test9.expected" \
 		"$(MORK_MM2_TEST10):tests/mm2_conformance_test10.expected"; do \
 		file=$${case%%:*}; expected=$${case#*:}; \
-		result=$$(./$(BIN) --lang mm2 "$$file" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --lang mm2 "$$file" 2>&1); \
 		if [ "$$result" = "$$(cat "$$expected")" ]; then \
 			echo "PASS: mm2 lean conformance $$(basename "$$file")"; \
 			pass=$$((pass + 1)); \
@@ -2306,7 +2359,7 @@ test-mm2-sink-suite: $(BIN)
 		"$(MORK_MM2_SINK_COUNT_SIMPLE):tests/mm2_sink_count_simple.expected" \
 		"$(MORK_MM2_SINK_HEAD_LIMIT):tests/mm2_sink_head_limit.expected"; do \
 		file=$${case%%:*}; expected=$${case#*:}; \
-		result=$$(./$(BIN) --lang mm2 "$$file" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --lang mm2 "$$file" 2>&1); \
 		if [ "$$result" = "$$(cat "$$expected")" ]; then \
 			echo "PASS: mm2 sink suite $$(basename "$$file")"; \
 			pass=$$((pass + 1)); \
@@ -2323,7 +2376,7 @@ test-pathmap-conjunction-init: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap conjunction init regression,$@)
 	$(call require_runtime_stats_or_reexec,pathmap conjunction init regression,$@)
 	@ \
-	result=$$(./$(BIN) --profile he-extended --space-engine pathmap --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_conjunction_bridge_init_regression.expected)" ]; then \
 		echo "PASS: pathmap conjunction init regression"; \
 	else \
@@ -2336,7 +2389,7 @@ test-pathmap-bridge-v2: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap bridge v2 regression,$@)
 	$(call require_runtime_stats_or_reexec,pathmap bridge v2 regression,$@)
 	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$(./$(BIN) --profile he-extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap bridge v2 regression"; \
 	else \
@@ -2349,7 +2402,7 @@ test-pathmap-long-string-regression: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap long-string regression,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]'); \
-	result=$$(./$(BIN) --space-engine pathmap --lang he tests/support/pathmap_imported_long_string_probe.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --space-engine pathmap --lang he tests/support/pathmap_imported_long_string_probe.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap long-string regression"; \
 	else \
@@ -2361,7 +2414,7 @@ test-pathmap-long-string-regression: $(BIN)
 test-pathmap-match-chain: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap nested-match chain regression,$@)
 	@ \
-	result=$$(./$(BIN) --space-engine pathmap --lang he tests/test_match_chain_imported_regression.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --space-engine pathmap --lang he tests/test_match_chain_imported_regression.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_match_chain_imported_regression.expected)" ]; then \
 		echo "PASS: pathmap nested-match chain regression"; \
 	else \
@@ -2374,7 +2427,7 @@ test-pathmap-match-chain-v3: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,pathmap nested-match conjunction lowering regression,$@)
 	$(call require_runtime_stats_or_reexec,pathmap nested-match conjunction lowering regression,$@)
 	@ \
-	result=$$(./$(BIN) --profile he-extended --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_match_chain_conjunction_lowering.expected)" ]; then \
 		echo "PASS: pathmap nested-match conjunction lowering regression"; \
 	else \
@@ -2387,7 +2440,7 @@ test-mork-lib-pathmap: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,mork lib pathmap probe,$@)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$(./$(BIN) --profile he-extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mork lib pathmap probe"; \
 	else \
@@ -2399,7 +2452,7 @@ test-mork-lib-pathmap: $(BIN)
 test-mork-open-act: $(BIN)
 	$(call require_mork_bridge_or_reexec,mork open-act probe,$@)
 	@ \
-	result=$$(./$(BIN) --profile he-extended --lang he tests/test_mork_open_act_surface.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_mork_open_act_surface.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_open_act_surface.expected)" ]; then \
 		echo "PASS: mork open-act probe"; \
 	else \
@@ -2409,9 +2462,9 @@ test-mork-open-act: $(BIN)
 	fi
 
 test-pretty-vars-flags: $(BIN)
-	@raw_result=$$(./$(BIN) --raw-vars --profile he-extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
-	default_result=$$(./$(BIN) --profile he-extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
-	pretty_result=$$(./$(BIN) --pretty-vars --profile he-extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	@raw_result=$$($(CETTA_BIN_INVOKE) --raw-vars --profile he-extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
+	pretty_result=$$($(CETTA_BIN_INVOKE) --pretty-vars --profile he-extended --lang he tests/test_pretty_vars_surface.metta 2>&1); \
 	if printf '%s\n' "$$raw_result" | grep -Fq '#'; then \
 		:; \
 	else \
@@ -2435,9 +2488,9 @@ test-pretty-vars-flags: $(BIN)
 	fi
 
 test-pretty-namespaces-flags: $(BIN)
-	@raw_result=$$(./$(BIN) --raw-namespaces --profile he-extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
-	default_result=$$(./$(BIN) --profile he-extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
-	pretty_result=$$(./$(BIN) --pretty-namespaces --profile he-extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	@raw_result=$$($(CETTA_BIN_INVOKE) --raw-namespaces --profile he-extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
+	pretty_result=$$($(CETTA_BIN_INVOKE) --pretty-namespaces --profile he-extended --lang he tests/test_pretty_namespaces_surface.metta 2>&1); \
 	if printf '%s\n' "$$raw_result" | grep -Fq 'mork:open-act' && \
 	   printf '%s\n' "$$raw_result" | grep -Fq 'runtime:test-module' && \
 	   printf '%s\n' "$$raw_result" | grep -Fq '$mork:space'; then \
@@ -2475,7 +2528,7 @@ bench-bio-eqtl-act-modes: $(BIN)
 prepare-bio-1m-act: $(BIN)
 	$(call require_mork_bridge_or_reexec,bio 1m ACT prepare,$@)
 	@ \
-	result=$$(./$(BIN) --quiet --profile he-extended --lang he tests/support/prepare_bio_1m_act.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/support/prepare_bio_1m_act.metta 2>&1); \
 	if [ -z "$$result" ]; then \
 		echo "PASS: prepared runtime/bench_bio_1m.act"; \
 	else \
@@ -2500,7 +2553,7 @@ test-duplicate-multiplicity-backends: $(BIN)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	for backend in native native-candidate-exact pathmap; do \
-		result=$$(./$(BIN) --profile he-extended --space-engine "$$backend" --lang he tests/support/duplicate_multiplicity_probe.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine "$$backend" --lang he tests/support/duplicate_multiplicity_probe.metta 2>&1); \
 		if [ "$$result" = "$$expected" ]; then \
 			echo "PASS: $$backend duplicate multiplicity probe"; \
 		else \
@@ -2512,7 +2565,7 @@ test-duplicate-multiplicity-backends: $(BIN)
 
 test-runtime-stats-cli: $(BIN)
 	$(call require_runtime_stats_or_reexec,runtime stats cli flags,$@)
-	@result=$$(./$(BIN) --emit-runtime-stats --quiet --lang he tests/support/runtime_stats_cli_probe.metta 2>&1 >/dev/null); \
+	@result=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --quiet --lang he tests/support/runtime_stats_cli_probe.metta 2>&1 >/dev/null); \
 	if printf '%s\n' "$$result" | grep -Fq 'runtime-counter query-equations ' && \
 	   printf '%s\n' "$$result" | grep -Fq 'runtime-counter rename-vars ' && \
 	   ! printf '%s\n' "$$result" | grep -Fq '[ok]'; then \
@@ -2524,8 +2577,8 @@ test-runtime-stats-cli: $(BIN)
 	fi
 
 test-help-flags: $(BIN)
-	@help_long=$$(./$(BIN) --help 2>&1); \
-	help_short=$$(./$(BIN) -h 2>&1); \
+	@help_long=$$($(CETTA_BIN_INVOKE) --help 2>&1); \
+	help_short=$$($(CETTA_BIN_INVOKE) -h 2>&1); \
 	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
@@ -2544,7 +2597,7 @@ test-help-flags: $(BIN)
 probe-imported-conjunction-lanes: $(BIN)
 	$(call require_pathmap_bridge_or_reexec,imported conjunction lane probe,$@)
 	@ \
-	./$(BIN) --profile he-extended --space-engine pathmap --lang he \
+	$(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he \
 		tests/support/imported_conjunction_lane_probe.metta
 
 # Slow: regenerate .expected files from HE CLI oracle.
@@ -2570,7 +2623,7 @@ oracle-refresh:
 # Benchmark: forward chaining depth 3. Uses --count-only to avoid giant stdout.
 # Checks theorem count matches the current pinned regression number.
 bench-d3: $(BIN)
-	@count=$$(./$(BIN) --count-only tests/nil_pc_fc_d3.metta 2>&1 | tail -1); \
+	@count=$$($(CETTA_BIN_INVOKE) --count-only tests/nil_pc_fc_d3.metta 2>&1 | tail -1); \
 	echo "depth-3 total: $$count theorems"; \
 	if [ "$$count" = "3421" ]; then \
 		echo "PASS: theorem count matches"; \
@@ -2580,7 +2633,7 @@ bench-d3: $(BIN)
 
 bench-d3-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d3.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/nil_pc_fc_d3.metta 2>&1 | tail -1); \
 		echo "$$backend depth-3 total: $$count theorems"; \
 		if [ "$$count" = "3421" ]; then \
 			echo "PASS: $$backend theorem count matches"; \
@@ -2590,7 +2643,7 @@ bench-d3-backends: $(BIN)
 	done
 
 probe-d3-nodup: $(BIN)
-	@count=$$(./$(BIN) --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+	@count=$$($(CETTA_BIN_INVOKE) --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
 	echo "depth-3 nodup probe: $$count theorems"; \
 	if printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
 		echo "PASS: nodup probe produced a numeric count"; \
@@ -2601,7 +2654,7 @@ probe-d3-nodup: $(BIN)
 
 probe-d3-nodup-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
 		echo "$$backend depth-3 nodup probe: $$count theorems"; \
 		if printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
 			echo "PASS: $$backend nodup probe produced a numeric count"; \
@@ -2617,7 +2670,7 @@ bench-d3-nodup-backends: probe-d3-nodup-backends
 probe-fc-native-memory: $(BIN)
 	$(call require_runtime_stats_or_reexec,native FC memory probe,$@)
 	@echo "=== native FC memory buckets (depth 3 duplicate vs nodup) ==="; \
-	out=$$(./$(BIN) --profile he-extended --lang he tests/support/fc_native_memory_probe.metta 2>&1); \
+	out=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/fc_native_memory_probe.metta 2>&1); \
 	status=$$?; \
 	printf '%s\n' "$$out" | grep -E '^(=== fc-native-memory-probe ===|\\(fc3-(dup|nodup).+\\))$$' || true; \
 	if [ $$status -ne 0 ]; then \
@@ -2626,16 +2679,16 @@ probe-fc-native-memory: $(BIN)
 	fi; \
 	echo; \
 	echo "=== native FC operational frontier (depth 4 nodup) ==="; \
-	out=$$($(CETTA_BENCH_LIMIT_PREFIX)/usr/bin/time -f 'elapsed=%e rss_kb=%M exit=%x' timeout 300 ./$(BIN) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1 >/dev/null); \
+	out=$$($(CETTA_BENCH_LIMIT_PREFIX)/usr/bin/time -f 'elapsed=%e rss_kb=%M exit=%x' timeout 300 $(CETTA_BIN_INVOKE) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1 >/dev/null); \
 	printf '%s\n' "$$out" | tail -20; \
 	echo; \
 	echo "=== native FC operational frontier (depth 4 duplicate) ==="; \
-	out=$$($(CETTA_BENCH_LIMIT_PREFIX)/usr/bin/time -f 'elapsed=%e rss_kb=%M exit=%x' timeout 300 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1 >/dev/null); \
+	out=$$($(CETTA_BENCH_LIMIT_PREFIX)/usr/bin/time -f 'elapsed=%e rss_kb=%M exit=%x' timeout 300 $(CETTA_BIN_INVOKE) --count-only tests/nil_pc_fc_d4.metta 2>&1 >/dev/null); \
 	printf '%s\n' "$$out" | tail -20
 
 bench-conj-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/bench_conjunction_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_conjunction_he.metta 2>&1 | tail -1); \
 		echo "$$backend conjunction total: $$count results"; \
 		if [ "$$count" = "216" ]; then \
 			echo "PASS: $$backend conjunction count matches"; \
@@ -2646,7 +2699,7 @@ bench-conj-backends: $(BIN)
 
 bench-conj12-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/bench_conjunction12_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_conjunction12_he.metta 2>&1 | tail -1); \
 		echo "$$backend conjunction12 total: $$count results"; \
 		if [ "$$count" = "20736" ]; then \
 			echo "PASS: $$backend conjunction12 count matches"; \
@@ -2657,7 +2710,7 @@ bench-conj12-backends: $(BIN)
 
 bench-join8-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/bench_matchjoin8_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_matchjoin8_he.metta 2>&1 | tail -1); \
 		echo "$$backend join8 total: $$count results"; \
 		if [ "$$count" = "4096" ]; then \
 			echo "PASS: $$backend join8 count matches"; \
@@ -2668,7 +2721,7 @@ bench-join8-backends: $(BIN)
 
 bench-join12-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/bench_matchjoin12_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_matchjoin12_he.metta 2>&1 | tail -1); \
 		echo "$$backend join12 total: $$count results"; \
 		if [ "$$count" = "20736" ]; then \
 			echo "PASS: $$backend join12 count matches"; \
@@ -2685,7 +2738,7 @@ bench-conj12-runtime-backends: $(BIN)
 
 bench-dup-conj-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$(./$(BIN) --space-engine "$$backend" --count-only tests/bench_duplicate_conjunction_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_duplicate_conjunction_he.metta 2>&1 | tail -1); \
 		echo "$$backend duplicate conjunction total: $$count results"; \
 		if [ "$$count" = "4096" ]; then \
 			echo "PASS: $$backend duplicate conjunction count matches"; \
@@ -2713,7 +2766,7 @@ bench-join12-runtime-backends: $(BIN)
 	done
 
 bench-d4: $(BIN)
-	@out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
+	@out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout 600 $(CETTA_BIN_INVOKE) --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 	status=$$?; \
 	count=$$(printf '%s\n' "$$out" | tail -1); \
 	echo "depth-4 total: $$count theorems"; \
@@ -2725,7 +2778,7 @@ bench-d4: $(BIN)
 	fi
 
 bench-d4-nodup: $(BIN)
-	@out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout 600 ./$(BIN) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+	@out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout 600 $(CETTA_BIN_INVOKE) --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
 	status=$$?; \
 	count=$$(printf '%s\n' "$$out" | tail -1); \
 	echo "depth-4 nodup total: $$count theorems"; \
@@ -2738,7 +2791,7 @@ bench-d4-nodup: $(BIN)
 
 bench-d4-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
+		out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout $(D4_PROBE_TIMEOUT) $(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
 		status=$$?; \
 		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
 		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
@@ -2756,7 +2809,7 @@ bench-d4-backends: $(BIN)
 
 bench-d4-nodup-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout $(D4_PROBE_TIMEOUT) ./$(BIN) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
+		out=$$($(CETTA_BENCH_LIMIT_PREFIX)timeout $(D4_PROBE_TIMEOUT) $(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
 		status=$$?; \
 		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
 		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
@@ -2822,7 +2875,7 @@ bench-closed-stream-fastpath: $(BIN)
 	@./scripts/bench_closed_stream_fastpath.sh $(or $(BENCH_CLOSED_STREAM_SIZES),1000 10000 100000) $(or $(BENCH_CLOSED_STREAM_REPEAT),3)
 
 tail-recursion-check: $(BIN)
-	@result=$$(./$(BIN) tests/tail_recursion_deep.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) tests/tail_recursion_deep.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/tail_recursion_deep.expected)" ]; then \
 		echo "PASS: deep tail recursion under explicit fuel"; \
 	else \
@@ -2839,7 +2892,7 @@ compile-test: $(BIN)
 	@pass=0; fail=0; \
 	for f in tests/test_equations.metta tests/test_basic_eval.metta tests/test_disc_trie.metta tests/test_compile_arity.metta tests/test_compile_hybrid_interop.metta; do \
 		[ -f "$$f" ] || continue; \
-		ir=$$(./$(BIN) --compile "$$f" 2>&1); \
+		ir=$$($(CETTA_BIN_INVOKE) --compile "$$f" 2>&1); \
 		if echo "$$ir" | opt -S -o /dev/null 2>/dev/null; then \
 			if [ "$$f" = "tests/test_compile_arity.metta" ]; then \
 				if printf '%s\n' "$$ir" | grep -q 'define void @cetta_foo__arity_1' && \
@@ -2885,5 +2938,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
