@@ -35,7 +35,7 @@ typedef struct DiscNode {
     /* Variable branch: wildcard matches anything */
     struct DiscNode *var_child;
     /* Expression branches: arity → child */
-    struct { uint32_t arity; struct DiscNode *child; } *expr;
+    struct { CettaExprLen arity; struct DiscNode *child; } *expr;
     uint32_t nexpr, cexpr;
     /* Grounded int branches */
     struct { int64_t val; struct DiscNode *child; } *ints;
@@ -107,7 +107,8 @@ typedef enum {
 #define MATCH_TRIE_THRESHOLD 16
 
 typedef struct {
-    AtomId *atom_ids;
+    uint8_t *atom_ids;
+    uint8_t atom_id_width_bits;
     CettaIndex start;
     CettaIndex len, cap;
     TermUniverse *universe;
@@ -126,7 +127,8 @@ typedef struct Space {
     union {
         SpaceNativeStorage native;
         struct {
-            AtomId *atom_ids;
+            uint8_t *atom_ids;
+            uint8_t atom_id_width_bits;
             CettaIndex start;
             CettaIndex len, cap;
             TermUniverse *universe;
@@ -265,7 +267,7 @@ uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
 void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
                                  const Bindings *seed, Arena *a, Bindings *out);
-void space_query_conjunction(Space *s, Arena *a, Atom **patterns, uint32_t npatterns,
+void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out);
 
 /* ── Type Lookup (from HE spec Space.lean) ─────────────────────────────── */

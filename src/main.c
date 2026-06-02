@@ -12,6 +12,7 @@
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "stats.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -545,7 +546,7 @@ static void write_results(FILE *out, ResultSet *rs) {
             fprintf(out, "%lld\n", (long long)rs->items[0]->ground.ival);
             return;
         }
-        fprintf(out, "%u\n", rs->len);
+        fprintf(out, "%" PRIu64 "\n", rs->len);
         return;
     }
     if (g_quiet_results && !result_set_has_error(rs) && result_set_all_empty(rs)) {

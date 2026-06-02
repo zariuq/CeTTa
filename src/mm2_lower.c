@@ -746,7 +746,7 @@ static bool bridge_encode_atom_id_rec(Arena *a,
         break;
     }
     case ATOM_EXPR: {
-        uint32_t arity = tu_arity(universe, atom_id);
+        CettaExprLen arity = tu_arity(universe, atom_id);
         if (arity >= 64) {
             if (out_error)
                 *out_error = "MORK bridge expressions support arity at most 63";
@@ -754,7 +754,7 @@ static bool bridge_encode_atom_id_rec(Arena *a,
         }
         if (!bridge_expr_buf_push_u8(buf, (uint8_t)arity))
             return false;
-        for (uint32_t i = 0; i < arity; i++) {
+        for (CettaExprIndex i = 0; i < arity; i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
             if (i == 0 && tu_kind(universe, child_id) == ATOM_SYMBOL) {
                 SymbolId raised = bridge_raise_head_symbol_id(

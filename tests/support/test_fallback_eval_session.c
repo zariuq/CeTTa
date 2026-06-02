@@ -5,6 +5,7 @@
 #include "symbol.h"
 #include "term_universe.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 
 int main(void) {
@@ -41,7 +42,7 @@ int main(void) {
     result_set_init(&rs);
     eval_top(&space, &eval_arena, expr, &rs);
     if (rs.len != 1) {
-        fprintf(stderr, "unexpected result count: %u\n", rs.len);
+        fprintf(stderr, "unexpected result count: %" PRIu64 "\n", rs.len);
         result_set_free(&rs);
         goto cleanup;
     }

@@ -7,6 +7,10 @@
 
 static _Thread_local SpaceMatchBackendError g_space_match_backend_error =
     SPACE_MATCH_BACKEND_ERROR_NONE;
+static _Thread_local uint64_t
+    g_space_match_backend_packet_materialization_limit_override = 0;
+static _Thread_local uint64_t
+    g_space_match_backend_contextual_query_slot_limit_override = 0;
 
 static uint64_t space_match_backend_atom_id_materialization_limit(void) {
     return (uint64_t)(SIZE_MAX / sizeof(AtomId));
@@ -45,7 +49,30 @@ uint64_t space_match_backend_native_materialization_limit(void) {
 }
 
 uint64_t space_match_backend_packet_materialization_limit(void) {
+    if (g_space_match_backend_packet_materialization_limit_override != 0)
+        return g_space_match_backend_packet_materialization_limit_override;
     return space_match_backend_atom_id_materialization_limit();
+}
+
+uint64_t space_match_backend_contextual_query_slot_limit(void) {
+    if (g_space_match_backend_contextual_query_slot_limit_override != 0)
+        return g_space_match_backend_contextual_query_slot_limit_override;
+    return UINT16_MAX;
+}
+
+void space_match_backend_diag_set_contextual_query_slot_limit_override(
+    uint64_t limit) {
+    g_space_match_backend_contextual_query_slot_limit_override = limit;
+}
+
+void space_match_backend_diag_set_packet_materialization_limit_override(
+    uint64_t limit) {
+    g_space_match_backend_packet_materialization_limit_override = limit;
+}
+
+void space_match_backend_diag_reset(void) {
+    g_space_match_backend_packet_materialization_limit_override = 0;
+    g_space_match_backend_contextual_query_slot_limit_override = 0;
 }
 
 static uint64_t space_match_backend_limit_for_error(SpaceMatchBackendError error) {
@@ -206,7 +233,7 @@ static DiscNode *disc_get_var(DiscNode *n) {
     return n->var_child;
 }
 
-static DiscNode *disc_get_expr(DiscNode *n, uint32_t arity) {
+static DiscNode *disc_get_expr(DiscNode *n, CettaExprLen arity) {
     for (uint32_t i = 0; i < n->nexpr; i++)
         if (n->expr[i].arity == arity) return n->expr[i].child;
     if (n->nexpr >= n->cexpr) {
@@ -356,7 +383,7 @@ static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
         DiscNodeSet cur;
         dns_init(&cur);
         dns_push(&cur, node->expr[i].child);
-        for (uint32_t ci = 0; ci < node->expr[i].arity; ci++) {
+        for (CettaExprIndex ci = 0; ci < node->expr[i].arity; ci++) {
             DiscNodeSet tmp;
             dns_init(&tmp);
             for (uint32_t ni = 0; ni < cur.n; ni++)
@@ -838,35 +865,204 @@ static bool space_tracks_atom_ids(const Space *s) {
     return s && s->native.universe != NULL;
 }
 
+static ImportedBridgeState *space_imported_bridge_state(Space *s) {
+    if (!s)
+        return NULL;
+    switch (s->match_backend.kind) {
+    case SPACE_ENGINE_PATHMAP:
+        return &s->match_backend.pathmap.bridge;
+    case SPACE_ENGINE_MORK:
+        return &s->match_backend.mork.bridge;
+    default:
+        return NULL;
+    }
+}
+
+static uint32_t space_atom_id_width_bits_for_format(
+    TermUniverseStoreFormat format) {
+    return term_universe_store_format_atom_id_width_bits(format);
+}
+
+static uint32_t space_atom_id_width_bits_for_universe(
+    const TermUniverse *universe) {
+    return space_atom_id_width_bits_for_format(term_universe_store_format(universe));
+}
+
+static size_t space_atom_id_width_bytes_bits(uint32_t bits) {
+    return cetta_atom_id_storage_width_bytes_from_bits(bits);
+}
+
+static AtomId space_atom_id_storage_load_at(const uint8_t *storage,
+                                            uint32_t bits,
+                                            CettaIndex idx) {
+    size_t width = space_atom_id_width_bytes_bits(bits);
+    if (!storage || width == 0)
+        return CETTA_ATOM_ID_NONE;
+    return cetta_atom_id_storage_load_bits(storage + ((size_t)idx * width),
+                                           bits);
+}
+
+static bool space_atom_id_storage_store_at(uint8_t *storage,
+                                           uint32_t bits,
+                                           CettaIndex idx,
+                                           AtomId atom_id) {
+    size_t width = space_atom_id_width_bytes_bits(bits);
+    if (!storage || width == 0)
+        return false;
+    return cetta_atom_id_storage_store_bits(
+        storage + ((size_t)idx * width), bits, atom_id);
+}
+
+static bool space_raw_atom_id_storage_rewrite(uint8_t **storage,
+                                              uint8_t *storage_bits,
+                                              CettaIndex start,
+                                              CettaIndex len,
+                                              CettaIndex cap,
+                                              uint32_t new_bits) {
+    uint32_t old_bits = 0;
+    uint8_t *next = NULL;
+    size_t new_width = space_atom_id_width_bytes_bits(new_bits);
+    if (!storage || !storage_bits)
+        return false;
+    old_bits = *storage_bits;
+    if (old_bits == new_bits)
+        return true;
+    if (new_width == 0)
+        return false;
+    if (cap == 0 || !*storage) {
+        free(*storage);
+        *storage = NULL;
+        *storage_bits = (uint8_t)new_bits;
+        return true;
+    }
+    if ((size_t)cap > SIZE_MAX / new_width)
+        return false;
+    next = cetta_malloc((size_t)cap * new_width);
+    if (!next)
+        return false;
+    memset(next, 0, (size_t)cap * new_width);
+    for (CettaIndex i = start; i < start + len; i++) {
+        AtomId atom_id = space_atom_id_storage_load_at(*storage, old_bits, i);
+        if (!space_atom_id_storage_store_at(next, new_bits, i, atom_id)) {
+            free(next);
+            return false;
+        }
+    }
+    free(*storage);
+    *storage = next;
+    *storage_bits = (uint8_t)new_bits;
+    return true;
+}
+
+static bool space_sync_atom_id_storage_width_bits(Space *s,
+                                                  uint32_t want_bits) {
+    if (!s || !space_tracks_atom_ids(s))
+        return true;
+    if (want_bits == 0)
+        return false;
+    if (s->native.atom_id_width_bits == 0) {
+        s->native.atom_id_width_bits = (uint8_t)want_bits;
+        return true;
+    }
+    return space_raw_atom_id_storage_rewrite(
+        &s->native.atom_ids, &s->native.atom_id_width_bits, s->native.start,
+        s->native.len, s->native.cap, want_bits);
+}
+
+static bool space_sync_atom_id_storage_width(Space *s) {
+    return space_sync_atom_id_storage_width_bits(
+        s, s && s->native.universe
+               ? space_atom_id_width_bits_for_universe(s->native.universe)
+               : 0);
+}
+
+static bool space_sync_projected_atom_id_storage_width_bits(Space *s,
+                                                            uint32_t want_bits) {
+    ImportedBridgeState *st = NULL;
+    if (!s)
+        return true;
+    st = space_imported_bridge_state(s);
+    if (!st)
+        return true;
+    if (want_bits == 0)
+        return false;
+    if (st->projected_atom_id_width_bits == 0) {
+        st->projected_atom_id_width_bits = (uint8_t)want_bits;
+        return true;
+    }
+    return space_raw_atom_id_storage_rewrite(
+        &st->projected_atom_ids, &st->projected_atom_id_width_bits, 0,
+        st->projected_len, st->projected_len, want_bits);
+}
+
+static bool space_term_universe_store_format_observer(
+    TermUniverse *universe,
+    TermUniverseStoreFormat old_format,
+    TermUniverseStoreFormat new_format,
+    void *ctx) {
+    Space *space = ctx;
+    uint32_t want_bits = space_atom_id_width_bits_for_format(new_format);
+    (void)old_format;
+    if (!space || space->native.universe != universe)
+        return true;
+    if (!space_sync_atom_id_storage_width_bits(space, want_bits))
+        return false;
+    return space_sync_projected_atom_id_storage_width_bits(space, want_bits);
+}
+
+static void space_attach_to_universe(Space *s, TermUniverse *universe) {
+    if (!s || !universe)
+        return;
+    (void)term_universe_add_store_format_observer(
+        universe, space_term_universe_store_format_observer, s);
+}
+
+static void space_detach_from_universe(Space *s) {
+    if (!s || !s->native.universe)
+        return;
+    term_universe_remove_store_format_observer(
+        s->native.universe, space_term_universe_store_format_observer, s);
+}
+
 static void space_note_atom_id_storage_peak(const Space *s) {
+    size_t width = 0;
     if (!s || !space_tracks_atom_ids(s))
         return;
+    width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+    (void)width;
     cetta_runtime_stats_update_max(
         CETTA_RUNTIME_COUNTER_SPACE_ATOM_ID_LIVE_BYTES_PEAK,
-        (uint64_t)s->native.len * (uint64_t)sizeof(AtomId));
+        (uint64_t)s->native.len * (uint64_t)width);
     cetta_runtime_stats_update_max(
         CETTA_RUNTIME_COUNTER_SPACE_ATOM_ID_CAPACITY_BYTES_PEAK,
-        (uint64_t)s->native.cap * (uint64_t)sizeof(AtomId));
+        (uint64_t)s->native.cap * (uint64_t)width);
 }
 
 static void space_reserve_linear(Space *s, CettaIndex min_cap) {
+    size_t width = 0;
     if (s->native.cap >= min_cap)
+        return;
+    if (!space_sync_atom_id_storage_width(s))
         return;
     CettaIndex new_cap = s->native.cap ? s->native.cap : 64;
     while (new_cap < min_cap)
         new_cap *= 2;
-    s->native.atom_ids =
-        cetta_realloc(s->native.atom_ids, sizeof(AtomId) * new_cap);
+    width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+    s->native.atom_ids = cetta_realloc(
+        s->native.atom_ids, width * (size_t)new_cap);
     s->native.cap = new_cap;
     space_note_atom_id_storage_peak(s);
 }
 
 void space_linearize(Space *s) {
+    size_t width = 0;
     if (!space_is_queue(s) || s->native.start == 0)
         return;
     if (s->native.len > 0) {
-        memmove(s->native.atom_ids, s->native.atom_ids + s->native.start,
-                sizeof(AtomId) * s->native.len);
+        width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+        memmove(s->native.atom_ids,
+                s->native.atom_ids + ((size_t)s->native.start * width),
+                width * (size_t)s->native.len);
     }
     s->native.start = 0;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUEUE_COMPACT);
@@ -1130,13 +1326,17 @@ static bool space_sync_exact_membership_from_backend(Space *s) {
 }
 
 static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
+    TermUniverse *resolved = NULL;
     if (!s)
         return;
+    resolved = universe ? universe : space_default_universe();
     s->native.atom_ids = NULL;
+    s->native.atom_id_width_bits =
+        (uint8_t)space_atom_id_width_bits_for_universe(resolved);
     s->native.start = 0;
     s->native.len = 0;
     s->native.cap = 0;
-    s->native.universe = universe ? universe : space_default_universe();
+    s->native.universe = resolved;
     eq_index_init(&s->native.eq_idx);
     ty_ann_index_init(&s->native.ty_idx);
     exact_index_init(&s->native.exact_idx);
@@ -1172,6 +1372,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     space_native_storage_init_empty(s, universe);
     s->revision = 0;
     space_match_backend_init(s);
+    space_attach_to_universe(s, s->native.universe);
 }
 
 void space_init(Space *s) {
@@ -1179,8 +1380,10 @@ void space_init(Space *s) {
 }
 
 void space_free(Space *s) {
+    space_detach_from_universe(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
+    s->native.atom_id_width_bits = 0;
     s->native.start = 0;
     s->native.len = 0;
     s->native.cap = 0;
@@ -1290,8 +1493,8 @@ static void eq_index_rebuild(Space *s) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EQ_INDEX_REBUILD);
     eq_index_free(&s->native.eq_idx);
     eq_index_init(&s->native.eq_idx);
-    for (uint32_t i = 0; i < s->native.len; i++) {
-        AtomId atom_id = space_get_atom_id_at(s, i);
+    for (CettaIndex i = 0; i < s->native.len; i++) {
+        AtomId atom_id = space_get_atom_id_at64(s, i);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
@@ -1310,8 +1513,8 @@ static void ty_ann_index_rebuild(Space *s) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TY_INDEX_REBUILD);
     ty_ann_index_free(&s->native.ty_idx);
     ty_ann_index_init(&s->native.ty_idx);
-    for (uint32_t i = 0; i < s->native.len; i++) {
-        AtomId atom_id = space_get_atom_id_at(s, i);
+    for (CettaIndex i = 0; i < s->native.len; i++) {
+        AtomId atom_id = space_get_atom_id_at64(s, i);
         AtomId subject_id = CETTA_ATOM_ID_NONE;
         AtomId type_id = CETTA_ATOM_ID_NONE;
         if (space_type_annotation_child_ids_at_id(s, atom_id, &subject_id, &type_id)) {
@@ -1329,8 +1532,8 @@ static void exact_index_rebuild(Space *s) {
     space_linearize(s);
     exact_index_free(&s->native.exact_idx);
     exact_index_init(&s->native.exact_idx);
-    for (uint32_t i = 0; i < s->native.len; i++) {
-        AtomId atom_id = space_get_atom_id_at(s, i);
+    for (CettaIndex i = 0; i < s->native.len; i++) {
+        AtomId atom_id = space_get_atom_id_at64(s, i);
         if (!atom_id_is_exact_indexable(s, atom_id))
             continue;
         exact_atom_bucket_add(
@@ -1342,8 +1545,8 @@ static void exact_index_rebuild(Space *s) {
 static void recompute_has_non_exact_atoms(Space *s) {
     if (!s) return;
     s->native.has_non_exact_atoms = false;
-    for (uint32_t i = 0; i < s->native.len; i++) {
-        AtomId atom_id = space_get_atom_id_at(s, i);
+    for (CettaIndex i = 0; i < s->native.len; i++) {
+        AtomId atom_id = space_get_atom_id_at64(s, i);
         if (!atom_id_is_exact_indexable(s, atom_id)) {
             s->native.has_non_exact_atoms = true;
             break;
@@ -1384,13 +1587,17 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         if (!backend_atom)
             return;
     }
-    uint32_t idx = s->native.len;
+    CettaIndex idx = s->native.len;
     if (space_is_queue(s)) {
         space_queue_reserve_tail(s, 1);
-        s->native.atom_ids[s->native.start + s->native.len] = atom_id;
+        (void)space_atom_id_storage_store_at(
+            s->native.atom_ids, s->native.atom_id_width_bits,
+            s->native.start + s->native.len, atom_id);
     } else {
         space_reserve_linear(s, s->native.len + 1);
-        s->native.atom_ids[s->native.len] = atom_id;
+        (void)space_atom_id_storage_store_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, s->native.len,
+            atom_id);
     }
     s->native.len++;
     space_note_atom_id_storage_peak(s);
@@ -1506,32 +1713,46 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
     Atom *stored = space_store_atom(s, fallback, atom);
     if (!stored)
         return false;
-    uint32_t len_before = s->native.len;
+    CettaIndex len_before = s->native.len;
     space_add(s, stored);
     return s->native.len == len_before + 1;
 }
 
 Space *space_heap_clone_shallow(Space *src) {
     Space *clone;
-    uint32_t logical_len = 0;
+    CettaCount logical_len = 0;
+    uint32_t narrow_len = 0;
     if (!src)
         return NULL;
-    clone = cetta_malloc(sizeof(Space));
-    if (!space_length_u32_checked(src, &logical_len)) {
-        free(clone);
-        return NULL;
+    logical_len = space_length64(src);
+    if (src->native.len != logical_len) {
+        if (!space_length_u32_checked(src, &narrow_len))
+            return NULL;
+        logical_len = narrow_len;
     }
+    clone = cetta_malloc(sizeof(Space));
+    if (!clone)
+        return NULL;
     space_init_with_universe(clone, src ? src->native.universe : NULL);
     clone->kind = src->kind;
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
-    for (uint32_t i = 0; i < logical_len; i++) {
-        AtomId atom_id = space_get_atom_id_at(src, i);
+    for (CettaIndex i = 0; i < logical_len; i++) {
+        AtomId atom_id = space_get_atom_id_at64(src, i);
+        Atom *source_atom = NULL;
         if (atom_id != CETTA_ATOM_ID_NONE) {
             space_add_atom_id(clone, atom_id);
             continue;
         }
-        if (!space_admit_atom(clone, NULL, space_get_at(src, i)))
-            space_add(clone, space_get_at(src, i));
+        source_atom = space_get_at64(src, i);
+        if (!source_atom) {
+            space_match_backend_set_error(
+                SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE);
+            space_free(clone);
+            free(clone);
+            return NULL;
+        }
+        if (!space_admit_atom(clone, NULL, source_atom))
+            space_add(clone, source_atom);
     }
     return clone;
 }
@@ -1543,6 +1764,8 @@ void space_replace_contents(Space *dst, Space *src) {
     uint64_t src_revision = src ? src->revision : 0;
     space_free(dst);
     space_move_storage_and_backend(dst, src);
+    space_detach_from_universe(src);
+    space_attach_to_universe(dst, dst->native.universe);
     dst->revision = (old_revision > src_revision ? old_revision : src_revision) + 1;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
     space_reset_moved_from(src);
@@ -1942,21 +2165,23 @@ bool space_remove(Space *s, Atom *atom) {
         return false;
     if (space_is_queue(s))
         space_linearize(s);
-    uint32_t remove_idx = UINT32_MAX;
-    for (uint32_t i = 0; i < s->native.len; i++) {
-        Atom *candidate = space_get_at(s, i);
+    bool found = false;
+    CettaIndex remove_idx = 0;
+    for (CettaIndex i = 0; i < s->native.len; i++) {
+        Atom *candidate = space_get_at64(s, i);
         if (!candidate)
             continue;
         if (atom_eq(candidate, atom)) {
             remove_idx = i;
+            found = true;
             break;
         }
     }
-    if (remove_idx == UINT32_MAX) {
-        uint32_t alpha_idx = UINT32_MAX;
-        uint32_t alpha_count = 0;
-        for (uint32_t i = 0; i < s->native.len; i++) {
-            Atom *candidate = space_get_at(s, i);
+    if (!found) {
+        CettaIndex alpha_idx = 0;
+        CettaCount alpha_count = 0;
+        for (CettaIndex i = 0; i < s->native.len; i++) {
+            Atom *candidate = space_get_at64(s, i);
             if (!candidate)
                 continue;
             if (atom_alpha_eq(candidate, atom)) {
@@ -1964,20 +2189,28 @@ bool space_remove(Space *s, Atom *atom) {
                 alpha_count++;
             }
         }
-        if (alpha_count == 1)
+        if (alpha_count == 1) {
             remove_idx = alpha_idx;
+            found = true;
+        }
     }
-    if (remove_idx == UINT32_MAX)
+    if (!found)
         return false;
 
     if (space_is_ordered(s)) {
-        for (uint32_t j = remove_idx + 1; j < s->native.len; j++) {
-            s->native.atom_ids[j - 1] = s->native.atom_ids[j];
-        }
+        size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+        memmove(s->native.atom_ids + ((size_t)remove_idx * width),
+                s->native.atom_ids + ((size_t)(remove_idx + 1u) * width),
+                (size_t)(s->native.len - remove_idx - 1u) * width);
         s->native.len--;
     } else {
-        s->native.atom_ids[remove_idx] =
-            s->native.atom_ids[--s->native.len]; /* swap with last */
+        AtomId tail_id = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits,
+            s->native.len - 1u);
+        s->native.len--;
+        (void)space_atom_id_storage_store_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, remove_idx,
+            tail_id); /* swap with last */
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
@@ -1986,13 +2219,12 @@ bool space_remove(Space *s, Atom *atom) {
 }
 
 bool space_contains_atom_id(const Space *s, AtomId atom_id) {
-    uint32_t logical_len = 0;
+    CettaCount logical_len = 0;
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
-    if (!space_length_u32_checked(s, &logical_len))
-        return false;
-    for (uint32_t i = 0; i < logical_len; i++) {
-        if (space_get_atom_id_at(s, i) == atom_id)
+    logical_len = space_length64(s);
+    for (CettaIndex i = 0; i < logical_len; i++) {
+        if (space_get_atom_id_at64(s, i) == atom_id)
             return true;
     }
     return false;
@@ -2007,16 +2239,23 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
         return false;
     if (space_is_queue(s))
         space_linearize(s);
-    for (uint32_t i = 0; i < s->native.len; i++) {
-        if (space_get_atom_id_at(s, i) != atom_id)
+    for (CettaIndex i = 0; i < s->native.len; i++) {
+        if (space_get_atom_id_at64(s, i) != atom_id)
             continue;
         if (space_is_ordered(s)) {
-            for (uint32_t j = i + 1; j < s->native.len; j++) {
-                s->native.atom_ids[j - 1] = s->native.atom_ids[j];
-            }
+            size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+            memmove(s->native.atom_ids + ((size_t)i * width),
+                    s->native.atom_ids + ((size_t)(i + 1u) * width),
+                    (size_t)(s->native.len - i - 1u) * width);
             s->native.len--;
         } else {
-            s->native.atom_ids[i] = s->native.atom_ids[--s->native.len];
+            AtomId tail_id = space_atom_id_storage_load_at(
+                s->native.atom_ids, s->native.atom_id_width_bits,
+                s->native.len - 1u);
+            s->native.len--;
+            (void)space_atom_id_storage_store_at(
+                s->native.atom_ids, s->native.atom_id_width_bits, i,
+                tail_id);
         }
         space_mark_indexes_dirty(s);
         space_match_backend_note_remove(s);

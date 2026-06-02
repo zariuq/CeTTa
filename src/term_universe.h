@@ -4,6 +4,7 @@
 #include "atom.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifndef CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
 #define CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS 0
@@ -47,18 +48,34 @@ typedef enum {
     TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1 = 2,
 } TermUniverseStoreFormat;
 
-typedef struct TermUniverse {
+typedef struct TermUniverse TermUniverse;
+
+typedef bool (*TermUniverseStoreFormatObserver)(
+    TermUniverse *universe,
+    TermUniverseStoreFormat old_format,
+    TermUniverseStoreFormat new_format,
+    void *ctx);
+
+typedef struct {
+    TermUniverseStoreFormatObserver fn;
+    void *ctx;
+} TermUniverseStoreFormatObserverEntry;
+
+struct TermUniverse {
     Arena *persistent_arena;
     uint8_t *blob_pool;
     size_t blob_len, blob_cap;
     struct TermEntry *entries;
     size_t len, cap;
-    uint64_t *intern_slots;
+    uint8_t *intern_slots;
     size_t intern_mask;
     size_t intern_used;
-    uint64_t *ptr_slots;
+    uint8_t *ptr_slots;
     size_t ptr_mask;
     size_t ptr_used;
+    TermUniverseStoreFormatObserverEntry *observers;
+    size_t observer_len;
+    size_t observer_cap;
     TermUniverseError last_error;
     TermUniverseStoreFormat store_format;
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
@@ -66,7 +83,7 @@ typedef struct TermUniverse {
     uint64_t diag_atom_id_capacity_override;
     uint64_t diag_logical_atom_id_base_override;
 #endif
-} TermUniverse;
+};
 
 typedef uint64_t CettaAtomId;
 typedef CettaAtomId AtomId;
@@ -76,6 +93,64 @@ typedef uint64_t CettaIndex;
 #define CETTA_ATOM_ID_NONE UINT64_MAX
 #define CETTA_ATOM_ID_MAX ((AtomId)(UINT64_MAX - 1u))
 #define CETTA_TERM_ENTRY_BLOB_NONE UINT64_MAX
+
+static inline size_t cetta_atom_id_storage_width_bytes_from_bits(
+    uint32_t bits) {
+    switch (bits) {
+    case 32u:
+        return sizeof(uint32_t);
+    case 64u:
+        return sizeof(uint64_t);
+    }
+    return 0;
+}
+
+static inline bool cetta_atom_id_fits_width_bits(uint32_t bits, AtomId id) {
+    switch (bits) {
+    case 32u:
+        return id <= (AtomId)UINT32_MAX - 1u;
+    case 64u:
+        return id != CETTA_ATOM_ID_NONE;
+    }
+    return false;
+}
+
+static inline AtomId cetta_atom_id_storage_load_bits(const uint8_t *src,
+                                                     uint32_t bits) {
+    if (!src)
+        return CETTA_ATOM_ID_NONE;
+    switch (bits) {
+    case 32u: {
+        uint32_t value = UINT32_MAX;
+        memcpy(&value, src, sizeof(value));
+        return (AtomId)value;
+    }
+    case 64u: {
+        uint64_t value = CETTA_ATOM_ID_NONE;
+        memcpy(&value, src, sizeof(value));
+        return (AtomId)value;
+    }
+    }
+    return CETTA_ATOM_ID_NONE;
+}
+
+static inline bool cetta_atom_id_storage_store_bits(uint8_t *dst,
+                                                    uint32_t bits,
+                                                    AtomId value) {
+    if (!dst || !cetta_atom_id_fits_width_bits(bits, value))
+        return false;
+    switch (bits) {
+    case 32u: {
+        uint32_t narrowed = (uint32_t)value;
+        memcpy(dst, &narrowed, sizeof(narrowed));
+        return true;
+    }
+    case 64u:
+        memcpy(dst, &value, sizeof(value));
+        return true;
+    }
+    return false;
+}
 
 typedef struct {
     uint8_t tag;
@@ -127,6 +202,14 @@ TermUniverseStoreFormat term_universe_store_format(const TermUniverse *universe)
 const char *term_universe_store_format_name(TermUniverseStoreFormat format);
 uint32_t term_universe_store_format_version(TermUniverseStoreFormat format);
 uint32_t term_universe_store_format_atom_id_width_bits(TermUniverseStoreFormat format);
+bool term_universe_add_store_format_observer(
+    TermUniverse *universe,
+    TermUniverseStoreFormatObserver fn,
+    void *ctx);
+void term_universe_remove_store_format_observer(
+    TermUniverse *universe,
+    TermUniverseStoreFormatObserver fn,
+    void *ctx);
 uint64_t term_universe_atom_id_capacity(const TermUniverse *universe);
 bool term_universe_migrate_store_format(TermUniverse *universe,
                                         TermUniverseStoreFormat format);
@@ -150,7 +233,7 @@ Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,
                                Atom *src);
 const CettaTermHdr *tu_hdr(const TermUniverse *universe, AtomId id);
 AtomKind tu_kind(const TermUniverse *universe, AtomId id);
-uint32_t tu_arity(const TermUniverse *universe, AtomId id);
+CettaExprLen tu_arity(const TermUniverse *universe, AtomId id);
 uint32_t tu_hash32(const TermUniverse *universe, AtomId id);
 SymbolId tu_sym(const TermUniverse *universe, AtomId id);
 VarId tu_var_id(const TermUniverse *universe, AtomId id);
@@ -162,7 +245,7 @@ bool tu_bool(const TermUniverse *universe, AtomId id);
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
 const char *tu_bigint_cstr(const TermUniverse *universe, AtomId id);
 const char *tu_rational_cstr(const TermUniverse *universe, AtomId id);
-AtomId tu_child(const TermUniverse *universe, AtomId id, uint32_t idx);
+AtomId tu_child(const TermUniverse *universe, AtomId id, CettaExprIndex idx);
 bool tu_has_vars(const TermUniverse *universe, AtomId id);
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id);
@@ -174,6 +257,6 @@ AtomId tu_intern_string(TermUniverse *universe, const char *value);
 AtomId tu_intern_bigint(TermUniverse *universe, const char *value);
 AtomId tu_intern_rational(TermUniverse *universe, const char *value);
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
-                        uint32_t arity);
+                        CettaExprLen arity);
 
 #endif /* CETTA_TERM_UNIVERSE_H */
