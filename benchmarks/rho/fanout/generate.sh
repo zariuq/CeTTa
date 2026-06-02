@@ -48,19 +48,21 @@ rho="$out_dir/$name.rho"
     printf '   (rho.recv $chan $sink rho.nil))\n\n'
     printf '(= (fanout-send $chan $msg)\n'
     printf '   (rho.send $chan (rho.drop $msg)))\n\n'
-    printf '!(rho.step\n'
-    printf '  (rho.par\n'
-    printf '    (fanout-source $bcast rho.nil)\n'
-    printf '    (rho.recv $bcast $msg\n'
-    printf '      (rho.par\n'
+    printf '!(let $program\n'
+    printf '  (eval\n'
+    printf '    (rho.par\n'
+    printf '      (fanout-source $bcast rho.nil)\n'
+    printf '      (rho.recv $bcast $msg\n'
+    printf '        (rho.par\n'
     for i in $(seq 0 $((n - 1))); do
-        printf '        (fanout-send $c%s $msg)\n' "$i"
+        printf '          (fanout-send $c%s $msg)\n' "$i"
     done
-    printf '      ))\n'
+    printf '        ))\n'
     for i in $(seq 0 $((n - 1))); do
-        printf '    (fanout-sink $c%s)\n' "$i"
+        printf '      (fanout-sink $c%s)\n' "$i"
     done
-    printf '  ))\n'
+    printf '    ))\n'
+    printf '  $program)\n'
 } > "$metta"
 
 {

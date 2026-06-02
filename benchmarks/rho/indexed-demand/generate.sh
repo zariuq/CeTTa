@@ -31,6 +31,7 @@ esac
 mkdir -p "$out_dir"
 name="indexed_demand_${n}_topic${target}"
 metta="$out_dir/$name.metta"
+mrho="$out_dir/$name.mrho"
 rho="$out_dir/$name.rho"
 
 {
@@ -75,8 +76,29 @@ rho="$out_dir/$name.rho"
         printf '(fact topic%s $topic%s $payload%s)' "$topic" "$topic" "$i"
     done
     printf ')))\n'
-    printf '  (rho.step $program))\n'
+    printf '  $program)\n'
 } > "$metta"
+
+{
+    printf '(rho:par\n'
+    for i in $(seq 0 $((n - 1))); do
+        topic=$((i % 4))
+        if [ "$topic" -ne "$target" ]; then
+            continue
+        fi
+        printf '  (rho:recv $topic%s $msg (rho:send $sink%s (rho:drop $msg)))\n' \
+            "$target" "$i"
+    done
+    for i in $(seq 0 $((n - 1))); do
+        topic=$((i % 4))
+        if [ "$topic" -ne "$target" ]; then
+            continue
+        fi
+        printf '  (rho:send $topic%s (rho:send $payload%s rho:nil))\n' \
+            "$target" "$i"
+    done
+    printf ')\n'
+} > "$mrho"
 
 first=1
 {
@@ -106,4 +128,4 @@ first=1
     printf '\n'
 } > "$rho"
 
-printf '%s\t%s\t%s\n' "$name" "$metta" "$rho"
+printf '%s\t%s\t%s\t%s\n' "$name" "$metta" "$mrho" "$rho"

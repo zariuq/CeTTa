@@ -33,6 +33,8 @@ static void handle_sigsegv(int sig) {
 static bool g_count_only = false;
 static bool g_quiet_results = false;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
+static const uint32_t CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT = 100000u;
+static const int CETTA_RHOCALC_EXIT_REDUCTION_LIMIT_EXHAUSTED = 3;
 
 typedef enum {
     CETTA_DISPLAY_VARS_AUTO = 0,
@@ -649,10 +651,39 @@ static bool endpoint_supports_syntax(const CettaCliEndpoint *endpoint,
     return false;
 }
 
+static RhocalcSemanticProfileId
+rhocalc_semantic_profile_for_endpoint(const CettaCliEndpoint *endpoint) {
+    if (!endpoint || !endpoint->profile) {
+        return RHOCALC_SEMANTIC_PROFILE_STRICT_CORE;
+    }
+    switch (endpoint->profile->id) {
+    case CETTA_PROFILE_RHOCALC_COST:
+        return RHOCALC_SEMANTIC_PROFILE_COST;
+    case CETTA_PROFILE_RHOCALC_STRICT_CORE:
+    default:
+        return RHOCALC_SEMANTIC_PROFILE_STRICT_CORE;
+    }
+}
+
+static bool rho_scheduler_policy_from_name(const char *name,
+                                           RhoSchedulerPolicy *out) {
+    if (!name || !out) return false;
+    if (strcmp(name, "canonical") == 0) {
+        *out = RHO_SCHEDULER_CANONICAL;
+        return true;
+    }
+    if (strcmp(name, "rotating") == 0) {
+        *out = RHO_SCHEDULER_ROTATING;
+        return true;
+    }
+    return false;
+}
+
 static int run_rhocalc_cli(const char *filename,
                            const char *inline_text,
+                           RhocalcSemanticProfileId semantic_profile,
                            CettaSyntaxId syntax,
-                           bool count_only) {
+                           const RhoRuntimeProfile *profile) {
     int rc = 0;
     int n = 0;
     Atom **atoms = NULL;
@@ -672,8 +703,8 @@ static int run_rhocalc_cli(const char *filename,
     arena_set_hashcons(&arena, &hashcons_table);
 
     n = inline_text
-        ? rhocalc_parse_text(inline_text, syntax, &arena, &atoms)
-        : rhocalc_parse_file(filename, syntax, &arena, &atoms);
+        ? rhocalc_parse_text(inline_text, semantic_profile, syntax, &arena, &atoms)
+        : rhocalc_parse_file(filename, semantic_profile, syntax, &arena, &atoms);
     if (n < 0) {
         const char *detail = rhocalc_last_parse_error();
         fprintf(stderr, "error: could not parse %s as rhocalc/%s\n",
@@ -685,26 +716,33 @@ static int run_rhocalc_cli(const char *filename,
     }
 
     for (int i = 0; i < n; i++) {
-        RhoStepSet steps = {0};
-        Atom *steps_atom;
-        if (!rhocalc_one_step(&arena, atoms[i], &steps)) {
+        RhoReductionResult reduction = {0};
+        if (!rhocalc_reduce_to_quiescence_with_semantic_profile(&arena, atoms[i],
+                                                                semantic_profile,
+                                                                profile, &reduction)) {
             const char *detail = rhocalc_last_validation_error();
-            fprintf(stderr, "error: invalid rhocalc core process");
+            if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_STRICT_CORE) {
+                fprintf(stderr, "error: invalid rhocalc core process");
+            } else {
+                fprintf(stderr, "error: invalid rhocalc %s term",
+                        rhocalc_semantic_profile_name(semantic_profile));
+            }
             if (detail) fprintf(stderr, ": %s", detail);
             fputc('\n', stderr);
-            free(steps.items);
             rc = 1;
             goto done;
         }
-        if (count_only) {
-            printf("%u\n", steps.len);
-            free(steps.items);
-            continue;
-        }
-        steps_atom = rhocalc_steps_atom(&arena, &steps);
-        rhocalc_print_atom_syntax(steps_atom, CETTA_SYNTAX_MRHO, stdout);
+        rhocalc_print_atom_syntax(reduction.residual, syntax, stdout);
         fputc('\n', stdout);
-        free(steps.items);
+        if (reduction.status == RHOCALC_REDUCTION_LIMIT_EXHAUSTED) {
+            fflush(stdout);
+            fprintf(stderr,
+                    "warning: rhocalc reduction limit exhausted after %u COMM %s\n",
+                    reduction.reductions_taken,
+                    reduction.reductions_taken == 1 ? "reduction" : "reductions");
+            rc = CETTA_RHOCALC_EXIT_REDUCTION_LIMIT_EXHAUSTED;
+            goto done;
+        }
     }
 
 done:
@@ -721,6 +759,8 @@ done:
 
 static int run_rhocalc_translation(const char *filename,
                                    const char *inline_text,
+                                   RhocalcSemanticProfileId input_profile,
+                                   RhocalcSemanticProfileId output_profile,
                                    CettaSyntaxId input_syntax,
                                    CettaSyntaxId output_syntax) {
     int rc = 0;
@@ -742,8 +782,8 @@ static int run_rhocalc_translation(const char *filename,
     arena_set_hashcons(&arena, &hashcons_table);
 
     n = inline_text
-        ? rhocalc_parse_text(inline_text, input_syntax, &arena, &atoms)
-        : rhocalc_parse_file(filename, input_syntax, &arena, &atoms);
+        ? rhocalc_parse_text(inline_text, input_profile, input_syntax, &arena, &atoms)
+        : rhocalc_parse_file(filename, input_profile, input_syntax, &arena, &atoms);
     if (n < 0) {
         const char *detail = rhocalc_last_parse_error();
         fprintf(stderr, "error: could not parse %s as rhocalc/%s\n",
@@ -753,10 +793,23 @@ static int run_rhocalc_translation(const char *filename,
         rc = 1;
         goto done;
     }
+    if (output_profile != RHOCALC_SEMANTIC_PROFILE_STRICT_CORE) {
+        fprintf(stderr,
+                "error: rhocalc profile '%s' translation is not implemented yet\n",
+                rhocalc_semantic_profile_name(output_profile));
+        rc = 1;
+        goto done;
+    }
     for (int i = 0; i < n; i++) {
-        if (!rhocalc_process_well_formed(atoms[i])) {
+        if (!rhocalc_process_well_formed_with_semantic_profile(atoms[i],
+                                                               input_profile)) {
             const char *detail = rhocalc_last_validation_error();
-            fprintf(stderr, "error: invalid rhocalc core process");
+            if (input_profile == RHOCALC_SEMANTIC_PROFILE_STRICT_CORE) {
+                fprintf(stderr, "error: invalid rhocalc core process");
+            } else {
+                fprintf(stderr, "error: invalid rhocalc %s term",
+                        rhocalc_semantic_profile_name(input_profile));
+            }
             if (detail) fprintf(stderr, ": %s", detail);
             fputc('\n', stderr);
             rc = 1;
@@ -783,6 +836,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he-compat|he-extended|he-prime>] <file.metta>\n", out);
+    fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
@@ -798,10 +852,14 @@ static void print_usage(FILE *out) {
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --prefer-rationals <file.metta>  # exact rational division for exact numbers\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
+    fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
+    fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
+    fputs("       cetta --space-match-backend <name> <file.metta>   # alias for --space-engine\n", out);
     fputs("       cetta [--lang <name>] --list-profiles\n", out);
     fputs("       cetta --list-space-engines\n", out);
+    fputs("       cetta --list-space-match-backends                 # alias for --list-space-engines\n", out);
     fputs("       cetta --list-languages\n", out);
 }
 
@@ -1169,6 +1227,10 @@ int main(int argc, char **argv) {
     uint32_t lang_occurrences = 0;
     bool prefer_rationals_cli = false;
     int fuel_override = -1;
+    uint32_t rho_reduction_limit = CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT;
+    bool rho_reduction_limit_requested = false;
+    RhoSchedulerPolicy rho_scheduler = RHO_SCHEDULER_CANONICAL;
+    bool rho_scheduler_requested = false;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
 
@@ -1255,6 +1317,35 @@ int main(int argc, char **argv) {
                 return 2;
             }
             fuel_override = (int)parsed;
+            continue;
+        }
+        if (strcmp(argv[i], "--rho-reduction-limit") == 0) {
+            char *endp = NULL;
+            unsigned long long parsed;
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            parsed = strtoull(argv[++i], &endp, 10);
+            if (!endp || *endp != '\0' || parsed == 0 ||
+                parsed > 100000000ULL) {
+                fprintf(stderr, "error: invalid rhocalc reduction limit '%s'\n", argv[i]);
+                return 2;
+            }
+            rho_reduction_limit = (uint32_t)parsed;
+            rho_reduction_limit_requested = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--rho-scheduler") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!rho_scheduler_policy_from_name(argv[++i], &rho_scheduler)) {
+                fprintf(stderr, "error: unknown rho scheduler '%s'\n", argv[i]);
+                return 2;
+            }
+            rho_scheduler_requested = true;
             continue;
         }
         if (strcmp(argv[i], "--steps") == 0) {
@@ -1404,6 +1495,15 @@ int main(int argc, char **argv) {
     }
 
     if (translate_mode) {
+        RhocalcSemanticProfileId input_profile =
+            rhocalc_semantic_profile_for_endpoint(&source_endpoint);
+        RhocalcSemanticProfileId output_profile =
+            rhocalc_semantic_profile_for_endpoint(&target_endpoint);
+        if (rho_reduction_limit_requested || rho_scheduler_requested) {
+            fprintf(stderr, "error: rhocalc runtime flags do not combine with --translate\n");
+            free(inline_buf);
+            return 2;
+        }
         CettaSyntaxId output_syntax =
             endpoint_effective_syntax(&target_endpoint, NULL);
         if (!endpoint_supports_syntax(&target_endpoint, output_syntax, "target")) {
@@ -1422,20 +1522,50 @@ int main(int argc, char **argv) {
             return 2;
         }
         int translate_rc =
-            run_rhocalc_translation(filename, inline_text, syntax, output_syntax);
+            run_rhocalc_translation(filename, inline_text,
+                                    input_profile, output_profile,
+                                    syntax, output_syntax);
         free(inline_buf);
         return translate_rc;
     }
 
     if (lang->id == CETTA_LANGUAGE_RHOCALC) {
+        RhocalcSemanticProfileId semantic_profile =
+            rhocalc_semantic_profile_for_endpoint(&source_endpoint);
+        RhoRuntimeProfile rho_profile = {
+            .scheduler_policy = rho_scheduler,
+            .reduction_limit = rho_reduction_limit,
+        };
         if (compile_mode || compile_stdlib_mode) {
             fprintf(stderr, "error: compile modes are not supported with --lang rhocalc\n");
             free(inline_buf);
             return 2;
         }
-        int rho_rc = run_rhocalc_cli(filename, inline_text, syntax, count_only);
+        if (count_only) {
+            fprintf(stderr,
+                    "error: --count-only is not supported with --lang rhocalc\n");
+            free(inline_buf);
+            return 2;
+        }
+        if (emit_runtime_stats) {
+            cetta_runtime_stats_reset();
+            cetta_runtime_stats_enable();
+        }
+        int rho_rc = run_rhocalc_cli(filename, inline_text, semantic_profile,
+                                     syntax, &rho_profile);
+        if (emit_runtime_stats) {
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            cetta_runtime_stats_print(stderr, &stats);
+        }
         free(inline_buf);
         return rho_rc;
+    }
+
+    if (rho_reduction_limit_requested || rho_scheduler_requested) {
+        fprintf(stderr, "error: rhocalc runtime flags require --lang rhocalc\n");
+        free(inline_buf);
+        return 2;
     }
 
     /* --compile-stdlib: parse .metta file, emit C blob header, exit */

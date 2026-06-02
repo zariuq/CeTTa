@@ -1,0 +1,3 @@
+MeTTa performs a control-level route selection before constructing the pure
+rho output. The rhocalc core remains extension-free; only the host MeTTa layer
+chooses which core process to emit.

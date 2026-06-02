@@ -1,0 +1,4 @@
+Private communication with no payload leak.
+
+The hidden payload is consumed on a private channel. The only public observation
+is a completion signal, so payload-aware parity would catch an accidental leak.

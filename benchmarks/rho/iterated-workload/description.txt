@@ -1,0 +1,3 @@
+MeTTa folds over a subscription list to build a finite pure-rho workload. This
+models the programming-language iteration layer without adding iteration to the
+core rhocalc reducer.

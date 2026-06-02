@@ -1,0 +1,4 @@
+MeTTa supplies a private channel name around the pure rho core. This mirrors a
+non-extruding Rholang `new` program while keeping --lang rhocalc extension-free:
+MeTTa chooses the private channel, constructs the rho process, and the reducer
+only sees strict-core send/receive/drop/parallel terms.

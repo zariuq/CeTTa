@@ -1,0 +1,6 @@
+Fresh-name extrusion through a public channel.
+
+The Rholang side creates an unforgeable name with new and sends the dereferenced
+name as a process payload on a public channel. The MeTTa side supplies an
+alpha-renamed private rho name and sends the same dropped-name payload through
+lib_rho. The parity oracle canonicalizes both to fresh0.

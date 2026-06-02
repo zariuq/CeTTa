@@ -9,9 +9,11 @@
 (= (fwd $src $dst)
    (rho.recv $src $msg (rho.send $dst (rho.drop $msg))))
 
-!(rho.step
-  (rho.par
-    (pipeline-source $c0)
-    (fwd $c0 $c1)
-    (fwd $c1 $c2)
-    (pipeline-sink $c2)))
+!(let $program
+  (eval
+    (rho.par
+      (pipeline-source $c0)
+      (fwd $c0 $c1)
+      (fwd $c1 $c2)
+      (pipeline-sink $c2)))
+  $program)

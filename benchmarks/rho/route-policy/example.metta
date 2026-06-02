@@ -32,4 +32,4 @@
            (edge $c1 $c2 backup))
           $payload))
         (rho.par $forwarders $signals))))
-  (rho.step $program))
+  $program)

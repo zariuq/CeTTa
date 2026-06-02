@@ -72,10 +72,12 @@ for size in $(sizes); do
     generated="$("$BENCH_DIR/generate.sh" "$size" "$GEN_DIR")"
     case_name="$(printf '%s' "$generated" | cut -f1)"
     metta="$(printf '%s' "$generated" | cut -f2)"
-    rho="$(printf '%s' "$generated" | cut -f3)"
+    mrho="$(printf '%s' "$generated" | cut -f3)"
+    rho="$(printf '%s' "$generated" | cut -f4)"
     printf 'case=%s size=%s\n' "$case_name" "$size"
     for rep in $(seq 1 "$REPEATS"); do
-        time_case "$size" "cetta-lib-rho" "$case_name" "$rep" "$CETTA_BIN" --quiet "$metta"
+        time_case "$size" "cetta-rhocalc-run" "$case_name" "$rep" \
+            "$CETTA_BIN" --quiet --lang rhocalc --syntax mrho "$mrho"
         data_dir="$DATA_ROOT/$case_name/$rep"
         mkdir -p "$(dirname "$data_dir")"
         time_case "$size" "f1r3node-rholang-cli" "$case_name" "$rep" \

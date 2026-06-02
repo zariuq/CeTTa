@@ -1,0 +1,2 @@
+; Strict-core rho send is asynchronous: channel + process payload only.
+(rho:send (rho:quote rho:nil) rho:nil rho:nil)

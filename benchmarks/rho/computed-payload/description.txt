@@ -1,0 +1,2 @@
+MeTTa computes a nested rho payload before sending it. This benchmark is meant
+to fail under channel-only parity if the payload is routed incorrectly.
