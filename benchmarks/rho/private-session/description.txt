@@ -1,0 +1,5 @@
+Two-private-channel request/reply session.
+
+MeTTa supplies the two local rho names and constructs a request/reply protocol.
+The public observation checks only the payload routed through the completed
+private session.

@@ -41,3 +41,26 @@
 !(assertEqualToResult
   (rho:eval rho:nil)
   ((rho:eval rho:nil)))
+
+; Dotted rho. reader sugar must not smuggle the same helper names into scope.
+!(assertAlphaEqualToResult
+  (rho.step (comm-redex))
+  ((rho:step
+     (rho:par
+       (rho:recv (rho:quote rho:nil) $msg (rho:drop $msg))
+       (rho:send (rho:quote rho:nil) rho:nil)))))
+
+!(assertAlphaEqualToResult
+  (rho.frontier (comm-redex))
+  ((rho:frontier
+     (rho:par
+       (rho:recv (rho:quote rho:nil) $msg (rho:drop $msg))
+       (rho:send (rho:quote rho:nil) rho:nil)))))
+
+!(assertEqualToResult
+  (rho.reduce rho.nil)
+  ((rho:reduce rho:nil)))
+
+!(assertEqualToResult
+  (rho.eval rho.nil)
+  ((rho:eval rho:nil)))

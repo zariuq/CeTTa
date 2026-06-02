@@ -1,0 +1,5 @@
+Finite replication by MeTTa construction.
+
+MeTTa expands three worker copies and three input signals over one shared topic.
+The result is intentionally nondeterministic: any payload can be consumed by any
+worker. The may/must oracle checks the full six-outcome frontier.

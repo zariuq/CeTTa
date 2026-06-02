@@ -1,0 +1,5 @@
+(rho:cost:par
+  (rho:cost:signed (rho:recv pay $m (rho:cost:signed rho:nil cont)) alice)
+  (rho:cost:signed (rho:send pay (rho:cost:signed rho:nil payload)) bob)
+  (rho:cost:stack-cons alice rho:cost:stack-empty)
+  (rho:cost:stack-cons bob rho:cost:stack-empty))

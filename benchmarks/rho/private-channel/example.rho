@@ -1,0 +1,4 @@
+new secret in {
+  for (x <- secret) { @"out"!(*x) } |
+  secret!(@"payload"!(Nil))
+}

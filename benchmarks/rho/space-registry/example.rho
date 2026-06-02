@@ -1,0 +1,2 @@
+for (x <- @"serviceB") { @"resolved"!(*x) } |
+@"serviceB"!(@"payload"!(Nil))

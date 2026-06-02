@@ -4,7 +4,7 @@
    (rho.recv $src $msg (rho.send $dst (rho.drop $msg))))
 
 (= (edge-signal (edge $src $dst) $payload)
-   (rho.send $src (rho.send $payload rho.nil)))
+   (rho.send $src $payload))
 
 (= (build-forwarders $edges)
    (foldl-atom $edges rho.nil $acc $edge
@@ -26,5 +26,5 @@
     ((edge $c0 $c1)
      (edge $c1 $c2)
      (edge $c2 $c3))
-    $payload))
+    rho.nil))
   $program)

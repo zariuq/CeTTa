@@ -1,0 +1,5 @@
+new req, reply in {
+  for (x <- req) { reply!(*x) } |
+  req!(@"payload"!(Nil)) |
+  for (y <- reply) { @"out"!(*y) }
+}

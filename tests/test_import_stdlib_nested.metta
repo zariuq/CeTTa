@@ -1,0 +1,6 @@
+!(import! &self test_nested_stdlib:deep:inner)
+!(assertEqualToResult (match &self (stdlib-nested-root $x) $x) (loaded))
+!(assertEqualToResult (match &self (stdlib-nested-helper $x) $x) (loaded))
+!(bind! &m (mod-space! test_nested_stdlib:deep:inner))
+!(assertEqualToResult (match &m (stdlib-nested-root $x) $x) (loaded))
+!(assertEqualToResult (match &m (stdlib-nested-helper $x) $x) (loaded))

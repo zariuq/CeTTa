@@ -23,7 +23,9 @@ typedef struct Space Space;
 typedef enum {
     CETTA_PROFILE_HE_COMPAT = 0,
     CETTA_PROFILE_HE_EXTENDED = 1,
-    CETTA_PROFILE_HE_PRIME = 2
+    CETTA_PROFILE_HE_PRIME = 2,
+    CETTA_PROFILE_RHOCALC_STRICT_CORE = 3,
+    CETTA_PROFILE_RHOCALC_COST = 4
 } CettaProfileId;
 
 typedef enum {

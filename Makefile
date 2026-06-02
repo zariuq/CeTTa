@@ -999,6 +999,20 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	for f in tests/rhocalc_cost_run/*.mrho tests/rhocalc_cost_run/*.rho; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		if [ ! -f "$$exp" ]; then continue; fi; \
+		result=$$(./$(BIN) --lang rhocalc --profile cost "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
 	result=$$(./$(BIN) --rho-reduction-limit 4 --lang rhocalc --syntax mrho tests/rhocalc/paper_divergence_self_recreates_h4.mrho 2>&1); \
 	status=$$?; \
 	if [ "$$status" -eq 3 ] && [ "$$result" = "$$(cat tests/rhocalc_run/paper_divergence_self_recreates_reduction_limit.expected)" ]; then \
@@ -1021,6 +1035,19 @@ test-rhocalc: $(BIN)
 			pass=$$((pass + 1)); \
 		else \
 			echo "FAIL: rhocalc strict-boundary reject $$f"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	for f in tests/rhocalc_cost/reject_dequote.rho; do \
+		exp="$${f%.*}.expected"; \
+		result=$$(./$(BIN) --lang rhocalc --profile cost "$$f" 2>&1); \
+		status=$$?; \
+		if [ "$$status" -eq 1 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: rhocalc cost reject $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc cost reject $$f"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1145,15 +1172,33 @@ test-rhocalc: $(BIN)
 				fail=$$((fail + 1)) ;; \
 		esac; \
 	done < tests/rhocalc_m3_overlap.tsv; \
+	if python3 scripts/rhocalc_m3_rholang_cli_compare_selftest.py; then \
+		echo "PASS: rhocalc M3 rholang-cli parser/oracle selftest"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc M3 rholang-cli parser/oracle selftest"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	while IFS=$$(printf '\t') read -r name cetta_syntax cetta_fixture expected_outputs; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		if python3 scripts/rhocalc_m3_may_must.py ./$(BIN) "$$cetta_syntax" "$$cetta_fixture" "$$expected_outputs"; then \
+			echo "PASS: rhocalc M3 may/must frontier $$name"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc M3 may/must frontier $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_m3_may_must.tsv; \
 	rholang_cli="$${RHOLANG_CLI:-$$(command -v rholang-cli || true)}"; \
 	if [ -z "$$rholang_cli" ] && [ -x ../f1r3node/target/release/rholang-cli ]; then \
 		rholang_cli=../f1r3node/target/release/rholang-cli; \
 	fi; \
 	if [ -x "$$rholang_cli" ]; then \
-		while IFS=$$(printf '\t') read -r name cetta_syntax cetta_fixture rholang_fixture expected_channels; do \
+		while IFS=$$(printf '\t') read -r name cetta_syntax cetta_fixture rholang_fixture expected_outputs; do \
 			[ -n "$$name" ] || continue; \
 			case "$$name" in \#*) continue ;; esac; \
-			if python3 scripts/rhocalc_m3_rholang_cli_compare.py ./$(BIN) "$$rholang_cli" "$$cetta_syntax" "$$cetta_fixture" "$$rholang_fixture" "$$expected_channels"; then \
+			if python3 scripts/rhocalc_m3_rholang_cli_compare.py ./$(BIN) "$$rholang_cli" "$$cetta_syntax" "$$cetta_fixture" "$$rholang_fixture" "$$expected_outputs"; then \
 				echo "PASS: rhocalc M3 rholang-cli overlap $$name"; \
 				pass=$$((pass + 1)); \
 			else \
@@ -1161,10 +1206,17 @@ test-rhocalc: $(BIN)
 				fail=$$((fail + 1)); \
 			fi; \
 		done < tests/rhocalc_m3_rholang_cli.tsv; \
+		if python3 scripts/rhocalc_m3_rholang_cli_compare.py ./$(BIN) "$$rholang_cli" metta benchmarks/rho/route-policy/example.metta benchmarks/rho/route-policy/example.rho 'c1=nil' >/dev/null 2>&1; then \
+			echo "FAIL: rhocalc M3 rholang-cli rejects wrong payload"; \
+			fail=$$((fail + 1)); \
+		else \
+			echo "PASS: rhocalc M3 rholang-cli rejects wrong payload"; \
+			pass=$$((pass + 1)); \
+		fi; \
 	else \
 		echo "SKIP: rhocalc M3 rholang-cli overlap (set RHOLANG_CLI or install rholang-cli)"; \
 	fi; \
-	for f in tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta; do \
+	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta; do \
 		exp="$${f%.metta}.expected"; \
 		result=$$(./$(BIN) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
@@ -1198,6 +1250,17 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done < tests/rhocalc_lean_trace_bridge.tsv; \
+	while IFS=$$(printf '\t') read -r name fixture expected_file lean_file anchor; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		if python3 scripts/rhocalc_cost_lean_bridge.py ./$(BIN) "$$fixture" "$$expected_file" "$$lean_file" "$$anchor"; then \
+			echo "PASS: rhocalc cost lean bridge $$name"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc cost lean bridge $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_cost_lean_bridge.tsv; \
 	mettapedia_root="$${METTAPEDIA_ROOT:-../../lean-projects/mettapedia}"; \
 	if [ -d "$$mettapedia_root" ]; then \
 		if python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean; then \
@@ -1427,6 +1490,39 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$mm2_profile_err"; \
 		fail=$$((fail + 1)); \
 	fi; \
+	rhocalc_profiles=$$(./$(BIN) --lang rhocalc --list-profiles 2>&1); \
+	if printf '%s\n' "$$rhocalc_profiles" | grep -Eq '^strict-core[[:space:]]' && \
+	   printf '%s\n' "$$rhocalc_profiles" | grep -Eq '^cost[[:space:]]'; then \
+		echo "PASS: rhocalc profile inventory"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc profile inventory"; \
+		printf '%s\n' "$$rhocalc_profiles"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	rhocalc_strict=$$(./$(BIN) --lang rhocalc --profile strict-core -e 'rho:nil' 2>&1); \
+	if [ "$$rhocalc_strict" = "rho:nil" ]; then \
+		echo "PASS: rhocalc strict-core profile"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc strict-core profile"; \
+		printf '%s\n' "$$rhocalc_strict"; \
+		fail=$$((fail + 1)); \
+	fi; \
+		rhocalc_cost=$$(./$(BIN) --lang rhocalc --profile cost --syntax rho -e '{for ($$m <- pay) {{0}cont}}alice | {pay!({0}payload)}bob | alice : () | bob : ()' 2>&1); \
+		if [ "$$rhocalc_cost" = "{0}cont" ]; then \
+			echo "PASS: rhocalc cost profile slice"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc cost profile slice"; \
+			printf '%s\n' "$$rhocalc_cost"; \
+			fail=$$((fail + 1)); \
+		fi; \
+		he_lts=$$(./$(BIN) --profile he-extended --lang he tests/test_lts_he_surface.metta 2>&1); \
+		if [ "$$he_lts" = "$$(cat tests/test_lts_he_surface.expected)" ]; then \
+			echo "PASS: he-extended lts:he surface"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: he-extended lts:he surface"; \
+			diff <(cat tests/test_lts_he_surface.expected) <(echo "$$he_lts") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
 	for profile in he-compat he-extended he-prime; do \
 		result=$$(./$(BIN) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \

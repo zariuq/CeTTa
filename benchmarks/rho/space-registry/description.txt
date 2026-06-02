@@ -1,0 +1,5 @@
+MeTTa-space registry driving rho wiring.
+
+The registry is represented as ordinary MeTTa data in a space. The benchmark
+looks up a service key, maps the returned symbol to a rho name, and constructs
+the pure rho communication graph with lib_rho.

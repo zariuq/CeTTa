@@ -1,0 +1,1 @@
+{for ($m <- pay) {{0}cont}}alice | {pay!({0}payload)}bob | alice : ()

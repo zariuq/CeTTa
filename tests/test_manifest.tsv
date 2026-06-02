@@ -199,6 +199,7 @@ tests/test_import_nested_depth.metta	he	metta	he-extended	main	native	test	golde
 tests/test_import_parse_failure.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_import_partial_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_import_registered_nested_parent.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_import_stdlib_nested.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_import_transaction.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_imported_bridge_string_grounding_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_imported_conjunction_bridge_init_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
@@ -216,6 +217,10 @@ tests/test_let.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let_star_error_short_circuit.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_list_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_he_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_rho_cost_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_rho_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_map_filter_atom.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_advanced.metta	he	metta	he-extended	main	native	test	golden	-
