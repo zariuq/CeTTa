@@ -53,9 +53,13 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
 static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
                                             SubstMatchSet *out);
 static bool imported_bridge_query_conjunction_fast(Space *s, Arena *a,
-                                                   Atom **patterns, uint32_t npatterns,
+                                                   Atom **patterns, CettaExprLen npatterns,
                                                    const Bindings *seed,
                                                    BindingSet *out);
+static bool mork_query_collect_bindings(const Bindings *bindings, void *ctx);
+static bool mork_visit_collected_bindings(const BindingSet *set,
+                                          CettaMorkBindingsVisitor visitor,
+                                          void *ctx);
 static bool imported_bridge_query_text_has_internal_vars(const char *text);
 static bool imported_text_may_contain_vars(const uint8_t *text, size_t len);
 static bool imported_materialize_bridge_space(Space *dst,
@@ -63,7 +67,7 @@ static bool imported_materialize_bridge_space(Space *dst,
                                               CettaMorkSpaceHandle *bridge,
                                               uint64_t *out_loaded);
 static void space_query_conjunction_default(Space *s, Arena *a,
-                                            Atom **patterns, uint32_t npatterns,
+                                            Atom **patterns, CettaExprLen npatterns,
                                             const Bindings *seed,
                                             BindingSet *out);
 static void imported_projection_clear(ImportedBridgeState *st);
@@ -78,6 +82,9 @@ static bool pathmap_local_apply_text_chunk_direct(Space *s,
                                                   size_t len,
                                                   bool remove_atoms,
                                                   uint64_t *out_changed);
+static bool imported_bridge_packet_count_ok(uint64_t count);
+static bool imported_bridge_packet_count_sum_ok(uint64_t total,
+                                                uint64_t add);
 
 static CettaIndex sort_unique_cetta_index(CettaIndex *items, CettaIndex len) {
     if (!items || len <= 1)
@@ -89,6 +96,24 @@ static CettaIndex sort_unique_cetta_index(CettaIndex *items, CettaIndex len) {
             items[w++] = items[r];
     }
     return w;
+}
+
+static bool imported_bridge_packet_count_ok(uint64_t count) {
+    if (count > space_match_backend_packet_materialization_limit()) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    return true;
+}
+
+static bool imported_bridge_packet_count_sum_ok(uint64_t total,
+                                                uint64_t add) {
+    uint64_t limit = space_match_backend_packet_materialization_limit();
+    if (total > limit || add > limit - total) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    return true;
 }
 
 static bool backend_uses_bridge_adapter(const Space *s) {
@@ -143,7 +168,8 @@ static bool native_atom_id_insertable(const TermUniverse *universe,
         return false;
     if (tu_kind(universe, atom_id) != ATOM_EXPR)
         return true;
-    for (uint32_t i = 0; i < tu_arity(universe, atom_id); i++) {
+    CettaExprLen arity = tu_arity(universe, atom_id);
+    for (CettaExprIndex i = 0; i < arity; i++) {
         if (!native_atom_id_insertable(universe, tu_child(universe, atom_id, i)))
             return false;
     }
@@ -298,7 +324,7 @@ static void native_rebuild_match_trie(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     disc_node_free(st->match_trie);
     st->match_trie = disc_node_new();
-    for (uint32_t i = 0; i < s->native.len; i++)
+    for (CettaIndex i = 0; i < s->native.len; i++)
         native_insert_match_trie_entry(s, i);
     st->match_trie_dirty = false;
 }
@@ -307,7 +333,7 @@ static void native_ensure_match_trie(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (!st->match_trie) {
         st->match_trie = disc_node_new();
-        for (uint32_t i = 0; i < s->native.len; i++)
+        for (CettaIndex i = 0; i < s->native.len; i++)
             native_insert_match_trie_entry(s, i);
         st->match_trie_dirty = false;
     } else if (st->match_trie_dirty) {
@@ -320,13 +346,13 @@ static void native_ensure_stree(Space *s) {
     if (!st->stree) {
         st->stree = cetta_malloc(sizeof(SubstTree));
         stree_init(st->stree);
-        for (uint32_t i = 0; i < s->native.len; i++)
+        for (CettaIndex i = 0; i < s->native.len; i++)
             native_insert_stree_entry(s, i);
         st->stree_dirty = false;
     } else if (st->stree_dirty) {
         stree_free(st->stree);
         stree_init(st->stree);
-        for (uint32_t i = 0; i < s->native.len; i++)
+        for (CettaIndex i = 0; i < s->native.len; i++)
             native_insert_stree_entry(s, i);
         st->stree_dirty = false;
     }
@@ -599,7 +625,7 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
     smset_init(out);
     if (!matches)
         return;
-    for (uint32_t i = 0; i < matches->len; i++)
+    for (CettaIndex i = 0; i < matches->len; i++)
         subst_matchset_push(out, 0, 0, &matches->items[i], true);
 }
 
@@ -659,14 +685,14 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
 
 typedef struct {
     ImportedFlatToken *items;
-    uint32_t len, cap;
+    CettaIndex len, cap;
 } ImportedFlatBuilder;
 
 typedef struct {
     VarId var_id;
     SymbolId spelling;
-    uint32_t idx;
-    uint32_t span;
+    CettaIndex idx;
+    CettaIndex span;
     Atom *origin;
 } ImportedCorefRef;
 
@@ -732,8 +758,8 @@ typedef struct {
 
 typedef struct {
     ImportedBridgeExprMemoSlot *slots;
-    uint32_t cap;
-    uint32_t used;
+    CettaIndex cap;
+    CettaIndex used;
 } ImportedBridgeExprMemo;
 
 typedef struct {
@@ -770,6 +796,9 @@ static void imported_bridge_varmap_free(ImportedBridgeVarMap *map);
 static ImportedBridgeVarSlot *imported_bridge_varmap_lookup(ImportedBridgeVarMap *map,
                                                             uint32_t query_slot);
 static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map);
+static bool imported_bridge_query_var_slots_contextual_ok(
+    const ImportedBridgeVarMap *map,
+    bool set_error);
 static void imported_bridge_expr_varmap_init(ImportedBridgeExprVarMap *map);
 static void imported_bridge_expr_varmap_free(ImportedBridgeExprVarMap *map);
 static bool imported_bridge_read_u32(const uint8_t *packet, size_t len, size_t *off,
@@ -822,7 +851,7 @@ static Atom *imported_bridge_parse_value_raw_multi_ref_v3(
     ImportedBridgeValueVarMap *vars,
     bool *value_ok);
 static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
-                                                    uint32_t npatterns);
+                                                    CettaExprLen npatterns);
 static void imported_bridge_expr_memo_init(ImportedBridgeExprMemo *memo);
 static void imported_bridge_expr_memo_free(ImportedBridgeExprMemo *memo);
 static ImportedBridgeExprDecodeResult imported_bridge_expr_to_atom_id_cached(
@@ -861,6 +890,7 @@ static void imported_projection_clear(ImportedBridgeState *st) {
     free(st->projected_atom_ids);
     st->projected_atom_ids = NULL;
     st->projected_len = 0;
+    st->projected_atom_id_width_bits = 0;
     st->projection_valid = false;
 }
 
@@ -906,11 +936,102 @@ static uint64_t shadow_storage_logical_len(const Space *s) {
     return s ? s->native.len : 0;
 }
 
-static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
-    if (!s || idx > UINT32_MAX || idx >= s->native.len)
+static AtomId imported_projected_atom_id_at(const ImportedBridgeState *st,
+                                            CettaIndex idx) {
+    size_t width = 0;
+    if (!st || !st->projected_atom_ids || idx >= st->projected_len)
         return CETTA_ATOM_ID_NONE;
-    uint32_t idx32 = (uint32_t)idx;
-    return s->native.atom_ids[space_is_queue(s) ? (s->native.start + idx32) : idx32];
+    width = cetta_atom_id_storage_width_bytes_from_bits(
+        st->projected_atom_id_width_bits);
+    if (width == 0)
+        return CETTA_ATOM_ID_NONE;
+    return cetta_atom_id_storage_load_bits(
+        st->projected_atom_ids + ((size_t)idx * width),
+        st->projected_atom_id_width_bits);
+}
+
+static bool imported_projected_pack_atom_ids(
+    const TermUniverse *universe,
+    const AtomId *atom_ids,
+    CettaCount len,
+    uint8_t **out_storage,
+    uint8_t *out_bits) {
+    uint32_t bits = 0;
+    size_t width = 0;
+    uint8_t *storage = NULL;
+    if (out_storage)
+        *out_storage = NULL;
+    if (out_bits)
+        *out_bits = 0;
+    if (!universe || !out_storage || !out_bits)
+        return false;
+    bits = term_universe_store_format_atom_id_width_bits(
+        term_universe_store_format(universe));
+    width = cetta_atom_id_storage_width_bytes_from_bits(bits);
+    if (width == 0)
+        return false;
+    if (len == 0) {
+        *out_bits = (uint8_t)bits;
+        return true;
+    }
+    if ((size_t)len > SIZE_MAX / width)
+        return false;
+    storage = cetta_malloc((size_t)len * width);
+    if (!storage)
+        return false;
+    for (CettaIndex i = 0; i < len; i++) {
+        if (!cetta_atom_id_storage_store_bits(
+                storage + ((size_t)i * width), bits, atom_ids[i])) {
+            free(storage);
+            return false;
+        }
+    }
+    *out_storage = storage;
+    *out_bits = (uint8_t)bits;
+    return true;
+}
+
+static bool imported_projected_pack_space_atom_ids(const Space *space,
+                                                   uint8_t **out_storage,
+                                                   uint8_t *out_bits) {
+    AtomId *scratch_ids = NULL;
+    bool ok = false;
+    if (out_storage)
+        *out_storage = NULL;
+    if (out_bits)
+        *out_bits = 0;
+    if (!space || !space->native.universe || !out_storage || !out_bits)
+        return false;
+    if (space->native.len == 0) {
+        *out_bits = (uint8_t)term_universe_store_format_atom_id_width_bits(
+            term_universe_store_format(space->native.universe));
+        return true;
+    }
+    scratch_ids = cetta_malloc(sizeof(*scratch_ids) * (size_t)space->native.len);
+    if (!scratch_ids)
+        return false;
+    for (CettaIndex i = 0; i < space->native.len; i++)
+        scratch_ids[i] = space_get_atom_id_at64(space, i);
+    ok = imported_projected_pack_atom_ids(space->native.universe, scratch_ids,
+                                          space->native.len, out_storage,
+                                          out_bits);
+    free(scratch_ids);
+    return ok;
+}
+
+static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
+    size_t physical_idx = 0;
+    if (!s || idx >= s->native.len)
+        return CETTA_ATOM_ID_NONE;
+    if (idx > (uint64_t)SIZE_MAX)
+        return CETTA_ATOM_ID_NONE;
+    physical_idx = (size_t)(space_is_queue(s) ? (s->native.start + idx) : idx);
+    return cetta_atom_id_storage_load_bits(
+        s->native.atom_ids +
+            (physical_idx *
+             cetta_atom_id_storage_width_bytes_from_bits(
+                 s->native.atom_id_width_bits)),
+        s->native.atom_id_width_bits);
 }
 
 static Atom *shadow_storage_get_at(const Space *s, uint64_t idx) {
@@ -958,7 +1079,7 @@ static AtomId imported_storage_get_atom_id_at(const Space *s, uint64_t idx) {
     if (st && imported_storage_ensure_projection(mutable_space)) {
         if (idx >= st->projected_len)
             return CETTA_ATOM_ID_NONE;
-        return st->projected_atom_ids[(size_t)idx];
+        return imported_projected_atom_id_at(st, (CettaIndex)idx);
     }
     return shadow_storage_get_atom_id_at(s, idx);
 }
@@ -1071,7 +1192,7 @@ static void imported_bridge_expr_memo_init(ImportedBridgeExprMemo *memo) {
 static void imported_bridge_expr_memo_free(ImportedBridgeExprMemo *memo) {
     if (!memo)
         return;
-    for (uint32_t i = 0; i < memo->cap; i++) {
+    for (CettaIndex i = 0; i < memo->cap; i++) {
         if (memo->slots[i].occupied)
             free(memo->slots[i].bytes);
     }
@@ -1101,7 +1222,7 @@ static ImportedBridgeExprMemoSlot *imported_bridge_expr_memo_probe(
     if (!memo || memo->cap == 0)
         return NULL;
 
-    uint32_t idx = (uint32_t)(hash & (uint64_t)(memo->cap - 1u));
+    CettaIndex idx = (CettaIndex)(hash & (uint64_t)(memo->cap - 1u));
     for (;;) {
         ImportedBridgeExprMemoSlot *slot = &memo->slots[idx];
         if (!slot->occupied)
@@ -1116,17 +1237,18 @@ static ImportedBridgeExprMemoSlot *imported_bridge_expr_memo_probe(
 }
 
 static bool imported_bridge_expr_memo_resize(ImportedBridgeExprMemo *memo,
-                                             uint32_t new_cap) {
+                                             CettaIndex new_cap) {
+    CettaIndex i = 0;
     ImportedBridgeExprMemoSlot *new_slots =
-        cetta_malloc(sizeof(ImportedBridgeExprMemoSlot) * new_cap);
-    memset(new_slots, 0, sizeof(ImportedBridgeExprMemoSlot) * new_cap);
+        cetta_malloc(sizeof(ImportedBridgeExprMemoSlot) * (size_t)new_cap);
+    memset(new_slots, 0, sizeof(ImportedBridgeExprMemoSlot) * (size_t)new_cap);
 
     if (memo->slots) {
-        for (uint32_t i = 0; i < memo->cap; i++) {
+        for (i = 0; i < memo->cap; i++) {
             ImportedBridgeExprMemoSlot old = memo->slots[i];
             if (!old.occupied)
                 continue;
-            uint32_t idx = (uint32_t)(old.hash & (uint64_t)(new_cap - 1u));
+            CettaIndex idx = (CettaIndex)(old.hash & (uint64_t)(new_cap - 1u));
             while (new_slots[idx].occupied)
                 idx = (idx + 1u) & (new_cap - 1u);
             new_slots[idx] = old;
@@ -1140,15 +1262,36 @@ static bool imported_bridge_expr_memo_resize(ImportedBridgeExprMemo *memo,
 }
 
 static bool imported_bridge_expr_memo_reserve(ImportedBridgeExprMemo *memo,
-                                              uint32_t needed) {
+                                              CettaIndex needed) {
+    CettaIndex new_cap;
+    CettaIndex limit;
     if (!memo)
         return false;
-    if (memo->cap > 0 && needed * 10u <= memo->cap * 7u)
+    if (memo->cap > 0 &&
+        needed <= (memo->cap / 2u) + (memo->cap / 4u))
         return true;
 
-    uint32_t new_cap = memo->cap ? memo->cap : 16u;
-    while (needed * 10u > new_cap * 7u)
+    limit = (CettaIndex)(SIZE_MAX / sizeof(ImportedBridgeExprMemoSlot));
+    if (needed > limit)
+        return false;
+    new_cap = memo->cap ? memo->cap : 16u;
+    while (needed > (new_cap / 2u) + (new_cap / 4u)) {
+        if (new_cap > limit / 2u)
+            new_cap = limit;
+        else
+            new_cap *= 2u;
+        if (new_cap < needed)
+            return false;
+        if (new_cap == limit)
+            break;
+    }
+    if (new_cap < needed)
+        return false;
+    while ((new_cap & (new_cap - 1u)) != 0u) {
+        if (new_cap > limit / 2u)
+            return false;
         new_cap *= 2u;
+    }
     return imported_bridge_expr_memo_resize(memo, new_cap);
 }
 
@@ -1711,10 +1854,13 @@ static bool imported_bridge_read_contextual_opening_contexts(
     bool allow_query_refs,
     ImportedOpeningContext **out_contexts) {
     ImportedOpeningContext *contexts = NULL;
+    uint64_t total_entries = 0;
 
     if (out_contexts)
         *out_contexts = NULL;
     if (!packet || !off || !out_contexts)
+        return false;
+    if (!imported_bridge_packet_count_ok(context_count))
         return false;
     if (context_count) {
         contexts = cetta_malloc(sizeof(ImportedOpeningContext) * context_count);
@@ -1728,6 +1874,9 @@ static bool imported_bridge_read_contextual_opening_contexts(
             !imported_bridge_read_u32(packet, packet_len, off, &entry_count) ||
             imported_opening_context_lookup(contexts, i, context_id))
             goto fail;
+        if (!imported_bridge_packet_count_sum_ok(total_entries, entry_count))
+            goto fail;
+        total_entries += entry_count;
         contexts[i].context_id = context_id;
         for (uint32_t entry_idx = 0; entry_idx < entry_count; entry_idx++) {
             uint16_t slot = 0;
@@ -2026,6 +2175,8 @@ static bool imported_bridge_visit_contextual_query_rows_packet(
         flags != IMPORTED_MORK_CONTEXTUAL_QUERY_ROWS_FLAGS ||
         parsed_rows != row_count)
         return false;
+    if (!imported_bridge_packet_count_ok(parsed_rows))
+        return false;
 
     if (!imported_bridge_read_contextual_opening_contexts(
             packet, packet_len, &off, context_count, true, &contexts))
@@ -2037,6 +2188,10 @@ static bool imported_bridge_visit_contextual_query_rows_packet(
         bool merged_inited = false;
 
         if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
+            success = false;
+            break;
+        }
+        if (!imported_bridge_packet_count_ok(binding_count)) {
             success = false;
             break;
         }
@@ -2160,6 +2315,7 @@ static bool imported_bridge_decode_contextual_exact_rows(
     AtomId *items = NULL;
     CettaCount len = 0;
     CettaCount cap = 0;
+    uint64_t total_entries = 0;
     bool ok = false;
     (void)memo;
 
@@ -2181,12 +2337,13 @@ static bool imported_bridge_decode_contextual_exact_rows(
         version != IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION ||
         flags != IMPORTED_MORK_CONTEXTUAL_EXACT_ROWS_FLAGS)
         goto done;
-    if (row_count > space_match_backend_packet_materialization_limit()) {
-        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+    if (!imported_bridge_packet_count_ok(row_count)) {
         goto done;
     }
     if ((row_count == 0 && context_count != 0) ||
         (row_count != 0 && context_count == 0))
+        goto done;
+    if (!imported_bridge_packet_count_ok(context_count))
         goto done;
 
     if (context_count) {
@@ -2200,6 +2357,9 @@ static bool imported_bridge_decode_contextual_exact_rows(
             !imported_bridge_read_u32(packet, packet_len, &off, &entry_count) ||
             imported_opening_context_lookup(contexts, i, context_id))
             goto done;
+        if (!imported_bridge_packet_count_sum_ok(total_entries, entry_count))
+            goto done;
+        total_entries += entry_count;
         contexts[i].context_id = context_id;
         for (uint32_t entry_idx = 0; entry_idx < entry_count; entry_idx++) {
             uint16_t slot = 0;
@@ -2376,6 +2536,46 @@ static bool imported_bridge_decode_expr_rows_from_cursor(
     }
 
     cetta_mork_bridge_cursor_free(cursor);
+    if (!ok) {
+        free(items);
+        return false;
+    }
+
+    *out_items = items;
+    *out_len = len;
+    return true;
+}
+
+static bool imported_bridge_decode_expr_rows_from_dump(
+    TermUniverse *universe,
+    Arena *scratch,
+    ImportedBridgeExprMemo *memo,
+    CettaMorkSpaceHandle *bridge,
+    AtomId **out_items,
+    CettaCount *out_len) {
+    uint8_t *packet = NULL;
+    size_t packet_len = 0;
+    uint64_t packet_rows = 0;
+    AtomId *items = NULL;
+    CettaCount len = 0;
+    CettaCount cap = 0;
+    bool ok = false;
+
+    if (out_items)
+        *out_items = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (!universe || !scratch || !memo || !bridge || !out_items || !out_len)
+        return false;
+
+    if (!cetta_mork_bridge_space_dump_expr_rows(
+            bridge, &packet, &packet_len, &packet_rows))
+        return false;
+
+    ok = imported_bridge_decode_expr_row_packet_append(
+        universe, scratch, memo, packet, packet_len, packet_rows,
+        &items, &len, &cap);
+    cetta_mork_bridge_bytes_free(packet, packet_len);
     if (!ok) {
         free(items);
         return false;
@@ -2594,7 +2794,7 @@ bool space_match_backend_mork_visit_atoms_direct(
     bool ok = imported_bridge_collect_atoms_cursor(
         bridge, universe, scratch, &staged);
     if (ok) {
-        for (uint32_t i = 0; i < staged.len; i++) {
+        for (CettaIndex i = 0; i < staged.len; i++) {
             if (!visitor(staged.items[i], ctx)) {
                 imported_bridge_atom_rows_free(&staged);
                 return false;
@@ -2630,8 +2830,21 @@ SpaceBridgeImportResult space_match_backend_import_bridge_space(
     imported_bridge_expr_memo_init(&memo);
     space_init_with_universe(&staged, dst->native.universe);
     cursor = cetta_mork_bridge_cursor_new(bridge);
-    if (!cursor)
-        goto done;
+    if (!cursor) {
+        AtomId *items = NULL;
+        CettaCount len = 0;
+        if (!imported_bridge_decode_expr_rows_from_dump(
+                dst->native.universe, &scratch, &memo, bridge,
+                &items, &len)) {
+            goto done;
+        }
+        for (CettaIndex i = 0; i < len; i++) {
+            space_add_atom_id(&staged, items[i]);
+            loaded++;
+        }
+        free(items);
+        goto commit_staged;
+    }
 
     for (;;) {
         ArenaMark scratch_mark = arena_mark(&scratch);
@@ -2668,8 +2881,9 @@ SpaceBridgeImportResult space_match_backend_import_bridge_space(
         arena_reset(&scratch, scratch_mark);
     }
 
-    for (uint32_t i = 0; i < staged.native.len; i++)
-        space_add_atom_id(dst, staged.native.atom_ids[i]);
+commit_staged:
+    for (CettaIndex i = 0; i < staged.native.len; i++)
+        space_add_atom_id(dst, space_get_atom_id_at64(&staged, i));
     outcome = SPACE_BRIDGE_IMPORT_OK;
 
 done:
@@ -3104,9 +3318,17 @@ static bool imported_bridge_visit_query_only_v2_packet(
             bindings_free(&row_bindings);
             return false;
         }
+        if (!imported_bridge_packet_count_ok(ref_count)) {
+            bindings_free(&row_bindings);
+            return false;
+        }
         off += (size_t)ref_count * 4u;
 
         if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
+            bindings_free(&row_bindings);
+            return false;
+        }
+        if (!imported_bridge_packet_count_ok(binding_count)) {
             bindings_free(&row_bindings);
             return false;
         }
@@ -3159,6 +3381,104 @@ static bool imported_bridge_visit_query_only_v2_packet(
     return off == packet_len;
 }
 
+static bool imported_bridge_visit_bindings_materialized(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom *query,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx) {
+    Arena persistent;
+    TermUniverse universe;
+    Space staged;
+    SubstMatchSet matches = {0};
+    bool space_inited = false;
+    bool ok = false;
+
+    if (!bridge || !a || !query || !visitor)
+        return false;
+
+    arena_init(&persistent);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&staged, &universe);
+    space_inited = true;
+
+    if (!imported_materialize_bridge_space(&staged, &persistent, bridge, NULL))
+        goto done;
+
+    space_match_backend_clear_error();
+    space_subst_query(&staged, a, query, &matches);
+    for (CettaIndex i = 0; i < matches.len; i++) {
+        Bindings merged;
+        bindings_init(&merged);
+        if (space_subst_match_with_seed(&staged, query, &matches.items[i],
+                                        NULL, a, &merged)) {
+            if (!visitor(&merged, ctx)) {
+                bindings_free(&merged);
+                goto done;
+            }
+        }
+        bindings_free(&merged);
+    }
+
+    ok = true;
+    space_match_backend_clear_error();
+
+done:
+    smset_free(&matches);
+    if (space_inited)
+        space_free(&staged);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    return ok;
+}
+
+static bool imported_bridge_visit_conjunction_materialized(
+    CettaMorkSpaceHandle *bridge,
+    Arena *a,
+    Atom **patterns,
+    CettaExprLen npatterns,
+    const Bindings *seed,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx) {
+    Arena persistent;
+    TermUniverse universe;
+    Space staged;
+    BindingSet collected;
+    bool space_inited = false;
+    bool ok = false;
+
+    if (!bridge || !a || !patterns || !visitor)
+        return false;
+
+    binding_set_init(&collected);
+    arena_init(&persistent);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&staged, &universe);
+    space_inited = true;
+
+    if (!imported_materialize_bridge_space(&staged, &persistent, bridge, NULL))
+        goto done;
+
+    space_match_backend_clear_error();
+    space_query_conjunction(&staged, a, patterns, npatterns, seed, &collected);
+    if (space_match_backend_last_error_code() != SPACE_MATCH_BACKEND_ERROR_NONE)
+        goto done;
+
+    ok = mork_visit_collected_bindings(&collected, visitor, ctx);
+    if (ok)
+        space_match_backend_clear_error();
+
+done:
+    binding_set_free(&collected);
+    if (space_inited)
+        space_free(&staged);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    return ok;
+}
+
 bool space_match_backend_mork_visit_bindings_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
@@ -3180,7 +3500,8 @@ bool space_match_backend_mork_visit_bindings_direct(
     char *pattern_text = atom_to_parseable_string(&scratch, query);
     if (imported_bridge_query_text_has_internal_vars(pattern_text)) {
         arena_free(&scratch);
-        return false;
+        return imported_bridge_visit_bindings_materialized(
+            bridge, a, query, visitor, ctx);
     }
     imported_bridge_varmap_init(&query_vars);
     if (!imported_bridge_collect_vars(query, &query_vars)) {
@@ -3188,15 +3509,35 @@ bool space_match_backend_mork_visit_bindings_direct(
         arena_free(&scratch);
         return false;
     }
+    if (!imported_bridge_query_var_slots_contextual_ok(&query_vars, false)) {
+        imported_bridge_varmap_free(&query_vars);
+        arena_free(&scratch);
+        space_match_backend_clear_error();
+        return imported_bridge_visit_bindings_materialized(
+            bridge, a, query, visitor, ctx);
+    }
     if (cetta_mork_bridge_space_query_contextual_rows(
             bridge, (const uint8_t *)pattern_text, strlen(pattern_text),
             &packet, &packet_len, &row_count)) {
+        BindingSet collected;
+        binding_set_init(&collected);
         arena_free(&scratch);
         success = imported_bridge_visit_contextual_query_rows_packet(
-            a, packet, packet_len, row_count, &query_vars, NULL, visitor, ctx);
+            a, packet, packet_len, row_count, &query_vars, NULL,
+            mork_query_collect_bindings, &collected);
         imported_bridge_varmap_free(&query_vars);
         cetta_mork_bridge_bytes_free(packet, packet_len);
-        return success;
+        if (success) {
+            success = mork_visit_collected_bindings(&collected, visitor, ctx);
+            binding_set_free(&collected);
+            if (success)
+                space_match_backend_clear_error();
+            return success;
+        }
+        binding_set_free(&collected);
+        space_match_backend_clear_error();
+        return imported_bridge_visit_bindings_materialized(
+            bridge, a, query, visitor, ctx);
     }
     cetta_mork_bridge_bytes_free(packet, packet_len);
     packet = NULL;
@@ -3239,14 +3580,18 @@ bool space_match_backend_mork_visit_bindings_direct(
     arena_free(&scratch);
     if (!ok) {
         imported_bridge_varmap_free(&query_vars);
-        return false;
+        return imported_bridge_visit_bindings_materialized(
+            bridge, a, query, visitor, ctx);
     }
 
     success = imported_bridge_visit_query_only_v2_packet(
         a, packet, packet_len, row_count, &query_vars, visitor, ctx);
     imported_bridge_varmap_free(&query_vars);
     cetta_mork_bridge_bytes_free(packet, packet_len);
-    return success;
+    if (!success)
+        return false;
+    space_match_backend_clear_error();
+    return true;
 }
 
 static bool mork_query_collect_bindings(const Bindings *bindings, void *ctx) {
@@ -3315,6 +3660,10 @@ static bool imported_bridge_visit_multi_ref_v3_packet(
         parsed_rows != row_count) {
         return false;
     }
+    if (!imported_bridge_packet_count_ok(parsed_rows) ||
+        !imported_bridge_packet_count_ok(factor_count)) {
+        return false;
+    }
 
     for (uint64_t row = 0; row < parsed_rows; row++) {
         uint64_t multiplicity = 1;
@@ -3341,6 +3690,10 @@ static bool imported_bridge_visit_multi_ref_v3_packet(
                     imported_bridge_value_varmap_free(&value_vars);
                     return false;
                 }
+                if (!imported_bridge_packet_count_ok(ref_count)) {
+                    imported_bridge_value_varmap_free(&value_vars);
+                    return false;
+                }
                 factor_multiplicity = ref_count ? ref_count : 1u;
                 off += (size_t)ref_count * 4u;
             }
@@ -3355,6 +3708,10 @@ static bool imported_bridge_visit_multi_ref_v3_packet(
 
         uint32_t binding_count = 0;
         if (!imported_bridge_read_u32(packet, packet_len, &off, &binding_count)) {
+            imported_bridge_value_varmap_free(&value_vars);
+            return false;
+        }
+        if (!imported_bridge_packet_count_ok(binding_count)) {
             imported_bridge_value_varmap_free(&value_vars);
             return false;
         }
@@ -3503,7 +3860,7 @@ static bool mork_visit_collected_bindings(const BindingSet *set,
                                           void *ctx) {
     if (!set || !visitor)
         return false;
-    for (uint32_t i = 0; i < set->len; i++) {
+    for (CettaIndex i = 0; i < set->len; i++) {
         if (!visitor(&set->items[i], ctx))
             return false;
     }
@@ -3514,7 +3871,7 @@ static bool mork_query_conjunction_iterative(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
     Atom **patterns,
-    uint32_t npatterns,
+    CettaExprLen npatterns,
     const Bindings *seed,
     BindingSet *out) {
     if (!bridge || !a || !patterns || !out)
@@ -3544,11 +3901,11 @@ static bool mork_query_conjunction_iterative(
         bindings_free(&empty);
     }
 
-    for (uint32_t pi = 0; pi < npatterns; pi++) {
+    for (CettaExprIndex pi = 0; pi < npatterns; pi++) {
         bool success = true;
         BindingSet next;
         binding_set_init(&next);
-        for (uint32_t bi = 0; bi < cur.len; bi++) {
+        for (CettaIndex bi = 0; bi < cur.len; bi++) {
             Atom *grounded = bindings_apply_if_vars(&cur.items[bi], a, patterns[pi]);
             BindingSet matches;
             binding_set_init(&matches);
@@ -3558,7 +3915,7 @@ static bool mork_query_conjunction_iterative(
                 success = false;
                 break;
             }
-            for (uint32_t mi = 0; mi < matches.len; mi++) {
+            for (CettaIndex mi = 0; mi < matches.len; mi++) {
                 Bindings merged;
                 bindings_init(&merged);
                 if (!bindings_try_merge_live(&merged, &cur.items[bi]) ||
@@ -3601,7 +3958,7 @@ bool space_match_backend_mork_visit_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
     Atom **patterns,
-    uint32_t npatterns,
+    CettaExprLen npatterns,
     const Bindings *seed,
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
@@ -3636,13 +3993,25 @@ bool space_match_backend_mork_visit_conjunction_direct(
     uint64_t row_count = 0;
     CettaMorkQueryCursorHandle *query_cursor = NULL;
 
-    for (uint32_t i = 0; i < npatterns; i++) {
+    for (CettaExprIndex i = 0; i < npatterns; i++) {
         grounded[i] = seed ? bindings_apply_if_vars(seed, &scratch, patterns[i])
                            : patterns[i];
         if (!imported_bridge_collect_vars(grounded[i], &query_vars)) {
             success = false;
             goto cleanup;
         }
+    }
+    if (!imported_bridge_query_var_slots_contextual_ok(&query_vars, false)) {
+        imported_bridge_varmap_free(&query_vars);
+        arena_free(&scratch);
+        BindingSet collected;
+        if (!mork_query_conjunction_iterative(bridge, a, patterns, npatterns,
+                                              seed, &collected)) {
+            return false;
+        }
+        bool ok = mork_visit_collected_bindings(&collected, visitor, ctx);
+        binding_set_free(&collected);
+        return ok;
     }
 
     char *query_text = imported_bridge_build_conjunction_text(&scratch, grounded, npatterns);
@@ -3665,14 +4034,23 @@ bool space_match_backend_mork_visit_conjunction_direct(
     if (cetta_mork_bridge_space_query_contextual_rows(
             bridge, (const uint8_t *)query_text, strlen(query_text),
             &packet, &packet_len, &row_count)) {
+        BindingSet contextual;
+        binding_set_init(&contextual);
         success = imported_bridge_visit_contextual_query_rows_packet(
-            a, packet, packet_len, row_count, &query_vars, seed, visitor, ctx);
-        goto cleanup;
+            a, packet, packet_len, row_count, &query_vars, seed,
+            mork_query_collect_bindings, &contextual);
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+        packet = NULL;
+        packet_len = 0;
+        row_count = 0;
+        if (success) {
+            success = mork_visit_collected_bindings(&contextual, visitor, ctx);
+            binding_set_free(&contextual);
+            goto cleanup;
+        }
+        binding_set_free(&contextual);
+        space_match_backend_clear_error();
     }
-    cetta_mork_bridge_bytes_free(packet, packet_len);
-    packet = NULL;
-    packet_len = 0;
-    row_count = 0;
 
     if (cetta_mork_bridge_query_cursor_new_multi_ref_v3(
             bridge, (const uint8_t *)query_text, strlen(query_text),
@@ -3721,6 +4099,14 @@ bool space_match_backend_mork_visit_conjunction_direct(
     success = imported_bridge_visit_multi_ref_v3_packet(
         a, packet, packet_len, row_count, npatterns, &query_vars, seed, false,
         visitor, ctx, true);
+    if (!success) {
+        imported_bridge_varmap_free(&query_vars);
+        cetta_mork_bridge_bytes_free(packet, packet_len);
+        arena_free(&scratch);
+        space_match_backend_clear_error();
+        return imported_bridge_visit_conjunction_materialized(
+            bridge, a, patterns, npatterns, seed, visitor, ctx);
+    }
 
 cleanup:
     imported_bridge_varmap_free(&query_vars);
@@ -3733,7 +4119,7 @@ bool space_match_backend_mork_query_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
     Atom **patterns,
-    uint32_t npatterns,
+    CettaExprLen npatterns,
     const Bindings *seed,
     BindingSet *out) {
     if (!out)
@@ -3758,7 +4144,7 @@ static void imported_builder_push(ImportedFlatBuilder *b, ImportedFlatToken tok)
 }
 
 static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
-    uint32_t start = b->len;
+    CettaIndex start = b->len;
     ImportedFlatToken tok = {0};
     tok.origin = atom;
     tok.origin_id = CETTA_ATOM_ID_NONE;
@@ -3815,7 +4201,7 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
                                      AtomId atom_id) {
     if (!b || !universe || atom_id == CETTA_ATOM_ID_NONE || !tu_hdr(universe, atom_id))
         return false;
-    uint32_t start = b->len;
+    CettaIndex start = b->len;
     ImportedFlatToken tok = {0};
     tok.origin = NULL;
     tok.origin_id = atom_id;
@@ -3870,7 +4256,7 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
         tok.kind = IMPORTED_FLAT_EXPR;
         tok.arity = tu_arity(universe, atom_id);
         imported_builder_push(b, tok);
-        for (uint32_t i = 0; i < tu_arity(universe, atom_id); i++) {
+        for (CettaExprIndex i = 0; i < tok.arity; i++) {
             if (!imported_flatten_atom_id(b, universe, tu_child(universe, atom_id, i)))
                 return false;
         }
@@ -3937,10 +4323,10 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     return false;
 }
 
-static bool imported_flat_equal(const ImportedFlatToken *lhs, uint32_t li,
-                                const ImportedFlatToken *rhs, uint32_t ri) {
+static bool imported_flat_equal(const ImportedFlatToken *lhs, CettaIndex li,
+                                const ImportedFlatToken *rhs, CettaIndex ri) {
     if (lhs[li].span != rhs[ri].span) return false;
-    for (uint32_t off = 0; off < lhs[li].span; off++) {
+    for (CettaIndex off = 0; off < lhs[li].span; off++) {
         if (!imported_token_equal(&lhs[li + off], &rhs[ri + off]))
             return false;
     }
@@ -4015,6 +4401,20 @@ static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map) 
     default:
         return true;
     }
+}
+
+static bool imported_bridge_query_var_slots_contextual_ok(
+    const ImportedBridgeVarMap *map,
+    bool set_error
+) {
+    if (!map)
+        return false;
+    if ((uint64_t)map->len > space_match_backend_contextual_query_slot_limit()) {
+        if (set_error)
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        return false;
+    }
+    return true;
 }
 
 static bool imported_bridge_query_text_has_internal_vars(const char *text) {
@@ -4500,12 +4900,12 @@ static Atom *imported_bridge_parse_value_raw_multi_ref_v3(
 }
 
 static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
-                                                    uint32_t npatterns) {
+                                                    CettaExprLen npatterns) {
     if (npatterns == 0)
         return NULL;
     char **parts = arena_alloc(a, sizeof(char *) * npatterns);
     size_t total = 3;
-    for (uint32_t i = 0; i < npatterns; i++) {
+    for (CettaExprIndex i = 0; i < npatterns; i++) {
         parts[i] = atom_to_parseable_string(a, patterns[i]);
         total += 1 + strlen(parts[i]);
     }
@@ -4513,7 +4913,7 @@ static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
     size_t off = 0;
     buf[off++] = '(';
     buf[off++] = ',';
-    for (uint32_t i = 0; i < npatterns; i++) {
+    for (CettaExprIndex i = 0; i < npatterns; i++) {
         size_t len = strlen(parts[i]);
         buf[off++] = ' ';
         memcpy(buf + off, parts[i], len);
@@ -4551,8 +4951,8 @@ static ImportedCorefRef *imported_find_indexed_value(ImportedCorefState *refs,
 static ImportedCorefVerdict imported_add_query_ref(ImportedCorefState *refs,
                                                    VarId var_id,
                                                    SymbolId spelling,
-                                                   uint32_t idx,
-                                                   uint32_t span,
+                                                   CettaIndex idx,
+                                                   CettaIndex span,
                                                    Atom *origin) {
     if (refs->nquery >= IMPORTED_COREF_LIMIT)
         return IMPORTED_COREF_NEEDS_FALLBACK;
@@ -4566,8 +4966,8 @@ static ImportedCorefVerdict imported_add_query_ref(ImportedCorefState *refs,
 static ImportedCorefVerdict imported_add_indexed_ref(ImportedCorefState *refs,
                                                      VarId var_id,
                                                      SymbolId spelling,
-                                                     uint32_t idx,
-                                                     uint32_t span,
+                                                     CettaIndex idx,
+                                                     CettaIndex span,
                                                      Atom *origin) {
     if (refs->nindexed >= IMPORTED_COREF_LIMIT)
         return IMPORTED_COREF_NEEDS_FALLBACK;
@@ -4581,8 +4981,8 @@ static ImportedCorefVerdict imported_add_indexed_ref(ImportedCorefState *refs,
 static ImportedCorefVerdict imported_add_indexed_value(ImportedCorefState *refs,
                                                        VarId var_id,
                                                        SymbolId spelling,
-                                                       uint32_t idx,
-                                                       uint32_t span,
+                                                       CettaIndex idx,
+                                                       CettaIndex span,
                                                        Atom *origin) {
     ImportedCorefRef *existing = imported_find_indexed_value(refs, var_id);
     if (existing) {
@@ -4601,10 +5001,10 @@ static ImportedCorefVerdict imported_add_indexed_value(ImportedCorefState *refs,
 }
 
 static bool imported_subtree_contains_var(const ImportedFlatToken *tokens,
-                                          uint32_t idx,
+                                          CettaIndex idx,
                                           VarId var_id) {
-    uint32_t end = idx + tokens[idx].span;
-    for (uint32_t i = idx; i < end; i++) {
+    CettaIndex end = idx + tokens[idx].span;
+    for (CettaIndex i = idx; i < end; i++) {
         if (tokens[i].kind == IMPORTED_FLAT_VAR &&
             tokens[i].var_id == var_id)
             return true;
@@ -4614,8 +5014,8 @@ static bool imported_subtree_contains_var(const ImportedFlatToken *tokens,
 
 static ImportedCorefVerdict imported_bind_indexed_value(ImportedCorefState *refs,
                                                         const ImportedFlatToken *tokens,
-                                                        uint32_t var_idx,
-                                                        uint32_t value_idx) {
+                                                        CettaIndex var_idx,
+                                                        CettaIndex value_idx) {
     const ImportedFlatToken *vt = &tokens[var_idx];
     const ImportedFlatToken *val = &tokens[value_idx];
     ImportedCorefRef *existing = imported_find_indexed_value(refs, vt->var_id);
@@ -4710,8 +5110,7 @@ static ImportedFlatBucket *imported_bucket_for_atom_id(ImportedBridgeState *st,
 
 static void imported_rebuild_flat(Space *s) {
     ImportedBridgeState *st = backend_bridge_state(s);
-    const AtomId *source_ids = NULL;
-    uint32_t source_len = 0;
+    CettaIndex source_len = 0;
     bool source_from_projection = false;
     if (!st)
         return;
@@ -4719,14 +5118,15 @@ static void imported_rebuild_flat(Space *s) {
     imported_flat_state_clear(st);
     if (st->bridge_active && st->bridge_space &&
         imported_storage_ensure_projection(s)) {
-        source_ids = st->projected_atom_ids;
         source_len = st->projected_len;
         source_from_projection = true;
     } else {
         source_len = s->native.len;
     }
-    for (uint32_t i = 0; i < source_len; i++) {
-        AtomId atom_id = source_ids ? source_ids[i] : shadow_storage_get_atom_id_at(s, i);
+    for (CettaIndex i = 0; i < source_len; i++) {
+        AtomId atom_id = source_from_projection
+                             ? imported_projected_atom_id_at(st, i)
+                             : shadow_storage_get_atom_id_at(s, i);
         if (s->native.universe && tu_hdr(s->native.universe, atom_id)) {
             ImportedFlatBuilder b = {0};
             if (imported_flatten_atom_id(&b, s->native.universe, atom_id)) {
@@ -4737,7 +5137,7 @@ static void imported_rebuild_flat(Space *s) {
             }
             free(b.items);
         }
-        Atom *atom = source_ids
+        Atom *atom = source_from_projection
             ? term_universe_get_atom(s->native.universe, atom_id)
             : shadow_storage_get_at(s, i);
         ImportedFlatBucket *bucket = imported_bucket_for_atom(st, atom);
@@ -4793,7 +5193,7 @@ static bool backend_rebuild_bridge(Space *s) {
         return false;
 
     imported_projection_clear(st);
-    for (uint32_t i = 0; i < s->native.len; i++) {
+    for (CettaIndex i = 0; i < s->native.len; i++) {
         Arena scratch;
         arena_init(&scratch);
         AtomId atom_id = shadow_storage_get_atom_id_at(s, i);
@@ -4840,7 +5240,9 @@ static bool imported_projection_capture_from_bridge(Space *s,
     Arena scratch;
     ImportedBridgeExprMemo memo;
     bool ok;
-    AtomId *snapshot = NULL;
+    uint8_t *snapshot = NULL;
+    uint8_t snapshot_bits = 0;
+    AtomId *snapshot_ids = NULL;
     uint8_t *packet = NULL;
     size_t packet_len = 0;
     uint64_t packet_rows = 0;
@@ -4857,31 +5259,52 @@ static bool imported_projection_capture_from_bridge(Space *s,
         if (ok) {
             ok = imported_bridge_decode_contextual_exact_rows(
                 s->native.universe, &scratch, &memo, packet, packet_len,
-                &snapshot, &rows);
+                &snapshot_ids, &rows);
+            if (ok) {
+                ok = imported_projected_pack_atom_ids(
+                    s->native.universe, snapshot_ids, rows, &snapshot,
+                    &snapshot_bits);
+                free(snapshot_ids);
+                snapshot_ids = NULL;
+            }
         }
         cetta_mork_bridge_bytes_free(packet, packet_len);
 
         if (!ok) {
+            space_match_backend_clear_error();
             ok = imported_bridge_decode_expr_rows_from_cursor(
                 s->native.universe, &scratch, &memo,
                 (CettaMorkSpaceHandle *)st->bridge_space,
-                &snapshot, &rows);
+                &snapshot_ids, &rows);
+            if (!ok) {
+                space_match_backend_clear_error();
+                ok = imported_bridge_decode_expr_rows_from_dump(
+                    s->native.universe, &scratch, &memo,
+                    (CettaMorkSpaceHandle *)st->bridge_space,
+                    &snapshot_ids, &rows);
+            }
+            if (ok) {
+                ok = imported_projected_pack_atom_ids(
+                    s->native.universe, snapshot_ids, rows, &snapshot,
+                    &snapshot_bits);
+                free(snapshot_ids);
+                snapshot_ids = NULL;
+            }
         }
     } else {
         Space staged;
         space_init_with_universe(&staged, s->native.universe);
         ok = imported_materialize_bridge_space(
             &staged, &scratch, (CettaMorkSpaceHandle *)st->bridge_space, NULL);
-        if (ok && staged.native.len) {
-            snapshot = cetta_malloc(sizeof(AtomId) * staged.native.len);
-            memcpy(snapshot, staged.native.atom_ids,
-                   sizeof(AtomId) * staged.native.len);
-        }
+        if (ok)
+            ok = imported_projected_pack_space_atom_ids(
+                &staged, &snapshot, &snapshot_bits);
         rows = staged.native.len;
         space_free(&staged);
     }
     imported_bridge_expr_memo_free(&memo);
     if (!ok) {
+        free(snapshot_ids);
         free(snapshot);
         arena_free(&scratch);
         return false;
@@ -4889,6 +5312,7 @@ static bool imported_projection_capture_from_bridge(Space *s,
     imported_projection_clear(st);
     st->projected_atom_ids = snapshot;
     st->projected_len = rows;
+    st->projected_atom_id_width_bits = snapshot_bits;
     st->projection_valid = true;
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_PROJECTION_CAPTURE);
@@ -4931,19 +5355,34 @@ static bool imported_storage_ensure_projection(Space *s) {
 
 static bool imported_shadow_refresh_from_projection(Space *s) {
     ImportedBridgeState *st = backend_bridge_state(s);
-    AtomId *next_ids = NULL;
+    uint8_t *next_ids = NULL;
+    uint8_t next_bits = 0;
 
     if (!s || !st)
         return false;
     if (!imported_storage_ensure_projection(s))
         return false;
+    next_bits = (uint8_t)term_universe_store_format_atom_id_width_bits(
+        term_universe_store_format(s->native.universe));
     if (st->projected_len > 0) {
-        next_ids = cetta_malloc(sizeof(AtomId) * st->projected_len);
-        memcpy(next_ids, st->projected_atom_ids,
-               sizeof(AtomId) * st->projected_len);
+        size_t width = cetta_atom_id_storage_width_bytes_from_bits(next_bits);
+        if (width == 0 || (size_t)st->projected_len > SIZE_MAX / width)
+            return false;
+        next_ids = cetta_malloc(width * (size_t)st->projected_len);
+        if (!next_ids)
+            return false;
+        for (CettaIndex i = 0; i < st->projected_len; i++) {
+            if (!cetta_atom_id_storage_store_bits(
+                    next_ids + ((size_t)i * width), next_bits,
+                    imported_projected_atom_id_at(st, i))) {
+                free(next_ids);
+                return false;
+            }
+        }
     }
     free(s->native.atom_ids);
     s->native.atom_ids = next_ids;
+    s->native.atom_id_width_bits = next_bits;
     s->native.start = 0;
     s->native.len = st->projected_len;
     s->native.cap = st->projected_len;
@@ -5215,12 +5654,12 @@ static void imported_ensure_built(Space *s) {
 }
 
 static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken *q,
-                                                         uint32_t qi,
+                                                         CettaIndex qi,
                                                          const ImportedFlatToken *c,
-                                                         uint32_t ci,
+                                                         CettaIndex ci,
                                                          ImportedCorefState *refs,
-                                                         uint32_t *qnext,
-                                                         uint32_t *cnext,
+                                                         CettaIndex *qnext,
+                                                         CettaIndex *cnext,
                                                          int depth) {
     if (depth <= 0) return false;
     const ImportedFlatToken *qt = &q[qi];
@@ -5345,9 +5784,9 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
         return IMPORTED_COREF_EXACT;
     case IMPORTED_FLAT_EXPR: {
         if (qt->arity != ct->arity) return IMPORTED_COREF_FAIL;
-        uint32_t qcur = qi + 1;
-        uint32_t ccur = ci + 1;
-        for (uint32_t i = 0; i < qt->arity; i++) {
+        CettaIndex qcur = qi + 1;
+        CettaIndex ccur = ci + 1;
+        for (CettaExprIndex i = 0; i < qt->arity; i++) {
             ImportedCorefVerdict child =
                 imported_match_subtree_coref(q, qcur, c, ccur, refs,
                                              &qcur, &ccur, depth - 1);
@@ -5364,11 +5803,11 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
     return IMPORTED_COREF_FAIL;
 }
 
-static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t qi,
-                                          const ImportedFlatToken *c, uint32_t ci,
+static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex qi,
+                                          const ImportedFlatToken *c, CettaIndex ci,
                                           const TermUniverse *candidate_universe,
                                           Bindings *b, Arena *a, uint32_t epoch,
-                                          uint32_t *qnext, uint32_t *cnext, int depth) {
+                                          CettaIndex *qnext, CettaIndex *cnext, int depth) {
     if (depth <= 0) return false;
     const ImportedFlatToken *qt = &q[qi];
     const ImportedFlatToken *ct = &c[ci];
@@ -5458,9 +5897,9 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
         return true;
     case IMPORTED_FLAT_EXPR: {
         if (qt->arity != ct->arity) return false;
-        uint32_t qcur = qi + 1;
-        uint32_t ccur = ci + 1;
-        for (uint32_t i = 0; i < qt->arity; i++) {
+        CettaIndex qcur = qi + 1;
+        CettaIndex ccur = ci + 1;
+        for (CettaExprIndex i = 0; i < qt->arity; i++) {
             if (!imported_match_subtree_legacy(q, qcur, c, ccur,
                                                candidate_universe, b, a, epoch,
                                                &qcur, &ccur, depth - 1))
@@ -5477,14 +5916,14 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, uint32_t q
 }
 
 static void imported_collect_bucket(const ImportedFlatBucket *bucket,
-                                    const ImportedFlatToken *qtokens, uint32_t qlen,
+                                    const ImportedFlatToken *qtokens, CettaIndex qlen,
                                     const TermUniverse *candidate_universe,
                                     Arena *a, SubstMatchSet *out) {
-    for (uint32_t i = 0; i < bucket->len; i++) {
+    for (CettaIndex i = 0; i < bucket->len; i++) {
         const ImportedFlatEntry *entry = &bucket->entries[i];
         uint32_t match_epoch = fresh_var_suffix();
         if (entry->len == 0 || qlen == 0) continue;
-        uint32_t qnext = 0, cnext = 0;
+        CettaIndex qnext = 0, cnext = 0;
         ImportedCorefState refs = {0};
         ImportedCorefVerdict verdict =
             imported_match_subtree_coref(qtokens, 0, entry->tokens, 0, &refs,
@@ -5869,7 +6308,7 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
 }
 
 static void pathmap_local_query_conjunction(Space *s, Arena *a,
-                                            Atom **patterns, uint32_t npatterns,
+                                            Atom **patterns, CettaExprLen npatterns,
                                             const Bindings *seed, BindingSet *out) {
     /* The bridge conjunction lane is still incomplete for shared variables
        sourced from indexed-side values.  Use the semantic baseline until that
@@ -6027,16 +6466,21 @@ static SpaceTransferResult transfer_bridge_logical_rows_direct(Space *dst, Space
 static bool transfer_atom_ids_direct(Space *dst, Space *src,
                                      Arena *persistent_arena,
                                      uint64_t *out_added) {
-    uint32_t len = 0;
+    CettaCount logical_len = 0;
+    uint32_t narrow_len = 0;
     uint64_t added = 0;
 
     if (!dst || !src)
         return false;
 
-    if (!space_length_u32_checked(src, &len))
-        return false;
-    for (uint32_t i = 0; i < len; i++) {
-        AtomId atom_id = space_get_atom_id_at(src, i);
+    logical_len = space_length64(src);
+    if (src->native.len != logical_len) {
+        if (!space_length_u32_checked(src, &narrow_len))
+            return false;
+        logical_len = narrow_len;
+    }
+    for (CettaIndex i = 0; i < logical_len; i++) {
+        AtomId atom_id = space_get_atom_id_at64(src, i);
         if (atom_id != CETTA_ATOM_ID_NONE &&
             dst->native.universe == src->native.universe) {
             space_add_atom_id(dst, atom_id);
@@ -6044,8 +6488,13 @@ static bool transfer_atom_ids_direct(Space *dst, Space *src,
             continue;
         }
 
-        Atom *atom = space_get_at(src, i);
-        if (!atom || !space_admit_atom(dst, persistent_arena, atom))
+        Atom *atom = space_get_at64(src, i);
+        if (!atom) {
+            space_match_backend_set_error(
+                SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE);
+            return false;
+        }
+        if (!space_admit_atom(dst, persistent_arena, atom))
             return false;
         added++;
     }
@@ -6421,11 +6870,6 @@ static bool pathmap_local_truncate_direct(Space *s, uint64_t new_len) {
         return false;
     if (new_len == logical_len)
         return true;
-    if (new_len > UINT32_MAX || (logical_len > UINT32_MAX && new_len != 0)) {
-        space_match_backend_set_error(
-            SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE);
-        return false;
-    }
 
     st = &s->match_backend.pathmap.bridge;
     if (!(st->bridge_active && st->bridge_space) &&
@@ -6454,12 +6898,10 @@ static bool pathmap_local_truncate_direct(Space *s, uint64_t new_len) {
     if (!clone)
         return false;
 
-    uint32_t logical_len32 = (uint32_t)logical_len;
-    uint32_t new_len32 = (uint32_t)new_len;
-    for (uint32_t i = logical_len32; i > new_len32; i--) {
+    for (CettaIndex i = st->projected_len; i > (CettaIndex)new_len; i--) {
         Arena scratch;
         uint64_t removed = 0;
-        AtomId atom_id = st->projected_atom_ids[i - 1];
+        AtomId atom_id = imported_projected_atom_id_at(st, i - 1u);
 
         if (atom_id == CETTA_ATOM_ID_NONE) {
             ok = false;
@@ -6698,7 +7140,7 @@ static void imported_epoch_query_candidates(Space *s, Arena *a, Atom *query,
 
 typedef struct {
     Atom *pattern;
-    uint32_t idx;
+    CettaExprIndex idx;
     CettaIndex estimate;
 } ImportedConjStep;
 
@@ -6730,7 +7172,7 @@ static int imported_cmp_conj_step(const void *lhs, const void *rhs) {
 }
 
 static void space_query_conjunction_default(Space *s, Arena *a,
-                                            Atom **patterns, uint32_t npatterns,
+                                            Atom **patterns, CettaExprLen npatterns,
                                             const Bindings *seed, BindingSet *out) {
     bool success = true;
     binding_set_init(out);
@@ -6758,16 +7200,16 @@ static void space_query_conjunction_default(Space *s, Arena *a,
         return;
     }
 
-    for (uint32_t pi = 0; pi < npatterns && success; pi++) {
+    for (CettaExprIndex pi = 0; pi < npatterns && success; pi++) {
         BindingSet next;
         binding_set_init(&next);
-        for (uint32_t bi = 0; bi < cur.len; bi++) {
+        for (CettaIndex bi = 0; bi < cur.len; bi++) {
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_SPACE_CONJ_DEFAULT);
             Atom *grounded = bindings_apply_if_vars(&cur.items[bi], a, patterns[pi]);
             SubstMatchSet smr;
             smset_init(&smr);
             space_subst_query(s, a, grounded, &smr);
-            for (uint32_t mi = 0; mi < smr.len; mi++) {
+            for (CettaIndex mi = 0; mi < smr.len; mi++) {
                 Bindings merged;
                 if (space_subst_match_with_seed(s, grounded, &smr.items[mi],
                                                 &cur.items[bi], a, &merged)) {
@@ -6799,7 +7241,7 @@ static void space_query_conjunction_default(Space *s, Arena *a,
 
 static bool
 imported_bridge_query_conjunction_fast(Space *s, Arena *a,
-                                       Atom **patterns, uint32_t npatterns,
+                                       Atom **patterns, CettaExprLen npatterns,
                                        const Bindings *seed,
                                        BindingSet *out) {
     if (npatterns == 0) {
@@ -6812,7 +7254,7 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
         return false;
 
     ImportedConjStep order[IMPORTED_CONJUNCTION_PATTERN_LIMIT];
-    for (uint32_t i = 0; i < npatterns; i++) {
+    for (CettaExprIndex i = 0; i < npatterns; i++) {
         order[i].pattern = patterns[i];
         order[i].idx = i;
         order[i].estimate = imported_pattern_estimate(s, patterns[i]);
@@ -6833,7 +7275,7 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
     uint64_t row_count = 0;
     CettaMorkQueryCursorHandle *query_cursor = NULL;
 
-    for (uint32_t i = 0; i < npatterns; i++) {
+    for (CettaExprIndex i = 0; i < npatterns; i++) {
         if (seed)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_SPACE_CONJ_IMPORTED);
         grounded[i] = seed ? bindings_apply_if_vars(seed, &scratch, order[i].pattern)
@@ -6842,6 +7284,10 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
             success = false;
             goto cleanup;
         }
+    }
+    if (!imported_bridge_query_var_slots_contextual_ok(&query_vars, false)) {
+        success = false;
+        goto cleanup;
     }
 
     char *query_text = imported_bridge_build_conjunction_text(&scratch, grounded, npatterns);
@@ -6924,7 +7370,7 @@ cleanup:
 }
 
 static void imported_query_conjunction_flat(Space *s, Arena *a, Atom **patterns,
-                                            uint32_t npatterns, const Bindings *seed,
+                                            CettaExprLen npatterns, const Bindings *seed,
                                             BindingSet *out) {
     bool success = true;
     if (npatterns == 0) {
@@ -6940,7 +7386,7 @@ static void imported_query_conjunction_flat(Space *s, Arena *a, Atom **patterns,
         space_query_conjunction_default(s, a, patterns, npatterns, seed, out);
         return;
     }
-    for (uint32_t i = 0; i < npatterns; i++) {
+    for (CettaExprIndex i = 0; i < npatterns; i++) {
         order[i].pattern = patterns[i];
         order[i].idx = i;
         order[i].estimate = imported_pattern_estimate(s, patterns[i]);
@@ -6966,15 +7412,15 @@ static void imported_query_conjunction_flat(Space *s, Arena *a, Atom **patterns,
         return;
     }
 
-    for (uint32_t pi = 0; pi < npatterns && success; pi++) {
+    for (CettaExprIndex pi = 0; pi < npatterns && success; pi++) {
         BindingSet next;
         binding_set_init(&next);
-        for (uint32_t bi = 0; bi < cur.len; bi++) {
+        for (CettaIndex bi = 0; bi < cur.len; bi++) {
             Atom *grounded = bindings_apply_if_vars(&cur.items[bi], a, order[pi].pattern);
             SubstMatchSet smr;
             smset_init(&smr);
             space_subst_query(s, a, grounded, &smr);
-            for (uint32_t mi = 0; mi < smr.len; mi++) {
+            for (CettaIndex mi = 0; mi < smr.len; mi++) {
                 Bindings merged;
                 if (space_subst_match_with_seed(s, grounded, &smr.items[mi],
                                                 &cur.items[bi], a, &merged)) {
@@ -7004,7 +7450,7 @@ static void imported_query_conjunction_flat(Space *s, Arena *a, Atom **patterns,
 }
 
 static void imported_query_conjunction(Space *s, Arena *a, Atom **patterns,
-                                       uint32_t npatterns, const Bindings *seed,
+                                       CettaExprLen npatterns, const Bindings *seed,
                                        BindingSet *out) {
     ImportedBridgeState *st = backend_bridge_state(s);
     MorkImportedState *mst = mork_imported_state(s);
@@ -7395,7 +7841,7 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
     return false;
 }
 
-void space_query_conjunction(Space *s, Arena *a, Atom **patterns, uint32_t npatterns,
+void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out) {
     space_linearize(s);
     if (s->match_backend.ops && s->match_backend.ops->query_conjunction) {

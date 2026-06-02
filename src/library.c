@@ -170,7 +170,7 @@ bool cetta_library_pack_mork_expr_batch(Arena *scratch, Atom **items,
         *error_out = NULL;
 
     cetta_sb_init(&packet);
-    for (uint32_t i = 0; i < item_count; i++) {
+    for (CettaIndex i = 0; i < item_count; i++) {
         uint8_t *expr_bytes = NULL;
         size_t expr_len = 0;
         const char *encode_error = NULL;
@@ -183,6 +183,13 @@ bool cetta_library_pack_mork_expr_batch(Arena *scratch, Atom **items,
                 *error_out = encode_error ? encode_error
                                           : "MORK expr-byte lowering failed";
             }
+            return false;
+        }
+        if (expr_len > UINT32_MAX) {
+            free(expr_bytes);
+            cetta_sb_free(&packet);
+            if (error_out)
+                *error_out = "MORK expr-byte packet item too large";
             return false;
         }
         cetta_sb_append_u32_be(&packet, (uint32_t)expr_len);
@@ -243,6 +250,13 @@ static bool cetta_library_pack_mork_expr_batch_from_ids(
             }
             return false;
         }
+        if (expr_len > UINT32_MAX) {
+            free(expr_bytes);
+            cetta_sb_free(&packet);
+            if (error_out)
+                *error_out = "MORK expr-byte packet item too large";
+            return false;
+        }
         cetta_sb_append_u32_be(&packet, (uint32_t)expr_len);
         cetta_sb_append_n(&packet, (const char *)expr_bytes, expr_len);
         free(expr_bytes);
@@ -253,9 +267,12 @@ static bool cetta_library_pack_mork_expr_batch_from_ids(
     return true;
 }
 
-static bool library_atom_expr_len_checked(CettaCount len, uint32_t *out_len) {
-    return space_match_backend_u32_bound_checked(
-        len, SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE, out_len);
+static bool library_atom_expr_len_checked(CettaCount len, CettaExprLen *out_len) {
+    if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
+        return false;
+    if (out_len)
+        *out_len = (CettaExprLen)len;
+    return true;
 }
 
 static bool ascii_ieq(const char *lhs, const char *rhs) {
@@ -3168,11 +3185,11 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
 
         Atom *result = atom_expr(a, NULL, 0);
         if (rows.len > 0) {
-            uint32_t result_len = 0;
+            CettaExprLen result_len = 0;
             if (!library_atom_expr_len_checked(rows.len, &result_len)) {
                 free(rows.items);
                 return atom_error(a, library_call_expr(a, head, args, nargs),
-                                  atom_symbol(a, space_match_backend_last_error()));
+                                  atom_symbol(a, "ArityTooLarge"));
             }
             Atom **elems = arena_alloc(a, sizeof(Atom *) * rows.len);
             memcpy(elems, rows.items, sizeof(Atom *) * rows.len);
@@ -3481,11 +3498,11 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
             }
             Atom *result = atom_expr(a, NULL, 0);
             if (atom_rows.len > 0) {
-                uint32_t result_len = 0;
+                CettaExprLen result_len = 0;
                 if (!library_atom_expr_len_checked(atom_rows.len, &result_len)) {
                     free(atom_rows.items);
                     return atom_error(a, library_call_expr(a, head, args, nargs),
-                                      atom_symbol(a, space_match_backend_last_error()));
+                                      atom_symbol(a, "ArityTooLarge"));
                 }
                 Atom **elems = arena_alloc(a, sizeof(Atom *) * atom_rows.len);
                 memcpy(elems, atom_rows.items, sizeof(Atom *) * atom_rows.len);
@@ -3501,7 +3518,7 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
         if (!library_atom_expr_len_checked(rows, NULL)) {
             cetta_mork_bridge_bytes_free(packet, len);
             return atom_error(a, library_call_expr(a, head, args, nargs),
-                              atom_symbol(a, space_match_backend_last_error()));
+                              atom_symbol(a, "ArityTooLarge"));
         }
         Atom *result = library_atoms_from_text(
             a, packet, len, library_call_expr(a, head, args, nargs));

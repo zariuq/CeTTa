@@ -221,16 +221,23 @@ uint64_t space_match_backend_logical_len64(const Space *s) {
     return s ? s->len : 0;
 }
 
-AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
-    if (!s || idx >= s->len || !s->atom_ids)
+static AtomId test_space_native_atom_id_at(const Space *s, uint64_t idx) {
+    if (!s || !s->atom_ids || idx >= s->len)
         return CETTA_ATOM_ID_NONE;
-    return s->atom_ids[s->start + idx];
+    return cetta_atom_id_storage_load_bits(
+        s->atom_ids +
+            ((size_t)(s->start + idx) *
+             cetta_atom_id_storage_width_bytes_from_bits(
+                 s->atom_id_width_bits)),
+        s->atom_id_width_bits);
+}
+
+AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
+    return test_space_native_atom_id_at(s, idx);
 }
 
 AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
-    if (idx > UINT32_MAX)
-        return CETTA_ATOM_ID_NONE;
-    return space_match_backend_get_atom_id_at(s, (uint32_t)idx);
+    return test_space_native_atom_id_at(s, idx);
 }
 
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
@@ -261,7 +268,7 @@ bool space_match_backend_mork_query_bindings_direct(
 
 bool space_match_backend_mork_query_conjunction_direct(
     CettaMorkSpaceHandle *bridge, Arena *a, Atom **patterns,
-    uint32_t npatterns, const Bindings *seed, BindingSet *out) {
+    CettaExprLen npatterns, const Bindings *seed, BindingSet *out) {
     (void)bridge;
     (void)a;
     (void)patterns;
@@ -332,8 +339,8 @@ int main(void) {
     space_add(&left, pair_a);
     assert(universe.len == 4);
     assert(left.atom_ids != NULL);
-    assert(left.atom_ids[0] != CETTA_ATOM_ID_NONE);
-    AtomId pair_id = left.atom_ids[0];
+    assert(test_space_native_atom_id_at(&left, 0) != CETTA_ATOM_ID_NONE);
+    AtomId pair_id = test_space_native_atom_id_at(&left, 0);
     assert(tu_hdr(&universe, pair_id) != NULL);
     assert(tu_kind(&universe, pair_id) == ATOM_EXPR);
     assert(tu_arity(&universe, pair_id) == 3);
@@ -350,7 +357,7 @@ int main(void) {
     assert(space_get_atom_id_at64(&left, 0) == pair_id);
     assert(space_match_backend_get_atom_id_at64(&left, 0) == pair_id);
     assert(space_get_at(&left, 0) ==
-           term_universe_get_atom(&universe, left.atom_ids[0]));
+           term_universe_get_atom(&universe, pair_id));
     assert(space_get_at64(&left, 0) == space_get_at(&left, 0));
     assert(space_match_backend_get_at64(&left, 0) == space_get_at(&left, 0));
     assert(space_get_at64(&left, (CettaIndex)UINT32_MAX + 1u) == NULL);
@@ -358,7 +365,8 @@ int main(void) {
 
     space_add(&right, pair_b);
     assert(universe.len == 4);
-    assert(right.atom_ids[0] == left.atom_ids[0]);
+    assert(test_space_native_atom_id_at(&right, 0) ==
+           test_space_native_atom_id_at(&left, 0));
     assert(space_get_at(&right, 0) == space_get_at(&left, 0));
 
     Atom *boxed_space = make_boxed_space(&scratch_c, box_sym, &left);
@@ -369,7 +377,7 @@ int main(void) {
     assert(tu_hdr(&universe, boxed_id) == NULL);
     space_add(&left, stored_boxed);
     assert(universe.len == 5);
-    assert(left.atom_ids[1] == boxed_id);
+    assert(test_space_native_atom_id_at(&left, 1) == boxed_id);
     assert(space_get_at(&left, 1) == stored_boxed);
     assert(space_length64(&left) == 2);
     assert(space_get_atom_id_at64(&left, 1) == boxed_id);
@@ -379,18 +387,57 @@ int main(void) {
     assert(clone->universe == &universe);
     assert(clone->atom_ids != NULL);
     assert(clone->len == left.len);
-    assert(clone->atom_ids[0] == left.atom_ids[0]);
-    assert(clone->atom_ids[1] == left.atom_ids[1]);
+    assert(test_space_native_atom_id_at(clone, 0) ==
+           test_space_native_atom_id_at(&left, 0));
+    assert(test_space_native_atom_id_at(clone, 1) ==
+           test_space_native_atom_id_at(&left, 1));
     assert(space_get_at(clone, 0) == space_get_at(&left, 0));
     assert(space_get_at(clone, 1) == space_get_at(&left, 1));
     assert(space_truncate64(clone, 1));
     assert(space_length64(clone) == 1);
-    assert(space_get_atom_id_at64(clone, 0) == left.atom_ids[0]);
+    assert(space_get_atom_id_at64(clone, 0) ==
+           test_space_native_atom_id_at(&left, 0));
     assert(!space_truncate64(clone, (CettaCount)UINT32_MAX + 1u));
     assert(!space_match_backend_truncate_direct64(clone, (uint64_t)UINT32_MAX + 1u));
 
     space_free(clone);
     free(clone);
+
+    {
+        Arena wide_persistent;
+        Arena wide_scratch;
+        TermUniverse wide_universe;
+        Space wide_space;
+
+        arena_init(&wide_persistent);
+        arena_init(&wide_scratch);
+        assert(term_universe_init_with_store_format(
+            &wide_universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+        term_universe_set_persistent_arena(&wide_universe, &wide_persistent);
+        space_init_with_universe(&wide_space, &wide_universe);
+
+        Atom *wide_pair = make_pair(&wide_scratch, pair_sym, 7, 8);
+        AtomId wide_pair_id =
+            term_universe_store_atom_id(&wide_universe, NULL, wide_pair);
+        assert(wide_pair_id != CETTA_ATOM_ID_NONE);
+        space_add_atom_id(&wide_space, wide_pair_id);
+        assert(space_contains_atom_id(&wide_space, wide_pair_id));
+        assert(space_get_atom_id_at64(&wide_space, 0) == wide_pair_id);
+
+        Space *wide_clone = space_heap_clone_shallow(&wide_space);
+        assert(wide_clone != NULL);
+        assert(space_contains_atom_id(wide_clone, wide_pair_id));
+        assert(space_remove_atom_id(wide_clone, wide_pair_id));
+        assert(space_length64(wide_clone) == 0);
+        space_free(wide_clone);
+        free(wide_clone);
+
+        space_free(&wide_space);
+        term_universe_free(&wide_universe);
+        arena_free(&wide_scratch);
+        arena_free(&wide_persistent);
+    }
+
     space_free(&right);
     space_free(&left);
     term_universe_free(&universe);

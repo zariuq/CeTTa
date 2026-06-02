@@ -50,11 +50,11 @@ typedef struct {
     ImportedFlatTokenKind kind;
     Atom *origin;
     AtomId origin_id;
-    uint32_t span;
+    CettaIndex span;
     VarId var_id;
     union {
         SymbolId sym_id;
-        uint32_t arity;
+        CettaExprLen arity;
         int64_t ival;
         double fval;
         bool bval;
@@ -65,7 +65,7 @@ typedef struct {
     CettaIndex atom_idx;
     uint32_t epoch;
     ImportedFlatToken *tokens;
-    uint32_t len;
+    CettaIndex len;
 } ImportedFlatEntry;
 
 typedef struct {
@@ -81,8 +81,9 @@ typedef struct {
     bool bridge_active;
     bool bridge_unavailable;
     void *bridge_space;
-    AtomId *projected_atom_ids;
+    uint8_t *projected_atom_ids;
     CettaIndex projected_len;
+    uint8_t projected_atom_id_width_bits;
     bool projection_valid;
 } ImportedBridgeState;
 
@@ -125,7 +126,7 @@ typedef struct SpaceMatchBackendOps {
     void (*note_remove)(Space *s);
     CettaIndex (*candidates)(Space *s, Atom *pattern, CettaIndex **out);
     void (*query)(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
-    void (*query_conjunction)(Space *s, Arena *a, Atom **patterns, uint32_t npatterns,
+    void (*query_conjunction)(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                               const Bindings *seed, BindingSet *out);
 } SpaceMatchBackendOps;
 
@@ -179,6 +180,12 @@ const char *space_match_backend_last_error(void);
 const char *space_match_backend_error_name(SpaceMatchBackendError code);
 uint64_t space_match_backend_native_materialization_limit(void);
 uint64_t space_match_backend_packet_materialization_limit(void);
+uint64_t space_match_backend_contextual_query_slot_limit(void);
+void space_match_backend_diag_set_packet_materialization_limit_override(
+    uint64_t limit);
+void space_match_backend_diag_set_contextual_query_slot_limit_override(
+    uint64_t limit);
+void space_match_backend_diag_reset(void);
 bool space_match_backend_u32_bound_checked(uint64_t value,
                                            SpaceMatchBackendError error,
                                            uint32_t *out_value);
@@ -278,7 +285,7 @@ bool space_match_backend_mork_visit_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
     Atom **patterns,
-    uint32_t npatterns,
+    CettaExprLen npatterns,
     const Bindings *seed,
     CettaMorkBindingsVisitor visitor,
     void *ctx);
@@ -286,7 +293,7 @@ bool space_match_backend_mork_query_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
     Atom **patterns,
-    uint32_t npatterns,
+    CettaExprLen npatterns,
     const Bindings *seed,
     BindingSet *out);
 void space_match_backend_print_inventory(FILE *out);

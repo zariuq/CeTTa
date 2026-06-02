@@ -472,7 +472,7 @@ static PyObject *bridge_run(PyObject *self, PyObject *args) {
             return NULL;
         }
 
-        for (uint32_t i = 0; i < rs.len; i++) {
+        for (CettaCount i = 0; i < rs.len; i++) {
             char *text_atom = atom_to_string(&eval_arena, rs.items[i]);
             PyObject *py_atom = PyObject_CallFunction(g_bridge_cetta_atom_class, "s", text_atom);
             if (!py_atom || PyList_Append(inner, py_atom) != 0) {
