@@ -5,7 +5,7 @@ BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$BENCH_DIR/../../.." && pwd)"
 CETTA_BIN="${CETTA_BIN:-$ROOT/cetta}"
 RHOLANG_CLI="${RHOLANG_CLI:-$(command -v rholang-cli || true)}"
-OUT_DIR="${OUT_DIR:-$ROOT/runtime/benchmarks/rho/hot-successors}"
+OUT_DIR="${OUT_DIR:-$ROOT/runtime/benchmarks/rho/comm-contention}"
 REPEATS="${REPEATS:-3}"
 RHOLANG_MAP_SIZE="${RHOLANG_MAP_SIZE:-268435456}"
 
@@ -48,7 +48,7 @@ time_case() {
     fi
     read -r seconds max_rss < <(tail -n 1 "$time_file")
     stdout_bytes="$(wc -c < "$stem.out" | tr -d '[:space:]')"
-    printf 'hot-successors\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'comm-contention\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$size" "$engine" "$repeat" "$status" "$seconds" "$max_rss" \
         "$stdout_bytes" >> "$RESULTS"
     return "$status"
@@ -62,7 +62,7 @@ sizes() {
     fi
 }
 
-printf '== rho hot-successors benchmark ==\n'
+printf '== rho comm-contention benchmark ==\n'
 printf 'CeTTa:      %s\n' "$CETTA_BIN"
 printf 'Rholang:    %s\n' "$RHOLANG_CLI"
 printf 'Repeats:    %s\n' "$REPEATS"

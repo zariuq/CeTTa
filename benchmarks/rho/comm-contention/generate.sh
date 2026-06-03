@@ -20,7 +20,7 @@ case "$n" in
 esac
 
 mkdir -p "$out_dir"
-name="hot_successors_$n"
+name="comm_contention_$n"
 mrho="$out_dir/$name.mrho"
 metta="$out_dir/$name.metta"
 rho="$out_dir/$name.rho"
