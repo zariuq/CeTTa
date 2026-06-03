@@ -4,11 +4,11 @@
 # Nondeterministic alternatives are separated by semicolons.
 pipeline-forward-empty	mrho	benchmarks/rho/pipeline-forward/example.mrho	benchmarks/rho/pipeline-forward/example.rho	empty
 fanout-empty	mrho	benchmarks/rho/fanout/example.mrho	benchmarks/rho/fanout/example.rho	empty
-hot-successors-two-outputs	mrho	benchmarks/rho/hot-successors/example.mrho	benchmarks/rho/hot-successors/example.rho	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
+comm-contention-two-outputs	mrho	benchmarks/rho/comm-contention/example.mrho	benchmarks/rho/comm-contention/example.rho	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
 metta-certificate-quorum	metta	benchmarks/rho/certificate-quorum/example.metta	benchmarks/rho/certificate-quorum/example.rho	sink0=send(cert0 nil),sink1=send(cert2 nil)
 metta-demand-index	metta	benchmarks/rho/demand-index/example.metta	benchmarks/rho/demand-index/example.rho	sink0=send(payload0 nil),sink2=send(payload1 nil);sink1=send(payload0 nil),sink2=send(payload1 nil)
 metta-fanout	metta	benchmarks/rho/fanout/example.metta	benchmarks/rho/fanout/example.rho	empty
-metta-hot-successors	metta	benchmarks/rho/hot-successors/example.metta	benchmarks/rho/hot-successors/example.rho	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
+metta-comm-contention	metta	benchmarks/rho/comm-contention/example.metta	benchmarks/rho/comm-contention/example.rho	out0=send(p0 nil),out1=send(p1 nil);out0=send(p1 nil),out1=send(p0 nil)
 metta-indexed-demand	metta	benchmarks/rho/indexed-demand/example.metta	benchmarks/rho/indexed-demand/example.rho	sink0=send(payload0 nil)
 metta-pipeline-forward	metta	benchmarks/rho/pipeline-forward/example.metta	benchmarks/rho/pipeline-forward/example.rho	empty
 metta-route-policy	metta	benchmarks/rho/route-policy/example.metta	benchmarks/rho/route-policy/example.rho	c1=send(payload nil)
