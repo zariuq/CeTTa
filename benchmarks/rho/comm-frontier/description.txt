@@ -1,0 +1,17 @@
+comm-frontier
+
+This benchmark is one rho process family: N receives and N sends all compete
+on the same channel, so the strict-core rho COMM frontier has N*N one-step
+successors. It is the sharp CeTTa benchmark for full frontier enumeration via
+`lts:rho:transitions`.
+
+Files:
+- sizes.tsv: default sizes for this benchmark only.
+- generate.sh SIZE OUT_DIR: writes comm_frontier_SIZE.metta,
+  comm_frontier_SIZE.mrho, and comm_frontier_SIZE.rho.
+- run.sh: times only CeTTa frontier enumeration over the generated `.metta`
+  program.
+
+The generated `.metta` file is the timed lane. The `.mrho` and `.rho` files
+are sibling renderings of the same process family kept for manual inspection
+and cross-checking, but they are not part of this benchmark's timed lane.

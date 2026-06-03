@@ -1,4 +1,4 @@
-hot-successors
+comm-contention
 
 This benchmark is one rho process family: N receives and N sends all compete
 on the same channel, so the strict-core rho runtime must repeatedly choose
@@ -6,9 +6,9 @@ among many enabled COMM reactions before reaching quiescence.
 
 Files:
 - sizes.tsv: default sizes for this benchmark only.
-- generate.sh SIZE OUT_DIR: writes hot_successors_SIZE.metta,
-  hot_successors_SIZE.mrho, and hot_successors_SIZE.rho.
-- run.sh: runs only hot-successors against CeTTa --lang rhocalc runtime
+- generate.sh SIZE OUT_DIR: writes comm_contention_SIZE.metta,
+  comm_contention_SIZE.mrho, and comm_contention_SIZE.rho.
+- run.sh: runs only comm-contention against CeTTa strict-core rho runtime
   evaluation and f1r3node rholang-cli.
 
 The `.mrho` file is CeTTa's strict-core rho concrete syntax; the `.rho` file

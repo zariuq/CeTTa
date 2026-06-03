@@ -288,7 +288,7 @@ Keep these oracles separate:
 Required first threaded fixtures:
 
 - independent-two-comms: two disjoint channels, deterministic observation
-- hot-successors: one shared hot channel, scheduler-sensitive observation
+- comm-contention: one shared hot channel, scheduler-sensitive observation
 - demand-index: receiver race, accepted may outcomes
 - payload-race: same channel set, different payloads, catches barb-only bugs
 - reduction-limit-threaded: limit stops after exactly n successful claims
