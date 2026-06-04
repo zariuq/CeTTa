@@ -28,6 +28,11 @@ ENABLE_RUNTIME_STATS ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
 ENABLE_SANITIZERS ?= 0
 SANITIZERS ?= address,undefined
+RHO_BENCH_RUNS ?= 3
+RHO_BENCH_THREADS ?= 1,2,4,8
+RHO_BENCH_SEED ?= 0xC377A
+RHO_BENCH_CSV ?=
+RHO_BENCH_CSV_ARG = $(if $(strip $(RHO_BENCH_CSV)),--csv "$(RHO_BENCH_CSV)",)
 ifneq ($(filter $(ENABLE_GMP),0 1),$(ENABLE_GMP))
 $(error ENABLE_GMP must be 0 or 1)
 endif
@@ -194,6 +199,13 @@ ifeq ($(ENABLE_SANITIZERS),1)
 SANITIZER_TAG := $(subst $(comma),-,$(subst $(space),_,$(SANITIZERS)))
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).sanitize.$(SANITIZER_TAG)
 endif
+SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
+TSAN_ENABLED := 0
+ifeq ($(ENABLE_SANITIZERS),1)
+ifneq ($(filter thread,$(SANITIZER_WORDS)),)
+TSAN_ENABLED := 1
+endif
+endif
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 BUILD_CONFIG_HEADER = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_OBJ_TAG).runtime-stats.h
 BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.$(BUILD_OBJ_TAG).runtime-stats.stamp
@@ -206,11 +218,11 @@ STAGE0_BUILD_CONFIG_STAMP = $(BOOTSTRAP_TMPDIR)/build_config.stage0.$(BUILD_OBJ_
 VERSION_FILE = VERSION
 CETTA_VERSION := $(strip $(shell cat $(VERSION_FILE) 2>/dev/null))
 CPPFLAGS = -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) -include $(BUILD_CONFIG_HEADER)
-CFLAGS = -O3 -Wall -Werror -std=c11
+CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm $(GMP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
 ifeq ($(ENABLE_SANITIZERS),1)
-CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11
+CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
 endif
 
@@ -249,19 +261,19 @@ endif
 D4_PROBE_TIMEOUT ?= 60
 CETTA_BENCH_VMEM_KIB ?=
 CETTA_BENCH_LIMIT_PREFIX = $(if $(strip $(CETTA_BENCH_VMEM_KIB)),ulimit -v $(CETTA_BENCH_VMEM_KIB); )
-ASAN_REPEATABLE := 0
+SANITIZER_REPEATABLE := 0
 ifeq ($(ENABLE_SANITIZERS),1)
-ifneq ($(filter address,$(subst $(comma), ,$(SANITIZERS))),)
-ASAN_REPEATABLE := 1
+ifneq ($(filter address thread,$(SANITIZER_WORDS)),)
+SANITIZER_REPEATABLE := 1
 endif
 endif
 CETTA_EXEC_WRAPPER := ./scripts/cetta_exec.sh
 define cetta_exec
-$(if $(filter 1,$(ASAN_REPEATABLE)),CETTA_ASAN_REPEATABLE=1 $(CETTA_EXEC_WRAPPER) $1,$1)
+$(if $(filter 1,$(SANITIZER_REPEATABLE)),CETTA_SANITIZER_REPEATABLE=1 $(CETTA_EXEC_WRAPPER) $1,$1)
 endef
 CETTA_BIN_INVOKE = $(call cetta_exec,./$(BIN))
-ifeq ($(ASAN_REPEATABLE),1)
-CETTA_SCRIPT_RUN_ENV = CETTA_ASAN_REPEATABLE=1 CETTA_BIN="$(abspath $(CETTA_EXEC_WRAPPER))" CETTA_WRAPPED_BIN="$(abspath $(BIN))"
+ifeq ($(SANITIZER_REPEATABLE),1)
+CETTA_SCRIPT_RUN_ENV = CETTA_SANITIZER_REPEATABLE=1 CETTA_BIN="$(abspath $(CETTA_EXEC_WRAPPER))" CETTA_WRAPPED_BIN="$(abspath $(BIN))"
 CETTA_SCRIPT_BIN = $(abspath $(CETTA_EXEC_WRAPPER))
 else
 CETTA_SCRIPT_RUN_ENV = CETTA_BIN="$(abspath $(BIN))"
@@ -458,6 +470,12 @@ bench-rho-route-policy: $(BIN)
 bench-rho-certificate-quorum: $(BIN)
 	@./benchmarks/rho/certificate-quorum/run.sh
 
+bench-rho-threaded: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_bench.py "$(CETTA_SCRIPT_BIN)" --mode quick --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" --seed "$(RHO_BENCH_SEED)" $(RHO_BENCH_CSV_ARG)
+
+bench-rho-threaded-heavy: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_bench.py "$(CETTA_SCRIPT_BIN)" --mode standard --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" --seed "$(RHO_BENCH_SEED)" $(RHO_BENCH_CSV_ARG)
+
 bench-weird-audit: $(BIN)
 	$(call require_mork_bridge_or_reexec,weird benchmark audit,$@)
 	@./scripts/bench_weird_audit.sh
@@ -514,8 +532,8 @@ perf-runtime-stats:
 
 probe-epoch-runtime-witness: $(BIN)
 	$(call require_runtime_stats_or_reexec,epoch runtime witness,$@)
-	@$(if $(filter 1,$(ASAN_REPEATABLE)),CETTA_ASAN_REPEATABLE=1 CETTA_WRAPPED_BIN="$(abspath $(BIN))",) \
-		bash ./scripts/probe_epoch_runtime_witness.sh "$(if $(filter 1,$(ASAN_REPEATABLE)),$(abspath $(CETTA_EXEC_WRAPPER)),$(abspath $(BIN)))"
+	@$(if $(filter 1,$(SANITIZER_REPEATABLE)),CETTA_SANITIZER_REPEATABLE=1 CETTA_WRAPPED_BIN="$(abspath $(BIN))",) \
+		bash ./scripts/probe_epoch_runtime_witness.sh "$(if $(filter 1,$(SANITIZER_REPEATABLE)),$(abspath $(CETTA_EXEC_WRAPPER)),$(abspath $(BIN)))"
 
 perf-stable: perf-runtime-stats
 
@@ -737,6 +755,14 @@ $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 # Stage 1: compile stdlib using stage0
 $(STDLIB_BLOB): $(STDLIB_BLOB_STAMP)
 
+ifeq ($(TSAN_ENABLED),1)
+$(STDLIB_BLOB_STAMP): $(STDLIB_SRC)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@if [ ! -s "$(STDLIB_BLOB)" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 $(STDLIB_BLOB); \
+	fi
+	@touch "$@"
+else
 $(STDLIB_BLOB_STAMP): $(STAGE0_BIN) $(STDLIB_SRC)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
 	@tmp_stage0=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.run.XXXXXX"); \
@@ -744,13 +770,16 @@ $(STDLIB_BLOB_STAMP): $(STAGE0_BIN) $(STDLIB_SRC)
 	trap 'rm -f "$$tmp_stage0" "$$tmp_blob"' EXIT INT TERM; \
 	cp "$(STAGE0_BIN)" "$$tmp_stage0"; \
 	chmod +x "$$tmp_stage0"; \
-	$(call cetta_exec,"$$tmp_stage0") --compile-stdlib $(STDLIB_SRC) > "$$tmp_blob"; \
+	if ! $(call cetta_exec,"$$tmp_stage0") --compile-stdlib $(STDLIB_SRC) > "$$tmp_blob"; then \
+		exit 1; \
+	fi; \
 	if [ -f "$(STDLIB_BLOB)" ] && cmp -s "$$tmp_blob" "$(STDLIB_BLOB)"; then \
 		rm -f "$$tmp_blob"; \
 	else \
 		mv "$$tmp_blob" "$(STDLIB_BLOB)"; \
 	fi; \
 	touch "$@"
+endif
 
 # Stage 2: full binary with precompiled stdlib
 $(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
@@ -1125,6 +1154,15 @@ test-asan-main:
 test-asan-mork:
 	@$(MAKE) -s BUILD=mork ENABLE_SANITIZERS=1 SANITIZERS=address,undefined test
 
+test-tsan:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc
+
+test-tsan-main:
+	@$(MAKE) -s BUILD=main ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc
+
+test-tsan-mork:
+	@$(MAKE) -s BUILD=mork ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc
+
 test-rhocalc: $(BIN)
 	@pass=0; fail=0; \
 	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
@@ -1194,6 +1232,36 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	result=$$($(CETTA_BIN_INVOKE) --rho-threads 2 --lang rhocalc --profile cost --syntax mrho tests/rhocalc_cost_run/internal_split_tokens_basic.mrho 2>&1); \
+	status=$$?; \
+	if [ "$$status" -eq 1 ] && printf '%s\n' "$$result" | grep -q "threaded execution is strict-core only"; then \
+		echo "PASS: rhocalc cost rejects threaded execution"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc cost rejects threaded execution"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --rho-threads 0 --lang rhocalc --syntax mrho tests/rhocalc_run/stuck_pending_send.mrho 2>&1); \
+	status=$$?; \
+	if [ "$$status" -eq 2 ] && printf '%s\n' "$$result" | grep -q "invalid rhocalc thread count"; then \
+		echo "PASS: rhocalc rejects zero thread count"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc rejects zero thread count"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --rho-threads 2 --rho-scheduler rotating --lang rhocalc --syntax mrho tests/rhocalc_run/core_comm_run.mrho 2>&1); \
+	status=$$?; \
+	if [ "$$status" -eq 2 ] && printf '%s\n' "$$result" | grep -q "does not combine with --rho-threads"; then \
+		echo "PASS: rhocalc rejects scheduler with threaded execution"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc rejects scheduler with threaded execution"; \
+		printf '%s\n' "$$result"; \
+		fail=$$((fail + 1)); \
+	fi; \
 	for f in tests/rhocalc/no_reduction_under_recv_puritanical.mrho \
 	         tests/rhocalc/quoted_process_not_reduced_in_name_eq.mrho \
 	         tests/rhocalc/open_name_variable_roundtrip_h7.mrho \
@@ -1228,6 +1296,20 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	result=$$($(CETTA_BIN_INVOKE) --rho-threads 4 --lang rhocalc --syntax mrho tests/rhocalc_run/core_comm_run.mrho 2>&1); \
+	if [ "$$result" = "$$(cat tests/rhocalc_run/core_comm_run.expected)" ]; then \
+		echo "PASS: rhocalc thread-budget plumbing"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: rhocalc thread-budget plumbing"; \
+		diff <(cat tests/rhocalc_run/core_comm_run.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_stress.py "$(CETTA_SCRIPT_BIN)"; then \
+		pass=$$((pass + 7)); \
+	else \
+		fail=$$((fail + 1)); \
+	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --rho-reduction-limit 2 --lang rhocalc --syntax mrho tests/rhocalc/rotating_scheduler_persistent_branch.mrho 2>&1); \
 	status=$$?; \
 	if [ "$$status" -eq 3 ] && [ "$$result" = "$$(cat tests/rhocalc/rotating_scheduler_persistent_branch_canonical_reduction_limit2.expected)" ]; then \
@@ -1586,6 +1668,7 @@ test-runtime-stats-metta-suite:
 perf-list:
 	@./scripts/run_witness.sh --list
 	@echo "native_fc_memory_probe (runtime stats): make ENABLE_RUNTIME_STATS=1 probe-fc-native-memory"
+	@echo "rhocalc_threaded: make bench-rho-threaded"
 
 perf-show-baselines:
 	@./scripts/run_witness.sh --show-baselines
@@ -2940,6 +3023,7 @@ test-help-flags: $(BIN)
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-reduction-limit <n> <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-scheduler <canonical|rotating> <file>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-threads <n> <file>' && \
 	   HELP_TEXT="$$help_long" python3 -c "from pathlib import Path; import os, re, sys; text = Path('src/main.c').read_text(); accepted = sorted(set(re.findall(r'strcmp\\(argv\\[i\\],\\s*\\\"(--[^\\\"= ]+)\\\"\\)\\s*==\\s*0', text))); documented = sorted(set(re.findall(r'--[A-Za-z0-9-]+', os.environ['HELP_TEXT']))); sys.exit(0 if accepted == documented else 1)" >/dev/null && \
 	   printf '%s\n' "$$lang_list" | grep -Fq 'Strict-core rho-calculus reducer to quiescence' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
@@ -3301,5 +3385,5 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-hot-successors bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-tsan test-tsan-main test-tsan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-hot-frontier bench-rho-hot-successors bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
