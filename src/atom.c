@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 
 struct CettaBigInt {
@@ -479,10 +480,11 @@ typedef struct {
 
 static SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
 
-static uint32_t g_var_base_counter = 1;
+static _Atomic uint32_t g_var_base_counter = 1;
 
 VarId fresh_var_id(void) {
-    return (VarId)g_var_base_counter++;
+    return (VarId)atomic_fetch_add_explicit(&g_var_base_counter, 1u,
+                                            memory_order_relaxed);
 }
 
 uint32_t var_base_id(VarId id) {

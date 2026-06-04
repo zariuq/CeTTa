@@ -854,6 +854,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
     fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
     fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
+    fputs("       cetta --rho-threads <n> <file>                    # set strict-core rho execution thread budget\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>   # alias for --space-engine\n", out);
@@ -1231,6 +1232,8 @@ int main(int argc, char **argv) {
     bool rho_reduction_limit_requested = false;
     RhoSchedulerPolicy rho_scheduler = RHO_SCHEDULER_CANONICAL;
     bool rho_scheduler_requested = false;
+    uint32_t rho_threads = 1u;
+    bool rho_threads_requested = false;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
 
@@ -1346,6 +1349,22 @@ int main(int argc, char **argv) {
                 return 2;
             }
             rho_scheduler_requested = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--rho-threads") == 0) {
+            char *endp = NULL;
+            unsigned long long parsed;
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            parsed = strtoull(argv[++i], &endp, 10);
+            if (!endp || *endp != '\0' || parsed == 0 || parsed > 1024ULL) {
+                fprintf(stderr, "error: invalid rhocalc thread count '%s'\n", argv[i]);
+                return 2;
+            }
+            rho_threads = (uint32_t)parsed;
+            rho_threads_requested = true;
             continue;
         }
         if (strcmp(argv[i], "--steps") == 0) {
@@ -1499,7 +1518,8 @@ int main(int argc, char **argv) {
             rhocalc_semantic_profile_for_endpoint(&source_endpoint);
         RhocalcSemanticProfileId output_profile =
             rhocalc_semantic_profile_for_endpoint(&target_endpoint);
-        if (rho_reduction_limit_requested || rho_scheduler_requested) {
+        if (rho_reduction_limit_requested || rho_scheduler_requested ||
+            rho_threads_requested) {
             fprintf(stderr, "error: rhocalc runtime flags do not combine with --translate\n");
             free(inline_buf);
             return 2;
@@ -1532,9 +1552,17 @@ int main(int argc, char **argv) {
     if (lang->id == CETTA_LANGUAGE_RHOCALC) {
         RhocalcSemanticProfileId semantic_profile =
             rhocalc_semantic_profile_for_endpoint(&source_endpoint);
+        if (rho_threads_requested && rho_scheduler_requested) {
+            fprintf(stderr,
+                    "error: --rho-scheduler does not combine with --rho-threads\n");
+            free(inline_buf);
+            return 2;
+        }
         RhoRuntimeProfile rho_profile = {
             .scheduler_policy = rho_scheduler,
             .reduction_limit = rho_reduction_limit,
+            .thread_count = rho_threads,
+            .threaded = rho_threads_requested,
         };
         if (compile_mode || compile_stdlib_mode) {
             fprintf(stderr, "error: compile modes are not supported with --lang rhocalc\n");
@@ -1562,7 +1590,8 @@ int main(int argc, char **argv) {
         return rho_rc;
     }
 
-    if (rho_reduction_limit_requested || rho_scheduler_requested) {
+    if (rho_reduction_limit_requested || rho_scheduler_requested ||
+        rho_threads_requested) {
         fprintf(stderr, "error: rhocalc runtime flags require --lang rhocalc\n");
         free(inline_buf);
         return 2;

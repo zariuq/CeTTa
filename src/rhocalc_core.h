@@ -19,6 +19,8 @@ typedef enum {
 typedef struct {
     RhoSchedulerPolicy scheduler_policy;
     uint32_t reduction_limit;
+    uint32_t thread_count;
+    bool threaded;
 } RhoRuntimeProfile;
 
 typedef enum {

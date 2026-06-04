@@ -1,5 +1,8 @@
 #include "rhocalc_core.h"
+#include <assert.h>
+#include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,7 +96,120 @@ typedef struct {
     size_t cap;
 } RhoStr;
 
+typedef struct {
+    bool ready;
+    SymbolId nil;
+    SymbolId par;
+    SymbolId send;
+    SymbolId recv;
+    SymbolId quote;
+    SymbolId drop;
+} RhoSymbolIds;
+
+typedef enum {
+    RHO_ASYNC_ENDPOINT_SEND = 0,
+    RHO_ASYNC_ENDPOINT_RECV = 1
+} RhoAsyncEndpointKind;
+
+typedef struct RhoAsyncEndpoint RhoAsyncEndpoint;
+struct RhoAsyncEndpoint {
+    RhoAsyncEndpointKind kind;
+    Atom *atom;
+    RhoView view;
+    RhoAsyncEndpoint *next;
+};
+
+typedef struct RhoChannelBucket RhoChannelBucket;
+struct RhoChannelBucket {
+    char *key;
+    pthread_mutex_t mutex;
+    RhoAsyncEndpoint *send_head;
+    RhoAsyncEndpoint *send_tail;
+    RhoAsyncEndpoint *recv_head;
+    RhoAsyncEndpoint *recv_tail;
+    RhoChannelBucket *next;
+};
+
+typedef struct {
+    pthread_mutex_t mutex;
+    RhoChannelBucket *head;
+} RhoChannelTable;
+
+typedef struct RhoTaskNode RhoTaskNode;
+struct RhoTaskNode {
+    Atom *proc;
+    RhoTaskNode *next;
+};
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    RhoTaskNode *head;
+    RhoTaskNode *tail;
+    uint32_t active;
+    bool closed;
+    bool failed;
+} RhoReadyQueue;
+
+typedef struct RhoAsyncExecutor RhoAsyncExecutor;
+
+typedef struct {
+    RhoAsyncExecutor *executor;
+    Arena arena;
+    uint32_t index;
+} RhoThreadContext;
+
+struct RhoAsyncExecutor {
+    Arena *global_arena;
+    RhoRuntimeProfile profile;
+    RhoReadyQueue queue;
+    RhoChannelTable channels;
+    RhoAtomVec residuals;
+    pthread_mutex_t residual_mutex;
+    pthread_mutex_t error_mutex;
+    char error[256];
+    _Atomic uint32_t budget;
+    _Atomic uint32_t reductions_taken;
+    pthread_t *threads;
+    RhoThreadContext *workers;
+    uint32_t thread_count;
+};
+
+/*
+ * Threaded strict-core invariant: each bucket-locked rendezvous computes exactly
+ * one ordinary COMM continuation, consumes one send and one receive endpoint,
+ * and enqueues only that continuation.  The final state is materialized from the
+ * unmatched endpoints plus stuck residual processes.  Thus a threaded run should
+ * serialize to some legal Reduces* path; scheduler order is deliberately not a
+ * canonical output contract.
+ */
+static RhoSymbolIds g_rho_syms = {0};
+static __thread bool g_rho_async_worker_active = false;
 static __thread char g_rhocalc_validation_error[256];
+
+static void rho_symbols_ensure(void) {
+    if (g_rho_syms.ready) return;
+    g_rho_syms.nil = symbol_intern_cstr(g_symbols, "rho:nil");
+    g_rho_syms.par = symbol_intern_cstr(g_symbols, "rho:par");
+    g_rho_syms.send = symbol_intern_cstr(g_symbols, "rho:send");
+    g_rho_syms.recv = symbol_intern_cstr(g_symbols, "rho:recv");
+    g_rho_syms.quote = symbol_intern_cstr(g_symbols, "rho:quote");
+    g_rho_syms.drop = symbol_intern_cstr(g_symbols, "rho:drop");
+    g_rho_syms.ready = true;
+}
+
+static SymbolId rho_head_symbol_id(const char *head) {
+    rho_symbols_ensure();
+    if (strcmp(head, "rho:nil") == 0) return g_rho_syms.nil;
+    if (strcmp(head, "rho:par") == 0) return g_rho_syms.par;
+    if (strcmp(head, "rho:send") == 0) return g_rho_syms.send;
+    if (strcmp(head, "rho:recv") == 0) return g_rho_syms.recv;
+    if (strcmp(head, "rho:quote") == 0) return g_rho_syms.quote;
+    if (strcmp(head, "rho:drop") == 0) return g_rho_syms.drop;
+    assert(!g_rho_async_worker_active &&
+           "rho worker attempted to intern a non-rho head symbol");
+    return symbol_intern_cstr(g_symbols, head);
+}
 
 static char *rho_heap_strdup(const char *text) {
     size_t len = strlen(text) + 1u;
@@ -178,7 +294,7 @@ static RhoView rho_view(Atom *atom) {
 static Atom *rho_call(Arena *arena, const char *head,
                       Atom *const *args, uint32_t nargs) {
     Atom **elems = arena_alloc(arena, sizeof(Atom *) * (size_t)(nargs + 1));
-    elems[0] = atom_symbol(arena, head);
+    elems[0] = atom_symbol_id(arena, rho_head_symbol_id(head));
     for (uint32_t i = 0; i < nargs; i++) {
         elems[i + 1] = args[i];
     }
@@ -186,7 +302,8 @@ static Atom *rho_call(Arena *arena, const char *head,
 }
 
 static Atom *rho_nil(Arena *arena) {
-    return atom_symbol(arena, "rho:nil");
+    rho_symbols_ensure();
+    return atom_symbol_id(arena, g_rho_syms.nil);
 }
 
 static Atom *rho_unary(Arena *arena, const char *head, Atom *arg) {
@@ -697,8 +814,13 @@ static Atom *rho_par_from_vec(Arena *arena, RhoAtomVec *vec) {
     return rho_call(arena, "rho:par", args, vec->len);
 }
 
+static Atom *rho_copy_var(Arena *arena, Atom *var) {
+    if (!var || var->kind != ATOM_VAR) return var;
+    return atom_var_with_spelling(arena, var->sym_id, var->var_id);
+}
+
 static Atom *rho_normalize_name(Arena *arena, Atom *name) {
-    if (name->kind == ATOM_VAR) return name;
+    if (name->kind == ATOM_VAR) return rho_copy_var(arena, name);
     RhoView view = rho_view(name);
     if (view.kind == RHO_QUOTE && view.nargs == 1) {
         Atom *inner = rho_normalize_proc(arena, view.args[0]);
@@ -733,7 +855,7 @@ static Atom *rho_normalize_proc(Arena *arena, Atom *proc) {
     case RHO_RECV:
         return rho_ternary(arena, "rho:recv",
                            rho_normalize_name(arena, view.args[0]),
-                           view.args[1],
+                           rho_copy_var(arena, view.args[1]),
                            rho_normalize_proc(arena, view.args[2]));
     case RHO_DROP:
         return rho_unary(arena, "rho:drop",
@@ -790,18 +912,7 @@ static bool rho_proc_has_free_var(Atom *proc, VarId var_id) {
 
 static Atom *rho_fresh_var_like(Arena *arena, Atom *var) {
     VarId id = fresh_var_id();
-    const char *base = atom_name_cstr(var);
-    char suffix[64];
-    size_t base_len;
-    size_t suffix_len;
-    char *name;
-    snprintf(suffix, sizeof(suffix), "_rho%llu", (unsigned long long)id);
-    base_len = strlen(base);
-    suffix_len = strlen(suffix);
-    name = arena_alloc(arena, base_len + suffix_len + 1u);
-    memcpy(name, base, base_len);
-    memcpy(name + base_len, suffix, suffix_len + 1u);
-    return atom_var_with_id(arena, name, id);
+    return atom_var_with_spelling(arena, var->sym_id, id);
 }
 
 static Atom *rho_rename_proc(Arena *arena, Atom *proc,
@@ -844,14 +955,14 @@ static Atom *rho_rename_proc(Arena *arena, Atom *proc,
             return rho_ternary(arena, "rho:recv",
                                rho_rename_name(arena, view.args[0], old_id,
                                                replacement_name),
-                               view.args[1],
-                               view.args[2]);
+                               rho_copy_var(arena, view.args[1]),
+                               rho_normalize_proc(arena, view.args[2]));
         }
         return rho_normalize_proc(arena,
             rho_ternary(arena, "rho:recv",
                         rho_rename_name(arena, view.args[0], old_id,
                                         replacement_name),
-                        view.args[1],
+                        rho_copy_var(arena, view.args[1]),
                         rho_rename_proc(arena, view.args[2], old_id,
                                         replacement_name)));
     case RHO_DROP:
@@ -921,11 +1032,11 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
             return rho_ternary(arena, "rho:recv",
                                rho_subst_name(arena, view.args[0],
                                               var_id, replacement_name),
-                               view.args[1],
-                               view.args[2]);
+                               rho_copy_var(arena, view.args[1]),
+                               rho_normalize_proc(arena, view.args[2]));
         }
         {
-            Atom *binder = view.args[1];
+            Atom *binder = rho_copy_var(arena, view.args[1]);
             Atom *body = view.args[2];
             if (binder->kind == ATOM_VAR &&
                 rho_name_has_free_var(replacement_name, binder->var_id)) {
@@ -1065,31 +1176,47 @@ static bool rho_collect_endpoints(RhoAtomVec *components,
     return true;
 }
 
+static bool rho_compute_comm_continuation(Arena *arena,
+                                          const RhoEndpoint *send_endpoint,
+                                          const RhoEndpoint *recv_endpoint,
+                                          Atom **out_body) {
+    RhoView send = send_endpoint->view;
+    RhoView recv = recv_endpoint->view;
+    Atom *replacement;
+
+    if (!arena || !send_endpoint || !recv_endpoint || !out_body ||
+        send.kind != RHO_SEND || send.nargs != 2 ||
+        recv.kind != RHO_RECV || recv.nargs != 3 ||
+        recv.args[1]->kind != ATOM_VAR) {
+        return false;
+    }
+    *out_body = NULL;
+
+    replacement =
+        rho_unary(arena, "rho:quote", rho_normalize_proc(arena, send.args[1]));
+    *out_body = rho_subst_proc(arena, recv.args[2],
+                               recv.args[1]->var_id,
+                               replacement);
+    return *out_body != NULL;
+}
+
 static bool rho_compute_comm_result(Arena *arena,
                                     RhoAtomVec *components,
                                     const RhoEndpoint *send_endpoint,
                                     const RhoEndpoint *recv_endpoint,
                                     Atom **out_result,
                                     char **out_key) {
-    RhoView send = send_endpoint->view;
-    RhoView recv = recv_endpoint->view;
-    Atom *replacement;
     Atom *body;
     Atom *result;
 
     if (!arena || !components || !send_endpoint || !recv_endpoint ||
-        !out_result || !out_key ||
-        send.kind != RHO_SEND || send.nargs != 2 ||
-        recv.kind != RHO_RECV || recv.nargs != 3 ||
-        recv.args[1]->kind != ATOM_VAR) {
+        !out_result || !out_key) {
         return false;
     }
-
-    replacement =
-        rho_unary(arena, "rho:quote", rho_normalize_proc(arena, send.args[1]));
-    body = rho_subst_proc(arena, recv.args[2],
-                          recv.args[1]->var_id,
-                          replacement);
+    if (!rho_compute_comm_continuation(arena, send_endpoint, recv_endpoint,
+                                       &body)) {
+        return false;
+    }
     result = rho_rebuild_reaction(arena, components,
                                   send_endpoint->component_index,
                                   recv_endpoint->component_index,
@@ -1105,11 +1232,21 @@ static RhoRuntimeProfile rho_runtime_profile_default(uint32_t reduction_limit) {
     RhoRuntimeProfile profile;
     profile.scheduler_policy = RHO_SCHEDULER_CANONICAL;
     profile.reduction_limit = reduction_limit;
+    profile.thread_count = 1u;
+    profile.threaded = false;
     return profile;
 }
 
 static bool rho_runtime_profile_supported(const RhoRuntimeProfile *profile) {
     if (!profile || profile->reduction_limit == 0u) return false;
+    if (profile->threaded && profile->thread_count == 0u) {
+        rho_validation_set("rho threaded execution requires at least one worker");
+        return false;
+    }
+    if (profile->thread_count > 1024u) {
+        rho_validation_set("rho thread count is out of range");
+        return false;
+    }
     if (profile->scheduler_policy != RHO_SCHEDULER_CANONICAL &&
         profile->scheduler_policy != RHO_SCHEDULER_ROTATING) {
         rho_validation_set("rho scheduler policy is not implemented");
@@ -1234,6 +1371,510 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
     *out_next = best_result ? best_result : machine->current;
     free(best_key);
     return true;
+}
+
+static void rho_ready_queue_init(RhoReadyQueue *queue) {
+    pthread_mutex_init(&queue->mutex, NULL);
+    pthread_cond_init(&queue->cond, NULL);
+    queue->head = NULL;
+    queue->tail = NULL;
+    queue->active = 0;
+    queue->closed = false;
+    queue->failed = false;
+}
+
+static void rho_ready_queue_free(RhoReadyQueue *queue) {
+    RhoTaskNode *node = queue->head;
+    while (node) {
+        RhoTaskNode *next = node->next;
+        free(node);
+        node = next;
+    }
+    pthread_cond_destroy(&queue->cond);
+    pthread_mutex_destroy(&queue->mutex);
+    queue->head = NULL;
+    queue->tail = NULL;
+}
+
+static bool rho_ready_queue_push(RhoReadyQueue *queue, Atom *proc) {
+    RhoTaskNode *node = cetta_malloc(sizeof(RhoTaskNode));
+    node->proc = proc;
+    node->next = NULL;
+
+    pthread_mutex_lock(&queue->mutex);
+    if (queue->closed || queue->failed) {
+        pthread_mutex_unlock(&queue->mutex);
+        free(node);
+        return false;
+    }
+    if (queue->tail) {
+        queue->tail->next = node;
+    } else {
+        queue->head = node;
+    }
+    queue->tail = node;
+    pthread_cond_signal(&queue->cond);
+    pthread_mutex_unlock(&queue->mutex);
+    return true;
+}
+
+static Atom *rho_ready_queue_pop(RhoReadyQueue *queue) {
+    RhoTaskNode *node;
+    Atom *proc;
+
+    pthread_mutex_lock(&queue->mutex);
+    while (!queue->head && !queue->closed && !queue->failed) {
+        pthread_cond_wait(&queue->cond, &queue->mutex);
+    }
+    if (queue->failed || queue->closed) {
+        pthread_mutex_unlock(&queue->mutex);
+        return NULL;
+    }
+    node = queue->head;
+    queue->head = node->next;
+    if (!queue->head) queue->tail = NULL;
+    queue->active++;
+    pthread_mutex_unlock(&queue->mutex);
+
+    proc = node->proc;
+    free(node);
+    return proc;
+}
+
+static void rho_ready_queue_task_done(RhoReadyQueue *queue) {
+    pthread_mutex_lock(&queue->mutex);
+    if (queue->active > 0) queue->active--;
+    if (!queue->head && queue->active == 0) {
+        queue->closed = true;
+        pthread_cond_broadcast(&queue->cond);
+    }
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+static void rho_ready_queue_fail(RhoReadyQueue *queue) {
+    pthread_mutex_lock(&queue->mutex);
+    queue->failed = true;
+    pthread_cond_broadcast(&queue->cond);
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+static void rho_async_fail(RhoAsyncExecutor *executor, const char *fmt, ...) {
+    va_list ap;
+
+    if (!executor) return;
+    pthread_mutex_lock(&executor->error_mutex);
+    if (!executor->error[0]) {
+        va_start(ap, fmt);
+        vsnprintf(executor->error, sizeof(executor->error), fmt, ap);
+        va_end(ap);
+    }
+    pthread_mutex_unlock(&executor->error_mutex);
+    rho_ready_queue_fail(&executor->queue);
+}
+
+static void rho_channel_table_init(RhoChannelTable *table) {
+    pthread_mutex_init(&table->mutex, NULL);
+    table->head = NULL;
+}
+
+static void rho_async_endpoint_free(RhoAsyncEndpoint *endpoint) {
+    free(endpoint);
+}
+
+static void rho_async_endpoint_list_free(RhoAsyncEndpoint *endpoint) {
+    while (endpoint) {
+        RhoAsyncEndpoint *next = endpoint->next;
+        rho_async_endpoint_free(endpoint);
+        endpoint = next;
+    }
+}
+
+static void rho_channel_table_free(RhoChannelTable *table) {
+    RhoChannelBucket *bucket = table->head;
+    while (bucket) {
+        RhoChannelBucket *next = bucket->next;
+        rho_async_endpoint_list_free(bucket->send_head);
+        rho_async_endpoint_list_free(bucket->recv_head);
+        pthread_mutex_destroy(&bucket->mutex);
+        free(bucket->key);
+        free(bucket);
+        bucket = next;
+    }
+    pthread_mutex_destroy(&table->mutex);
+    table->head = NULL;
+}
+
+static RhoChannelBucket *rho_channel_table_get_or_create(RhoChannelTable *table,
+                                                         const char *key) {
+    RhoChannelBucket *bucket;
+
+    pthread_mutex_lock(&table->mutex);
+    for (bucket = table->head; bucket; bucket = bucket->next) {
+        if (strcmp(bucket->key, key) == 0) {
+            pthread_mutex_unlock(&table->mutex);
+            return bucket;
+        }
+    }
+
+    bucket = cetta_malloc(sizeof(RhoChannelBucket));
+    bucket->key = rho_heap_strdup(key);
+    pthread_mutex_init(&bucket->mutex, NULL);
+    bucket->send_head = NULL;
+    bucket->send_tail = NULL;
+    bucket->recv_head = NULL;
+    bucket->recv_tail = NULL;
+    bucket->next = table->head;
+    table->head = bucket;
+    pthread_mutex_unlock(&table->mutex);
+    return bucket;
+}
+
+static void rho_async_endpoint_append(RhoAsyncEndpoint **head,
+                                      RhoAsyncEndpoint **tail,
+                                      RhoAsyncEndpoint *endpoint) {
+    endpoint->next = NULL;
+    if (*tail) {
+        (*tail)->next = endpoint;
+    } else {
+        *head = endpoint;
+    }
+    *tail = endpoint;
+}
+
+static RhoAsyncEndpoint *rho_async_endpoint_pop(RhoAsyncEndpoint **head,
+                                                RhoAsyncEndpoint **tail) {
+    RhoAsyncEndpoint *endpoint = *head;
+    if (!endpoint) return NULL;
+    *head = endpoint->next;
+    if (!*head) *tail = NULL;
+    endpoint->next = NULL;
+    return endpoint;
+}
+
+static bool rho_async_try_spend_budget(RhoAsyncExecutor *executor) {
+    uint32_t old = atomic_load_explicit(&executor->budget,
+                                        memory_order_relaxed);
+    while (old != 0) {
+        if (atomic_compare_exchange_weak_explicit(&executor->budget, &old,
+                                                  old - 1u,
+                                                  memory_order_acq_rel,
+                                                  memory_order_relaxed)) {
+            atomic_fetch_add_explicit(&executor->reductions_taken, 1u,
+                                      memory_order_relaxed);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool rho_async_enqueue_proc(RhoAsyncExecutor *executor, Atom *proc) {
+    if (!executor || !proc) return false;
+    return rho_ready_queue_push(&executor->queue, proc);
+}
+
+static bool rho_async_add_residual(RhoAsyncExecutor *executor, Atom *proc) {
+    bool ok;
+    pthread_mutex_lock(&executor->residual_mutex);
+    ok = rho_vec_push(&executor->residuals, proc);
+    pthread_mutex_unlock(&executor->residual_mutex);
+    if (!ok) rho_async_fail(executor, "could not record rho residual");
+    return ok;
+}
+
+static bool rho_async_publish_endpoint(RhoThreadContext *ctx,
+                                       RhoAsyncEndpointKind kind,
+                                       Atom *proc,
+                                       RhoView view) {
+    RhoAsyncExecutor *executor = ctx->executor;
+    char *key = rho_key_name(view.args[0]);
+    RhoChannelBucket *bucket =
+        rho_channel_table_get_or_create(&executor->channels, key);
+    RhoAsyncEndpoint *current = cetta_malloc(sizeof(RhoAsyncEndpoint));
+    RhoAsyncEndpoint *opposite = NULL;
+    bool fire = false;
+
+    current->kind = kind;
+    current->atom = proc;
+    current->view = view;
+    current->next = NULL;
+
+    pthread_mutex_lock(&bucket->mutex);
+    if (kind == RHO_ASYNC_ENDPOINT_SEND) {
+        if (bucket->recv_head && rho_async_try_spend_budget(executor)) {
+            opposite = rho_async_endpoint_pop(&bucket->recv_head,
+                                              &bucket->recv_tail);
+            fire = true;
+        } else {
+            rho_async_endpoint_append(&bucket->send_head, &bucket->send_tail,
+                                      current);
+        }
+    } else {
+        if (bucket->send_head && rho_async_try_spend_budget(executor)) {
+            opposite = rho_async_endpoint_pop(&bucket->send_head,
+                                              &bucket->send_tail);
+            fire = true;
+        } else {
+            rho_async_endpoint_append(&bucket->recv_head, &bucket->recv_tail,
+                                      current);
+        }
+    }
+    pthread_mutex_unlock(&bucket->mutex);
+    free(key);
+
+    if (!fire) return true;
+
+    {
+        RhoEndpoint send_endpoint;
+        RhoEndpoint recv_endpoint;
+        Atom *body = NULL;
+        bool ok;
+
+        if (kind == RHO_ASYNC_ENDPOINT_SEND) {
+            send_endpoint = (RhoEndpoint){0, current->view, NULL};
+            recv_endpoint = (RhoEndpoint){0, opposite->view, NULL};
+        } else {
+            send_endpoint = (RhoEndpoint){0, opposite->view, NULL};
+            recv_endpoint = (RhoEndpoint){0, current->view, NULL};
+        }
+
+        ok = rho_compute_comm_continuation(&ctx->arena,
+                                           &send_endpoint,
+                                           &recv_endpoint,
+                                           &body);
+        rho_async_endpoint_free(opposite);
+        rho_async_endpoint_free(current);
+        if (!ok || !body) {
+            rho_async_fail(executor, "could not compute rho COMM continuation");
+            return false;
+        }
+        if (!rho_async_enqueue_proc(executor, body)) {
+            rho_async_fail(executor, "could not enqueue rho COMM continuation");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool rho_async_process_task(RhoThreadContext *ctx, Atom *proc) {
+    Atom *norm = rho_normalize_proc(&ctx->arena, proc);
+    RhoView view = rho_view(norm);
+
+    switch (view.kind) {
+    case RHO_NIL:
+        return true;
+    case RHO_PAR:
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            if (!rho_async_enqueue_proc(ctx->executor, view.args[i])) {
+                rho_async_fail(ctx->executor, "could not enqueue rho parallel component");
+                return false;
+            }
+        }
+        return true;
+    case RHO_SEND:
+        return rho_async_publish_endpoint(ctx, RHO_ASYNC_ENDPOINT_SEND,
+                                          norm, view);
+    case RHO_RECV:
+        return rho_async_publish_endpoint(ctx, RHO_ASYNC_ENDPOINT_RECV,
+                                          norm, view);
+    case RHO_DROP:
+        return rho_async_add_residual(ctx->executor, norm);
+    case RHO_QUOTE:
+    case RHO_BAD:
+        break;
+    }
+    rho_async_fail(ctx->executor, "unsupported rho task during threaded reduction");
+    return false;
+}
+
+static void *rho_async_worker_main(void *arg) {
+    RhoThreadContext *ctx = arg;
+    RhoReadyQueue *queue = &ctx->executor->queue;
+
+    g_rho_async_worker_active = true;
+    for (;;) {
+        Atom *task = rho_ready_queue_pop(queue);
+        bool ok;
+        if (!task) break;
+        ok = rho_async_process_task(ctx, task);
+        if (!ok) {
+            rho_async_fail(ctx->executor, "rho threaded worker failed");
+        }
+        rho_ready_queue_task_done(queue);
+    }
+
+    g_rho_async_worker_active = false;
+    return NULL;
+}
+
+static bool rho_channel_table_has_enabled_pair(RhoChannelTable *table) {
+    bool found = false;
+    pthread_mutex_lock(&table->mutex);
+    for (RhoChannelBucket *bucket = table->head; bucket; bucket = bucket->next) {
+        pthread_mutex_lock(&bucket->mutex);
+        if (bucket->send_head && bucket->recv_head) found = true;
+        pthread_mutex_unlock(&bucket->mutex);
+        if (found) break;
+    }
+    pthread_mutex_unlock(&table->mutex);
+    return found;
+}
+
+static bool rho_async_materialize_residual(RhoAsyncExecutor *executor,
+                                           Atom **out) {
+    RhoAtomVec items;
+    bool ok = true;
+
+    rho_vec_init(&items);
+    for (uint32_t i = 0; i < executor->residuals.len; i++) {
+        if (!rho_vec_push(&items,
+                          atom_deep_copy(executor->global_arena,
+                                         executor->residuals.items[i]))) {
+            ok = false;
+            break;
+        }
+    }
+
+    pthread_mutex_lock(&executor->channels.mutex);
+    for (RhoChannelBucket *bucket = executor->channels.head;
+         ok && bucket;
+         bucket = bucket->next) {
+        pthread_mutex_lock(&bucket->mutex);
+        for (RhoAsyncEndpoint *ep = bucket->send_head; ok && ep; ep = ep->next) {
+            ok = rho_vec_push(&items,
+                              atom_deep_copy(executor->global_arena, ep->atom));
+        }
+        for (RhoAsyncEndpoint *ep = bucket->recv_head; ok && ep; ep = ep->next) {
+            ok = rho_vec_push(&items,
+                              atom_deep_copy(executor->global_arena, ep->atom));
+        }
+        pthread_mutex_unlock(&bucket->mutex);
+    }
+    pthread_mutex_unlock(&executor->channels.mutex);
+
+    if (ok) {
+        *out = rho_par_from_vec(executor->global_arena, &items);
+        ok = *out != NULL;
+    }
+    rho_vec_free(&items);
+    return ok;
+}
+
+static void rho_async_executor_init(RhoAsyncExecutor *executor,
+                                    Arena *global_arena,
+                                    const RhoRuntimeProfile *profile) {
+    executor->global_arena = global_arena;
+    executor->profile = *profile;
+    rho_ready_queue_init(&executor->queue);
+    rho_channel_table_init(&executor->channels);
+    rho_vec_init(&executor->residuals);
+    pthread_mutex_init(&executor->residual_mutex, NULL);
+    pthread_mutex_init(&executor->error_mutex, NULL);
+    executor->error[0] = '\0';
+    atomic_init(&executor->budget, profile->reduction_limit);
+    atomic_init(&executor->reductions_taken, 0u);
+    executor->threads = NULL;
+    executor->workers = NULL;
+    executor->thread_count = 0;
+}
+
+static void rho_async_executor_free(RhoAsyncExecutor *executor) {
+    if (executor->workers) {
+        for (uint32_t i = 0; i < executor->thread_count; i++) {
+            arena_free(&executor->workers[i].arena);
+        }
+    }
+    free(executor->workers);
+    free(executor->threads);
+    rho_vec_free(&executor->residuals);
+    rho_channel_table_free(&executor->channels);
+    rho_ready_queue_free(&executor->queue);
+    pthread_mutex_destroy(&executor->residual_mutex);
+    pthread_mutex_destroy(&executor->error_mutex);
+}
+
+static bool rhocalc_reduce_to_quiescence_threaded(
+    Arena *arena, Atom *proc, const RhoRuntimeProfile *profile,
+    RhoReductionResult *out) {
+    RhoAsyncExecutor executor;
+    uint32_t started = 0;
+    bool ok = true;
+
+    if (!arena || !proc || !profile || !out) return false;
+    out->residual = NULL;
+    out->reductions_taken = 0;
+    out->status = RHOCALC_REDUCTION_QUIESCENT;
+
+    if (profile->thread_count == 0u) {
+        rho_validation_set("rho threaded execution requires at least one worker");
+        return false;
+    }
+    rho_symbols_ensure();
+    if (!rhocalc_process_well_formed(proc)) {
+        return false;
+    }
+
+    rho_async_executor_init(&executor, arena, profile);
+    executor.thread_count = profile->thread_count;
+    executor.threads = cetta_malloc(sizeof(pthread_t) * executor.thread_count);
+    executor.workers =
+        cetta_malloc(sizeof(RhoThreadContext) * executor.thread_count);
+
+    for (uint32_t i = 0; i < executor.thread_count; i++) {
+        executor.workers[i].executor = &executor;
+        executor.workers[i].index = i;
+        arena_init(&executor.workers[i].arena);
+        arena_set_hashcons(&executor.workers[i].arena, NULL);
+        arena_set_runtime_kind(&executor.workers[i].arena,
+                               CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    }
+
+    if (!rho_ready_queue_push(&executor.queue, proc)) {
+        rho_async_fail(&executor, "could not enqueue initial rho task");
+        ok = false;
+    }
+
+    for (uint32_t i = 0; ok && i < executor.thread_count; i++) {
+        if (pthread_create(&executor.threads[i], NULL,
+                           rho_async_worker_main,
+                           &executor.workers[i]) != 0) {
+            rho_async_fail(&executor, "could not start rho worker thread");
+            ok = false;
+            break;
+        }
+        started++;
+    }
+
+    if (!ok) rho_ready_queue_fail(&executor.queue);
+
+    for (uint32_t i = 0; i < started; i++) {
+        if (pthread_join(executor.threads[i], NULL) != 0) {
+            rho_async_fail(&executor, "could not join rho worker thread");
+            ok = false;
+        }
+    }
+
+    if (executor.error[0]) {
+        rho_validation_set("%s", executor.error);
+        ok = false;
+    }
+
+    if (ok && !rho_async_materialize_residual(&executor, &out->residual)) {
+        rho_validation_set("could not materialize threaded rho residual");
+        ok = false;
+    }
+
+    if (ok) {
+        out->reductions_taken =
+            atomic_load_explicit(&executor.reductions_taken,
+                                 memory_order_relaxed);
+        out->status = rho_channel_table_has_enabled_pair(&executor.channels)
+            ? RHOCALC_REDUCTION_LIMIT_EXHAUSTED
+            : RHOCALC_REDUCTION_QUIESCENT;
+    }
+
+    rho_async_executor_free(&executor);
+    return ok;
 }
 
 static bool rho_collect_successors(Arena *arena, Atom *proc, RhoSuccessorSetAcc *out);
@@ -2911,6 +3552,9 @@ bool rhocalc_reduce_to_quiescence_with_profile(Arena *arena, Atom *proc,
     if (!rho_runtime_profile_supported(profile)) {
         return false;
     }
+    if (profile->threaded) {
+        return rhocalc_reduce_to_quiescence_threaded(arena, proc, profile, out);
+    }
 
     rho_machine_init(&machine, arena, profile);
     if (!rho_machine_load_process(&machine, proc)) {
@@ -2953,6 +3597,10 @@ static bool rhocost_reduce_to_quiescence_with_profile(
     out->status = RHOCALC_REDUCTION_QUIESCENT;
 
     if (!rho_runtime_profile_supported(profile)) {
+        return false;
+    }
+    if (profile->threaded) {
+        rho_validation_set("rho threaded execution is strict-core only");
         return false;
     }
     if (!rhocost_term_well_formed(term)) {
