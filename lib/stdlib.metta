@@ -88,6 +88,7 @@
 (: undefined-doc-function-type (-> Expression Type))
 (: get-doc-params (-> Expression Atom Expression (Expression Atom)))
 (: get-doc-atom (-> SpaceType Atom %Undefined%))
+(: __cetta_surface-available (-> Atom Bool))
 (: help! (-> Atom (->)))
 (: help! (-> (->)))
 (: help-space! (-> SpaceType (->)))
@@ -574,17 +575,22 @@
 
 (= (get-doc $atom)
   (function
-    (case (context-space)
-      (($space
-         (case (eval (get-doc $space $atom))
-           ((Empty (return Empty))
-            ($doc (return $doc)))))))))
+    (case (__cetta_surface-available $atom)
+      ((False (return Empty))
+       (True
+         (case (context-space)
+           (($space
+              (case (eval (get-doc $space $atom))
+                ((Empty (return Empty))
+                 ($doc (return $doc))))))))))))
 
 (= (get-doc $space $atom)
-  (let $meta-type (get-metatype $atom)
-    (case $meta-type (
-      (Expression (get-doc-atom $space $atom))
-      ($_ (get-doc-single-atom $space $atom)) ))))
+  (if (__cetta_surface-available $atom)
+    (let $meta-type (get-metatype $atom)
+      (case $meta-type (
+        (Expression (get-doc-atom $space $atom))
+        ($_ (get-doc-single-atom $space $atom)) )))
+    Empty))
 
 (= (get-doc-single-atom $space $atom)
   (let $type (get-type-space $space $atom)

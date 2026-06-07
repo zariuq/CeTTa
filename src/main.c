@@ -540,19 +540,42 @@ done:
 
 static void write_results(FILE *out, ResultSet *rs) {
     FILE *logical_dest = stdout;
+    ResultSet visible = {0};
+    Atom **visible_items = NULL;
+    uint32_t visible_len = 0;
     if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
+
+    for (uint32_t i = 0; i < rs->len; i++) {
+        if (!atom_is_empty(rs->items[i]))
+            visible_len++;
+    }
+    if (visible_len == 0) return;
+    if (visible_len != rs->len) {
+        visible_items = malloc(sizeof(Atom *) * visible_len);
+        if (!visible_items) return;
+        uint32_t out_i = 0;
+        for (uint32_t i = 0; i < rs->len; i++) {
+            if (!atom_is_empty(rs->items[i]))
+                visible_items[out_i++] = rs->items[i];
+        }
+        visible.items = visible_items;
+        visible.len = visible_len;
+        visible.cap = visible_len;
+        rs = &visible;
+    }
+
     if (g_count_only) {
         if (rs->len == 1 &&
             rs->items[0]->kind == ATOM_GROUNDED &&
             rs->items[0]->ground.gkind == GV_INT) {
             fprintf(out, "%lld\n", (long long)rs->items[0]->ground.ival);
-            return;
+            goto done;
         }
         fprintf(out, "%" PRIu64 "\n", rs->len);
-        return;
+        goto done;
     }
     if (g_quiet_results && !result_set_has_error(rs) && result_set_all_empty(rs)) {
-        return;
+        goto done;
     }
     if (result_set_all_rhocalc_domain(rs)) {
         fprintf(out, "[");
@@ -561,13 +584,13 @@ static void write_results(FILE *out, ResultSet *rs) {
             rhocalc_print_atom_syntax(rs->items[i], CETTA_SYNTAX_MRHO, out);
         }
         fprintf(out, "]\n");
-        return;
+        goto done;
     }
     bool pretty_vars = display_vars_pretty_enabled_for(logical_dest);
     bool pretty_namespaces = display_namespaces_pretty_enabled_for(logical_dest);
     if (pretty_vars || pretty_namespaces) {
         if (write_pretty_results(out, rs, pretty_vars, pretty_namespaces)) {
-            return;
+            goto done;
         }
     }
     fprintf(out, "[");
@@ -580,6 +603,9 @@ static void write_results(FILE *out, ResultSet *rs) {
         }
     }
     fprintf(out, "]\n");
+
+done:
+    free(visible_items);
 }
 
 typedef struct {

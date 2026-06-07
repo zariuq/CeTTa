@@ -273,6 +273,9 @@ GIT_TEST_URL = file://$(GIT_TEST_FIXTURE_ROOT)
 GIT_TEST_DYNAMIC = $(CURDIR)/runtime/test-git-module-dynamic.metta
 GIT_TEST_COMPAT_DYNAMIC = $(CURDIR)/runtime/test-git-module-compat.metta
 HE_CONTRACT_GENERATED_DIR = tests/generated/he_contract
+HE_COMPAT_GENERATED_DIR = tests/generated/he_compat
+HE_COMPAT_CATALOG = $(HE_COMPAT_GENERATED_DIR)/he_compat_cases_2026-06-07.json
+HE_NATIVE_CONTRACTS = $(HE_COMPAT_GENERATED_DIR)/he_native_contracts_2026-06-07.json
 TEST_MANIFEST = tests/test_manifest.tsv
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
@@ -1711,6 +1714,22 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_get_doc_compat_surface.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_get_doc_surface.expected)" ]; then \
+		echo "PASS: he-compat get-doc surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat get-doc surface"; \
+		diff <(cat tests/support/profile_get_doc_surface.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/profile_get_doc_extended_surface.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_get_doc_surface.expected)" ]; then \
+		echo "PASS: he-extended get-doc surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-extended get-doc surface"; \
+		diff <(cat tests/support/profile_get_doc_surface.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_size_extension.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/spec_profile_size_extension.expected)" ]; then \
 		echo "PASS: he-extended size extension"; pass=$$((pass + 1)); \
@@ -2124,6 +2143,30 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/profile_he_prime_dependent_binders.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_type_formation.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_type_formation.expected)" ]; then \
+		echo "PASS: he-prime declared-constructor type formation"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime declared-constructor type formation"; \
+		diff <(cat tests/profile_he_prime_type_formation.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_dtt_typed_corpus.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_dtt_typed_corpus.expected)" ]; then \
+		echo "PASS: he-prime DTT typed seed corpus"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime DTT typed seed corpus"; \
+		diff <(cat tests/profile_he_prime_dtt_typed_corpus.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_dtt_tutorial_ladder.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_dtt_tutorial_ladder.expected)" ]; then \
+		echo "PASS: he-prime DTT tutorial ladder"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime DTT tutorial ladder"; \
+		diff <(cat tests/profile_he_prime_dtt_tutorial_ladder.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_recursive_search.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_recursive_search.expected)" ]; then \
 		echo "PASS: he-prime recursive dependent search"; pass=$$((pass + 1)); \
@@ -2218,6 +2261,14 @@ test-backends-lanes: test-backends
 refresh-he-contract-tests:
 	@python3 scripts/sync_he_contract_tests.py
 
+refresh-he-compat-catalog:
+	@python3 scripts/build_he_compat_catalog.py --out $(HE_COMPAT_CATALOG)
+
+refresh-he-native-contracts: refresh-he-compat-catalog
+	@python3 scripts/build_he_native_contracts.py \
+		--catalog $(HE_COMPAT_CATALOG) \
+		--out $(HE_NATIVE_CONTRACTS)
+
 test-he-contract-suite: $(BIN)
 	@pass=0; fail=0; \
 	files=($(HE_CONTRACT_GENERATED_DIR)/*.metta); \
@@ -2246,6 +2297,14 @@ test-he-contract-suite: $(BIN)
 	echo "---"; \
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+
+test-he-compat-semantic-suite: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/check_he_compat_semantic_suite.py \
+		--catalog $(HE_COMPAT_CATALOG)
+
+probe-he-compat-tier2: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/probe_he_compat_tier2.py \
+		--catalog $(HE_COMPAT_CATALOG)
 
 test-mork-lane: test-mork-lane-core
 
@@ -3301,5 +3360,6 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: refresh-he-native-contracts
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

@@ -212,6 +212,7 @@ typedef struct {
     /* ── Grounded internal helpers ── */ \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
+    X(cetta_surface_available, "__cetta_surface-available") \
     /* ── Python FFI ── */ \
     X(py_atom, "py-atom") \
     X(py_call, "py-call") \
