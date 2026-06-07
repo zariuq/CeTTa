@@ -1,0 +1,2290 @@
+{
+  "cases": [
+    {
+      "cetta_expected_path": "tests/io_he_duplicate_multiplicity_preserved.expected",
+      "cetta_path": "tests/io_he_duplicate_multiplicity_preserved.metta",
+      "cetta_result": {
+        "bytes": 7,
+        "kind": "expected-file",
+        "path": "tests/io_he_duplicate_multiplicity_preserved.expected",
+        "sha256": "ba83fba20eb54098c568ec7137ec029dc60e921bcd9d540aed8a6ebb67d7a88b",
+        "text": "[x, x]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "x",
+        "x"
+      ],
+      "feature": "core",
+      "id": "mettapedia-he-io:he_duplicate_multiplicity_preserved",
+      "lean_authority": [
+        "he_io_anchor_he_duplicate_multiplicity_preserved"
+      ],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": true,
+        "theorem_anchor": "he_io_anchor_he_duplicate_multiplicity_preserved"
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "Bag semantics: multiplicity must be preserved"
+      ],
+      "tier": 0,
+      "tier_name": "tier0-core-anchor",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_duplicate_multiplicity_preserved",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_nested_rewrite.expected",
+      "cetta_path": "tests/io_he_nested_rewrite.metta",
+      "cetta_result": {
+        "bytes": 4,
+        "kind": "expected-file",
+        "path": "tests/io_he_nested_rewrite.expected",
+        "sha256": "ca0dff2eeeb428d9b948154b48f08f4957c2aa0b9c36f31410812c2943df3b74",
+        "text": "[b]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "b"
+      ],
+      "feature": "core",
+      "id": "mettapedia-he-io:he_nested_rewrite",
+      "lean_authority": [
+        "he_io_anchor_he_nested_rewrite"
+      ],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": true,
+        "theorem_anchor": "he_io_anchor_he_nested_rewrite"
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "SimpleHE nested parity case"
+      ],
+      "tier": 0,
+      "tier_name": "tier0-core-anchor",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_nested_rewrite",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_nondet_choose_bag.expected",
+      "cetta_path": "tests/io_he_nondet_choose_bag.metta",
+      "cetta_result": {
+        "bytes": 12,
+        "kind": "expected-file",
+        "path": "tests/io_he_nondet_choose_bag.expected",
+        "sha256": "31115eba5d2c1fbdf01d3afce9d36442cc2937d057f350d030e77a2c3f9f8c5d",
+        "text": "[red, blue]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "red",
+        "blue"
+      ],
+      "feature": "core",
+      "id": "mettapedia-he-io:he_nondet_choose_bag",
+      "lean_authority": [
+        "he_io_anchor_he_nondet_choose_bag"
+      ],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": true,
+        "theorem_anchor": "he_io_anchor_he_nondet_choose_bag"
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "Order-insensitive nondeterministic result set"
+      ],
+      "tier": 0,
+      "tier_name": "tier0-core-anchor",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_nondet_choose_bag",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_pattern_variable_substitution.expected",
+      "cetta_path": "tests/io_he_pattern_variable_substitution.metta",
+      "cetta_result": {
+        "bytes": 17,
+        "kind": "expected-file",
+        "path": "tests/io_he_pattern_variable_substitution.expected",
+        "sha256": "aafbad0b9f1b5ec8cb8673484e03f2ec19757626289b61b8cbf9d32597fa64f0",
+        "text": "[(result hello)]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "(result hello)"
+      ],
+      "feature": "core",
+      "id": "mettapedia-he-io:he_pattern_variable_substitution",
+      "lean_authority": [
+        "he_io_anchor_he_pattern_variable_substitution"
+      ],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": true,
+        "theorem_anchor": "he_io_anchor_he_pattern_variable_substitution"
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "Variable binding substitution"
+      ],
+      "tier": 0,
+      "tier_name": "tier0-core-anchor",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_pattern_variable_substitution",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_simple_rewrite.expected",
+      "cetta_path": "tests/io_he_simple_rewrite.metta",
+      "cetta_result": {
+        "bytes": 4,
+        "kind": "expected-file",
+        "path": "tests/io_he_simple_rewrite.expected",
+        "sha256": "ca0dff2eeeb428d9b948154b48f08f4957c2aa0b9c36f31410812c2943df3b74",
+        "text": "[b]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "b"
+      ],
+      "feature": "core",
+      "id": "mettapedia-he-io:he_simple_rewrite",
+      "lean_authority": [
+        "he_io_anchor_he_simple_rewrite"
+      ],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": true,
+        "theorem_anchor": "he_io_anchor_he_simple_rewrite"
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "SimpleHE simple parity case"
+      ],
+      "tier": 0,
+      "tier_name": "tier0-core-anchor",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_simple_rewrite",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_unknown_expr_preserved.expected",
+      "cetta_path": "tests/io_he_unknown_expr_preserved.metta",
+      "cetta_result": {
+        "bytes": 16,
+        "kind": "expected-file",
+        "path": "tests/io_he_unknown_expr_preserved.expected",
+        "sha256": "48dbab095ac64c4ac8cf0d1a15de97cd3d50ccf0280252c631e2c0c249c0b155",
+        "text": "[(unknown arg)]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "(unknown arg)"
+      ],
+      "feature": "core",
+      "id": "mettapedia-he-io:he_unknown_expr_preserved",
+      "lean_authority": [
+        "he_io_anchor_he_unknown_expr_preserved"
+      ],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": true,
+        "theorem_anchor": "he_io_anchor_he_unknown_expr_preserved"
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "No rewrite path preserves expression"
+      ],
+      "tier": 0,
+      "tier_name": "tier0-core-anchor",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_unknown_expr_preserved",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_equal_msg_failure.expected",
+      "cetta_path": "tests/io_he_ext_assert_equal_msg_failure.metta",
+      "cetta_result": {
+        "bytes": 52,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_equal_msg_failure.expected",
+        "sha256": "5a196f0a4d1756d497e2768f7273fc3cbd5d0d1231d7e4a68eaeb3cd381bf1a8",
+        "text": "[(Error (assertEqualMsg (+ 1 2) 4) \"Test message\")]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "(Error (assertEqualMsg (+ 1 2) 4) \"Test message\")"
+      ],
+      "feature": "assertEqualMsg",
+      "id": "mettapedia-he-io:he_ext_assert_equal_msg_failure",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "message-preserving assert failure"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_equal_msg_failure",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_equal_to_result_msg_failure.expected",
+      "cetta_path": "tests/io_he_ext_assert_equal_to_result_msg_failure.metta",
+      "cetta_result": {
+        "bytes": 54,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_equal_to_result_msg_failure.expected",
+        "sha256": "1b023b0e3b083df46f7bcb56cba4c3f2db93598ac4dd07cb34bde3d357d8fcc0",
+        "text": "[(Error (assertEqualToResultMsg (+ 1 2) (4)) \"Oops\")]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "(Error (assertEqualToResultMsg (+ 1 2) (4)) \"Oops\")"
+      ],
+      "feature": "assertEqualToResultMsg",
+      "id": "mettapedia-he-io:he_ext_assert_equal_to_result_msg_failure",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "message-preserving result-mode assert failure"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_equal_to_result_msg_failure",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_equal_to_result_unit.expected",
+      "cetta_path": "tests/io_he_ext_assert_equal_to_result_unit.metta",
+      "cetta_result": {
+        "bytes": 5,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_equal_to_result_unit.expected",
+        "sha256": "9ff6c9823226845c5397ad7e3fc42a1914c2b05336ea870319da18a7272754f4",
+        "text": "[()]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "()"
+      ],
+      "feature": "assertEqualToResult",
+      "id": "mettapedia-he-io:he_ext_assert_equal_to_result_unit",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "assertEqualToResult success"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_equal_to_result_unit",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_equal_unit.expected",
+      "cetta_path": "tests/io_he_ext_assert_equal_unit.metta",
+      "cetta_result": {
+        "bytes": 5,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_equal_unit.expected",
+        "sha256": "9ff6c9823226845c5397ad7e3fc42a1914c2b05336ea870319da18a7272754f4",
+        "text": "[()]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "()"
+      ],
+      "feature": "assertEqual",
+      "id": "mettapedia-he-io:he_ext_assert_equal_unit",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "assertEqual success"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_equal_unit",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_failure_error_shape.expected",
+      "cetta_path": "tests/io_he_ext_assert_failure_error_shape.metta",
+      "cetta_result": {
+        "bytes": 64,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_failure_error_shape.expected",
+        "sha256": "ebba729fee30f77043379b810e8824cd6197c089cba880800993cc20498809d6",
+        "text": "[(Error (assert (and True False)) ((and True False) not True))]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "(Error (assert (and True False)) ((and True False) not True))"
+      ],
+      "feature": "assert",
+      "id": "mettapedia-he-io:he_ext_assert_failure_error_shape",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "assert failure error form"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_failure_error_shape",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_includes_failure.expected",
+      "cetta_path": "tests/io_he_ext_assert_includes_failure.metta",
+      "cetta_result": {
+        "bytes": 117,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_includes_failure.expected",
+        "sha256": "bb9d8e31e5a62b8cb7c1fc42ae4ebfafe7d7e5a4c9a0ec520603cb6961a0517c",
+        "text": "[(Error (assertIncludes (superpose (41 42 43)) (A)) (assertIncludes error: (A) not included in result: (41 42 43)))]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "(Error (assertIncludes (superpose (41 42 43)) (A)) (assertIncludes error: (A) not included in result: (41 42 43)))"
+      ],
+      "feature": "assertIncludes",
+      "id": "mettapedia-he-io:he_ext_assert_includes_failure",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "assertIncludes failure error form"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_includes_failure",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_includes_unit.expected",
+      "cetta_path": "tests/io_he_ext_assert_includes_unit.metta",
+      "cetta_result": {
+        "bytes": 5,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_includes_unit.expected",
+        "sha256": "9ff6c9823226845c5397ad7e3fc42a1914c2b05336ea870319da18a7272754f4",
+        "text": "[()]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "()"
+      ],
+      "feature": "assertIncludes",
+      "id": "mettapedia-he-io:he_ext_assert_includes_unit",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "assertIncludes success"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_includes_unit",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_assert_true_unit.expected",
+      "cetta_path": "tests/io_he_ext_assert_true_unit.metta",
+      "cetta_result": {
+        "bytes": 5,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_assert_true_unit.expected",
+        "sha256": "9ff6c9823226845c5397ad7e3fc42a1914c2b05336ea870319da18a7272754f4",
+        "text": "[()]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "()"
+      ],
+      "feature": "assert",
+      "id": "mettapedia-he-io:he_ext_assert_true_unit",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "assert success returns unit"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_assert_true_unit",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_case_empty_branch.expected",
+      "cetta_path": "tests/io_he_ext_case_empty_branch.metta",
+      "cetta_result": {
+        "bytes": 6,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_case_empty_branch.expected",
+        "sha256": "ea406c675fce2b41807e3d92e77d7f1bb0806a010e469448a992bb049e6cf5b4",
+        "text": "[nok]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "nok"
+      ],
+      "feature": "case",
+      "id": "mettapedia-he-io:he_ext_case_empty_branch",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "stdlib case on Empty"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_case_empty_branch",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_case_reducing_rhs.expected",
+      "cetta_path": "tests/io_he_ext_case_reducing_rhs.metta",
+      "cetta_result": {
+        "bytes": 4,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_case_reducing_rhs.expected",
+        "sha256": "b130d086e945005dccde9902a4f20b8c7c70a680a2d019523a5102dd7d031dfa",
+        "text": "[3]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "3"
+      ],
+      "feature": "case",
+      "id": "mettapedia-he-io:he_ext_case_reducing_rhs",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "case should evaluate selected branch"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_case_reducing_rhs",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_collapse_superpose_duplicates.expected",
+      "cetta_path": "tests/io_he_ext_collapse_superpose_duplicates.metta",
+      "cetta_result": {
+        "bytes": 10,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_collapse_superpose_duplicates.expected",
+        "sha256": "049d5e5b15f74cee65952efd7c13fdc7a9bd8f279f4ae5fa82b3d9050d3b1b24",
+        "text": "[(a b a)]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "(a b a)"
+      ],
+      "feature": "collapse",
+      "id": "mettapedia-he-io:he_ext_collapse_superpose_duplicates",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "collapse collects nondet outcomes preserving duplicates"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_collapse_superpose_duplicates",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_if_false.expected",
+      "cetta_path": "tests/io_he_ext_if_false.metta",
+      "cetta_result": {
+        "bytes": 7,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_if_false.expected",
+        "sha256": "efcf697af19f91adcd78fb46f768bb0173e4699e46a2e36412dd4903a73b7080",
+        "text": "[beta]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "beta"
+      ],
+      "feature": "if",
+      "id": "mettapedia-he-io:he_ext_if_false",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "stdlib if rule"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_if_false",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/io_he_ext_if_true.expected",
+      "cetta_path": "tests/io_he_ext_if_true.metta",
+      "cetta_result": {
+        "bytes": 8,
+        "kind": "expected-file",
+        "path": "tests/io_he_ext_if_true.expected",
+        "sha256": "ef920357059a50a7c37ec956bf25348248d9c766812bef81eaa2a4aec5059b05",
+        "text": "[alpha]\n"
+      },
+      "classification": "agree",
+      "expected": [
+        "alpha"
+      ],
+      "feature": "if",
+      "id": "mettapedia-he-io:he_ext_if_true",
+      "lean_authority": [],
+      "lean_comparator": {
+        "authority_head_ref": "repositories.mettapedia.head",
+        "engine": "simpleMeTTa he-run",
+        "repository_head_ref": "repositories.algorithms.head",
+        "required": false,
+        "theorem_anchor": ""
+      },
+      "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
+      "source_kind": "mettapedia_he_io_fixture",
+      "spec_refs": [
+        "stdlib if rule"
+      ],
+      "tier": 1,
+      "tier_name": "tier1-extension-target",
+      "upstream_oracle": {
+        "baseline": "/home/zar/claude/lean-projects/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+        "engine": "Hyperon Experimental metta",
+        "fixture_id": "he_ext_if_true",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 2,
+      "cetta_expected_path": "tests/generated/he_contract/test_assert.expected",
+      "cetta_path": "tests/generated/he_contract/test_assert.metta",
+      "cetta_result": {
+        "bytes": 10,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_assert.expected",
+        "sha256": "2b7d047281e296a2e44431ed0be3ad706363e66ca361ecb09dba1e7c468efbdf",
+        "text": "[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_assert.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_assert.metta"
+      },
+      "feature": "assert",
+      "id": "generated-he-contract:test_assert",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: assert"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 5,
+      "cetta_expected_path": "tests/generated/he_contract/test_case_switch.expected",
+      "cetta_path": "tests/generated/he_contract/test_case_switch.metta",
+      "cetta_result": {
+        "bytes": 25,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_case_switch.expected",
+        "sha256": "dd651ff1310eceafe910ffe67242688aec9ffbf03f1b8eebefa3bb45100da953",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_case_switch.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_case_switch.metta"
+      },
+      "feature": "case_switch",
+      "id": "generated-he-contract:test_case_switch",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: case and switch"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 4,
+      "cetta_expected_path": "tests/generated/he_contract/test_cons_decons.expected",
+      "cetta_path": "tests/generated/he_contract/test_cons_decons.metta",
+      "cetta_result": {
+        "bytes": 20,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_cons_decons.expected",
+        "sha256": "b8c35de938502cca49b14f1ef5ca012cb807f87e5fd7f26f03174bb7ab2bb12d",
+        "text": "[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_cons_decons.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_cons_decons.metta"
+      },
+      "feature": "cons_decons",
+      "id": "generated-he-contract:test_cons_decons",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: cons-atom and decons-atom"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 3,
+      "cetta_expected_path": "tests/generated/he_contract/test_eval.expected",
+      "cetta_path": "tests/generated/he_contract/test_eval.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_eval.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_eval.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_eval.metta"
+      },
+      "feature": "eval",
+      "id": "generated-he-contract:test_eval",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: eval"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 3,
+      "cetta_expected_path": "tests/generated/he_contract/test_function_return.expected",
+      "cetta_path": "tests/generated/he_contract/test_function_return.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_function_return.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_function_return.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_function_return.metta"
+      },
+      "feature": "function_return",
+      "id": "generated-he-contract:test_function_return",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: function/return"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 3,
+      "cetta_expected_path": "tests/generated/he_contract/test_match.expected",
+      "cetta_path": "tests/generated/he_contract/test_match.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_match.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_match.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_match.metta"
+      },
+      "feature": "match",
+      "id": "generated-he-contract:test_match",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: match"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 4,
+      "cetta_expected_path": "tests/generated/he_contract/test_superpose_collapse.expected",
+      "cetta_path": "tests/generated/he_contract/test_superpose_collapse.metta",
+      "cetta_result": {
+        "bytes": 20,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_superpose_collapse.expected",
+        "sha256": "b8c35de938502cca49b14f1ef5ca012cb807f87e5fd7f26f03174bb7ab2bb12d",
+        "text": "[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_superpose_collapse.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_superpose_collapse.metta"
+      },
+      "feature": "superpose_collapse",
+      "id": "generated-he-contract:test_superpose_collapse",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: superpose and collapse"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "assertion_count": 3,
+      "cetta_expected_path": "tests/generated/he_contract/test_unify.expected",
+      "cetta_path": "tests/generated/he_contract/test_unify.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/generated/he_contract/test_unify.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/generated/he_contract/test_unify.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/generated/he_contract/test_unify.metta"
+      },
+      "feature": "unify",
+      "id": "generated-he-contract:test_unify",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_generated_he_contract",
+      "spec_refs": [
+        "HE conformance: unify"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-contract-assertion-corpus",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_a1_symbols.expected",
+      "cetta_path": "tests/he_a1_symbols.metta",
+      "cetta_result": {
+        "bytes": 35,
+        "kind": "expected-file",
+        "path": "tests/he_a1_symbols.expected",
+        "sha256": "9192d27b298dd41c40d1718faa8dfbc88f936e2a5ac31ecb34b7fdb3ad621c63",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_a1_symbols.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_a1_symbols.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_a1_symbols",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_a2_opencoggy.expected",
+      "cetta_path": "tests/he_a2_opencoggy.metta",
+      "cetta_result": {
+        "bytes": 5,
+        "kind": "expected-file",
+        "path": "tests/he_a2_opencoggy.expected",
+        "sha256": "9ff6c9823226845c5397ad7e3fc42a1914c2b05336ea870319da18a7272754f4",
+        "text": "[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_a2_opencoggy.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_a2_opencoggy.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_a2_opencoggy",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_a3_twoside.expected",
+      "cetta_path": "tests/he_a3_twoside.metta",
+      "cetta_result": {
+        "bytes": 20,
+        "kind": "expected-file",
+        "path": "tests/he_a3_twoside.expected",
+        "sha256": "b8c35de938502cca49b14f1ef5ca012cb807f87e5fd7f26f03174bb7ab2bb12d",
+        "text": "[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_a3_twoside.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_a3_twoside.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_a3_twoside",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_b0_chaining_prelim.expected",
+      "cetta_path": "tests/he_b0_chaining_prelim.metta",
+      "cetta_result": {
+        "bytes": 25,
+        "kind": "expected-file",
+        "path": "tests/he_b0_chaining_prelim.expected",
+        "sha256": "dd651ff1310eceafe910ffe67242688aec9ffbf03f1b8eebefa3bb45100da953",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_b0_chaining_prelim.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_b0_chaining_prelim.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_b0_chaining_prelim",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_b1_equal_chain.expected",
+      "cetta_path": "tests/he_b1_equal_chain.metta",
+      "cetta_result": {
+        "bytes": 40,
+        "kind": "expected-file",
+        "path": "tests/he_b1_equal_chain.expected",
+        "sha256": "0c5b0363cfc2698481e635d0d37fbecee00250e1989d8859ab96406f15779396",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_b1_equal_chain.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_b1_equal_chain.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_b1_equal_chain",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_b2_backchain.expected",
+      "cetta_path": "tests/he_b2_backchain.metta",
+      "cetta_result": {
+        "bytes": 30,
+        "kind": "expected-file",
+        "path": "tests/he_b2_backchain.expected",
+        "sha256": "9144fac3c85e0212d983d5868b26c108e4c03b1c950faa86cd098ee93a987e27",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_b2_backchain.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_b2_backchain.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_b2_backchain",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_b3_direct.expected",
+      "cetta_path": "tests/he_b3_direct.metta",
+      "cetta_result": {
+        "bytes": 20,
+        "kind": "expected-file",
+        "path": "tests/he_b3_direct.expected",
+        "sha256": "b8c35de938502cca49b14f1ef5ca012cb807f87e5fd7f26f03174bb7ab2bb12d",
+        "text": "[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_b3_direct.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_b3_direct.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_b3_direct",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_b4_nondeterm.expected",
+      "cetta_path": "tests/he_b4_nondeterm.metta",
+      "cetta_result": {
+        "bytes": 55,
+        "kind": "expected-file",
+        "path": "tests/he_b4_nondeterm.expected",
+        "sha256": "0145ed6022807e69e7125e28c5cb9d08330793ade0c3a9535ca0dbfe50e53ef4",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_b4_nondeterm.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_b4_nondeterm.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_b4_nondeterm",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_b5_types_prelim.expected",
+      "cetta_path": "tests/he_b5_types_prelim.metta",
+      "cetta_result": {
+        "bytes": 130,
+        "kind": "expected-file",
+        "path": "tests/he_b5_types_prelim.expected",
+        "sha256": "d18982d7267e3e854b2d925262c0cb4612f7f7b6e0f6ec8445ffbe11fbc25e2d",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_b5_types_prelim.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_b5_types_prelim.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_b5_types_prelim",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_c1_grounded_basic.expected",
+      "cetta_path": "tests/he_c1_grounded_basic.metta",
+      "cetta_result": {
+        "bytes": 105,
+        "kind": "expected-file",
+        "path": "tests/he_c1_grounded_basic.expected",
+        "sha256": "19f7d930f30bacc2dc8ca6b8e9884a3c93aff9d9c5bd09ea9ed66dd3c26c0295",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_c1_grounded_basic.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_c1_grounded_basic.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_c1_grounded_basic",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_c2_spaces_kb.expected",
+      "cetta_path": "tests/he_c2_spaces_kb.metta",
+      "cetta_result": {
+        "bytes": 0,
+        "kind": "expected-file",
+        "path": "tests/he_c2_spaces_kb.expected",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "text": ""
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_c2_spaces_kb.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_c2_spaces_kb.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_c2_spaces_kb",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_c3_pln_stv.expected",
+      "cetta_path": "tests/he_c3_pln_stv.metta",
+      "cetta_result": {
+        "bytes": 25,
+        "kind": "expected-file",
+        "path": "tests/he_c3_pln_stv.expected",
+        "sha256": "dd651ff1310eceafe910ffe67242688aec9ffbf03f1b8eebefa3bb45100da953",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_c3_pln_stv.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_c3_pln_stv.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_c3_pln_stv",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_d1_gadt.expected",
+      "cetta_path": "tests/he_d1_gadt.metta",
+      "cetta_result": {
+        "bytes": 70,
+        "kind": "expected-file",
+        "path": "tests/he_d1_gadt.expected",
+        "sha256": "e440c3e313ab2db0cb1f75ebbce0fdb9823cfbd894a8099681408f8ffdd00f2a",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_d1_gadt.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_d1_gadt.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_d1_gadt",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_d2_higherfunc.expected",
+      "cetta_path": "tests/he_d2_higherfunc.metta",
+      "cetta_result": {
+        "bytes": 125,
+        "kind": "expected-file",
+        "path": "tests/he_d2_higherfunc.expected",
+        "sha256": "005a891adda805772bd8567fc9f317bc5fa4c025575acef0c3dd8bceac8601f3",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_d2_higherfunc.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_d2_higherfunc.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_d2_higherfunc",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_d3_deptypes.expected",
+      "cetta_path": "tests/he_d3_deptypes.metta",
+      "cetta_result": {
+        "bytes": 40,
+        "kind": "expected-file",
+        "path": "tests/he_d3_deptypes.expected",
+        "sha256": "0c5b0363cfc2698481e635d0d37fbecee00250e1989d8859ab96406f15779396",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_d3_deptypes.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_d3_deptypes.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_d3_deptypes",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_d4_type_prop.expected",
+      "cetta_path": "tests/he_d4_type_prop.metta",
+      "cetta_result": {
+        "bytes": 90,
+        "kind": "expected-file",
+        "path": "tests/he_d4_type_prop.expected",
+        "sha256": "3e93c03607604609a92d6fae12c6ab09688692edd026c3525c0f775d6d08ebcc",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_d4_type_prop.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_d4_type_prop.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_d4_type_prop",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_d5_auto_types.expected",
+      "cetta_path": "tests/he_d5_auto_types.metta",
+      "cetta_result": {
+        "bytes": 35,
+        "kind": "expected-file",
+        "path": "tests/he_d5_auto_types.expected",
+        "sha256": "9192d27b298dd41c40d1718faa8dfbc88f936e2a5ac31ecb34b7fdb3ad621c63",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_d5_auto_types.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_d5_auto_types.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_d5_auto_types",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_e1_kb_write.expected",
+      "cetta_path": "tests/he_e1_kb_write.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/he_e1_kb_write.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_e1_kb_write.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_e1_kb_write.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_e1_kb_write",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_e2_states.expected",
+      "cetta_path": "tests/he_e2_states.metta",
+      "cetta_result": {
+        "bytes": 70,
+        "kind": "expected-file",
+        "path": "tests/he_e2_states.expected",
+        "sha256": "e440c3e313ab2db0cb1f75ebbce0fdb9823cfbd894a8099681408f8ffdd00f2a",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_e2_states.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_e2_states.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_e2_states",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_e3_match_states.expected",
+      "cetta_path": "tests/he_e3_match_states.metta",
+      "cetta_result": {
+        "bytes": 45,
+        "kind": "expected-file",
+        "path": "tests/he_e3_match_states.expected",
+        "sha256": "1ded3f0ceba745e2d0a799627fe98d5080ade22aa8dcfe89d25404a09f12c784",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_e3_match_states.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_e3_match_states.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_e3_match_states",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/he_g1_docs.expected",
+      "cetta_path": "tests/he_g1_docs.metta",
+      "cetta_result": {
+        "bytes": 534,
+        "kind": "expected-file",
+        "path": "tests/he_g1_docs.expected",
+        "sha256": "fc37f5bb9c6e5e3d06a8a0cd780d69ded27e774f4ee530c433b9cc8a3eb3c904",
+        "text": "Function some-func: (-> Arg1Type Arg2Type ReturnType) Test function\nParameters:\n  Arg1Type First argument\n  Arg2Type Second argument\nReturn: (type ReturnType) Return value\nAtom SomeSymbol: SomeType Test symbol atom having specific type\nFunction some-gnd-atom: %Undefined% Test function\nParameters:\n  %Undefined% First argument\n  %Undefined% Second argument\nReturn: (type %Undefined%) Return value\nNo documentation found for NoSuchAtom\nNo documentation found for (some-func arg1 arg2)\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "upstream-he-divergence",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/he_g1_docs.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/he_g1_docs.metta"
+      },
+      "feature": "historical_he_ladder",
+      "id": "cetta-he-example:he_g1_docs",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Historical HE example corpus. Formal HE follows the documented stdlib @doc/get-doc/help! surface for the active language/profile: get-doc returns @doc-formal data for surfaces available in that profile and hides unavailable extension surfaces. Upstream HE 0.2.10 fails the @doc-formal assertion with IncorrectNumberOfArguments.",
+      "source_kind": "cetta_he_example",
+      "spec_refs": [],
+      "tier": 2,
+      "tier_name": "tier2-historical-he-example",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_bad_type_error.expected",
+      "cetta_path": "tests/test_bad_type_error.metta",
+      "cetta_result": {
+        "bytes": 5,
+        "kind": "expected-file",
+        "path": "tests/test_bad_type_error.expected",
+        "sha256": "9ff6c9823226845c5397ad7e3fc42a1914c2b05336ea870319da18a7272754f4",
+        "text": "[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_bad_type_error.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_bad_type_error.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_bad_type_error",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md line 147, TypeCheck.lean:126-148"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_chain_nondet.expected",
+      "cetta_path": "tests/test_chain_nondet.metta",
+      "cetta_result": {
+        "bytes": 5,
+        "kind": "expected-file",
+        "path": "tests/test_chain_nondet.expected",
+        "sha256": "9ff6c9823226845c5397ad7e3fc42a1914c2b05336ea870319da18a7272754f4",
+        "text": "[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_chain_nondet.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_chain_nondet.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_chain_nondet",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: minimal-metta.md lines 103-116"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_context_space.expected",
+      "cetta_path": "tests/test_context_space.metta",
+      "cetta_result": {
+        "bytes": 8,
+        "kind": "expected-file",
+        "path": "tests/test_context_space.expected",
+        "sha256": "049d6f38b58e7af16f75d4e01848542c93f259aa76a83c93e6073b6f3fcb4d6f",
+        "text": "[found]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_context_space.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_context_space.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_context_space",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: minimal-metta.md line 193"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_empty_handling.expected",
+      "cetta_path": "tests/test_empty_handling.metta",
+      "cetta_result": {
+        "bytes": 25,
+        "kind": "expected-file",
+        "path": "tests/test_empty_handling.expected",
+        "sha256": "dd651ff1310eceafe910ffe67242688aec9ffbf03f1b8eebefa3bb45100da953",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_empty_handling.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_empty_handling.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_empty_handling",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md lines 127-128, minimal-metta.md lines 57-59"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_eval_grounded.expected",
+      "cetta_path": "tests/test_eval_grounded.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/test_eval_grounded.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "upstream-he-divergence",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_eval_grounded.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_eval_grounded.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_eval_grounded",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Formal HE follows CeTTa's documented reading: when eval reaches a non-reducible expression E, the user-visible result is E itself. Upstream HE 0.2.10 instead leaves the wrapper as (eval E).",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: minimal-metta.md lines 75-101"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_evalc.expected",
+      "cetta_path": "tests/test_evalc.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/test_evalc.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_evalc.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_evalc.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_evalc",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md line 173-174"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_float_ops.expected",
+      "cetta_path": "tests/test_float_ops.metta",
+      "cetta_result": {
+        "bytes": 40,
+        "kind": "expected-file",
+        "path": "tests/test_float_ops.expected",
+        "sha256": "0c5b0363cfc2698481e635d0d37fbecee00250e1989d8859ab96406f15779396",
+        "text": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_float_ops.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_float_ops.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_float_ops",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md grounded atoms"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_function_type_check.expected",
+      "cetta_path": "tests/test_function_type_check.metta",
+      "cetta_result": {
+        "bytes": 20,
+        "kind": "expected-file",
+        "path": "tests/test_function_type_check.expected",
+        "sha256": "b8c35de938502cca49b14f1ef5ca012cb807f87e5fd7f26f03174bb7ab2bb12d",
+        "text": "[()]\n[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_function_type_check.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_function_type_check.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_function_type_check",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md lines 384-427, TypeCheck.lean:55-116"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_match_atoms_bidir.expected",
+      "cetta_path": "tests/test_match_atoms_bidir.metta",
+      "cetta_result": {
+        "bytes": 10,
+        "kind": "expected-file",
+        "path": "tests/test_match_atoms_bidir.expected",
+        "sha256": "2b7d047281e296a2e44431ed0be3ad706363e66ca361ecb09dba1e7c468efbdf",
+        "text": "[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_match_atoms_bidir.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_match_atoms_bidir.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_match_atoms_bidir",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md lines 577-617"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_meta_types.expected",
+      "cetta_path": "tests/test_meta_types.metta",
+      "cetta_result": {
+        "bytes": 10,
+        "kind": "expected-file",
+        "path": "tests/test_meta_types.expected",
+        "sha256": "2b7d047281e296a2e44431ed0be3ad706363e66ca361ecb09dba1e7c468efbdf",
+        "text": "[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_meta_types.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_meta_types.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_meta_types",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md lines 108-123"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_no_return_error.expected",
+      "cetta_path": "tests/test_no_return_error.metta",
+      "cetta_result": {
+        "bytes": 52,
+        "kind": "expected-file",
+        "path": "tests/test_no_return_error.expected",
+        "sha256": "fb5deaf4fb72b6060131220c913d09f3029b51885a1585e51a787ee1f7f0b595",
+        "text": "[(Error (function (chain (+ 1 2) $x $x)) NoReturn)]\n"
+      },
+      "classification": "upstream-he-divergence",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_no_return_error.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_no_return_error.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_no_return_error",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. CeTTa returns (Error ... NoReturn) for a function block without return, matching minimal-metta.md function/return lines 134-136; upstream HE 0.2.10 returns a fresh variable.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: minimal-metta.md lines 134-136"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_nondeterministic_types.expected",
+      "cetta_path": "tests/test_nondeterministic_types.metta",
+      "cetta_result": {
+        "bytes": 133,
+        "kind": "expected-file",
+        "path": "tests/test_nondeterministic_types.expected",
+        "sha256": "d150227eae0f646a14c3250ac7b7765339af16230423f30f81f306d43f69e86e",
+        "text": "[(Error (assertEqual (Add Z Ten) Ten) \"\\nExpected: [Ten]\\nGot: [(Add Z Ten)]\\nMissed results: Ten\\nExcessive results: (Add Z Ten)\")]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_nondeterministic_types.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_nondeterministic_types.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_nondeterministic_types",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md interpret_expression, multiple types tried"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_string_ops.expected",
+      "cetta_path": "tests/test_string_ops.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/test_string_ops.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_string_ops.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_string_ops.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_string_ops",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md grounded atoms"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_type_cast.expected",
+      "cetta_path": "tests/test_type_cast.metta",
+      "cetta_result": {
+        "bytes": 15,
+        "kind": "expected-file",
+        "path": "tests/test_type_cast.expected",
+        "sha256": "26b4898cd1952a7e0351ff9843b6b8543459747119a648fcef685c969b2f102d",
+        "text": "[()]\n[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_type_cast.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_type_cast.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_type_cast",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: metta.md lines 275-296, TypeCheck.lean:126-148"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    },
+    {
+      "cetta_expected_path": "tests/test_variable_scoping.expected",
+      "cetta_path": "tests/test_variable_scoping.metta",
+      "cetta_result": {
+        "bytes": 10,
+        "kind": "expected-file",
+        "path": "tests/test_variable_scoping.expected",
+        "sha256": "2b7d047281e296a2e44431ed0be3ad706363e66ca361ecb09dba1e7c468efbdf",
+        "text": "[()]\n[()]\n"
+      },
+      "classification": "agree",
+      "comparison_evidence": {
+        "cetta_command": "cetta --profile he-compat --lang he tests/test_variable_scoping.metta",
+        "method": "exact-output probe of CeTTa --profile he-compat against upstream HE 0.2.10 on 2026-06-06",
+        "upstream_command": "conda run -n hyperon metta tests/test_variable_scoping.metta"
+      },
+      "feature": "spec_reference",
+      "id": "cetta-ref-test:test_variable_scoping",
+      "lean_authority": [],
+      "lean_comparator": {},
+      "notes": "Hand-written CeTTa test cites official HE/minimal MeTTa spec. Direct CeTTa/upstream HE exact-output probe agreed.",
+      "source_kind": "cetta_spec_referenced_test",
+      "spec_refs": [
+        "Ref: minimal-metta.md lines 180-207"
+      ],
+      "tier": 2,
+      "tier_name": "tier2-spec-referenced-test",
+      "upstream_oracle": {
+        "engine": "Hyperon Experimental metta",
+        "mode": "direct-file-probe",
+        "repository_head_ref": "repositories.hyperon_experimental.head",
+        "version": "0.2.10"
+      }
+    }
+  ],
+  "catalog_date": "2026-06-07",
+  "classification_values": [
+    "agree",
+    "cetta-bug",
+    "lean-spec-bug",
+    "official-spec-gap",
+    "upstream-he-divergence",
+    "intentional-cetta-divergence",
+    "he-prime-only",
+    "needs-triage"
+  ],
+  "no_runtime_trace_or_certificate_surface": true,
+  "oracle_versions": {
+    "lean_executable": "simpleMeTTa he-run (algorithms repo)",
+    "upstream_hyperon_experimental": "metta-0.2.10"
+  },
+  "profile_policy": {
+    "formal_he": {
+      "doc_surface_sentence": "get-doc and help! follow the documented stdlib documentation surface for the active language/profile; unavailable extension surfaces are hidden, and upstream HE 0.2.10 get-doc arity failures on the HE documentation example are treated as upstream divergence.",
+      "eval_surface_sentence": "When the eval instruction reaches a non-reducible expression E, the user-visible formal-HE result is E itself.",
+      "scope": "Spec-faithful HE interpretation used as the formal base for OSLF/NTT/DTT work."
+    },
+    "he_compat": {
+      "scope": "Compatibility catalog for upstream Hyperon Experimental HE 0.2.10. Cases that intentionally follow the written/formal HE spec rather than upstream quirks remain classified explicitly."
+    }
+  },
+  "repositories": {
+    "algorithms": {
+      "dirty": true,
+      "head": "56bde7542953263044a42a57031f4b7d85876628",
+      "path": "/home/zar/claude/lean-projects/algorithms"
+    },
+    "cetta": {
+      "dirty": true,
+      "head": "776a6edfdcb70d41a993a533c50c98d7f04d5640",
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime"
+    },
+    "hyperon_experimental": {
+      "dirty": false,
+      "head": "3f76dc460da6961f57f69f6c3e550c59c74ada83",
+      "path": "/home/zar/claude/hyperon/hyperon-experimental"
+    },
+    "mettapedia": {
+      "dirty": true,
+      "head": "56bde7542953263044a42a57031f4b7d85876628",
+      "path": "/home/zar/claude/lean-projects/mettapedia"
+    }
+  },
+  "schema_version": 1,
+  "subject": "CeTTa HE-compatible runtime surface",
+  "summary": {
+    "by_classification": {
+      "agree": 60,
+      "upstream-he-divergence": 3
+    },
+    "by_source_kind": {
+      "cetta_generated_he_contract": 8,
+      "cetta_he_example": 21,
+      "cetta_spec_referenced_test": 15,
+      "mettapedia_he_io_fixture": 19
+    },
+    "by_tier": {
+      "0": 6,
+      "1": 13,
+      "2": 44
+    },
+    "tier0_1_needs_triage": 0,
+    "total": 63
+  }
+}

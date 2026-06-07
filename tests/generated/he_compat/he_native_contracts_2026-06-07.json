@@ -1,0 +1,687 @@
+{
+  "contract_date": "2026-06-07",
+  "contracts": {
+    "arity_surface": {
+      "lts_declarations": [
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:transitions",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:trace-2",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:is-normal-form",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:is-can-step",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:transitions",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:step-state",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:trace-2",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:is-normal-form",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:is-can-step",
+          "return_type": "Bool"
+        }
+      ],
+      "profile_surface_policies": [
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "_minimal-foldl-atom"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "foldl-atom-in-space"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "foldl-atom"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "extension_only",
+          "surface": "count-atoms"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "module-inventory!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "runtime-stats!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "reset-runtime-stats!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "register-module!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "git-module!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "import!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "include"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "mod-space!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "print-mods!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "capture"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "quote"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "unquote"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "sealed"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "collect"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "fold"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "fold-by-key"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "reduce"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "select"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "once"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "translator_compat_surface",
+          "surface": "singleton-visible-witness"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "search-policy"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "new-space-kind"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-set-backend!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "space-set-match-backend!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "size"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-len"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-push"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-peek"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-pop"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-get"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-truncate"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "step!"
+        }
+      ],
+      "profiles": [
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": true,
+          "name": "he-compat",
+          "note": "HE-compatible public/runtime surface."
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": true,
+          "name": "he-extended",
+          "note": "HE-compatible surface plus labeled CeTTa extensions."
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": true,
+          "he_compatible_surface": false,
+          "name": "he-prime",
+          "note": "Binder-aware dependent telescope elaboration atop he-extended."
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": false,
+          "name": "strict-core",
+          "note": "Strict-core rho-calculus without cost-layer extensions."
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": false,
+          "name": "cost",
+          "note": "Meredith cost-accounted rho extension (ground-signature token-gated slice)."
+        }
+      ]
+    },
+    "profile_doc_surface": [
+      {
+        "id": "get-doc-respects-profile-surface",
+        "implementation_anchors": [
+          "src/session.c:CETTA_SURFACE_POLICIES",
+          "src/eval.c:__cetta_surface-available",
+          "lib/stdlib.metta:get-doc"
+        ],
+        "regression_tests": [
+          "tests/support/profile_get_doc_compat_surface.metta",
+          "tests/support/profile_get_doc_extended_surface.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:profile/lang surfaces"
+        ],
+        "statement": "get-doc only returns documentation for surfaces available in the active HE language/profile; public HE surfaces remain documented, while extension-only surfaces are hidden from he-compat.",
+        "status": "implemented-and-regression-tested"
+      }
+    ],
+    "result_algebra": [
+      {
+        "id": "empty-zero-visible-result-bag",
+        "implementation_anchors": [
+          "src/eval.c:result_set_filter_empty",
+          "src/eval.c:outcome_set_normalize_visible_frontier",
+          "src/main.c:write_results"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta",
+          "tests/he_d4_type_prop.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:minimal-metta Empty result algebra"
+        ],
+        "statement": "Empty contributes no visible result when a non-Empty result survives in a finished HE result/frontier bag.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "empty-not-lts-successor",
+        "implementation_anchors": [
+          "src/library.c:lts_he_transitions_frontier"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta"
+        ],
+        "spec_refs": [
+          "lib/lts.metta:quiescent states are reported by zero results",
+          "lib/lts/he.metta:lts:he:transitions emits zero results on quiescent atoms"
+        ],
+        "statement": "Empty is not emitted as a quoted lts:he successor state.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "surviving-branch-reenters-evaluator",
+        "implementation_anchors": [
+          "src/eval.c:eval_delayed_outcome_for_caller",
+          "src/eval.c:atom_is_constructor_normal_form"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta",
+          "tests/he_c3_pln_stv.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:minimal-metta applicative evaluation order"
+        ],
+        "statement": "A surviving branch from an overlapping nondeterministic equation frontier is evaluated applicatively even when a sibling branch collapses to Empty.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "success-frontier-filters-errors",
+        "implementation_anchors": [
+          "src/eval.c:outcome_set_filter_errors_if_success",
+          "src/eval.c:outcome_set_normalize_visible_frontier"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:minimal-metta result collection"
+        ],
+        "statement": "A visible successful frontier suppresses sibling Error outcomes; Empty alone does not count as success for that filter.",
+        "status": "implemented-and-regression-tested"
+      }
+    ]
+  },
+  "kind": "he-native-contract-ledger",
+  "profile_policy": {
+    "formal_he": {
+      "doc_surface_sentence": "get-doc and help! follow the documented stdlib documentation surface for the active language/profile; unavailable extension surfaces are hidden, and upstream HE 0.2.10 get-doc arity failures on the HE documentation example are treated as upstream divergence.",
+      "eval_surface_sentence": "When the eval instruction reaches a non-reducible expression E, the user-visible formal-HE result is E itself.",
+      "scope": "Spec-faithful HE interpretation used as the formal base for OSLF/NTT/DTT work."
+    },
+    "he_compat": {
+      "scope": "Compatibility catalog for upstream Hyperon Experimental HE 0.2.10. Cases that intentionally follow the written/formal HE spec rather than upstream quirks remain classified explicitly."
+    }
+  },
+  "provenance": {
+    "cetta_cli": {
+      "bytes": 70024,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/main.c",
+      "sha256": "6c6ccd4c6ec055453344638e0484bc5b8ab7acf7a7b7bebd008f7a16e3222cbe"
+    },
+    "cetta_eval": {
+      "bytes": 554731,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/eval.c",
+      "sha256": "ddba3905ca812bbbe43b4d98633b8c75c4a02458f5f62960b60446a5c03ad694"
+    },
+    "cetta_library": {
+      "bytes": 278506,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/library.c",
+      "sha256": "68d5256b36db85d6d3f8ba058a05a7656595ba35b7c75b12da8d2ddd1541f0ba"
+    },
+    "cetta_session": {
+      "bytes": 23336,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/session.c",
+      "sha256": "97582db59c11a33d37853d0835dc435f7a6796596507dc992bedc5ad519674b1"
+    },
+    "cetta_session_header": {
+      "bytes": 10324,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/session.h",
+      "sha256": "52cfca580f6a30d85b23a4d88e01d602117c1110b3facb256f4815fba1a57f0a"
+    },
+    "frontier_regression": {
+      "bytes": 1418,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/test_he_frontier_algebra_regression.metta",
+      "sha256": "8a38eaf83d983d9d6ba98289e5f35010c72ec7580b6050c0f7aecab19903af84"
+    },
+    "he_c3_regression": {
+      "bytes": 2708,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/he_c3_pln_stv.metta",
+      "sha256": "fb1d38e28591e53bb017e810f83ea27ad6df96d13fa711db7be3c1f80363614f"
+    },
+    "he_compat_catalog": {
+      "bytes": 96658,
+      "exists": true,
+      "path": "tests/generated/he_compat/he_compat_cases_2026-06-07.json",
+      "sha256": "37986f6ac87b8c15fb581084b9f309a2f0b750d65e5aefc2fc4d5cb9109e1bed"
+    },
+    "he_d4_regression": {
+      "bytes": 5571,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/he_d4_type_prop.metta",
+      "sha256": "142acb1deebd51a2e4917bd0cdab856380a63119f4c71bf43247350d82190b82"
+    },
+    "lts_generic_surface": {
+      "bytes": 2875,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/lib/lts.metta",
+      "sha256": "3b022cdcc70d136520a89574ebf49bcc0477cb1eaf018ed9a1a95e6bcc825234"
+    },
+    "lts_he_surface": {
+      "bytes": 3117,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/lib/lts/he.metta",
+      "sha256": "ccf34f57f88b2dde03d56dd35ada09c58ee3c85eafa418e468db576a627c4f6c"
+    },
+    "official_he_spec_snapshot": {
+      "bytes": 22826,
+      "exists": true,
+      "path": "/home/zar/claude/tmp/he_metta_official_specs.md",
+      "sha256": "1a968394c5b03ff9cb9233af1de2d07a1426c44a6d438d302d05a1f008827e08"
+    },
+    "profile_get_doc_compat_regression": {
+      "bytes": 86,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/support/profile_get_doc_compat_surface.metta",
+      "sha256": "82f701363be5066f366ba0102d77abf64f88d4923a36e2e56fc0dd4fff7c2009"
+    },
+    "profile_get_doc_extended_regression": {
+      "bytes": 97,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/support/profile_get_doc_extended_surface.metta",
+      "sha256": "b6fdc759e4a8178d553c7e29e6916b7a3ba04d988136c7cffda40be6af5683c2"
+    },
+    "stdlib_surface": {
+      "bytes": 34119,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/lib/stdlib.metta",
+      "sha256": "cdbbff9c596864013bf2e4232c39aab6af537e8d5b9734f344990f7b956061c5"
+    },
+    "symbol_table": {
+      "bytes": 18079,
+      "exists": true,
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/symbol.h",
+      "sha256": "354a549c0ed5bdc05f89c2d6e8199f60a864f86fb38105d1ec92b6ada30442c6"
+    }
+  },
+  "repositories": {
+    "algorithms": {
+      "dirty": true,
+      "head": "56bde7542953263044a42a57031f4b7d85876628",
+      "path": "/home/zar/claude/lean-projects/algorithms"
+    },
+    "cetta": {
+      "dirty": true,
+      "head": "776a6edfdcb70d41a993a533c50c98d7f04d5640",
+      "path": "/home/zar/claude/hyperon/cetta-dtt-prime"
+    },
+    "hyperon_experimental": {
+      "dirty": false,
+      "head": "3f76dc460da6961f57f69f6c3e550c59c74ada83",
+      "path": "/home/zar/claude/hyperon/hyperon-experimental"
+    },
+    "mettapedia": {
+      "dirty": true,
+      "head": "56bde7542953263044a42a57031f4b7d85876628",
+      "path": "/home/zar/claude/lean-projects/mettapedia"
+    }
+  },
+  "schema_version": 1,
+  "status": "generated-design-and-test-ledger-not-runtime-feature"
+}

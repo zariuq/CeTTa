@@ -2,9 +2,14 @@
 """Sync generated HE contract tests from Mettapedia into CeTTa's test tree.
 
 This keeps the local CeTTa runner path cheap and self-contained:
-- copy the generated `.metta` files into `tests/generated/he_contract/`
+- copy the source `.metta` files into `tests/generated/he_contract/`
 - generate simple `.expected` files with one `[()]` per top-level assertion
 - never delete extra local files automatically
+
+The preferred source is the Mettapedia artifact export.  The live tree does not
+always have that export materialized, so this script falls back to the explicit
+checked-in CeTTa seed copy under `tests/support/he_contract_sources/`.  The
+fallback keeps regeneration working, but it is not an external authority.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ DEFAULT_SOURCE = (
     / "conformance"
     / "he_contract_tests"
 )
+FALLBACK_SOURCE = ROOT / "tests" / "support" / "he_contract_sources"
 DEFAULT_DEST = ROOT / "tests" / "generated" / "he_contract"
 
 
@@ -37,9 +43,20 @@ def expected_text(assertion_count: int) -> str:
     return "\n".join("[()]" for _ in range(assertion_count)) + "\n"
 
 
+def resolve_source(source: Path) -> Path:
+    if source.is_dir():
+        return source
+    if source == DEFAULT_SOURCE and FALLBACK_SOURCE.is_dir():
+        print(
+            "Mettapedia HE contract export not found; "
+            f"using local seed source {FALLBACK_SOURCE}"
+        )
+        return FALLBACK_SOURCE
+    raise FileNotFoundError(f"source directory not found: {source}")
+
+
 def sync_contract_tests(source: Path, dest: Path) -> int:
-    if not source.is_dir():
-        raise FileNotFoundError(f"source directory not found: {source}")
+    source = resolve_source(source)
 
     dest.mkdir(parents=True, exist_ok=True)
     synced = 0

@@ -2133,6 +2133,8 @@ static Atom *lts_he_transitions_frontier(Arena *a, Atom *state,
 
     for (uint32_t i = 0; i < results->len; i++) {
         Atom *candidate = results->items[i];
+        if (atom_is_empty(candidate))
+            continue;
         if (atom_is_error(candidate)) {
             if (!first_error) first_error = candidate;
             continue;
