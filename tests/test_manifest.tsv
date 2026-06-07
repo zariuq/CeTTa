@@ -182,6 +182,7 @@ tests/test_git_module_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_git_module_missing.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hash_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_compat_surface_regressions.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_he_frontier_algebra_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_nested_binding_substitution_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_if_equal.metta	he	metta	he-extended	main	native	test	golden	-

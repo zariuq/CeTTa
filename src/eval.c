@@ -561,6 +561,18 @@ void result_set_add(ResultSet *rs, Atom *atom) {
     rs->items[rs->len++] = atom;
 }
 
+static void result_set_filter_empty(ResultSet *rs) {
+    CettaCount out = 0;
+    if (!rs)
+        return;
+    for (CettaCount i = 0; i < rs->len; i++) {
+        if (atom_is_empty(rs->items[i]))
+            continue;
+        rs->items[out++] = rs->items[i];
+    }
+    rs->len = out;
+}
+
 void result_set_free(ResultSet *rs) {
     free(rs->items);
     rs->items = NULL;
@@ -920,6 +932,7 @@ static Atom *space_backend_or_symbol_error(Arena *a, Atom *call,
 static bool is_function_type(Atom *a);
 static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                         Atom ***out_types);
+static bool type_expr_is_well_formed_profiled(Space *s, Arena *a, Atom *ty);
 
 static bool grounded_dispatch_accepts_data_arg(SymbolId head_id, uint32_t arg_index) {
     return arg_index == 1 &&
@@ -1278,6 +1291,10 @@ static __attribute__((unused)) bool outcome_atom_is_empty_or_error(Arena *a, Out
     return atom_is_empty_or_error(outcome_atom_materialize(a, out));
 }
 
+static bool outcome_atom_is_empty_result(Arena *a, Outcome *out) {
+    return atom_is_empty(outcome_atom_materialize(a, out));
+}
+
 static void bindings_array_free(Bindings *items, uint32_t len) {
     if (!items) return;
     for (uint32_t i = 0; i < len; i++)
@@ -1631,10 +1648,37 @@ static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
         bindings_free(&merged);
 }
 
+static void outcome_set_filter_empty_if_nonempty(Arena *a, OutcomeSet *os) {
+    bool has_non_empty = false;
+    for (CettaCount i = 0; i < os->len; i++) {
+        if (!outcome_atom_is_empty_result(a, &os->items[i])) {
+            has_non_empty = true;
+            break;
+        }
+    }
+    if (!has_non_empty) return;
+
+    CettaCount out = 0;
+    for (CettaCount i = 0; i < os->len; i++) {
+        if (outcome_atom_is_empty_result(a, &os->items[i]))
+            continue;
+        if (out != i) {
+            outcome_free_fields(&os->items[out]);
+            outcome_init(&os->items[out]);
+            outcome_move(&os->items[out], &os->items[i]);
+        }
+        out++;
+    }
+    for (CettaCount i = out; i < os->len; i++)
+        outcome_free_fields(&os->items[i]);
+    os->len = out;
+}
+
 static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
     bool has_success = false;
     for (CettaCount i = 0; i < os->len; i++) {
-        if (!outcome_atom_is_error(a, &os->items[i])) {
+        if (!outcome_atom_is_empty_result(a, &os->items[i]) &&
+            !outcome_atom_is_error(a, &os->items[i])) {
             has_success = true;
             break;
         }
@@ -1655,6 +1699,11 @@ static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
     for (CettaCount i = out; i < os->len; i++)
         outcome_free_fields(&os->items[i]);
     os->len = out;
+}
+
+static void outcome_set_normalize_visible_frontier(Arena *a, OutcomeSet *os) {
+    outcome_set_filter_empty_if_nonempty(a, os);
+    outcome_set_filter_errors_if_success(a, os);
 }
 
 void outcome_set_free(OutcomeSet *os) {
@@ -3464,7 +3513,6 @@ static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
                                             Outcome *seed, int fuel,
                                             bool preserve_bindings,
                                             OutcomeSet *outcomes) {
-    Atom *head = NULL;
     Atom *preview = outcome_preview_atom(seed);
     if (!seed || !preview)
         return;
@@ -3474,13 +3522,15 @@ static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
         outcome_set_add_prefixed_outcome(a, outcomes, seed, NULL, preserve_bindings);
         return;
     }
-    head = preview->expr.elems[0];
-    if (head && head->kind == ATOM_SYMBOL &&
-        !symbol_id_is_builtin_surface(head->sym_id) &&
-        !is_grounded_op(head->sym_id) &&
-        !(g_library_context && g_library_context->foreign_runtime &&
-          cetta_foreign_is_callable_atom(head)) &&
-        !space_equations_may_match_known_head(s, head->sym_id)) {
+
+    Atom *normal_candidate = preview;
+    if (seed->env.len != 0 || seed->env.eq_len != 0 ||
+        variant_instance_present(&seed->variant)) {
+        normal_candidate = outcome_atom_materialize(a, seed);
+        if (!normal_candidate)
+            return;
+    }
+    if (atom_is_constructor_normal_form(s, a, normal_candidate, fuel)) {
         outcome_set_add_prefixed_outcome(a, outcomes, seed, NULL, preserve_bindings);
         return;
     }
@@ -6389,6 +6439,300 @@ static bool bind_domain_binder_builder(BindingsBuilder *bb, Atom *domain,
     return bindings_builder_add_var_fresh(bb, binder, term);
 }
 
+#define PROFILED_TYPE_CACHE_CAP 4096u
+#define PROFILED_TYPE_FORMATION_CACHE_CAP 4096u
+#define PROFILED_TYPE_CACHE_RESET_STORES 32768u
+
+typedef struct {
+    Space *space;
+    uint64_t revision;
+    CettaLanguageId language_id;
+    uint32_t profile_id;
+    bool dependent_telescope_enabled;
+    uint32_t atom_hash;
+    uint32_t hash;
+} ProfiledTypeCacheKey;
+
+typedef struct {
+    bool occupied;
+    ProfiledTypeCacheKey key;
+    Atom *atom_key;
+    Atom **types;
+    uint32_t count;
+} ProfiledTypeListCacheEntry;
+
+typedef struct {
+    bool occupied;
+    ProfiledTypeCacheKey key;
+    Atom *atom_key;
+    bool result;
+} ProfiledTypeFormationCacheEntry;
+
+static Arena g_profiled_type_cache_arena;
+static bool g_profiled_type_cache_arena_ready = false;
+static uint32_t g_profiled_type_cache_stores = 0;
+static ProfiledTypeListCacheEntry
+    g_profiled_type_cache[PROFILED_TYPE_CACHE_CAP];
+static ProfiledTypeFormationCacheEntry
+    g_profiled_type_formation_cache[PROFILED_TYPE_FORMATION_CACHE_CAP];
+static bool g_profiled_type_cache_config_ready = false;
+static bool g_profiled_type_cache_config_enabled = true;
+
+static bool profiled_type_cache_disabled_value(const char *raw) {
+    return raw &&
+           (strcmp(raw, "0") == 0 ||
+            strcmp(raw, "false") == 0 ||
+            strcmp(raw, "off") == 0 ||
+            strcmp(raw, "no") == 0);
+}
+
+static bool profiled_type_cache_enabled(void) {
+    if (!g_profiled_type_cache_config_ready) {
+        g_profiled_type_cache_config_enabled =
+            !profiled_type_cache_disabled_value(getenv("CETTA_TYPE_CACHE"));
+        g_profiled_type_cache_config_ready = true;
+    }
+    return g_profiled_type_cache_config_enabled;
+}
+
+static void profiled_type_cache_clear_all(void) {
+    if (g_profiled_type_cache_arena_ready)
+        arena_free(&g_profiled_type_cache_arena);
+    arena_init(&g_profiled_type_cache_arena);
+    arena_set_hashcons(&g_profiled_type_cache_arena, NULL);
+    arena_set_runtime_kind(&g_profiled_type_cache_arena,
+                           CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    memset(g_profiled_type_cache, 0, sizeof(g_profiled_type_cache));
+    memset(g_profiled_type_formation_cache, 0,
+           sizeof(g_profiled_type_formation_cache));
+    g_profiled_type_cache_arena_ready = true;
+    g_profiled_type_cache_stores = 0;
+}
+
+static bool profiled_type_cache_prepare_store(void) {
+    if (!profiled_type_cache_enabled())
+        return false;
+    if (!g_profiled_type_cache_arena_ready ||
+        g_profiled_type_cache_stores >= PROFILED_TYPE_CACHE_RESET_STORES) {
+        profiled_type_cache_clear_all();
+    }
+    g_profiled_type_cache_stores++;
+    return true;
+}
+
+static uint32_t profiled_type_cache_mix_u32(uint32_t h, uint32_t v) {
+    h ^= v + 0x9e3779b9u + (h << 6) + (h >> 2);
+    return h;
+}
+
+static uint32_t profiled_type_cache_mix_u64(uint32_t h, uint64_t v) {
+    h = profiled_type_cache_mix_u32(h, (uint32_t)(v & 0xFFFFFFFFu));
+    h = profiled_type_cache_mix_u32(h, (uint32_t)(v >> 32));
+    return h;
+}
+
+static bool profiled_type_cache_atom_input_stable(Atom *atom) {
+    if (!atom || atom_has_vars(atom) || atom_has_registry_refs(atom))
+        return false;
+    switch (atom->kind) {
+    case ATOM_SYMBOL:
+        return true;
+    case ATOM_VAR:
+        return false;
+    case ATOM_GROUNDED:
+        switch (atom->ground.gkind) {
+        case GV_INT:
+        case GV_FLOAT:
+        case GV_BOOL:
+        case GV_STRING:
+        case GV_BIGINT:
+        case GV_RATIONAL:
+            return true;
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return false;
+        }
+        return false;
+    case ATOM_EXPR:
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+            if (!profiled_type_cache_atom_input_stable(atom->expr.elems[i]))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool profiled_type_cache_result_stable(Atom *atom) {
+    if (!atom || atom_has_registry_refs(atom))
+        return false;
+    switch (atom->kind) {
+    case ATOM_SYMBOL:
+    case ATOM_VAR:
+        return true;
+    case ATOM_GROUNDED:
+        switch (atom->ground.gkind) {
+        case GV_INT:
+        case GV_FLOAT:
+        case GV_BOOL:
+        case GV_STRING:
+        case GV_BIGINT:
+        case GV_RATIONAL:
+            return true;
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return false;
+        }
+        return false;
+    case ATOM_EXPR:
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+            if (!profiled_type_cache_result_stable(atom->expr.elems[i]))
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool profiled_type_cache_make_key(Space *s, Atom *atom,
+                                         ProfiledTypeCacheKey *out) {
+    if (!profiled_type_cache_enabled() || !s || !atom ||
+        !profiled_type_cache_atom_input_stable(atom)) {
+        return false;
+    }
+    CettaEvalSession *session = active_eval_session();
+    uint32_t profile_id = UINT32_MAX;
+    if (session && session->profile)
+        profile_id = (uint32_t)session->profile->id;
+    uint32_t atom_h = atom_hash(atom);
+    uint32_t h = 2166136261u;
+    h = profiled_type_cache_mix_u64(h, (uint64_t)(uintptr_t)s);
+    h = profiled_type_cache_mix_u64(h, space_revision(s));
+    h = profiled_type_cache_mix_u32(h, session ? (uint32_t)session->language_id : 0u);
+    h = profiled_type_cache_mix_u32(h, profile_id);
+    h = profiled_type_cache_mix_u32(h, eval_dependent_telescope_enabled() ? 1u : 0u);
+    h = profiled_type_cache_mix_u32(h, atom_h);
+    *out = (ProfiledTypeCacheKey){
+        .space = s,
+        .revision = space_revision(s),
+        .language_id = session ? session->language_id : CETTA_LANGUAGE_HE,
+        .profile_id = profile_id,
+        .dependent_telescope_enabled = eval_dependent_telescope_enabled(),
+        .atom_hash = atom_h,
+        .hash = h,
+    };
+    return true;
+}
+
+static bool profiled_type_cache_key_matches(const ProfiledTypeCacheKey *lhs,
+                                            const ProfiledTypeCacheKey *rhs) {
+    return lhs->space == rhs->space &&
+           lhs->revision == rhs->revision &&
+           lhs->language_id == rhs->language_id &&
+           lhs->profile_id == rhs->profile_id &&
+           lhs->dependent_telescope_enabled == rhs->dependent_telescope_enabled &&
+           lhs->atom_hash == rhs->atom_hash &&
+           lhs->hash == rhs->hash;
+}
+
+static bool profiled_type_cache_copy_types_from_entry(Arena *a,
+                                                      const ProfiledTypeListCacheEntry *entry,
+                                                      Atom ***out_types,
+                                                      uint32_t *out_count) {
+    if (!entry || !entry->occupied || !out_types || !out_count)
+        return false;
+    if (entry->count == 0) {
+        *out_types = NULL;
+        *out_count = 0;
+        return true;
+    }
+    Atom **types = cetta_malloc(sizeof(Atom *) * entry->count);
+    for (uint32_t i = 0; i < entry->count; i++) {
+        Atom *fresh = atom_freshen_epoch(a, entry->types[i], fresh_var_suffix());
+        types[i] = atom_deep_copy(a, fresh);
+    }
+    *out_types = types;
+    *out_count = entry->count;
+    return true;
+}
+
+static bool profiled_type_cache_lookup(Space *s, Arena *a, Atom *atom,
+                                       Atom ***out_types,
+                                       uint32_t *out_count) {
+    ProfiledTypeCacheKey key;
+    if (!profiled_type_cache_make_key(s, atom, &key))
+        return false;
+    ProfiledTypeListCacheEntry *entry =
+        &g_profiled_type_cache[key.hash % PROFILED_TYPE_CACHE_CAP];
+    if (!entry->occupied ||
+        !profiled_type_cache_key_matches(&entry->key, &key) ||
+        !atom_eq(entry->atom_key, atom)) {
+        return false;
+    }
+    return profiled_type_cache_copy_types_from_entry(a, entry, out_types, out_count);
+}
+
+static void profiled_type_cache_store(Space *s, Atom *atom,
+                                      Atom **types, uint32_t count) {
+    ProfiledTypeCacheKey key;
+    if (!profiled_type_cache_make_key(s, atom, &key))
+        return;
+    for (uint32_t i = 0; i < count; i++) {
+        if (!profiled_type_cache_result_stable(types[i]))
+            return;
+    }
+    if (!profiled_type_cache_prepare_store())
+        return;
+
+    ProfiledTypeListCacheEntry *entry =
+        &g_profiled_type_cache[key.hash % PROFILED_TYPE_CACHE_CAP];
+    entry->occupied = true;
+    entry->key = key;
+    entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, atom);
+    entry->count = count;
+    entry->types = NULL;
+    if (count == 0)
+        return;
+    entry->types =
+        arena_alloc(&g_profiled_type_cache_arena, sizeof(Atom *) * count);
+    for (uint32_t i = 0; i < count; i++)
+        entry->types[i] = atom_deep_copy(&g_profiled_type_cache_arena, types[i]);
+}
+
+static bool profiled_type_formation_cache_lookup(Space *s, Atom *ty,
+                                                 bool *out_result) {
+    ProfiledTypeCacheKey key;
+    if (!profiled_type_cache_make_key(s, ty, &key))
+        return false;
+    ProfiledTypeFormationCacheEntry *entry =
+        &g_profiled_type_formation_cache[key.hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
+    if (!entry->occupied ||
+        !profiled_type_cache_key_matches(&entry->key, &key) ||
+        !atom_eq(entry->atom_key, ty)) {
+        return false;
+    }
+    *out_result = entry->result;
+    return true;
+}
+
+static void profiled_type_formation_cache_store(Space *s, Atom *ty, bool result) {
+    ProfiledTypeCacheKey key;
+    if (!profiled_type_cache_make_key(s, ty, &key) ||
+        !profiled_type_cache_prepare_store()) {
+        return;
+    }
+    ProfiledTypeFormationCacheEntry *entry =
+        &g_profiled_type_formation_cache[key.hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
+    entry->occupied = true;
+    entry->key = key;
+    entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, ty);
+    entry->result = result;
+}
+
 static Atom *normalize_type_expr_profiled(Arena *a, Atom *ty) {
     if (ty->kind != ATOM_EXPR || ty->expr.len < 2) return ty;
     Atom **new_elems = arena_alloc(a, sizeof(Atom *) * ty->expr.len);
@@ -6407,6 +6751,233 @@ static Atom *normalize_type_expr_profiled(Arena *a, Atom *ty) {
         if (result) return result;
     }
     return norm;
+}
+
+static bool atom_is_type_sort(Atom *atom) {
+    static SymbolId type_id = SYMBOL_ID_NONE;
+    if (type_id == SYMBOL_ID_NONE)
+        type_id = symbol_intern_cstr(g_symbols, "Type");
+    return atom_is_symbol_id(atom, type_id);
+}
+
+static bool type_expr_bind_success(Bindings *env, Arena *scratch,
+                                   Atom *domain, Atom *arg,
+                                   Atom *plain_domain_var) {
+    BindingsBuilder bb;
+    if (!bindings_builder_init(&bb, env))
+        return false;
+    bool ok = true;
+    if (plain_domain_var) {
+        Atom *arg_term =
+            bindings_apply_if_vars(bindings_builder_bindings(&bb), scratch, arg);
+        ok = bindings_builder_add_var_fresh(&bb, plain_domain_var, arg_term);
+    }
+    if (ok) {
+        Atom *arg_term =
+            bindings_apply_if_vars(bindings_builder_bindings(&bb), scratch, arg);
+        ok = bind_domain_binder_builder(&bb, domain, arg_term);
+    }
+    if (ok) {
+        Bindings next;
+        bindings_init(&next);
+        bindings_builder_take(&bb, &next);
+        bindings_replace(env, &next);
+    } else {
+        bindings_builder_free(&bb);
+    }
+    return ok;
+}
+
+static bool type_expr_constructor_contract_matches(Space *s, Arena *a,
+                                                   Atom *type_app,
+                                                   Atom *func_type) {
+    if (!is_function_type(func_type) || !type_app ||
+        type_app->kind != ATOM_EXPR || type_app->expr.len < 2) {
+        return false;
+    }
+    if (func_type->expr.len - 2 != type_app->expr.len - 1)
+        return false;
+
+    Arena scratch;
+    arena_init(&scratch);
+    arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_hashcons(&scratch, NULL);
+
+    Atom *fresh_ft = atom_freshen_epoch(&scratch, func_type, fresh_var_suffix());
+    Bindings env;
+    bindings_init(&env);
+    bool all_ok = true;
+
+    for (CettaExprIndex ai = 0;
+         ai < type_app->expr.len - 1 && all_ok;
+         ai++) {
+        Atom *domain = fresh_ft->expr.elems[ai + 1];
+        Atom *binder = NULL;
+        Atom *decl = function_domain_type(&env, &scratch, domain, &binder);
+        Atom *arg = type_app->expr.elems[ai + 1];
+
+        if (!type_expr_is_well_formed_profiled(s, &scratch, decl)) {
+            all_ok = false;
+            break;
+        }
+
+        if (decl->kind == ATOM_VAR) {
+            all_ok = type_expr_bind_success(&env, &scratch, domain, arg, decl);
+            continue;
+        }
+
+        if (atom_is_type_sort(decl)) {
+            all_ok =
+                type_expr_is_well_formed_profiled(s, &scratch, arg) &&
+                type_expr_bind_success(&env, &scratch, domain, arg, NULL);
+            continue;
+        }
+
+        if (atom_is_meta_type(decl)) {
+            all_ok =
+                atom_meta_type_accepts(&scratch, decl, arg) &&
+                type_expr_bind_success(&env, &scratch, domain, arg, NULL);
+            continue;
+        }
+
+        Atom **arg_types = NULL;
+        uint32_t n_arg_types = get_atom_types_profiled(s, &scratch, arg, &arg_types);
+        bool found = false;
+        SearchContext trial_context;
+        if (!search_context_init(&trial_context, &env, &scratch)) {
+            free(arg_types);
+            all_ok = false;
+            break;
+        }
+
+        for (uint32_t ti = 0; ti < n_arg_types; ti++) {
+            ChoicePoint point = search_context_save(&trial_context);
+            if (match_types_builder(decl, arg_types[ti],
+                                    search_context_builder(&trial_context))) {
+                Atom *arg_term =
+                    bindings_apply_if_vars(search_context_bindings(&trial_context),
+                                           search_context_scratch(&trial_context),
+                                           arg);
+                if (bind_domain_binder_builder(search_context_builder(&trial_context),
+                                               domain, arg_term)) {
+                    Bindings next;
+                    bindings_init(&next);
+                    search_context_take(&trial_context, &next);
+                    bindings_replace(&env, &next);
+                    found = true;
+                    break;
+                }
+            }
+            search_context_rollback(&trial_context, point);
+        }
+        search_context_free(&trial_context);
+        free(arg_types);
+        all_ok = found;
+    }
+
+    bool ret_ok = false;
+    if (all_ok) {
+        Atom *ret = bindings_apply_if_vars(&env, &scratch,
+                                           get_function_ret_type(fresh_ft));
+        ret = normalize_type_expr_profiled(&scratch, ret);
+        ret_ok = atom_is_type_sort(ret);
+    }
+
+    bindings_free(&env);
+    arena_free(&scratch);
+    return all_ok && ret_ok;
+}
+
+static bool function_type_expr_is_well_formed_profiled(Space *s, Arena *a,
+                                                       Atom *ty) {
+    if (!ty || ty->kind != ATOM_EXPR || ty->expr.len == 0 ||
+        !atom_is_symbol_id(ty->expr.elems[0], g_builtin_syms.arrow)) {
+        return false;
+    }
+    if (ty->expr.len == 1)
+        return true;
+    if (!is_function_type(ty))
+        return false;
+    for (CettaExprIndex i = 1; i + 1 < ty->expr.len; i++) {
+        Atom *binder = NULL;
+        Atom *body = NULL;
+        split_dependent_domain(ty->expr.elems[i], &binder, &body);
+        (void)binder;
+        if (!type_expr_is_well_formed_profiled(s, a, body))
+            return false;
+    }
+    return type_expr_is_well_formed_profiled(s, a,
+                                             get_function_ret_type(ty));
+}
+
+static bool type_expr_is_well_formed_profiled_uncached(Space *s, Arena *a,
+                                                       Atom *ty) {
+    if (!ty)
+        return false;
+    if (ty->kind == ATOM_GROUNDED)
+        return false;
+    if (ty->kind == ATOM_SYMBOL || ty->kind == ATOM_VAR)
+        return true;
+    if (ty->kind != ATOM_EXPR)
+        return true;
+    if (ty->expr.len == 0)
+        return true;
+    if (atom_is_symbol_id(ty->expr.elems[0], g_builtin_syms.arrow))
+        return function_type_expr_is_well_formed_profiled(s, a, ty);
+    if (ty->expr.len < 2)
+        return true;
+
+    Atom *head = ty->expr.elems[0];
+    Atom **head_types = NULL;
+    uint32_t n_head_types = get_atom_types(s, a, head, &head_types);
+    bool saw_type_constructor_contract = false;
+    bool accepted = false;
+
+    for (uint32_t i = 0; i < n_head_types; i++) {
+        Atom *ft = head_types[i];
+        if (!is_function_type(ft))
+            continue;
+        Atom *ret = get_function_ret_type(ft);
+        if (!atom_is_type_sort(ret))
+            continue;
+        saw_type_constructor_contract = true;
+        if (type_expr_constructor_contract_matches(s, a, ty, ft)) {
+            accepted = true;
+            break;
+        }
+    }
+
+    free(head_types);
+    return saw_type_constructor_contract ? accepted : true;
+}
+
+static bool type_expr_is_well_formed_profiled(Space *s, Arena *a, Atom *ty) {
+    bool result = false;
+    if (profiled_type_formation_cache_lookup(s, ty, &result))
+        return result;
+    result = type_expr_is_well_formed_profiled_uncached(s, a, ty);
+    profiled_type_formation_cache_store(s, ty, result);
+    return result;
+}
+
+static uint32_t filter_well_formed_profiled_types(Space *s, Arena *a,
+                                                  Atom ***types_inout,
+                                                  uint32_t count) {
+    if (!eval_dependent_telescope_enabled() || count == 0 || !types_inout ||
+        !*types_inout) {
+        return count;
+    }
+    Atom **types = *types_inout;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (type_expr_is_well_formed_profiled(s, a, types[i]))
+            types[kept++] = types[i];
+    }
+    if (kept == 0) {
+        free(types);
+        *types_inout = NULL;
+    }
+    return kept;
 }
 
 static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom,
@@ -6521,9 +7092,11 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             Atom *concrete_ret =
                 normalize_type_expr_profiled(&scratch,
                                              bindings_apply_if_vars(&tb, &scratch, fresh_ret));
-            types = types ? cetta_realloc(types, sizeof(Atom *) * (count + 1))
-                          : cetta_malloc(sizeof(Atom *));
-            types[count++] = atom_deep_copy(a, concrete_ret);
+            if (type_expr_is_well_formed_profiled(s, &scratch, concrete_ret)) {
+                types = types ? cetta_realloc(types, sizeof(Atom *) * (count + 1))
+                              : cetta_malloc(sizeof(Atom *));
+                types[count++] = atom_deep_copy(a, concrete_ret);
+            }
         }
         bindings_free(&tb);
         arena_reset(&scratch, scratch_mark);
@@ -6539,13 +7112,25 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
     return count;
 }
 
-static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
-                                        Atom ***out_types) {
+static uint32_t get_atom_types_profiled_uncached(Space *s, Arena *a, Atom *atom,
+                                                 Atom ***out_types) {
     uint32_t count = get_atom_types(s, a, atom, out_types);
+    count = filter_well_formed_profiled_types(s, a, out_types, count);
     if (!eval_dependent_telescope_enabled() || atom->kind != ATOM_EXPR || count != 0) {
         return count;
     }
     return infer_dependent_application_types(s, a, atom, out_types);
+}
+
+static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
+                                        Atom ***out_types) {
+    uint32_t cached_count = 0;
+    if (profiled_type_cache_lookup(s, a, atom, out_types, &cached_count))
+        return cached_count;
+
+    uint32_t count = get_atom_types_profiled_uncached(s, a, atom, out_types);
+    profiled_type_cache_store(s, atom, *out_types, count);
+    return count;
 }
 
 /* ── Type cast (TypeCheck.lean:126-148) ────────────────────────────────── */
@@ -6832,7 +7417,7 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
         OutcomeSet os;
         outcome_set_init(&os);
         metta_call(s, a, atom, etype, fuel > 0 ? fuel - 1 : fuel, false, &os);
-        outcome_set_filter_errors_if_success(a, &os);
+        outcome_set_normalize_visible_frontier(a, &os);
         for (CettaCount oi = 0; oi < os.len; oi++)
             result_set_add(rs,
                            outcome_atom_materialize_traced(
@@ -6877,7 +7462,7 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
         return;
     }
     metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel, true, os);
-    outcome_set_filter_errors_if_success(a, os);
+    outcome_set_normalize_visible_frontier(a, os);
 }
 
 static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, OutcomeSet *os) {
@@ -6942,7 +7527,7 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
     }
 
     metta_call(s, a, atom, etype, fuel > 0 ? fuel - 1 : fuel, true, os);
-    outcome_set_filter_errors_if_success(a, os);
+    outcome_set_normalize_visible_frontier(a, os);
 }
 
 static void eval_with_prefix_bindings(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
@@ -7444,7 +8029,7 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     OutcomeSet inner;
     outcome_set_init(&inner);
     metta_eval_bind_typed(s, a, type, applied, fuel, &inner);
-    outcome_set_filter_errors_if_success(a, &inner);
+    outcome_set_normalize_visible_frontier(a, &inner);
     outcome_set_append_prefixed_move(a, os, &inner, NULL, false);
     outcome_set_free(&inner);
 }
@@ -12576,6 +13161,20 @@ tail_call: ;
         return;
     }
 
+    if (head_id == g_builtin_syms.cetta_surface_available && nargs == 1) {
+        Atom *target = expr_arg(atom, 0);
+        const char *surface_name = NULL;
+        if (target->kind == ATOM_SYMBOL) {
+            surface_name = atom_name_cstr(target);
+        } else if (target->kind == ATOM_EXPR && target->expr.len > 0 &&
+                   target->expr.elems[0]->kind == ATOM_SYMBOL) {
+            surface_name = atom_name_cstr(target->expr.elems[0]);
+        }
+        outcome_set_add(os, atom_bool(a,
+            !surface_name || active_surface_allowed(surface_name)), &_empty);
+        return;
+    }
+
     /* ── get-metatype ───────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.get_metatype) {
         if (nargs != 1) {
@@ -12757,6 +13356,7 @@ tail_call: ;
         ResultSet actual;
         result_set_init(&actual);
         metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, &actual);
+        result_set_filter_empty(&actual);
         result_set_resolve_registry_refs(a, &actual);
         Atom *expected_list = expr_arg(atom, 1);
         bool ok = false;
@@ -12829,6 +13429,7 @@ tail_call: ;
         ResultSet actual;
         result_set_init(&actual);
         metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        result_set_filter_empty(&actual);
         result_set_resolve_registry_refs(a, &actual);
         Atom *expected_list = expr_arg(atom, 1);
         bool ok = false;
@@ -12934,6 +13535,7 @@ tail_call: ;
         ResultSet actual;
         result_set_init(&actual);
         metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        result_set_filter_empty(&actual);
         Atom *expected_list = expr_arg(atom, 1);
         bool ok = false;
         if (expected_list->kind == ATOM_EXPR && actual.len == expected_list->expr.len) {
@@ -12963,6 +13565,7 @@ tail_call: ;
         ResultSet actual;
         result_set_init(&actual);
         metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        result_set_filter_empty(&actual);
         Atom *expected_list = expr_arg(atom, 1);
         bool ok = false;
         if (expected_list->kind == ATOM_EXPR && actual.len == expected_list->expr.len) {
@@ -12992,6 +13595,7 @@ tail_call: ;
         ResultSet actual;
         result_set_init(&actual);
         metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &actual);
+        result_set_filter_empty(&actual);
         Atom *expected_list = expr_arg(atom, 1);
         /* Check that every expected item is in the actual results */
         bool ok = true;
