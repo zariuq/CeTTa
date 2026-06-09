@@ -6,6 +6,17 @@
 (= (mock:step c) e)
 (= (mock:step d) (superpose ()))
 (= (mock:step e) (superpose ()))
+(= (mock:true $_) True)
+(= (mock:false $_) False)
+(= (mock:is-b b) True)
+(= (mock:is-b $_) False)
+(= (mock:not-b b) False)
+(= (mock:not-b $_) True)
+
+; Mixed frontier policy: a frontier containing both Error and ordinary
+; successors is treated as an ordinary frontier rather than being promoted
+; to Error. Only a pure singleton Error frontier is propagated.
+(= (mixed:step x) (superpose ((Error mixed msg) ok)))
 
 !(assertEqualToResult
   (collapse (lts:transitions mock:step a))
@@ -29,6 +40,42 @@
 
 !(assertEqualToResult
   (lts:is-can-step mock:step d)
+  (False))
+
+!(assertEqual
+  (lts:box mock:step mock:false a)
+  (lts:is-normal-form mock:step a))
+
+!(assertEqual
+  (lts:box mock:step mock:false d)
+  (lts:is-normal-form mock:step d))
+
+!(assertEqual
+  (lts:diamond mock:step mock:true a)
+  (lts:is-can-step mock:step a))
+
+!(assertEqual
+  (lts:diamond mock:step mock:true d)
+  (lts:is-can-step mock:step d))
+
+!(assertEqualToResult
+  (lts:box mock:step mock:true a)
+  (True))
+
+!(assertEqualToResult
+  (lts:diamond mock:step mock:false a)
+  (False))
+
+!(assertEqual
+  (lts:box mock:step mock:is-b a)
+  (not (lts:diamond mock:step mock:not-b a)))
+
+!(assertEqualToResult
+  (lts:box mixed:step mock:true x)
+  (True))
+
+!(assertEqualToResult
+  (lts:diamond mixed:step mock:false x)
   (False))
 
 !(assertEqual
@@ -109,3 +156,11 @@
 !(assertEqualToResult
   (lts:is-can-step)
   ((Error (lts:is-can-step) IncorrectNumberOfArguments)))
+
+!(assertEqualToResult
+  (lts:box)
+  ((Error (lts:box) IncorrectNumberOfArguments)))
+
+!(assertEqualToResult
+  (lts:diamond)
+  ((Error (lts:diamond) IncorrectNumberOfArguments)))

@@ -8,6 +8,7 @@
 (: math:min (-> Number Number Number))
 (: math:max (-> Number Number Number))
 (: math:clamp (-> Number Number Number Number))
+(: math:mod (-> Number Number Number))
 (: math:pow (-> Number Number Number))
 (: math:sqrt (-> Number Number))
 (: math:abs (-> Number Number))
@@ -42,6 +43,13 @@
     (@param "Upper bound")
     (@param "Input value")))
   (@return "Input clamped into the inclusive [min, max] interval"))
+
+(@doc math:mod
+  (@desc "Euclidean modulo in the math: namespace. The result is the canonical non-negative remainder modulo the absolute divisor.")
+  (@params (
+    (@param "Dividend")
+    (@param "Divisor")))
+  (@return "Non-negative remainder less than the absolute divisor"))
 
 (@doc math:pow
   (@desc "Namespaced wrapper over CeTTa's grounded pow-math surface.")
@@ -125,6 +133,9 @@
 
 (= (math:clamp $min $max $v)
    (math:min $max (math:max $v $min)))
+
+(= (math:mod $a $b)
+   (- $a (* (math:abs $b) (// $a (math:abs $b)))))
 
 (= (math:pow $base $exponent)
    (pow-math $base $exponent))

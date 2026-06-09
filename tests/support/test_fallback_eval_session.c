@@ -7,6 +7,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 int main(void) {
     int rc = 1;
@@ -41,20 +42,30 @@ int main(void) {
 
     result_set_init(&rs);
     eval_top(&space, &eval_arena, expr, &rs);
-    if (rs.len != 1) {
+    if (rs.len != 2) {
         fprintf(stderr, "unexpected result count: %" PRIu64 "\n", rs.len);
         result_set_free(&rs);
         goto cleanup;
     }
 
     char *rendered = atom_to_string(&arena, rs.items[0]);
-    if (!rendered) {
+    char *rendered2 = atom_to_string(&arena, rs.items[1]);
+    if (!rendered || !rendered2) {
         fprintf(stderr, "render failure\n");
         result_set_free(&rs);
         goto cleanup;
     }
+    if (!((strcmp(rendered, "(once 1)") == 0 &&
+           strcmp(rendered2, "(once 2)") == 0) ||
+          (strcmp(rendered, "(once 2)") == 0 &&
+           strcmp(rendered2, "(once 1)") == 0))) {
+        fprintf(stderr, "unexpected fallback results: [%s, %s]\n",
+                rendered, rendered2);
+        result_set_free(&rs);
+        goto cleanup;
+    }
 
-    fputs(rendered, stdout);
+    printf("[%s, %s]", rendered, rendered2);
     result_set_free(&rs);
     rc = 0;
 

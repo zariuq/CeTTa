@@ -155,6 +155,7 @@ typedef struct {
     X(op_minus, "-") \
     X(op_mul, "*") \
     X(op_div, "/") \
+    X(op_floor_div, "//") \
     X(op_mod, "%") \
     X(op_lt, "<") \
     X(op_gt, ">") \

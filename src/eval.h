@@ -69,7 +69,7 @@ void eval_set_default_fuel(int fuel);
 int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
-uint64_t eval_current_max_rational_digits(void);
+bool eval_current_uses_rust_he_compat_semantics(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
 Registry *eval_current_registry(void);
 Arena *eval_current_persistent_arena(void);

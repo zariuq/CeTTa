@@ -1,8 +1,6 @@
-; Runtime parsing observes the rational growth ceiling before arithmetic.
+; Exact rational parsing is unbounded; resource caps belong outside semantics.
 
 !(pragma! prefer-rationals True)
-
-!(pragma! max-rational-digits 5)
 
 !(parse "1/3")
 

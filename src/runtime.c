@@ -51,13 +51,7 @@ Atom *cetta_atom_bigint(Arena *a, const char *val) {
 }
 
 Atom *cetta_atom_rational(Arena *a, const char *val) {
-    bool too_large = false;
-    Atom *out = atom_rational_limited(
-        a, val, CETTA_RATIONAL_DEFAULT_MAX_DIGITS, &too_large);
-    if (too_large)
-        return atom_error(a, atom_symbol(a, val),
-                          atom_symbol(a, "RationalTooLarge"));
-    return out;
+    return atom_rational(a, val);
 }
 
 Atom *cetta_atom_expr(Arena *a, Atom **elems, CettaExprLen len) {

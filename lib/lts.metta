@@ -15,6 +15,8 @@
 (: lts:trace-2 (-> Atom Atom %Undefined%))
 (: lts:is-normal-form (-> Atom Atom Bool))
 (: lts:is-can-step (-> Atom Atom Bool))
+(: lts:box (-> Atom Atom Atom Bool))
+(: lts:diamond (-> Atom Atom Atom Bool))
 
 (@doc lts:transitions
   (@desc "Generic one-step LTS frontier adapter. Applies the supplied step relation to the supplied state, preserving whatever one-step successor surface that relation exposes.")
@@ -44,6 +46,22 @@
     (@param "State to inspect")))
   (@return "True when at least one successor exists, False when the frontier is empty, or Error when the step relation reports Error"))
 
+(@doc lts:box
+  (@desc "Checks whether every one-step successor exposed by the supplied step relation satisfies the supplied unary predicate symbol. A pure singleton Error frontier propagates unchanged, matching lts:is-normal-form. An empty frontier makes lts:box vacuously True. Mixed frontiers that contain Error among ordinary successors are folded as ordinary frontiers rather than being promoted to Error.")
+  (@params (
+    (@param "One-step step relation")
+    (@param "Unary Bool-valued predicate symbol over successor states")
+    (@param "State to inspect")))
+  (@return "True when every successor satisfies the predicate, False when at least one successor fails it, or Error when the step relation reports a pure singleton Error frontier"))
+
+(@doc lts:diamond
+  (@desc "Checks whether some one-step successor exposed by the supplied step relation satisfies the supplied unary predicate symbol. A pure singleton Error frontier propagates unchanged, matching lts:is-can-step. An empty frontier makes lts:diamond False. Mixed frontiers that contain Error among ordinary successors are folded as ordinary frontiers rather than being promoted to Error.")
+  (@params (
+    (@param "One-step step relation")
+    (@param "Unary Bool-valued predicate symbol over successor states")
+    (@param "State to inspect")))
+  (@return "True when some successor satisfies the predicate, False when no successor satisfies it, or Error when the step relation reports a pure singleton Error frontier"))
+
 (= (lts:transitions $step $state)
    ($step $state))
 
@@ -63,3 +81,19 @@
      (((Error $ctx $msg) (Error $ctx $msg))
       (True False)
       (False True))))
+
+(= (lts:box $step $phi $state)
+   (case (collapse ($step $state))
+     ((((Error $ctx $msg)) (Error $ctx $msg))
+      (() True)
+      ($frontier
+       (foldl-atom $frontier True $acc $q
+         (if $acc ($phi $q) False))))))
+
+(= (lts:diamond $step $phi $state)
+   (case (collapse ($step $state))
+     ((((Error $ctx $msg)) (Error $ctx $msg))
+      (() False)
+      ($frontier
+       (foldl-atom $frontier False $acc $q
+         (if $acc True ($phi $q)))))))
