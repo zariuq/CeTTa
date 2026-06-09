@@ -49,4 +49,9 @@ bool parser_rest_is_delimiters(const char *text, size_t *pos);
    either the original token or an arena-owned canonical copy. */
 const char *parser_canonicalize_namespace_token(Arena *a, const char *tok);
 
+/* Reader option used by he-compat: Rust HE treats slash tokens such as 2/4 as
+   ordinary symbols unless an operation explicitly interprets them. */
+bool parser_set_rational_literals_enabled(bool enabled);
+bool parser_rational_literals_enabled(void);
+
 #endif /* CETTA_PARSER_H */

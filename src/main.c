@@ -538,18 +538,28 @@ done:
     return rc;
 }
 
-static void write_results(FILE *out, ResultSet *rs) {
+static void write_results(FILE *out, ResultSet *rs,
+                          CettaLanguageId language_id,
+                          const CettaProfile *profile) {
     FILE *logical_dest = stdout;
     ResultSet visible = {0};
     Atom **visible_items = NULL;
     uint32_t visible_len = 0;
-    if (rs->len == 0) return;  /* HE prints nothing for empty result sets */
+    bool rust_compat =
+        cetta_language_uses_rust_he_compat_semantics(language_id, profile);
+    if (rs->len == 0) {
+        if (rust_compat) fprintf(out, "[]\n");
+        return;
+    }
 
     for (uint32_t i = 0; i < rs->len; i++) {
         if (!atom_is_empty(rs->items[i]))
             visible_len++;
     }
-    if (visible_len == 0) return;
+    if (visible_len == 0) {
+        if (rust_compat) fprintf(out, "[]\n");
+        return;
+    }
     if (visible_len != rs->len) {
         visible_items = malloc(sizeof(Atom *) * visible_len);
         if (!visible_items) return;
@@ -861,7 +871,7 @@ static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
-    fputs("       cetta [--lang he --profile <he-compat|he-extended|he-prime>] <file.metta>\n", out);
+    fputs("       cetta [--lang he --profile <he|he-compat|he-extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
@@ -893,125 +903,51 @@ static void print_version(FILE *out) {
     fprintf(out, "cetta %s (%s)\n", CETTA_VERSION_STRING, CETTA_BUILD_MODE_STRING);
 }
 
-static const char *active_scope_name(CettaLanguageId language_id,
-                                     const CettaProfile *profile) {
-    if (profile && profile->name) return profile->name;
-    return cetta_language_canonical_name(language_id);
-}
-
-static const char *active_scope_kind(const CettaProfile *profile) {
-    return profile ? "profile" : "language";
-}
-
-static const char *find_profile_blocked_surface(CettaLanguageId language_id,
-                                                const CettaProfile *profile,
-                                                Atom *atom) {
-    if (!atom) return NULL;
-    if (atom->kind != ATOM_EXPR || atom->expr.len == 0) return NULL;
-
-    Atom *head = atom->expr.elems[0];
-    if (head->kind == ATOM_SYMBOL) {
-        if (atom_is_symbol_id(head, g_builtin_syms.quote)) {
-            return NULL;
-        }
-        if (!cetta_language_allows_surface(language_id, profile, atom_name_cstr(head))) {
-            return atom_name_cstr(head);
-        }
-        if (atom_is_symbol_id(head, g_builtin_syms.colon) && atom->expr.len >= 2 &&
-            atom->expr.elems[1]->kind == ATOM_SYMBOL &&
-            !cetta_language_allows_surface(language_id, profile,
-                                           atom_name_cstr(atom->expr.elems[1]))) {
-            return atom_name_cstr(atom->expr.elems[1]);
-        }
-    }
-
-    for (CettaExprIndex i = 1; i < atom->expr.len; i++) {
-        const char *blocked = find_profile_blocked_surface(language_id, profile,
-                                                           atom->expr.elems[i]);
-        if (blocked) return blocked;
-    }
-    return NULL;
-}
-
 static bool compile_profile_guard_ok(CettaLanguageId language_id,
                                      const CettaProfile *profile,
                                      Atom **atoms,
                                      int n) {
-    for (int i = 0; i < n; i++) {
-        Atom *at = atoms[i];
-        if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
-            i++;
-            continue;
-        }
-        const char *blocked = find_profile_blocked_surface(language_id, profile, at);
-        if (blocked) {
-            const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
-            fprintf(stderr, "error: surface '%s' is unavailable in %s '%s'",
-                    blocked, active_scope_kind(profile),
-                    active_scope_name(language_id, profile));
-            if (policy && policy->surface_classification) {
-                fprintf(stderr, " (%s)", policy->surface_classification);
-            }
-            fputc('\n', stderr);
-            return false;
-        }
-    }
+    (void)language_id;
+    (void)profile;
+    (void)atoms;
+    (void)n;
     return true;
-}
-
-static bool atom_id_is_symbol_id(const TermUniverse *universe, AtomId atom_id,
-                                 SymbolId sym_id) {
-    return universe && atom_id != CETTA_ATOM_ID_NONE &&
-           tu_kind(universe, atom_id) == ATOM_SYMBOL &&
-           tu_sym(universe, atom_id) == sym_id;
 }
 
 static bool compile_profile_guard_ok_ids(CettaLanguageId language_id,
                                          const CettaProfile *profile,
                                          TermUniverse *universe,
                                          const AtomId *atom_ids, int n) {
-    if (!universe)
-        return false;
-    if (n <= 0)
-        return true;
-    if (!atom_ids)
-        return false;
-    for (int i = 0; i < n; i++) {
-        AtomId atom_id = atom_ids[i];
-        if (atom_id_is_symbol_id(universe, atom_id, g_builtin_syms.bang)) {
-            i++;
-            continue;
-        }
-        Atom *at = term_universe_get_atom(universe, atom_id);
-        if (!at) {
-            fprintf(stderr, "error: could not decode parsed term for compile guard\n");
-            return false;
-        }
-        const char *blocked = find_profile_blocked_surface(language_id, profile, at);
-        if (blocked) {
-            const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(blocked);
-            fprintf(stderr, "error: surface '%s' is unavailable in %s '%s'",
-                    blocked, active_scope_kind(profile),
-                    active_scope_name(language_id, profile));
-            if (policy && policy->surface_classification) {
-                fprintf(stderr, " (%s)", policy->surface_classification);
-            }
-            fputc('\n', stderr);
-            return false;
-        }
-    }
+    (void)language_id;
+    (void)profile;
+    (void)universe;
+    (void)atom_ids;
+    (void)n;
     return true;
 }
 
-static bool main_try_add_builtin_type_decls_direct(Space *space) {
+static bool atom_id_is_symbol_id(TermUniverse *universe, AtomId atom_id,
+                                 SymbolId sym_id) {
+    Atom *atom = term_universe_get_atom(universe, atom_id);
+    return atom && atom_is_symbol_id(atom, sym_id);
+}
+
+static bool main_try_add_builtin_type_decls_direct(Space *space,
+                                                   CettaLanguageId language_id,
+                                                   const CettaProfile *profile) {
     if (!space || !space->native.universe)
         return false;
 
-    static const char *arith_ops[] = {"+", "-", "*", "/", "%", NULL};
+    static const char *arith_ops_base[] = {"+", "-", "*", "/", "%", NULL};
+    static const char *arith_ops_formal[] = {"+", "-", "*", "/", "//", "%", NULL};
     static const char *cmp_ops[] = {"<", ">", "<=", ">=", NULL};
+    const char **arith_ops =
+        cetta_language_uses_rust_he_compat_semantics(language_id, profile)
+        ? arith_ops_base
+        : arith_ops_formal;
 
     TermUniverse *universe = space->native.universe;
-    AtomId decl_ids[11];
+    AtomId decl_ids[12];
     uint32_t decl_count = 0;
 
     AtomId colon_id = tu_intern_symbol(universe, g_builtin_syms.colon);
@@ -1078,8 +1014,10 @@ static bool main_try_add_builtin_type_decls_direct(Space *space) {
     return true;
 }
 
-static void main_add_builtin_type_decls(Space *space, Arena *arena) {
-    if (main_try_add_builtin_type_decls_direct(space))
+static void main_add_builtin_type_decls(Space *space, Arena *arena,
+                                        CettaLanguageId language_id,
+                                        const CettaProfile *profile) {
+    if (main_try_add_builtin_type_decls_direct(space, language_id, profile))
         return;
 
     Atom *num = atom_symbol(arena, "Number");
@@ -1088,7 +1026,12 @@ static void main_add_builtin_type_decls(Space *space, Arena *arena) {
     Atom *bool_t = atom_symbol(arena, "Bool");
     Atom *arrow_nnb = atom_expr(arena, (Atom*[]){
         atom_symbol_id(arena, g_builtin_syms.arrow), num, num, bool_t}, 4);
-    const char *arith_ops[] = {"+", "-", "*", "/", "%", NULL};
+    static const char *arith_ops_base[] = {"+", "-", "*", "/", "%", NULL};
+    static const char *arith_ops_formal[] = {"+", "-", "*", "/", "//", "%", NULL};
+    const char **arith_ops =
+        cetta_language_uses_rust_he_compat_semantics(language_id, profile)
+        ? arith_ops_base
+        : arith_ops_formal;
     const char *cmp_ops[] = {"<", ">", "<=", ">=", NULL};
     for (const char **op = arith_ops; *op; op++) {
         Atom *decl = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.colon),
@@ -1139,6 +1082,8 @@ typedef struct {
     bool space_initialized;
     Registry *registry;
     bool registry_initialized;
+    bool parser_rational_literals_set;
+    bool parser_rational_literals_old;
 } CettaMainCleanup;
 
 static void cetta_main_cleanup_registry_spaces(Registry *registry, Space *root_space) {
@@ -1157,6 +1102,11 @@ static void cetta_main_cleanup_registry_spaces(Registry *registry, Space *root_s
 
 static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     if (!cleanup) return;
+
+    if (cleanup->parser_rational_literals_set) {
+        parser_set_rational_literals_enabled(cleanup->parser_rational_literals_old);
+        cleanup->parser_rational_literals_set = false;
+    }
 
     if (cleanup->output_spool) {
         fclose(cleanup->output_spool);
@@ -1726,6 +1676,10 @@ int main(int argc, char **argv) {
             CETTA_EVAL_OPTION_VALUE_SYMBOL, "true", 0);
     }
     eval_set_library_context(&libraries);
+    cleanup.parser_rational_literals_old =
+        parser_set_rational_literals_enabled(
+            !cetta_language_uses_rust_he_compat_semantics(lang->id, profile));
+    cleanup.parser_rational_literals_set = true;
 
     space_init_with_universe(&space, &libraries.term_universe);
     cleanup.space_initialized = true;
@@ -1765,7 +1719,7 @@ int main(int argc, char **argv) {
     stdlib_load(&space, &arena);
 
     /* Add grounded op type declarations (HE stdlib implicit types) */
-    main_add_builtin_type_decls(&space, &arena);
+    main_add_builtin_type_decls(&space, &arena, lang->id, profile);
 
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
@@ -1823,7 +1777,7 @@ int main(int argc, char **argv) {
                 ResultSet rs;
                 result_set_init(&rs);
                 eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
-                write_results(output_spool, &rs);
+                write_results(output_spool, &rs, lang->id, profile);
                 if (fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
                     free(rs.items);
@@ -1867,7 +1821,7 @@ int main(int argc, char **argv) {
             }
             result_set_init(&rs);
             eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
-            write_results(output_spool, &rs);
+            write_results(output_spool, &rs, lang->id, profile);
             if (fflush(output_spool) != 0) {
                 fprintf(stderr, "error: could not write output spool\n");
                 free(rs.items);

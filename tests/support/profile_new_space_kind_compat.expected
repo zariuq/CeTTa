@@ -1,0 +1,2 @@
+[(-> SpaceType)]
+[(Error (new-space 1) IncorrectNumberOfArguments)]

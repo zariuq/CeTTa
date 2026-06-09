@@ -685,12 +685,7 @@ static Atom *python_fraction_to_atom(Arena *a, PyObject *obj) {
     memcpy(text, num, nlen);
     text[nlen] = '/';
     memcpy(text + nlen + 1, den, dlen + 1);
-    bool too_large = false;
-    Atom *out = atom_rational_limited(
-        a, text, eval_current_max_rational_digits(), &too_large);
-    if (too_large)
-        out = atom_error(a, atom_symbol(a, "PythonFraction"),
-                         atom_symbol(a, "RationalTooLarge"));
+    Atom *out = atom_rational(a, text);
     free(text);
     free(num);
     free(den);

@@ -23,8 +23,8 @@ bool eval_current_prefer_rationals(void) {
 #if defined(__GNUC__)
 __attribute__((weak))
 #endif
-uint64_t eval_current_max_rational_digits(void) {
-    return 4096u;
+bool eval_current_uses_rust_he_compat_semantics(void) {
+    return false;
 }
 
 typedef struct {
@@ -244,7 +244,8 @@ bool is_grounded_op(SymbolId id) {
         return true;
     return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
            id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
-           id == g_builtin_syms.op_mod || id == g_builtin_syms.op_lt ||
+           id == g_builtin_syms.op_floor_div || id == g_builtin_syms.op_mod ||
+           id == g_builtin_syms.op_lt ||
            id == g_builtin_syms.op_gt || id == g_builtin_syms.op_le ||
            id == g_builtin_syms.op_ge || id == g_builtin_syms.op_eq ||
            id == g_builtin_syms.numeric_eq ||
@@ -358,6 +359,14 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
     return false;
 }
 
+static bool get_numeric_arg_for_math(Atom *a, NumArg *out) {
+    if (!get_numeric_arg(a, out))
+        return false;
+    if (eval_current_uses_rust_he_compat_semantics() && out->is_rational)
+        return false;
+    return true;
+}
+
 #if CETTA_BUILD_WITH_GMP
 static bool num_arg_to_mpz(const NumArg *arg, mpz_t out) {
     if (!arg || arg->is_float || arg->is_rational)
@@ -395,34 +404,26 @@ static Atom *atom_from_mpq(Arena *a, const mpq_t value) {
     return atom_rational_from_mpq(a, value);
 }
 
-static uint64_t rational_decimal_digit_count(const mpq_t value) {
-    size_t n_digits = mpz_sizeinbase(mpq_numref(value), 10);
-    size_t d_digits = mpz_sizeinbase(mpq_denref(value), 10);
-    if (n_digits > UINT64_MAX - d_digits)
-        return UINT64_MAX;
-    return (uint64_t)(n_digits + d_digits);
-}
-
-static Atom *grounded_rational_too_large(Arena *a, Atom *head, Atom **args,
-                                         uint32_t nargs) {
-    return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                      atom_symbol(a, "RationalTooLarge"));
-}
-
 static Atom *grounded_atom_from_mpq(Arena *a, Atom *head, Atom **args,
                                     uint32_t nargs, const mpq_t value) {
+    (void)head;
+    (void)args;
+    (void)nargs;
+    return atom_from_mpq(a, value);
+}
+
+static Atom *atom_from_floor_div_mpq(Arena *a, const mpq_t lhs,
+                                     const mpq_t rhs) {
+    if (mpq_sgn(rhs) == 0)
+        return NULL;
     mpq_t q;
+    mpz_t z;
     mpq_init(q);
-    mpq_set(q, value);
-    mpq_canonicalize(q);
-    uint64_t limit = eval_current_max_rational_digits();
-    if (mpz_cmp_ui(mpq_denref(q), 1u) != 0 &&
-        limit != UINT64_MAX &&
-        rational_decimal_digit_count(q) > limit) {
-        mpq_clear(q);
-        return grounded_rational_too_large(a, head, args, nargs);
-    }
-    Atom *out = atom_from_mpq(a, q);
+    mpz_init(z);
+    mpq_div(q, lhs, rhs);
+    mpz_fdiv_q(z, mpq_numref(q), mpq_denref(q));
+    Atom *out = atom_from_mpz(a, z);
+    mpz_clear(z);
     mpq_clear(q);
     return out;
 }
@@ -528,7 +529,8 @@ static Atom *grounded_rational_unavailable(Arena *a, Atom *head,
 static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
                                      Atom **args, uint32_t nargs,
                                      const NumArg *na, const NumArg *nb,
-                                     bool prefer_rationals) {
+                                     bool prefer_rationals,
+                                     bool rust_compat) {
     bool wants_rational = na->is_rational || nb->is_rational ||
                           (prefer_rationals && head_id == g_builtin_syms.op_div);
     if (wants_rational) {
@@ -556,6 +558,11 @@ static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
                 mpq_div(ri, ai, bi);
                 result = grounded_atom_from_mpq(a, head, args, nargs, ri);
             }
+        } else if (head_id == g_builtin_syms.op_floor_div) {
+            if (mpq_sgn(bi) == 0)
+                result = grounded_division_by_zero(a, head, args, nargs);
+            else
+                result = atom_from_floor_div_mpq(a, ai, bi);
         } else if (head_id == g_builtin_syms.op_mod) {
             if (mpq_sgn(bi) == 0)
                 result = grounded_division_by_zero(a, head, args, nargs);
@@ -601,11 +608,21 @@ static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
     } else if (head_id == g_builtin_syms.op_div) {
         if (mpz_sgn(bi) == 0) {
             result = grounded_division_by_zero(a, head, args, nargs);
+        } else if (rust_compat) {
+            mpz_tdiv_q(ri, ai, bi);
+            result = atom_from_mpz(a, ri);
         } else if (mpz_divisible_p(ai, bi)) {
             mpz_tdiv_q(ri, ai, bi);
             result = atom_from_mpz(a, ri);
         } else {
             result = atom_float(a, mpz_get_d(ai) / mpz_get_d(bi));
+        }
+    } else if (head_id == g_builtin_syms.op_floor_div) {
+        if (mpz_sgn(bi) == 0) {
+            result = grounded_division_by_zero(a, head, args, nargs);
+        } else {
+            mpz_fdiv_q(ri, ai, bi);
+            result = atom_from_mpz(a, ri);
         }
     } else if (head_id == g_builtin_syms.op_mod) {
         if (mpz_sgn(bi) == 0) {
@@ -638,9 +655,11 @@ static Atom *grounded_bigint_unavailable(Arena *a, Atom *head, Atom **args,
 static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
                                      Atom **args, uint32_t nargs,
                                      const NumArg *na, const NumArg *nb,
-                                     bool prefer_rationals) {
+                                     bool prefer_rationals,
+                                     bool rust_compat) {
     (void)na;
     (void)nb;
+    (void)rust_compat;
     if (prefer_rationals && head_id == g_builtin_syms.op_div)
         return grounded_rational_unavailable(a, head, args, nargs);
     (void)head_id;
@@ -683,6 +702,14 @@ static bool numeric_arg_is_integral(const NumArg *arg) {
     if (!isfinite(arg->val)) return false;
     double whole = 0.0;
     return modf(arg->val, &whole) == 0.0;
+}
+
+static int64_t floor_div_i64(int64_t lhs, int64_t rhs) {
+    int64_t q = lhs / rhs;
+    int64_t r = lhs % rhs;
+    if (r != 0 && ((r > 0) != (rhs > 0)))
+        q -= 1;
+    return q;
 }
 
 /* ── Boolean arg extraction (True/False symbols) ──────────────────────── */
@@ -786,8 +813,11 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         return atom_error(a, grounded_call_expr(a, head, args, nargs),
                           atom_symbol(a, "ParseFailed"));
 
+    bool old_rational_literals = parser_set_rational_literals_enabled(
+        !eval_current_uses_rust_he_compat_semantics());
     size_t pos = 0;
     Atom *parsed = parse_sexpr(a, args[0]->ground.sval, &pos);
+    parser_set_rational_literals_enabled(old_rational_literals);
     if (!parsed)
         return atom_error(a, grounded_call_expr(a, head, args, nargs),
                           atom_symbol(a, "ParseFailed"));
@@ -996,7 +1026,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return grounded_repr(a, head, args, nargs);
 
     if (head_id == g_builtin_syms.parse)
-        return grounded_parse_text(a, head, args, nargs, true);
+        return grounded_parse_text(a, head, args, nargs,
+                                   !eval_current_uses_rust_he_compat_semantics());
 
     if (head_id == g_builtin_syms.parse_first)
         return grounded_parse_text(a, head, args, nargs, false);
@@ -1051,7 +1082,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         NumArg base;
-        if (!get_numeric_arg(args[0], &base))
+        if (!get_numeric_arg_for_math(args[0], &base))
             return grounded_string_error(a, head, args, nargs,
                                          "pow-math expects two arguments: number (base) and number (power)");
         NumArg power;
@@ -1066,15 +1097,16 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             power.is_float = false;
             power_val = (double)n;
         } else {
-            if (!get_numeric_arg(args[1], &power))
+            if (!get_numeric_arg_for_math(args[1], &power))
                 return grounded_string_error(a, head, args, nargs,
                                              "pow-math expects two arguments: number (base) and number (power)");
             power_val = power.val;
         }
-        if (base.val == 0.0 && power.val < 0.0)
+        bool rust_compat = eval_current_uses_rust_he_compat_semantics();
+        if (!rust_compat && base.val == 0.0 && power.val < 0.0)
             return grounded_math_domain_error(a, head, args, nargs, 1,
                                               "NonZeroBaseWhenExponentNegative");
-        if (base.val < 0.0 && !numeric_arg_is_integral(&power))
+        if (!rust_compat && base.val < 0.0 && !numeric_arg_is_integral(&power))
             return grounded_math_domain_error(a, head, args, nargs, 2,
                                               "IntegralExponentWhenBaseNegative");
         double res = pow(base.val, power_val);
@@ -1085,13 +1117,15 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
         NumArg base, input;
-        if (!get_numeric_arg(args[0], &base) || !get_numeric_arg(args[1], &input))
+        if (!get_numeric_arg_for_math(args[0], &base) ||
+            !get_numeric_arg_for_math(args[1], &input))
             return grounded_string_error(a, head, args, nargs,
                                          "log-math expects two arguments: base (number) and input value (number)");
-        if (!(base.val > 0.0) || base.val == 1.0)
+        bool rust_compat = eval_current_uses_rust_he_compat_semantics();
+        if (!rust_compat && (!(base.val > 0.0) || base.val == 1.0))
             return grounded_math_domain_error(a, head, args, nargs, 1,
                                               "PositiveRealNotOne");
-        if (!(input.val > 0.0))
+        if (!rust_compat && !(input.val > 0.0))
             return grounded_math_domain_error(a, head, args, nargs, 2,
                                               "PositiveReal");
         return atom_float(a, log(input.val) / log(base.val));
@@ -1107,7 +1141,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
         NumArg input;
-        if (!get_numeric_arg(args[0], &input)) {
+        if (!get_numeric_arg_for_math(args[0], &input)) {
             const char *msg = NULL;
             if (head_id == g_builtin_syms.sqrt_math)
                 msg = "sqrt-math expects one argument: number";
@@ -1141,7 +1175,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         }
 
         if (head_id == g_builtin_syms.sqrt_math) {
-            if (input.val < 0.0)
+            bool rust_compat = eval_current_uses_rust_he_compat_semantics();
+            if (!rust_compat && input.val < 0.0)
                 return grounded_math_domain_error(a, head, args, nargs, 1,
                                                   "NonNegativeReal");
 #if CETTA_BUILD_WITH_GMP
@@ -1250,7 +1285,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (head_id == g_builtin_syms.sin_math)
             return atom_float(a, sin(input.val));
         if (head_id == g_builtin_syms.asin_math) {
-            if (input.val < -1.0 || input.val > 1.0)
+            bool rust_compat = eval_current_uses_rust_he_compat_semantics();
+            if (!rust_compat && (input.val < -1.0 || input.val > 1.0))
                 return grounded_math_domain_error(a, head, args, nargs, 1,
                                                   "ClosedUnitInterval");
             return atom_float(a, asin(input.val));
@@ -1258,7 +1294,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (head_id == g_builtin_syms.cos_math)
             return atom_float(a, cos(input.val));
         if (head_id == g_builtin_syms.acos_math) {
-            if (input.val < -1.0 || input.val > 1.0)
+            bool rust_compat = eval_current_uses_rust_he_compat_semantics();
+            if (!rust_compat && (input.val < -1.0 || input.val > 1.0))
                 return grounded_math_domain_error(a, head, args, nargs, 1,
                                                   "ClosedUnitInterval");
             return atom_float(a, acos(input.val));
@@ -1274,6 +1311,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     if (head_id == g_builtin_syms.max_atom || head_id == g_builtin_syms.min_atom) {
         bool want_max = head_id == g_builtin_syms.max_atom;
+        bool rust_compat = eval_current_uses_rust_he_compat_semantics();
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
         if (args[0]->kind != ATOM_EXPR)
@@ -1286,7 +1324,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         bool has_exact_extended = false;
         for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
             NumArg n;
-            if (!get_numeric_arg(args[0]->expr.elems[i], &n))
+            if (!get_numeric_arg(args[0]->expr.elems[i], &n) ||
+                (rust_compat && n.is_rational))
                 return grounded_expr_message_error(
                     a, head, args, nargs,
                     "Only numbers are allowed in expression: ",
@@ -1303,6 +1342,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             for (CettaExprIndex i = 0; i < args[0]->expr.len; i++) {
                 NumArg n;
                 if (!get_numeric_arg(args[0]->expr.elems[i], &n) ||
+                    (rust_compat && n.is_rational) ||
                     !num_arg_to_mpq(&n, cur_q)) {
                     mpq_clears(best_q, cur_q, NULL);
                     return grounded_expr_message_error(
@@ -1524,10 +1564,14 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     /* Check if this is an arithmetic op that expects numeric args */
     bool is_arith = (head_id == g_builtin_syms.op_plus || head_id == g_builtin_syms.op_minus ||
                      head_id == g_builtin_syms.op_mul || head_id == g_builtin_syms.op_div ||
+                     head_id == g_builtin_syms.op_floor_div ||
                      head_id == g_builtin_syms.op_mod || head_id == g_builtin_syms.op_lt ||
                      head_id == g_builtin_syms.op_gt || head_id == g_builtin_syms.op_le ||
                      head_id == g_builtin_syms.op_ge ||
                      head_id == g_builtin_syms.numeric_eq);
+    bool rust_compat = eval_current_uses_rust_he_compat_semantics();
+    if (rust_compat && head_id == g_builtin_syms.op_floor_div)
+        return NULL;
     NumArg na = {0}, nb = {0};
     bool na_ok = get_numeric_arg(args[0], &na);
     bool nb_ok = get_numeric_arg(args[1], &nb);
@@ -1545,6 +1589,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return NULL; /* Symbol/variable args → return unchanged */
     }
     if (!na_ok || !nb_ok)
+        return NULL;
+    if (rust_compat && (na.is_rational || nb.is_rational))
         return NULL;
     /* Both args are numeric from here */
     if (head_id == g_builtin_syms.numeric_eq) {
@@ -1579,7 +1625,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (!fl && (na.is_bigint || nb.is_bigint ||
                 na.is_rational || nb.is_rational)) {
         return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                       prefer_rationals);
+                                       prefer_rationals, rust_compat);
     }
 
     if (!fl) {
@@ -1591,34 +1637,44 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             if (sum >= INT64_MIN && sum <= INT64_MAX)
                 return atom_int(a, (int64_t)sum);
             return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                           prefer_rationals);
+                                           prefer_rationals, rust_compat);
         }
         if (head_id == g_builtin_syms.op_minus) {
             __int128 diff = (__int128)ai - (__int128)bi;
             if (diff >= INT64_MIN && diff <= INT64_MAX)
                 return atom_int(a, (int64_t)diff);
             return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                           prefer_rationals);
+                                           prefer_rationals, rust_compat);
         }
         if (head_id == g_builtin_syms.op_mul) {
             __int128 prod = (__int128)ai * (__int128)bi;
             if (prod >= INT64_MIN && prod <= INT64_MAX)
                 return atom_int(a, (int64_t)prod);
             return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                           prefer_rationals);
+                                           prefer_rationals, rust_compat);
         }
         if (head_id == g_builtin_syms.op_div) {
             if (bi == 0)
                 return grounded_division_by_zero(a, head, args, nargs);
             if (ai == INT64_MIN && bi == -1)
                 return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                               prefer_rationals);
+                                               prefer_rationals, rust_compat);
+            if (rust_compat)
+                return atom_int(a, ai / bi);
             if (ai % bi == 0)
                 return atom_int(a, ai / bi);
             if (prefer_rationals)
                 return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                               prefer_rationals);
+                                               prefer_rationals, rust_compat);
             return atom_float(a, (double)ai / (double)bi);
+        }
+        if (head_id == g_builtin_syms.op_floor_div) {
+            if (bi == 0)
+                return grounded_division_by_zero(a, head, args, nargs);
+            if (ai == INT64_MIN && bi == -1)
+                return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
+                                               prefer_rationals, rust_compat);
+            return atom_int(a, floor_div_i64(ai, bi));
         }
         if (head_id == g_builtin_syms.op_mod) {
             if (bi == 0)
@@ -1640,6 +1696,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
        remain usable on direct arithmetic results. */
     if (head_id == g_builtin_syms.op_div) return nb.val != 0 ? make_numeric(a, na.val / nb.val, fl)
                                                               : atom_float(a, na.val / nb.val);
+    if (head_id == g_builtin_syms.op_floor_div) return nb.val != 0 ? atom_float(a, floor(na.val / nb.val))
+                                                                   : grounded_division_by_zero(a, head, args, nargs);
     if (head_id == g_builtin_syms.op_mod) return nb.val != 0 ? make_numeric(a, fmod(na.val, nb.val), fl)
                                                               : grounded_division_by_zero(a, head, args, nargs);
     if (head_id == g_builtin_syms.op_lt)  return na.val < nb.val  ? atom_true(a) : atom_false(a);

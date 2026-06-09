@@ -297,6 +297,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_match_chain_cross_space_pathmap_regression.metta \
 	tests/test_effect_append_batch_fastpath.metta \
 	tests/test_space_batch_copy_surfaces.metta \
+	tests/test_rational_bridge_roundtrip_regression.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
 	tests/test_mork_recursive_bc_micro_regression.metta \
 	tests/test_mork_recursive_bc_regression.metta
@@ -1618,11 +1619,15 @@ test-manifest-sync:
 
 test-manifest-strict: test-manifest-check
 
-test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes
+test-forbidden-availability-errors:
+	@python3 scripts/check_forbidden_availability_errors.py
+
+test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
-	if printf '%s\n' "$$profiles" | grep -Eq '^he-compat[[:space:]]' && \
+	if printf '%s\n' "$$profiles" | grep -Eq '^he[[:space:]]' && \
+	   printf '%s\n' "$$profiles" | grep -Eq '^he-compat[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-extended[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-prime[[:space:]]'; then \
 		echo "PASS: profile inventory"; pass=$$((pass + 1)); \
@@ -1632,10 +1637,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 	base_result=$$($(CETTA_BIN_INVOKE) --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
-	if printf '%s\n' "$$base_result" | grep -Fq "surface once is unavailable in language he"; then \
-		echo "PASS: he base surface uses compat policy"; pass=$$((pass + 1)); \
+	if printf '%s\n' "$$base_result" | grep -Fq "(once "; then \
+		echo "PASS: he base leaves uninterpreted extension calls inert"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he base surface uses compat policy"; \
+		echo "FAIL: he base leaves uninterpreted extension calls inert"; \
 		printf '%s\n' "$$base_result"; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -1688,6 +1693,30 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/test_lts_he_surface.expected) <(echo "$$he_lts") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
+	formal_eval=$$($(CETTA_BIN_INVOKE) --profile he --lang he tests/test_eval_grounded.metta 2>&1); \
+	if [ "$$formal_eval" = "$$(cat tests/test_eval_grounded.expected)" ]; then \
+		echo "PASS: formal he eval surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: formal he eval surface"; \
+		diff <(cat tests/test_eval_grounded.expected) <(echo "$$formal_eval") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	formal_no_return=$$($(CETTA_BIN_INVOKE) --profile he --lang he tests/test_no_return_error.metta 2>&1); \
+	if [ "$$formal_no_return" = "$$(cat tests/test_no_return_error.expected)" ]; then \
+		echo "PASS: formal he no-return surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: formal he no-return surface"; \
+		diff <(cat tests/test_no_return_error.expected) <(echo "$$formal_no_return") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	formal_docs=$$($(CETTA_BIN_INVOKE) --profile he --lang he tests/he_g1_docs.metta 2>&1); \
+	if [ "$$formal_docs" = "$$(cat tests/he_g1_docs.expected)" ]; then \
+		echo "PASS: formal he documentation surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: formal he documentation surface"; \
+		diff <(cat tests/he_g1_docs.expected) <(echo "$$formal_docs") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
 	for profile in he-compat he-extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \
@@ -1707,18 +1736,129 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_count_atoms.metta 2>&1); \
-	if printf '%s\n' "$$result" | grep -Fq "surface count-atoms is unavailable in profile he-compat"; then \
-		echo "PASS: he-compat count-atoms guard"; pass=$$((pass + 1)); \
+	if printf '%s\n' "$$result" | grep -Fq "(count-atoms "; then \
+		echo "PASS: he-compat count-atoms Rust-inert surface"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-compat count-atoms guard"; \
+		echo "FAIL: he-compat count-atoms Rust-inert surface"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_get_doc_compat_surface.metta 2>&1); \
-	if [ "$$result" = "$$(cat tests/support/profile_get_doc_surface.expected)" ]; then \
-		echo "PASS: he-compat get-doc surface"; pass=$$((pass + 1)); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_new_space_kind_compat.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_new_space_kind_compat.expected)" ]; then \
+		echo "PASS: he-compat new-space kind overload is hidden"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-compat get-doc surface"; \
+		echo "FAIL: he-compat new-space kind overload is hidden"; \
+		diff <(cat tests/support/profile_new_space_kind_compat.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_bind_error_compat.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_bind_error_compat.expected)" ]; then \
+		echo "PASS: he-compat bind! propagates generated initializer errors"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat bind! propagates generated initializer errors"; \
+		diff <(cat tests/support/profile_bind_error_compat.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if $(CETTA_BIN_INVOKE) --profile he --lang he tests/test_deep_tail_if_constructor_regression.metta >/dev/null 2>&1 && \
+	   $(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/test_deep_tail_if_constructor_regression.metta >/dev/null 2>&1; then \
+		echo "PASS: assertion diagnostics handle large failure terms"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: assertion diagnostics handle large failure terms"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/profile_new_space_kind_extended.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_new_space_kind_extended.expected)" ]; then \
+		echo "PASS: he-extended new-space kind overload is visible"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-extended new-space kind overload is visible"; \
+		diff <(cat tests/support/profile_new_space_kind_extended.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_core_surface_compat.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_core_surface_compat.expected)" ]; then \
+		echo "PASS: he-compat core-surface extensions are hidden"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat core-surface extensions are hidden"; \
+		diff <(cat tests/support/profile_core_surface_compat.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_filter_atom_compat_error.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_filter_atom_compat_error.expected)" ]; then \
+		echo "PASS: he-compat filter-atom helper overload is hidden"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat filter-atom helper overload is hidden"; \
+		diff <(cat tests/support/profile_filter_atom_compat_error.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_include_space_target_compat_error.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_include_space_target_compat_error.expected)" ]; then \
+		echo "PASS: he-compat include target overload is hidden"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat include target overload is hidden"; \
+		diff <(cat tests/support/profile_include_space_target_compat_error.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_include_compat_surface.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_include_compat_surface.expected)" ]; then \
+		echo "PASS: he-compat include Rust result surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat include Rust result surface"; \
+		diff <(cat tests/support/profile_include_compat_surface.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_if_compat_arity.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_if_compat_arity.expected)" ]; then \
+		echo "PASS: he-compat if two-argument extension is hidden"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat if two-argument extension is hidden"; \
+		diff <(cat tests/support/profile_if_compat_arity.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_numeric_compat.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_numeric_compat.expected)" ]; then \
+		echo "PASS: he-compat numeric Rust behavior"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat numeric Rust behavior"; \
+		diff <(cat tests/support/profile_numeric_compat.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_math_domain_compat.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_math_domain_compat.expected)" ]; then \
+		echo "PASS: he-compat math-domain Rust behavior"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat math-domain Rust behavior"; \
+		diff <(cat tests/support/profile_math_domain_compat.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_parse_compat_surface.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_parse_compat_surface.expected)" ]; then \
+		echo "PASS: he-compat parse Rust surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat parse Rust surface"; \
+		diff <(cat tests/support/profile_parse_compat_surface.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he --lang he tests/support/profile_numeric_formal.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_numeric_formal.expected)" ]; then \
+		echo "PASS: formal he numeric surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: formal he numeric surface"; \
+		diff <(cat tests/support/profile_numeric_formal.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_get_doc_compat_surface.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_get_doc_compat_surface.expected)" ]; then \
+		echo "PASS: he-compat get-doc Rust surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat get-doc Rust surface"; \
+		diff <(cat tests/support/profile_get_doc_compat_surface.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he --lang he tests/support/profile_get_doc_formal_surface.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/support/profile_get_doc_surface.expected)" ]; then \
+		echo "PASS: formal he get-doc surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: formal he get-doc surface"; \
 		diff <(cat tests/support/profile_get_doc_surface.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -1739,19 +1879,17 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_size_extension.metta 2>&1); \
-	if printf '%s\n' "$$result" | grep -Fq "surface size is unavailable in profile he-compat"; then \
-		echo "PASS: he-compat size guard"; pass=$$((pass + 1)); \
+	if printf '%s\n' "$$result" | grep -Fq "(size "; then \
+		echo "PASS: he-compat size Rust-inert surface"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-compat size guard"; \
+		echo "FAIL: he-compat size Rust-inert surface"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_size_extension.metta 2>&1 >/dev/null); \
-	if printf '%s\n' "$$compile_output" | grep -Fq "surface 'size' is unavailable in profile 'he-compat'"; then \
-		echo "PASS: he-compat size compile guard"; pass=$$((pass + 1)); \
+	if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
+		echo "PASS: he-compat size compile leaves extension call inert"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-compat size compile guard"; \
-		printf '%s\n' "$$compile_output"; \
+		echo "FAIL: he-compat size compile leaves extension call inert"; \
 		fail=$$((fail + 1)); \
 	fi; \
 	if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
@@ -1769,21 +1907,21 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface foldl-atom-in-space is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat foldl-atom-in-space guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(foldl-atom-in-space "; then \
+			echo "PASS: he-compat foldl-atom-in-space Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat foldl-atom-in-space guard"; \
+			echo "FAIL: he-compat foldl-atom-in-space Rust-inert surface"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_foldl_public.metta 2>&1); \
-		if [ "$$result" = "$$(cat tests/spec_profile_foldl_public.expected)" ]; then \
-			echo "PASS: he-compat foldl-atom public surface"; pass=$$((pass + 1)); \
-		else \
-			echo "FAIL: he-compat foldl-atom public surface"; \
-			diff <(cat tests/spec_profile_foldl_public.expected) <(echo "$$result") | head -10; \
-			fail=$$((fail + 1)); \
-		fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_foldl_public.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/spec_profile_foldl_public.expected)" ]; then \
+		echo "PASS: he-compat foldl-atom Rust core surface"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-compat foldl-atom Rust core surface"; \
+		diff <(cat tests/spec_profile_foldl_public.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_collect_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_collect_extension.expected)" ]; then \
 			echo "PASS: he-extended collect extension"; pass=$$((pass + 1)); \
@@ -1793,10 +1931,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_collect_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface collect is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat collect guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(collect "; then \
+			echo "PASS: he-compat collect Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat collect guard"; \
+			echo "FAIL: he-compat collect Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1809,10 +1947,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_select_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface select is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat select guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(select "; then \
+			echo "PASS: he-compat select Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat select guard"; \
+			echo "FAIL: he-compat select Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1825,10 +1963,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_fold_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface fold is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat fold guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(fold "; then \
+			echo "PASS: he-compat fold Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat fold guard"; \
+			echo "FAIL: he-compat fold Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1841,10 +1979,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface fold-by-key is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat fold-by-key guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(fold-by-key "; then \
+			echo "PASS: he-compat fold-by-key Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat fold-by-key guard"; \
+			echo "FAIL: he-compat fold-by-key Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1857,10 +1995,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface reduce is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat reduce guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(reduce "; then \
+			echo "PASS: he-compat reduce Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat reduce guard"; \
+			echo "FAIL: he-compat reduce Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1873,10 +2011,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_runtime_stats_runtime.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface runtime-stats! is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat runtime-stats guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(runtime-stats!)"; then \
+			echo "PASS: he-compat runtime-stats Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat runtime-stats guard"; \
+			echo "FAIL: he-compat runtime-stats Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1889,10 +2027,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface once is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat once guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(once "; then \
+			echo "PASS: he-compat once Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat once guard"; \
+			echo "FAIL: he-compat once Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -1905,20 +2043,17 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface search-policy is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat search-policy guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(search-policy "; then \
+			echo "PASS: he-compat search-policy Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat search-policy guard"; \
+			echo "FAIL: he-compat search-policy Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_search_policy_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'search-policy' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile search-policy guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile search-policy leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile search-policy guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile search-policy leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
@@ -1936,20 +2071,17 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			fail=$$((fail + 1)); \
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
-		if printf '%s\n' "$$result" | grep -Fq "surface space-set-match-backend! is unavailable in profile he-compat"; then \
-			echo "PASS: he-compat space-set-match-backend! guard"; pass=$$((pass + 1)); \
+		if printf '%s\n' "$$result" | grep -Fq "(space-set-"; then \
+			echo "PASS: he-compat space-set-match-backend! Rust-inert surface"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat space-set-match-backend! guard"; \
+			echo "FAIL: he-compat space-set-match-backend! Rust-inert surface"; \
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_space_set_match_backend_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'space-set-match-backend!' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile space-set-match-backend! guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile space-set-match-backend! leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile space-set-match-backend! guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile space-set-match-backend! leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
@@ -1958,14 +2090,11 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he-extended compile space-set-match-backend!"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'count-atoms' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile count-atoms leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-		echo "FAIL: he-compat compile guard"; \
-		printf '%s\n' "$$compile_output"; \
-		fail=$$((fail + 1)); \
+			echo "FAIL: he-compat compile count-atoms leaves extension call inert"; \
+			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
 			echo "PASS: he-extended compile extension"; pass=$$((pass + 1)); \
@@ -1973,13 +2102,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he-extended compile extension"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_collect_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'collect' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile collect guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile collect leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile collect guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile collect leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
@@ -1988,13 +2114,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he-extended compile collect"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_select_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'select' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile select guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile select leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile select guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile select leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
@@ -2003,13 +2126,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he-extended compile select"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile fold guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile fold leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile fold guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile fold leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
@@ -2018,13 +2138,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he-extended compile fold"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_by_key_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'fold-by-key' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile fold-by-key guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile fold-by-key leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile fold-by-key guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile fold-by-key leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
@@ -2033,13 +2150,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he-extended compile fold-by-key"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_reduce_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'reduce' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile reduce guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile reduce leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile reduce guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile reduce leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
@@ -2048,13 +2162,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 			echo "FAIL: he-extended compile reduce"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_runtime_stats_extension.metta 2>&1 >/dev/null); \
-		status=$$?; \
-		if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'runtime-stats!' is unavailable in profile 'he-compat'"; then \
-			echo "PASS: he-compat compile runtime-stats guard"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: he-compat compile runtime-stats leaves extension call inert"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-compat compile runtime-stats guard"; \
-			printf '%s\n' "$$compile_output"; \
+			echo "FAIL: he-compat compile runtime-stats leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
@@ -2072,10 +2183,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		fail=$$((fail + 1)); \
 	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/support/profile_module_inventory_runtime.metta 2>&1); \
-	if printf '%s\n' "$$result" | grep -Fq "surface module-inventory! is unavailable in profile he-compat"; then \
-		echo "PASS: he-compat module-inventory guard"; pass=$$((pass + 1)); \
+	if printf '%s\n' "$$result" | grep -Fq "(module-inventory!)"; then \
+		echo "PASS: he-compat module-inventory Rust-inert surface"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-compat module-inventory guard"; \
+		echo "FAIL: he-compat module-inventory Rust-inert surface"; \
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -2183,13 +2294,10 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 		diff <(cat tests/profile_he_prime_structural_eq.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	compile_output=$$($(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_module_inventory.metta 2>&1 >/dev/null); \
-	status=$$?; \
-	if [ $$status -ne 0 ] && printf '%s\n' "$$compile_output" | grep -Fq "surface 'module-inventory!' is unavailable in profile 'he-compat'"; then \
-		echo "PASS: he-compat module-inventory compile guard"; pass=$$((pass + 1)); \
+	if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
+		echo "PASS: he-compat module-inventory compile leaves extension call inert"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-compat module-inventory compile guard"; \
-		printf '%s\n' "$$compile_output"; \
+		echo "FAIL: he-compat module-inventory compile leaves extension call inert"; \
 		fail=$$((fail + 1)); \
 	fi; \
 	if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
@@ -2204,11 +2312,11 @@ test-profiles: $(BIN) test-manifest test-git-module-profiles test-symbolid-guard
 
 test-fallback-eval-session: $(FALLBACK_EVAL_TEST_BIN)
 	@result=$$(./$(FALLBACK_EVAL_TEST_BIN) 2>&1); \
-	expected='(Error (once (superpose (1 2))) surface once is unavailable in language he)'; \
+	expected='[(once 1), (once 2)]'; \
 	if [ "$$result" = "$$expected" ]; then \
-		echo "PASS: fallback eval session uses base HE semantics"; \
+		echo "PASS: fallback eval session leaves uninterpreted extension call inert"; \
 	else \
-		echo "FAIL: fallback eval session uses base HE semantics"; \
+		echo "FAIL: fallback eval session leaves uninterpreted extension call inert"; \
 		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$result") | head -20; \
 		exit 1; \
 	fi
@@ -2269,7 +2377,10 @@ refresh-he-native-contracts: refresh-he-compat-catalog
 		--catalog $(HE_COMPAT_CATALOG) \
 		--out $(HE_NATIVE_CONTRACTS)
 
-test-he-contract-suite: $(BIN)
+test-he-compat-catalog-guards:
+	@python3 scripts/test_he_compat_catalog_guards.py
+
+test-he-contract-suite: $(BIN) test-he-compat-catalog-guards
 	@pass=0; fail=0; \
 	files=($(HE_CONTRACT_GENERATED_DIR)/*.metta); \
 	if [ ! -e "$${files[0]}" ]; then \
@@ -2305,6 +2416,9 @@ test-he-compat-semantic-suite: $(BIN)
 probe-he-compat-tier2: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/probe_he_compat_tier2.py \
 		--catalog $(HE_COMPAT_CATALOG)
+
+probe-he-compat-runnable-corpus: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/probe_he_compat_runnable_corpus.py
 
 test-mork-lane: test-mork-lane-core
 
@@ -3360,6 +3474,6 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts
+.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

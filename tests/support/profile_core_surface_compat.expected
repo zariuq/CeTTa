@@ -1,0 +1,7 @@
+[6]
+[(2 3)]
+[]
+[(range-atom 3)]
+[(repeat-atom 2 z)]
+[(add-atom-nodup bogus marker)]
+[(space-set-match-backend! bogus native-subst-tree)]

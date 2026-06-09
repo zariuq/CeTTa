@@ -21,22 +21,32 @@
 typedef struct Space Space;
 
 typedef enum {
-    CETTA_PROFILE_HE_COMPAT = 0,
-    CETTA_PROFILE_HE_EXTENDED = 1,
-    CETTA_PROFILE_HE_PRIME = 2,
-    CETTA_PROFILE_RHOCALC_STRICT_CORE = 3,
-    CETTA_PROFILE_RHOCALC_COST = 4
+    CETTA_PROFILE_HE_FORMAL = 0,
+    CETTA_PROFILE_HE_COMPAT = 1,
+    CETTA_PROFILE_HE_EXTENDED = 2,
+    CETTA_PROFILE_HE_PRIME = 3,
+    CETTA_PROFILE_RHOCALC_STRICT_CORE = 4,
+    CETTA_PROFILE_RHOCALC_COST = 5
 } CettaProfileId;
 
 typedef enum {
-    CETTA_PROFILE_MASK_HE_COMPAT = 1u << 0,
-    CETTA_PROFILE_MASK_HE_EXTENDED = 1u << 1,
-    CETTA_PROFILE_MASK_HE_PRIME = 1u << 2,
+    CETTA_PROFILE_MASK_HE_FORMAL = 1u << 0,
+    CETTA_PROFILE_MASK_HE_COMPAT = 1u << 1,
+    CETTA_PROFILE_MASK_HE_EXTENDED = 1u << 2,
+    CETTA_PROFILE_MASK_HE_PRIME = 1u << 3,
+    CETTA_PROFILE_MASK_HE_BASE =
+        CETTA_PROFILE_MASK_HE_FORMAL |
+        CETTA_PROFILE_MASK_HE_COMPAT,
     CETTA_PROFILE_MASK_HE_PUBLIC =
+        CETTA_PROFILE_MASK_HE_FORMAL |
         CETTA_PROFILE_MASK_HE_COMPAT |
         CETTA_PROFILE_MASK_HE_EXTENDED |
         CETTA_PROFILE_MASK_HE_PRIME,
     CETTA_PROFILE_MASK_HE_EXTENDED_PLUS =
+        CETTA_PROFILE_MASK_HE_EXTENDED |
+        CETTA_PROFILE_MASK_HE_PRIME,
+    CETTA_PROFILE_MASK_HE_NON_COMPAT =
+        CETTA_PROFILE_MASK_HE_FORMAL |
         CETTA_PROFILE_MASK_HE_EXTENDED |
         CETTA_PROFILE_MASK_HE_PRIME,
     CETTA_PROFILE_MASK_ALL = CETTA_PROFILE_MASK_HE_PUBLIC
@@ -50,6 +60,7 @@ typedef struct {
     bool he_compatible_surface;
     bool enable_cetta_extensions;
     bool enable_dependent_telescope;
+    bool rust_he_compat_semantics;
 } CettaProfile;
 
 typedef enum {
@@ -195,6 +206,7 @@ typedef struct {
     const char *surface_classification;
 } CettaSurfacePolicy;
 
+const CettaProfile *cetta_profile_he_formal(void);
 const CettaProfile *cetta_profile_he_compat(void);
 const CettaProfile *cetta_profile_he_extended(void);
 const CettaProfile *cetta_profile_he_prime(void);
@@ -217,6 +229,8 @@ bool cetta_language_allows_surface(CettaLanguageId language_id,
                                    const char *name);
 bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,
                                                 const CettaProfile *profile);
+bool cetta_language_uses_rust_he_compat_semantics(CettaLanguageId language_id,
+                                                  const CettaProfile *profile);
 uint32_t cetta_module_provider_count(void);
 const CettaModuleProviderDescriptor *cetta_module_provider_at(uint32_t index);
 const CettaModuleProviderDescriptor *cetta_module_provider_descriptor(CettaModuleProviderKind kind);

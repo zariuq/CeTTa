@@ -1,0 +1,222 @@
+TRACK A — NTT-IN-IMPLEMENTATION CHARTER: lts MODAL SURFACE (Rung 2) + ONE CONFORMANCE SLICE (A2)
+================================================================================================
+Date: 2026-06-09
+Scope owner: Codex (implementation).  Charter/spec: analyst.
+Status: ready to hand off.
+
+This charter scopes the next concrete step of the OSLF/NTT integration. It is
+deliberately narrow. It adds a reflective modal surface to the existing lts
+library and pins ONE conformance slice in the reduction-relation vocabulary that
+NTT is defined over. It does NOT touch the C kernel, does NOT introduce trace
+emission, and does NOT begin the proof-kernel / he-prime / DTT work.
+
+
+0. WHY THIS, WHY NOW (the decided ordering)
+-------------------------------------------
+The program is a two-track split with a hard dependency order:
+
+  Track A — semantic waist / NTT: pin CeTTa's ACTUAL behaviour to
+    LanguageDef -> ReductionSpan -> OSLF(diamond/box) -> NTT, and reflect that
+    structure into the runtime.
+  Track B — proof kernel / covers: theory-parametric PureKernel, HOTG/Megalodon
+    + DTT covers, MTT/MATT bridges.
+
+Rule: A outranks B in dependency. B must not pick a proof-kernel story that
+outruns A's object-language pinning. The failure mode this prevents is "two
+beautiful proof worlds proving things about a drifting MeTTa semantics."
+
+Witness-extraction toward Lean theorem anchors, he-prime kernel slices, NatRec
+iota, Fin/Vec indexed families — all Track B. They are OUT OF SCOPE here and
+require explicit go-ahead before any work begins.
+
+
+1. THE RUNG LADDER, AND WHERE WE ARE
+------------------------------------
+  Rung 0  OutcomeSet = internal diamond; lts/lts:he reflects diamond.   DONE
+            lib/lts.metta:      lts:transitions / is-normal-form / is-can-step / trace-2
+            lib/lts/he.metta:   lts:he:transitions / step-state / is-normal-form / is-can-step / trace-2
+  Rung 1  Bugfix AS diamond-law (Empty = absorbing zero; surviving         DONE (runtime)
+            branches re-driven).  he_c3 / he_d4 fixed in eval.c.
+  Rung 2  Extend reflection to box and (bounded) diamond*.               THIS CHARTER
+  Rung 3  Type-directed pruning (box-guard prunes diamond-expansion).    DEFERRED (he-prime; approval-gated)
+  Rung 4  Types-as-behavioral-predicates (full NTT in kernel).          DEFERRED (he-prime endgame)
+
+Desiderata the ladder is ordered against:
+  #1 types make execution FASTER (pruning) — pays off at Rung 3, not Rung 2.
+  #4 the kernel stays MINIMAL — Rungs 0-2 add no kernel mass; they recognize and
+     reflect structure already present.
+
+
+2. WHAT box IS, AND HOW IT IS COMPUTED
+--------------------------------------
+Over the one-step reduction relation, where (lts:transitions $step $state)
+enumerates the successor frontier { q : state --> q }:
+
+  diamond phi at p  ==  EXISTS q. p --> q  AND  phi(q)     ("some successor")
+  box     phi at p  ==  FORALL q. p --> q THEN phi(q)      ("every successor";
+                                                            vacuously True at a
+                                                            normal form)
+
+Grounding fact that makes box non-foreign: lts:is-normal-form IS box(FALSE-pred)
+— "every successor satisfies FALSE" is exactly "there are no successors." And
+lts:is-can-step IS diamond(TRUE-pred). The new operators GENERALIZE the two
+quiescence checks the library already ships. These two equalities are the first
+regression anchors (Section 6).
+
+Computation is purely a .metta library surface over the existing frontier — NO C,
+NO new primitive. Collapse the frontier, apply phi to each successor, and fold:
+
+  Reference sketch (lib/lts.metta), matching the Error/quiescence contract that
+  lts:is-normal-form already uses:
+
+    (: lts:box     (-> Atom Atom Atom Bool))   ; step, phi, state
+    (: lts:diamond (-> Atom Atom Atom Bool))   ; step, phi, state
+
+    (= (lts:box $step $phi $state)
+       (case (collapse ($step $state))
+         ((((Error $ctx $msg)) (Error $ctx $msg))     ; pure single Error -> propagate
+          (() True)                                    ; empty frontier -> box vacuously True
+          ($frontier
+             (foldl-atom $frontier True $acc $q
+               (if $acc ($phi $q) False))))))          ; AND-fold; phi(q) must be Bool
+
+    (= (lts:diamond $step $phi $state)
+       (case (collapse ($step $state))
+         ((((Error $ctx $msg)) (Error $ctx $msg))
+          (() False)                                   ; empty frontier -> diamond False
+          ($frontier
+             (foldl-atom $frontier False $acc $q
+               (if $acc True ($phi $q)))))))           ; OR-fold
+
+  HE specialization (lib/lts/he.metta), exactly mirroring how the existing HE
+  surface binds to lts:he:step-state + quote:
+
+    (: lts:he:box     (-> Atom Atom Bool))   ; phi, state
+    (: lts:he:diamond (-> Atom Atom Bool))
+    (= (lts:he:box $phi $state)     (lts:box     lts:he:step-state $phi (quote $state)))
+    (= (lts:he:diamond $phi $state) (lts:diamond lts:he:step-state $phi (quote $state)))
+
+  phi is passed as a unary predicate symbol returning Bool, the same way $step is
+  passed as a relation symbol today (e.g. (= (lts:const-true $q) True),
+  (= (lts:const-false $q) False)).
+
+  EDGE CASE for Codex to decide explicitly and TEST: a mixed frontier that
+  contains an Error among non-Error successors (e.g. (q1 (Error ..) q2)).
+  lts:is-normal-form only special-cases the PURE single Error ((Error ..)); a
+  mixed frontier falls through to the catch-all. box/diamond must make the same
+  choice consistently (either propagate Error from a mixed frontier, or fold phi
+  over it) and a test must pin whichever is chosen. Match is-normal-form's
+  existing behaviour unless there is a clear reason not to; document the choice
+  in the @doc.
+
+
+3. OPTIONAL SECOND DELIVERABLE — bounded diamond* / box*
+--------------------------------------------------------
+Multi-step reachability (diamond*) and invariance (box*) generalize trace-2.
+HONESTY CONSTRAINT: unbounded diamond*/box* over a Turing-complete reduction
+relation are undecidable. Only FUEL-BOUNDED versions are total and may be added:
+
+    (lts:reachable-within $step $phi $state $fuel)   ; diamond^{<=fuel} phi
+    (lts:invariant-within $step $phi $state $fuel)    ; box^{<=fuel} phi
+
+If added, they MUST carry the bound in the name and @doc, and the @doc MUST state
+that they are bounded approximations, not the unbounded modality. If the
+recursion is awkward, ship only one-step box/diamond this pass and defer the
+bounded multi-step to a follow-up. Do NOT name anything "lts:reachable" or
+"lts:diamond-star" without an explicit fuel parameter — that would over-claim
+decidability.
+
+
+4. THE CONFORMANCE SLICE (A2) — DONE THE TESTING WAY, NOT BY TRACE
+------------------------------------------------------------------
+Goal: express ONE slice's conformance in the reduction-relation vocabulary NTT
+consumes, WITHOUT introducing any trace/certificate surface.
+
+  Slice: minimal.eval + result.empty-zero  (this is where the Rung-1 fix lives,
+         so the slice certifies the fix already shipped).
+
+  Steps:
+  (a) Confirm HELanguageDef.langReduces for the eval rule and the Empty-as-zero
+      rule is the relation that --he / he-compat is TESTED against. This is spec
+      work (defining the relation), not trace emission.
+  (b) Re-key the catalog's reduction-edge rule-IDs to ReductionSpan edge labels:
+        ReductionSpan edges (diamond edges, NTT-relevant):
+          minimal.eval, minimal.chain, minimal.collapse-superpose,
+          minimal.function-return, special.type-assignment, special.function-type,
+          special.eq-definition, result.empty-zero, result.error-shape,
+          nondet.visible-bag
+        NOT reduction edges (spatial / policy lane — keep OUT of the diamond/box span):
+          surface.module-import, surface.module-inventory, surface.native-space,
+          profile.surface-policy
+  (c) Check, BY TEST (bag-equal), that the Lean OSLF diamond over those rules
+      (langDiamondUsing) agrees with lts:he:transitions / lts:he:diamond on the
+      slice's catalog cases.
+
+  HONESTY: (a)-(c) establish CeTTa-(--he) <-> langReduces as TESTED ADEQUACY, not
+  a proof. If a genuine proof of "CeTTa implements langReduces" is ever wanted,
+  the route is extraction / compilation (CakeML-style), NOT trace-replay. Do not
+  present a per-run check as a proof.
+
+
+5. NON-GOALS / HARD FENCES
+--------------------------
+  - NO trace or certificate surface. The flag
+      no_runtime_trace_or_certificate_surface: True
+    in the generated catalog and the gate at
+      scripts/check_he_compat_semantic_suite.py
+    that raises "catalog must explicitly forbid runtime trace/certificate surface"
+    STAY IN PLACE. box/diamond are reflection over the live reduction relation,
+    which is categorically different from emit-trace-and-replay. Conformance is
+    TESTING (bag-equal); the spec is what gets proven about. This is the ITP
+    shape and it is deliberate.
+  - NO C / kernel change. box/diamond are pure .metta library definitions over
+    the existing __cetta_lib_lts_he_transitions primitive.
+  - NO Rung 3. box/diamond here are REFLECTION ONLY (expressiveness), not a guard.
+    Using box to prune a search is the optimization, and it is Rung 3 / he-prime,
+    deferred and approval-gated. Reflection alone is NOT a speedup and must not be
+    sold as one (computing box by materializing the frontier is the same work as
+    exploring it).
+  - NO Track B. No proof-kernel slice, no he-prime DTT, no NatRec iota, no Fin/Vec
+    indexed families, no "promote witness to theorem anchor." A outranks B.
+  - NO module/import "contract" redesign. The surface.* / profile.* rule-IDs are
+    spatial/policy, not reduction edges; they stay in the policy lane. The spatial
+    half of spatial-behavioral types has no referent in this term-rewrite fragment
+    yet (it lands when the atomspace / MORK / PathMap layer is typed — a later
+    horizon).
+
+
+6. VERIFICATION GATES (what "done" means for Rung 2)
+----------------------------------------------------
+  G1. lts:box and lts:diamond defined in lib/lts.metta (generic) and
+      lts:he:box / lts:he:diamond in lib/lts/he.metta (HE), each with a type
+      signature and an @doc that states the Error/quiescence contract and the
+      mixed-Error decision from Section 2.
+  G2. Self-tests pass (these tie the new surface to the existing one):
+        box(const-false)    == is-normal-form        [box(FALSE) = normal form]
+        diamond(const-true) == is-can-step           [diamond(TRUE) = can-step]
+        box(const-true)     == True   (on non-Error states)
+        diamond(const-false)== False  (on non-Error states)
+        De Morgan, on a CONCRETE pair (phi, not-phi):
+          box(phi) == (not (diamond(not-phi)))       [box phi = not diamond not phi]
+        (De Morgan is the runtime witness of the Galois law langGalois already
+         proves on the spec side in TypeSynthesis.lean.)
+  G3. tests/test_lts_surface.metta and tests/test_lts_he_surface.metta extended
+      with the above; both green.
+  G4. The he-compat semantic suite and test-profiles remain green (no regression),
+      AND the no_runtime_trace_or_certificate_surface gate still passes.
+  G5. git diff --stat touches ONLY: lib/lts.metta, lib/lts/he.metta, the two
+      test_lts_* files (+ the catalog re-key files IF A2 is done in the same pass).
+      No src/*.c changes.
+
+
+7. CODING vs ORGANIZING SPLIT
+-----------------------------
+  Organizing / spec (analyst): this charter; the box/diamond semantics; the
+    A2 slice definition and the reduction-edge vs policy-lane partition; the
+    honesty constraints.
+  Coding (Codex): G1-G5 above; the Lean-side langReduces confirmation (A2a) and
+    the langDiamondUsing-vs-lts:he agreement test (A2c); the catalog re-key (A2b).
+
+After Codex lands G1-G5, hand back for verification against the gates (NOT a
+self-report). Confirm the self-tests genuinely run on the engine and the no-trace
+gate still holds before anything is called done.

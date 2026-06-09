@@ -1,0 +1,11 @@
+; Minimal semantic witness extracted from tests/he_c3_pln_stv.metta.
+(= (min $a $b) (if (< $a $b) $a $b))
+(= (s-tv (stv $s $c)) $s)
+(= (c-tv (stv $s $c)) $c)
+(= (TV $x) (match &self (.tv $x $stv) $stv))
+(= (TV (And $a $b))
+   (stv (min (s-tv (TV $a)) (s-tv (TV $b)))
+        (min (c-tv (TV $a)) (c-tv (TV $b)))))
+(.tv aa (stv 0.5 0.8))
+(.tv bb (stv 0.3 0.9))
+!(TV (And aa bb))
