@@ -11,3 +11,4 @@
 !(get-doc math.exp)
 !(get-doc math.min)
 !(get-doc math.clamp)
+!(get-doc math.mod)

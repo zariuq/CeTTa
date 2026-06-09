@@ -7,6 +7,4 @@
 !(assertEqualToResult ((py-atom str) 9223372036854775808) ("9223372036854775808"))
 !(assertEqualToResult ((py-atom fractions.Fraction) 2 4) (1/2))
 !(assertEqualToResult ((py-atom str) 1/2) ("1/2"))
-!(pragma! max-rational-digits 5)
-!(assertEqualToResult ((py-atom fractions.Fraction) 999 1000)
-  ((Error PythonFraction RationalTooLarge)))
+!(assertEqualToResult ((py-atom fractions.Fraction) 999 1000) (999/1000))

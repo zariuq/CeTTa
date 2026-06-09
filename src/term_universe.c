@@ -1757,10 +1757,6 @@ AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
 AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
     if (!value)
         return CETTA_ATOM_ID_NONE;
-    if (cetta_rational_text_exceeds_digit_limit(
-            value, CETTA_RATIONAL_DEFAULT_MAX_DIGITS, NULL)) {
-        return CETTA_ATOM_ID_NONE;
-    }
     char *canonical = cetta_rational_canonicalize_owned(value);
     if (!canonical)
         return CETTA_ATOM_ID_NONE;

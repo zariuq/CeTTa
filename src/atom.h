@@ -27,8 +27,6 @@ typedef struct HashConsTable HashConsTable;
 typedef struct ArenaFinalizer ArenaFinalizer;
 
 #define VAR_ID_NONE ((VarId)0)
-#define CETTA_RATIONAL_DEFAULT_MAX_DIGITS 4096u
-
 /* ── Atom kinds ─────────────────────────────────────────────────────────── */
 
 typedef enum {
@@ -196,11 +194,6 @@ Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value);
 #endif
 Atom *atom_rational(Arena *a, const char *val);
 const char *atom_rational_cstr(const Atom *atom);
-bool cetta_rational_text_exceeds_digit_limit(const char *text,
-                                             uint64_t max_digits,
-                                             bool *valid_out);
-Atom *atom_rational_limited(Arena *a, const char *val, uint64_t max_digits,
-                            bool *too_large_out);
 #if CETTA_BUILD_WITH_GMP
 bool  atom_rational_get_mpq(const Atom *atom, mpq_t out);
 Atom *atom_rational_from_mpq(Arena *a, const mpq_t value);

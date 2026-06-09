@@ -110,6 +110,7 @@ tests/test_collect_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_comparison.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_compile_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_compile_hybrid_interop.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_cons_atom_tail_type_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_cons_decons.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_context_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_context_space_arity.metta	he	metta	he-extended	main	native	test	golden	-
@@ -342,14 +343,14 @@ tests/test_quote.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_quote_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_quote_substitution_no_reapply_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_range_repeat_atom_surface.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_rational_bridge_roundtrip_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_bridge_roundtrip_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_rational_default_division_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rational_exact_math_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rational_ingestion_limit_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rational_mod_rejection_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rational_prefer_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rational_storage_match_regression.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_rational_too_large_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rational_unbounded_arithmetic_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_reduce.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_reduce_docs.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_register_module_arity.metta	he	metta	he-extended	main	native	test	golden	-

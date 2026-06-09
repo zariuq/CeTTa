@@ -6,6 +6,12 @@
 (= (h $x) (k $x))
 (= (choose-path) left)
 (= (choose-path) right)
+(= (he:true $_) True)
+(= (he:false $_) False)
+(= (he:is-b (quote b)) True)
+(= (he:is-b $_) False)
+(= (he:not-b (quote b)) False)
+(= (he:not-b $_) True)
 
 !(assertEqualToResult
   (collapse (lts:he:transitions (f a)))
@@ -137,6 +143,34 @@
   (lts:he:is-can-step x)
   (lts:is-can-step lts:he:step-state (quote x)))
 
+!(assertEqual
+  (lts:he:box he:false x)
+  (lts:he:is-normal-form x))
+
+!(assertEqual
+  (lts:he:box he:false (f a))
+  (lts:he:is-normal-form (f a)))
+
+!(assertEqual
+  (lts:he:diamond he:true x)
+  (lts:he:is-can-step x))
+
+!(assertEqual
+  (lts:he:diamond he:true (g hello))
+  (lts:he:is-can-step (g hello)))
+
+!(assertEqualToResult
+  (lts:he:box he:true (f a))
+  (True))
+
+!(assertEqualToResult
+  (lts:he:diamond he:false (f a))
+  (False))
+
+!(assertEqual
+  (lts:he:box he:is-b (f a))
+  (not (lts:he:diamond he:not-b (f a))))
+
 !(assertEqualToResult
   (lts:he:is-normal-form (f a))
   (False))
@@ -216,3 +250,11 @@
 !(assertEqualToResult
   (lts:he:is-can-step)
   ((Error (lts:he:is-can-step) IncorrectNumberOfArguments)))
+
+!(assertEqualToResult
+  (lts:he:box)
+  ((Error (lts:he:box) IncorrectNumberOfArguments)))
+
+!(assertEqualToResult
+  (lts:he:diamond)
+  ((Error (lts:he:diamond) IncorrectNumberOfArguments)))

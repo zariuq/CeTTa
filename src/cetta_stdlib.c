@@ -447,13 +447,7 @@ static Atom *deserialize_atom_scoped(BlobReader *r, Arena *a,
     case BLOB_TAG_BIGINT: return atom_bigint(a, rd_str(r, rd_u16(r)));
     case BLOB_TAG_RATIONAL: {
         const char *text = rd_str(r, rd_u16(r));
-        bool too_large = false;
-        Atom *out = atom_rational_limited(
-            a, text, CETTA_RATIONAL_DEFAULT_MAX_DIGITS, &too_large);
-        if (too_large)
-            return atom_error(a, atom_symbol(a, text),
-                              atom_symbol(a, "RationalTooLarge"));
-        return out;
+        return atom_rational(a, text);
     }
     case BLOB_TAG_EXPR: {
         uint16_t count = rd_u16(r);

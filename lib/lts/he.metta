@@ -11,6 +11,8 @@
 ;   lts:he:trace-2
 ;   lts:he:is-normal-form
 ;   lts:he:is-can-step
+;   lts:he:box
+;   lts:he:diamond
 ;
 ; The current frontier exposes direct top-level one-step reductions together
 ; with chain/let/let*/case/switch-context progression, and emits quoted
@@ -22,6 +24,8 @@
 (: lts:he:trace-2 (-> Atom %Undefined%))
 (: lts:he:is-normal-form (-> Atom Bool))
 (: lts:he:is-can-step (-> Atom Bool))
+(: lts:he:box (-> Atom Atom Bool))
+(: lts:he:diamond (-> Atom Atom Bool))
 
 (@doc lts:he:transitions
   (@desc "Meta-level one-step HE frontier. This is the unquoted-state front door for lts:he:step-state: it quotes the input once, emits each immediate successor as a quoted MeTTa state, emits zero results on quiescent atoms, and propagates Error outcomes.")
@@ -53,6 +57,20 @@
     (@param "MeTTa atom to inspect")))
   (@return "True when at least one successor exists, False when quiescent, or Error when evaluation reports Error"))
 
+(@doc lts:he:box
+  (@desc "Checks whether every quoted one-step HE successor of the supplied MeTTa atom satisfies the supplied unary Bool-valued predicate symbol. This is lts:box over lts:he:step-state after quoting the input once, so the predicate sees quoted successor states. A pure singleton Error frontier propagates unchanged, while quiescent states make lts:he:box vacuously True.")
+  (@params (
+    (@param "Unary Bool-valued predicate symbol over quoted HE successor states")
+    (@param "MeTTa atom to inspect")))
+  (@return "True when every one-step HE successor satisfies the predicate, False when at least one successor fails it, or Error when evaluation reports Error"))
+
+(@doc lts:he:diamond
+  (@desc "Checks whether some quoted one-step HE successor of the supplied MeTTa atom satisfies the supplied unary Bool-valued predicate symbol. This is lts:diamond over lts:he:step-state after quoting the input once, so the predicate sees quoted successor states. A pure singleton Error frontier propagates unchanged, while quiescent states make lts:he:diamond False.")
+  (@params (
+    (@param "Unary Bool-valued predicate symbol over quoted HE successor states")
+    (@param "MeTTa atom to inspect")))
+  (@return "True when some one-step HE successor satisfies the predicate, False when no successor satisfies it, or Error when evaluation reports Error"))
+
 (= (lts:he:transitions $state)
    (__cetta_lib_lts_he_transitions (quote $state)))
 
@@ -67,3 +85,9 @@
 
 (= (lts:he:is-can-step $state)
    (lts:is-can-step lts:he:step-state (quote $state)))
+
+(= (lts:he:box $phi $state)
+   (lts:box lts:he:step-state $phi (quote $state)))
+
+(= (lts:he:diamond $phi $state)
+   (lts:diamond lts:he:step-state $phi (quote $state)))
