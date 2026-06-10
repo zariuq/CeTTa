@@ -11,6 +11,7 @@
 #include "table_store.h"
 #include "term_universe.h"
 #include "variant_shape.h"
+#include "langdef_pack.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14237,6 +14238,42 @@ static void metta_eval_one_step_switch(Arena *a, Atom *scrutinee,
     }
 }
 
+static bool metta_eval_one_step_expr_congruence(Space *s, Arena *a, Atom *atom,
+                                                ResultSet *rs) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0)
+        return false;
+
+    for (CettaExprIndex idx = 0; idx < atom->expr.len; idx++) {
+        Atom *elem = atom->expr.elems[idx];
+        ResultSet inner;
+        bool emitted = false;
+
+        result_set_init(&inner);
+        metta_eval_one_step(s, a, NULL, elem, &inner);
+
+        for (uint32_t i = 0; i < inner.len; i++) {
+            Atom *next = inner.items[i];
+            if (atom_eq(next, elem))
+                continue;
+            if (atom_is_empty(next) || atom_is_error(next)) {
+                result_set_add(rs, next);
+            } else {
+                Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                for (CettaExprIndex j = 0; j < atom->expr.len; j++)
+                    elems[j] = (j == idx) ? next : atom->expr.elems[j];
+                result_set_add(rs, atom_expr(a, elems, atom->expr.len));
+            }
+            emitted = true;
+        }
+
+        result_set_free(&inner);
+        if (emitted)
+            return true;
+    }
+
+    return false;
+}
+
 static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
                                 ResultSet *rs) {
     __attribute__((cleanup(eval_c_stack_guard_leave)))
@@ -14336,7 +14373,11 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
                                       atom_symbol(a, "IncorrectNumberOfArguments")));
             return;
         }
-        if (head->kind == ATOM_SYMBOL && is_grounded_op(head_id)) {
+        /* HEF_GroundedDispatch: pack-gated; this is the only grounded-dispatch
+         * implementation in the one-step subsystem. */
+        if (head->kind == ATOM_SYMBOL && is_grounded_op(head_id) &&
+            cetta_langdef_pack_rule_enabled(cetta_langdef_pack_he_frontier(),
+                                            CETTA_HEF_RULE_GROUNDED_DISPATCH)) {
             Atom *direct = dispatch_native_op(s, a, head, atom->expr.elems + 1, nargs);
             if (direct) {
                 result_set_add(rs, direct);
@@ -14362,6 +14403,12 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
             result_set_add(rs, atom);
             return;
         }
+        /* HEF_LeftmostExprCongruence: pack-gated; this is the only argument-
+         * congruence implementation in the one-step subsystem. */
+        if (cetta_langdef_pack_rule_enabled(cetta_langdef_pack_he_frontier(),
+                                            CETTA_HEF_RULE_LEFTMOST_EXPR_CONGRUENCE) &&
+            metta_eval_one_step_expr_congruence(s, a, atom, rs))
+            return;
     }
 
     result_set_add(rs, atom);
