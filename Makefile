@@ -214,7 +214,7 @@ CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
 endif
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_frontier_pack.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -1116,6 +1116,34 @@ endif
 test-light: test test-width-tuple-stack
 
 test-correctness: test
+
+# HE frontier LangDef pack lane: baseline witnesses must pass, then the same
+# witnesses must FAIL with each covered pack rule disabled (anti-decorative
+# gate: proves the frontier depends on the pack, not on a duplicate branch).
+test-langdef-pack: $(BIN)
+	@set -e; \
+	expected_file=tests/test_langdef_pack_rules.expected; \
+	echo "[langdef-pack] baseline witnesses"; \
+	out=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_langdef_pack_rules.metta 2>/dev/null); \
+	if [ "$$out" != "$$(cat $$expected_file)" ]; then \
+		echo "FAIL [langdef-pack]: baseline witnesses diverged from expected"; exit 1; \
+	fi; \
+	probe=$$(mktemp); \
+	printf '!(import! &self lts:he)\n!(lts:he:transitions (+ 1 (+ 2 3)))\n!(lts:he:is-normal-form (+ 1 (+ 2 3)))\n' > $$probe; \
+	shape_expected=$$(printf '[()]\n[True]'); \
+	for rule in HEF_LeftmostExprCongruence HEF_GroundedDispatch; do \
+		echo "[langdef-pack] rule-removal: $$rule"; \
+		out=$$(CETTA_LANGDEF_DISABLED_RULES=$$rule $(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_langdef_pack_rules.metta 2>/dev/null); \
+		if [ "$$out" = "$$(cat $$expected_file)" ]; then \
+			echo "FAIL [langdef-pack]: witnesses did not fail with $$rule disabled (pack is decorative)"; rm -f $$probe; exit 1; \
+		fi; \
+		out=$$(CETTA_LANGDEF_DISABLED_RULES=$$rule $(CETTA_BIN_INVOKE) --profile he-extended --lang he $$probe 2>/dev/null); \
+		if [ "$$out" != "$$shape_expected" ]; then \
+			echo "FAIL [langdef-pack]: disabled-$$rule frontier shape unexpected:"; echo "$$out"; rm -f $$probe; exit 1; \
+		fi; \
+	done; \
+	rm -f $$probe; \
+	echo "[langdef-pack] PASS (baseline + 2 rule-removal failures confirmed)"
 
 test-parse-depth-guard: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) ./scripts/test_parse_depth_guard.sh
@@ -3475,5 +3503,5 @@ refresh-he-matrices:
 	@echo "refreshed HE runtime parity matrices"
 
 .PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc-runtime-stats test-variant-shape-roundtrip test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-langdef-pack
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

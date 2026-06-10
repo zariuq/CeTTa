@@ -244,6 +244,7 @@ typedef struct {
     X(lib_str_ends_with, "__cetta_lib_str_ends_with") \
     X(lib_str_trim, "__cetta_lib_str_trim") \
     X(lib_lts_he_transitions, "__cetta_lib_lts_he_transitions") \
+    X(lib_langdef_pack_info, "__cetta_lib_langdef_pack_info") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \
     X(lib_lts_rho_cost_steps, "__cetta_lib_lts_rho_cost_steps") \
     X(lib_mork_space_new, "__cetta_lib_mork_space_new") \

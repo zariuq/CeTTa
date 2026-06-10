@@ -13,6 +13,7 @@
 ;   lts:he:is-can-step
 ;   lts:he:box
 ;   lts:he:diamond
+;   lts:he:pack-info
 ;
 ; The current frontier exposes direct top-level one-step reductions together
 ; with chain/let/let*/case/switch-context progression, and emits quoted
@@ -26,6 +27,7 @@
 (: lts:he:is-can-step (-> Atom Bool))
 (: lts:he:box (-> Atom Atom Bool))
 (: lts:he:diamond (-> Atom Atom Bool))
+(: lts:he:pack-info (-> %Undefined%))
 
 (@doc lts:he:transitions
   (@desc "Meta-level one-step HE frontier. This is the unquoted-state front door for lts:he:step-state: it quotes the input once, emits each immediate successor as a quoted MeTTa state, emits zero results on quiescent atoms, and propagates Error outcomes.")
@@ -71,6 +73,11 @@
     (@param "MeTTa atom to inspect")))
   (@return "True when some one-step HE successor satisfies the predicate, False when no successor satisfies it, or Error when evaluation reports Error"))
 
+(@doc lts:he:pack-info
+  (@desc "Reflects the active HE frontier LangDef pack as data: language, profile, granularity, source digest, claim level, the coarse rule inventory, and any rules disabled via CETTA_LANGDEF_DISABLED_RULES. The digest identifies which rule object the lts:he frontier is currently driven by.")
+  (@params ())
+  (@return "A (langdef-pack ...) expression describing the active HE frontier rule pack"))
+
 (= (lts:he:transitions $state)
    (__cetta_lib_lts_he_transitions (quote $state)))
 
@@ -91,3 +98,6 @@
 
 (= (lts:he:diamond $phi $state)
    (lts:diamond lts:he:step-state $phi (quote $state)))
+
+(= (lts:he:pack-info)
+   (__cetta_lib_langdef_pack_info he-frontier))

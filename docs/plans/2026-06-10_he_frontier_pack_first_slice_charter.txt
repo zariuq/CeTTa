@@ -1,0 +1,169 @@
+HE FRONTIER LANGDEF PACK — FIRST WELDED SLICE CHARTER (Stage 0 + Stage 1)
+==========================================================================
+Date: 2026-06-10
+Scope owner: Codex (implementation). Charter/spec: analyst. Veto window: Zar.
+Builds on: docs/plans/2026-06-09_track_a_ntt_lts_modal_charter.txt
+Design source: the welded-LanguageDef design + its granularity/codegen
+amendment (GPT-Pro consult, 2026-06-10). This charter encodes the amended
+design, not the original.
+
+0. RATIFIED ARCHITECTURE DECISIONS (Zar may veto before work starts)
+--------------------------------------------------------------------
+D1. SEMANTIC STRATA. Three related artifacts, never conflated:
+      HEFine     = mettaHE (Lean, 59-rule instruction machine: M_*/IE_*/IF_*/
+                   IA_*/MC_*/TC_*). Proof reference. NOT the pack target.
+      HEFrontier = coarse user-visible one-step relation over ordinary atoms
+                   (e.g. (+ 1 (+ 2 3)) -> (+ 1 5)). THE pack target; what
+                   lts:he:transitions exposes today.
+      HEBigStep  = full evaluator relation ( !(+ 1 (+ 2 3)) -> 6 ).
+    The coarse step is delimited by OBSERVATION: one step = up to the first
+    user-observable surface rewrite. (Not "any bounded fine closure" — that
+    would silently make the frontier a partial big-step evaluator.)
+    "Same labels/arities as mettaHE" is DROPPED for the pack; replaced by
+    provenance links (each coarse rule lists the fine rules that justify it)
+    and future simulation lemmas.
+
+D2. HYBRID DE-DUP ARCHITECTURE.
+      (A) runtime pack/table  -> first weld, non-hot frontier + reflection.
+      (B) codegen             -> hot-path ENDGAME: generator emits BOTH the
+                                 reflectable pack AND specialized C, sharing
+                                 one source_digest. LanguageDef-as-data is
+                                 preserved because the pack remains canonical.
+      (C) iterate-one-step    -> reference oracle / benchmark baseline ONLY
+                                 (--eval-via-frontier, later stage). Never the
+                                 default evaluator.
+    This slice implements (A) only. (B) and (C) are later stages.
+
+D3. BAG/SUPPORT SPLIT. lts:he:transitions stays MULTIPLICITY-PRESERVING
+    (current live behavior; bags are semantically load-bearing in MeTTa).
+    The set/reachability quotient happens only inside modal predicates
+    (box / diamond / is-can-step / is-normal-form), which are support-only.
+    No dedup of evaluator or frontier bags for speed, ever, unless a caller
+    explicitly requests a support-only API.
+
+1. FIRST SLICE — SCOPE
+----------------------
+Build a hand-authored but GENERATOR-SHAPED coarse HEFrontier pack and route
+the existing frontier through it. No metta_eval changes. No codegen yet.
+
+Pack identity (all fields mandatory):
+    language_id   = HE
+    profile_id    = he-extended        (the profile the lts tests run under)
+    granularity   = frontier
+    schema_version
+    source_digest (sha256 over the canonical authored rule source)
+    rule_ids, disabled_rules mask
+    claim_level   = bag-tested-adequate   (NOT Lean-proven; do not overclaim)
+
+Rules (the witness needs exactly these two as live rules):
+    HEF_GroundedDispatch        (+ 2 3) -> 5 at the root
+        provenance: M_Expression, IE_*, IF_*, MC_Grounded
+    HEF_LeftmostExprCongruence  inner step lifts: (+ 1 (+ 2 3)) -> (+ 1 5)
+        provenance: IA_Start_*, M_Expression, IE_*, IF_*, IA_*
+Optional metadata-only quiescence rules (document, do not fake content):
+    HEF_QuoteQuiescent, HEF_ReturnQuiescent, HEF_EmptyQuiescent,
+    HEF_ErrorQuiescent
+
+Note: pack rules produce the UNQUOTED successor atom ((+ 1 5)); quoting is an
+LTS presentation convention applied at the lts surface, as today.
+
+Files (new):
+    src/langdef_pack.h        pack schema: CettaCtorDef / CettaRuleDef /
+                              profile masks / digest / disabled_rules
+    src/langdef_pack.c        loader + generic application for THIS slice
+    src/he_frontier_pack.c    the hand-authored he-extended frontier pack
+Files (modified, minimal):
+    src/library.c             route lts_he_transitions_frontier through
+                              he_frontier_bag_from_pack for covered shapes
+    src/eval.c                ONLY if routing eval_top_one_step is low-risk;
+                              otherwise leave untouched this slice
+    tests/test_lts_he_surface.metta (+ .expected)   new witnesses
+    a new pack regression test file (rule-removal harness)
+
+2. COVERAGE / FALLBACK DISCIPLINE (anti-decorative integrity)
+-------------------------------------------------------------
+The pack covers only 2 rule classes this slice, so the frontier must combine
+pack-driven and legacy paths. The discipline that keeps the rule-removal test
+meaningful:
+
+    The pack declares a COVERED-SHAPE predicate (grounded-op root dispatch;
+    leftmost-expression congruence positions). For covered shapes the pack is
+    AUTHORITATIVE: if a covered rule is disabled, the answer for that shape is
+    "no successors from this rule" — the legacy C path MUST NOT silently
+    answer instead. Legacy fallback applies only to rule classes the pack
+    does not yet cover (chain/let/let*/case/switch/equation-match/...).
+
+Without this fence, disabling HEF_LeftmostExprCongruence would fall back to
+the hand-coded congruence fix and the anti-decorative test would pass
+vacuously — making the whole weld decorative. This fence is the point.
+
+3. ACCEPTANCE GATES (all must pass; analyst verifies on the engine,
+   not from a self-report)
+------------------------------------------------------------------
+G1  Witness (pack-driven path active):
+      !(import! &self lts:he)
+      !(lts:he:transitions (+ 1 (+ 2 3)))   => ((quote (+ 1 5)))
+      !(lts:he:is-normal-form (+ 1 (+ 2 3))) => False
+      !(lts:he:is-can-step (+ 1 (+ 2 3)))    => True
+G2  Anti-decorative (rule-removal) — run with disabled_rules masks:
+      disable HEF_LeftmostExprCongruence:
+        transitions (+ 1 (+ 2 3)) = ()  AND the G1 witness test FAILS
+      disable HEF_GroundedDispatch:
+        transitions (+ 1 (+ 2 3)) = ()  AND the G1 witness test FAILS
+      (proves the witness depends on the pack, not a duplicate C branch)
+G3  Bag-equality: pack-driven frontier == legacy frontier on the existing
+    lts test corpus + the congruence/branching witnesses
+    (incl. (g (f 1)) -> both (g (g 1)) and (g (h 1)) with the two-equation
+    fixture — branching congruence must survive the pack route).
+G4  Multiplicity witness: an expression whose inner step has duplicate
+    results produces duplicate outer successors via transitions (bag
+    preserved); box/diamond on the same state are unaffected (support).
+G5  Soundness unchanged: is-normal-form still True on 5, done, (g done),
+    (foo bar baz); transitions (g done) empty.
+G6  Suites: full make test green; he-compat semantic suite green;
+    no_runtime_trace_or_certificate_surface gate intact.
+G7  Scope: git diff touches only the files listed in Section 1.
+    The pack reports its source_digest via a reflectable surface
+    (queryable from MeTTa or at minimum printed by a debug flag).
+
+4. LEAN SIDE (parallel, honest-minimum)
+---------------------------------------
+Define the coarse relation as a first-class Lean object and connect it to
+OSLF; do NOT state fine-collapse theorems yet:
+    - mettaHE_obs / HEFrontierStep : an honest inductive over user atoms
+      with constructors for exactly the slice's rules (grounded dispatch,
+      leftmost congruence) — defined on its own terms, NOT defined as a
+      wrapper around the C behavior, and NOT a degenerate instance.
+    - Instantiate the OSLF span / diamond / box over HEFrontierStep via the
+      existing TypeSynthesis machinery.
+    - The HEFrontier <-> HEFine (mettaHE) collapse/simulation bridge
+      (delimited observable closure, soundness + completeness) is a SEPARATE
+      FUTURE TRANCHE with real content. Do not state it now; no sorries, no
+      placeholder Props, no vacuous rfl simulations.
+
+5. FENCES
+---------
+  - No metta_eval refactor or routing (Stage 5+ in the staged plan).
+  - No codegen / --compile-langdef yet (Stage 4).
+  - No --eval-via-frontier oracle mode yet (Stage 2/6).
+  - No fine-granularity pack, no lts:he:micro:* surface.
+  - No he-prime / DTT / proof-kernel work.
+  - No runtime trace/certificate surface; the existing gate stays.
+  - he-compat/he packs are LATER profile instantiations; never let
+    he-extended rules silently serve he-compat or vice versa (fail closed).
+
+6. AFTER THIS SLICE (next tranches, in order, each separately approved)
+-----------------------------------------------------------------------
+  S2  Harden the generic frontier interpreter; widen pack coverage over
+      metta_eval_one_step rule classes (chain/let/case/switch/equation/
+      empty-error), each migrated branch removed only with rule ID + bag
+      tests + rule-removal test.
+  S3  Lean coarse/fine bridge tranche (delimited collapse, soundness first).
+  S4  --compile-langdef codegen scaffold: emits he_frontier_pack.c +
+      he_frontier_dispatch.c + manifest; invariant
+      dispatch.source_digest == pack.source_digest; generated dispatcher ==
+      generic interpreter on a bounded corpus.
+  S5  --eval-via-frontier reference oracle; benchmark baseline.
+  S6  Profile family: separate packs for he, he-compat (fail closed).
+  S7  Big-step pack + generated evaluator islands (where duplication
+      truly dies).
