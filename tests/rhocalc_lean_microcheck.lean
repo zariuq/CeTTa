@@ -1,8 +1,11 @@
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Reduction
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.MultiStep
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Engine
+import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Outcomes
+import Mettapedia.Languages.ProcessCalculi.RhoCalculus.RhometaReduction
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.PresentMoment
+import Mettapedia.Languages.MeTTa.HE.Correctness
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.SemanticSubstitution
 import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Soundness
 import Mettapedia.GSLT.Meredith.InteractiveGSLT
@@ -15,10 +18,12 @@ open Mettapedia.OSLF.MeTTaIL.Syntax
 open Mettapedia.OSLF.MeTTaIL.Substitution
 open Mettapedia.GSLT.Meredith.RhoExample
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus
+open Mettapedia.Languages.ProcessCalculi.RhoCalculus.RhometaReduction
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.PresentMoment
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Reduction
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Soundness
+open Mettapedia.Languages.MeTTa.HE
 
 local notation "possibly" => possiblyProp
 local notation "rely" => relyProp
@@ -121,6 +126,18 @@ def branchingReductReceiveEmpty : Pattern :=
 
 def branchingReductReceiveNested : Pattern :=
   .collection .hashBag [branchingPayload, branchingPayload] none
+
+def rhomettaNoncanonicalDropBody : Pattern :=
+  .apply "PDrop" [.collection .hashBag [.bvar 0] none]
+
+def rhomettaCounterexampleValue :
+    Mettapedia.Languages.MeTTa.OSLFCore.Atom :=
+  .symbol "x"
+
+def rhomettaNoncanonicalDropResidual
+    (value : Mettapedia.Languages.MeTTa.OSLFCore.Atom) : Pattern :=
+  .collection .hashBag
+    [semanticCommSubst rhomettaNoncanonicalDropBody (wrappedValue value)] none
 
 theorem commInput_canStep : CanStep commInput := by
   rcases comm_reduces (n := channel) (q := payload) (p := body) with ⟨r, h⟩
@@ -286,6 +303,104 @@ theorem branchingComm_presentMoment_contains_receiveEmpty :
 theorem branchingComm_presentMoment_contains_receiveNested :
     branchingReductReceiveNested ∈ Spice.presentMoment branchingComm := by
   exact reduceStep_mem_presentMoment branchingComm_engine_has_receiveNested
+
+theorem branchingComm_mayReachable_receiveEmpty :
+    branchingReductReceiveEmpty ∈ MayReachable branchingComm := by
+  obtain ⟨hred⟩ := (mem_presentMoment_iff_reduces).1
+    branchingComm_presentMoment_contains_receiveEmpty
+  exact mayReachable_of_step ⟨hred⟩
+
+theorem branchingComm_mayReachable_receiveNested :
+    branchingReductReceiveNested ∈ MayReachable branchingComm := by
+  obtain ⟨hred⟩ := (mem_presentMoment_iff_reduces).1
+    branchingComm_presentMoment_contains_receiveNested
+  exact mayReachable_of_step ⟨hred⟩
+
+theorem branchingComm_mayReachable_nondeterminism :
+    ∃ r₁ r₂,
+      r₁ ∈ MayReachable branchingComm ∧
+      r₂ ∈ MayReachable branchingComm ∧
+      r₁ ≠ r₂ := by
+  exact ⟨branchingReductReceiveEmpty, branchingReductReceiveNested,
+         branchingComm_mayReachable_receiveEmpty,
+         branchingComm_mayReachable_receiveNested,
+         branchingComm_engine_successors_distinct⟩
+
+theorem branchingComm_engine_reduceToNormalForm_picks_first_branch :
+    Engine.reduceToNormalForm branchingComm 10 = branchingReductReceiveEmpty := by
+  native_decide
+
+theorem branchingComm_engine_reduceAll_exact :
+    (Engine.reduceAll branchingComm 10).Perm
+      [branchingReductReceiveEmpty, branchingReductReceiveNested] := by
+  native_decide
+
+theorem branchingComm_engine_reduceAll_two_outcomes :
+    (Engine.reduceAll branchingComm 10).length = 2 := by
+  native_decide
+
+theorem branchingComm_single_path_is_member_not_whole_outcome_set :
+    Engine.reduceToNormalForm branchingComm 10 ∈ Engine.reduceAll branchingComm 10 ∧
+    Engine.reduceAll branchingComm 10 ≠ [Engine.reduceToNormalForm branchingComm 10] := by
+  native_decide
+
+theorem rhometta_var_eventually_executes :
+    ∃ fuel0, ∀ fuel, fuel ≥ fuel0 →
+      ((.var "x"), Bindings.empty) ∈
+        evalAtom Space.empty GroundedDispatch.none
+          (.var "x")
+          Mettapedia.Languages.MeTTa.OSLFCore.Atom.undefinedType
+          Bindings.empty fuel := by
+  refine ⟨1, ?_⟩
+  intro fuel hfuel
+  cases fuel with
+  | zero =>
+      omega
+  | succ n =>
+      simp [evalAtom, getMetaType,
+        Mettapedia.Languages.MeTTa.OSLFCore.Atom.variableType]
+
+theorem rhometta_var_certified :
+    CertifiedPayloadResult Space.empty GroundedDispatch.none
+      (.var "x") (.var "x") := by
+  refine ⟨Bindings.empty, ?_⟩
+  rw [evalAtomCertified_iff_stably_reaches]
+  exact rhometta_var_eventually_executes
+
+theorem rhometta_evalDrop_var_outcome :
+    evalDropResidual (.var "x") ∈
+      RhometaOutcomes Space.empty GroundedDispatch.none
+        (evalDropSource channel (.var "x")) := by
+  exact evalDrop_certified_value_outcome
+    (space := Space.empty)
+    (dispatch := GroundedDispatch.none)
+    (chan := channel)
+    (payload := .var "x")
+    (value := .var "x")
+    rhometta_var_certified
+
+theorem rhometta_noncanonical_drop_body_counterexample :
+    StructuralCongruence rhomettaNoncanonicalDropBody (.apply "PDrop" [.bvar 0]) ∧
+      semanticNormalizeProc rhomettaNoncanonicalDropBody =
+        rhomettaNoncanonicalDropBody ∧
+      strictCoreCommBody rhomettaNoncanonicalDropBody = false ∧
+      semanticCommSubst rhomettaNoncanonicalDropBody
+          (wrappedValue rhomettaCounterexampleValue) =
+        rhomettaNoncanonicalDropBody ∧
+      rhomettaNoncanonicalDropResidual rhomettaCounterexampleValue ≠
+        evalDropResidual rhomettaCounterexampleValue := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · refine StructuralCongruence.apply_cong "PDrop" _ _ rfl ?_
+    intro i h₁ h₂
+    have hi : i = 0 := by
+      have hlt : i < 1 := by simpa using h₁
+      omega
+    subst hi
+    simpa using (StructuralCongruence.par_singleton (.bvar 0))
+  · native_decide
+  · native_decide
+  · native_decide
+  · native_decide
 
 theorem emptyBag_zero_step : Nonempty (emptyBag ⇝[0] emptyBag) := by
   exact ⟨ReducesN.zero _⟩

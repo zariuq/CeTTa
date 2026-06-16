@@ -6,6 +6,8 @@
 (= (h $x) (k $x))
 (= (choose-path) left)
 (= (choose-path) right)
+(= (step-inner 1) mid-inner)
+(= (wrap-inner mid-inner) done-inner)
 
 !(assertEqualToResult
   (collapse (lts:he:transitions (f a)))
@@ -14,6 +16,14 @@
 !(assertEqualToResult
   (collapse (lts:he:transitions (g a)))
   (((quote (h a)))))
+
+!(assertEqualToResult
+  (collapse (lts:he:transitions (+ 1 (+ 2 3))))
+  (((quote (+ 1 5)))))
+
+!(assertEqualToResult
+  (collapse (lts:he:transitions (wrap-inner (step-inner 1))))
+  (((quote (wrap-inner mid-inner)))))
 
 !(assertEqualToResult
   (collapse (lts:he:step-state (quote (g a))))
@@ -46,6 +56,14 @@
 !(assertEqualToResult
   (collapse (lts:trace-2 lts:he:step-state (quote (g a))))
   ((((quote (h a)) (quote (k a))))))
+
+!(assertEqualToResult
+  (collapse (lts:he:trace-2 (wrap-inner (step-inner 1))))
+  ((((quote (wrap-inner mid-inner)) (quote done-inner)))))
+
+!(assertEqualToResult
+  (collapse (lts:he:trace-2 (+ 1 (+ 2 3))))
+  ((((quote (+ 1 5)) (quote 6)))))
 
 !(assertEqual
   (collapse (lts:he:trace-2 (g a)))
@@ -139,6 +157,10 @@
 
 !(assertEqualToResult
   (lts:he:is-normal-form (f a))
+  (False))
+
+!(assertEqualToResult
+  (lts:he:is-normal-form (+ 1 (+ 2 3)))
   (False))
 
 !(assertEqual

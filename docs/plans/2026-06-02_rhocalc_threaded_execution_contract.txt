@@ -4,18 +4,19 @@ Date: 2026-06-02
 Status
 ======
 
-This is a design note, not an implementation.  The current CeTTa
-strict-core rhocalc engine is still the sequential reducer in
-src/rhocalc_core.c.  It enumerates the one-step successor frontier, then
+This is the execution contract for the implemented strict-core rhocalc
+threaded reducer.  CeTTa keeps the sequential reducer in src/rhocalc_core.c
+for --num-threads 0/1.  With --num-threads n>1, the strict-core profile uses
+the shared pthread executor plus rho's own channel-bucket rendezvous table.
+The sequential reducer enumerates the one-step successor frontier, then
 selects one successor with the current scheduler policy:
 
 - canonical: the stable first successor
 - rotating: round-robin over the current frontier
 
-The goal of this note is to prepare the next implementation tranche:
-OS-threaded execution for pure, strict-core --lang rhocalc, without
-changing the calculus and without claiming that any single threaded
-scheduler is the semantic truth.
+The goal of the threaded implementation is OS-threaded execution for pure,
+strict-core --lang rhocalc, without changing the calculus and without
+claiming that any single threaded scheduler is the semantic truth.
 
 
 What the Rholang/F1R3node implementations show
@@ -23,14 +24,14 @@ What the Rholang/F1R3node implementations show
 
 The inspected code paths are:
 
-- /home/zar/claude/hyperon/f1r3node/rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
-- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpaceOps.scala
-- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpace.scala
-- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/MultiLock.scala
-- /home/zar/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/TwoStepLock.scala
-- /home/zar/claude/hyperon/f1r3node-rust/rholang/src/rust/interpreter/reduce.rs
-- /home/zar/claude/hyperon/f1r3node-rust/rspace++/src/rspace/rspace.rs
-- /home/zar/claude/hyperon/f1r3node-rust/rspace++/src/rspace/hot_store.rs
+- /home/aimama/aihub/hyperon/f1r3node/rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
+- /home/aimama/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpaceOps.scala
+- /home/aimama/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpace.scala
+- /home/aimama/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/MultiLock.scala
+- /home/aimama/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/TwoStepLock.scala
+- /home/aimama/aihub/hyperon/f1r3node-rust/rholang/src/rust/interpreter/reduce.rs
+- /home/aimama/aihub/hyperon/f1r3node-rust/rspace++/src/rspace/rspace.rs
+- /home/aimama/aihub/hyperon/f1r3node-rust/rspace++/src/rspace/hot_store.rs
 
 Useful observations:
 
@@ -72,14 +73,13 @@ Useful observations:
    obviously correct; narrow the lock granularity after the behavior is
    nailed down by may/must tests.
 
-6. Existing CeTTa HE hyperpose threading is a useful local precedent, but it
-   is not the rho design.
+6. The shared CeTTa parallel executor is a useful local substrate, but it is
+   not the rho design.
 
-   src/eval.c already has --hyperpose-threads, pthread workers, thread-local
-   branch resources, and fallback on thread-unsafe branches.  Rho threading is
-   different: the central shared object is the name/channel rendezvous table.
-   Reuse the CLI validation style and worker-pool discipline, not the branch
-   cloning model as-is.
+   Rho and hyperpose share the worker-pool, worker-local arena, cancellation,
+   and materialization discipline.  Rho remains different: its central shared
+   object is the name/channel rendezvous table, while hyperpose owns branch
+   evaluation and answer collection.
 
 
 Core semantic contract
@@ -136,7 +136,7 @@ Negative example:
 
 Only one receiver can consume the single send.  A threaded run may choose
 body0 or body1.  A user who needs a deterministic result must avoid this
-race, use unique channels, or run with --rho-threads 1.
+race, use unique channels, or run with --num-threads 1.
 
 Positive testing example:
 
@@ -158,27 +158,26 @@ Existing flags stay unchanged:
   cetta --lang rhocalc --rho-reduction-limit <n> <file>
   cetta --lang rhocalc --rho-scheduler <canonical|rotating> <file>
 
-New flag:
+Thread resource flag:
 
-  cetta --lang rhocalc --rho-threads <n> <file>
+  cetta --num-threads <n> --lang rhocalc <file>
 
 Validation:
 
-- Only accepted with --lang rhocalc.
-- Valid integer range: 0..1024, matching the existing
-  --hyperpose-threads discipline.
+- Language-agnostic resource budget for parallel-capable execution.
+- Valid integer range: 0..1024.
 - 0 and 1 mean sequential execution and preserve the exact current
   behavior.
 - n > 1 enables the threaded strict-core executor.
 - The first implementation should reject --profile cost with
-  --rho-threads n>1.  Cost threading should wait for dedicated cost
+  --num-threads n>1.  Cost threading should wait for dedicated cost
   frontier tests.
 
 Scheduler interaction:
 
-- With --rho-threads 0 or 1, --rho-scheduler is exactly the current
+- With --num-threads 0 or 1, --rho-scheduler is exactly the current
   sequential policy.
-- With --rho-threads n>1, --rho-scheduler must not be advertised as a
+- With --num-threads n>1, --rho-scheduler must not be advertised as a
   determinism guarantee.  It may be used only as a local tie-breaker for
   queue order, fallback, or replay tooling.
 - If deterministic replay is needed later, add explicit trace flags such as
@@ -208,22 +207,20 @@ Exit/output:
 Implementation path
 ===================
 
-Phase 0: CLI plumbing with no behavior change
+Phase 0: CLI plumbing with no behavior change (implemented)
 
 - Add RhoRuntimeProfile.threads.
-- Parse --rho-threads.
-- Validate it only with --lang rhocalc.
+- Parse --num-threads.
+- Treat it as a shared runtime resource budget.
 - For 0/1, call the current reducer.
-- For n>1, initially return a clear "threaded rhocalc is not implemented"
-  error until Phase 1 lands.
 - Add help-flag and rejection tests.
 
-Phase 1: safe threaded strict-core executor
+Phase 1: safe threaded strict-core executor (implemented)
 
 - Keep the current parser, normalizer, and endpoint matching semantics.
 - Split the input Par into runnable components.
 - Use a fixed pthread worker pool, following the local
-  --hyperpose-threads pattern for bounded worker counts.
+  shared parallel-executor pattern for bounded worker counts.
 - Maintain a shared channel table keyed by the same normalized name keys
   used by rho_collect_successors.
 - Each channel bucket stores pending sends and receives.
@@ -236,23 +233,23 @@ Phase 1: safe threaded strict-core executor
 - Claiming a redex must remove exactly the consumed endpoints, unless a
   future profile explicitly adds persistence.
 
-Phase 1 should prioritize correctness over fine-grained performance.  A
-global arena/allocation mutex is acceptable at first if Atom/Arena
-thread-safety is not yet audited.  The important part is that COMM claims
-and endpoint ownership are correct.
+The implemented Phase 1 uses per-worker arenas plus a single-threaded
+materialization step, so Atom/Arena mutation remains owner-threaded while
+COMM claims and endpoint ownership are synchronized at rho channel buckets.
 
-Phase 2: narrow locks and improve scaling
+Phase 2: narrow locks and improve scaling (future)
 
-- Replace any whole-engine lock with channel-bucket locks.
+- Keep the channel-bucket lock discipline and profile before replacing any
+  remaining shared queue or table bottleneck.
 - Keep sorted lock acquisition for any operation touching multiple names.
-- Consider per-worker arenas plus a final materialization/merge step if
-  global allocation becomes a bottleneck.
+- Preserve per-worker arenas plus final materialization/merge unless a later
+  memory model audit justifies a different ownership boundary.
 - Study libdill/libmill channel rendezvous for the COMM handshake shape.
 - Study C-Thread-Pool for bounded pthread worker loops.
 - Study ck only after the mutex version is correct; lock-free structures are
   an optimization, not the first proof of life.
 
-Phase 3: replay/tracing
+Phase 3: replay/tracing (future)
 
 - Add explicit trace output only after the threaded executor is correct.
 - A trace item should identify the normalized channel key and enough
@@ -280,7 +277,7 @@ Keep these oracles separate:
 3. threaded sampling tests
 
    Regression oracle for the executor.  Run selected race programs with
-   --rho-threads 2 and --rho-threads 4 repeatedly.  Every result must be
+   --num-threads 2 and --num-threads 4 repeatedly.  Every result must be
    accepted by the lts:rho may/must frontier.  For known race fixtures,
    repeated runs should try to witness more than one branch, but that is a
    coverage signal, not the proof of correctness.

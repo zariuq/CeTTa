@@ -25,7 +25,7 @@ from rhocalc_tiny_semantics import (
 def run_rho(bin_path: str, expr: str, *, threads: int = 4, limit: int | None = None) -> tuple[int, str, str]:
     cmd = [
         bin_path,
-        "--rho-threads",
+        "--num-threads",
         str(threads),
         "--lang",
         "rhocalc",
