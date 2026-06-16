@@ -93,6 +93,7 @@ typedef struct {
 typedef struct {
     SubstMatch *items;
     CettaIndex len, cap;
+    SubstMatch inline_items[1];
 } SubstMatchSet;
 
 /* ── API ───────────────────────────────────────────────────────────────── */

@@ -1,0 +1,4 @@
+# N parallel deduction jobs (CHAIN_LEN env sets hops per job, default 64)
+8
+16
+32

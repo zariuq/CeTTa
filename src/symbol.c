@@ -1,5 +1,6 @@
 #include "symbol.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,10 +23,10 @@ static void *symbol_malloc(size_t size) {
     return ptr;
 }
 
-static void *symbol_realloc(void *ptr, size_t size) {
-    void *out = realloc(ptr, size == 0 ? 1 : size);
-    if (!out) symbol_oom(size);
-    return out;
+static void *symbol_calloc(size_t count, size_t size) {
+    void *ptr = calloc(count == 0 ? 1 : count, size == 0 ? 1 : size);
+    if (!ptr) symbol_oom(count * size);
+    return ptr;
 }
 
 static uint64_t symbol_hash_bytes(const uint8_t *bytes, uint32_t len) {
@@ -37,12 +38,32 @@ static uint64_t symbol_hash_bytes(const uint8_t *bytes, uint32_t len) {
     return h ? h : 1ULL;
 }
 
-static void symbol_table_grow_entries(SymbolTable *st, uint32_t needed) {
-    if (needed <= st->entry_cap) return;
-    uint32_t next_cap = st->entry_cap ? st->entry_cap : 64;
-    while (next_cap < needed) next_cap *= 2;
-    st->entries = symbol_realloc(st->entries, sizeof(SymbolEntry) * next_cap);
-    st->entry_cap = next_cap;
+static SymbolEntry *symbol_table_entry_chunk(const SymbolTable *st, SymbolId id) {
+    if (!st || !st->entry_chunks) return NULL;
+    return st->entry_chunks[id >> SYMBOL_ENTRY_CHUNK_BITS];
+}
+
+static const SymbolEntry *symbol_table_entry_ref(const SymbolTable *st, SymbolId id) {
+    const SymbolEntry *chunk = symbol_table_entry_chunk(st, id);
+    if (!chunk) return NULL;
+    return &chunk[id & SYMBOL_ENTRY_CHUNK_MASK];
+}
+
+static SymbolEntry *symbol_table_entry_mut(SymbolTable *st, SymbolId id) {
+    SymbolEntry *chunk = symbol_table_entry_chunk(st, id);
+    if (!chunk) return NULL;
+    return &chunk[id & SYMBOL_ENTRY_CHUNK_MASK];
+}
+
+static void symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
+    uint32_t chunk_index = id >> SYMBOL_ENTRY_CHUNK_BITS;
+    if (chunk_index >= SYMBOL_ENTRY_CHUNK_COUNT) {
+        fprintf(stderr, "fatal: symbol table exhausted symbol id space\n");
+        abort();
+    }
+    if (st->entry_chunks[chunk_index]) return;
+    st->entry_chunks[chunk_index] =
+        symbol_calloc(SYMBOL_ENTRY_CHUNK_SIZE, sizeof(SymbolEntry));
 }
 
 static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
@@ -53,16 +74,16 @@ static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
 
 static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     SymbolSlot *old_slots = st->slots;
-    uint32_t old_cap = st->slot_cap;
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
 
     st->slots = symbol_malloc(sizeof(SymbolSlot) * new_cap);
     memset(st->slots, 0, sizeof(SymbolSlot) * new_cap);
     st->slot_cap = new_cap;
     st->slot_used = 0;
 
-    for (uint32_t i = 1; i < st->entry_len; i++) {
-        const SymbolEntry *entry = &st->entries[i];
-        if (!entry->bytes) continue;
+    for (uint32_t i = 1; i < entry_len; i++) {
+        const SymbolEntry *entry = symbol_table_entry_ref(st, (SymbolId)i);
+        if (!entry || !entry->bytes) continue;
         uint32_t slot = (uint32_t)(entry->hash % st->slot_cap);
         while (st->slots[slot].id != SYMBOL_ID_NONE) {
             slot = (slot + 1) % st->slot_cap;
@@ -74,9 +95,6 @@ static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     }
 
     free(old_slots);
-    if (old_cap == 0) {
-        /* nothing else to do */
-    }
 }
 
 void symbol_table_init(SymbolTable *st) {
@@ -84,68 +102,95 @@ void symbol_table_init(SymbolTable *st) {
     st->slots = NULL;
     st->slot_cap = 0;
     st->slot_used = 0;
-    st->entries = NULL;
-    st->entry_len = 0;
-    st->entry_cap = 0;
+    st->entry_chunks = symbol_calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
+    atomic_init(&st->entry_len, 0);
+    if (pthread_mutex_init(&st->write_mutex, NULL) != 0) {
+        fprintf(stderr, "fatal: failed to initialize symbol table mutex\n");
+        abort();
+    }
 
-    symbol_table_grow_entries(st, 64);
-    memset(st->entries, 0, sizeof(SymbolEntry) * st->entry_cap);
-    st->entry_len = 1; /* entries[0] reserved invalid */
+    symbol_table_ensure_entry_chunk(st, SYMBOL_ID_NONE);
+    atomic_store_explicit(&st->entry_len, 1, memory_order_relaxed);
     symbol_table_resize(st, SYMBOL_TABLE_MIN_SLOTS);
 }
 
 void symbol_table_free(SymbolTable *st) {
     if (!st) return;
-    for (uint32_t i = 1; i < st->entry_len; i++) {
-        free((void *)st->entries[i].bytes);
-        st->entries[i].bytes = NULL;
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
+    for (uint32_t i = 1; i < entry_len; i++) {
+        SymbolEntry *entry = symbol_table_entry_mut(st, (SymbolId)i);
+        if (!entry) continue;
+        free((void *)entry->bytes);
+        entry->bytes = NULL;
     }
-    free(st->entries);
+    if (st->entry_chunks) {
+        for (uint32_t i = 0; i < SYMBOL_ENTRY_CHUNK_COUNT; i++) {
+            free(st->entry_chunks[i]);
+        }
+        free(st->entry_chunks);
+    }
     free(st->slots);
-    st->entries = NULL;
+    pthread_mutex_destroy(&st->write_mutex);
+    st->entry_chunks = NULL;
     st->slots = NULL;
-    st->entry_len = 0;
-    st->entry_cap = 0;
+    atomic_store_explicit(&st->entry_len, 0, memory_order_relaxed);
     st->slot_cap = 0;
     st->slot_used = 0;
 }
 
-SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
-                                   uint32_t len, uint64_t hash) {
+static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
+                                                   const uint8_t *bytes,
+                                                   uint32_t len,
+                                                   uint64_t hash) {
+    uint32_t entry_len;
+
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
     if ((st->slot_used + 1) * SYMBOL_TABLE_MAX_LOAD_DEN >
         st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
         symbol_table_resize(st, st->slot_cap ? st->slot_cap * 2 : SYMBOL_TABLE_MIN_SLOTS);
     }
 
+    entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
     uint32_t slot = (uint32_t)(hash % st->slot_cap);
     while (true) {
         SymbolSlot *entry = &st->slots[slot];
         if (entry->id == SYMBOL_ID_NONE) {
-            symbol_table_grow_entries(st, st->entry_len + 1);
             char *copy = symbol_malloc((size_t)len + 1);
             memcpy(copy, bytes, len);
             copy[len] = '\0';
 
-            SymbolId id = (SymbolId)st->entry_len++;
-            st->entries[id].bytes = copy;
-            st->entries[id].len = len;
-            st->entries[id].hash = hash;
-            st->entries[id].flags = 0;
+            SymbolId id = (SymbolId)entry_len;
+            symbol_table_ensure_entry_chunk(st, id);
+            SymbolEntry *sym = symbol_table_entry_mut(st, id);
+            sym->bytes = copy;
+            sym->len = len;
+            sym->hash = hash;
+            sym->flags = 0;
 
             entry->hash = hash;
             entry->len = len;
             entry->id = id;
             st->slot_used++;
+            atomic_store_explicit(&st->entry_len, id + 1, memory_order_release);
             return id;
         }
         if (entry->hash == hash) {
-            const SymbolEntry *sym = &st->entries[entry->id];
+            const SymbolEntry *sym = symbol_table_entry_ref(st, entry->id);
             if (symbol_entry_matches(sym, bytes, len, hash))
                 return entry->id;
         }
         slot = (slot + 1) % st->slot_cap;
     }
+}
+
+SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
+                                   uint32_t len, uint64_t hash) {
+    SymbolId id;
+    if (!st) return SYMBOL_ID_NONE;
+    pthread_mutex_lock(&st->write_mutex);
+    id = symbol_intern_span_hashed_unlocked(st, bytes, len, hash);
+    pthread_mutex_unlock(&st->write_mutex);
+    return id;
 }
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len) {
@@ -159,25 +204,36 @@ SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {
 }
 
 const char *symbol_bytes(const SymbolTable *st, SymbolId id) {
-    if (!st || id == SYMBOL_ID_NONE || id >= st->entry_len) return "";
-    return st->entries[id].bytes ? st->entries[id].bytes : "";
+    if (!st || id == SYMBOL_ID_NONE) return "";
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
+    if (id >= entry_len) return "";
+    const SymbolEntry *entry = symbol_table_entry_ref(st, id);
+    return (entry && entry->bytes) ? entry->bytes : "";
 }
 
 uint32_t symbol_len(const SymbolTable *st, SymbolId id) {
-    if (!st || id == SYMBOL_ID_NONE || id >= st->entry_len) return 0;
-    return st->entries[id].len;
+    if (!st || id == SYMBOL_ID_NONE) return 0;
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
+    if (id >= entry_len) return 0;
+    const SymbolEntry *entry = symbol_table_entry_ref(st, id);
+    return entry ? entry->len : 0;
 }
 
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
-    if (!st || id == SYMBOL_ID_NONE || id >= st->entry_len) return (uint64_t)id;
-    return st->entries[id].hash;
+    if (!st || id == SYMBOL_ID_NONE) return (uint64_t)id;
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
+    if (id >= entry_len) return (uint64_t)id;
+    const SymbolEntry *entry = symbol_table_entry_ref(st, id);
+    return entry ? entry->hash : (uint64_t)id;
 }
 
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {
-    if (!st || id == SYMBOL_ID_NONE || !text) return false;
+    if (!text || !st || id == SYMBOL_ID_NONE) return false;
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
+    if (id >= entry_len) return false;
     uint32_t len = (uint32_t)strlen(text);
-    const SymbolEntry *entry = &st->entries[id];
-    return entry->len == len && memcmp(entry->bytes, text, len) == 0;
+    const SymbolEntry *entry = symbol_table_entry_ref(st, id);
+    return entry && entry->len == len && memcmp(entry->bytes, text, len) == 0;
 }
 
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {

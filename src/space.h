@@ -148,9 +148,17 @@ typedef struct Space {
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
     SpaceMatchBackend match_backend;
+    const struct Space *overlay_base;
+    CettaIndex overlay_base_visible_len;
+    CettaIndex *overlay_removed_base_indices;
+    CettaIndex overlay_removed_base_len;
+    CettaIndex overlay_removed_base_cap;
+    uint64_t payload_owner_epoch;
+    uint64_t payload_export_owner_epoch;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
+void space_init_overlay(Space *s, const Space *base);
 void space_init(Space *s);
 void space_free(Space *s);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
@@ -203,6 +211,7 @@ typedef struct {
 typedef struct {
     QueryResult *items;
     CettaCount len, cap;
+    QueryResult inline_items[1];
 } QueryResults;
 
 typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,

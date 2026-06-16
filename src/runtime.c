@@ -110,7 +110,7 @@ ResultSet *cetta_rs_alloc(void) {
 }
 
 void cetta_rs_free(ResultSet *rs) {
-    if (rs) { free(rs->items); free(rs); }
+    if (rs) { result_set_free(rs); free(rs); }
 }
 
 void cetta_rs_add(ResultSet *rs, Atom *atom) {

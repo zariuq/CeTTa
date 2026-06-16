@@ -24,5 +24,6 @@ metta-threshold-quorum	metta	benchmarks/rho/threshold-quorum/example.metta	appro
 metta-reflection-loader	metta	benchmarks/rho/reflection-loader/example.metta	out=send(payload nil)
 metta-finite-replication	metta	benchmarks/rho/finite-replication/example.metta	sink0=send(payload0 nil),sink1=send(payload1 nil),sink2=send(payload2 nil);sink0=send(payload0 nil),sink1=send(payload2 nil),sink2=send(payload1 nil);sink0=send(payload1 nil),sink1=send(payload0 nil),sink2=send(payload2 nil);sink0=send(payload1 nil),sink1=send(payload2 nil),sink2=send(payload0 nil);sink0=send(payload2 nil),sink1=send(payload0 nil),sink2=send(payload1 nil);sink0=send(payload2 nil),sink1=send(payload1 nil),sink2=send(payload0 nil)
 metta-private-no-leak	metta	benchmarks/rho/private-no-leak/example.metta	out=nil
+metta-job-queue-collector	metta	benchmarks/rho/job-queue-collector/example.metta	out0=send(payload0 nil),out1=send(payload1 nil);out0=send(payload1 nil),out1=send(payload0 nil)
 paper-reflection-name-generation	mrho	tests/rhocalc/paper_reflection_name_generation_h4.mrho	quote(nil)=nil,quote(send(quote(nil) nil))=nil
 paper-input-guarded-replication	mrho	tests/rhocalc/paper_input_guarded_replication_unfold_h4.mrho	quote(nil)=recv(quote(send(quote(nil) nil)) recv(quote(nil) par(drop(y)|send(quote(nil) drop(y)))))

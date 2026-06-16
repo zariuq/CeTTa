@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parents[1]
 DEFAULT_SOURCE = (
     WORKSPACE
-    / "lean-projects"
+    / "Mettapedia"
+    / "lean"
     / "mettapedia"
     / "artifacts"
     / "conformance"

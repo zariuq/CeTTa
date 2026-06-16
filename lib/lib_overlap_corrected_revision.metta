@@ -7,7 +7,7 @@
 ; cross-runtime consistency oracles: same input -> same output.
 ;
 ; Formula (operational adaptation of
-; lean-projects/mettapedia/Mettapedia/Logic/AbstractInheritanceOverlap.lean:140
+; Mettapedia/lean/mettapedia/Mettapedia/Logic/AbstractInheritanceOverlap.lean (overlapEvidence)
 ; overlapEvidence):
 ;
 ;   per_pos_i = pos_i / |S_i|
