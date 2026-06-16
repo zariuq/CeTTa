@@ -273,8 +273,20 @@ static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
                                 uint32_t epoch, const Bindings *bindings,
                                 bool exact) {
     if (out->len >= out->cap) {
-        out->cap = out->cap ? out->cap * 2 : 8;
-        out->items = cetta_realloc(out->items, sizeof(SubstMatch) * out->cap);
+        CettaIndex next_cap = out->cap ? out->cap * 2 : 8;
+        if (out->items == out->inline_items) {
+            SubstMatch *next =
+                cetta_malloc(sizeof(SubstMatch) * (size_t)next_cap);
+            if (out->len > 0) {
+                memcpy(next, out->items,
+                       sizeof(SubstMatch) * (size_t)out->len);
+            }
+            out->items = next;
+        } else {
+            out->items =
+                cetta_realloc(out->items, sizeof(SubstMatch) * (size_t)next_cap);
+        }
+        out->cap = next_cap;
     }
     out->items[out->len].atom_idx = atom_idx;
     out->items[out->len].epoch = epoch;
@@ -3390,7 +3402,7 @@ static bool imported_bridge_visit_bindings_materialized(
     Arena persistent;
     TermUniverse universe;
     Space staged;
-    SubstMatchSet matches = {0};
+    SubstMatchSet matches;
     bool space_inited = false;
     bool ok = false;
 
@@ -3401,6 +3413,7 @@ static bool imported_bridge_visit_bindings_materialized(
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
     space_init_with_universe(&staged, &universe);
+    smset_init(&matches);
     space_inited = true;
 
     if (!imported_materialize_bridge_space(&staged, &persistent, bridge, NULL))
@@ -7763,7 +7776,71 @@ uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out) {
     return space_match_backend_candidates(s, pattern, out);
 }
 
+/* Overlay spaces resolve reads through their base: the indexed backends and
+ * the exact-index shortcut only cover local storage, so an overlay query
+ * delegates the base-visible atoms to the base's own (indexed) query and
+ * matches only the local scratch atoms directly.  Matches are pushed as
+ * exact results carrying their finalized bindings because overlay logical
+ * indices do not address local backend storage.  When base entries have
+ * been removed through the overlay, the slow logical walk keeps the
+ * removal filtering exact. */
+static void overlay_subst_query(Space *s, Arena *a, Atom *query,
+                                SubstMatchSet *out) {
+    smset_init(out);
+    if (s->overlay_removed_base_len == 0) {
+        Space *base = (Space *)s->overlay_base;
+        CettaCount base_visible = s->overlay_base_visible_len;
+        SubstMatchSet base_matches;
+        space_subst_query(base, a, query, &base_matches);
+        for (CettaIndex i = 0; i < base_matches.len; i++) {
+            Bindings final_b;
+            if (base_matches.items[i].atom_idx >= base_visible)
+                continue;
+            bindings_init(&final_b);
+            if (space_subst_match_with_seed(base, query,
+                                            &base_matches.items[i], NULL, a,
+                                            &final_b)) {
+                subst_matchset_push(out, base_matches.items[i].atom_idx,
+                                    base_matches.items[i].epoch, &final_b,
+                                    true);
+            }
+            bindings_free(&final_b);
+        }
+        smset_free(&base_matches);
+        for (CettaIndex i = 0; i < s->native.len; i++) {
+            uint32_t epoch = fresh_var_suffix();
+            Bindings b;
+            bindings_init(&b);
+            if (match_space_atom_epoch(s, i, query, &b, a, epoch) &&
+                !bindings_has_loop(&b)) {
+                subst_matchset_push(out, base_visible + i, epoch, &b, true);
+            }
+            bindings_free(&b);
+        }
+        return;
+    }
+    CettaCount logical_len = space_length64(s);
+    for (CettaIndex i = 0; i < logical_len; i++) {
+        Atom *atom = space_get_at64(s, i);
+        uint32_t epoch;
+        Bindings b;
+        if (!atom)
+            continue;
+        epoch = fresh_var_suffix();
+        bindings_init(&b);
+        if (match_atoms_epoch(query, atom, &b, a, epoch) &&
+            !bindings_has_loop(&b)) {
+            subst_matchset_push(out, i, epoch, &b, true);
+        }
+        bindings_free(&b);
+    }
+}
+
 void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
+    if (s && s->overlay_base) {
+        overlay_subst_query(s, a, query, out);
+        return;
+    }
     bool use_exact_shortcut =
         !s || s->match_backend.kind != SPACE_ENGINE_PATHMAP;
     if (use_exact_shortcut) {

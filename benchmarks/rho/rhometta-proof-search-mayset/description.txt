@@ -1,0 +1,28 @@
+rhometta proof-search may-set demo
+
+A deferred MeTTa payload whose evaluation has multiple results produces one COMM
+outcome per result: nondeterministic inference becomes branching rho reduction,
+and (rhometta:run P) returns the may-set of ALL quiescent residuals -- one per
+proof path. Nothing is silently dropped; this is the faithfulness property the
+Lean RhometaReduction/Outcomes formalization pins down.
+
+The knowledge base holds two-hop Inheritance chains with truth values:
+A -> C is derivable via B1 or B2 (2 proof paths), and D -> F via E1, E2, or E3
+(3 proof paths). The (prove $a $c) payload nests two KB matches and folds the
+hop TVs with PLN Truth_Deduction, so each derivation carries its own conclusion
+truth value and a (via $b) witness of the path taken.
+
+Programs:
+  (one-ch): a single send/recv pair carrying (rhometta:eval (prove A C))
+            -> 2 quiescent outcomes, one per proof of A -> C.
+  (two-ch): two channels carrying (prove A C) and (prove D F)
+            -> 2 x 3 = 6 quiescent outcomes (one per combination).
+
+Outcome counts multiply: K MeTTa results per payload across N channels yield
+K^N quiescent residuals. Exhaustive may-set enumeration is the point of this
+demo, not throughput, so the example is deliberately small. Confluent designs
+(deterministic payload per channel) keep production workloads at one residual.
+
+Run:
+  ./cetta --profile he-extended --lang he \
+      benchmarks/rho/rhometta-proof-search-mayset/example.metta

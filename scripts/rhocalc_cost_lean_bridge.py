@@ -63,7 +63,7 @@ def main() -> int:
     mettapedia_root = Path(
         os.environ.get(
             "METTAPEDIA_ROOT",
-            str(Path.cwd().resolve().parent.parent / "lean-projects" / "mettapedia"),
+            str(Path.cwd().resolve().parent.parent / "Mettapedia" / "lean" / "mettapedia"),
         )
     )
 

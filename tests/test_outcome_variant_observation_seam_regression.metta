@@ -2,7 +2,10 @@
 ; variant materialization through either tuple interpretation or call-term
 ; observation for obviously data-like tuples.
 
-(= (pair-from-space $ss)
+(= (pair-body $a1 $a2)
+   (Pair $a1 $a2))
+
+(= (pair-from-ss $ss)
    (match $ss (: $x1 $a1)
      (match $ss (: $x2 $a2)
        (: ($x1 $x2) (Pair $a1 $a2)))))
@@ -14,7 +17,7 @@
 !(pragma! outcome-variant-sharing on)
 !(reset-runtime-stats!)
 !(assertAlphaEqualToResult
-  (pair-from-space &ss)
+  (pair-from-ss &ss)
   ((: (ax-1 ax-1) (Pair (P $a $b) (P $c $d)))
    (: (ax-1 ax-2) (Pair (P $a $b) (Q $e $f)))
    (: (ax-2 ax-1) (Pair (Q $g $h) (P $i $j)))

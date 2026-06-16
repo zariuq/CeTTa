@@ -204,9 +204,9 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
         }
         return snode_get_var(node,
                              g_var_intern ? var_intern(g_var_intern,
-                                                       symbol_intern_cstr(g_symbols, "__grounded__"))
+                                                       g_builtin_syms.grounded_placeholder)
                                           : fresh_var_id(),
-                             symbol_intern_cstr(g_symbols, "__grounded__"));
+                             g_builtin_syms.grounded_placeholder);
     case ATOM_EXPR: {
         SubstNode *cur = snode_get_expr(node, a->expr.len);
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
@@ -248,9 +248,9 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
         }
         return snode_get_var(node,
                              g_var_intern ? var_intern(g_var_intern,
-                                                       symbol_intern_cstr(g_symbols, "__grounded__"))
+                                                       g_builtin_syms.grounded_placeholder)
                                           : fresh_var_id(),
-                             symbol_intern_cstr(g_symbols, "__grounded__"));
+                             g_builtin_syms.grounded_placeholder);
     case ATOM_EXPR: {
         SubstNode *cur = snode_get_expr(node, tu_arity(universe, atom_id));
         for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
@@ -347,22 +347,39 @@ bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
 
 /* ── Result Set ────────────────────────────────────────────────────────── */
 
-void smset_init(SubstMatchSet *s) { s->items = NULL; s->len = 0; s->cap = 0; }
+void smset_init(SubstMatchSet *s) {
+    memset(s->inline_items, 0, sizeof(s->inline_items));
+    s->items = s->inline_items;
+    s->len = 0;
+    s->cap = 1;
+}
 
 void smset_free(SubstMatchSet *s) {
     for (CettaIndex i = 0; i < s->len; i++)
         bindings_free(&s->items[i].bindings);
-    free(s->items);
-    s->items = NULL;
+    if (s->items != s->inline_items)
+        free(s->items);
+    memset(s->inline_items, 0, sizeof(s->inline_items));
+    s->items = s->inline_items;
     s->len = 0;
-    s->cap = 0;
+    s->cap = 1;
 }
 
 static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, uint32_t epoch,
                             Bindings *b) {
     if (s->len >= s->cap) {
-        s->cap = s->cap ? s->cap * 2 : 8;
-        s->items = cetta_realloc(s->items, sizeof(SubstMatch) * s->cap);
+        CettaIndex next_cap = s->cap ? s->cap * 2 : 8;
+        if (s->items == s->inline_items) {
+            SubstMatch *next =
+                cetta_malloc(sizeof(SubstMatch) * (size_t)next_cap);
+            if (s->len > 0)
+                memcpy(next, s->items, sizeof(SubstMatch) * (size_t)s->len);
+            s->items = next;
+        } else {
+            s->items =
+                cetta_realloc(s->items, sizeof(SubstMatch) * (size_t)next_cap);
+        }
+        s->cap = next_cap;
     }
     s->items[s->len].atom_idx = atom_idx;
     s->items[s->len].epoch = epoch;

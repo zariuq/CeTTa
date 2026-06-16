@@ -64,7 +64,7 @@ def run_rho(bin_path: str, expr: str, *, threads: int,
             input_path: Path | None = None) -> RunResult:
     cmd = [
         bin_path,
-        "--rho-threads",
+        "--num-threads",
         str(threads),
         "--lang",
         "rhocalc",
@@ -260,6 +260,10 @@ def summarize_times(times: list[float]) -> tuple[float, float]:
     return statistics.median(times), min(times)
 
 
+def executor_mode_for_threads(threads: int) -> str:
+    return "threaded" if threads > 1 else "sequential"
+
+
 def workload_input_path(spill_dir: Path, workload: Workload,
                         mode: str, seed: int) -> Path:
     safe_name = "".join(
@@ -271,7 +275,7 @@ def workload_input_path(spill_dir: Path, workload: Workload,
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Measure --rho-threads speed/crossover on validated rho workloads."
+        description="Measure --num-threads speed/crossover on validated rho workloads."
     )
     parser.add_argument("bin_path")
     parser.add_argument("--mode", choices=["quick", "standard", "heavy"],
@@ -315,7 +319,8 @@ def main(argv: list[str]) -> int:
         print(f"NOTE {workload.note}")
         print(f"REDUCTIONS {workload.reductions}")
         print(f"INPUT {input_path}")
-        baseline_median: float | None = None
+        sequential_baseline_median: float | None = None
+        first_threaded_median: float | None = None
         for threads in thread_counts:
             times: list[float] = []
             for _ in range(args.runs):
@@ -330,31 +335,55 @@ def main(argv: list[str]) -> int:
             if not times:
                 continue
             median, best = summarize_times(times)
+            mode = executor_mode_for_threads(threads)
             if threads == 1:
-                baseline_median = median
-            assert baseline_median is not None
-            speedup = baseline_median / median if median > 0 else 0.0
+                sequential_baseline_median = median
+            elif first_threaded_median is None:
+                first_threaded_median = median
+            assert sequential_baseline_median is not None
+            speedup_vs_seq = (
+                sequential_baseline_median / median if median > 0 else 0.0
+            )
+            speedup_vs_first_parallel = (
+                first_threaded_median / median
+                if first_threaded_median is not None and median > 0
+                else ""
+            )
             if workload.name.startswith("chain-farm") and threads == max(thread_counts):
-                chain_speedup = speedup
+                chain_speedup = speedup_vs_seq
             rows.append({
                 "mode": args.mode,
                 "seed": args.seed,
                 "workload": workload.name,
                 "reductions": workload.reductions,
                 "threads": threads,
+                "executor_mode": mode,
                 "runs": args.runs,
                 "median_s": f"{median:.9f}",
                 "best_s": f"{best:.9f}",
-                "speedup_vs_1": f"{speedup:.6f}",
+                "speedup_vs_seq": f"{speedup_vs_seq:.6f}",
+                "speedup_vs_first_parallel": (
+                    f"{speedup_vs_first_parallel:.6f}"
+                    if speedup_vs_first_parallel != ""
+                    else ""
+                ),
                 "samples_s": ";".join(f"{sample:.9f}" for sample in times),
                 "note": workload.note,
             })
-            print(
+            summary = (
                 "RESULT "
                 f"threads={threads} "
+                f"mode={mode} "
                 f"median_s={median:.6f} "
                 f"best_s={best:.6f} "
-                f"speedup_vs_1={speedup:.3f}"
+                f"speedup_vs_seq={speedup_vs_seq:.3f}"
+            )
+            if speedup_vs_first_parallel != "":
+                summary += (
+                    f" speedup_vs_first_parallel={speedup_vs_first_parallel:.3f}"
+                )
+            print(
+                summary
             )
         print()
 
@@ -371,10 +400,12 @@ def main(argv: list[str]) -> int:
                 "workload",
                 "reductions",
                 "threads",
+                "executor_mode",
                 "runs",
                 "median_s",
                 "best_s",
-                "speedup_vs_1",
+                "speedup_vs_seq",
+                "speedup_vs_first_parallel",
                 "samples_s",
                 "note",
             ]
