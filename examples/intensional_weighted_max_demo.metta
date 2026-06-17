@@ -22,7 +22,7 @@
 ;   - Audit output with $covered (what we found) and $missing (what we lack)
 ;   - Difference between an entity with strong evidence and one with weak
 ;
-; Run:  cd /home/zar/claude/hyperon/CeTTa
+; Run:  cd /home/aimama/aihub/hyperon/cetta-dtt-prime
 ;       ./cetta examples/intensional_weighted_max_demo.metta
 ; ============================================================================
 

@@ -134,8 +134,14 @@
   (collapse (lts:he:transitions (switch z ((z two)))))
   (((quote two))))
 
+; switch evaluates its scrutinee (upstream contract; split ratified
+; 2026-06-10): the reducible scrutinee steps first.  switch-minimal
+; matches the raw scrutinee structurally.
 !(assertEqualToResult
   (collapse (lts:he:transitions (switch (g a) (((g a) raw) ((h a) evald)))))
+  (((quote (switch (h a) (((g a) raw) ((h a) evald)))))))
+!(assertEqualToResult
+  (collapse (lts:he:transitions (switch-minimal (g a) (((g a) raw) ((h a) evald)))))
   (((quote raw))))
 
 !(assertEqualToResult

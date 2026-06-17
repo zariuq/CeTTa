@@ -11190,6 +11190,71 @@ tail_call: ;
         }
         Atom *scrutinee = expr_arg(atom, 0);
         Atom *branches = expr_arg(atom, 1);
+        if (head_id == g_builtin_syms.switch_text) {
+            /* Upstream contract: switch evaluates its scrutinee
+             * ((: switch (-> %Undefined% Expression %Undefined%)) then
+             * matches structurally; switch-minimal (Atom-typed) below
+             * matches the raw scrutinee. */
+            ResultSet scrut;
+            result_set_init(&scrut);
+            metta_eval(s, a, NULL, scrutinee, fuel, &scrut);
+            if (scrut.len == 1 && branches->kind == ATOM_EXPR) {
+                Atom *sv = scrut.items[0];
+                for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
+                    Atom *branch = branches->expr.elems[i];
+                    if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
+                        BindingsBuilder b;
+                        if (!bindings_builder_init(&b, NULL)) {
+                            free(scrut.items);
+                            return;
+                        }
+                        if (simple_match_builder(branch->expr.elems[0], sv, &b)) {
+                            const Bindings *bb = bindings_builder_bindings(&b);
+                            Atom *next_atom =
+                                bindings_apply_if_vars(bb, a, branch->expr.elems[1]);
+                            if (preserve_bindings &&
+                                !bindings_builder_merge_commit(&current_env_builder, bb)) {
+                                bindings_builder_free(&b);
+                                free(scrut.items);
+                                return;
+                            }
+                            bindings_builder_free(&b);
+                            free(scrut.items);
+                            TAIL_REENTER(next_atom);
+                        }
+                        bindings_builder_free(&b);
+                    }
+                }
+                free(scrut.items);
+                return;
+            }
+            for (CettaCount si = 0; si < scrut.len; si++) {
+                Atom *sv = scrut.items[si];
+                if (branches->kind == ATOM_EXPR) {
+                    for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
+                        Atom *branch = branches->expr.elems[i];
+                        if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
+                            BindingsBuilder b;
+                            if (!bindings_builder_init(&b, NULL))
+                                continue;
+                            if (simple_match_builder(branch->expr.elems[0], sv, &b)) {
+                                const Bindings *bb = bindings_builder_bindings(&b);
+                                Atom *result =
+                                    bindings_apply_if_vars(bb, a, branch->expr.elems[1]);
+                                eval_for_current_caller(s, a, NULL, result, fuel, bb,
+                                                        CURRENT_ENV,
+                                                        preserve_bindings, os);
+                                bindings_builder_free(&b);
+                                break;
+                            }
+                            bindings_builder_free(&b);
+                        }
+                    }
+                }
+            }
+            free(scrut.items);
+            return;
+        }
         if (branches->kind == ATOM_EXPR) {
             for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
                 Atom *branch = branches->expr.elems[i];
@@ -14153,6 +14218,7 @@ static void metta_eval_one_step_let_star(Arena *a, Atom *binding_list,
 }
 
 static void metta_eval_one_step_case(Space *s, Arena *a, Atom *atom,
+                                     SymbolId head_sym,
                                      Atom *scrutinee, Atom *branches,
                                      ResultSet *rs) {
     ResultSet inner;
@@ -14175,7 +14241,7 @@ static void metta_eval_one_step_case(Space *s, Arena *a, Atom *atom,
         if (atom_eq(next, scrutinee))
             continue;
         Atom **elems = arena_alloc(a, sizeof(Atom *) * 3);
-        elems[0] = atom_symbol_id(a, g_builtin_syms.case_text);
+        elems[0] = atom_symbol_id(a, head_sym);
         elems[1] = next;
         elems[2] = branches;
         result_set_add(rs, atom_expr(a, elems, 3));
@@ -14236,6 +14302,12 @@ static void metta_eval_one_step_switch(Arena *a, Atom *scrutinee,
             bindings_builder_free(&b);
         }
     }
+}
+
+/* True when the HE small-step rule table has this rule live and enabled. */
+static bool he_step_rule_on(CettaLangdefRuleId rule_id) {
+    return cetta_langdef_pack_rule_enabled(cetta_langdef_pack_he_small_step(),
+                                           rule_id);
 }
 
 static bool metta_eval_one_step_expr_congruence(Space *s, Arena *a, Atom *atom,
@@ -14326,65 +14398,92 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
         uint32_t nargs = atom->expr.len - 1;
         SymbolId head_id = head->kind == ATOM_SYMBOL ? head->sym_id : SYMBOL_ID_NONE;
 
-        if (head_id == g_builtin_syms.eval && nargs == 1) {
+        /* Special forms: each rule class below is table-gated (HES_*) and is
+         * the only implementation of that rule in the one-step subsystem.
+         * A disabled rule leaves its head uninterpreted (inert; argument
+         * congruence still applies, per the unknown-symbols-stay-inert
+         * principle). */
+        if (head_id == g_builtin_syms.eval && nargs == 1 &&
+            he_step_rule_on(CETTA_HES_RULE_EVAL)) {
             result_set_add(rs, expr_arg(atom, 0));
             return;
         }
-        if (head_id == g_builtin_syms.chain && nargs == 3) {
-            metta_eval_one_step_chain(s, a, atom, expr_arg(atom, 0),
-                                      expr_arg(atom, 1), expr_arg(atom, 2), rs);
+        if (head_id == g_builtin_syms.chain &&
+            he_step_rule_on(CETTA_HES_RULE_CHAIN)) {
+            if (nargs == 3) {
+                metta_eval_one_step_chain(s, a, atom, expr_arg(atom, 0),
+                                          expr_arg(atom, 1), expr_arg(atom, 2), rs);
+            } else {
+                result_set_add(rs,
+                               atom_error(a, atom,
+                                          atom_symbol(a, "IncorrectNumberOfArguments")));
+            }
             return;
         }
-        if (head_id == g_builtin_syms.chain && nargs != 3) {
-            result_set_add(rs,
-                           atom_error(a, atom,
-                                      atom_symbol(a, "IncorrectNumberOfArguments")));
-            return;
-        }
-        if (head_id == g_builtin_syms.let_star && nargs == 2) {
+        if (head_id == g_builtin_syms.let_star && nargs == 2 &&
+            he_step_rule_on(CETTA_HES_RULE_LET_STAR)) {
             metta_eval_one_step_let_star(a, expr_arg(atom, 0), expr_arg(atom, 1), rs);
             return;
         }
-        if (head_id == g_builtin_syms.let && nargs == 3) {
+        if (head_id == g_builtin_syms.let && nargs == 3 &&
+            he_step_rule_on(CETTA_HES_RULE_LET)) {
             metta_eval_one_step_let(s, a, expr_arg(atom, 1),
                                     expr_arg(atom, 0), expr_arg(atom, 2), rs);
             return;
         }
-        if (head_id == g_builtin_syms.case_text && nargs == 2) {
-            metta_eval_one_step_case(s, a, atom, expr_arg(atom, 0),
-                                     expr_arg(atom, 1), rs);
+        if (head_id == g_builtin_syms.case_text &&
+            he_step_rule_on(CETTA_HES_RULE_CASE)) {
+            if (nargs == 2) {
+                metta_eval_one_step_case(s, a, atom, g_builtin_syms.case_text,
+                                         expr_arg(atom, 0),
+                                         expr_arg(atom, 1), rs);
+            } else {
+                result_set_add(rs,
+                               atom_error(a, atom,
+                                          atom_symbol(a, "IncorrectNumberOfArguments")));
+            }
             return;
         }
-        if (head_id == g_builtin_syms.case_text && nargs != 2) {
-            result_set_add(rs,
-                           atom_error(a, atom,
-                                      atom_symbol(a, "IncorrectNumberOfArguments")));
+        if (head_id == g_builtin_syms.switch_text &&
+            he_step_rule_on(CETTA_HES_RULE_SWITCH)) {
+            /* Upstream contract: switch evaluates its scrutinee, so the
+             * coarse rule is case-shaped (scrutinee progress, then
+             * structural branch selection). */
+            if (nargs == 2) {
+                metta_eval_one_step_case(s, a, atom, g_builtin_syms.switch_text,
+                                         expr_arg(atom, 0),
+                                         expr_arg(atom, 1), rs);
+            } else {
+                result_set_add(rs,
+                               atom_error(a, atom,
+                                          atom_symbol(a, "IncorrectNumberOfArguments")));
+            }
             return;
         }
-        if ((head_id == g_builtin_syms.switch_text ||
-             head_id == g_builtin_syms.switch_minimal) && nargs == 2) {
-            metta_eval_one_step_switch(a, expr_arg(atom, 0), expr_arg(atom, 1), rs);
+        if (head_id == g_builtin_syms.switch_minimal &&
+            he_step_rule_on(CETTA_HES_RULE_SWITCH_MINIMAL)) {
+            if (nargs == 2) {
+                metta_eval_one_step_switch(a, expr_arg(atom, 0), expr_arg(atom, 1), rs);
+            } else {
+                result_set_add(rs,
+                               atom_error(a, atom,
+                                          atom_symbol(a, "IncorrectNumberOfArguments")));
+            }
             return;
         }
-        if ((head_id == g_builtin_syms.switch_text ||
-             head_id == g_builtin_syms.switch_minimal) && nargs != 2) {
-            result_set_add(rs,
-                           atom_error(a, atom,
-                                      atom_symbol(a, "IncorrectNumberOfArguments")));
-            return;
-        }
-        /* HEF_GroundedDispatch: pack-gated; this is the only grounded-dispatch
+        /* HES_GroundedDispatch: pack-gated; this is the only grounded-dispatch
          * implementation in the one-step subsystem. */
         if (head->kind == ATOM_SYMBOL && is_grounded_op(head_id) &&
-            cetta_langdef_pack_rule_enabled(cetta_langdef_pack_he_frontier(),
-                                            CETTA_HEF_RULE_GROUNDED_DISPATCH)) {
+            he_step_rule_on(CETTA_HES_RULE_GROUNDED_DISPATCH)) {
             Atom *direct = dispatch_native_op(s, a, head, atom->expr.elems + 1, nargs);
             if (direct) {
                 result_set_add(rs, direct);
                 return;
             }
         }
-        {
+        /* HES_EquationMatch: table-gated; this is the only equation-match
+         * implementation in the one-step subsystem. */
+        if (he_step_rule_on(CETTA_HES_RULE_EQUATION_MATCH)) {
             QueryResults qr;
             query_results_init(&qr);
             query_equations(s, atom, a, &qr);
@@ -14403,10 +14502,9 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
             result_set_add(rs, atom);
             return;
         }
-        /* HEF_LeftmostExprCongruence: pack-gated; this is the only argument-
+        /* HES_LeftmostExprCongruence: pack-gated; this is the only argument-
          * congruence implementation in the one-step subsystem. */
-        if (cetta_langdef_pack_rule_enabled(cetta_langdef_pack_he_frontier(),
-                                            CETTA_HEF_RULE_LEFTMOST_EXPR_CONGRUENCE) &&
+        if (he_step_rule_on(CETTA_HES_RULE_LEFTMOST_EXPR_CONGRUENCE) &&
             metta_eval_one_step_expr_congruence(s, a, atom, rs))
             return;
     }

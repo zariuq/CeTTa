@@ -14,8 +14,8 @@
           "HELanguageDef.mettaHE:MC_Error"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/test_bad_type_error.metta",
@@ -36,7 +36,7 @@
           "Mettapedia.OSLF.Framework.TypeSynthesis.langDiamondUsing"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/test_he_frontier_algebra_regression.metta"
@@ -55,8 +55,8 @@
           "HELanguageDef.mettaHE:MC_Match_Empty"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/generated/he_contract/test_match.metta",
@@ -75,8 +75,8 @@
           "HELanguageDef.mettaHE:MC_Unify_NoMatch"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/generated/he_contract/test_unify.metta"
@@ -94,8 +94,8 @@
           "HELanguageDef.mettaHE:R_Done"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/test_chain_nondet.metta",
@@ -114,8 +114,8 @@
           "HELanguageDef.mettaHE:MC_NoMatch"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/io_he_simple_rewrite.metta",
@@ -137,7 +137,7 @@
           "HELanguageDef.mettaHE:MC_NoMatch"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "regression_tests": [
           "tests/test_eval_grounded.metta"
@@ -155,7 +155,7 @@
           "HELanguageDef.mettaHE:TC_Mismatch"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "regression_tests": [
           "tests/test_type_cast.metta",
@@ -173,7 +173,7 @@
           "HELanguageDef.mettaHE:MC_Grounded"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "regression_tests": [
           "tests/test_float_ops.metta",
@@ -194,7 +194,7 @@
           "HELanguageDef.mettaHE:R_Done"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "regression_tests": [
           "tests/test_no_return_error.metta"
@@ -212,7 +212,7 @@
           "HELanguageDef.mettaHE:MC_Superpose_Empty"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/generated/he_contract/test_superpose_collapse.metta",
@@ -230,7 +230,7 @@
           "HELanguageDef.mettaHE:MC_Collapse"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/generated/he_contract/test_superpose_collapse.metta"
@@ -248,7 +248,7 @@
           "HELanguageDef.mettaHE:Space"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "regression_tests": [
           "tests/test_context_space.metta",
@@ -402,6 +402,13 @@
           "module": "lts:he",
           "name": "lts:he:diamond",
           "return_type": "Bool"
+        },
+        {
+          "argument_types": [],
+          "arity": 0,
+          "module": "lts:he",
+          "name": "lts:he:step-rules",
+          "return_type": "%Undefined%"
         }
       ],
       "profile_surface_policies": [
@@ -1053,8 +1060,8 @@
           "HELanguageDef.mettaHE:IF_AfterOp_EvalArgs"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "regression_tests": [
           "tests/test_function_type_check.metta",
@@ -1077,8 +1084,8 @@
           "HELanguageDef.mettaHE:IA_Tail_Empty"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/he_c3_pln_stv.metta",
@@ -1098,8 +1105,8 @@
           "HELanguageDef.mettaHE:MC_Match_Empty"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/generated/he_contract/test_match.metta",
@@ -1118,8 +1125,8 @@
           "HELanguageDef.mettaHE:MC_Unify_NoMatch"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "regression_tests": [
           "tests/generated/he_contract/test_unify.metta"
@@ -1137,7 +1144,7 @@
           "HELanguageDef.mettaHE:R_Done"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "regression_tests": [
           "tests/test_chain_nondet.metta",
@@ -1295,126 +1302,126 @@
     "cetta_cli": {
       "bytes": 68242,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/main.c",
+      "path": "hyperon/cetta-dtt-prime/src/main.c",
       "sha256": "bcd5cc9778b9b33e36ce5a6fef6c16f12911044116c61e858c96324a26f37ac1"
     },
     "cetta_eval": {
-      "bytes": 566611,
+      "bytes": 573489,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/eval.c",
-      "sha256": "37c13b7b358ca2e8568e3414b128f17106726e2a6352f15769e35d595b70432d"
+      "path": "hyperon/cetta-dtt-prime/src/eval.c",
+      "sha256": "882e6d09d32b9a32b1429490a7564900c1118643b98e1146cab52c1e483c56af"
     },
     "cetta_library": {
-      "bytes": 278506,
+      "bytes": 279156,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/library.c",
-      "sha256": "68d5256b36db85d6d3f8ba058a05a7656595ba35b7c75b12da8d2ddd1541f0ba"
+      "path": "hyperon/cetta-dtt-prime/src/library.c",
+      "sha256": "f97f9b0ffb1a117e0f9ec054baa25109625394d0af54a98f2d543fdb735a848c"
     },
     "cetta_session": {
       "bytes": 25239,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/session.c",
+      "path": "hyperon/cetta-dtt-prime/src/session.c",
       "sha256": "aface453453fe23762bd2aeaec72fa8f61c0f21a21b3b3c02ff2097ea200fce5"
     },
     "cetta_session_header": {
       "bytes": 10951,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/session.h",
+      "path": "hyperon/cetta-dtt-prime/src/session.h",
       "sha256": "55c02108b8a74c6e16070780319f954e38a4012356f994b831d4f5987888f2da"
     },
     "frontier_regression": {
       "bytes": 1418,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/test_he_frontier_algebra_regression.metta",
+      "path": "hyperon/cetta-dtt-prime/tests/test_he_frontier_algebra_regression.metta",
       "sha256": "8a38eaf83d983d9d6ba98289e5f35010c72ec7580b6050c0f7aecab19903af84"
     },
     "he_c3_regression": {
       "bytes": 2708,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/he_c3_pln_stv.metta",
+      "path": "hyperon/cetta-dtt-prime/tests/he_c3_pln_stv.metta",
       "sha256": "fb1d38e28591e53bb017e810f83ea27ad6df96d13fa711db7be3c1f80363614f"
     },
     "he_compat_catalog": {
-      "bytes": 1469300,
+      "bytes": 1470625,
       "exists": true,
-      "path": "tests/generated/he_compat/he_compat_cases_2026-06-07.json",
-      "sha256": "e203eb1a48d6ee580f590c2df65f68461fa0ab0f3a665182d7e6924719f31773"
+      "path": "hyperon/cetta-dtt-prime/tests/generated/he_compat/he_compat_cases_2026-06-07.json",
+      "sha256": "67e318074ba055165359d57bff87c41dc40c32c0f4e5b57f20ab06216f519a22"
     },
     "he_d4_regression": {
       "bytes": 5571,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/he_d4_type_prop.metta",
+      "path": "hyperon/cetta-dtt-prime/tests/he_d4_type_prop.metta",
       "sha256": "142acb1deebd51a2e4917bd0cdab856380a63119f4c71bf43247350d82190b82"
     },
     "lts_generic_surface": {
       "bytes": 4908,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/lib/lts.metta",
+      "path": "hyperon/cetta-dtt-prime/lib/lts.metta",
       "sha256": "bb927f4452a26cfda6cbd4495af7de37af7c3443b6e1345dd0ac464401548b22"
     },
     "lts_he_surface": {
-      "bytes": 4762,
+      "bytes": 5447,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/lib/lts/he.metta",
-      "sha256": "2919cd82588642caaff465b510dd2ef01555676e89d136d4be146d3c183bb4c0"
+      "path": "hyperon/cetta-dtt-prime/lib/lts/he.metta",
+      "sha256": "5f2369d57c05e0217f983b451bc5e9bbd9ebe8fd5324f1db69a38f8b24a1f9a1"
     },
     "official_he_spec_snapshot": {
       "bytes": 22826,
       "exists": true,
-      "path": "/home/zar/claude/tmp/he_metta_official_specs.md",
+      "path": "tmp/he_metta_official_specs.md",
       "sha256": "1a968394c5b03ff9cb9233af1de2d07a1426c44a6d438d302d05a1f008827e08"
     },
     "profile_get_doc_compat_regression": {
       "bytes": 19,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/support/profile_get_doc_compat_surface.metta",
+      "path": "hyperon/cetta-dtt-prime/tests/support/profile_get_doc_compat_surface.metta",
       "sha256": "1167679e96616407e4718435bb5d0f2c22d6ada8930b5554576f2750b9e1222d"
     },
     "profile_get_doc_extended_regression": {
       "bytes": 97,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/support/profile_get_doc_extended_surface.metta",
+      "path": "hyperon/cetta-dtt-prime/tests/support/profile_get_doc_extended_surface.metta",
       "sha256": "b6fdc759e4a8178d553c7e29e6916b7a3ba04d988136c7cffda40be6af5683c2"
     },
     "profile_get_doc_formal_regression": {
       "bytes": 86,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/tests/support/profile_get_doc_formal_surface.metta",
+      "path": "hyperon/cetta-dtt-prime/tests/support/profile_get_doc_formal_surface.metta",
       "sha256": "82f701363be5066f366ba0102d77abf64f88d4923a36e2e56fc0dd4fff7c2009"
     },
     "stdlib_surface": {
       "bytes": 34119,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/lib/stdlib.metta",
+      "path": "hyperon/cetta-dtt-prime/lib/stdlib.metta",
       "sha256": "cdbbff9c596864013bf2e4232c39aab6af537e8d5b9734f344990f7b956061c5"
     },
     "symbol_table": {
-      "bytes": 18107,
+      "bytes": 18171,
       "exists": true,
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime/src/symbol.h",
-      "sha256": "d6215e8693903af9cafe50ee3c1a55f28f03486cafde8591adee531f38143e50"
+      "path": "hyperon/cetta-dtt-prime/src/symbol.h",
+      "sha256": "1a56a34301095f2385dc988cb436211ab549d456f9dfe7ba3a6705a8e32113fa"
     }
   },
   "repositories": {
     "algorithms": {
       "dirty": true,
-      "head": "dde7d9d24271a1a44f3e786deecda7502c4ad682",
-      "path": "/home/zar/claude/lean-projects/algorithms"
+      "head": "be8695ddb56f8636098ae534d33f9b2a0596befc",
+      "path": "Mettapedia/lean/algorithms"
     },
     "cetta": {
       "dirty": true,
-      "head": "9774186451059ae1c0621e279bd2b1741d32f142",
-      "path": "/home/zar/claude/hyperon/cetta-dtt-prime"
+      "head": "c026664bff19340bd0cad9ad83485eacac464f15",
+      "path": "hyperon/cetta-dtt-prime"
     },
     "hyperon_experimental": {
       "dirty": false,
       "head": "3f76dc460da6961f57f69f6c3e550c59c74ada83",
-      "path": "/home/zar/claude/hyperon/hyperon-experimental"
+      "path": "hyperon/hyperon-experimental"
     },
     "mettapedia": {
       "dirty": true,
-      "head": "dde7d9d24271a1a44f3e786deecda7502c4ad682",
-      "path": "/home/zar/claude/lean-projects/mettapedia"
+      "head": "be8695ddb56f8636098ae534d33f9b2a0596befc",
+      "path": "Mettapedia/lean/mettapedia"
     }
   },
   "rule_coverage": {
@@ -1464,8 +1471,8 @@
           "profile-he-formal-vs-rust-compat-split"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "status": "covered",
         "title": "Top-level ! evaluation",
@@ -1485,7 +1492,7 @@
           "profile-surface-policy-table"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "partial",
         "title": "Atomspace declarations and assertion-style programs",
@@ -1506,8 +1513,8 @@
           "equation-query-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "status": "covered",
         "title": "Equation definitions",
@@ -1531,8 +1538,8 @@
           "type-cast-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "status": "partial",
         "title": "Type assignment and type lookup",
@@ -1552,7 +1559,7 @@
           "function-type-applicability-premise-flow"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "partial",
         "title": "Function type arrows",
@@ -1584,9 +1591,9 @@
           "empty-not-lts-successor"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langReduces/langDiamondUsing_spec/langBoxUsing_spec",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Formula.lean:sem_dia_eq_langDiamondUsing/sem_box_eq_langBoxUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langReduces/langDiamondUsing_spec/langBoxUsing_spec",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Formula.lean:sem_dia_eq_langDiamondUsing/sem_box_eq_langBoxUsing"
         ],
         "status": "covered",
         "title": "Empty as no visible result",
@@ -1608,7 +1615,7 @@
           "error-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "covered",
         "title": "Error propagation and error constructors",
@@ -1639,9 +1646,9 @@
           "eval-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langReduces/langDiamondUsing_spec/langBoxUsing_spec"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langReduces/langDiamondUsing_spec/langBoxUsing_spec"
         ],
         "status": "covered",
         "title": "Minimal MeTTa eval instruction",
@@ -1661,7 +1668,7 @@
           "context-space-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "partial",
         "title": "evalc and context-space",
@@ -1682,8 +1689,8 @@
           "chain-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "status": "covered",
         "title": "chain premise flow",
@@ -1704,8 +1711,8 @@
           "match-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "status": "covered",
         "title": "match against the active space",
@@ -1726,8 +1733,8 @@
           "unify-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "status": "covered",
         "title": "local unify success/failure branches",
@@ -1750,7 +1757,7 @@
           "empty-zero-visible-result-bag"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "status": "covered",
         "title": "collapse/superpose nondeterministic bags",
@@ -1770,7 +1777,7 @@
           "constructor-arity-surface"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "covered",
         "title": "cons/decons atom structure",
@@ -1790,7 +1797,7 @@
           "function-return-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "covered",
         "title": "function/return control flow",
@@ -1814,8 +1821,8 @@
           "surviving-branch-reenters-evaluator"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "status": "covered",
         "title": "Applicative argument evaluation",
@@ -1834,7 +1841,7 @@
           "grounded-dispatch-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "status": "covered",
         "title": "Grounded dispatch and native results",
@@ -1856,7 +1863,7 @@
           "lts-diamond-frontier-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "status": "covered",
         "title": "Nondeterministic visible result bags",
@@ -1889,7 +1896,7 @@
           "profile-surface-policy-table"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "partial",
         "title": "Language/profile surface availability",
@@ -1941,8 +1948,8 @@
           "context-space-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
-          "lean-projects/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
         ],
         "status": "partial",
         "title": "Native space operations and space-kind extensions",
@@ -1961,7 +1968,7 @@
           "grounded-dispatch-successor-shape"
         ],
         "oslf_refs": [
-          "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
         ],
         "status": "partial",
         "title": "Grounded numeric and exact-rational extensions",

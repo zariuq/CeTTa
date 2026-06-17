@@ -18,13 +18,11 @@ import argparse
 import shutil
 from pathlib import Path
 
+from mettapedia_paths import discover_mettapedia_root
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = ROOT.parents[1]
 DEFAULT_SOURCE = (
-    WORKSPACE
-    / "lean-projects"
-    / "mettapedia"
+    discover_mettapedia_root()
     / "artifacts"
     / "conformance"
     / "he_contract_tests"

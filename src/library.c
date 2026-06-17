@@ -2163,18 +2163,18 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
                                         Atom **args, uint32_t nargs) {
     (void)ctx;
     if (head->kind != ATOM_SYMBOL) return NULL;
-    if (head->sym_id == g_builtin_syms.lib_langdef_pack_info) {
+    if (head->sym_id == g_builtin_syms.lib_lts_he_step_rules) {
         if (nargs != 1) {
             return atom_error(a, head,
                               atom_symbol(a, "IncorrectNumberOfArguments"));
         }
         if (args[0]->kind == ATOM_SYMBOL &&
-            strcmp(symbol_bytes(g_symbols, args[0]->sym_id), "he-frontier") == 0) {
-            return cetta_langdef_pack_info_atom(cetta_langdef_pack_he_frontier(),
-                                                a);
+            strcmp(symbol_bytes(g_symbols, args[0]->sym_id), "he-small-step") == 0) {
+            return cetta_langdef_step_rules_atom(cetta_langdef_pack_he_small_step(),
+                                                 a);
         }
         return atom_error(a, atom_expr2(a, head, args[0]),
-                          atom_string(a, "unknown langdef pack"));
+                          atom_string(a, "unknown rule table"));
     }
     if (head->sym_id == g_builtin_syms.lib_lts_rho_transitions) {
         Atom *result;

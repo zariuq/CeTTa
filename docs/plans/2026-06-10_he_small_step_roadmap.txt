@@ -1,0 +1,162 @@
+HE SMALL-STEP ROADMAP — plain-English milestones
+=================================================
+Date: 2026-06-10.  Supersedes the Tranche-A/B/C and S2..S7 labels of the
+earlier charters (2026-06-09 lts modal charter, 2026-06-10 first-slice
+charter): same plan, human names.  Each milestone says WHAT changes in the
+system, WHY we stop there, and WHEN it counts as done.
+
+THE GOAL, in one sentence: HE MeTTa's reduction rules become ONE named,
+reflectable, machine-checked rule source that the C runtime executes and
+Lean proves about — so the rules can never again silently drift apart
+(the disease that produced the missing-congruence bug on three branches).
+
+NAMING REGISTRY (ratified 2026-06-10; "frontier" and "pack-info" are
+retired vocabulary — internal-only where already committed):
+  public query     lts:he:step-rules     -> (step-rules HE small-step
+                                             "fnv1a64:..." (schema 2)
+                                             (rules (<name> <claim>)...)
+                                             (disabled ...))
+                   per-rule claims: bag-tested-adequate
+                                    | rule-sound-on-fragment
+                                    | rule-sound
+                   (claims are evidence, excluded from the digest)
+  rule IDs         HES_*  live: GroundedDispatch, LeftmostExprCongruence,
+                           EquationMatch, Eval, Chain, Let, LetStar, Case,
+                           Switch, SwitchMinimal; structural: QuoteQuiescent,
+                           ReturnQuiescent, EmptyQuiescent, ErrorQuiescent
+  granularity      "small-step" (user-visible surface steps)
+                   vs the fine mettaHE instruction machine
+                   vs big-step evaluation
+  Lean relation    HESmallStep, HECanSmallStep, heSmallStepSpan,
+                   SmallStepNormalForm, successorBox
+  C artifact       CettaLangdefPack (internal); src/he_small_step_pack.c
+  test lane        make test-step-rules (wired into make test; fail-closed)
+  kill switch      CETTA_LANGDEF_DISABLED_RULES=<rule,...>
+
+────────────────────────────────────────────────────────────────────────
+DONE — RULE-TABLE WELD
+  What: every branch of metta_eval_one_step is governed by the named rule
+  table: NINE live rules (grounded dispatch, leftmost congruence, equation
+  match, eval, chain, let, let*, case, switch), each with a kill switch and
+  a rule-removal test that must break the engine; quote/return and
+  empty/error quiescence are structural rows with written reasons.
+  Disabled special forms go inert (head uninterpreted, congruence still
+  applies) — the unknown-symbols-stay-inert principle.
+  Why staged as it was: the first two rules were the smallest slice that
+  could prove the mechanism real instead of decorative; the rest followed
+  once proven.
+  Evidence: make test 375/0 (default) and 371/0 (mork), both incl.
+  [step-rules] PASS (baseline + 9 rule-removal failures confirmed);
+  digest fnv1a64:a08298ab9c09e5ef (schema 2, per-rule claim levels).
+
+DONE — LEAN SMALL-STEP MODEL
+  What: HESmallStep in Lean (Mettapedia/Languages/MeTTa/HE/SmallStep.lean,
+  zero sorries) — the coarse relation as a mathematical object over the
+  SAME Space/GroundedDispatch/queryEquations the official EvalSpec uses,
+  with all three computational rules (grounded dispatch, equation match
+  with the official hasLoop side condition, leftmost congruence), the OSLF
+  span, diamond/box, De Morgan, the Galois connection, and totality.
+  Special-form rules are not yet modeled (documented scope gap).
+
+DONE (first slice) — SMALL-STEP / OFFICIAL-HE CORRESPONDENCE
+  What: SmallStepSound.lean (zero sorries) proves the ABSORPTION theorems:
+  - mettaCall_absorbs_grounded_dispatch and mettaCall_absorbs_equation_match
+    (against the declarative MettaCall), and
+  - minimalStep_absorbs_eval (against the official MinimalStep.eval
+    instruction; the coarse rule's content IS the official constructor).
+  FIVE rules now carry Lean certification: HES_GroundedDispatch,
+  HES_EquationMatch, HES_Eval (rule-sound, unconditional) and HES_Chain,
+  HES_LeftmostExprCongruence (rule-sound-on-fragment — Zar-ratified third
+  claim level 2026-06-10; theorems on the certified fragment: untyped
+  constructor-headed terms, Q-domain spectators, grounded/equation leaf
+  redexes; the full S0–S4 ladder in SmallStepQuiescence/Master.lean).  The digest proved invariant under every claim flip,
+  validating the evidence/content separation.  The Lean model
+  (SmallStep.lean) now also carries the eval and chain constructors with
+  full rule-priority machinery (special forms excluded from grounded/
+  equation/congruence, mirroring the C dispatch order) and totality over
+  the extended relation.
+  THE SINGLE REMAINING MOUNTAIN, precisely: the master theorem
+  "EvalAtom absorbs coarse steps" (+ companion "coarse normal forms
+  self-evaluate officially").  Its congruence case is the InterpretTuple/
+  InterpretArgs context lemma; HES_Chain's two cases need exactly the
+  master statement (source progress) and the companion (substitution);
+  HES_LeftmostExprCongruence needs the congruence case.  let/let*/case/switch
+  one-step behavior is now pinned by probes AND modeled in Lean (all nine
+  rules exist in HESmallStep, 0 sorries); their soundness route is the
+  official stdlib-sugar formalization (they are upstream stdlib equations,
+  so native-step ≡ equation-step over the stdlib space).
+
+NEXT — CORRESPONDENCE, REMAINING FIVE RULES (updated 2026-06-11)
+  State: 5/10 certified (GroundedDispatch, EquationMatch, Eval =
+  rule-sound; Chain, LeftmostExprCongruence = rule-sound-on-fragment).
+  The ground matcher bridge (coarse simpleMatch vs official matchAtoms)
+  is PROVEN on the success side (MatcherBridge.lean:
+  matchAtomsList_singleton_factor_ground, simpleMatch_ground_official,
+  simpleMatch_ground_matchAtoms); the failure side is proven for
+  non-expression patterns.  The executable boundary is an explicit named
+  interface (UnifyGroundRealization: matchStable/noMatchStable phrased
+  over the pre-existing EvalAtomStablyReaches).
+  Lane 1 — rule certifications: finish the expression-pattern failure
+  bridge (list-level earlier-branch lemma), then certify
+  let -> switch-minimal -> switch -> let* -> case against the verbatim
+  upstream stdlib compositions, each relative to the realization
+  boundary; flip claims one compiled theorem at a time (digest must not
+  move); rerun the step-rules lane + he-compat suite after the flips.
+  Lane 2 — boundary discharge: prove UnifyGroundRealization as a
+  THEOREM of the official evaluator, removing the assumption:
+  (i) official unify-instruction semantics, hit and miss, via the
+  official matchAtoms; (ii) spend the matcher bridge to convert coarse
+  match outcomes into official ones (success side done; miss side is
+  the same expression-pattern failure bridge Lane 1 needs — shared
+  dependency, build once); (iii) fuel-stability plumbing lifting the
+  instruction-level outcome to EvalAtomStablyReaches on ground unify
+  forms (Correctness.lean already has the stable-reaches machinery).
+  Lane 2 is independent of Lane 1 and upgrades every Lane-1 result in
+  place when it lands — no theorem restatement needed.
+  Budget fence: if Lane 2's stability plumbing (iii) exceeds ~2 focused
+  sessions, stop and consult rather than grinding — the named boundary
+  stays an honest explicit interface meanwhile, and Lane-1 flips do not
+  block on it (provenance notes the boundary until discharged).
+  Done when: all ten live rules read rule-sound or
+  rule-sound-on-fragment via compiled theorems, and the realization
+  boundary is discharged (no assumed executable-boundary structure left
+  on the certification path).
+
+THEN — FINE-MACHINE COLLAPSE (mettaHE)
+  What: the delimited-observation theorem connecting the coarse relation
+  to the fine mettaHE instruction machine (one coarse step = a fine run
+  stopping at the first observable surface rewrite).  Complements the
+  absorption route: absorption certifies against the declarative spec;
+  the collapse certifies against the instruction machine.
+
+PARKED (2026-06-11, Zar's ruling) — GENERATED RUNTIME FROM RULE SOURCE
+  The --compile-langdef generator (emitting reflectable table +
+  specialized C under one shared digest, with an
+  evaluate-by-iterating-one-step differential oracle) is OFF the menu:
+  it is too far ahead of the certification program.  Do not start,
+  scope, or design toward it without explicit go-ahead.  The
+  hand-authored pack + digest + rule-removal lane remain the weld
+  between the C runtime and the Lean model.
+
+THEN — PER-PROFILE RULE TABLES
+  What: he, he-compat, and he-extended each get their own explicit rule
+  table (fail-closed: a profile with no table refuses, never silently
+  borrows another's rules), and step-rules can then honestly report the
+  active profile's table.  A separate, properly-named introspection
+  surface for "what profile am I running in" can ride along here.
+  Done when: profile differences are table rows, not scattered if(profile)
+  branches.
+
+FINALLY — EVALUATOR UNIFICATION
+  What: the big-step evaluator (metta_eval) derives from the same rule
+  source family.  This is where the duplication that caused the
+  congruence bug truly dies, rather than shrinks.  With codegen parked,
+  the route here is routing both evaluators through the ONE
+  hand-authored table — not generation.
+  Done when: no reduction rule exists in two hand-maintained copies.
+
+STANDING FENCES (all milestones): no runtime trace/certificate surface;
+result bags never deduplicated for speed (support-quotient only inside
+box/diamond); claim levels never overstate (bag-tested-adequate until the
+correspondence theorem lands); unknown symbols stay inert in every
+profile; he-prime DTT work stays out until the small-step story is welded.
