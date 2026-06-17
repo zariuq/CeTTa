@@ -152,6 +152,7 @@ $(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
 $(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS) $(MORK_BRIDGE_WORKSPACE_MANIFEST)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
 	@cd $(MORK_BRIDGE_WORKDIR) && \
+		MAKEFLAGS= \
 		CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
 		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
 		cargo build --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
@@ -1381,7 +1382,7 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done < tests/rhocalc_tiny_oracle.tsv; \
-	mettapedia_root="$${METTAPEDIA_ROOT:-../../lean-projects/mettapedia}"; \
+	mettapedia_root="$${METTAPEDIA_ROOT:-../../Mettapedia/lean/mettapedia}"; \
 	if [ -d "$$mettapedia_root" ]; then \
 		while IFS=$$(printf '\t') read -r name fixture expected_count mode expected_file lean_file anchor; do \
 			[ -n "$$name" ] || continue; \
@@ -2964,7 +2965,8 @@ probe-imported-conjunction-lanes: $(BIN)
 		tests/support/imported_conjunction_lane_probe.metta
 
 # Slow: regenerate .expected files from HE CLI oracle.
-# Run ONE AT A TIME to avoid OOM. Requires conda hyperon env.
+# Run ONE AT A TIME to avoid OOM. Requires a metta CLI on PATH or a local
+# hyperon env under miniforge/miniconda.
 oracle-refresh:
 	@for f in tests/test_*.metta tests/he_*.metta; do \
 		[ -f "$$f" ] || continue; \
@@ -2978,8 +2980,24 @@ oracle-refresh:
 		fi; \
 		exp="$${f%.metta}.expected"; \
 		echo "oracle: $$f"; \
-		source $$HOME/miniconda3/bin/activate hyperon && \
-		timeout 30 metta "$$f" > "$$exp" 2>&1; \
+		if [ -n "$$HE_METTA_BIN" ]; then \
+			timeout 30 "$$HE_METTA_BIN" "$$f" > "$$exp" 2>&1; \
+		elif command -v metta >/dev/null 2>&1; then \
+			timeout 30 metta "$$f" > "$$exp" 2>&1; \
+		elif [ -x "$$HOME/miniforge3/envs/hyperon/bin/metta" ]; then \
+			timeout 30 "$$HOME/miniforge3/envs/hyperon/bin/metta" "$$f" > "$$exp" 2>&1; \
+		elif [ -x "$$HOME/miniconda3/envs/hyperon/bin/metta" ]; then \
+			timeout 30 "$$HOME/miniconda3/envs/hyperon/bin/metta" "$$f" > "$$exp" 2>&1; \
+		elif [ -f "$$HOME/miniforge3/bin/activate" ]; then \
+			source "$$HOME/miniforge3/bin/activate" hyperon && \
+			timeout 30 metta "$$f" > "$$exp" 2>&1; \
+		elif [ -f "$$HOME/miniconda3/bin/activate" ]; then \
+			source "$$HOME/miniconda3/bin/activate" hyperon && \
+			timeout 30 metta "$$f" > "$$exp" 2>&1; \
+		else \
+			echo "FAIL: no metta CLI found (set HE_METTA_BIN or install/activate a hyperon env)" >&2; \
+			exit 1; \
+		fi; \
 	done; \
 	echo "done — .expected files updated"
 

@@ -6,8 +6,8 @@
 ; Same algebra, runs in CeTTa native evaluator.  Used as cross-runtime
 ; consistency oracle: the PeTTa and CeTTa outputs MUST agree numerically.
 ;
-; Run:  cd /home/zar/claude/hyperon/CeTTa
-;       ulimit -v 10485760 && ./cetta examples/overlap_corrected_revision_demo.metta
+; Run:  cd /home/aimama/aihub/hyperon/CeTTa
+;       ./cetta examples/overlap_corrected_revision_demo.metta
 ; ============================================================================
 
 !(import! &self ../lib/lib_wmpln)
