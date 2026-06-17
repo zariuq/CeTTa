@@ -6,7 +6,7 @@
 ; Same algebra, runs in CeTTa native evaluator.  Used as cross-runtime
 ; consistency oracle: the PeTTa and CeTTa outputs MUST agree numerically.
 ;
-; Run:  cd /home/aimama/aihub/hyperon/cetta-dtt-prime
+; Run:  cd /home/aimama/aihub/hyperon/CeTTa
 ;       ./cetta examples/overlap_corrected_revision_demo.metta
 ; ============================================================================
 
