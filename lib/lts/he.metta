@@ -1,6 +1,6 @@
 !(import! &self lts)
 
-; Public HE evaluator LTS specialization over the current one-step HE frontier.
+; Public HE evaluator LTS specialization over the user-visible one-step HE relation.
 ;
 ; Import pattern:
 ;   !(import! &self lts:he)
@@ -13,11 +13,11 @@
 ;   lts:he:is-can-step
 ;   lts:he:box
 ;   lts:he:diamond
-;   lts:he:pack-info
+;   lts:he:step-rules
 ;
-; The current frontier exposes direct top-level one-step reductions together
+; The one-step surface exposes direct top-level one-step reductions together
 ; with chain/let/let*/case/switch-context progression, and emits quoted
-; successors so the frontier remains stable as data instead of being eagerly
+; successors so the one-step surface remains stable as data instead of being eagerly
 ; evaluated again.
 
 (: lts:he:transitions (-> Atom %Undefined%))
@@ -27,16 +27,16 @@
 (: lts:he:is-can-step (-> Atom Bool))
 (: lts:he:box (-> Atom Atom Bool))
 (: lts:he:diamond (-> Atom Atom Bool))
-(: lts:he:pack-info (-> %Undefined%))
+(: lts:he:step-rules (-> %Undefined%))
 
 (@doc lts:he:transitions
-  (@desc "Meta-level one-step HE frontier. This is the unquoted-state front door for lts:he:step-state: it quotes the input once, emits each immediate successor as a quoted MeTTa state, emits zero results on quiescent atoms, and propagates Error outcomes.")
+  (@desc "Meta-level one-step HE surface. This is the unquoted-state front door for lts:he:step-state: it quotes the input once, emits each immediate successor as a quoted MeTTa state, emits zero results on quiescent atoms, and propagates Error outcomes.")
   (@params (
     (@param "MeTTa atom to inspect for one evaluator step")))
   (@return "Zero or more quoted immediate HE successors"))
 
 (@doc lts:he:step-state
-  (@desc "Quoted-state one-step HE frontier. This is lts:transitions bound to the raw quoted-state HE successor primitive: it accepts a frozen quoted HE state and emits quoted immediate successors, so repeated stepping composes at the MeTTa surface. Incoming Error atoms are propagated unchanged. Ordinary unquoted atoms are not implicitly frozen or stepped here, so they yield zero results.")
+  (@desc "Quoted-state one-step HE surface. This is lts:transitions bound to the raw quoted-state HE successor primitive: it accepts a frozen quoted HE state and emits quoted immediate successors, so repeated stepping composes at the MeTTa surface. Incoming Error atoms are propagated unchanged. Ordinary unquoted atoms are not implicitly frozen or stepped here, so they yield zero results.")
   (@params (
     (@param "Quoted HE state to inspect for one evaluator step")))
   (@return "Zero or more quoted immediate HE successors"))
@@ -48,7 +48,7 @@
   (@return "Zero or more pairs of quoted HE states"))
 
 (@doc lts:he:is-normal-form
-  (@desc "Checks whether a MeTTa atom has an empty one-step HE frontier. This is lts:is-normal-form over lts:he:step-state after quoting the input once.")
+  (@desc "Checks whether a MeTTa atom has an empty one-step HE surface. This is lts:is-normal-form over lts:he:step-state after quoting the input once.")
   (@params (
     (@param "MeTTa atom to inspect")))
   (@return "True when no one-step successor exists, False when at least one successor exists, or Error when evaluation reports Error"))
@@ -60,23 +60,23 @@
   (@return "True when at least one successor exists, False when quiescent, or Error when evaluation reports Error"))
 
 (@doc lts:he:box
-  (@desc "Checks whether every quoted one-step HE successor of the supplied MeTTa atom satisfies the supplied unary Bool-valued predicate symbol. This is lts:box over lts:he:step-state after quoting the input once, so the predicate sees quoted successor states. A pure singleton Error frontier propagates unchanged, while quiescent states make lts:he:box vacuously True.")
+  (@desc "Checks whether every quoted one-step HE successor of the supplied MeTTa atom satisfies the supplied unary Bool-valued predicate symbol. This is lts:box over lts:he:step-state after quoting the input once, so the predicate sees quoted successor states. A pure singleton Error successor set propagates unchanged, while quiescent states make lts:he:box vacuously True.")
   (@params (
     (@param "Unary Bool-valued predicate symbol over quoted HE successor states")
     (@param "MeTTa atom to inspect")))
   (@return "True when every one-step HE successor satisfies the predicate, False when at least one successor fails it, or Error when evaluation reports Error"))
 
 (@doc lts:he:diamond
-  (@desc "Checks whether some quoted one-step HE successor of the supplied MeTTa atom satisfies the supplied unary Bool-valued predicate symbol. This is lts:diamond over lts:he:step-state after quoting the input once, so the predicate sees quoted successor states. A pure singleton Error frontier propagates unchanged, while quiescent states make lts:he:diamond False.")
+  (@desc "Checks whether some quoted one-step HE successor of the supplied MeTTa atom satisfies the supplied unary Bool-valued predicate symbol. This is lts:diamond over lts:he:step-state after quoting the input once, so the predicate sees quoted successor states. A pure singleton Error successor set propagates unchanged, while quiescent states make lts:he:diamond False.")
   (@params (
     (@param "Unary Bool-valued predicate symbol over quoted HE successor states")
     (@param "MeTTa atom to inspect")))
   (@return "True when some one-step HE successor satisfies the predicate, False when no successor satisfies it, or Error when evaluation reports Error"))
 
-(@doc lts:he:pack-info
-  (@desc "Reflects the active HE frontier LangDef pack as data: language, profile, granularity, source digest, claim level, the coarse rule inventory, and any rules disabled via CETTA_LANGDEF_DISABLED_RULES. The digest identifies which rule object the lts:he frontier is currently driven by.")
+(@doc lts:he:step-rules
+  (@desc "Reflects the HE small-step rule table as data: language, granularity, source digest, schema version, claim level, the coarse rule inventory, and any rules disabled via CETTA_LANGDEF_DISABLED_RULES. The digest identifies which rule object the lts:he one-step surface is currently driven by. The table describes the authored rule object and deliberately makes no claim about the active profile.")
   (@params ())
-  (@return "A (langdef-pack ...) expression describing the active HE frontier rule pack"))
+  (@return "A (step-rules ...) expression describing the HE small-step rule table"))
 
 (= (lts:he:transitions $state)
    (__cetta_lib_lts_he_transitions (quote $state)))
@@ -99,5 +99,5 @@
 (= (lts:he:diamond $phi $state)
    (lts:diamond lts:he:step-state $phi (quote $state)))
 
-(= (lts:he:pack-info)
-   (__cetta_lib_langdef_pack_info he-frontier))
+(= (lts:he:step-rules)
+   (__cetta_lib_lts_he_step_rules he-small-step))

@@ -34,7 +34,7 @@ static uint64_t pack_source_digest(const CettaLangdefPack *pack) {
     h = fnv1a64_field(h, pack->profile_id);
     h = fnv1a64_field(h, pack->granularity);
     h = fnv1a64_u32(h, pack->schema_version);
-    h = fnv1a64_field(h, pack->claim_level);
+    /* claim levels are evidence about rules, not rule content: excluded */
     for (uint32_t i = 0; i < pack->rule_count; i++) {
         const CettaLangdefRuleDef *r = &pack->rules[i];
         h = fnv1a64_field(h, r->name);
@@ -108,9 +108,9 @@ bool cetta_langdef_pack_rule_enabled(const CettaLangdefPack *pack,
 
 /* ── Reflection atom ───────────────────────────────────────────────────── */
 
-Atom *cetta_langdef_pack_info_atom(const CettaLangdefPack *pack, Arena *a) {
+Atom *cetta_langdef_step_rules_atom(const CettaLangdefPack *pack, Arena *a) {
     char digest_buf[32];
-    Atom *elems[8];
+    Atom *elems[7];
     Atom *rule_elems[CETTA_LANGDEF_RULE_COUNT + 1];
     Atom *disabled_elems[CETTA_LANGDEF_RULE_COUNT + 1];
     uint32_t rule_len = 0, disabled_len = 0, i;
@@ -122,19 +122,21 @@ Atom *cetta_langdef_pack_info_atom(const CettaLangdefPack *pack, Arena *a) {
     disabled_elems[disabled_len++] = atom_symbol(a, "disabled");
     for (i = 0; i < pack->rule_count; i++) {
         const CettaLangdefRuleDef *r = &pack->rules[i];
-        rule_elems[rule_len++] = atom_symbol(a, r->name);
+        rule_elems[rule_len++] = atom_expr2(a, atom_symbol(a, r->name),
+                                            atom_symbol(a, r->claim));
         if (pack->disabled_mask & (1u << (uint32_t)r->rule_id))
             disabled_elems[disabled_len++] = atom_symbol(a, r->name);
     }
 
-    elems[0] = atom_symbol(a, "langdef-pack");
+    /* No active-profile claim: the table describes the authored rule
+     * object, and per-profile packs only arrive at S6. */
+    elems[0] = atom_symbol(a, "step-rules");
     elems[1] = atom_symbol(a, pack->language_id);
-    elems[2] = atom_symbol(a, pack->profile_id);
-    elems[3] = atom_symbol(a, pack->granularity);
-    elems[4] = atom_string(a, digest_buf);
-    elems[5] = atom_expr2(a, atom_symbol(a, "claim"),
-                          atom_symbol(a, pack->claim_level));
-    elems[6] = atom_expr(a, rule_elems, rule_len);
-    elems[7] = atom_expr(a, disabled_elems, disabled_len);
-    return atom_expr(a, elems, 8);
+    elems[2] = atom_symbol(a, pack->granularity);
+    elems[3] = atom_string(a, digest_buf);
+    elems[4] = atom_expr2(a, atom_symbol(a, "schema"),
+                          atom_int(a, (int64_t)pack->schema_version));
+    elems[5] = atom_expr(a, rule_elems, rule_len);
+    elems[6] = atom_expr(a, disabled_elems, disabled_len);
+    return atom_expr(a, elems, 7);
 }

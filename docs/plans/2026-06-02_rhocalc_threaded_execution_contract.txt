@@ -23,14 +23,14 @@ What the Rholang/F1R3node implementations show
 
 The inspected code paths are:
 
-- /workspace/claude/hyperon/f1r3node/rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
-- /workspace/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpaceOps.scala
-- /workspace/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpace.scala
-- /workspace/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/MultiLock.scala
-- /workspace/claude/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/TwoStepLock.scala
-- /workspace/claude/hyperon/f1r3node-rust/rholang/src/rust/interpreter/reduce.rs
-- /workspace/claude/hyperon/f1r3node-rust/rspace++/src/rspace/rspace.rs
-- /workspace/claude/hyperon/f1r3node-rust/rspace++/src/rspace/hot_store.rs
+- /workspace/aihub/hyperon/f1r3node/rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
+- /workspace/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpaceOps.scala
+- /workspace/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/RSpace.scala
+- /workspace/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/MultiLock.scala
+- /workspace/aihub/hyperon/f1r3node/rspace/src/main/scala/coop/rchain/rspace/concurrent/TwoStepLock.scala
+- /workspace/aihub/hyperon/f1r3node-rust/rholang/src/rust/interpreter/reduce.rs
+- /workspace/aihub/hyperon/f1r3node-rust/rspace++/src/rspace/rspace.rs
+- /workspace/aihub/hyperon/f1r3node-rust/rspace++/src/rspace/hot_store.rs
 
 Useful observations:
 

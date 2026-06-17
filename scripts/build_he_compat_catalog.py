@@ -18,12 +18,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from mettapedia_paths import (
+    discover_algorithms_root,
+    discover_mettapedia_root,
+    workspace_display,
+)
 
 CATALOG_DATE = "2026-06-07"
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parents[1]
-METTAPEDIA = WORKSPACE / "lean-projects" / "mettapedia"
+METTAPEDIA = discover_mettapedia_root()
+ALGORITHMS = discover_algorithms_root()
 FIXTURES = METTAPEDIA / "scripts" / "conformance" / "he_io_fixtures.json"
 DEFAULT_OUT = (
     ROOT
@@ -361,39 +367,39 @@ BROAD_LOCAL_LIBRARY_IMPORT_MODULES = {
 
 OSLF_ANCHORS = {
     "language_def": (
-        "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/"
+        "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/"
         "HELanguageDef.lean:mettaHE"
     ),
     "language_def_simulation": (
-        "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/"
+        "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/"
         "LanguageDefSimulation.lean:evalSpec_families_covered"
     ),
     "executable_boundary": (
-        "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/"
+        "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/"
         "ExecutableBoundary.lean:EvalAtomCertified"
     ),
     "correctness": (
-        "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/"
+        "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/"
         "Correctness.lean:allSound"
     ),
     "declarative_spec": (
-        "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/"
+        "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/"
         "DeclarativeSpec.lean:emptyOrErrorPassthrough_intro"
     ),
     "type_synthesis": (
-        "lean-projects/mettapedia/Mettapedia/OSLF/Framework/"
+        "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/"
         "TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
     ),
     "type_synthesis_modal_spec": (
-        "lean-projects/mettapedia/Mettapedia/OSLF/Framework/"
+        "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/"
         "TypeSynthesis.lean:langReduces/langDiamondUsing_spec/langBoxUsing_spec"
     ),
     "formula_modal_semantics": (
-        "lean-projects/mettapedia/Mettapedia/OSLF/"
+        "Mettapedia/lean/mettapedia/Mettapedia/OSLF/"
         "Formula.lean:sem_dia_eq_langDiamondUsing/sem_box_eq_langBoxUsing"
     ),
     "premise_reduction": (
-        "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/"
+        "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/"
         "DeclReducesWithPremises.lean"
     ),
 }
@@ -868,9 +874,9 @@ def git_head(repo: Path) -> dict[str, Any]:
     try:
         head = run(["rev-parse", "HEAD"])
         dirty = bool(run(["status", "--short"]))
-        return {"path": str(repo), "head": head, "dirty": dirty}
+        return {"path": workspace_display(repo), "head": head, "dirty": dirty}
     except Exception:  # noqa: BLE001
-        return {"path": str(repo), "head": "unknown", "dirty": "unknown"}
+        return {"path": workspace_display(repo), "head": "unknown", "dirty": "unknown"}
 
 
 def first_ref_line(path: Path) -> str:
@@ -1184,7 +1190,7 @@ def build_cases() -> list[dict[str, Any]]:
                 "engine": "Hyperon Experimental metta",
                 "version": "0.2.10",
                 "repository_head_ref": "repositories.hyperon_experimental.head",
-                "baseline": str(
+                "baseline": workspace_display(
                     METTAPEDIA
                     / "scripts"
                     / "conformance"
@@ -1819,7 +1825,7 @@ def main() -> int:
         "repositories": {
             "cetta": git_head(ROOT),
             "mettapedia": git_head(METTAPEDIA),
-            "algorithms": git_head(WORKSPACE / "lean-projects" / "algorithms"),
+            "algorithms": git_head(ALGORITHMS),
             "hyperon_experimental": git_head(WORKSPACE / "hyperon" / "hyperon-experimental"),
         },
         "oracle_versions": {

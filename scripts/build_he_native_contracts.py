@@ -18,12 +18,19 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from mettapedia_paths import (
+    discover_algorithms_root,
+    discover_mettapedia_root,
+    workspace_display,
+)
 
 CONTRACT_DATE = "2026-06-07"
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parents[1]
 OFFICIAL_SPEC = WORKSPACE / "tmp" / "he_metta_official_specs.md"
+METTAPEDIA = discover_mettapedia_root()
+ALGORITHMS = discover_algorithms_root()
 HE_COMPAT_GENERATED_DIR = ROOT / "tests" / "generated" / "he_compat"
 DEFAULT_CATALOG = HE_COMPAT_GENERATED_DIR / f"he_compat_cases_{CONTRACT_DATE}.json"
 DEFAULT_OUT = HE_COMPAT_GENERATED_DIR / f"he_native_contracts_{CONTRACT_DATE}.json"
@@ -62,15 +69,15 @@ MASK_PROFILES = {
 
 OSLF_ANCHORS = {
     "language_def": (
-        "lean-projects/mettapedia/Mettapedia/Languages/MeTTa/HE/"
+        "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/"
         "HELanguageDef.lean:mettaHE"
     ),
     "type_synthesis": (
-        "lean-projects/mettapedia/Mettapedia/OSLF/Framework/"
+        "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/"
         "TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
     ),
     "premise_reduction": (
-        "lean-projects/mettapedia/Mettapedia/OSLF/MeTTaIL/"
+        "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/"
         "DeclReducesWithPremises.lean"
     ),
 }
@@ -78,10 +85,10 @@ OSLF_ANCHORS = {
 
 def file_sha256(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"path": str(path), "exists": False}
+        return {"path": workspace_display(path), "exists": False}
     data = path.read_bytes()
     return {
-        "path": str(path),
+        "path": workspace_display(path),
         "exists": True,
         "sha256": hashlib.sha256(data).hexdigest(),
         "bytes": len(data),
@@ -98,12 +105,12 @@ def git_head(repo: Path) -> dict[str, Any]:
 
     try:
         return {
-            "path": str(repo),
+            "path": workspace_display(repo),
             "head": run(["rev-parse", "HEAD"]),
             "dirty": bool(run(["status", "--short"])),
         }
     except Exception:  # noqa: BLE001
-        return {"path": str(repo), "head": "unknown", "dirty": "unknown"}
+        return {"path": workspace_display(repo), "head": "unknown", "dirty": "unknown"}
 
 
 def parse_profiles(session_c: str) -> list[dict[str, Any]]:
@@ -910,8 +917,8 @@ def build_payload(catalog_path: Path) -> dict[str, Any]:
         "profile_policy": load_profile_policy(catalog_path),
         "repositories": {
             "cetta": git_head(ROOT),
-            "mettapedia": git_head(WORKSPACE / "lean-projects" / "mettapedia"),
-            "algorithms": git_head(WORKSPACE / "lean-projects" / "algorithms"),
+            "mettapedia": git_head(METTAPEDIA),
+            "algorithms": git_head(ALGORITHMS),
             "hyperon_experimental": git_head(WORKSPACE / "hyperon" / "hyperon-experimental"),
         },
         "provenance": {
