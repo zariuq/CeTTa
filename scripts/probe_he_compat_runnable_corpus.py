@@ -28,7 +28,7 @@ DEFAULT_REPORT = (
     / "he_compat"
     / "he_compat_broad_corpus_2026-06-07.json"
 )
-DEFAULT_UPSTREAM = Path("/home/zar/miniconda3/envs/hyperon/bin/metta")
+DEFAULT_UPSTREAM = Path.home() / "miniforge3" / "envs" / "hyperon" / "bin" / "metta"
 
 
 def digest(text: str) -> str:

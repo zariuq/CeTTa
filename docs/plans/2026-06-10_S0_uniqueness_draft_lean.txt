@@ -1,0 +1,286 @@
+S0 (Q-UNIQUENESS) — IN-PROGRESS LEAN DRAFT + EXACT FIX LIST
+=============================================================
+Extracted 2026-06-10 from SmallStepQuiescence.lean to keep the tree green
+across a context compaction.  Re-insert before the chain-subst theorem,
+apply the fixes below, iterate with lean_goal probes.
+
+DECODED FIX LIST (from the last diagnostic pass — do not rediscover):
+ F1. tuple_unique_of @head_error arity: constructor has SEVEN args
+     (hd tl b headResult | h_tl_nonempty h_head h_err) — pattern needs
+     FOUR leading underscores: `| @head_error _ _ _ _ h_ne h_ev h_isErr`.
+ F2. `cases h_tail with | @singleton ...` (the [y] tail): cases demands
+     ALL alternatives — add head_error/tail_error/success arms, each
+     refuted by their h_tl_nonempty premise: index [y] forces tl = [],
+     so `exact absurd rfl h_ne`-style closes (after binding the premise).
+ F3. ALL shape injections are TWO-step (Atom.expression has one field):
+     `injection h_shape with hlist; injection hlist with h1 _`.
+ F4. @function_path missed the forced `callResult` slot — add one `_`
+     before fuel': args are (atom type_ b op args funcType retType b'
+     interpResult callResult fuel) then 9 props.
+ F5. @op_type_error and the five @grounded_* arms still have a one-slot
+     shift — do NOT keep guessing: extract the MettaCall inversion into a
+     standalone lemma `mettaCall_untyped_inert (h_not_exec) (h_no_eqs :
+     ∀ f, …=[]) (h_not_err) : MettaCall space d (.expression es) t b r →
+     r = (.expression es, b)` and probe its arms with lean_goal
+     (rename_i + probe worked before; small context there).  Then both
+     interp arms call the lemma — also try `simp_all [isFunctionType,
+     Atom.undefinedType]` per refutation arm first; it may just close.
+ F6. decreasing_by for the selfEval_unique recursion lost the
+     a = .expression(...) link (auto `a✝` in the WF goal): probe the
+     decreasing goal; likely fix is `simp_all` before omega or
+     restructuring the recursive call site so the cases-subst happens
+     before elaboration of the call.
+
+DRAFT (last state, including the working tuple_unique_of skeleton with
+@-patterns — F1/F2 pending; selfEval_unique with empty_or_error/type_pass/
+type_cast arms WORKING, interp arms pending F3-F5):
+
+/-- Tail-tuple uniqueness: with all elements in Q's domain (and the shape
+conditions), self-evaluation is the ONLY tuple evaluation.  The element
+uniqueness is taken as a hypothesis (supplied by `selfEval_unique`'s
+well-founded recursion). -/
+private theorem tuple_unique_of {space : Space} {d : GroundedDispatch}
+    {fuel : Nat} :
+    ∀ (x y : Atom) (zs : List Atom) {b : Bindings} {r : ResultPair},
+      (∀ e ∈ x :: y :: zs, SelfEvalQuiescent space d fuel e) →
+      (∀ e ∈ x :: y :: zs, ∀ {b' : Bindings} {r' : ResultPair},
+        EvalAtom space d e Atom.undefinedType b' r' → r' = (e, b')) →
+      (∀ es', (x :: y :: zs).getLast? = some (Atom.expression es') → False) →
+      (∀ e ∈ x :: y :: zs, e ≠ Atom.symbol "Error") →
+      InterpretTuple space d (.expression (x :: y :: zs)) b r →
+      r = (.expression (x :: y :: zs), b)
+  | x, y, zs, b, r, h_elems, h_uniq, h_last, h_nes, h => by
+    cases h with
+    | @head_error _ _ _ h_ne h_ev h_isErr =>
+        have hr := h_uniq x (by simp) h_ev
+        have h_ok := (h_elems x (by simp)).not_empty_or_error
+        rw [hr] at h_isErr
+        simp [h_isErr] at h_ok
+    | @tail_error _ _ _ hr _ h_ne h_ev h_hok h_tail h_terr =>
+        have hx := h_uniq x (by simp) h_ev
+        subst hx
+        cases zs with
+        | nil =>
+            cases h_tail with
+            | @singleton _ _ _ h_ev_y =>
+                have hy := h_uniq y (by simp) h_ev_y
+                have h_ok := (h_elems y (by simp)).not_empty_or_error
+                rw [hy] at h_terr
+                simp [h_terr] at h_ok
+        | cons z zs' =>
+            have h_tl := tuple_unique_of y z zs'
+              (fun e he => h_elems e (List.mem_cons_of_mem x he))
+              (fun e he => h_uniq e (List.mem_cons_of_mem x he))
+              (fun es' h' => h_last es' (by simpa using h'))
+              (fun e he => h_nes e (List.mem_cons_of_mem x he))
+              h_tail
+            rw [h_tl] at h_terr
+            have h_ok := isEmptyOrError_expr_false (z :: zs')
+              (h_nes y (by simp))
+            simp [h_terr] at h_ok
+    | @success _ _ _ hr tr h_ne h_ev h_hok h_tl h_tok =>
+        have hx := h_uniq x (by simp) h_ev
+        subst hx
+        cases zs with
+        | nil =>
+            cases h_tl with
+            | @singleton _ _ _ h_ev_y =>
+                have hy := h_uniq y (by simp) h_ev_y
+                subst hy
+                cases y with
+                | expression es' => exact absurd (by simp) (h_last es')
+                | symbol s => rfl
+                | var v => rfl
+                | grounded g => rfl
+        | cons z zs' =>
+            have h_tl' := tuple_unique_of y z zs'
+              (fun e he => h_elems e (List.mem_cons_of_mem x he))
+              (fun e he => h_uniq e (List.mem_cons_of_mem x he))
+              (fun es' h' => h_last es' (by simpa using h'))
+              (fun e he => h_nes e (List.mem_cons_of_mem x he))
+              h_tl
+            subst h_tl'
+            rfl
+
+/-- **Theorem S0 (Q-uniqueness)**: on Q's domain, self-evaluation is the
+ONLY official evaluation — every `EvalAtom` derivation at `%Undefined%`
+returns the atom itself with unchanged bindings.  This pins arbitrary
+successor derivations in the master-absorption transport (design note S0). -/
+theorem selfEval_unique {space : Space} {d : GroundedDispatch}
+    {fuel : Nat} :
+    (a : Atom) → SelfEvalQuiescent space d fuel a →
+    ∀ {b : Bindings} {r : ResultPair},
+      EvalAtom space d a Atom.undefinedType b r → r = (a, b)
+  | a, h_dom, b, r, h => by
+    cases h with
+    | empty_or_error _ _ _ _ => rfl
+    | type_pass _ _ _ _ _ => rfl
+    | @type_cast _ _ _ _ fuel' h_ne h_np h_branch h_result =>
+        cases h_dom with
+        | symbol h_not_err h_untyped =>
+            rw [typeCast_self_of_undefined h_untyped] at h_result
+            exact List.mem_singleton.mp h_result
+        | grounded h_untyped =>
+            rw [typeCast_self_of_undefined h_untyped] at h_result
+            exact List.mem_singleton.mp h_result
+        | expr _ _ _ _ _ _ _ =>
+            rcases h_branch with h' | h' | h'
+            · simp [getMetaType, Atom.symbolType, Atom.expressionType] at h'
+            · simp [getMetaType, Atom.groundedType, Atom.expressionType] at h'
+            · simp [Atom.unit] at h'
+    | interpret_success _ _ _ _ _ _ h_expr h_not_unit h_interp h_not_error =>
+        cases h_dom with
+        | symbol h_not_err h_untyped =>
+            simp [getMetaType, Atom.symbolType, Atom.expressionType] at h_expr
+        | grounded h_untyped =>
+            simp [getMetaType, Atom.groundedType, Atom.expressionType] at h_expr
+        | @expr op e2 rest h_not_err h_not_exec h_no_eqs h_head_untyped h_last h_nes h_elems =>
+            cases h_interp with
+            | @function_path _ _ _ op' args' funcType retType b' interpResult fuel'
+                h_shape h_op_type h_is_func succs h_check h_check_b h_ret h_if h_mc =>
+                injection h_shape with h1 _
+                rw [← h1, h_head_untyped] at h_op_type
+                rw [List.mem_singleton.mp h_op_type] at h_is_func
+                simp [isFunctionType, Atom.undefinedType] at h_is_func
+            | @op_type_error _ _ _ op' args' errAtom fuel' failedType errs
+                h_shape h_all_fail h_no_non_func h_failed_type h_failed_func h_check_fail h_err_mem =>
+                injection h_shape with h1 _
+                rw [← h1, h_head_untyped] at h_failed_type
+                rw [List.mem_singleton.mp h_failed_type] at h_failed_func
+                simp [isFunctionType, Atom.undefinedType] at h_failed_func
+            | @tuple_path _ _ _ tupleResult _ h_has h_tuple h_mc =>
+                have h_tr : tupleResult = (.expression (op :: e2 :: rest), b) :=
+                  tuple_unique_of op e2 rest h_elems
+                    (fun e he => selfEval_unique e (h_elems e he))
+                    h_last h_nes h_tuple
+                rw [h_tr] at h_mc
+                have h_mc' : MettaCall space d (.expression (op :: e2 :: rest))
+                    Atom.undefinedType b r := h_mc
+                clear h_mc
+                cases h_mc' with
+                | error_passthrough _ _ _ _ => rfl
+                | @grounded_ok _ _ _ op' args' nrs nr mg _ fuel'
+                    h_shape h_exec h_nerr h_native h_nm h_mg h_rec =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_runtime_error _ _ _ op' args' msg
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_no_reduce _ _ _ op' args'
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_incorrect_arg _ _ _ op' args'
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_empty_results _ _ _ op' args'
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @equation_match _ _ _ rhs qb mg _ fuel'
+                    h_nerr h_ng h_query h_mg h_loop h_rec =>
+                    rw [h_no_eqs fuel'] at h_query
+                    cases h_query
+                | no_match _ _ _ _ _ _ _ => rfl
+                | @empty_results _ _ _ fuel' h_nerr h_ng h_has_eqs h_filtered =>
+                    exact absurd (h_no_eqs fuel') h_has_eqs
+
+    | interpret_error _ _ _ _ _ _ h_expr h_not_unit h_interp h_is_error =>
+        cases h_dom with
+        | symbol h_not_err h_untyped =>
+            simp [getMetaType, Atom.symbolType, Atom.expressionType] at h_expr
+        | grounded h_untyped =>
+            simp [getMetaType, Atom.groundedType, Atom.expressionType] at h_expr
+        | @expr op e2 rest h_not_err h_not_exec h_no_eqs h_head_untyped h_last h_nes h_elems =>
+            cases h_interp with
+            | @function_path _ _ _ op' args' funcType retType b' interpResult fuel'
+                h_shape h_op_type h_is_func succs h_check h_check_b h_ret h_if h_mc =>
+                injection h_shape with h1 _
+                rw [← h1, h_head_untyped] at h_op_type
+                rw [List.mem_singleton.mp h_op_type] at h_is_func
+                simp [isFunctionType, Atom.undefinedType] at h_is_func
+            | @op_type_error _ _ _ op' args' errAtom fuel' failedType errs
+                h_shape h_all_fail h_no_non_func h_failed_type h_failed_func h_check_fail h_err_mem =>
+                injection h_shape with h1 _
+                rw [← h1, h_head_untyped] at h_failed_type
+                rw [List.mem_singleton.mp h_failed_type] at h_failed_func
+                simp [isFunctionType, Atom.undefinedType] at h_failed_func
+            | @tuple_path _ _ _ tupleResult _ h_has h_tuple h_mc =>
+                have h_tr : tupleResult = (.expression (op :: e2 :: rest), b) :=
+                  tuple_unique_of op e2 rest h_elems
+                    (fun e he => selfEval_unique e (h_elems e he))
+                    h_last h_nes h_tuple
+                rw [h_tr] at h_mc
+                have h_mc' : MettaCall space d (.expression (op :: e2 :: rest))
+                    Atom.undefinedType b r := h_mc
+                clear h_mc
+                cases h_mc' with
+                | error_passthrough _ _ _ _ => rfl
+                | @grounded_ok _ _ _ op' args' nrs nr mg _ fuel'
+                    h_shape h_exec h_nerr h_native h_nm h_mg h_rec =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_runtime_error _ _ _ op' args' msg
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_no_reduce _ _ _ op' args'
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_incorrect_arg _ _ _ op' args'
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @grounded_empty_results _ _ _ op' args'
+                    h_shape h_exec h_nerr h_native =>
+                    injection h_shape with h1 _
+                    revert h_not_exec
+                    unfold HeadNotExecutable
+                    rw [← h1] at h_exec
+                    simp [h_exec]
+                | @equation_match _ _ _ rhs qb mg _ fuel'
+                    h_nerr h_ng h_query h_mg h_loop h_rec =>
+                    rw [h_no_eqs fuel'] at h_query
+                    cases h_query
+                | no_match _ _ _ _ _ _ _ => rfl
+                | @empty_results _ _ _ fuel' h_nerr h_ng h_has_eqs h_filtered =>
+                    exact absurd (h_no_eqs fuel') h_has_eqs
+
+  termination_by a _ => sizeOf a
+  decreasing_by
+    have h1 : sizeOf e < sizeOf (op :: e2 :: rest) := List.sizeOf_lt_of_mem he
+    have h2 : sizeOf (Atom.expression (op :: e2 :: rest)) =
+        1 + sizeOf (op :: e2 :: rest) := by
+      simp [Atom.expression.sizeOf_spec]
+    omega
+

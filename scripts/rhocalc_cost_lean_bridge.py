@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
+
+from mettapedia_paths import discover_mettapedia_root
 
 
 def main() -> int:
@@ -60,12 +61,11 @@ def main() -> int:
         print(f"theorem: {theorem}", file=sys.stderr)
         return 1
 
-    mettapedia_root = Path(
-        os.environ.get(
-            "METTAPEDIA_ROOT",
-            str(Path.cwd().resolve().parent.parent / "lean-projects" / "mettapedia"),
-        )
-    )
+    try:
+        mettapedia_root = discover_mettapedia_root()
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     helper = Path(__file__).resolve().with_name("rhocalc_lean_microcheck.py")
     proc = subprocess.run(

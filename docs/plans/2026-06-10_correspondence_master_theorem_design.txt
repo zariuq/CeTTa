@@ -1,0 +1,396 @@
+CERTIFIED SMALL-STEP — MASTER THEOREM DESIGN NOTE
+==================================================
+Date: 2026-06-10.  Status: statement-design pass (no proofs claimed here).
+Companion to: 2026-06-10_he_small_step_roadmap.txt.
+Lean substrate (all built, 0 sorries): SmallStep.lean (HESmallStep, all
+nine rules, totality), SmallStepSound.lean (absorption for grounded /
+equation / eval — the three rule-sound rules).
+
+GOAL REMAINDER.  Six rules need Lean soundness theorems to flip to
+rule-sound: HES_Chain, HES_LeftmostExprCongruence, HES_Let, HES_LetStar,
+HES_Case, HES_Switch.  All routes converge on the machinery below; none
+admits an honest shortcut (verified this session: the "two-equation let*"
+idealization is NOT the upstream definition — upstream sugar routes through
+chain/decons/unify, i.e. through the same master machinery).
+
+────────────────────────────────────────────────────────────────────────
+THEOREM M (master, candidate statement — to be validated before proving):
+
+  For all space d fuel a b, HESmallStep space d fuel a b →
+  for all type_ bnd r,
+    EvalAtom space d b type_ (stepBindings h) r →
+    EvalAtom space d a type_ bnd' r
+  (with an explicit binding-transport function `stepBindings` per rule,
+   as already realized concretely in mettaCall_absorbs_root_step).
+
+THEOREM Q (companion) — **PROVEN** (SmallStepQuiescence.lean, 0 sorries):
+
+  selfEval_of_quiescent : SelfEvalQuiescent space d fuel a →
+    ∀ b, EvalAtom space d a Atom.undefinedType b (a, b)
+
+  with the honestly-characterized domain SelfEvalQuiescent: untyped
+  symbols/grounded values; expressions with untyped non-executable
+  non-special heads, no matching equations, ≥2 elements, non-expression
+  last element, and no bare "Error"-symbol elements.
+  PAYOFF ALSO PROVEN: minimalStep_absorbs_chain_subst — the substitution
+  half of HES_Chain's correspondence with the official MinimalStep.chain.
+  (HES_Chain still needs M's source-progress half before its claim flips.)
+
+WHAT EACH REMAINING RULE NEEDS:
+  HES_Chain        = M (source-progress case) + Q (substitution case),
+                     then absorption into MinimalStep.chain.
+  HES_LeftmostExprCongruence = M's congruence case alone.
+  HES_Let/LetStar/Case/Switch = formalize upstream stdlib definitions
+                     (chain/decons/unify-based, NOT the naive recursive
+                     equations) as official objects, then native-step ≡
+                     official-derivation, leaning on M and Q.
+
+KNOWN TRAPS (each discovered or confirmed this session — do not rediscover):
+  T1. M's congruence case is the InterpretTuple/InterpretArgs context lemma:
+      a mutual induction over EvalAtom / InterpretExpression /
+      InterpretFunction / InterpretArgs / InterpretTuple / MettaCall.
+      The naive statement ("evaluation factors through any element") is
+      FALSE: argument evaluation order and type-flow (function vs tuple
+      path) constrain which elements are evaluated under which expected
+      types.  The statement must be validated against at least:
+      (i) a function-typed head with per-argument expected types,
+      (ii) the tuple path (no function type),
+      (iii) an element whose evaluation depends on bindings produced by an
+      earlier element (cross-argument type dependency).
+  T2. Q is false without side conditions: Empty/Error atoms officially
+      pass through with their own constructors, and some quiescent shapes
+      (e.g. (case 9 ((3 three)))) officially evaluate to Empty, NOT to
+      themselves — Q must exclude exactly the visible-relation quiescents
+      that big-step sends to Empty (the no-match sugar shapes).  This is
+      why the coarse relation was defined as the VISIBLE relation; Q's
+      domain must be characterized accordingly (candidate: quiescent AND
+      not a no-match sugar shape AND not Empty/Error — needs a crisp
+      predicate, likely "officially-self-evaluating", defined first).
+  T3. The fine bindings bookkeeping: EvalAtom recursion threads merged
+      bindings; the coarse relation forgets them.  mettaCall_absorbs_*
+      handled this with explicit per-rule witness bindings — M must
+      generalize that pattern, not quantify naively over bnd.
+  T4. Upstream sugar definitions: formalize from the ACTUAL upstream
+      stdlib.metta (chain/decons/unify chains), never from an idealized
+      recursive-equation rendering — the latter is fake authority.
+  T5. fuel: queryEquations/simpleMatch are fuel-indexed; fuel-0 cases are
+      vacuous via queryEquations_zero (proven); M should be stated at the
+      coarse step's own fuel with constructor-fuel chosen freely on the
+      official side (the pattern used in mettaCall_absorbs_equation_match).
+  T6 (DISCOVERED while proving Q). InterpretTuple UNWRAPS singletons:
+      (x) officially evaluates to x's result, not a 1-tuple; and the
+      success-combination SPLICES an expression-valued unwrapped tail.
+      Hence self-evaluation is FALSE for singleton wrappers and for
+      tuples whose last element is an expression — Q's domain excludes
+      them, and M's congruence case must respect the same shapes.
+      Whether upstream Rust HE matches this singleton/splice behavior
+      deserves an independent probe (possible spec-vs-Lean divergence).
+  T7 (DISCOVERED while proving Q). A bare "Error" SYMBOL as any non-head
+      element makes a tail-segment Error-SHAPED ((Error ...) expression),
+      aborting tuple evaluation — even though the symbol itself is not an
+      error atom.  Q's domain excludes bare-"Error" elements; M's
+      congruence inversion will meet the same shape conditions.
+
+  T8 (DISCOVERED designing interpretArgs_swap). InterpretArgs treats an
+      UNCHANGED Empty/Error argument as "ok, continue to tail"
+      (h_head_ok's right disjunct) but a CHANGED Empty/Error result as
+      "stop with that result" — so transport across an argument
+      replacement fails when either atom is Empty/Error-shaped (the same
+      result flips between continue and stop).  interpretArgs_swap
+      carries both non-Empty/Error side conditions; M's congruence case
+      inherits them (coarse successors can be Error atoms — grounded
+      dispatch and equation rhs can produce them — those congruence
+      steps are outside the transportable fragment).
+
+VALIDATION PLAN STATUS:
+  Q: DONE (domain defined, theorem proven, chain-subst payoff proven —
+     SmallStepQuiescence.lean, 0 sorries).
+  M machinery layer 1: DONE (SmallStepContext.lean, 0 sorries):
+     - interpretTuple_swap: tuple transport at ANY position (incl. head —
+       in the tuple path the head is an ordinary %Undefined% element);
+     - interpretArgs_swap: typed args transport, T8 side conditions.
+     KEY STRUCTURAL FACT proven by the lemma shapes: transport preserves
+     the EXACT result pair, so the downstream MettaCall in
+     InterpretExpression needs NO transport (it runs on the evaluated
+     tuple, which is identical).  Hence:
+     - tuple-path InterpretExpression transport: within reach (next),
+     - function-path transport at non-head positions: blocked only by
+       checkIfFunctionTypeIsApplicable (the type-check depends on the
+       whole source expression — needs "coarse steps preserve
+       type-applicability", a real theorem about matchTypes under
+       reduction; T1(iii) made precise),
+     - function-path HEAD transport: the deep case (path selection
+       changes), unchanged.
+  M machinery layer 2: DONE (SmallStepContext.lean, 0 sorries):
+     - interpretExpression_swap_tuple_path + evalAtom_swap_tuple_path:
+       full EvalAtom-level transport for tuple-path interpret_success
+       derivations at non-head positions.
+  T9 (DISCOVERED during M assembly analysis — IMPORTANT, affects claim
+      semantics).  Official evaluation is TYPE-DIRECTED: under expected
+      type Atom (and the other type_pass conditions) atoms pass through
+      UNEVALUATED, so a coarse step at such a position does not commute
+      with official evaluation — the official result is the atom itself,
+      and source≠successor means M's same-result conclusion is FALSE
+      there.  The C coarse one-step is TYPE-BLIND.  Consequences:
+      (a) M is provable on the UNTYPED FRAGMENT (everything
+          %Undefined%-typed; type_pass unreachable for expressions under
+          %Undefined%, which is exactly chain's expected type);
+      (b) on TYPED programs the coarse relation may step where official
+          evaluation would not evaluate at all — a REAL potential
+          C-vs-official divergence class deserving engine probes with
+          type annotations (e.g. (: f (-> Atom Atom)) arguments);
+      (c) CLAIM-SEMANTICS QUESTION FOR ZAR: chain/congruence theorems
+          will be domain-restricted (untyped fragment).  Does a
+          domain-restricted Lean theorem merit the same "rule-sound"
+          claim string (with the domain documented in provenance), or a
+          distinct level (e.g. "rule-sound-untyped")?  The first two
+          flips (grounded/equation/eval) are unconditional, so this is
+          a real taxonomy decision, not a formality.
+  T10 (DISCOVERED during M layer-3 design — the true form of T3).
+      BINDINGS THREADING: when an element equation-steps, the official
+      semantics merges qb into the bindings thread and the TAIL elements
+      evaluate under the grown bindings; the coarse successor (with rhs
+      already applied) evaluates under the original bindings.  So M with
+      "same result PAIR" is FALSE across equation steps in element
+      position, and the uniform-in-bindings transport hypothesis the
+      swap lemmas need cannot come from pair-exact recursion.
+      RESOLUTION PATH (validated by hand, not yet in Lean):
+      (i)  state M on result ATOMS (r.1), existential over result
+           bindings;
+      (ii) prove BINDINGS-IRRELEVANCE on the GROUND fragment (no
+           variables anywhere): result atoms are independent of the
+           incoming bindings — its own induction over the mutual
+           family (~20 constructors, sized like EvalSpec itself);
+      (iii) assemble M on the GROUND UNTYPED fragment using
+           bindings-irrelevance + Q + the swap lemmas; grounded-root
+           case additionally wants dispatch-results-carry-empty-
+           bindings (true for arithmetic-style ops; make it a fragment
+           condition, not an assumption about all dispatches).
+  M-FRAGMENT SHORTCUT (DISCOVERED next cycle — supersedes the
+     three-induction plan for the rule flips; the 20-constructor
+     bindings-irrelevance induction is needed only for FULL-generality
+     M, not for the fragment M the chain/congruence flips need):
+     KEY FACTS: (a) Theorem Q is already BINDINGS-UNIFORM — Q-domain
+     elements evaluate to (e, b') for EVERY incoming b'; (b) the coarse
+     congruence rule ITSELF requires pre-elements non-steppable
+     (leftmost); (c) the T10 bindings-divergence only bites elements
+     evaluated AFTER the stepped one.  Therefore, on the fragment
+     "every element except the stepped one is SelfEvalQuiescent
+     (hereditarily through nested congruence)", the tuple result ATOM
+     is constructible DIRECTLY on both sides (a tuple_self-style
+     construction with one active position, no derivation-transport
+     needed for the quiescent elements), and M-on-atoms follows by
+     induction on the COARSE STEP alone:
+       - root grounded/equation cases: the proven MettaCall absorptions
+         (+ Q for element pre-evaluation of the redex's own elements);
+       - eval/chain root cases: MinimalStep absorptions (eval proven;
+         chain_subst proven; chain_source = the M recursion itself);
+       - congruence case: the one-active-position tuple construction.
+     CONSTRUCTION PLAN (each piece compiles standalone, no sorries at
+     any intermediate state):
+       (S0) Q-UNIQUENESS — **PROVEN** (SmallStepQuiescence.lean, 0 sorries):
+            selfEval_unique + tuple_unique_of + mettaCall_untyped_inert.
+            (The extracted draft file 2026-06-10_S0_uniqueness_draft_lean.txt
+            is SUPERSEDED — the real proof landed; the @-pattern/probe
+            lessons are baked in.)  Original description:
+            on Q's domain, self-evaluation is the ONLY official
+            evaluation — an inversion over the mutual family, but with
+            the domain's strong shape conditions each official
+            constructor either contradicts a condition or recurses;
+            far smaller than bindings-irrelevance.  Needed because M
+            transports ARBITRARY successor derivations: the successor's
+            post-elements' sub-derivations must be pinned to self-eval
+            before the source's post can be rebuilt under the shifted
+            bindings thread.
+       (S1) tuple_swap_atom — **PROVEN** (SmallStepMaster.lean, 0
+            sorries): atom-level tuple transport at any position;
+            spectator elements (pre AND post — pre also needs Q for the
+            atom-level rebuild since the active result-bindings shift
+            propagates) in Q-domain, post with T6/T7 shape conditions;
+            S0 pins successor spectators, Q-uniformity rebuilds the
+            source post-segment under the shifted thread.
+       (S2) evalAtom-level assembly (DESIGN REFINED after S1): invert
+            the successor's EvalAtom; empty_or_error killed by a
+            successor-not-Error-shaped premise; type_pass/type_cast
+            mechanical; function_path/op_type_error killed by
+            head-untyped premises (BOTH heads when pre = [] — defer the
+            head-active case with the function-path problem, as
+            already deferred); tuple_path via S1 + the KEY NEW
+            CONDITION: the head must be CONSTRUCTOR-LIKE in the space —
+            not executable AND no equation matches ANY expression with
+            that head (∀ es f, queryEquations space (.expression
+            (hd :: es)) f = []) — because the official evaluation CALLS
+            MettaCall on the EVALUATED tuple form A (a different atom
+            than the source!), and constructor-likeness makes both
+            sides' calls inert (mettaCall_untyped_inert), hence
+            atom-equal.  Without it the call can fire equations under
+            DIFFERENT bindings threads (T10 again, one level up).
+            This is the honest final shape of the fragment: untyped
+            constructor-headed terms — exactly the (pair 1 2)-style
+            sources the chain/congruence witnesses exercise.
+       (S2) — **PROVEN** (SmallStepMaster.lean, 0 sorries):
+            evalAtom_swap_atom + tuple_result_shape + mettaCall_symbol_inert.
+            The call-inert trichotomy replaced all manual MettaCall arm
+            casing; one orientation fix only.
+       (S3) M_frag — FINAL DESIGN (refined while proving S2): define an
+            inductive FragStep ⊆ HESmallStep with three constructors:
+            (a) grounded LEAF redex: executable head, Q-domain args with
+                T6/T7 shapes, dispatch-results-carry-empty-bindings;
+                absorption = tuple_self(args) + MettaCall.grounded_ok +
+                mergeBindings_empty_right + the premise derivation.
+            (b) equation LEAF redex: loop-free match, APPLIED RHS IN
+                Q-DOMAIN (realistic: constructor-headed rhs; this is
+                what closes the merged-vs-b bindings mismatch — premise
+                pinned by S0, official side rebuilt by Q under merged).
+            (c) congruence: constructor-like non-special head, spectator
+                elements Q-domain (+T6/T7 on post), inner FragStep;
+                absorption = S2 with the IH as h_sub.
+            NOTE: inner-position SPECIAL-FORM steps are NOT in FragStep —
+            official EvalSpec treats embedded (eval …)/(chain …) as
+            ordinary inert expressions (special forms are MinimalMeTTa
+            instructions, not EvalAtom behavior); certifying those needs
+            the stdlib-sugar mountain, NOT M.  FragStep covers exactly
+            the nested-congruence-over-grounded/equation-leaf fragment —
+            the (g (f 1))-style witnesses, and chain sources.
+       (S3) — **PROVEN** (SmallStepMaster.lean, 0 sorries): FragStep
+            (grounded_leaf / equation_leaf / congruence) +
+            evalAtom_absorbs_fragStep, by induction on the fragment
+            step; congruence case = one line through S2; leaf cases
+            assemble via tuple_self + grounded_ok/equation_match +
+            mergeBindings_empty_right + Q/S0.  Key signature refinement:
+            S1/S2 h_sub fixed at the incoming bindings (Q-spectators
+            preserve the thread, so M_frag's empty-bindings IH feeds S2
+            directly).
+       (S4) — **PROVEN** (SmallStepMaster.lean, 0 sorries):
+            minimalStep_absorbs_chain_source (with the proven
+            minimalStep_absorbs_chain_subst this certifies BOTH coarse
+            HES_Chain cases against official MinimalStep.chain on the
+            fragment, result-atom level) and
+            evalAtom_absorbs_congruence_frag (HES_LeftmostExprCongruence
+            certification against official EvalAtom on the fragment).
+       THE LADDER IS COMPLETE.  FLIPS NOW GATED SOLELY ON T9c: the
+       chain/congruence theorems are FRAGMENT-RESTRICTED; Zar must rule
+       whether they flip to plain "rule-sound" (domain documented in
+       provenance) or a distinct level (recommended:
+       "rule-sound-on-fragment" — the surface itself then distinguishes
+       unconditional from fragment certification; digest invariant
+       either way).  let/let*/case/switch remain on the stdlib-sugar
+       mountain (their official semantics are MinimalMeTTa-instruction
+       compositions, outside EvalAtom/M entirely).
+       (S3'-sanity, optional) theorem FragStep ⊆ HESmallStep — needs
+       ¬SpecialFormHead side conditions added to FragStep leaves;
+       deferred, not flip-blocking.
+       (S4) chain/congruence rule theorems from M_frag.
+     The fragment predicate (one non-quiescent element, hereditary) is
+     honest: it is exactly the shape of single-redex programs; document
+     it in the rule provenance on flip.  Claim-flip taxonomy
+     (rule-sound vs rule-sound-on-fragment) awaits Zar's ruling (T9c).
+  FULL-GENERALITY M (all programs): still the three-induction route
+     (bindings-irrelevance over the mutual family first) — future work
+     beyond the fragment flips.
+
+DIVERGENCE FOUND AND FIXED BY THIS EFFORT (2026-06-10, Zar-ratified,
+Codex convergent): CeTTa conflated `switch` and `switch-minimal` — both
+matched the RAW scrutinee, while upstream `switch` ((: switch (->
+%Undefined% Expression %Undefined%))) EVALUATES its scrutinee first
+(oracle probe: upstream `three` vs CeTTa `(got 1 2)` on
+(switch (+ 1 2) …); switch-minimal conforms structurally).  FIX: split
+in big-step (eval.c switch handler mirrors case's scrutinee evaluation
+for switch_text only), one-step (switch_text routes through the
+case-shaped helper, parametrized by head symbol; switch-minimal keeps
+the structural helper under new rule HES_SwitchMinimal), rule table
+(10 live rules; digest moved a08298ab9c09e5ef → 12eec5b655a75904 —
+correctly: rule CONTENT changed), tests (distinguishing witnesses both
+spellings; lane = 10 removal failures), and the Lean model
+(switch_scrutinee/switch_match/switch_minimal_match constructors,
+totality over the split).  let/let*/case all conform to the oracle
+(probed).  The quartet's certification route remains the typed
+function-path theory (let's (-> Atom %Undefined% Atom %Undefined%)
+annotation makes official sugar evaluation TYPE-DIRECTED — T9 is
+the sugar mountain's core, plus chain/decons/unify instruction
+compositions per the actual upstream stdlib definitions).
+
+FINAL STRETCH — THE SUGAR QUARTET+1 (let/let*/case/switch/switch-minimal
+→ rule-sound-on-fragment; completes ALL TEN rules).  Designed 2026-06-10
+against the verbatim upstream definitions (stdlib.metta lines 543-559,
+345-365, 1224-1233); execute in this order:
+  (F1) MATCHER BRIDGE — LEAF LAYER PROVEN (MatcherBridge.lean, 0
+       sorries): addVarBinding_fresh/_same, mergeBindings_single_assign,
+       hasLoop_empty.  VERIFIED ALIGNMENT: assign APPENDS (order
+       preserved); addVarBinding's nonlinear handling (prev == val →
+       [b]) mirrors simpleMatch's lookup-equality EXACTLY — no T11
+       divergence at the leaf level.  FUEL-MONOTONICITY PROVEN (matcher_mono,
+       MatcherBridge.lean, 0 sorries): the 5-function simultaneous
+       induction, with Sub/flatMap_sub/foldl_flatMap_sub combinators;
+       the matchAtoms case walks the paired if-levels (identical
+       normalization on BOTH sides is essential — simp-only set:
+       matchAtoms, List.mem_filter, beq_iff_eq, Bool.and_eq_true;
+       contradiction for off-diagonals, two-level split for the
+       expression diagonal).  GROUND-INVARIANTS started: GroundBindings def +
+       .empty + .assign proven (MatcherBridge.lean); NEXT SMALL STEP:
+       GroundBindings.hasLoop_false (hasLoop only chases VAR-VALUED
+       assignments — `some non-var → false` — so ground values kill
+       every chase at depth 1; the only plumbing needed is
+       List.lookup_eq_some_iff to get the looked-up value's membership,
+       then GroundAtom.not_var refutes the var case).  THEN the
+       matcher_ground simultaneous induction (4 conjuncts:
+       matchAtoms-ground-left / list-with-ground-acc / merge-preserves /
+       addVarBinding-preserves; addVarEquality unreachable since ground
+       right-bindings have [] equalities).  THEN the factorization lemma
+       (x ∈ list-[b]-acc ↔ ∃ fr ∈ list-[empty]-acc, x ∈ merge b fr) —
+       the central bindings-algebra step — then the mutual elem/list
+       bridge by induction on simpleMatch fuel (elem(f+1)→list(f)→
+       elem(f); list by inner induction on the pattern list at fixed
+       fuel).  NEXT after that: the per-element bridge (statement validated by hand: var/
+       symbol/grounded cases close via the leaf facts; expression case
+       via L_list with acc=[b] + acc-monotonicity), then L_list, then
+       the b=empty main theorem.  Original plan:
+       GroundAtom target → simpleMatch pt target empty fuel = some mb
+       ↔ corresponding mb' ∈ matchAtoms target pt fuel'.
+       KNOWN SPECIFICS (read both defs 2026-06-10): simpleMatch THREADS
+       an accumulator (nonlinear patterns = lookup-equality); matchAtoms
+       returns per-element FRESH bindings folded via mergeBindings
+       (nonlinear = merge conflict detection).  Needs an
+       assign/mergeBindings commutation lemma family + fuel-skew
+       handling (simpleMatchList shares n; matchAtomsList decrements
+       per element → state with ∃-fuel or prove fuel-monotonicity).
+       Watch for a REAL nonlinear-pattern semantic divergence between
+       the two matchers (would be trap T11 + possible engine probe).
+  (F2) DISPATCH REALIZATION hypotheses: the minimal ops (decons-atom,
+       cons-atom, unify, if-equal, id, function/return) live in the
+       GroundedDispatch d in real HE; certifications take "d realizes
+       op X per MinimalStep" hypotheses connecting EvalAtom's grounded
+       path to MinimalStep's instruction shapes.  Without these the
+       chain-of-instructions compositions cannot thread through
+       EvalAtom premises (MinimalStep.chain's source eval is EvalAtom).
+  (F3) PER-RULE COMPOSITIONS over the VERBATIM upstream programs
+       (transcribe as Lean atom constants; never idealize — T4):
+       - HES_SwitchMinimal: switch-internal recursion = iterated
+         MinimalStep.unify_match/unify_no_match over branches; coarse
+         first-match rule = the iteration's net effect (F1 bridges the
+         matchers; earlier-branch failures = unify_no_match steps).
+       - HES_Switch: scrutinee evaluation (M_frag absorbs the coarse
+         progress half — same shape as minimalStep_absorbs_chain_source)
+         + switch-minimal selection on the result (Q pins quiescent
+         scrutinees; F1+SwitchMinimal for selection).
+       - HES_Case: as switch but via collapse-bind/superpose-bind
+         (constructors exist in MinimalMeTTa.lean) + Empty-branch
+         handling (visible-relation no-match documented vs upstream
+         Empty-matching — pin with oracle probes first).
+       - HES_Let: coarse value-progress half = M_frag (chain-source
+         shape); substitution half = unify_match via F1 + Q; NOTE the
+         type annotation (-> Atom %Undefined% Atom %Undefined%) is WHY
+         the value evaluates — the typed-function-path story is
+         DELEGATED to the equation+annotation realization hypotheses,
+         not reproven.
+       - HES_LetStar: 4-5 instruction composition (chain + decons-atom
+         + unify×2) over the verbatim rhs; net effect = the coarse
+         unroll; empty-list case = the $template else-branch.
+  (F4) Five flips (rule-sound-on-fragment per the ratified taxonomy)
+       → ALL TEN rules certified → the Certified Small-Step goal's
+       condition is met in full.
+
+NON-NEGOTIABLES (standing project rules, restated so the next session
+inherits them): no sorries; no placeholder Props; no idealized "official"
+references; claim levels flip only on compiled theorems; the digest never
+moves on claim flips (validated three times so far).

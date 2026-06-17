@@ -12,10 +12,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from mettapedia_paths import discover_mettapedia_root
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = ROOT.parents[1]
-METTAPEDIA = WORKSPACE / "lean-projects" / "mettapedia"
+METTAPEDIA = discover_mettapedia_root()
+CONFORMANCE = METTAPEDIA / "scripts" / "conformance"
 DEFAULT_CATALOG = (
     ROOT
     / "tests"
@@ -55,11 +56,11 @@ def run_mettapedia_oracle(results: Path, scratch: Path) -> None:
     steps = [
         [
             "python3",
-            "scripts/conformance/check_he_io_lean_anchors.py",
+            str(CONFORMANCE / "check_he_io_lean_anchors.py"),
         ],
         [
             "python3",
-            "scripts/conformance/run_he_io_conformance.py",
+            str(CONFORMANCE / "run_he_io_conformance.py"),
             "--results",
             str(results),
             "--scratch-dir",
@@ -67,11 +68,11 @@ def run_mettapedia_oracle(results: Path, scratch: Path) -> None:
         ],
         [
             "python3",
-            "scripts/conformance/check_he_io_baseline.py",
+            str(CONFORMANCE / "check_he_io_baseline.py"),
             "--results",
             str(results),
             "--baseline",
-            "scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
+            str(CONFORMANCE / "he_io_baseline_hyperon_0.2.10.json"),
         ],
     ]
     for cmd in steps:

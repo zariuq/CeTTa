@@ -7,6 +7,20 @@ import sys
 from pathlib import Path
 
 
+def imported_modules(lean_file: Path) -> list[str]:
+    modules: list[str] = []
+    seen: set[str] = set()
+    for raw_line in lean_file.read_text().splitlines():
+        line = raw_line.strip()
+        if not line.startswith("import "):
+            continue
+        for module in line.split()[1:]:
+            if module not in seen:
+                seen.add(module)
+                modules.append(module)
+    return modules
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(
@@ -25,8 +39,12 @@ def main() -> int:
         print(f"missing Lean microcheck file: {lean_file}", file=sys.stderr)
         return 2
 
+    build_targets = imported_modules(lean_file)
+    if not build_targets:
+        build_targets = ["Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge"]
+
     build = subprocess.run(
-        ["lake", "build", "Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge"],
+        ["lake", "build", *build_targets],
         cwd=str(mettapedia_root),
         check=False,
         text=True,
