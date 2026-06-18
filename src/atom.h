@@ -52,6 +52,8 @@ typedef enum {
 #define ATOM_FLAG_HAS_VARS 0x01u
 #define ATOM_FLAG_HASH_VALID 0x02u
 #define ATOM_FLAG_HAS_REGISTRY_REFS 0x04u
+#define ATOM_FLAG_HASH_STABLE 0x08u
+#define ATOM_FLAG_HASHCONS_ELIGIBLE 0x10u
 
 /* ── Atom ───────────────────────────────────────────────────────────────── */
 
