@@ -1,0 +1,284 @@
+CeTTa MeTTa-over-rhocalc rebuild brief
+Date: 2026-06-09
+
+Status
+======
+
+The rebuild is now LIVE in the active tree as the Rhometta surface:
+
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/lib/rhometta.metta`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/src/eval.c`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/src/eval.h`
+
+The active implementation keeps the earlier hard constraint: there is still NO
+shadow reducer stack.  Rhometta is a narrow extension seam in the existing
+rhocalc engine, not a second operational semantics running beside it.
+
+Current verification snapshot:
+
+- `make -s BUILD=core test-rhocalc` passes with `277 passed, 0 failed`
+- `make -s BUILD=mork test-rhocalc` passes with `277 passed, 0 failed`
+- `make -s BUILD=core test-rhometta-macro-audit` reports `0/N` divergences on
+  the named + randomized audit corpus
+- `setarch -R make BUILD=core ENABLE_SANITIZERS=1 SANITIZERS=address,undefined test-rhocalc`
+  passes
+- `setarch -R make BUILD=core ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc`
+  passes
+- the matching `mork` sanitizer runs also pass
+
+This note is now a LIVE design/requirements brief for the transactional
+Rhometta surface, not just a record of the earlier purge.
+
+
+Current branch health
+=====================
+
+The active tree has a passing transactional Rhometta lane in both `core` and
+`mork` builds.
+
+Important current witnesses:
+
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_lib_surface.metta`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_threaded_differential.metta`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_threaded_runtime_stats.metta`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_isolation_oracle.metta`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/scripts/rhometta_macro_differential_audit.py`
+
+These cover:
+
+- single-result, multi-result, zero-result, and fault-localized deferred COMM
+- sequential/threaded parity on the active Rhometta surface
+- sibling isolation and shared-state non-mutation for content-reached spaces
+  and state cells
+- explicit owned-result escape for mutated local resources
+- quiet-frontier macro-step soundness against the exact reference path
+
+What remains open is theorem-facing alignment, not a second implementation
+track.
+
+
+Current engine state
+====================
+
+The live engine exposes Rhometta as a library surface backed by the existing
+reducer stack:
+
+- Rhometta library surface:
+  `/home/aimama/aihub/hyperon/cetta-rho-threading/lib/rhometta.metta`
+
+- COMM seam:
+  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
+  `rho_compute_comm_continuation(...)`
+
+- Sequential and threaded reducer entry points:
+  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
+  `rhocalc_reduce_to_quiescence_with_profile(...)`
+  `rhocalc_reduce_to_quiescence_threaded(...)`
+
+- Threaded endpoint publication / rendezvous:
+  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
+  `rho_async_publish_endpoint(...)`
+
+- Worker-pool substrate:
+  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/parallel_executor.c`
+  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/parallel_executor.h`
+
+- Existing proof that MeTTa evaluation can run on worker threads:
+  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/eval.c`
+  parallel branch execution path around `cetta_parallel_executor_*`
+
+The active Rhometta payload contract is:
+
+- COMM-time deferred payload evaluation
+- sibling-isolated transactional scratch over a frozen shared base
+- payload-local write-forward mutation for spaces and state cells
+- shared mutable state unchanged after the run
+- mutated resources escape only as owned results
+- no implicit merge back into shared state
+
+The live rhocalc semantic profiles are still:
+
+- strict-core
+- cost
+
+There is no second MeTTa-over-rho execution profile.  Rhometta is the active
+library surface on top of the existing rhocalc engine.
+
+
+Hard rebuild constraints
+========================
+
+1. Reuse the existing rhocalc engine.
+
+   The rebuild must extend the existing rho reducer path rather than introduce
+   a second reducer, frontier builder, substitution stack, keyer, checker, or
+   normalization pipeline.
+
+2. Keep strict-core pure.
+
+   The existing pure rho behavior must remain available unchanged.
+
+3. No fake parallelism.
+
+   If the feature claims rho-orchestrated MeTTa evaluation, the interesting
+   MeTTa work must run through the actual rho execution path, including the
+   threaded runtime where appropriate.
+
+4. Preserve proof-kernel fit.
+
+   The extension seam should be narrow enough to later formalize as a local
+   change to COMM/evaluation behavior rather than as a second operational
+   semantics.
+
+
+Semantic requirements to preserve
+=================================
+
+These are the requirements learned from the excised experiment and earlier
+design work.  They should survive the rebuild even though the old runtime code
+is gone.
+
+1. COMM-time MeTTa payload evaluation.
+
+   The intended extension point is send/receive communication: the payload of
+   a send should be MeTTa-evaluated at COMM time, not by a separate meta-level
+   stepping loop.
+
+2. Pure-rho conservative extension.
+
+   When payload evaluation is identity on a pure rho payload, the execution
+   must coincide with ordinary strict-core rho reduction.
+
+3. MeTTa nondeterminism maps to rho branching.
+
+   If payload evaluation yields multiple successful results, each successful
+   result should induce a legal COMM successor.
+
+4. Zero-result payload evaluation does not force a fake residual.
+
+   If payload evaluation yields no results, the COMM should not silently invent
+   a replacement payload or alternate reduction.  The branch simply has no
+   successor from that COMM.
+
+5. Payload-evaluation failure must be localized.
+
+   Failure in one COMM must not erase unrelated parallel work.  The failure
+   should remain inspectable/localized rather than acting like a whole-process
+   abort.
+
+6. The design must accommodate arbitrary MeTTa values, not only rho processes.
+
+   The earlier experiment used a particular process-vs-data handling strategy.
+   The rebuild must support both categories, but the exact representation and
+   binding discipline should be treated as an explicit design question rather
+   than assumed from the excised implementation.
+
+7. The full target includes enforceable space ownership.
+
+   The long-term goal is payload-local forward mutation with explicit
+   ownership discipline.  The design must keep the full "spaces ~ channels"
+   goal in view, with sibling-isolated transactional scratch and explicit
+   merge boundaries rather than an informal assumption that workers will
+   behave.
+
+
+Current formal target
+=====================
+
+The live theorem target is now narrower and cleaner than the original rebuild
+question.
+
+1. COMM-time deferred payload results.
+
+   The Rhometta theorem surface should continue to characterize one-step and
+   quiescent outcomes of deferred COMM in terms of the existing rhocalc engine.
+
+2. Transactional payload contract, not suppression semantics.
+
+   Any future mechanization of the payload side condition should model the live
+   runtime contract:
+
+   - each payload evaluates against a frozen shared base,
+   - every reachable mutable resource is seen through sibling-isolated local
+     scratch,
+   - writes are local and write-forward within the payload,
+   - shared bases stay unchanged,
+   - mutated resources escape only as owned results.
+
+   This is now a STRUCTURAL runtime property, delivered by dynamic redirect /
+   copy-on-write at the access layer, not by a syntactic payload filter.
+
+3. Macro theorem target.
+
+   The quiet-frontier macro-step should be justified under:
+
+   - no alternative pairing on any fired key,
+   - quiet continuations,
+   - copy-stable payload results,
+   - the transactional sibling-isolation contract above.
+
+   In other words, the C3 theorem assumption is no longer a suppression rule
+   or a syntactic purity check.  It is the stronger and cleaner statement that
+   payload evaluation is sibling-isolated and does not mutate shared bases.
+
+
+Relevant surviving evidence in the tree
+=======================================
+
+The following surviving tests/fixtures matter because they already show useful
+MeTTa-with-rho workloads running through ordinary rhocalc paths:
+
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/rhocalc_m3_may_must.tsv`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/rhocalc_m3_rholang_cli.tsv`
+
+In particular, the fixtures named below are useful witnesses that MeTTa terms
+can already participate in rho-driven workflows at the current abstraction
+layer:
+
+- `metta-computed-payload`
+- `metta-job-queue-collector`
+- `metta-threshold-quorum`
+- `metta-private-session`
+- `metta-reflection-loader`
+
+The old draft surface notes remain available only as historical scratch:
+
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/benchmarks/rho/metta-eval-bridge-drafts/bridge_surface.txt`
+
+They should not be mistaken for the target API.
+
+
+Questions for external design review
+====================================
+
+1. What is the minimal extension seam in the existing rho reducer for
+   MeTTa-at-COMM without duplicating reducer logic?
+
+2. If spaces are associated with channels, what exact ownership invariant
+   should be enforced, and at what runtime boundary should the check live?
+
+3. Under channel mobility, how should channel/space ownership transfer or
+   alias safely?
+
+4. What should be shared vs cloned in MeTTa registry/space state for threaded
+   rho execution?
+
+5. How should the design represent and bind arbitrary MeTTa payload values
+   versus rho-process-like results without forking the reducer?
+
+6. How should localized payload-evaluation failure be represented so that it
+   remains inspectable but does not halt unrelated parallel peers?
+
+7. What is the cleanest formal frame for later mechanization of the ownership
+   discipline and the COMM-time evaluation extension?
+
+
+Non-goals
+=========
+
+- Reintroducing a separate MeTTa-over-rho library runtime surface
+- Reintroducing a shadow reducer stack
+- Driving execution through a MeTTa frontier loop
+- Building a temporary simplified design that is structurally different from
+  the final goal

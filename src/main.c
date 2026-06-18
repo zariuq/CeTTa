@@ -319,6 +319,8 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
         case GV_STATE: {
             StateCell *src_cell = (StateCell *)src->ground.ptr;
             StateCell *dst_cell = arena_alloc(dst, sizeof(StateCell));
+            dst_cell->payload_owner_epoch = 0;
+            dst_cell->payload_export_owner_epoch = 0;
             dst_cell->value = src_cell ?
                 display_atom_copy(dst, src_cell->value, map, pretty_namespaces) : NULL;
             dst_cell->content_type =
@@ -888,6 +890,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --prefer-rationals <file.metta>  # exact rational division for exact numbers\n", out);
     fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
+    fputs("       cetta --num-threads <n> <file>             # set OS-thread budget for parallel-capable execution\n", out);
     fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
     fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
@@ -903,10 +906,11 @@ static void print_version(FILE *out) {
     fprintf(out, "cetta %s (%s)\n", CETTA_VERSION_STRING, CETTA_BUILD_MODE_STRING);
 }
 
-static bool compile_profile_guard_ok(CettaLanguageId language_id,
-                                     const CettaProfile *profile,
-                                     Atom **atoms,
-                                     int n) {
+static __attribute__((unused)) bool
+compile_profile_guard_ok(CettaLanguageId language_id,
+                         const CettaProfile *profile,
+                         Atom **atoms,
+                         int n) {
     (void)language_id;
     (void)profile;
     (void)atoms;
@@ -914,10 +918,12 @@ static bool compile_profile_guard_ok(CettaLanguageId language_id,
     return true;
 }
 
-static bool compile_profile_guard_ok_ids(CettaLanguageId language_id,
-                                         const CettaProfile *profile,
-                                         TermUniverse *universe,
-                                         const AtomId *atom_ids, int n) {
+static __attribute__((unused)) bool
+compile_profile_guard_ok_ids(CettaLanguageId language_id,
+                             const CettaProfile *profile,
+                             TermUniverse *universe,
+                             const AtomId *atom_ids,
+                             int n) {
     (void)language_id;
     (void)profile;
     (void)universe;
@@ -926,10 +932,11 @@ static bool compile_profile_guard_ok_ids(CettaLanguageId language_id,
     return true;
 }
 
-static bool atom_id_is_symbol_id(TermUniverse *universe, AtomId atom_id,
+static bool atom_id_is_symbol_id(const TermUniverse *universe, AtomId atom_id,
                                  SymbolId sym_id) {
-    Atom *atom = term_universe_get_atom(universe, atom_id);
-    return atom && atom_is_symbol_id(atom, sym_id);
+    return universe && atom_id != CETTA_ATOM_ID_NONE &&
+           tu_kind(universe, atom_id) == ATOM_SYMBOL &&
+           tu_sym(universe, atom_id) == sym_id;
 }
 
 static bool main_try_add_builtin_type_decls_direct(Space *space,
@@ -1118,9 +1125,17 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     free(cleanup->atom_ids);
     cleanup->atom_ids = NULL;
 
-    if (cleanup->registry_initialized && cleanup->space_initialized) {
-        cetta_main_cleanup_registry_spaces(cleanup->registry, cleanup->space);
+    if (cleanup->registry_initialized) {
+        if (cleanup->space_initialized) {
+            cetta_main_cleanup_registry_spaces(cleanup->registry, cleanup->space);
+            eval_cleanup_owned_new_spaces(cleanup->registry, cleanup->space);
+        } else {
+            eval_cleanup_owned_new_spaces(NULL, NULL);
+        }
+        registry_free(cleanup->registry);
         cleanup->registry_initialized = false;
+    } else {
+        eval_cleanup_owned_new_spaces(NULL, NULL);
     }
 
     if (cleanup->libraries_initialized) {
@@ -1203,6 +1218,8 @@ int main(int argc, char **argv) {
     uint32_t lang_occurrences = 0;
     bool prefer_rationals_cli = false;
     int fuel_override = -1;
+    uint32_t num_threads = 1u;
+    bool num_threads_requested = false;
     uint32_t rho_reduction_limit = CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT;
     bool rho_reduction_limit_requested = false;
     RhoSchedulerPolicy rho_scheduler = RHO_SCHEDULER_CANONICAL;
@@ -1293,6 +1310,22 @@ int main(int argc, char **argv) {
                 return 2;
             }
             fuel_override = (int)parsed;
+            continue;
+        }
+        if (strcmp(argv[i], "--num-threads") == 0) {
+            char *endp = NULL;
+            unsigned long long parsed;
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            parsed = strtoull(argv[++i], &endp, 10);
+            if (!endp || *endp != '\0' || parsed > 1024ULL) {
+                fprintf(stderr, "error: invalid thread count '%s'\n", argv[i]);
+                return 2;
+            }
+            num_threads = (uint32_t)parsed;
+            num_threads_requested = true;
             continue;
         }
         if (strcmp(argv[i], "--rho-reduction-limit") == 0) {
@@ -1475,8 +1508,9 @@ int main(int argc, char **argv) {
             rhocalc_semantic_profile_for_endpoint(&source_endpoint);
         RhocalcSemanticProfileId output_profile =
             rhocalc_semantic_profile_for_endpoint(&target_endpoint);
-        if (rho_reduction_limit_requested || rho_scheduler_requested) {
-            fprintf(stderr, "error: rhocalc runtime flags do not combine with --translate\n");
+        if (rho_reduction_limit_requested || rho_scheduler_requested ||
+            num_threads_requested) {
+            fprintf(stderr, "error: runtime thread/reduction flags do not combine with --translate\n");
             free(inline_buf);
             return 2;
         }
@@ -1508,9 +1542,18 @@ int main(int argc, char **argv) {
     if (lang->id == CETTA_LANGUAGE_RHOCALC) {
         RhocalcSemanticProfileId semantic_profile =
             rhocalc_semantic_profile_for_endpoint(&source_endpoint);
+        bool rho_threaded = num_threads_requested && num_threads > 1u;
+        if (rho_threaded && rho_scheduler_requested) {
+            fprintf(stderr,
+                    "error: --rho-scheduler does not combine with --num-threads > 1\n");
+            free(inline_buf);
+            return 2;
+        }
         RhoRuntimeProfile rho_profile = {
             .scheduler_policy = rho_scheduler,
             .reduction_limit = rho_reduction_limit,
+            .thread_count = rho_threaded ? num_threads : 1u,
+            .threaded = rho_threaded,
         };
         if (compile_mode || compile_stdlib_mode) {
             fprintf(stderr, "error: compile modes are not supported with --lang rhocalc\n");
@@ -1675,6 +1718,13 @@ int main(int argc, char **argv) {
             &libraries.session, "prefer-rationals",
             CETTA_EVAL_OPTION_VALUE_SYMBOL, "true", 0);
     }
+    if (num_threads_requested) {
+        char repr[32];
+        snprintf(repr, sizeof(repr), "%u", num_threads);
+        cetta_eval_session_record_generic_setting(
+            &libraries.session, "num-threads",
+            CETTA_EVAL_OPTION_VALUE_INT, repr, (int64_t)num_threads);
+    }
     eval_set_library_context(&libraries);
     cleanup.parser_rational_literals_old =
         parser_set_rational_literals_enabled(
@@ -1724,10 +1774,6 @@ int main(int argc, char **argv) {
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
         if (lang_is_mm2) {
-            if (!compile_profile_guard_ok(lang->id, profile, atoms, n)) {
-                rc = 2;
-                goto cleanup;
-            }
             for (int pi = 0; pi < n; pi++) {
                 Atom *at = atoms[pi];
                 if (atom_is_symbol_id(at, g_builtin_syms.bang)) {
@@ -1739,11 +1785,6 @@ int main(int argc, char **argv) {
                 space_add(&space, at);
             }
         } else {
-            if (!compile_profile_guard_ok_ids(lang->id, profile, &libraries.term_universe,
-                                              atom_ids, n)) {
-                rc = 2;
-                goto cleanup;
-            }
             for (int pi = 0; pi < n; pi++) {
                 if (atom_id_is_symbol_id(&libraries.term_universe, atom_ids[pi],
                                          g_builtin_syms.bang)) {
@@ -1780,12 +1821,12 @@ int main(int argc, char **argv) {
                 write_results(output_spool, &rs, lang->id, profile);
                 if (fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
-                    free(rs.items);
+                    result_set_free(&rs);
                     rc = 1;
                     goto cleanup;
                 }
                 bool stop_after_error = result_set_has_error(&rs);
-                free(rs.items);
+                result_set_free(&rs);
                 eval_release_temporary_spaces();
                 /* Reset ephemeral arena — frees all intermediate eval atoms.
                    This makes CeTTa safe for unlimited chaining iterations. */
@@ -1824,12 +1865,12 @@ int main(int argc, char **argv) {
             write_results(output_spool, &rs, lang->id, profile);
             if (fflush(output_spool) != 0) {
                 fprintf(stderr, "error: could not write output spool\n");
-                free(rs.items);
+                result_set_free(&rs);
                 rc = 1;
                 goto cleanup;
             }
             bool stop_after_error = result_set_has_error(&rs);
-            free(rs.items);
+            result_set_free(&rs);
             eval_release_temporary_spaces();
             arena_free(&eval_arena);
             arena_init(&eval_arena);

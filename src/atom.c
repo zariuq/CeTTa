@@ -4,8 +4,10 @@
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 
 struct CettaBigInt {
@@ -100,6 +102,15 @@ static void arena_runtime_note_usage(const Arena *a) {
                                    (uint64_t)a->reserved_bytes);
 }
 
+static void arena_runtime_note_spare(const Arena *a) {
+    if (!a)
+        return;
+    cetta_runtime_stats_update_max(CETTA_RUNTIME_COUNTER_ARENA_SPARE_BLOCKS_PEAK,
+                                   (uint64_t)a->spare_block_count);
+    cetta_runtime_stats_update_max(CETTA_RUNTIME_COUNTER_ARENA_SPARE_BYTES_PEAK,
+                                   (uint64_t)a->spare_bytes);
+}
+
 static void arena_runtime_note_alloc(const Arena *a, size_t size) {
     CettaRuntimeCounter alloc_counter;
     CettaRuntimeCounter live_peak_counter;
@@ -128,12 +139,84 @@ void *cetta_realloc(void *ptr, size_t size) {
     return out;
 }
 
+static void arena_free_block_list(ArenaBlock *head) {
+    while (head) {
+        ArenaBlock *next = head->next;
+        free(head);
+        head = next;
+    }
+}
+
+static ArenaBlock *arena_take_spare_block(Arena *a, size_t min_capacity) {
+    ArenaBlock **link = &a->spare;
+    while (*link) {
+        ArenaBlock *block = *link;
+        if (block->capacity >= min_capacity) {
+            *link = block->next;
+            block->next = NULL;
+            block->used = 0;
+            a->spare_bytes -= block->capacity;
+            a->spare_block_count--;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ARENA_SPARE_HIT);
+            arena_runtime_note_spare(a);
+            return block;
+        }
+        link = &block->next;
+    }
+    return NULL;
+}
+
+static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
+    ArenaBlock *block = arena_take_spare_block(a, min_capacity);
+    if (block)
+        return block;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ARENA_SPARE_MISS);
+
+    size_t block_size = sizeof(ArenaBlock);
+    if (min_capacity > ARENA_BLOCK_SIZE)
+        block_size = sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + min_capacity;
+    block = cetta_malloc(block_size);
+    block->capacity = min_capacity > ARENA_BLOCK_SIZE ? min_capacity
+                                                      : ARENA_BLOCK_SIZE;
+    block->used = 0;
+    block->next = NULL;
+    a->reserved_bytes += block->capacity;
+    a->block_count++;
+    arena_runtime_note_usage(a);
+    return block;
+}
+
+static void arena_push_spare_list(Arena *a, ArenaBlock *blocks) {
+    if (!a || !blocks)
+        return;
+    ArenaBlock *tail = blocks;
+    uint32_t recycled_blocks = 0;
+    size_t recycled_bytes = 0;
+    while (tail) {
+        recycled_blocks++;
+        recycled_bytes += tail->capacity;
+        if (!tail->next)
+            break;
+        tail = tail->next;
+    }
+    tail->next = a->spare;
+    a->spare = blocks;
+    a->spare_block_count += recycled_blocks;
+    a->spare_bytes += recycled_bytes;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ARENA_SPARE_RECYCLE_BLOCK,
+                            recycled_blocks);
+    arena_runtime_note_spare(a);
+}
+
 void arena_init(Arena *a) {
     a->head = NULL;
+    a->spare = NULL;
     a->hashcons = g_hashcons;
     a->live_bytes = 0;
     a->reserved_bytes = 0;
+    a->spare_bytes = 0;
     a->block_count = 0;
+    a->spare_block_count = 0;
     a->runtime_kind = CETTA_ARENA_RUNTIME_KIND_OTHER;
     a->finalizers = NULL;
 }
@@ -159,17 +242,32 @@ static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
 
 void arena_free(Arena *a) {
     arena_run_finalizers_until(a, NULL);
-    ArenaBlock *b = a->head;
-    while (b) {
-        ArenaBlock *next = b->next;
-        free(b);
-        b = next;
-    }
+    arena_free_block_list(a->head);
+    arena_free_block_list(a->spare);
     a->head = NULL;
+    a->spare = NULL;
     a->live_bytes = 0;
     a->reserved_bytes = 0;
+    a->spare_bytes = 0;
     a->block_count = 0;
+    a->spare_block_count = 0;
     a->finalizers = NULL;
+}
+
+void arena_reserve(Arena *a, size_t size) {
+    if (!a || size == 0)
+        return;
+    size = (size + 7) & ~(size_t)7;
+    size_t available =
+        (a->head && a->head->capacity > a->head->used)
+            ? (a->head->capacity - a->head->used)
+            : 0;
+    if (available >= size)
+        return;
+
+    ArenaBlock *b = arena_claim_block(a, size);
+    b->next = a->head;
+    a->head = b;
 }
 
 void arena_set_hashcons(Arena *a, HashConsTable *hc) {
@@ -200,17 +298,19 @@ ArenaMark arena_mark(const Arena *a) {
 void arena_reset(Arena *a, ArenaMark mark) {
     if (!a) return;
     arena_run_finalizers_until(a, mark.finalizers);
+    ArenaBlock *recycled = NULL;
     while (a->head && a->head != mark.head) {
         ArenaBlock *next = a->head->next;
-        free(a->head);
+        a->head->used = 0;
+        a->head->next = recycled;
+        recycled = a->head;
         a->head = next;
     }
+    arena_push_spare_list(a, recycled);
     if (a->head && a->head->used > mark.used) {
         a->head->used = mark.used;
     }
     a->live_bytes = mark.live_bytes;
-    a->reserved_bytes = mark.reserved_bytes;
-    a->block_count = mark.block_count;
     arena_runtime_note_usage(a);
 }
 
@@ -469,6 +569,11 @@ Atom *hashcons_get(HashConsTable *hc, Atom *atom) {
 
 VarInternTable *g_var_intern = NULL;
 
+#define VAR_INTERN_CHUNK_BITS 14u
+#define VAR_INTERN_CHUNK_SIZE (1u << VAR_INTERN_CHUNK_BITS)
+#define VAR_INTERN_CHUNK_MASK (VAR_INTERN_CHUNK_SIZE - 1u)
+#define VAR_INTERN_CHUNK_COUNT (1u << (32u - VAR_INTERN_CHUNK_BITS))
+
 #define SYMBOL_LITERAL_CACHE_SIZE 64
 
 typedef struct {
@@ -477,12 +582,36 @@ typedef struct {
     SymbolId id;
 } SymbolLiteralCacheEntry;
 
-static SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
+static __thread SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
 
-static uint32_t g_var_base_counter = 1;
+static _Atomic uint32_t g_var_base_counter = 1;
+#define VAR_ID_BLOCK_SIZE 4096u
+
+typedef struct {
+    uint32_t next;
+    uint32_t remaining;
+} VarIdBlockCache;
+
+static __thread VarIdBlockCache g_var_base_block_cache = {0};
+
+static uint32_t fresh_var_base_block_next(void) {
+    while (g_var_base_block_cache.remaining > 0) {
+        uint32_t value = g_var_base_block_cache.next++;
+        g_var_base_block_cache.remaining--;
+        if (value != 0)
+            return value;
+    }
+
+    uint32_t start = atomic_fetch_add_explicit(&g_var_base_counter,
+                                               VAR_ID_BLOCK_SIZE,
+                                               memory_order_relaxed);
+    g_var_base_block_cache.next = start;
+    g_var_base_block_cache.remaining = VAR_ID_BLOCK_SIZE;
+    return fresh_var_base_block_next();
+}
 
 VarId fresh_var_id(void) {
-    return (VarId)g_var_base_counter++;
+    return (VarId)fresh_var_base_block_next();
 }
 
 uint32_t var_base_id(VarId id) {
@@ -502,73 +631,77 @@ VarId var_epoch_id(VarId id, uint32_t epoch) {
 }
 
 void var_intern_init(VarInternTable *t) {
-    t->size = 4096;
-    t->used = 0;
-    t->spellings = cetta_malloc(sizeof(SymbolId) * t->size);
-    t->ids = cetta_malloc(sizeof(VarId) * t->size);
-    memset(t->spellings, 0, sizeof(SymbolId) * t->size);
-    memset(t->ids, 0, sizeof(VarId) * t->size);
+    if (!t) return;
+    t->chunks =
+        cetta_malloc(sizeof(*t->chunks) * VAR_INTERN_CHUNK_COUNT);
+    for (uint32_t i = 0; i < VAR_INTERN_CHUNK_COUNT; i++) {
+        atomic_init(&t->chunks[i], NULL);
+    }
+    if (pthread_mutex_init(&t->write_mutex, NULL) != 0) {
+        fprintf(stderr, "fatal: failed to initialize variable intern mutex\n");
+        abort();
+    }
 }
 
 void var_intern_free(VarInternTable *t) {
-    free(t->spellings);
-    free(t->ids);
-    t->spellings = NULL;
-    t->ids = NULL;
-    t->size = t->used = 0;
-}
-
-static void var_intern_insert_owned(VarInternTable *t, SymbolId spelling, VarId id) {
-    uint32_t h = spelling % t->size;
-    for (uint32_t i = 0; i < t->size; i++) {
-        uint32_t idx = (h + i) % t->size;
-        if (t->spellings[idx] == SYMBOL_ID_NONE) {
-            t->spellings[idx] = spelling;
-            t->ids[idx] = id;
-            t->used++;
-            return;
+    if (!t) return;
+    if (t->chunks) {
+        for (uint32_t i = 0; i < VAR_INTERN_CHUNK_COUNT; i++) {
+            VarInternEntry *chunk =
+                atomic_load_explicit(&t->chunks[i], memory_order_relaxed);
+            free(chunk);
         }
+        free(t->chunks);
     }
-    fprintf(stderr, "fatal: variable intern table insertion failed during resize\n");
-    abort();
+    pthread_mutex_destroy(&t->write_mutex);
+    t->chunks = NULL;
 }
 
-static void var_intern_resize(VarInternTable *t, uint32_t new_size) {
-    SymbolId *old_spellings = t->spellings;
-    VarId *old_ids = t->ids;
-    uint32_t old_size = t->size;
-    t->size = new_size;
-    t->used = 0;
-    t->spellings = cetta_malloc(sizeof(SymbolId) * t->size);
-    t->ids = cetta_malloc(sizeof(VarId) * t->size);
-    memset(t->spellings, 0, sizeof(SymbolId) * t->size);
-    memset(t->ids, 0, sizeof(VarId) * t->size);
-    for (uint32_t i = 0; i < old_size; i++) {
-        if (old_spellings[i] != SYMBOL_ID_NONE)
-            var_intern_insert_owned(t, old_spellings[i], old_ids[i]);
+static VarInternEntry *var_intern_chunk_load(const VarInternTable *t,
+                                             SymbolId spelling) {
+    if (!t || !t->chunks) return NULL;
+    return atomic_load_explicit(&t->chunks[spelling >> VAR_INTERN_CHUNK_BITS],
+                                memory_order_acquire);
+}
+
+static VarInternEntry *var_intern_ensure_chunk_locked(VarInternTable *t,
+                                                      SymbolId spelling) {
+    uint32_t chunk_index = spelling >> VAR_INTERN_CHUNK_BITS;
+    VarInternEntry *chunk =
+        atomic_load_explicit(&t->chunks[chunk_index], memory_order_relaxed);
+    if (chunk) return chunk;
+
+    chunk = cetta_malloc(sizeof(*chunk) * VAR_INTERN_CHUNK_SIZE);
+    for (uint32_t i = 0; i < VAR_INTERN_CHUNK_SIZE; i++) {
+        atomic_init(&chunk[i], VAR_ID_NONE);
     }
-    free(old_spellings);
-    free(old_ids);
+    atomic_store_explicit(&t->chunks[chunk_index], chunk, memory_order_release);
+    return chunk;
 }
 
 VarId var_intern(VarInternTable *t, SymbolId spelling) {
+    VarInternEntry *chunk;
+    uint32_t offset;
+    VarId out;
+
     if (!t || spelling == SYMBOL_ID_NONE) return fresh_var_id();
-    if ((t->used + 1) * 10 > t->size * 7)
-        var_intern_resize(t, t->size ? t->size * 2 : 4096);
-    uint32_t h = spelling % t->size;
-    for (uint32_t i = 0; i < t->size; i++) {
-        uint32_t idx = (h + i) % t->size;
-        if (t->spellings[idx] == SYMBOL_ID_NONE) {
-            VarId id = fresh_var_id();
-            t->spellings[idx] = spelling;
-            t->ids[idx] = id;
-            t->used++;
-            return id;
-        }
-        if (t->spellings[idx] == spelling)
-            return t->ids[idx];
+
+    offset = spelling & VAR_INTERN_CHUNK_MASK;
+    chunk = var_intern_chunk_load(t, spelling);
+    if (chunk) {
+        out = atomic_load_explicit(&chunk[offset], memory_order_acquire);
+        if (out != VAR_ID_NONE) return out;
     }
-    return fresh_var_id();
+
+    pthread_mutex_lock(&t->write_mutex);
+    chunk = var_intern_ensure_chunk_locked(t, spelling);
+    out = atomic_load_explicit(&chunk[offset], memory_order_relaxed);
+    if (out == VAR_ID_NONE) {
+        out = fresh_var_id();
+        atomic_store_explicit(&chunk[offset], out, memory_order_release);
+    }
+    pthread_mutex_unlock(&t->write_mutex);
+    return out;
 }
 
 static SymbolId symbol_cached_literal(const char *name) {
@@ -593,21 +726,12 @@ static SymbolId symbol_cached_literal(const char *name) {
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
 void *arena_alloc(Arena *a, size_t size) {
-    size_t block_capacity = 0;
     /* Align to 8 bytes */
     size = (size + 7) & ~(size_t)7;
-    if (!a->head || a->head->used + size > ARENA_BLOCK_SIZE) {
-        size_t block_size = sizeof(ArenaBlock);
-        if (size > ARENA_BLOCK_SIZE)
-            block_size = sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + size;
-        ArenaBlock *b = cetta_malloc(block_size);
-        block_capacity = size > ARENA_BLOCK_SIZE ? size : ARENA_BLOCK_SIZE;
-        b->capacity = block_capacity;
-        b->used = 0;
+    if (!a->head || a->head->used + size > a->head->capacity) {
+        ArenaBlock *b = arena_claim_block(a, size);
         b->next = a->head;
         a->head = b;
-        a->reserved_bytes += block_capacity;
-        a->block_count++;
     }
     void *ptr = a->head->data + a->head->used;
     a->head->used += size;
@@ -1016,7 +1140,7 @@ Atom *atom_var_with_id(Arena *a, const char *name, VarId id) {
 Atom *atom_var(Arena *a, const char *name) {
     SymbolId spelling = symbol_intern_cstr(g_symbols, name);
     VarId id = g_var_intern ? var_intern(g_var_intern, spelling) : fresh_var_id();
-    Atom *at = atom_var_with_id(a, name, id);
+    Atom *at = atom_var_with_spelling(a, spelling, id);
     return at;
 }
 

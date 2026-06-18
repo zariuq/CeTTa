@@ -1,0 +1,10 @@
+for (job0 <- @"jobs") { @"done0"!(*job0) } |
+for (job1 <- @"jobs") { @"done1"!(*job1) } |
+for (r0 <- @"done0") {
+  for (r1 <- @"done1") {
+    @"out0"!(*r0) |
+    @"out1"!(*r1)
+  }
+} |
+@"jobs"!(@"payload0"!(Nil)) |
+@"jobs"!(@"payload1"!(Nil))

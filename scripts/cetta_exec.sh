@@ -13,7 +13,7 @@ if [[ -z "$bin" ]]; then
     exit 2
 fi
 
-if [[ "${CETTA_ASAN_REPEATABLE:-0}" == "1" ]]; then
+if [[ "${CETTA_SANITIZER_REPEATABLE:-${CETTA_ASAN_REPEATABLE:-0}}" == "1" ]]; then
     export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}"
     if command -v setarch >/dev/null 2>&1; then
         exec setarch "$(uname -m)" -R "$bin" "$@"

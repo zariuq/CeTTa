@@ -1,0 +1,13 @@
+# name	fixture	expected_count	mode	expected-file-or-expr	lean_file	theorem
+rhometta-run-pure-single	tests/support/rhometta_lean_bridge_surface.metta	1	rhometta-run-exact-set	(pure:comm)	-	-
+rhometta-run-data-single	tests/support/rhometta_lean_bridge_surface.metta	1	rhometta-run-exact-set	(eval:data)	-	-
+rhometta-run-multi-two-way	tests/support/rhometta_lean_bridge_surface.metta	2	rhometta-run-exact-set	(eval:multi)	-	-
+rhometta-run-zero-stuck	tests/support/rhometta_lean_bridge_surface.metta	1	rhometta-run-exact-set	(eval:zero)	-	-
+rhometta-run-state-local	tests/support/rhometta_lean_bridge_surface.metta	1	rhometta-run-exact-set	(eval:state-local)	-	-
+rhometta-run-owned-space	tests/support/rhometta_lean_bridge_surface.metta	1	he-expect-true	(bridge:owned-space-ok)	-	-
+rhometta-run-owned-state	tests/support/rhometta_lean_bridge_surface.metta	1	he-expect-true	(bridge:owned-state-ok)	-	-
+rhometta-run-owned-space-aliased	tests/support/rhometta_lean_bridge_surface.metta	1	he-expect-true	(bridge:owned-space-aliased-fault)	-	-
+rhometta-run-owned-state-aliased	tests/support/rhometta_lean_bridge_surface.metta	1	he-expect-true	(bridge:owned-state-aliased-fault)	-	-
+rhometta-run-sibling-pair	tests/support/rhometta_lean_bridge_surface.metta	1	he-expect-true	(bridge:sibling-pair-ok)	-	-
+rhometta-run-contended-pair	tests/support/rhometta_lean_bridge_surface.metta	2	rhometta-run-exact-set	(eval:contended-pair)	-	-
+rhometta-run-chained-two-round	tests/support/rhometta_lean_bridge_surface.metta	1	rhometta-run-exact-set	(eval:chained-two-round)	-	-

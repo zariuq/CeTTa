@@ -37,6 +37,7 @@ typedef struct OutcomeSet {
     Outcome *items;
     CettaCount len, cap;
     Arena *payload_owner;
+    Outcome inline_items[1];
 } OutcomeSet;
 
 void outcome_set_init(OutcomeSet *os);
@@ -53,6 +54,7 @@ void outcome_set_free(OutcomeSet *os);
 typedef struct ResultSet {
     Atom **items;
     CettaCount len, cap;
+    Atom *inline_items[1];
 } ResultSet;
 
 void result_set_init(ResultSet *rs);
@@ -70,9 +72,41 @@ int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
+uint64_t eval_current_max_rational_digits(void);
+uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
+CettaLibraryContext *eval_current_library_context(void);
+/* Rhometta deferred payload mode: each payload evaluates against a
+ * sibling-isolated transactional snapshot.  The flag marks that context; the
+ * owner epoch distinguishes payload-local scratch from shared resources. */
+bool eval_set_payload_transactional(bool v);
+bool eval_payload_transactional(void);
+uint64_t eval_set_payload_owner_epoch(uint64_t epoch);
+uint64_t eval_payload_owner_epoch(void);
+uint64_t eval_next_payload_owner_epoch(void);
+bool eval_payload_redirects_begin(Arena *owner);
+void eval_payload_redirects_end(void);
+bool eval_payload_note_space_redirect(Space *orig, Space *redirect);
+bool eval_payload_note_state_redirect(StateCell *orig, StateCell *redirect);
+bool eval_payload_track_scratch_space(Space *space);
+bool eval_payload_track_scratch_state(StateCell *cell);
+/* Track a `new-space`-created space (persistent-arena struct) so its heap
+ * internals are released at session teardown; eval_cleanup_owned_new_spaces
+ * frees the ones not bound in the registry (registry-bound ones are freed by
+ * the registry teardown pass). */
+void eval_track_new_space(Space *space);
+void eval_cleanup_owned_new_spaces_for_current_thread(void);
+void eval_drain_owned_new_spaces_for_current_thread(void);
+void eval_cleanup_owned_new_spaces(Registry *registry, Space *root);
+CettaCount eval_payload_space_redirect_count(void);
+bool eval_payload_space_redirect_at(CettaCount idx, Space **orig,
+                                    Space **redirect);
+CettaCount eval_payload_state_redirect_count(void);
+bool eval_payload_state_redirect_at(CettaCount idx, StateCell **orig,
+                                    StateCell **redirect);
 Registry *eval_current_registry(void);
 Arena *eval_current_persistent_arena(void);
+Space *eval_space_snapshot_clone(Space *src, Arena *a);
 
 /* Internal: evaluate an atom fully (recursive).
    type is the expected type (NULL means %Undefined%). */

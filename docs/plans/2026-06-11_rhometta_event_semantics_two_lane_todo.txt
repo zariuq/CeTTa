@@ -1,0 +1,492 @@
+2026-06-11  Rhometta transactional event semantics — two-lane TODO
+====================================================================
+
+Lanes: (A) Codex — C runtime + fixtures + audits, in hyperon/cetta-rho-threading.
+       (B) Claude — Lean theory, in Mettapedia/lean/mettapedia (RhoCalculus tract; repo zariuq/MeTTapedia).
+Run in parallel. Lane separation is strict: A touches only the C repo, B only the
+Lean repo. Single-writer rule: every file has exactly one writing lane; where a
+file carries information from the other lane (the bridge TSV), the owning lane
+writes it from a handoff the other lane delivers — no shared editing. Sync
+points are listed at the end. Neither lane relitigates the Decision Log.
+
+MISSION
+-------
+Upgrade rhometta from "read-only snapshot + commuting fold" to its settled final
+form, with the Lean theory catching up to (and then certifying) the C runtime:
+
+    Rhometta semantics =
+        choice  (⊔)  over compatible COMM matchings        [contention]
+      + parallel(⊗)  commutative fold inside one matching  [existing theory]
+      + sequence(;)  closure across rounds                 [chaining]
+      + transactional payload labels (result, local delta, owned exports, cost)
+
+This is a richer semantics of the SAME operational core (rho orchestrates
+rendezvous; MeTTa computes payloads at COMM time). It is not a new kernel.
+
+DECISION LOG (ratified 2026-06-11 — do not reopen)
+--------------------------------------------------
+(a) Match(P) base = ALL compatible matchings (not maximal-only, not
+    scheduler-realizable-only). Consequences: singleton matchings are matchings,
+    so the exact one-redex reducer embeds as the finest refinement; every
+    concrete scheduler (canonical, rotating, threaded) is a refinement of the
+    same base relation, to be tested/proven as such.
+(b) Owned exports are FIRST-CLASS in the Lean outcome object
+    (result × delta × exports), with a reification-embedding theorem connecting
+    it to the C runtime's residual-carrying form (owned results returned as
+    values in the residual). The C runtime keeps reifying; the theory keeps Ω
+    explicit and proves the reification faithful.
+(c) Layering split (who owns which branching):
+      - Match(P) / compatibility / rounds / runs   → rho/rhocalc semantics
+      - PayloadOutcomes(e)                          → MeTTa/HE semantics
+        (HE spec, hyperon-experimental/docs/metta.md:556: matching two atoms
+        without custom grounded matchers yields exactly one binding set, so
+        payload branching enters only via space multi-hits, multiple equations,
+        superpose, custom matchers)
+      - scheduler / replay policy                   → runtime implementation,
+        never the calculus ("relations are public; schedulers are runtime
+        choices")
+(d) Cost/quantale work re-attaches only AFTER the structural layers exist
+    (otherwise cost theorems about the commuting subcase get misused as if they
+    governed contention and chaining).
+
+STATUS SNAPSHOT (2026-06-11, verified)
+--------------------------------------
+C runtime:  transactional write-forward payload evaluation with sibling-isolated
+            scratch + dynamic redirects is live and oracle-pinned
+            (tests/test_rhometta_isolation_oracle.metta, incl. threaded reruns);
+            quiet-frontier macro fires only without contention
+            (src/rhocalc_core.c:2546 rhocalc_try_quiet_macro_step, bail at :2601)
+            and the differential audit is 0-divergence; new-space heap internals
+            are freed at session teardown (src/eval.c:6928
+            eval_track_new_space / :6942 eval_cleanup_owned_new_spaces);
+            test-rhocalc 277/277 in BUILD=core and BUILD=mork.
+Lean:       the ⊗-layer is done and 0-sorry/0-axiom: foldOutcomes,
+            foldOutcomes_perm, factorization, cost quantale
+            (Mettapedia/Languages/ProcessCalculi/RhoCalculus/
+            RhometaReduction.lean:2343-2559); operational layer RhometaReduces /
+            RhometaReducesStar with drop-observer faithfulness and the
+            single-path-safety crown; engine witnesses for race
+            (Engine.lean:682) and multi-step (Engine.lean:711).
+Gap:        Lean has no choice layer, no sequence layer, no Ω; the C bridge
+            fixtures cover only pure/eval:data/eval:multi/eval:zero
+            (tests/rhocalc_run_lean_bridge.tsv).
+
+
+PART A — CODEX (C lane)
+=======================
+
+A1. Contention + chaining fixtures in the differential audit
+    File: scripts/rhometta_macro_differential_audit.py
+    - Add generator shapes and named fixtures for the two boundary phenomena:
+        (i)  contention: one send, two receivers on the same key
+             (e.g. rho:par (rho:send c v) (rho:recv c x P1) (rho:recv c x P2));
+             exact may-set must contain BOTH one-COMM outcomes; macro must bail
+             via the rhocalc_core.c:2601 contention path.
+        (ii) chaining: a COMM on c whose continuation exposes a send on d that
+             enables a second COMM (send c a | recv c x . send d x | recv d y . Q);
+             quiescent set requires two rounds.
+      Generate obfuscated variants too (wrapped in equations / let), per the
+      no-syntactic-blocklist policy: the audit must produce the disguised forms,
+      not just the literal ones.
+    - Assertion stays the same shape: macro-enabled set ≡ macro-disabled exact
+      set, 0 divergence. The new fixtures additionally pin that the macro DOES
+      bail (no silent macro-firing on contended/chained frontiers) — assert via
+      the runtime-stats macro counters when available.
+    Gate: audit 0/N with the new shapes included; both build lanes.
+
+A2. Lean-bridge fixture catch-up (schema agreed with B7 — see Sync)
+    Files: tests/rhocalc_run_lean_bridge.tsv,
+           tests/support/rhometta_lean_bridge_surface.metta
+    Add rows (same TSV schema: name, fixture, expected_count, mode,
+    expected-file-or-expr, lean_file, theorem):
+      - rhometta-run-state-local      : eval:state-local payload (local
+                                        change-state! visible in result, shared
+                                        cell unchanged) — surface already exists
+                                        in tests/test_rhometta_lib_surface.metta:28,
+                                        mirror it into the bridge surface.
+      - rhometta-run-owned-space      : payload returns its mutated space as an
+                                        owned result; expected: owned export
+                                        usable post-run, original space unchanged.
+      - rhometta-run-owned-state      : same for a state cell.
+      - rhometta-run-sibling-pair     : writer+reader siblings on one shared
+                                        space; reader never observes writer's
+                                        injection (isolation in the bridge lane).
+      - rhometta-run-contended-pair   : the A1(i) contention shape;
+                                        expected_count 2.
+      - rhometta-run-chained-two-round: the A1(ii) chaining shape;
+                                        expected_count 1, quiescent only after
+                                        two rounds.
+    The lean_file/theorem columns stay "-" until B7 lands. Ownership: this TSV
+    is A-lane property end-to-end; at B7 stage 3, lane B DELIVERS the theorem
+    names + file anchors (as a handoff block appended to this file, see Sync 2)
+    and lane A pastes them into the columns. Lane B never edits the TSV.
+    Gate: the trace-bridge lane — the Makefile target that iterates
+    tests/rhocalc_run_lean_bridge.tsv through
+    scripts/rhocalc_lean_trace_bridge.py (Makefile, run-lean-bridge loop) —
+    green on the extended TSV. (scripts/rhocalc_lean_microcheck.py does NOT
+    read this TSV; it is the separate Lean theorem smoke test and stays so.)
+
+A3. Scheduler-refinement seam (executable form of Decision (a))
+    Files: tests/rhocalc_scheduler_membership.tsv (extend),
+           scripts driving it; scheduler knobs at src/main.c:671
+           (canonical | rotating) and pragma num-threads.
+    - The CLI rejects --rho-scheduler combined with --num-threads > 1
+      (src/main.c:1455), so the matrix is two separate row families:
+        (i)  single-thread scheduler-refinement rows: canonical and rotating,
+             each asserted to realize outcome(s) that are MEMBERS of the exact
+             may-set computed by full exploration;
+        (ii) threaded membership rows: --num-threads 2 with NO scheduler knob,
+             same membership assertion.
+      This is "schedulers are refinements", as a test.
+    - Where a policy is deterministic (canonical single-thread), additionally
+      pin WHICH member it realizes, so regressions in policy are visible
+      separately from regressions in the relation.
+    - Note (latent design point, not this tranche): if A4 lands, threaded
+      execution and matching policy begin to interact; whether the
+      scheduler×threads exclusion stays a permanent contract should be
+      revisited then.
+    Gate: membership lane green under both build modes; threaded rows clean
+    under TSAN seal when run.
+
+A4. (Stretch — starts only after B4 lands) Partial-matching macro
+    File: src/rhocalc_core.c (rhocalc_try_quiet_macro_step, :2546)
+    - Today the macro is all-or-bail: any contended key aborts the whole macro.
+      Generalize: partition the frontier per key; macro-fire the compatible,
+      quiet, copy-stable SUB-frontier as one step and leave contended keys to
+      exact exploration. Justified by the B4 theorem (fold over any compatible
+      sub-matching is order-independent and sound).
+    - Keep the existing side conditions per fired event (quiet continuations,
+      copy-stable results, transactional non-interference).
+    Gate: the A1-hardened differential audit stays 0-divergence (this is the
+    audit's primary purpose); no perf regression on the rho benchmarks.
+
+A5. Space-GC tranche (Θ-affine lifetime; the semantics blesses this shape:
+    per-payload scratch is affine — discardable at event end unless exported)
+    Files: src/eval.c, src/rhocalc_core.c (payload teardown), src/space.c
+    - Per-payload scratch discard: spaces/states created INSIDE a payload
+      (overlay clones, payload-local new-space) are freed when the payload
+      finishes, unless they escape as an owned result. The existing
+      session-teardown cleanup (eval_track_new_space /
+      eval_cleanup_owned_new_spaces, src/eval.c:6928/:6942) remains as the
+      backstop for everything else.
+    - Escaped exports get an ownership tag (owner = the registry binding or the
+      run result that holds them); freed when the owner is released. If
+      multiple owners are possible, refcount; start with the single-owner case
+      and fault on aliasing rather than guessing.
+    - Worker-thread-created spaces: route their tracking through the same
+      mechanism (the current tracking list is thread-local to the main thread —
+      either per-thread lists drained at join, or a mutex-guarded shared list;
+      prefer drain-at-join to keep the hot path lock-free).
+    - Design reference: Erlang/OTP (repos/otp — study only, per its AGENTS.md;
+      do not copy code): ETS owner-tied table lifetime (erl_db.c), per-process
+      copying GC (erl_gc.c), delayed cross-thread dealloc
+      (internal_doc/DelayedDealloc.md).
+    Gates (A5 has its OWN acceptance gate, deliberately separate from the
+    semantics tranche so memory work never blurs whether the semantics items
+    are green): LeakSanitizer clean on (i) a discarded-space loop inside
+    payloads, (ii) the isolation oracle, (iii) a long rhometta:run loop;
+    AddressSanitizer clean on the same (no UAF from premature frees — the
+    owned-result post-run-mutation tests in the oracle are the canary);
+    test-rhocalc 277/277 both lanes; threaded oracle clean. A1-A4/A6 may be
+    declared green independently of A5 and vice versa.
+
+A6. Retarget the written contract
+    File: docs/plans/2026-06-09_rhocalc_metta_rebuild_brief.txt (transactional
+    contract section)
+    - Rename the payload semantics from "read-only snapshot" to "transactional
+      local-delta rhometta" and state the 7-point contract: frozen shared
+      bases; sibling-isolated scratch; write-forward within scratch; shared
+      bases unchanged post-run; escape only as owned results; no implicit
+      merge; foreign effects pure/faulted/front-channeled.
+    - Add one paragraph on the layered target (⊔/⊗/; + labels) and the
+      refinement reading of schedulers, mirroring this file's MISSION block.
+
+A7. Fixed-cap sweep follow-up (after B1 payload-map caps)
+    The B1 capacity tranche removes the confirmed live fixed limits in the
+    rhometta payload path: overlay map, state-clone map, space redirect map,
+    state redirect map, and registry entries.  Keep the broader fixed-cap audit
+    separate so B1 stays reviewable, but do not lose the remaining work:
+      - eval.c match/chain scratch arrays around the direct-match fast paths
+        (notably the 16/32/64 local array families);
+      - BODY_VISIBLE_INLINE_CAP 64 paths, which already use inline storage plus
+        heap growth in several places but still need a sweep-level audit;
+      - CETTA_MAX_IMPORTED_FILES and imported-same-space chain limits;
+      - any remaining "cap means truncate/skip" behavior found by search.
+    Acceptance for the follow-up: classify each cap as inline-only,
+    inline-plus-spill, semantic limit with an explicit error, or a real bug;
+    convert real bugs to dynamic storage or fail-loud errors with regression
+    tests.  Do not mix this sweep into the rhometta merge commit unless a cap is
+    directly in the payload isolation path.
+
+
+PART B — CLAUDE (Lean lane)
+===========================
+All in Mettapedia/Languages/ProcessCalculi/RhoCalculus/RhometaReduction.lean
+(extend in place after the existing sections; Outcomes.lean only if a
+step-generic helper truly belongs there). Zero new files. Each item lands
+0-sorry/0-axiom and `lake build` green before the next begins. Existing proven
+theorems are kept verbatim and become instances/corollaries.
+
+B1. Reframe the ⊗-block docstring (line 2343)
+    "Concurrent fold — the commuting lemma for one fixed compatible matching."
+    State explicitly: this is the ⊗ layer of the ⊔/⊗/; semantics; choice and
+    sequence live in the sections below. Trivial; do first so no reader
+    mistakes the fold for the whole semantics.
+
+B2. First-class Ω outcome object + reification embedding (Decision (b))
+    - PayloadOutcome (R Δ Ω) := R × Δ × Multiset Ω; generalize
+      Payload R Δ := Set (R × Δ) to PayloadΩ R Δ Ω := Set (PayloadOutcome R Δ Ω);
+      the existing theory is the Ω := Empty (or PUnit) instance — re-expressed,
+      not re-proven.
+    - foldOutcomesΩ: same recursive product; exports accumulate by Multiset
+      union (commutative — the perm theorem extends verbatim).
+    - Reification: reifyΩ : PayloadOutcome R Δ Ω → (R × Ω-tagged-residual) × Δ —
+      the abstract form of the C runtime returning owned results as values in
+      the residual. Theorems:
+        reifyΩ_injective      : reification is injective (no information loss);
+        reifyΩ_fold_commutes  : fold-then-reify = reify-then-fold.
+    - Distinguishing example (the no-go-3 content): two payload sets with equal
+      result/delta projections but different Ω, distinguishable after reify —
+      so process-only outcomes WITHOUT reified exports are too coarse, and
+      reification is exactly what restores faithfulness.
+
+B3. Event layer (concrete operational object, not full event-structure machinery)
+    - EventSkeleton: consumed output occurrence, consumed input occurrence,
+      channel, payload (a PayloadΩ). Occurrences as indices into the frontier
+      (the .collection list up to par_perm), matching the engine's frontier
+      representation.
+    - Compatible e e' : Prop — distinct consumed occurrences (no shared linear
+      send or recv), disjoint export identities. Keep it a structure of two
+      named conditions so later refinements (footprint conflicts) extend it.
+      Scope note: Compatible is the MODEL-level relation and is deliberately
+      weaker than the engine's macro side conditions (quiet continuations,
+      copy-stable results, no alternative pairing). In the model, payload
+      non-interference is structural (payload outcome sets are fixed data on
+      skeletons; frozen base + isolated scratch are baked into the type), so
+      bare Compatible carries the abstract theorems. The engine-side conditions
+      are NOT extra hypotheses for the same theorems — they are what makes a
+      live C macro step BE an instance of an abstract round at all. They enter
+      exactly once, as explicit hypotheses of macro_collapse_corollary (B6),
+      and are tracked in the CORRESPONDENCE TABLE below.
+    - Matching := { M : Finset EventSkeleton // pairwise Compatible }.
+    - MatchOf P := all matchings whose events are enabled in P (Decision (a):
+      ALL compatible matchings, including ∅ and singletons).
+
+B4. Round layer
+    - roundOutcomes P := ⋃ (M ∈ MatchOf P), foldOutcomesΩ (payloads M).
+    - singleton_step_embeds : every exact one-redex step outcome appears as the
+      {e} matching's contribution (the exact reducer is the finest refinement).
+    - independent_unique_matching_collapses_to_fold : if the enabled events are
+      pairwise Compatible (no contention), then the full-frontier fold's
+      outcome set is a member contribution of roundOutcomes P:
+      foldOutcomesΩ (enabled events) ⊆ roundOutcomes P. Exactly two membership
+      statements in B4 — the singleton embedding above and this one. NO
+      "sub-matching outcomes extend to the full fold" claim here: that is not a
+      defined relation on (result, delta, exports) triples, and the true
+      statement ("partial rounds complete in later rounds, so sub-rounds add
+      nothing to quiescents") is a closure fact that lives in B6, where
+      sequential composition makes it well-formed. This pair is the theorem A4
+      needs.
+
+B5. No-go theorems (concrete witnesses, mirroring Engine.lean:682 and :711)
+    - contention_requires_choice : for the one-send/two-receivers process,
+      roundOutcomes has two distinct outcomes consuming the same send, and NO
+      function of the form "commutative fold over all enabled events" (i.e. a
+      single foldOutcomesΩ application to the whole enabled set) equals it.
+      Statement quantifies over the fold-shaped semantics, witnessed by the
+      concrete process.
+    - chaining_not_single_round : for send c a | recv c x. send d x | recv d y. Q,
+      the quiescent outcome containing Q[a/y] is in the two-round closure but
+      in NO single-round denotation determined by the initial frontier.
+
+B6. Run layer + the crown (TWO theorems, deliberately split)
+    - runOutcomes (fuel) C := fuel-indexed sequential closure of roundOutcomes;
+      quiescents = members with no enabled COMM.
+    - round_granularity_independence (abstract crown, bare Compatible): the
+      quiescent set of the singleton-only closure equals the quiescent set of
+      the all-matchings closure — bigger compatible rounds add no quiescent
+      outcomes and lose none. (⊆ by singleton_step_embeds + induction; ⊇ by
+      serializing one compatible matching into singleton steps via
+      foldOutcomesΩ_perm.) Provable at bare Compatible BECAUSE the model bakes
+      payload non-interference in structurally; this theorem is a statement
+      about the model, and citing it as an engine guarantee without the
+      corollary below is the overclaim this document exists to prevent.
+      Known proof obligation: serialization must rename owned-export
+      identities (splitting a round into singleton steps re-derives freshness;
+      expect an alpha-renaming lemma on Ω, stated up to export-identity
+      bijection).
+    - macro_collapse_corollary (engine crown): under the EXPLICIT hypotheses
+      mirroring the C macro's side conditions — unique maximal matching (no
+      alternative pairing), quiet continuations, copy-stable results,
+      transactional payload isolation — a macro-fired round is an instance of
+      an abstract round, hence by the abstract crown semantically invisible.
+      Every hypothesis here must appear as a row of the CORRESPONDENCE TABLE;
+      a hypothesis the proof never uses is a conservatism finding (report it —
+      A4 candidate), a needed assumption with no C-side enforcing check is a
+      soundness alarm (stop and report immediately). This pair is the Lean
+      justification for both the existing macro and A4.
+
+B7. Bridge to the operational semantics (hardest; staged; ~0.5 confidence)
+    - Stage 1 (soundness): every RhometaReducesStar path to a quiescent term
+      induces a runOutcomes member (path → singleton-matching chain).
+    - Stage 2 (completeness on quiescents): every runOutcomes quiescent is
+      realized by some RhometaReducesStar path (via B6 serialization).
+    - Stage 3: DELIVER the lean_file/theorem values for the A2 bridge TSV rows
+      as a handoff block appended under "HANDOFFS" at the end of this file
+      (lane A pastes them into the TSV — single-writer rule); extend the Lean
+      theorem checks consumed by scripts/rhocalc_lean_microcheck.py to cover
+      the new fixture phenomena (state-local, owned exports, sibling pair,
+      contention, chaining) in the checked .lean file.
+    - If a stage blocks, report the precise blocker; no sorry placeholders.
+
+B8. Cost re-attachment (last, per Decision (d))
+    - On the layered object: ⊔ → join/sSup, ⊗ → existing foldCost, ; → mul,
+      over the existing IsCommQuantale / ℝ≥0∞ instances (Algebra/
+      QuantaleWeakness.lean). Restate foldCost_perm / foldCost_eq_aggregate as
+      the ⊗-grading; add round/run cost as the graded version of B4/B6. The
+      exchange-law inequality ((a⊗b);(c⊗d) ≤ (a;c)⊗(b;d)) enters here as the
+      orchestration-rewrite soundness statement — state it for the cost grading
+      first; the full CKA quotient is future work, not this tranche.
+
+
+CORRESPONDENCE TABLE (living artifact — both lanes extend it)
+==============================================================
+Purpose: a macro soundness break exists exactly when a C-side check fails to
+imply the model assumption it is supposed to enforce (a step fires that is not
+an instance of any abstract round). This table is the systematic hunt for that:
+every C macro condition names the model assumption it enforces; every model
+assumption names its enforcing check. Reading the gaps:
+  - C check with no model counterpart  → conservatism candidate (A4 material);
+  - model assumption with no enforcing check → break candidate → lane A
+    synthesizes an audit shape that satisfies the checks and violates the
+    assumption (the equation-wrapping lesson, generalized), lane B re-examines
+    the corollary hypotheses. Update the table whenever either lane learns
+    something; rows are append/refine-only with dates.
+
+  C-side check (rhocalc_core.c)        | model assumption enforced
+  -------------------------------------+----------------------------------------
+  keywise at-most-one send/recv,       | the fired set is a valid Matching
+  bail on contention (:2601)           | (unique maximal; no ⊔ branch hidden)
+  per-key partition: macro-fire only   | partial fire is one valid RoundStep;
+  eligible singleton-pair quiet keys,  | unfired groups remain enabled/untouched
+  exact-explore the rest in the same   | (persistence for the complementary
+  scheduling round [added 2026-06-13,  | exact subset)
+  A4]                                  |
+  quiet continuations                  | macro step = ONE abstract round
+                                       | (no mid-round enablement; rounds are
+                                       | atomic by definition in the model)
+  copy-stable results                  | engine reification of results equals
+                                       | the model fold (deterministic wrap)
+  transactional payload isolation      | payload outcome sets are fixed data
+  (dynamic redirects, frozen bases)    | (frozen base + isolated scratch =
+                                       | structural non-interference)
+  owned-export materialization,        | disjoint/fresh export identities
+  fresh identity on escape             | (the Ω half of Compatible)
+  single-owner export tag              | one owner per escaped resource: the
+  (payload_export_owner_epoch) +       | model's export bags are per-outcome
+  fault on cross-result aliasing       | data, so one resource in two top-level
+  (PayloadOwnedExportAliased)          | results would alias what the model
+  [added 2026-06-12, A5]               | treats as distinct — fault, don't guess
+  if ANY rejected group yields         | conservative operational guard: do not
+  identity-bearing results, bail the   | interleave safe macro repetitions with
+  WHOLE frontier to exact instead of   | exact fresh-identity branches unless the
+  mixing safe macro groups with        | multiplicity commutation theorem is
+  unsafe exact groups [added           | discharged; preserves may-set equality
+  2026-06-13, A4]                      | today, theorem-sharpening candidate later
+  [declared boundary, not a check]     | foreign effects (call-native, stdout)
+                                       | are OUTSIDE the theorem — must stay
+                                       | explicitly declared, never assumed in
+  [TSAN seal, separate lane]           | OS-thread interleaving correctness is
+                                       | not the audit's department
+
+SYNC POINTS & ORDERING
+======================
+1. A1, A2, A3, A5, A6, B1, B2, B3 are all independent — start immediately in
+   parallel. Suggested first week: Codex A1→A2→A5(+A3 as the fixtures land);
+   Claude B1→B2→B3→B4.
+2. A2 ↔ B7: the bridge TSV rows added in A2 use the schema above; at B7 stage 3
+   lane B appends the lean_file/theorem values under HANDOFFS below and lane A
+   pastes them into the TSV (single-writer). If either side must deviate from
+   the listed fixture set, update THIS file's A2 list first (single source).
+3. A4 starts only after B4 AND the macro_collapse_corollary (B6) are merged
+   (the sub-matching fold theorem + the corollary hypotheses are its
+   justification). If their final statements differ materially from the
+   sketch, A4's design follows the theorems, not this sketch.
+4. A6's contract wording and B1's docstring must tell the same story (the
+   7-point transactional contract + ⊔/⊗/; layers).
+5. The CORRESPONDENCE TABLE is the shared learning ledger: corollary-proof
+   findings (unused hypotheses, missing assumptions) and audit findings
+   (divergences, new adversarial shapes) both land there first.
+
+GATES (each item, before "done")
+================================
+C lane:  make BUILD=core test-rhocalc && make BUILD=mork test-rhocalc
+         (277/277 baseline, plus the new tests); differential audit
+         0-divergence including A1 shapes; sanitizer seals (ASan/LeakSan,
+         TSAN for threaded) on the touched paths; no golden tests — expected
+         outputs come from the exact reference semantics, never from the
+         optimized path's own output.
+Lean:    lake build Mettapedia.Languages.ProcessCalculi.RhoCalculus green;
+         rg '\bsorry\b|\baxiom\b|\badmit\b' over RhometaReduction.lean and
+         Outcomes.lean returns 0; existing theorem statements unchanged
+         (crown, drop-observer, conservativity compile as before);
+         scripts/rhocalc_lean_microcheck.py (theorem smoke test) green after
+         B7 stage 3.
+Cross:   the trace-bridge lane (tests/rhocalc_run_lean_bridge.tsv via
+         scripts/rhocalc_lean_trace_bridge.py) green with the B7 handoff
+         pasted in — this is the lane that actually joins the two worlds.
+Both:    no done-claims with gaps; blockers reported precisely and early.
+
+HANDOFFS (append-only; dated; consumed by the other lane then marked consumed)
+==============================================================================
+
+[2026-06-11, lane B → lane A]  B4 + B6 MERGED — A4 partial-matching macro is UNBLOCKED.
+  Landed in Mettapedia/Languages/ProcessCalculi/RhoCalculus/RhometaReduction.lean (0 sorry/axiom,
+  build green): roundOutcomes + singleton_step_embeds + independent_unique_matching_collapses_to_fold
+  + roundOutcomes_ne_rawFold (B4); EventSystem/RoundStep/runOutcomes + singleton_run_of_matching
+  (serialization) + round_granularity_independence (abstract crown) +
+  quiescent_granularity_independence + QuietFrontier + macro_collapse_corollary (engine crown) (B6).
+  A4's justification: macro-firing any compatible sub-frontier = one RoundStep of the all-matchings
+  closure; granularity independence says it adds/loses nothing; under QuietFrontier the one-shot
+  macro IS the quiescent may-set.
+  Correspondence-table findings from the crown-2 proof (all hypotheses used; no conservatism row,
+  no soundness alarm):
+    - matching        ↔ keywise at-most-one pairing (no contention)        [USED]
+    - complete        ↔ macro fires the whole frontier                     [USED]
+    - quiet_consume   ↔ quiet continuations + linear consumption, as ONE
+                        equation: enabled(after L) = enabled(before) \ L   [USED]
+    - copy-stable results / transactional payload isolation: NO separate formal content at the
+      model layer (payload outcome sets are fixed data on skeletons) — they are instance-hood
+      obligations for the operational bridge (B7), exactly as the table's "model-structural" rows
+      say. The owned-export renaming obligation VANISHES at this layer (exports are data merged by
+      bag union); it resurfaces only at B7 where fresh identity generation is operational.
+
+[2026-06-13, lane A → lane B]  A4 PARTIAL-MATCHING MACRO LANDED on the C side.
+  Files:
+    - src/rhocalc_core.c: keywise partition-per-round macro firing with exact fallback for
+      rejected groups; explicit full-fire / partial-fire / bail-exact modes; refusal reasons
+      (contention / nonquiet / unsafe payload / child-cap).
+    - src/stats.h, src/stats.c: runtime counters for the new macro modes and refusal reasons.
+    - scripts/rhometta_macro_differential_audit.py: mixed-frontier families added (partial
+      contention, mixed unsafe, child-cap) with runtime-stats expectations.
+    - tests/test_rhometta_threaded_runtime_stats.metta (+ .expected): witnesses updated to the
+      post-A4 semantics.
+  New operational finding worth preserving: mixing safe macro-fired groups with exact-explored
+  identity-producing groups CHANGED outcome multiplicity (fresh spaces/states were duplicated by
+  repeated safe-frontier firing), so the implementation now conservatively bails the WHOLE
+  frontier to exact whenever any rejected group is unsafe. Audit caught this directly; the row is
+  now in the CORRESPONDENCE TABLE above.
+  Verified gates on the live tree:
+    - make BUILD=core test-rhocalc    → 296/296
+    - make BUILD=mork test-rhocalc    → 296/296
+    - make BUILD=core test-rhometta-macro-audit → 0/146 divergences
+    - ASan/UBSan core rhocalc lane    → clean
+    - TSan core rhocalc lane          → clean
+  Performance notes (same binary, macro-on vs CETTA_RHO_NO_MACRO=1 exact reference):
+    - mixed Rhometta frontier (12 quiet keys + 1 contended key, generated from the audit family):
+      median 0.038s macro-on vs 22.938s macro-off (large A4 win, as intended)
+    - standard rho contended control (hot-channel 48 sends / 32 receives):
+      median 1.910s macro-on vs 2.128s macro-off (no regression observed)
+  Deferred, per the original tranche boundary: threaded scheduler × partial-matching interaction
+  remains a later design note only. The CLI contract is unchanged (explicit --rho-scheduler is
+  still rejected with --num-threads > 1); A4 did NOT redesign scheduling here.
