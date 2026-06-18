@@ -318,6 +318,8 @@ void arena_reset(Arena *a, ArenaMark mark) {
 
 HashConsTable *g_hashcons = NULL;
 
+static bool atom_is_hash_stable(const Atom *atom);
+
 static uint32_t atom_hash_compute(Atom *a) {
     if (!a) return 0;
     uint32_t h = 5381;
@@ -378,8 +380,10 @@ uint32_t atom_hash(Atom *a) {
     if ((a->flags & ATOM_FLAG_HASH_VALID) != 0)
         return a->hash_cache;
     uint32_t h = atom_hash_compute(a);
-    a->hash_cache = h;
-    a->flags |= ATOM_FLAG_HASH_VALID;
+    if (atom_is_hash_stable(a)) {
+        a->hash_cache = h;
+        a->flags |= ATOM_FLAG_HASH_VALID;
+    }
     return h;
 }
 
@@ -420,36 +424,7 @@ void hashcons_free(HashConsTable *hc) {
 }
 
 static bool atom_is_hash_stable(const Atom *atom) {
-    if (!atom) return false;
-    switch (atom->kind) {
-    case ATOM_SYMBOL:
-        return true;
-    case ATOM_VAR:
-        return true;
-    case ATOM_GROUNDED:
-        switch (atom->ground.gkind) {
-        case GV_INT:
-        case GV_FLOAT:
-        case GV_BOOL:
-        case GV_STRING:
-        case GV_BIGINT:
-        case GV_RATIONAL:
-            return true;
-        case GV_SPACE:
-        case GV_STATE:
-        case GV_CAPTURE:
-        case GV_FOREIGN:
-            return false;
-        }
-        return false;
-    case ATOM_EXPR:
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            if (!atom_is_hash_stable(atom->expr.elems[i]))
-                return false;
-        }
-        return true;
-    }
-    return false;
+    return atom && (atom->flags & ATOM_FLAG_HASH_STABLE) != 0;
 }
 
 static bool atom_expr_is_contextual(const Atom *atom) {
@@ -458,17 +433,7 @@ static bool atom_expr_is_contextual(const Atom *atom) {
 }
 
 static bool atom_can_hashcons(const Atom *atom) {
-    if (!atom)
-        return false;
-    if (!atom_is_hash_stable(atom) || atom_expr_is_contextual(atom))
-        return false;
-    if (atom->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-        if (!atom_can_hashcons(atom->expr.elems[i]))
-            return false;
-    }
-    return true;
+    return atom && (atom->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0;
 }
 
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
@@ -1082,21 +1047,61 @@ static Atom *atom_maybe_hashcons(Arena *a, const Atom *temp) {
     return hashcons_get(a->hashcons, (Atom *)temp);
 }
 
-static uint8_t atom_flags_for_symbol_id(SymbolId sym_id) {
-    uint8_t flags = 0;
+static uint32_t atom_hash_flags_for_eligible_leaf(void) {
+    return ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE;
+}
+
+static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind) {
+    switch (gkind) {
+    case GV_INT:
+    case GV_FLOAT:
+    case GV_BOOL:
+    case GV_STRING:
+    case GV_BIGINT:
+    case GV_RATIONAL:
+        return atom_hash_flags_for_eligible_leaf();
+    case GV_SPACE:
+    case GV_STATE:
+    case GV_CAPTURE:
+    case GV_FOREIGN:
+        return 0;
+    }
+    return 0;
+}
+
+static uint32_t atom_flags_for_symbol_id(SymbolId sym_id) {
+    uint32_t flags = atom_hash_flags_for_eligible_leaf();
     const char *bytes = symbol_bytes(g_symbols, sym_id);
     if (bytes && bytes[0] == '&')
         flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
     return flags;
 }
 
-static uint8_t atom_flags_from_children(Atom **elems, CettaExprLen len) {
-    uint8_t flags = 0;
+static uint32_t atom_flags_from_children(Atom **elems, CettaExprLen len) {
+    uint32_t flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE;
     for (CettaExprIndex i = 0; i < len; i++) {
-        if (atom_has_vars(elems[i]))
+        Atom *child = elems ? elems[i] : NULL;
+        if (!child) {
+            flags &= ~(ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE);
+            continue;
+        }
+        if (atom_has_vars(child))
             flags |= ATOM_FLAG_HAS_VARS;
-        if (atom_has_registry_refs(elems[i]))
+        if (atom_has_registry_refs(child))
             flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+        if (!atom_is_hash_stable(child))
+            flags &= ~ATOM_FLAG_HASH_STABLE;
+        if (!atom_can_hashcons(child))
+            flags &= ~ATOM_FLAG_HASHCONS_ELIGIBLE;
+    }
+    if (len > 0) {
+        Atom temp = {0};
+        temp.kind = ATOM_EXPR;
+        temp.flags = flags;
+        temp.expr.len = len;
+        temp.expr.elems = elems;
+        if (atom_expr_is_contextual(&temp))
+            flags &= ~ATOM_FLAG_HASHCONS_ELIGIBLE;
     }
     return flags;
 }
@@ -1122,7 +1127,7 @@ Atom *atom_symbol(Arena *a, const char *name) {
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     Atom temp = {0};
     temp.kind = ATOM_VAR;
-    temp.flags = ATOM_FLAG_HAS_VARS;
+    temp.flags = ATOM_FLAG_HAS_VARS | atom_hash_flags_for_eligible_leaf();
     temp.var_id = id ? id : fresh_var_id();
     temp.sym_id = spelling;
     temp.hash_cache = 0;
@@ -1147,7 +1152,7 @@ Atom *atom_var(Arena *a, const char *name) {
 Atom *atom_int(Arena *a, int64_t val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
-    temp.flags = 0;
+    temp.flags = atom_flags_for_grounded_kind(GV_INT);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
     temp.ground.gkind = GV_INT;
@@ -1171,7 +1176,7 @@ Atom *atom_bigint(Arena *a, const char *val) {
 
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
-    temp.flags = 0;
+    temp.flags = atom_flags_for_grounded_kind(GV_BIGINT);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
     temp.ground.gkind = GV_BIGINT;
@@ -1227,7 +1232,7 @@ Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value) {
 
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
-    temp.flags = 0;
+    temp.flags = atom_flags_for_grounded_kind(GV_BIGINT);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
     temp.ground.gkind = GV_BIGINT;
@@ -1326,7 +1331,7 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
 
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
-    temp.flags = 0;
+    temp.flags = atom_flags_for_grounded_kind(GV_RATIONAL);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
     temp.ground.gkind = GV_RATIONAL;
@@ -1369,7 +1374,7 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
 Atom *atom_space(Arena *a, void *space_ptr) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
-    at->flags = 0;
+    at->flags = atom_flags_for_grounded_kind(GV_SPACE);
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
     at->hash_cache = 0;
@@ -1381,7 +1386,7 @@ Atom *atom_space(Arena *a, void *space_ptr) {
 Atom *atom_state(Arena *a, StateCell *cell) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
-    at->flags = 0;
+    at->flags = atom_flags_for_grounded_kind(GV_STATE);
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
     at->hash_cache = 0;
@@ -1393,7 +1398,7 @@ Atom *atom_state(Arena *a, StateCell *cell) {
 Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
-    at->flags = 0;
+    at->flags = atom_flags_for_grounded_kind(GV_CAPTURE);
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
     at->hash_cache = 0;
@@ -1405,7 +1410,7 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure) {
 Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = ATOM_GROUNDED;
-    at->flags = 0;
+    at->flags = atom_flags_for_grounded_kind(GV_FOREIGN);
     at->var_id = VAR_ID_NONE;
     at->sym_id = SYMBOL_ID_NONE;
     at->hash_cache = 0;
@@ -1417,7 +1422,7 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
 Atom *atom_float(Arena *a, double val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
-    temp.flags = 0;
+    temp.flags = atom_flags_for_grounded_kind(GV_FLOAT);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
     temp.ground.gkind = GV_FLOAT;
@@ -1432,7 +1437,7 @@ Atom *atom_float(Arena *a, double val) {
 Atom *atom_bool(Arena *a, bool val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
-    temp.flags = 0;
+    temp.flags = atom_flags_for_grounded_kind(GV_BOOL);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
     temp.ground.gkind = GV_BOOL;
@@ -1447,7 +1452,7 @@ Atom *atom_bool(Arena *a, bool val) {
 Atom *atom_string(Arena *a, const char *val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
-    temp.flags = 0;
+    temp.flags = atom_flags_for_grounded_kind(GV_STRING);
     temp.var_id = VAR_ID_NONE;
     temp.hash_cache = 0;
     temp.ground.gkind = GV_STRING;

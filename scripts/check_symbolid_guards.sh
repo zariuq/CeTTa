@@ -35,6 +35,19 @@ eval_symbolid_files=(
   src/eval.c
 )
 
+raw_atom_hits="$(
+  rg -n -e '\.kind\s*=\s*ATOM_' -e '->kind\s*=\s*ATOM_' \
+    src native tests/support -g '*.c' -g '*.h' || true
+)"
+raw_atom_hits="$(
+  printf '%s\n' "$raw_atom_hits" | rg -v '^src/atom\.c:' || true
+)"
+if [ -n "$raw_atom_hits" ]; then
+  printf '%s\n' "$raw_atom_hits"
+  echo "SymbolId guard failed: raw Atom kind construction must stay centralized in src/atom.c." >&2
+  exit 1
+fi
+
 name_hits="$(
   rg -n -- '->name\b' "${no_name_files[@]}" || true
 )"
