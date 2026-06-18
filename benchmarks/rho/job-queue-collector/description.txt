@@ -1,0 +1,5 @@
+MeTTa constructs a strict-core rho job queue: two workers compete on one jobs
+channel, each job is consumed exactly once, and a collector waits for both worker
+results before publishing public outputs.  This showcases rho's channel
+rendezvous and linear consumption as a user-facing coordination primitive,
+distinct from hyperpose branch parallelism.

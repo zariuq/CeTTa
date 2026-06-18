@@ -36,6 +36,7 @@ rho="$out_dir/$name.rho"
 
 {
     printf '!(import! &self rho)\n\n'
+    printf '!(pragma! max-stack-depth 400000)\n\n'
     printf '(= (watch-proc $target (watch $topic-tag $topic-name $sink))\n'
     printf '   (if-equal $topic-tag $target\n'
     printf '     (rho.recv $topic-name $msg (rho.send $sink (rho.drop $msg)))\n'

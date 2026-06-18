@@ -1,8 +1,18 @@
 #include "rhocalc_core.h"
+#include <assert.h>
+#include <limits.h>
+#include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "eval.h"
+#include "match.h"
+#include "parallel_executor.h"
+#include "stats.h"
 
 typedef enum {
     RHO_BAD = 0,
@@ -11,7 +21,9 @@ typedef enum {
     RHO_SEND,
     RHO_RECV,
     RHO_QUOTE,
-    RHO_DROP
+    RHO_DROP,
+    RHO_VAL,
+    RHO_EVAL_PAYLOAD
 } RhoKind;
 
 typedef struct {
@@ -50,6 +62,17 @@ typedef struct {
     uint32_t len;
 } RhoSuccessorSet;
 
+static bool rho_collect_successors(Arena *arena, Atom *proc,
+                                   const RhocalcEvalContext *eval_context,
+                                   RhoSuccessorSetAcc *out);
+static bool rhocalc_collect_successor_set(Arena *arena, Atom *proc,
+                                          const RhocalcEvalContext *eval_context,
+                                          RhoSuccessorSet *out);
+static bool rhocalc_collect_quiescent_set(
+    Arena *arena, Atom *proc, const RhocalcEvalContext *eval_context,
+    RhoSuccessorSet *out);
+static void rhocalc_successor_set_free(RhoSuccessorSet *set);
+
 typedef struct {
     uint32_t component_index;
     RhoView view;
@@ -65,6 +88,7 @@ typedef struct {
 typedef struct {
     Arena *arena;
     RhoRuntimeProfile profile;
+    const RhocalcEvalContext *eval_context;
     Atom *current;
     uint64_t rotating_turn;
     /* Internal abstract-machine view: this COMM index is rebuilt from the
@@ -93,7 +117,101 @@ typedef struct {
     size_t cap;
 } RhoStr;
 
+typedef struct {
+    bool ready;
+    SymbolId nil;
+    SymbolId par;
+    SymbolId send;
+    SymbolId recv;
+    SymbolId quote;
+    SymbolId drop;
+    SymbolId val;
+    SymbolId eval_payload;
+} RhoSymbolIds;
+
+typedef enum {
+    RHO_ASYNC_ENDPOINT_SEND = 0,
+    RHO_ASYNC_ENDPOINT_RECV = 1
+} RhoAsyncEndpointKind;
+
+typedef struct RhoAsyncEndpoint RhoAsyncEndpoint;
+struct RhoAsyncEndpoint {
+    RhoAsyncEndpointKind kind;
+    Atom *atom;
+    RhoView view;
+    RhoAsyncEndpoint *next;
+};
+
+typedef struct RhoChannelBucket RhoChannelBucket;
+struct RhoChannelBucket {
+    char *key;
+    pthread_mutex_t mutex;
+    RhoAsyncEndpoint *send_head;
+    RhoAsyncEndpoint *send_tail;
+    RhoAsyncEndpoint *recv_head;
+    RhoAsyncEndpoint *recv_tail;
+    RhoChannelBucket *next;
+};
+
+typedef struct {
+    pthread_mutex_t mutex;
+    RhoChannelBucket *head;
+} RhoChannelTable;
+
+typedef struct RhoAsyncExecutor RhoAsyncExecutor;
+
+struct RhoAsyncExecutor {
+    Arena *global_arena;
+    RhoRuntimeProfile profile;
+    const RhocalcEvalContext *eval_context;
+    CettaParallelExecutor parallel;
+    RhoChannelTable channels;
+    RhoAtomVec residuals;
+    pthread_mutex_t residual_mutex;
+    _Atomic uint32_t budget;
+    _Atomic uint32_t reductions_taken;
+    _Atomic uint32_t branch_turn;
+};
+
+/*
+ * Threaded run invariant: each bucket-locked rendezvous consumes one send and
+ * one receive endpoint, computes the same COMM frontier the sequential machine
+ * would see there, and then schedules exactly one continuation from that
+ * frontier for the run path. The final state is materialized from unmatched
+ * endpoints plus stuck residual processes, so a threaded run serializes to some
+ * legal Reduces* path rather than accumulating an entire branching frontier.
+ */
+static RhoSymbolIds g_rho_syms = {0};
+static __thread bool g_rho_async_worker_active = false;
 static __thread char g_rhocalc_validation_error[256];
+
+static void rho_symbols_ensure(void) {
+    if (g_rho_syms.ready) return;
+    g_rho_syms.nil = symbol_intern_cstr(g_symbols, "rho:nil");
+    g_rho_syms.par = symbol_intern_cstr(g_symbols, "rho:par");
+    g_rho_syms.send = symbol_intern_cstr(g_symbols, "rho:send");
+    g_rho_syms.recv = symbol_intern_cstr(g_symbols, "rho:recv");
+    g_rho_syms.quote = symbol_intern_cstr(g_symbols, "rho:quote");
+    g_rho_syms.drop = symbol_intern_cstr(g_symbols, "rho:drop");
+    g_rho_syms.val = symbol_intern_cstr(g_symbols, "rho:val");
+    g_rho_syms.eval_payload = symbol_intern_cstr(g_symbols, "rho:eval-payload");
+    g_rho_syms.ready = true;
+}
+
+static SymbolId rho_head_symbol_id(const char *head) {
+    rho_symbols_ensure();
+    if (strcmp(head, "rho:nil") == 0) return g_rho_syms.nil;
+    if (strcmp(head, "rho:par") == 0) return g_rho_syms.par;
+    if (strcmp(head, "rho:send") == 0) return g_rho_syms.send;
+    if (strcmp(head, "rho:recv") == 0) return g_rho_syms.recv;
+    if (strcmp(head, "rho:quote") == 0) return g_rho_syms.quote;
+    if (strcmp(head, "rho:drop") == 0) return g_rho_syms.drop;
+    if (strcmp(head, "rho:val") == 0) return g_rho_syms.val;
+    if (strcmp(head, "rho:eval-payload") == 0) return g_rho_syms.eval_payload;
+    assert(!g_rho_async_worker_active &&
+           "rho worker attempted to intern a non-rho head symbol");
+    return symbol_intern_cstr(g_symbols, head);
+}
 
 static char *rho_heap_strdup(const char *text) {
     size_t len = strlen(text) + 1u;
@@ -147,6 +265,7 @@ static Atom *rhocost_successor_frontier_expr(Arena *arena, Atom *term);
 static bool rhocost_reduce_to_quiescence_with_profile(
     Arena *arena, Atom *term, const RhoRuntimeProfile *profile,
     RhoReductionResult *out);
+static bool rho_runtime_profile_supported(const RhoRuntimeProfile *profile);
 
 static bool rho_symbol_named(Atom *atom, const char *name) {
     return atom && atom->kind == ATOM_SYMBOL &&
@@ -172,13 +291,17 @@ static RhoView rho_view(Atom *atom) {
     else if (strcmp(head, "rho:recv") == 0) view.kind = RHO_RECV;
     else if (strcmp(head, "rho:quote") == 0) view.kind = RHO_QUOTE;
     else if (strcmp(head, "rho:drop") == 0) view.kind = RHO_DROP;
+    else if (strcmp(head, "rho:val") == 0) view.kind = RHO_VAL;
+    else if (strcmp(head, "rho:eval-payload") == 0) {
+        view.kind = RHO_EVAL_PAYLOAD;
+    }
     return view;
 }
 
 static Atom *rho_call(Arena *arena, const char *head,
                       Atom *const *args, uint32_t nargs) {
     Atom **elems = arena_alloc(arena, sizeof(Atom *) * (size_t)(nargs + 1));
-    elems[0] = atom_symbol(arena, head);
+    elems[0] = atom_symbol_id(arena, rho_head_symbol_id(head));
     for (uint32_t i = 0; i < nargs; i++) {
         elems[i + 1] = args[i];
     }
@@ -186,7 +309,8 @@ static Atom *rho_call(Arena *arena, const char *head,
 }
 
 static Atom *rho_nil(Arena *arena) {
-    return atom_symbol(arena, "rho:nil");
+    rho_symbols_ensure();
+    return atom_symbol_id(arena, g_rho_syms.nil);
 }
 
 static Atom *rho_unary(Arena *arena, const char *head, Atom *arg) {
@@ -203,6 +327,60 @@ static Atom *rho_ternary(Arena *arena, const char *head,
                          Atom *a, Atom *b, Atom *c) {
     Atom *args[3] = {a, b, c};
     return rho_call(arena, head, args, 3);
+}
+
+static Atom *rho_value_proc(Arena *arena, Atom *value) {
+    return rho_unary(arena, "rho:val", value);
+}
+
+static bool rho_is_builtin_quote(Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2 &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.quote);
+}
+
+static Atom *rho_unquote_payload_atom(Atom *atom) {
+    return rho_is_builtin_quote(atom) ? atom->expr.elems[1] : atom;
+}
+
+static bool rho_atom_contains_var_id(Atom *atom, VarId var_id) {
+    if (!atom || !atom_has_vars(atom)) return false;
+    if (atom->kind == ATOM_VAR) return atom->var_id == var_id;
+    if (atom->kind != ATOM_EXPR) return false;
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+        if (rho_atom_contains_var_id(atom->expr.elems[i], var_id)) return true;
+    }
+    return false;
+}
+
+static Atom *rho_atom_replace_var(Arena *arena, Atom *atom, VarId var_id,
+                                  Atom *replacement) {
+    Bindings subst;
+    Atom *result;
+
+    if (!atom_has_vars(atom)) return atom;
+    bindings_init(&subst);
+    if (!bindings_add_id(&subst, var_id, replacement ? replacement->sym_id
+                                                     : SYMBOL_ID_NONE,
+                         replacement)) {
+        bindings_free(&subst);
+        return atom;
+    }
+    result = bindings_apply_if_vars(&subst, arena, atom);
+    bindings_free(&subst);
+    return result;
+}
+
+static char *rho_atom_text_key(Atom *atom) {
+    Arena scratch;
+    char *rendered;
+    char *out;
+
+    arena_init(&scratch);
+    rendered = atom_to_string(&scratch, atom);
+    out = rendered ? rho_heap_strdup(rendered) : rho_heap_strdup("");
+    arena_free(&scratch);
+    return out;
 }
 
 static void rho_scope_init(RhoScope *scope) {
@@ -333,9 +511,11 @@ static bool rho_endpoint_vec_push(RhoEndpointVec *vec,
     return true;
 }
 
-static bool rho_check_proc(Atom *proc, RhoScope *scope);
+static bool rho_check_proc(Atom *proc, RhoScope *scope,
+                           bool allow_eval_payloads);
 
-static bool rho_check_name(Atom *name, RhoScope *scope) {
+static bool rho_check_name(Atom *name, RhoScope *scope,
+                           bool allow_eval_payloads) {
     (void)scope;
     if (!name) {
         rho_validation_set("missing rho name");
@@ -349,7 +529,8 @@ static bool rho_check_name(Atom *name, RhoScope *scope) {
         RhoScope quote_scope;
         bool ok;
         rho_scope_init(&quote_scope);
-        ok = rho_check_proc(view.args[0], &quote_scope);
+        ok = rho_check_proc(view.args[0], &quote_scope,
+                            allow_eval_payloads);
         rho_scope_free(&quote_scope);
         return ok;
     }
@@ -357,14 +538,18 @@ static bool rho_check_name(Atom *name, RhoScope *scope) {
     return false;
 }
 
-static bool rho_check_proc(Atom *proc, RhoScope *scope) {
+static bool rho_check_proc(Atom *proc, RhoScope *scope,
+                           bool allow_eval_payloads) {
     RhoView view = rho_view(proc);
     switch (view.kind) {
     case RHO_NIL:
         return true;
     case RHO_PAR:
         for (uint32_t i = 0; i < view.nargs; i++) {
-            if (!rho_check_proc(view.args[i], scope)) return false;
+            if (!rho_check_proc(view.args[i], scope,
+                                allow_eval_payloads)) {
+                return false;
+            }
         }
         return true;
     case RHO_SEND:
@@ -372,8 +557,8 @@ static bool rho_check_proc(Atom *proc, RhoScope *scope) {
             rho_validation_set("rho:send expects channel and process payload");
             return false;
         }
-        return rho_check_name(view.args[0], scope) &&
-               rho_check_proc(view.args[1], scope);
+        return rho_check_name(view.args[0], scope, allow_eval_payloads) &&
+               rho_check_proc(view.args[1], scope, allow_eval_payloads);
     case RHO_RECV: {
         if (view.nargs != 3) {
             rho_validation_set("rho:recv expects channel, binder, and body");
@@ -383,10 +568,13 @@ static bool rho_check_proc(Atom *proc, RhoScope *scope) {
             rho_validation_set("rho:recv binder must be a variable");
             return false;
         }
-        if (!rho_check_name(view.args[0], scope)) return false;
+        if (!rho_check_name(view.args[0], scope, allow_eval_payloads)) {
+            return false;
+        }
         uint32_t mark = rho_scope_mark(scope);
         if (!rho_scope_push(scope, view.args[1]->var_id)) return false;
-        bool ok = rho_check_proc(view.args[2], scope);
+        bool ok = rho_check_proc(view.args[2], scope,
+                                 allow_eval_payloads);
         rho_scope_pop(scope, mark);
         return ok;
     }
@@ -395,7 +583,34 @@ static bool rho_check_proc(Atom *proc, RhoScope *scope) {
             rho_validation_set("rho:drop expects one name");
             return false;
         }
-        return rho_check_name(view.args[0], scope);
+        return rho_check_name(view.args[0], scope, allow_eval_payloads);
+    case RHO_VAL:
+        if (!allow_eval_payloads) {
+            rho_validation_set("unsupported rho core form 'rho:val'");
+            return false;
+        }
+        if (view.nargs != 1) {
+            rho_validation_set("rho:val expects one wrapped value");
+            return false;
+        }
+        return true;
+    case RHO_EVAL_PAYLOAD:
+        if (!allow_eval_payloads) {
+            rho_validation_set(
+                "unsupported rho core form 'rho:eval-payload'");
+            return false;
+        }
+        if (view.nargs != 1) {
+            rho_validation_set(
+                "rho:eval-payload expects one MeTTa payload term");
+            return false;
+        }
+        if (!rho_is_builtin_quote(view.args[0])) {
+            rho_validation_set(
+                "rho:eval-payload expects one quoted MeTTa payload term");
+            return false;
+        }
+        return true;
     case RHO_QUOTE:
         rho_validation_set("rho:quote is a name, not a process");
         return false;
@@ -417,7 +632,17 @@ bool rhocalc_process_well_formed(Atom *proc) {
     bool ok;
     rho_validation_clear();
     rho_scope_init(&scope);
-    ok = rho_check_proc(proc, &scope);
+    ok = rho_check_proc(proc, &scope, false);
+    rho_scope_free(&scope);
+    return ok;
+}
+
+bool rhocalc_process_well_formed_with_eval_payloads(Atom *proc) {
+    RhoScope scope;
+    bool ok;
+    rho_validation_clear();
+    rho_scope_init(&scope);
+    ok = rho_check_proc(proc, &scope, true);
     rho_scope_free(&scope);
     return ok;
 }
@@ -612,6 +837,22 @@ static void rho_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
         rho_key_name_into(view.args[0], env, out);
         (void)rho_str_append(out, ")");
         return;
+    case RHO_VAL: {
+        char *payload_key = rho_atom_text_key(view.args[0]);
+        (void)rho_str_append(out, "val(");
+        (void)rho_str_append(out, payload_key);
+        (void)rho_str_append(out, ")");
+        free(payload_key);
+        return;
+    }
+    case RHO_EVAL_PAYLOAD: {
+        char *payload_key = rho_atom_text_key(view.args[0]);
+        (void)rho_str_append(out, "defer(");
+        (void)rho_str_append(out, payload_key);
+        (void)rho_str_append(out, ")");
+        free(payload_key);
+        return;
+    }
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -697,8 +938,13 @@ static Atom *rho_par_from_vec(Arena *arena, RhoAtomVec *vec) {
     return rho_call(arena, "rho:par", args, vec->len);
 }
 
+static Atom *rho_copy_var(Arena *arena, Atom *var) {
+    if (!var || var->kind != ATOM_VAR) return var;
+    return atom_var_with_spelling(arena, var->sym_id, var->var_id);
+}
+
 static Atom *rho_normalize_name(Arena *arena, Atom *name) {
-    if (name->kind == ATOM_VAR) return name;
+    if (name->kind == ATOM_VAR) return rho_copy_var(arena, name);
     RhoView view = rho_view(name);
     if (view.kind == RHO_QUOTE && view.nargs == 1) {
         Atom *inner = rho_normalize_proc(arena, view.args[0]);
@@ -733,11 +979,15 @@ static Atom *rho_normalize_proc(Arena *arena, Atom *proc) {
     case RHO_RECV:
         return rho_ternary(arena, "rho:recv",
                            rho_normalize_name(arena, view.args[0]),
-                           view.args[1],
+                           rho_copy_var(arena, view.args[1]),
                            rho_normalize_proc(arena, view.args[2]));
     case RHO_DROP:
         return rho_unary(arena, "rho:drop",
                          rho_normalize_name(arena, view.args[0]));
+    case RHO_VAL:
+        return rho_value_proc(arena, view.args[0]);
+    case RHO_EVAL_PAYLOAD:
+        return rho_unary(arena, "rho:eval-payload", view.args[0]);
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -781,6 +1031,9 @@ static bool rho_proc_has_free_var(Atom *proc, VarId var_id) {
         return rho_proc_has_free_var(view.args[2], var_id);
     case RHO_DROP:
         return view.nargs == 1 && rho_name_has_free_var(view.args[0], var_id);
+    case RHO_VAL:
+    case RHO_EVAL_PAYLOAD:
+        return view.nargs == 1 && rho_atom_contains_var_id(view.args[0], var_id);
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -790,18 +1043,7 @@ static bool rho_proc_has_free_var(Atom *proc, VarId var_id) {
 
 static Atom *rho_fresh_var_like(Arena *arena, Atom *var) {
     VarId id = fresh_var_id();
-    const char *base = atom_name_cstr(var);
-    char suffix[64];
-    size_t base_len;
-    size_t suffix_len;
-    char *name;
-    snprintf(suffix, sizeof(suffix), "_rho%llu", (unsigned long long)id);
-    base_len = strlen(base);
-    suffix_len = strlen(suffix);
-    name = arena_alloc(arena, base_len + suffix_len + 1u);
-    memcpy(name, base, base_len);
-    memcpy(name + base_len, suffix, suffix_len + 1u);
-    return atom_var_with_id(arena, name, id);
+    return atom_var_with_spelling(arena, var->sym_id, id);
 }
 
 static Atom *rho_rename_proc(Arena *arena, Atom *proc,
@@ -844,20 +1086,28 @@ static Atom *rho_rename_proc(Arena *arena, Atom *proc,
             return rho_ternary(arena, "rho:recv",
                                rho_rename_name(arena, view.args[0], old_id,
                                                replacement_name),
-                               view.args[1],
-                               view.args[2]);
+                               rho_copy_var(arena, view.args[1]),
+                               rho_normalize_proc(arena, view.args[2]));
         }
         return rho_normalize_proc(arena,
             rho_ternary(arena, "rho:recv",
                         rho_rename_name(arena, view.args[0], old_id,
                                         replacement_name),
-                        view.args[1],
+                        rho_copy_var(arena, view.args[1]),
                         rho_rename_proc(arena, view.args[2], old_id,
                                         replacement_name)));
     case RHO_DROP:
         return rho_unary(arena, "rho:drop",
                          rho_rename_name(arena, view.args[0], old_id,
                                          replacement_name));
+    case RHO_VAL:
+        return rho_value_proc(arena,
+                              rho_atom_replace_var(arena, view.args[0], old_id,
+                                                   replacement_name));
+    case RHO_EVAL_PAYLOAD:
+        return rho_unary(arena, "rho:eval-payload",
+                         rho_atom_replace_var(arena, view.args[0], old_id,
+                                              replacement_name));
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -921,11 +1171,11 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
             return rho_ternary(arena, "rho:recv",
                                rho_subst_name(arena, view.args[0],
                                               var_id, replacement_name),
-                               view.args[1],
-                               view.args[2]);
+                               rho_copy_var(arena, view.args[1]),
+                               rho_normalize_proc(arena, view.args[2]));
         }
         {
-            Atom *binder = view.args[1];
+            Atom *binder = rho_copy_var(arena, view.args[1]);
             Atom *body = view.args[2];
             if (binder->kind == ATOM_VAR &&
                 rho_name_has_free_var(replacement_name, binder->var_id)) {
@@ -951,6 +1201,14 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
         }
         return rho_unary(arena, "rho:drop", rho_normalize_name(arena, name));
     }
+    case RHO_VAL:
+        return rho_value_proc(arena,
+                              rho_atom_replace_var(arena, view.args[0], var_id,
+                                                   replacement_name));
+    case RHO_EVAL_PAYLOAD:
+        return rho_unary(arena, "rho:eval-payload",
+                         rho_atom_replace_var(arena, view.args[0], var_id,
+                                              replacement_name));
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -967,6 +1225,17 @@ static bool rho_successor_set_acc_push_keyed(RhoSuccessorSetAcc *acc, Atom *norm
     acc->keys[acc->len] = key;
     acc->len++;
     return true;
+}
+
+static bool rho_successor_set_acc_contains_key(const RhoSuccessorSetAcc *acc,
+                                               const char *key) {
+    if (!acc || !key) return false;
+    for (uint32_t i = 0; i < acc->len; i++) {
+        if (acc->keys[i] && strcmp(acc->keys[i], key) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void rho_successor_set_acc_finish(RhoSuccessorSetAcc *acc, RhoSuccessorSet *out) {
@@ -1065,51 +1334,1057 @@ static bool rho_collect_endpoints(RhoAtomVec *components,
     return true;
 }
 
-static bool rho_compute_comm_result(Arena *arena,
-                                    RhoAtomVec *components,
-                                    const RhoEndpoint *send_endpoint,
-                                    const RhoEndpoint *recv_endpoint,
-                                    Atom **out_result,
-                                    char **out_key) {
+/* Read-only-snapshot support: a per-payload map from each original space to its
+ * copy-on-write overlay.  Every space a payload could reach gets one, so writes
+ * land in per-payload scratch and never escape to a sibling payload. */
+typedef struct {
+    Space **orig;
+    Space **overlay;
+    int len, cap;
+    Space *inline_orig[16];
+    Space *inline_overlay[16];
+} RhoOverlayMap;
+
+typedef struct {
+    StateCell **orig;
+    StateCell **clone;
+    int len, cap;
+    StateCell *inline_orig[16];
+    StateCell *inline_clone[16];
+} RhoStateCloneMap;
+
+static bool rho_map_next_capacity(int current_cap, int min_needed,
+                                  size_t elem_size, int *out_next) {
+    int next = current_cap > 0 ? current_cap : 16;
+    if (!out_next || min_needed <= 0 || elem_size == 0)
+        return false;
+    while (next < min_needed) {
+        if (next > INT_MAX / 2)
+            return false;
+        next *= 2;
+    }
+    if ((size_t)next > SIZE_MAX / elem_size)
+        return false;
+    *out_next = next;
+    return true;
+}
+
+static bool rho_overlay_map_ensure(RhoOverlayMap *map, int min_needed) {
+    int next_cap;
+    if (!map)
+        return false;
+    if (!map->orig) {
+        map->orig = map->inline_orig;
+        map->overlay = map->inline_overlay;
+        map->cap = (int)(sizeof(map->inline_orig) / sizeof(map->inline_orig[0]));
+    }
+    if (map->cap >= min_needed)
+        return true;
+    if (!rho_map_next_capacity(map->cap, min_needed, sizeof(Space *),
+                               &next_cap))
+        return false;
+    if (map->orig == map->inline_orig) {
+        Space **orig = cetta_malloc(sizeof(Space *) * (size_t)next_cap);
+        Space **overlay = cetta_malloc(sizeof(Space *) * (size_t)next_cap);
+        if (map->len > 0) {
+            memcpy(orig, map->orig, sizeof(Space *) * (size_t)map->len);
+            memcpy(overlay, map->overlay, sizeof(Space *) * (size_t)map->len);
+        }
+        map->orig = orig;
+        map->overlay = overlay;
+    } else {
+        map->orig =
+            cetta_realloc(map->orig, sizeof(Space *) * (size_t)next_cap);
+        map->overlay =
+            cetta_realloc(map->overlay, sizeof(Space *) * (size_t)next_cap);
+    }
+    map->cap = next_cap;
+    return true;
+}
+
+static void rho_overlay_map_free(RhoOverlayMap *map) {
+    if (!map)
+        return;
+    if (map->orig && map->orig != map->inline_orig)
+        free(map->orig);
+    if (map->overlay && map->overlay != map->inline_overlay)
+        free(map->overlay);
+    map->orig = map->inline_orig;
+    map->overlay = map->inline_overlay;
+    map->len = 0;
+    map->cap = (int)(sizeof(map->inline_orig) / sizeof(map->inline_orig[0]));
+}
+
+static bool rho_state_clone_map_ensure(RhoStateCloneMap *map, int min_needed) {
+    int next_cap;
+    if (!map)
+        return false;
+    if (!map->orig) {
+        map->orig = map->inline_orig;
+        map->clone = map->inline_clone;
+        map->cap = (int)(sizeof(map->inline_orig) / sizeof(map->inline_orig[0]));
+    }
+    if (map->cap >= min_needed)
+        return true;
+    if (!rho_map_next_capacity(map->cap, min_needed, sizeof(StateCell *),
+                               &next_cap))
+        return false;
+    if (map->orig == map->inline_orig) {
+        StateCell **orig =
+            cetta_malloc(sizeof(StateCell *) * (size_t)next_cap);
+        StateCell **clone =
+            cetta_malloc(sizeof(StateCell *) * (size_t)next_cap);
+        if (map->len > 0) {
+            memcpy(orig, map->orig, sizeof(StateCell *) * (size_t)map->len);
+            memcpy(clone, map->clone, sizeof(StateCell *) * (size_t)map->len);
+        }
+        map->orig = orig;
+        map->clone = clone;
+    } else {
+        map->orig =
+            cetta_realloc(map->orig, sizeof(StateCell *) * (size_t)next_cap);
+        map->clone =
+            cetta_realloc(map->clone, sizeof(StateCell *) * (size_t)next_cap);
+    }
+    map->cap = next_cap;
+    return true;
+}
+
+static void rho_state_clone_map_free(RhoStateCloneMap *map) {
+    if (!map)
+        return;
+    if (map->orig && map->orig != map->inline_orig)
+        free(map->orig);
+    if (map->clone && map->clone != map->inline_clone)
+        free(map->clone);
+    map->orig = map->inline_orig;
+    map->clone = map->inline_clone;
+    map->len = 0;
+    map->cap = (int)(sizeof(map->inline_orig) / sizeof(map->inline_orig[0]));
+}
+
+static Space *rho_overlay_for(const RhoOverlayMap *map, Space *orig) {
+    for (int i = 0; i < map->len; i++)
+        if (map->orig[i] == orig) return map->overlay[i];
+    return NULL;
+}
+
+static StateCell *rho_state_clone_for(const RhoStateCloneMap *map,
+                                      StateCell *orig) {
+    for (int i = 0; i < map->len; i++)
+        if (map->orig[i] == orig) return map->clone[i];
+    return NULL;
+}
+
+/* Add `orig` to the map (deduped), creating its copy-on-write overlay.  Returns
+ * false only on allocation failure or if the map is full. */
+static bool rho_overlay_map_add(RhoOverlayMap *map, Space *orig) {
+    Space *ov;
+    if (!orig || rho_overlay_for(map, orig))
+        return true;
+    if (!rho_overlay_map_ensure(map, map->len + 1))
+        return false;
+    ov = cetta_malloc(sizeof(Space));
+    if (!ov)
+        return false;
+    space_init_overlay(ov, orig);
+    if (!eval_payload_track_scratch_space(ov)) {
+        space_free(ov);
+        free(ov);
+        return false;
+    }
+    map->orig[map->len] = orig;
+    map->overlay[map->len] = ov;
+    map->len++;
+    return true;
+}
+
+static bool rho_overlay_map_bind_pair(RhoOverlayMap *map, Space *orig,
+                                      Space *overlay) {
+    if (!orig || !overlay)
+        return false;
+    for (int i = 0; i < map->len; i++) {
+        if (map->orig[i] == orig) {
+            map->overlay[i] = overlay;
+            return true;
+        }
+    }
+    if (!rho_overlay_map_ensure(map, map->len + 1))
+        return false;
+    map->orig[map->len] = orig;
+    map->overlay[map->len] = overlay;
+    map->len++;
+    return true;
+}
+
+static bool rho_state_clone_map_note(RhoStateCloneMap *map, StateCell *orig,
+                                     bool *inserted) {
+    if (inserted)
+        *inserted = false;
+    if (!orig || rho_state_clone_for(map, orig))
+        return true;
+    if (!rho_state_clone_map_ensure(map, map->len + 1))
+        return false;
+    map->orig[map->len] = orig;
+    map->clone[map->len] = NULL;
+    map->len++;
+    if (inserted)
+        *inserted = true;
+    return true;
+}
+
+static bool rho_state_clone_map_bind_pair(RhoStateCloneMap *map, StateCell *orig,
+                                          StateCell *clone) {
+    if (!orig || !clone)
+        return false;
+    for (int i = 0; i < map->len; i++) {
+        if (map->orig[i] == orig) {
+            map->clone[i] = clone;
+            return true;
+        }
+    }
+    if (!rho_state_clone_map_ensure(map, map->len + 1))
+        return false;
+    map->orig[map->len] = orig;
+    map->clone[map->len] = clone;
+    map->len++;
+    return true;
+}
+
+bool rhocalc_payload_map_capacity_selftest(void) {
+    RhoOverlayMap overlay_map = {0};
+    RhoStateCloneMap state_map = {0};
+    bool ok = true;
+    for (uintptr_t i = 1; i <= 80; i++) {
+        if (!rho_overlay_map_bind_pair(
+                &overlay_map, (Space *)(i << 4),
+                (Space *)((i + 1000u) << 4))) {
+            ok = false;
+            break;
+        }
+        if (!rho_state_clone_map_bind_pair(
+                &state_map, (StateCell *)(i << 4),
+                (StateCell *)((i + 2000u) << 4))) {
+            ok = false;
+            break;
+        }
+    }
+    ok = ok &&
+         overlay_map.len == 80 &&
+         overlay_map.cap >= 80 &&
+         overlay_map.orig != overlay_map.inline_orig &&
+         overlay_map.overlay != overlay_map.inline_overlay &&
+         state_map.len == 80 &&
+         state_map.cap >= 80 &&
+         state_map.orig != state_map.inline_orig &&
+         state_map.clone != state_map.inline_clone;
+    rho_overlay_map_free(&overlay_map);
+    rho_state_clone_map_free(&state_map);
+    return ok &&
+           overlay_map.len == 0 &&
+           overlay_map.orig == overlay_map.inline_orig &&
+           state_map.len == 0 &&
+           state_map.orig == state_map.inline_orig;
+}
+
+static Atom *rho_atom_rebind_resources(Arena *arena, Atom *atom,
+                                       const RhoOverlayMap *space_map,
+                                       const RhoStateCloneMap *state_map);
+
+/* Collect every GV_SPACE literal baked into the payload term into the map. */
+static bool rho_collect_space_ptrs_into_map(RhoOverlayMap *map, Atom *atom) {
+    if (!atom)
+        return true;
+    if (atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_SPACE)
+            return rho_overlay_map_add(map, (Space *)atom->ground.ptr);
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++)
+        if (!rho_collect_space_ptrs_into_map(map, atom->expr.elems[i]))
+            return false;
+    return true;
+}
+
+static bool rho_collect_state_ptrs_into_map(RhoStateCloneMap *map, Atom *atom) {
+    if (!atom)
+        return true;
+    if (atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_STATE) {
+            StateCell *cell = (StateCell *)atom->ground.ptr;
+            bool inserted = false;
+            if (!rho_state_clone_map_note(map, cell, &inserted))
+                return false;
+            if (inserted && cell) {
+                if (!rho_collect_state_ptrs_into_map(map, cell->value))
+                    return false;
+                if (!rho_collect_state_ptrs_into_map(map, cell->content_type))
+                    return false;
+            }
+        }
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++)
+        if (!rho_collect_state_ptrs_into_map(map, atom->expr.elems[i]))
+            return false;
+    return true;
+}
+
+static bool rho_state_clone_map_materialize(RhoStateCloneMap *map,
+                                            Arena *owner,
+                                            const RhoOverlayMap *space_map,
+                                            uint64_t owner_epoch) {
+    if (!map || !owner)
+        return false;
+    for (int i = 0; i < map->len; i++) {
+        if (map->clone[i])
+            continue;
+        map->clone[i] = cetta_malloc(sizeof(StateCell));
+        if (!map->clone[i])
+            return false;
+        map->clone[i]->value = NULL;
+        map->clone[i]->content_type = NULL;
+        map->clone[i]->payload_owner_epoch = owner_epoch;
+        map->clone[i]->payload_export_owner_epoch = 0;
+        if (!eval_payload_track_scratch_state(map->clone[i]))
+            return false;
+    }
+    for (int i = 0; i < map->len; i++) {
+        StateCell *orig = map->orig[i];
+        StateCell *clone = map->clone[i];
+        if (!orig || !clone)
+            continue;
+        if (orig->value) {
+            clone->value =
+                rho_atom_rebind_resources(owner, orig->value, space_map, map);
+            if (!clone->value)
+                return false;
+        }
+        if (orig->content_type) {
+            clone->content_type = rho_atom_rebind_resources(
+                owner, orig->content_type, space_map, map);
+            if (!clone->content_type)
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool rho_eval_registry_init(Registry *dst, Registry *src,
+                                   const RhoOverlayMap *space_map,
+                                   const RhoStateCloneMap *state_map,
+                                   Space *self_overlay,
+                                   Arena *arena) {
+    registry_init(dst);
+    if (!dst) return true;
+    if (src) {
+        for (uint32_t i = 0; i < src->len; i++) {
+            Atom *value;
+            if (src->entries[i].key == SYMBOL_ID_NONE || !src->entries[i].value) {
+                continue;
+            }
+            value = rho_atom_rebind_resources(
+                arena, src->entries[i].value, space_map, state_map);
+            if (!value)
+                return false;
+            registry_bind_id(dst, src->entries[i].key, value);
+        }
+    }
+    if (g_builtin_syms.self != SYMBOL_ID_NONE && self_overlay) {
+        registry_bind_id(dst, g_builtin_syms.self, atom_space(arena, self_overlay));
+    }
+    return true;
+}
+
+static Atom *rho_atom_rebind_resources(Arena *arena, Atom *atom,
+                                       const RhoOverlayMap *space_map,
+                                       const RhoStateCloneMap *state_map) {
+    Atom **elems;
+    if (!arena || !atom)
+        return NULL;
+    if (atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_SPACE) {
+            Space *ov = rho_overlay_for(space_map, (Space *)atom->ground.ptr);
+            if (ov)
+                return atom_space(arena, ov);
+        } else if (atom->ground.gkind == GV_STATE) {
+            StateCell *clone =
+                rho_state_clone_for(state_map, (StateCell *)atom->ground.ptr);
+            if (clone)
+                return atom_state(arena, clone);
+        }
+        return atom_deep_copy(arena, atom);
+    }
+    if (atom->kind == ATOM_SYMBOL)
+        return atom_symbol_id(arena, atom->sym_id);
+    if (atom->kind == ATOM_VAR)
+        return atom_var_with_spelling(arena, atom->sym_id, atom->var_id);
+    if (atom->kind != ATOM_EXPR)
+        return atom_deep_copy(arena, atom);
+    elems = arena_alloc(arena, sizeof(Atom *) * atom->expr.len);
+    if (!elems)
+        return NULL;
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+        elems[i] = rho_atom_rebind_resources(arena, atom->expr.elems[i],
+                                             space_map, state_map);
+        if (!elems[i])
+            return NULL;
+    }
+    return atom_expr(arena, elems, atom->expr.len);
+}
+
+typedef struct {
+    Space **orig;
+    Space **stable;
+    uint64_t *export_owner_epoch;
+    CettaCount len, cap;
+} RhoPromotedSpaceMap;
+
+typedef struct {
+    StateCell **orig;
+    StateCell **stable;
+    uint64_t *export_owner_epoch;
+    CettaCount len, cap;
+} RhoPromotedStateMap;
+
+static Space *rho_promoted_space_for(const RhoPromotedSpaceMap *map,
+                                     Space *orig,
+                                     uint64_t export_owner_epoch,
+                                     bool *alias_fault) {
+    if (!map || !orig)
+        return NULL;
+    for (CettaCount i = 0; i < map->len; i++) {
+        if (map->orig[i] == orig) {
+            if (map->export_owner_epoch &&
+                map->export_owner_epoch[i] != export_owner_epoch) {
+                if (alias_fault)
+                    *alias_fault = true;
+                return NULL;
+            }
+            return map->stable[i];
+        }
+    }
+    return NULL;
+}
+
+static StateCell *rho_promoted_state_for(const RhoPromotedStateMap *map,
+                                         StateCell *orig,
+                                         uint64_t export_owner_epoch,
+                                         bool *alias_fault) {
+    if (!map || !orig)
+        return NULL;
+    for (CettaCount i = 0; i < map->len; i++) {
+        if (map->orig[i] == orig) {
+            if (map->export_owner_epoch &&
+                map->export_owner_epoch[i] != export_owner_epoch) {
+                if (alias_fault)
+                    *alias_fault = true;
+                return NULL;
+            }
+            return map->stable[i];
+        }
+    }
+    return NULL;
+}
+
+static bool rho_promoted_space_bind(RhoPromotedSpaceMap *map,
+                                    Space *orig,
+                                    Space *stable,
+                                    uint64_t export_owner_epoch,
+                                    bool *alias_fault) {
+    CettaCount next_cap;
+    if (!map || !orig || !stable)
+        return false;
+    for (CettaCount i = 0; i < map->len; i++) {
+        if (map->orig[i] == orig) {
+            if (map->export_owner_epoch &&
+                map->export_owner_epoch[i] != export_owner_epoch) {
+                if (alias_fault)
+                    *alias_fault = true;
+                return false;
+            }
+            map->stable[i] = stable;
+            return true;
+        }
+    }
+    if (map->len >= map->cap) {
+        next_cap = map->cap ? map->cap * 2u : 8u;
+        map->orig = cetta_realloc(map->orig, sizeof(Space *) * (size_t)next_cap);
+        map->stable =
+            cetta_realloc(map->stable, sizeof(Space *) * (size_t)next_cap);
+        map->export_owner_epoch =
+            cetta_realloc(map->export_owner_epoch,
+                          sizeof(uint64_t) * (size_t)next_cap);
+        map->cap = next_cap;
+    }
+    map->orig[map->len] = orig;
+    map->stable[map->len] = stable;
+    map->export_owner_epoch[map->len] = export_owner_epoch;
+    map->len++;
+    return true;
+}
+
+static bool rho_promoted_state_bind(RhoPromotedStateMap *map,
+                                    StateCell *orig,
+                                    StateCell *stable,
+                                    uint64_t export_owner_epoch,
+                                    bool *alias_fault) {
+    CettaCount next_cap;
+    if (!map || !orig || !stable)
+        return false;
+    for (CettaCount i = 0; i < map->len; i++) {
+        if (map->orig[i] == orig) {
+            if (map->export_owner_epoch &&
+                map->export_owner_epoch[i] != export_owner_epoch) {
+                if (alias_fault)
+                    *alias_fault = true;
+                return false;
+            }
+            map->stable[i] = stable;
+            return true;
+        }
+    }
+    if (map->len >= map->cap) {
+        next_cap = map->cap ? map->cap * 2u : 8u;
+        map->orig =
+            cetta_realloc(map->orig, sizeof(StateCell *) * (size_t)next_cap);
+        map->stable =
+            cetta_realloc(map->stable, sizeof(StateCell *) * (size_t)next_cap);
+        map->export_owner_epoch =
+            cetta_realloc(map->export_owner_epoch,
+                          sizeof(uint64_t) * (size_t)next_cap);
+        map->cap = next_cap;
+    }
+    map->orig[map->len] = orig;
+    map->stable[map->len] = stable;
+    map->export_owner_epoch[map->len] = export_owner_epoch;
+    map->len++;
+    return true;
+}
+
+static void rho_promoted_space_map_free(RhoPromotedSpaceMap *map) {
+    if (!map)
+        return;
+    free(map->orig);
+    free(map->stable);
+    free(map->export_owner_epoch);
+    map->orig = NULL;
+    map->stable = NULL;
+    map->export_owner_epoch = NULL;
+    map->len = 0;
+    map->cap = 0;
+}
+
+static void rho_promoted_state_map_free(RhoPromotedStateMap *map) {
+    if (!map)
+        return;
+    free(map->orig);
+    free(map->stable);
+    free(map->export_owner_epoch);
+    map->orig = NULL;
+    map->stable = NULL;
+    map->export_owner_epoch = NULL;
+    map->len = 0;
+    map->cap = 0;
+}
+
+static Atom *rho_promote_payload_atom(Arena *arena,
+                                      Arena *persistent,
+                                      Atom *atom,
+                                      const RhoOverlayMap *space_map,
+                                      const RhoStateCloneMap *state_map,
+                                      RhoPromotedSpaceMap *promoted_spaces,
+                                      RhoPromotedStateMap *promoted_states,
+                                      uint64_t owner_epoch,
+                                      uint64_t export_owner_epoch,
+                                      bool *alias_fault);
+
+static Space *rho_promote_payload_space(Arena *persistent,
+                                        Space *space,
+                                        const RhoOverlayMap *space_map,
+                                        const RhoStateCloneMap *state_map,
+                                        RhoPromotedSpaceMap *promoted_spaces,
+                                        RhoPromotedStateMap *promoted_states,
+                                        uint64_t owner_epoch,
+                                        uint64_t export_owner_epoch,
+                                        bool *alias_fault) {
+    Space *visible = space;
+    Space *stable;
+    CettaCount logical_len;
+
+    if (!persistent || !space)
+        return NULL;
+    if (space_map) {
+        Space *overlay = rho_overlay_for(space_map, space);
+        if (overlay)
+            visible = overlay;
+    }
+    stable = rho_promoted_space_for(promoted_spaces, visible,
+                                    export_owner_epoch, alias_fault);
+    if (stable)
+        return stable;
+
+    stable = arena_alloc(persistent, sizeof(Space));
+    if (!stable)
+        return NULL;
+    if (!rho_promoted_space_bind(promoted_spaces, visible, stable,
+                                 export_owner_epoch, alias_fault))
+        return NULL;
+    space_init_with_universe(stable,
+                             visible ? visible->native.universe : NULL);
+    stable->kind = visible->kind;
+    stable->payload_owner_epoch = 0;
+    stable->payload_export_owner_epoch = export_owner_epoch;
+    if (!space_match_backend_try_set(stable, visible->match_backend.kind))
+        return NULL;
+
+    logical_len = space_length64(visible);
+    for (CettaIndex i = 0; i < logical_len; i++) {
+        Atom *source_atom = space_get_at64(visible, i);
+        Atom *promoted_atom =
+            rho_promote_payload_atom(persistent, persistent, source_atom,
+                                     space_map, state_map,
+                                     promoted_spaces, promoted_states,
+                                     owner_epoch, export_owner_epoch,
+                                     alias_fault);
+        if (!promoted_atom)
+            return NULL;
+        if (!space_admit_atom(stable, persistent, promoted_atom)) {
+            Atom *stored = space_store_atom(stable, persistent, promoted_atom);
+            if (!stored)
+                return NULL;
+            space_add(stable, stored);
+        }
+    }
+    eval_track_new_space(stable);
+    return stable;
+}
+
+static StateCell *rho_promote_payload_state(Arena *persistent,
+                                            StateCell *cell,
+                                            const RhoOverlayMap *space_map,
+                                            const RhoStateCloneMap *state_map,
+                                            RhoPromotedSpaceMap *promoted_spaces,
+                                            RhoPromotedStateMap *promoted_states,
+                                            uint64_t owner_epoch,
+                                            uint64_t export_owner_epoch,
+                                            bool *alias_fault) {
+    StateCell *visible = cell;
+    StateCell *stable;
+
+    if (!persistent || !cell)
+        return NULL;
+    if (state_map) {
+        StateCell *clone = rho_state_clone_for(state_map, cell);
+        if (clone)
+            visible = clone;
+    }
+    stable = rho_promoted_state_for(promoted_states, visible,
+                                    export_owner_epoch, alias_fault);
+    if (stable)
+        return stable;
+
+    stable = arena_alloc(persistent, sizeof(StateCell));
+    if (!stable)
+        return NULL;
+    stable->value = NULL;
+    stable->content_type = NULL;
+    stable->payload_owner_epoch = 0;
+    stable->payload_export_owner_epoch = export_owner_epoch;
+    if (!rho_promoted_state_bind(promoted_states, visible, stable,
+                                 export_owner_epoch, alias_fault))
+        return NULL;
+    if (visible->value) {
+        stable->value =
+            rho_promote_payload_atom(persistent, persistent, visible->value,
+                                     space_map, state_map,
+                                     promoted_spaces, promoted_states,
+                                     owner_epoch, export_owner_epoch,
+                                     alias_fault);
+        if (!stable->value)
+            return NULL;
+    }
+    if (visible->content_type) {
+        stable->content_type =
+            rho_promote_payload_atom(persistent, persistent,
+                                     visible->content_type,
+                                     space_map, state_map,
+                                     promoted_spaces, promoted_states,
+                                     owner_epoch, export_owner_epoch,
+                                     alias_fault);
+        if (!stable->content_type)
+            return NULL;
+    }
+    return stable;
+}
+
+static Atom *rho_promote_payload_atom(Arena *arena,
+                                      Arena *persistent,
+                                      Atom *atom,
+                                      const RhoOverlayMap *space_map,
+                                      const RhoStateCloneMap *state_map,
+                                      RhoPromotedSpaceMap *promoted_spaces,
+                                      RhoPromotedStateMap *promoted_states,
+                                      uint64_t owner_epoch,
+                                      uint64_t export_owner_epoch,
+                                      bool *alias_fault) {
+    Atom **elems;
+    if (!arena || !persistent || !atom)
+        return NULL;
+    if (atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_SPACE) {
+            Space *orig = (Space *)atom->ground.ptr;
+            Space *visible = orig;
+            Space *overlay = space_map ? rho_overlay_for(space_map, orig) : NULL;
+            if (overlay)
+                visible = overlay;
+            if (overlay || (visible && (visible->overlay_base ||
+                                        visible->payload_owner_epoch == owner_epoch))) {
+                Space *stable =
+                    rho_promote_payload_space(persistent, visible,
+                                              space_map, state_map,
+                                              promoted_spaces, promoted_states,
+                                              owner_epoch,
+                                              export_owner_epoch,
+                                              alias_fault);
+                return stable ? atom_space(arena, stable) : NULL;
+            }
+        } else if (atom->ground.gkind == GV_STATE) {
+            StateCell *orig = (StateCell *)atom->ground.ptr;
+            StateCell *visible = orig;
+            StateCell *clone =
+                state_map ? rho_state_clone_for(state_map, orig) : NULL;
+            if (clone)
+                visible = clone;
+            if (clone || (visible &&
+                          visible->payload_owner_epoch == owner_epoch)) {
+                StateCell *stable =
+                    rho_promote_payload_state(persistent, visible,
+                                              space_map, state_map,
+                                              promoted_spaces, promoted_states,
+                                              owner_epoch,
+                                              export_owner_epoch,
+                                              alias_fault);
+                return stable ? atom_state(arena, stable) : NULL;
+            }
+        }
+        return atom_deep_copy(arena, atom);
+    }
+    if (atom->kind == ATOM_SYMBOL)
+        return atom_symbol_id(arena, atom->sym_id);
+    if (atom->kind == ATOM_VAR)
+        return atom_var_with_spelling(arena, atom->sym_id, atom->var_id);
+    if (atom->kind != ATOM_EXPR)
+        return atom_deep_copy(arena, atom);
+    elems = arena_alloc(arena, sizeof(Atom *) * atom->expr.len);
+    if (!elems)
+        return NULL;
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+        elems[i] = rho_promote_payload_atom(arena, persistent,
+                                            atom->expr.elems[i],
+                                            space_map, state_map,
+                                            promoted_spaces, promoted_states,
+                                            owner_epoch,
+                                            export_owner_epoch,
+                                            alias_fault);
+        if (!elems[i])
+            return NULL;
+    }
+    return atom_expr(arena, elems, atom->expr.len);
+}
+
+/* Evaluate a deferred payload against a sibling-isolated snapshot of the
+ * mutable environment. Shared spaces are rebound to per-payload overlays, and
+ * explicitly reachable state cells are rebound to payload-owned clones. Reads
+ * see the frozen shared bases plus local scratch; writes stay local to the
+ * payload and never escape to a sibling. Escaping local spaces are materialized
+ * as owned results; shared bases are never implicitly committed. */
+static bool rho_eval_payload_results(Arena *arena,
+                                     const RhocalcEvalContext *eval_context,
+                                     Atom *payload_expr,
+                                     ResultSet *out) {
+    RhoOverlayMap map = {0};
+    RhoStateCloneMap state_map = {0};
+    RhoPromotedSpaceMap promoted_spaces = {0};
+    RhoPromotedStateMap promoted_states = {0};
+    Registry local_registry = {0};
+    Arena *persistent = NULL;
+    CettaLibraryContext *prev_library_context;
+    Space *self_overlay;
+    uint64_t owner_epoch = 0;
+    Atom *payload;
+    bool alias_fault = false;
+
+    if (!arena || !eval_context || !eval_context->space || !payload_expr || !out) {
+        return false;
+    }
+
+    payload = rho_unquote_payload_atom(payload_expr);
+
+    persistent = eval_context->persistent_arena
+        ? eval_context->persistent_arena
+        : eval_current_persistent_arena();
+    if (!persistent)
+        persistent = arena;
+    owner_epoch = eval_next_payload_owner_epoch();
+    if (!eval_payload_redirects_begin(persistent))
+        goto fail;
+
+    /* Overlay the self space, every registry-bound space, and every baked space
+     * literal in the payload term. State cells are rebound separately below. */
+    if (!rho_overlay_map_add(&map, eval_context->space))
+        goto fail;
+    if (eval_context->registry) {
+        for (uint32_t i = 0; i < eval_context->registry->len; i++) {
+            Atom *v = eval_context->registry->entries[i].value;
+            if (v && v->kind == ATOM_GROUNDED && v->ground.gkind == GV_SPACE) {
+                if (!rho_overlay_map_add(&map, (Space *)v->ground.ptr))
+                    goto fail;
+            }
+            if (v && !rho_collect_state_ptrs_into_map(&state_map, v))
+                goto fail;
+        }
+    }
+    if (!rho_collect_space_ptrs_into_map(&map, payload))
+        goto fail;
+    if (!rho_collect_state_ptrs_into_map(&state_map, payload))
+        goto fail;
+    for (int i = 0; i < state_map.len; i++) {
+        StateCell *cell = state_map.orig[i];
+        if (cell) {
+            if (!rho_collect_space_ptrs_into_map(&map, cell->value))
+                goto fail;
+            if (!rho_collect_space_ptrs_into_map(&map, cell->content_type))
+                goto fail;
+        }
+    }
+
+    self_overlay = rho_overlay_for(&map, eval_context->space);
+
+    if (!rho_state_clone_map_materialize(&state_map, persistent, &map,
+                                         owner_epoch))
+        goto fail;
+    for (int i = 0; i < map.len; i++) {
+        if (!rho_overlay_map_bind_pair(&map, map.orig[i], map.overlay[i]) ||
+            !eval_payload_note_space_redirect(map.orig[i], map.overlay[i]))
+            goto fail;
+    }
+    for (int i = 0; i < state_map.len; i++) {
+        if (!rho_state_clone_map_bind_pair(&state_map, state_map.orig[i],
+                                           state_map.clone[i]) ||
+            !eval_payload_note_state_redirect(state_map.orig[i],
+                                              state_map.clone[i]))
+            goto fail;
+    }
+    if (!rho_eval_registry_init(&local_registry, eval_context->registry, &map,
+                                &state_map, self_overlay, arena))
+        goto fail;
+
+    payload = rho_atom_rebind_resources(arena, payload, &map, &state_map);
+    if (!payload)
+        goto fail;
+
+    prev_library_context = eval_current_library_context();
+    if (eval_context->library_context != prev_library_context) {
+        eval_set_library_context(eval_context->library_context);
+    }
+    {
+        bool prev_transactional = eval_set_payload_transactional(true);
+        uint64_t prev_epoch = eval_set_payload_owner_epoch(owner_epoch);
+        eval_top_with_registry(self_overlay, arena, persistent, &local_registry,
+                               payload, out);
+        eval_set_payload_owner_epoch(prev_epoch);
+        eval_set_payload_transactional(prev_transactional);
+    }
+    if (eval_context->library_context != prev_library_context) {
+        eval_set_library_context(prev_library_context);
+    }
+
+    for (CettaCount i = 0; i < eval_payload_space_redirect_count(); i++) {
+        Space *orig = NULL;
+        Space *redirect = NULL;
+        if (!eval_payload_space_redirect_at(i, &orig, &redirect) ||
+            !rho_overlay_map_bind_pair(&map, orig, redirect))
+            goto fail;
+    }
+    for (CettaCount i = 0; i < eval_payload_state_redirect_count(); i++) {
+        StateCell *orig = NULL;
+        StateCell *redirect = NULL;
+        if (!eval_payload_state_redirect_at(i, &orig, &redirect) ||
+            !rho_state_clone_map_bind_pair(&state_map, orig, redirect))
+            goto fail;
+    }
+    for (CettaCount r = 0; r < out->len; r++) {
+        out->items[r] = rho_atom_rebind_resources(arena, out->items[r], &map,
+                                                  &state_map);
+        if (!out->items[r])
+            goto fail;
+    }
+
+    for (CettaCount r = 0; r < out->len; r++) {
+        out->items[r] =
+            rho_promote_payload_atom(arena, persistent, out->items[r],
+                                     &map, &state_map,
+                                     &promoted_spaces, &promoted_states,
+                                     owner_epoch,
+                                     (uint64_t)r + 1u,
+                                     &alias_fault);
+        if (!out->items[r]) {
+            if (alias_fault) {
+                result_set_free(out);
+                result_set_init(out);
+                result_set_add(out,
+                               atom_error(arena,
+                                          atom_symbol(arena, "rhometta:eval"),
+                                          atom_symbol(arena,
+                                                      "PayloadOwnedExportAliased")));
+                break;
+            }
+            goto fail;
+        }
+    }
+
+    rho_promoted_space_map_free(&promoted_spaces);
+    rho_promoted_state_map_free(&promoted_states);
+    rho_overlay_map_free(&map);
+    rho_state_clone_map_free(&state_map);
+    registry_free(&local_registry);
+    eval_payload_redirects_end();
+    return true;
+
+fail:
+    rho_promoted_space_map_free(&promoted_spaces);
+    rho_promoted_state_map_free(&promoted_states);
+    rho_overlay_map_free(&map);
+    rho_state_clone_map_free(&state_map);
+    registry_free(&local_registry);
+    eval_payload_redirects_end();
+    return false;
+}
+
+static Atom *rho_embed_payload_result_name(Arena *arena, Atom *result) {
+    if (!arena || !result) return NULL;
+    if (rhocalc_process_well_formed_with_eval_payloads(result)) {
+        return rho_unary(arena, "rho:quote", rho_normalize_proc(arena, result));
+    }
+    return rho_unary(arena, "rho:quote", rho_value_proc(arena, result));
+}
+
+static bool rho_compute_comm_continuations(Arena *arena,
+                                           const RhoEndpoint *send_endpoint,
+                                           const RhoEndpoint *recv_endpoint,
+                                           const RhocalcEvalContext *eval_context,
+                                           RhoAtomVec *out_bodies) {
     RhoView send = send_endpoint->view;
     RhoView recv = recv_endpoint->view;
-    Atom *replacement;
-    Atom *body;
-    Atom *result;
 
-    if (!arena || !components || !send_endpoint || !recv_endpoint ||
-        !out_result || !out_key ||
+    if (!arena || !send_endpoint || !recv_endpoint || !out_bodies ||
         send.kind != RHO_SEND || send.nargs != 2 ||
         recv.kind != RHO_RECV || recv.nargs != 3 ||
         recv.args[1]->kind != ATOM_VAR) {
         return false;
     }
+    if (send.args[1] && rho_view(send.args[1]).kind == RHO_EVAL_PAYLOAD) {
+        ResultSet payload_results;
+        result_set_init(&payload_results);
+        if (!eval_context) {
+            result_set_free(&payload_results);
+            return true;
+        }
+        if (!rho_eval_payload_results(arena, eval_context,
+                                      rho_view(send.args[1]).args[0],
+                                      &payload_results)) {
+            result_set_free(&payload_results);
+            return false;
+        }
+        for (CettaCount i = 0; i < payload_results.len; i++) {
+            Atom *replacement =
+                rho_embed_payload_result_name(arena, payload_results.items[i]);
+            Atom *body;
+            if (!replacement) {
+                result_set_free(&payload_results);
+                return false;
+            }
+            body = rho_subst_proc(arena, recv.args[2], recv.args[1]->var_id,
+                                  replacement);
+            if (!body || !rho_vec_push(out_bodies, body)) {
+                result_set_free(&payload_results);
+                return false;
+            }
+        }
+        result_set_free(&payload_results);
+        return true;
+    }
 
-    replacement =
+    Atom *replacement =
         rho_unary(arena, "rho:quote", rho_normalize_proc(arena, send.args[1]));
-    body = rho_subst_proc(arena, recv.args[2],
-                          recv.args[1]->var_id,
-                          replacement);
-    result = rho_rebuild_reaction(arena, components,
-                                  send_endpoint->component_index,
-                                  recv_endpoint->component_index,
-                                  body);
-    if (!result) return false;
+    Atom *body = rho_subst_proc(arena, recv.args[2], recv.args[1]->var_id,
+                                replacement);
+    return body && rho_vec_push(out_bodies, body);
+}
 
-    *out_result = result;
-    *out_key = rho_key_proc(result);
-    return *out_key != NULL;
+static bool rho_emit_comm_results(Arena *arena, RhoAtomVec *components,
+                                  const RhoEndpoint *send_endpoint,
+                                  const RhoEndpoint *recv_endpoint,
+                                  const RhocalcEvalContext *eval_context,
+                                  RhoSuccessorSetAcc *out) {
+    RhoAtomVec bodies;
+    bool ok = true;
+
+    if (!arena || !components || !send_endpoint || !recv_endpoint || !out) {
+        return false;
+    }
+
+    rho_vec_init(&bodies);
+    if (!rho_compute_comm_continuations(arena, send_endpoint, recv_endpoint,
+                                        eval_context, &bodies)) {
+        rho_vec_free(&bodies);
+        return false;
+    }
+    for (uint32_t i = 0; i < bodies.len && ok; i++) {
+        Atom *result = rho_rebuild_reaction(arena, components,
+                                            send_endpoint->component_index,
+                                            recv_endpoint->component_index,
+                                            bodies.items[i]);
+        char *key;
+        if (!result) {
+            ok = false;
+            break;
+        }
+        key = rho_key_proc(result);
+        if (!key || !rho_successor_set_acc_push_keyed(out, result, key)) {
+            free(key);
+            ok = false;
+            break;
+        }
+    }
+    rho_vec_free(&bodies);
+    return ok;
 }
 
 static RhoRuntimeProfile rho_runtime_profile_default(uint32_t reduction_limit) {
     RhoRuntimeProfile profile;
     profile.scheduler_policy = RHO_SCHEDULER_CANONICAL;
     profile.reduction_limit = reduction_limit;
+    profile.thread_count = 1u;
+    profile.threaded = false;
     return profile;
 }
 
 static bool rho_runtime_profile_supported(const RhoRuntimeProfile *profile) {
     if (!profile || profile->reduction_limit == 0u) return false;
+    if (profile->threaded && profile->thread_count == 0u) {
+        rho_validation_set("rho threaded execution requires at least one worker");
+        return false;
+    }
+    if (profile->thread_count > 1024u) {
+        rho_validation_set("rho thread count is out of range");
+        return false;
+    }
     if (profile->scheduler_policy != RHO_SCHEDULER_CANONICAL &&
         profile->scheduler_policy != RHO_SCHEDULER_ROTATING) {
         rho_validation_set("rho scheduler policy is not implemented");
@@ -1119,9 +2394,11 @@ static bool rho_runtime_profile_supported(const RhoRuntimeProfile *profile) {
 }
 
 static void rho_machine_init(RhoMachine *machine, Arena *arena,
-                             const RhoRuntimeProfile *profile) {
+                             const RhoRuntimeProfile *profile,
+                             const RhocalcEvalContext *eval_context) {
     machine->arena = arena;
     machine->profile = *profile;
+    machine->eval_context = eval_context;
     machine->current = NULL;
     machine->rotating_turn = 0u;
     rho_vec_init(&machine->components);
@@ -1143,34 +2420,23 @@ static void rho_machine_clear_comm_index(RhoMachine *machine) {
 static void rho_machine_free(RhoMachine *machine) {
     rho_machine_clear_comm_index(machine);
     machine->arena = NULL;
+    machine->eval_context = NULL;
     machine->current = NULL;
 }
 
 static bool rho_machine_load_process(RhoMachine *machine, Atom *proc) {
-    if (!rhocalc_process_well_formed(proc)) return false;
+    bool ok = machine && machine->eval_context
+        ? rhocalc_process_well_formed_with_eval_payloads(proc)
+        : rhocalc_process_well_formed(proc);
+    if (!ok) return false;
     machine->current = rho_normalize_proc(machine->arena, proc);
-    return true;
-}
-
-static bool rho_machine_refresh_comm_index(RhoMachine *machine) {
-    rho_machine_clear_comm_index(machine);
-    rho_collect_par(machine->arena, machine->current, &machine->components);
-    if (!rho_collect_endpoints(&machine->components,
-                               &machine->sends,
-                               &machine->recvs)) {
-        return false;
-    }
-    machine->comm_index_loaded = true;
     return true;
 }
 
 static bool rho_machine_select_canonical_successor(RhoMachine *machine,
                                                    Atom **out_next,
                                                    bool *out_quiescent) {
-    uint32_t send_pos = 0;
-    uint32_t recv_pos = 0;
-    Atom *best_result = NULL;
-    char *best_key = NULL;
+    RhoSuccessorSet successors = {0};
 
     if (!machine || !machine->arena || !machine->current ||
         !out_next || !out_quiescent) {
@@ -1179,12 +2445,652 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
     *out_next = NULL;
     *out_quiescent = true;
 
-    if (!rho_machine_refresh_comm_index(machine)) return false;
+    if (!rhocalc_collect_successor_set(machine->arena, machine->current,
+                                       machine->eval_context, &successors)) {
+        return false;
+    }
+    *out_quiescent = successors.len == 0;
+    *out_next = successors.len == 0 ? machine->current : successors.items[0];
+    rhocalc_successor_set_free(&successors);
+    return true;
+}
 
-    while (recv_pos < machine->recvs.len &&
-           send_pos < machine->sends.len) {
-        int cmp = strcmp(machine->recvs.items[recv_pos].key,
-                         machine->sends.items[send_pos].key);
+static void rho_async_fail(RhoAsyncExecutor *executor, const char *fmt, ...) {
+    va_list ap;
+    char message[256];
+
+    if (!executor) return;
+    va_start(ap, fmt);
+    vsnprintf(message, sizeof(message), fmt, ap);
+    va_end(ap);
+    cetta_parallel_executor_fail(&executor->parallel, "%s", message);
+}
+
+static void rho_channel_table_init(RhoChannelTable *table) {
+    pthread_mutex_init(&table->mutex, NULL);
+    table->head = NULL;
+}
+
+static void rho_async_endpoint_free(RhoAsyncEndpoint *endpoint) {
+    free(endpoint);
+}
+
+static void rho_async_endpoint_list_free(RhoAsyncEndpoint *endpoint) {
+    while (endpoint) {
+        RhoAsyncEndpoint *next = endpoint->next;
+        rho_async_endpoint_free(endpoint);
+        endpoint = next;
+    }
+}
+
+static void rho_channel_table_free(RhoChannelTable *table) {
+    RhoChannelBucket *bucket = table->head;
+    while (bucket) {
+        RhoChannelBucket *next = bucket->next;
+        rho_async_endpoint_list_free(bucket->send_head);
+        rho_async_endpoint_list_free(bucket->recv_head);
+        pthread_mutex_destroy(&bucket->mutex);
+        free(bucket->key);
+        free(bucket);
+        bucket = next;
+    }
+    pthread_mutex_destroy(&table->mutex);
+    table->head = NULL;
+}
+
+static RhoChannelBucket *rho_channel_table_get_or_create(RhoChannelTable *table,
+                                                         const char *key) {
+    RhoChannelBucket *bucket;
+
+    pthread_mutex_lock(&table->mutex);
+    for (bucket = table->head; bucket; bucket = bucket->next) {
+        if (strcmp(bucket->key, key) == 0) {
+            pthread_mutex_unlock(&table->mutex);
+            return bucket;
+        }
+    }
+
+    bucket = cetta_malloc(sizeof(RhoChannelBucket));
+    bucket->key = rho_heap_strdup(key);
+    pthread_mutex_init(&bucket->mutex, NULL);
+    bucket->send_head = NULL;
+    bucket->send_tail = NULL;
+    bucket->recv_head = NULL;
+    bucket->recv_tail = NULL;
+    bucket->next = table->head;
+    table->head = bucket;
+    pthread_mutex_unlock(&table->mutex);
+    return bucket;
+}
+
+static void rho_async_endpoint_append(RhoAsyncEndpoint **head,
+                                      RhoAsyncEndpoint **tail,
+                                      RhoAsyncEndpoint *endpoint) {
+    endpoint->next = NULL;
+    if (*tail) {
+        (*tail)->next = endpoint;
+    } else {
+        *head = endpoint;
+    }
+    *tail = endpoint;
+}
+
+static RhoAsyncEndpoint *rho_async_endpoint_pop(RhoAsyncEndpoint **head,
+                                                RhoAsyncEndpoint **tail) {
+    RhoAsyncEndpoint *endpoint = *head;
+    if (!endpoint) return NULL;
+    *head = endpoint->next;
+    if (!*head) *tail = NULL;
+    endpoint->next = NULL;
+    return endpoint;
+}
+
+static bool rho_async_try_spend_budget(RhoAsyncExecutor *executor) {
+    uint32_t old = atomic_load_explicit(&executor->budget,
+                                        memory_order_relaxed);
+    while (old != 0) {
+        if (atomic_compare_exchange_weak_explicit(&executor->budget, &old,
+                                                  old - 1u,
+                                                  memory_order_acq_rel,
+                                                  memory_order_relaxed)) {
+            atomic_fetch_add_explicit(&executor->reductions_taken, 1u,
+                                      memory_order_relaxed);
+            return true;
+        }
+    }
+    return false;
+}
+
+static void rho_async_refund_budget(RhoAsyncExecutor *executor) {
+    if (!executor)
+        return;
+    atomic_fetch_add_explicit(&executor->budget, 1u, memory_order_relaxed);
+    atomic_fetch_sub_explicit(&executor->reductions_taken, 1u,
+                              memory_order_relaxed);
+}
+
+static bool rho_async_enqueue_proc(RhoAsyncExecutor *executor, Atom *proc) {
+    if (!executor || !proc) return false;
+    return cetta_parallel_executor_push(&executor->parallel, proc);
+}
+
+static bool rho_async_add_residual(RhoAsyncExecutor *executor, Atom *proc) {
+    bool ok;
+    pthread_mutex_lock(&executor->residual_mutex);
+    ok = rho_vec_push(&executor->residuals, proc);
+    pthread_mutex_unlock(&executor->residual_mutex);
+    if (!ok) rho_async_fail(executor, "could not record rho residual");
+    return ok;
+}
+
+static bool rho_async_publish_endpoint(RhoAsyncExecutor *executor,
+                                       Arena *worker_arena,
+                                       RhoAsyncEndpointKind kind,
+                                       Atom *proc,
+                                       RhoView view) {
+    char *key = rho_key_name(view.args[0]);
+    RhoChannelBucket *bucket =
+        rho_channel_table_get_or_create(&executor->channels, key);
+    RhoAsyncEndpoint *current = cetta_malloc(sizeof(RhoAsyncEndpoint));
+    RhoAsyncEndpoint *opposite = NULL;
+    bool fire = false;
+
+    current->kind = kind;
+    current->atom = proc;
+    current->view = view;
+    current->next = NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_PUBLISH);
+
+    pthread_mutex_lock(&bucket->mutex);
+    if (kind == RHO_ASYNC_ENDPOINT_SEND) {
+        if (bucket->recv_head && rho_async_try_spend_budget(executor)) {
+            opposite = rho_async_endpoint_pop(&bucket->recv_head,
+                                              &bucket->recv_tail);
+            fire = true;
+        } else {
+            rho_async_endpoint_append(&bucket->send_head, &bucket->send_tail,
+                                      current);
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_QUEUED);
+        }
+    } else {
+        if (bucket->send_head && rho_async_try_spend_budget(executor)) {
+            opposite = rho_async_endpoint_pop(&bucket->send_head,
+                                              &bucket->send_tail);
+            fire = true;
+        } else {
+            rho_async_endpoint_append(&bucket->recv_head, &bucket->recv_tail,
+                                      current);
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_QUEUED);
+        }
+    }
+    pthread_mutex_unlock(&bucket->mutex);
+    free(key);
+
+    if (!fire) return true;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_MATCH);
+
+    {
+        RhoEndpoint send_endpoint;
+        RhoEndpoint recv_endpoint;
+        RhoAtomVec bodies;
+        bool ok;
+        uint32_t chosen_body = 0u;
+        RhoAsyncEndpoint *send_async;
+        RhoAsyncEndpoint *recv_async;
+
+        if (kind == RHO_ASYNC_ENDPOINT_SEND) {
+            send_endpoint = (RhoEndpoint){0, current->view, NULL};
+            recv_endpoint = (RhoEndpoint){0, opposite->view, NULL};
+            send_async = current;
+            recv_async = opposite;
+        } else {
+            send_endpoint = (RhoEndpoint){0, opposite->view, NULL};
+            recv_endpoint = (RhoEndpoint){0, current->view, NULL};
+            send_async = opposite;
+            recv_async = current;
+        }
+
+        rho_vec_init(&bodies);
+        ok = rho_compute_comm_continuations(worker_arena,
+                                            &send_endpoint,
+                                            &recv_endpoint,
+                                            executor->eval_context,
+                                            &bodies);
+        if (!ok) {
+            rho_vec_free(&bodies);
+            rho_async_endpoint_free(opposite);
+            rho_async_endpoint_free(current);
+            rho_async_fail(executor, "could not compute rho COMM continuation");
+            return false;
+        }
+        if (bodies.len == 0) {
+            rho_async_refund_budget(executor);
+            if (!rho_async_add_residual(executor, send_async->atom) ||
+                !rho_async_add_residual(executor, recv_async->atom)) {
+                rho_vec_free(&bodies);
+                rho_async_endpoint_free(opposite);
+                rho_async_endpoint_free(current);
+                return false;
+            }
+            rho_async_endpoint_free(opposite);
+            rho_async_endpoint_free(current);
+            rho_vec_free(&bodies);
+            return true;
+        }
+        rho_async_endpoint_free(opposite);
+        rho_async_endpoint_free(current);
+        if (executor->profile.scheduler_policy == RHO_SCHEDULER_ROTATING &&
+            bodies.len > 1u) {
+            chosen_body =
+                atomic_fetch_add_explicit(&executor->branch_turn, 1u,
+                                          memory_order_relaxed) % bodies.len;
+        }
+        if (!rho_async_enqueue_proc(executor, bodies.items[chosen_body])) {
+            rho_vec_free(&bodies);
+            rho_async_fail(executor, "could not enqueue rho COMM continuation");
+            return false;
+        }
+        rho_vec_free(&bodies);
+    }
+
+    return true;
+}
+
+static bool rho_async_process_task(CettaParallelWorker *worker, void *task,
+                                   void *user) {
+    RhoAsyncExecutor *executor = user;
+    Arena *worker_arena = cetta_parallel_worker_arena(worker);
+    Atom *proc = task;
+    Atom *norm = rho_normalize_proc(worker_arena, proc);
+    RhoView view = rho_view(norm);
+
+    switch (view.kind) {
+    case RHO_NIL:
+        return true;
+    case RHO_PAR:
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            if (!rho_async_enqueue_proc(executor, view.args[i])) {
+                rho_async_fail(executor, "could not enqueue rho parallel component");
+                return false;
+            }
+        }
+        return true;
+    case RHO_SEND:
+        return rho_async_publish_endpoint(executor, worker_arena,
+                                          RHO_ASYNC_ENDPOINT_SEND,
+                                          norm, view);
+    case RHO_RECV:
+        return rho_async_publish_endpoint(executor, worker_arena,
+                                          RHO_ASYNC_ENDPOINT_RECV,
+                                          norm, view);
+    case RHO_DROP:
+    case RHO_VAL:
+    case RHO_EVAL_PAYLOAD:
+        return rho_async_add_residual(executor, norm);
+    case RHO_QUOTE:
+    case RHO_BAD:
+        break;
+    }
+    rho_async_fail(executor, "unsupported rho task during threaded reduction");
+    return false;
+}
+
+static void rho_async_worker_enter(CettaParallelWorker *worker, void *user) {
+    (void)worker;
+    (void)user;
+    g_rho_async_worker_active = true;
+}
+
+static void rho_async_worker_leave(CettaParallelWorker *worker, void *user) {
+    (void)worker;
+    (void)user;
+    g_rho_async_worker_active = false;
+    eval_cleanup_owned_new_spaces_for_current_thread();
+    bindings_thread_cache_free();
+}
+
+static bool rho_channel_table_has_enabled_pair(RhoChannelTable *table) {
+    bool found = false;
+    pthread_mutex_lock(&table->mutex);
+    for (RhoChannelBucket *bucket = table->head; bucket; bucket = bucket->next) {
+        pthread_mutex_lock(&bucket->mutex);
+        if (bucket->send_head && bucket->recv_head) found = true;
+        pthread_mutex_unlock(&bucket->mutex);
+        if (found) break;
+    }
+    pthread_mutex_unlock(&table->mutex);
+    return found;
+}
+
+static bool rho_async_materialize_residual(RhoAsyncExecutor *executor,
+                                           Atom **out) {
+    RhoAtomVec items;
+    bool ok = true;
+
+    rho_vec_init(&items);
+    for (uint32_t i = 0; i < executor->residuals.len; i++) {
+        if (!rho_vec_push(&items,
+                          atom_deep_copy(executor->global_arena,
+                                         executor->residuals.items[i]))) {
+            ok = false;
+            break;
+        }
+    }
+
+    pthread_mutex_lock(&executor->channels.mutex);
+    for (RhoChannelBucket *bucket = executor->channels.head;
+         ok && bucket;
+         bucket = bucket->next) {
+        pthread_mutex_lock(&bucket->mutex);
+        for (RhoAsyncEndpoint *ep = bucket->send_head; ok && ep; ep = ep->next) {
+            ok = rho_vec_push(&items,
+                              atom_deep_copy(executor->global_arena, ep->atom));
+        }
+        for (RhoAsyncEndpoint *ep = bucket->recv_head; ok && ep; ep = ep->next) {
+            ok = rho_vec_push(&items,
+                              atom_deep_copy(executor->global_arena, ep->atom));
+        }
+        pthread_mutex_unlock(&bucket->mutex);
+    }
+    pthread_mutex_unlock(&executor->channels.mutex);
+
+    if (ok) {
+        *out = rho_par_from_vec(executor->global_arena, &items);
+        ok = *out != NULL;
+    }
+    rho_vec_free(&items);
+    return ok;
+}
+
+static void rho_async_executor_init(RhoAsyncExecutor *executor,
+                                    Arena *global_arena,
+                                    const RhoRuntimeProfile *profile,
+                                    const RhocalcEvalContext *eval_context) {
+    CettaParallelExecutorConfig parallel_config;
+
+    executor->global_arena = global_arena;
+    executor->profile = *profile;
+    executor->eval_context = eval_context;
+    rho_channel_table_init(&executor->channels);
+    rho_vec_init(&executor->residuals);
+    pthread_mutex_init(&executor->residual_mutex, NULL);
+    atomic_init(&executor->budget, profile->reduction_limit);
+    atomic_init(&executor->reductions_taken, 0u);
+    atomic_init(&executor->branch_turn, 0u);
+
+    parallel_config = (CettaParallelExecutorConfig){
+        .thread_count = profile->thread_count,
+        .user = executor,
+        .task_fn = rho_async_process_task,
+        .worker_enter = rho_async_worker_enter,
+        .worker_leave = rho_async_worker_leave,
+        .worker_failure_message = "rho threaded worker failed",
+    };
+    cetta_parallel_executor_init(&executor->parallel, &parallel_config);
+}
+
+static void rho_async_executor_free(RhoAsyncExecutor *executor) {
+    cetta_parallel_executor_free(&executor->parallel);
+    rho_vec_free(&executor->residuals);
+    rho_channel_table_free(&executor->channels);
+    pthread_mutex_destroy(&executor->residual_mutex);
+}
+
+static bool rhocalc_reduce_to_quiescence_threaded(
+    Arena *arena, Atom *proc, const RhoRuntimeProfile *profile,
+    const RhocalcEvalContext *eval_context, RhoReductionResult *out) {
+    RhoAsyncExecutor executor;
+    bool ok = true;
+
+    if (!arena || !proc || !profile || !out) return false;
+    out->residual = NULL;
+    out->reductions_taken = 0;
+    out->status = RHOCALC_REDUCTION_QUIESCENT;
+
+    if (profile->thread_count == 0u) {
+        rho_validation_set("rho threaded execution requires at least one worker");
+        return false;
+    }
+    rho_symbols_ensure();
+    if (!(eval_context
+              ? rhocalc_process_well_formed_with_eval_payloads(proc)
+              : rhocalc_process_well_formed(proc))) {
+        return false;
+    }
+
+    rho_async_executor_init(&executor, arena, profile, eval_context);
+
+    if (!rho_async_enqueue_proc(&executor, proc)) {
+        rho_async_fail(&executor, "could not enqueue initial rho task");
+        ok = false;
+    }
+
+    if (ok && !cetta_parallel_executor_run(&executor.parallel)) {
+        ok = false;
+    }
+
+    if (cetta_parallel_executor_error(&executor.parallel)) {
+        rho_validation_set("%s",
+                           cetta_parallel_executor_error(&executor.parallel));
+        ok = false;
+    }
+
+    if (ok && !rho_async_materialize_residual(&executor, &out->residual)) {
+        rho_validation_set("could not materialize threaded rho residual");
+        ok = false;
+    }
+
+    if (ok) {
+        out->reductions_taken =
+            atomic_load_explicit(&executor.reductions_taken,
+                                 memory_order_relaxed);
+        out->status = rho_channel_table_has_enabled_pair(&executor.channels)
+            ? RHOCALC_REDUCTION_LIMIT_EXHAUSTED
+            : RHOCALC_REDUCTION_QUIESCENT;
+    }
+
+    rho_async_executor_free(&executor);
+    return ok;
+}
+
+static bool rho_collect_successors(Arena *arena, Atom *proc,
+                                   const RhocalcEvalContext *eval_context,
+                                   RhoSuccessorSetAcc *out);
+static bool rhocalc_collect_successor_set(Arena *arena, Atom *proc,
+                                          const RhocalcEvalContext *eval_context,
+                                          RhoSuccessorSet *out);
+
+static void rhocalc_successor_set_free(RhoSuccessorSet *set) {
+    if (!set) return;
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+}
+
+static bool rhocalc_collect_successor_set(Arena *arena, Atom *proc,
+                                          const RhocalcEvalContext *eval_context,
+                                          RhoSuccessorSet *out) {
+    RhoSuccessorSetAcc acc;
+
+    if (!arena || !proc || !out) return false;
+    out->items = NULL;
+    out->len = 0;
+
+    rho_successor_set_acc_init(&acc);
+    if (!rho_collect_successors(arena, proc, eval_context, &acc)) {
+        rho_successor_set_acc_free(&acc);
+        return false;
+    }
+    rho_successor_set_acc_finish(&acc, out);
+    return true;
+}
+
+/* ── Quiet-frontier macro step (partial-order reduction) ──────────────────
+ *
+ * COMM steps on distinct channels commute, so exploring every interleaving
+ * of an independent frontier multiplies intermediate states without adding
+ * quiescent outcomes.  When (a) every channel key carries at most one send
+ * and one receive endpoint, so no alternative pairing exists, and (b) every
+ * continuation produced by firing the enabled pairs is QUIET -- it contains
+ * no send, receive, or drop anywhere, so no firing order can create a new
+ * rendezvous on any key -- AND (C3) firing the deferred payloads cannot
+ * interfere with one another, and their results are freely duplicable across
+ * product children -- the whole frontier fires as one macro step, branching
+ * only on payload multiplicity.  The macro children are exactly the quiescent
+ * states the full interleaving lattice reaches.  Any state outside those side
+ * conditions falls back to the exact per-redex exploration.
+ *
+ * C3 is the condition the original argument missed: payload evaluation can
+ * interfere through shared mutable state.  Rather than syntactically guess
+ * which payloads are effectful (fragile -- a foreign-space access hidden behind
+ * a user equation defeats any syntactic check), the non-interference half of
+ * C3 is delivered STRUCTURALLY by the evaluator: rho_eval_payload_results runs
+ * every payload against sibling-isolated scratch -- per-payload overlays for
+ * reachable spaces and payload-owned clones for explicitly reachable state
+ * cells. Shared bases never escape to a sibling, while local scratch still
+ * supports write-forward computation inside the payload. The only remaining
+ * macro obligation is copy-stability of results: a result carrying an
+ * identity-bearing grounded value (e.g. a space from new-space or a state
+ * cell) cannot be shared across product children, so
+ * rho_atom_has_identity_grounded forces fallback for those.  The permanent
+ * differential audit (scripts/rhometta_macro_differential_audit.py) is the
+ * soundness backstop.
+ *
+ * NB: C2's quietness here is via rho_proc_is_quiet, which is STRONGER than
+ * "could enable a rendezvous": it rejects send/recv/drop even under an inert
+ * rho:val/rho:quote wrapper (conservative).  And free rho:drop(quote P) is
+ * inert in this strict core (it only unquotes under matched-COMM substitution,
+ * see semanticCommSubst), so excluding drop in continuations is sufficient. */
+static bool rho_proc_is_quiet(Atom *proc) {
+    RhoView view;
+    if (!proc)
+        return true;
+    if (proc->kind != ATOM_EXPR)
+        return true;
+    view = rho_view(proc);
+    if (view.kind == RHO_SEND || view.kind == RHO_RECV ||
+        view.kind == RHO_DROP) {
+        return false;
+    }
+    for (CettaExprIndex i = 0; i < proc->expr.len; i++) {
+        if (!rho_proc_is_quiet(proc->expr.elems[i]))
+            return false;
+    }
+    return true;
+}
+
+/* C3 support: a grounded value is identity-bearing (not freely copyable) when
+ * it carries pointer identity -- a space, state cell, capture, or foreign
+ * handle.  Mirrors hyperpose_atom_is_thread_local_resource (eval.c). */
+static bool rho_gkind_is_identity(GroundedKind k) {
+    return k == GV_SPACE || k == GV_STATE || k == GV_CAPTURE || k == GV_FOREIGN;
+}
+
+/* Post-result copy-stability: does this result tree carry any identity-bearing
+ * grounded value (which the macro would duplicate across product children)? */
+static bool rho_atom_has_identity_grounded(Atom *atom) {
+    if (!atom)
+        return false;
+    if (atom->kind == ATOM_GROUNDED)
+        return rho_gkind_is_identity(atom->ground.gkind);
+    if (atom->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+        if (rho_atom_has_identity_grounded(atom->expr.elems[i]))
+            return true;
+    }
+    return false;
+}
+
+typedef enum {
+    RHO_QUIET_MACRO_MODE_BAIL_EXACT = 0,
+    RHO_QUIET_MACRO_MODE_FULL_FIRE,
+    RHO_QUIET_MACRO_MODE_PARTIAL_FIRE,
+} RhoQuietMacroMode;
+
+typedef enum {
+    RHO_MACRO_REJECT_NONE = 0,
+    RHO_MACRO_REJECT_CONTENTION,
+    RHO_MACRO_REJECT_NONQUIET,
+    RHO_MACRO_REJECT_UNSAFE_PAYLOAD,
+    RHO_MACRO_REJECT_CHILD_CAP,
+} RhoMacroRejectReason;
+
+typedef struct {
+    uint32_t send_start;
+    uint32_t send_end;
+    uint32_t recv_start;
+    uint32_t recv_end;
+    const RhoEndpoint *send;
+    const RhoEndpoint *recv;
+    RhoAtomVec bodies;
+    bool macro_selected;
+    RhoMacroRejectReason reject_reason;
+} RhoMacroGroup;
+
+#define RHO_MACRO_STEP_CHILD_CAP 65536u
+
+static bool rho_emit_comm_results_range(
+    Arena *arena, RhoAtomVec *components, const RhoEndpointVec *sends,
+    uint32_t send_start, uint32_t send_end, const RhoEndpointVec *recvs,
+    uint32_t recv_start, uint32_t recv_end,
+    const RhocalcEvalContext *eval_context, RhoSuccessorSetAcc *out) {
+    for (uint32_t r = recv_start; r < recv_end; r++) {
+        for (uint32_t s = send_start; s < send_end; s++) {
+            if (!rho_emit_comm_results(arena, components,
+                                       &sends->items[s], &recvs->items[r],
+                                       eval_context, out)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool rhocalc_try_quiet_macro_step(
+    Arena *arena, Atom *proc, const RhocalcEvalContext *eval_context,
+    RhoQuietMacroMode *mode, RhoSuccessorSetAcc *out) {
+    RhoAtomVec components;
+    RhoEndpointVec sends;
+    RhoEndpointVec recvs;
+    RhoMacroGroup *groups = NULL;
+    bool *consumed = NULL;
+    uint32_t *odometer = NULL;
+    uint32_t ngroups = 0;
+    uint32_t macro_groups = 0;
+    uint32_t exact_groups = 0;
+    uint32_t unsafe_groups = 0;
+    uint64_t total_children = 1;
+    uint32_t send_pos = 0;
+    uint32_t recv_pos = 0;
+    bool ok = true;
+
+    *mode = RHO_QUIET_MACRO_MODE_BAIL_EXACT;
+    /* Audit/oracle toggle: CETTA_RHO_NO_MACRO forces the exact (un-optimized)
+     * interleaving exploration, so the same binary can run any program both
+     * macro-on and macro-off for differential soundness checking. */
+    if (getenv("CETTA_RHO_NO_MACRO"))
+        return true;
+    rho_vec_init(&components);
+    rho_endpoint_vec_init(&sends);
+    rho_endpoint_vec_init(&recvs);
+    rho_collect_par(arena, proc, &components);
+    if (!rho_collect_endpoints(&components, &sends, &recvs)) {
+        ok = false;
+        goto done;
+    }
+
+    /* Partition keywise: macro-fire eligible single-pair keys, exact-explore
+     * contended or otherwise ineligible keys in the same successor round. */
+    groups = cetta_malloc(sizeof(RhoMacroGroup) *
+                          (sends.len < recvs.len ? sends.len + 1
+                                                 : recvs.len + 1));
+    if (!groups) {
+        ok = false;
+        goto done;
+    }
+    while (recv_pos < recvs.len && send_pos < sends.len) {
+        int cmp = strcmp(recvs.items[recv_pos].key, sends.items[send_pos].key);
         if (cmp < 0) {
             recv_pos++;
             continue;
@@ -1196,82 +3102,371 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
 
         uint32_t recv_start = recv_pos;
         uint32_t send_start = send_pos;
-        while (recv_pos < machine->recvs.len &&
-               strcmp(machine->recvs.items[recv_pos].key,
-                      machine->recvs.items[recv_start].key) == 0) {
+        RhoMacroGroup *group = &groups[ngroups++];
+
+        memset(group, 0, sizeof(*group));
+        rho_vec_init(&group->bodies);
+        group->recv_start = recv_start;
+        group->send_start = send_start;
+        while (recv_pos < recvs.len &&
+               strcmp(recvs.items[recv_pos].key, recvs.items[recv_start].key) == 0) {
             recv_pos++;
         }
-        while (send_pos < machine->sends.len &&
-               strcmp(machine->sends.items[send_pos].key,
-                      machine->sends.items[send_start].key) == 0) {
+        while (send_pos < sends.len &&
+               strcmp(sends.items[send_pos].key, sends.items[send_start].key) == 0) {
             send_pos++;
         }
+        group->recv_end = recv_pos;
+        group->send_end = send_pos;
 
-        for (uint32_t r = recv_start; r < recv_pos; r++) {
-            for (uint32_t s = send_start; s < send_pos; s++) {
-                Atom *next;
-                char *key;
-                if (!rho_compute_comm_result(machine->arena,
-                                             &machine->components,
-                                             &machine->sends.items[s],
-                                             &machine->recvs.items[r],
-                                             &next, &key)) {
-                    free(best_key);
-                    return false;
-                }
-                if (!best_key || strcmp(key, best_key) < 0) {
-                    free(best_key);
-                    best_key = key;
-                    best_result = next;
-                } else {
-                    free(key);
-                }
+        if ((recv_pos - recv_start) != 1u || (send_pos - send_start) != 1u) {
+            group->reject_reason = RHO_MACRO_REJECT_CONTENTION;
+            exact_groups++;
+            continue;
+        }
+
+        group->send = &sends.items[send_start];
+        group->recv = &recvs.items[recv_start];
+        if (!rho_compute_comm_continuations(arena, group->send,
+                                            group->recv, eval_context,
+                                            &group->bodies)) {
+            ok = false;
+            goto done;
+        }
+        for (uint32_t b = 0; b < group->bodies.len; b++) {
+            Atom *body = rho_normalize_proc(arena, group->bodies.items[b]);
+            if (!body || !rho_proc_is_quiet(body)) {
+                group->reject_reason = RHO_MACRO_REJECT_NONQUIET;
+                exact_groups++;
+                goto next_group;
             }
+            if (rho_atom_has_identity_grounded(body)) {
+                group->reject_reason = RHO_MACRO_REJECT_UNSAFE_PAYLOAD;
+                unsafe_groups++;
+                exact_groups++;
+                goto next_group;
+            }
+            group->bodies.items[b] = body;
+        }
+        if (group->bodies.len == 0)
+            goto next_group;
+        if (total_children > (UINT64_MAX / group->bodies.len) ||
+            total_children * group->bodies.len > RHO_MACRO_STEP_CHILD_CAP) {
+            group->reject_reason = RHO_MACRO_REJECT_CHILD_CAP;
+            exact_groups++;
+            goto next_group;
+        }
+        group->macro_selected = true;
+        macro_groups++;
+        total_children *= group->bodies.len;
+
+next_group:
+        continue;
+    }
+
+    /* C3's non-interference half is guaranteed by the evaluator (each payload
+     * runs against sibling-isolated scratch, see rho_eval_payload_results), so
+     * the macro only has to demand quiet, copy-stable continuations below. */
+
+    for (uint32_t g = 0; g < ngroups; g++) {
+        switch (groups[g].reject_reason) {
+        case RHO_MACRO_REJECT_CONTENTION:
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_FALLBACK_CONTENTION);
+            break;
+        case RHO_MACRO_REJECT_NONQUIET:
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_FALLBACK_NONQUIET);
+            break;
+        case RHO_MACRO_REJECT_UNSAFE_PAYLOAD:
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_FALLBACK_UNSAFE_PAYLOAD);
+            break;
+        case RHO_MACRO_REJECT_CHILD_CAP:
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_FALLBACK_CHILD_CAP);
+            break;
+        case RHO_MACRO_REJECT_NONE:
+            break;
+        }
+    }
+    if (unsafe_groups > 0 ||
+        macro_groups == 0 ||
+        (macro_groups == 1 && exact_groups == 0)) {
+        if (macro_groups > 0 || exact_groups > 0) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_BAIL_EXACT);
+        }
+        goto done;
+    }
+
+    /* Cartesian product over macro-fired groups' payload results. */
+    consumed = cetta_malloc(sizeof(bool) * (components.len ? components.len
+                                                           : 1u));
+    odometer = cetta_malloc(sizeof(uint32_t) * (ngroups ? ngroups : 1u));
+    if (!consumed || !odometer) {
+        ok = false;
+        goto done;
+    }
+    memset(consumed, 0, sizeof(bool) * (components.len ? components.len : 1u));
+    memset(odometer, 0, sizeof(uint32_t) * (ngroups ? ngroups : 1u));
+    for (uint32_t g = 0; g < ngroups; g++) {
+        if (!groups[g].macro_selected)
+            continue;
+        consumed[groups[g].send->component_index] = true;
+        consumed[groups[g].recv->component_index] = true;
+    }
+
+    for (;;) {
+        RhoAtomVec child;
+        Atom *child_proc;
+        char *key;
+        rho_vec_init(&child);
+        for (uint32_t i = 0; i < components.len; i++) {
+            if (consumed[i])
+                continue;
+            if (!rho_vec_push(&child, components.items[i])) {
+                rho_vec_free(&child);
+                ok = false;
+                goto done;
+            }
+        }
+        for (uint32_t g = 0; g < ngroups && ok; g++) {
+            Atom *body;
+            RhoView body_view;
+            if (!groups[g].macro_selected)
+                continue;
+            body = groups[g].bodies.items[odometer[g]];
+            body_view = rho_view(body);
+            if (body_view.kind == RHO_PAR) {
+                for (uint32_t i = 0; i < body_view.nargs; i++) {
+                    if (!rho_vec_push(&child, body_view.args[i])) {
+                        ok = false;
+                        break;
+                    }
+                }
+            } else if (body_view.kind != RHO_NIL) {
+                if (!rho_vec_push(&child, body))
+                    ok = false;
+            }
+        }
+        if (!ok) {
+            rho_vec_free(&child);
+            goto done;
+        }
+        child_proc = rho_par_from_vec(arena, &child);
+        rho_vec_free(&child);
+        key = child_proc ? rho_key_proc(child_proc) : NULL;
+        if (!child_proc || !key ||
+            !rho_successor_set_acc_push_keyed(out, child_proc, key)) {
+            free(key);
+            ok = false;
+            goto done;
+        }
+
+        /* advance the odometer over macro-fired groups */
+        {
+            uint32_t g = 0;
+            while (g < ngroups) {
+                if (!groups[g].macro_selected) {
+                    g++;
+                    continue;
+                }
+                odometer[g]++;
+                if (odometer[g] < groups[g].bodies.len)
+                    break;
+                odometer[g] = 0;
+                g++;
+            }
+            if (g == ngroups)
+                break; /* product exhausted */
         }
     }
 
-    *out_quiescent = best_result == NULL;
-    *out_next = best_result ? best_result : machine->current;
-    free(best_key);
-    return true;
+    for (uint32_t g = 0; g < ngroups && ok; g++) {
+        if (groups[g].reject_reason == RHO_MACRO_REJECT_NONE)
+            continue;
+        if (!rho_emit_comm_results_range(arena, &components,
+                                         &sends,
+                                         groups[g].send_start,
+                                         groups[g].send_end,
+                                         &recvs,
+                                         groups[g].recv_start,
+                                         groups[g].recv_end,
+                                         eval_context,
+                                         out)) {
+            ok = false;
+        }
+    }
+    if (!ok)
+        goto done;
+
+    *mode = exact_groups == 0
+        ? RHO_QUIET_MACRO_MODE_FULL_FIRE
+        : RHO_QUIET_MACRO_MODE_PARTIAL_FIRE;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_APPLIED);
+    cetta_runtime_stats_inc(
+        *mode == RHO_QUIET_MACRO_MODE_FULL_FIRE
+            ? CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_FULL_FIRE
+            : CETTA_RUNTIME_COUNTER_RHO_QUIET_MACRO_PARTIAL_FIRE);
+
+done:
+    if (groups) {
+        for (uint32_t g = 0; g < ngroups; g++)
+            rho_vec_free(&groups[g].bodies);
+        free(groups);
+    }
+    free(consumed);
+    free(odometer);
+    rho_endpoint_vec_free(&sends);
+    rho_endpoint_vec_free(&recvs);
+    rho_vec_free(&components);
+    return ok;
 }
 
-static bool rho_collect_successors(Arena *arena, Atom *proc, RhoSuccessorSetAcc *out);
-
-static void rhocalc_successor_set_free(RhoSuccessorSet *set) {
-    if (!set) return;
-    free(set->items);
-    set->items = NULL;
-    set->len = 0;
-}
-
-static bool rhocalc_collect_successor_set(Arena *arena, Atom *proc, RhoSuccessorSet *out) {
-    RhoSuccessorSetAcc acc;
+static bool rhocalc_collect_quiescent_set(
+    Arena *arena, Atom *proc, const RhocalcEvalContext *eval_context,
+    RhoSuccessorSet *out) {
+    RhoAtomVec worklist;
+    RhoSuccessorSetAcc seen;
+    RhoSuccessorSetAcc quiescent;
+    Atom *start;
+    char *start_key;
+    uint32_t head = 0;
 
     if (!arena || !proc || !out) return false;
     out->items = NULL;
     out->len = 0;
 
-    rho_successor_set_acc_init(&acc);
-    if (!rho_collect_successors(arena, proc, &acc)) {
-        rho_successor_set_acc_free(&acc);
+    rho_vec_init(&worklist);
+    rho_successor_set_acc_init(&seen);
+    rho_successor_set_acc_init(&quiescent);
+
+    start = rho_normalize_proc(arena, proc);
+    start_key = rho_key_proc(start);
+    if (!start_key || !rho_vec_push(&worklist, start) ||
+        !rho_successor_set_acc_push_keyed(&seen, start, start_key)) {
+        free(start_key);
+        rho_vec_free(&worklist);
+        rho_successor_set_acc_free(&seen);
+        rho_successor_set_acc_free(&quiescent);
         return false;
     }
-    rho_successor_set_acc_finish(&acc, out);
+
+    while (head < worklist.len) {
+        Atom *current = worklist.items[head++];
+        RhoSuccessorSet successors = {0};
+        RhoQuietMacroMode macro_mode = RHO_QUIET_MACRO_MODE_BAIL_EXACT;
+
+        {
+            RhoSuccessorSetAcc macro_acc;
+            rho_successor_set_acc_init(&macro_acc);
+            if (!rhocalc_try_quiet_macro_step(arena, current, eval_context,
+                                              &macro_mode, &macro_acc)) {
+                rho_successor_set_acc_free(&macro_acc);
+                rho_vec_free(&worklist);
+                rho_successor_set_acc_free(&seen);
+                rho_successor_set_acc_free(&quiescent);
+                return false;
+            }
+            if (macro_mode != RHO_QUIET_MACRO_MODE_BAIL_EXACT) {
+                rho_successor_set_acc_finish(&macro_acc, &successors);
+            } else {
+                rho_successor_set_acc_free(&macro_acc);
+            }
+        }
+
+        if (macro_mode == RHO_QUIET_MACRO_MODE_BAIL_EXACT &&
+            !rhocalc_collect_successor_set(arena, current, eval_context,
+                                           &successors)) {
+            rho_vec_free(&worklist);
+            rho_successor_set_acc_free(&seen);
+            rho_successor_set_acc_free(&quiescent);
+            return false;
+        }
+        if (successors.len == 0) {
+            char *key = rho_key_proc(current);
+            if (!key || !rho_successor_set_acc_push_keyed(&quiescent, current,
+                                                          key)) {
+                free(key);
+                rhocalc_successor_set_free(&successors);
+                rho_vec_free(&worklist);
+                rho_successor_set_acc_free(&seen);
+                rho_successor_set_acc_free(&quiescent);
+                return false;
+            }
+            rhocalc_successor_set_free(&successors);
+            continue;
+        }
+
+        for (uint32_t i = 0; i < successors.len; i++) {
+            Atom *next = successors.items[i];
+            char *key = rho_key_proc(next);
+            if (!key) {
+                rhocalc_successor_set_free(&successors);
+                rho_vec_free(&worklist);
+                rho_successor_set_acc_free(&seen);
+                rho_successor_set_acc_free(&quiescent);
+                return false;
+            }
+            if (rho_successor_set_acc_contains_key(&seen, key)) {
+                free(key);
+                continue;
+            }
+            if (!rho_vec_push(&worklist, next) ||
+                !rho_successor_set_acc_push_keyed(&seen, next, key)) {
+                free(key);
+                rhocalc_successor_set_free(&successors);
+                rho_vec_free(&worklist);
+                rho_successor_set_acc_free(&seen);
+                rho_successor_set_acc_free(&quiescent);
+                return false;
+            }
+        }
+        rhocalc_successor_set_free(&successors);
+    }
+
+    rho_vec_free(&worklist);
+    rho_successor_set_acc_free(&seen);
+    rho_successor_set_acc_finish(&quiescent, out);
     return true;
 }
 
 Atom *rhocalc_successor_frontier_expr(Arena *arena, Atom *proc) {
+    return rhocalc_successor_frontier_expr_with_eval_context(arena, proc, NULL);
+}
+
+Atom *rhocalc_successor_frontier_expr_with_eval_context(
+    Arena *arena, Atom *proc, const RhocalcEvalContext *eval_context) {
     RhoSuccessorSet successors = {0};
     Atom *list;
     Atom *result;
 
-    if (!rhocalc_collect_successor_set(arena, proc, &successors)) {
+    if (!rhocalc_collect_successor_set(arena, proc, eval_context, &successors)) {
         return NULL;
     }
     list = atom_expr(arena, successors.items, successors.len);
     result = atom_expr2(arena, atom_symbol(arena, "superpose"), list);
     rhocalc_successor_set_free(&successors);
+    return result;
+}
+
+Atom *rhocalc_quiescent_frontier_expr(Arena *arena, Atom *proc) {
+    return rhocalc_quiescent_frontier_expr_with_eval_context(arena, proc, NULL);
+}
+
+Atom *rhocalc_quiescent_frontier_expr_with_eval_context(
+    Arena *arena, Atom *proc, const RhocalcEvalContext *eval_context) {
+    RhoSuccessorSet quiescent = {0};
+    Atom *list;
+    Atom *result;
+
+    if (!rhocalc_collect_quiescent_set(arena, proc, eval_context, &quiescent)) {
+        return NULL;
+    }
+    list = atom_expr(arena, quiescent.items, quiescent.len);
+    result = atom_expr2(arena, atom_symbol(arena, "superpose"), list);
+    rhocalc_successor_set_free(&quiescent);
     return result;
 }
 
@@ -1720,6 +3915,13 @@ static bool rhocost_check_proc(Atom *proc) {
         rho_validation_set(
             "rhocalc cost first slice does not yet support dequotation");
         return false;
+    case RHO_VAL:
+        rho_validation_set("rhocalc cost first slice does not support rho:val");
+        return false;
+    case RHO_EVAL_PAYLOAD:
+        rho_validation_set(
+            "rhocalc cost first slice does not support rho:eval-payload");
+        return false;
     case RHO_QUOTE:
         rho_validation_set("rho:quote is a name, not a process");
         return false;
@@ -1955,6 +4157,8 @@ static char *rhocost_key_proc(Atom *proc) {
         free(name_key);
         break;
     }
+    case RHO_VAL:
+    case RHO_EVAL_PAYLOAD:
     case RHO_QUOTE:
     case RHO_BAD:
         (void)rho_str_append(&out, "?bad-proc");
@@ -2028,6 +4232,8 @@ static Atom *rhocost_normalize_proc(Arena *arena, Atom *proc) {
     case RHO_DROP:
         return rho_unary(arena, "rho:drop",
                          rhocost_normalize_name(arena, view.args[0]));
+    case RHO_VAL:
+    case RHO_EVAL_PAYLOAD:
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -2189,6 +4395,8 @@ static bool rhocost_proc_has_free_var(Atom *proc, VarId var_id) {
         return rhocost_term_has_free_var(view.args[2], var_id);
     case RHO_DROP:
         return view.nargs == 1 && rhocost_name_has_free_var(view.args[0], var_id);
+    case RHO_VAL:
+    case RHO_EVAL_PAYLOAD:
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -2269,6 +4477,8 @@ static Atom *rhocost_rename_proc(Arena *arena, Atom *proc,
         return rho_unary(arena, "rho:drop",
                          rhocost_rename_name(arena, view.args[0], old_id,
                                              replacement_name));
+    case RHO_VAL:
+    case RHO_EVAL_PAYLOAD:
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -2368,6 +4578,8 @@ static Atom *rhocost_subst_proc(Arena *arena, Atom *proc,
         return rho_unary(arena, "rho:drop",
                          rhocost_subst_name(arena, view.args[0], var_id,
                                             replacement_term));
+    case RHO_VAL:
+    case RHO_EVAL_PAYLOAD:
     case RHO_QUOTE:
     case RHO_BAD:
         break;
@@ -2773,13 +4985,21 @@ Atom *rhocalc_cost_step_frontier_expr(Arena *arena, Atom *term) {
 
 Atom *rhocalc_successor_frontier_expr_with_semantic_profile(
     Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile) {
+    return rhocalc_successor_frontier_expr_with_semantic_profile_and_eval_context(
+        arena, proc, semantic_profile, NULL);
+}
+
+Atom *rhocalc_successor_frontier_expr_with_semantic_profile_and_eval_context(
+    Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile,
+    const RhocalcEvalContext *eval_context) {
     if (!rhocalc_semantic_profile_runtime_supported(semantic_profile)) {
         return NULL;
     }
     if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_COST) {
         return rhocost_successor_frontier_expr(arena, proc);
     }
-    return rhocalc_successor_frontier_expr(arena, proc);
+    return rhocalc_successor_frontier_expr_with_eval_context(arena, proc,
+                                                             eval_context);
 }
 
 static bool rho_machine_select_rotating_successor(RhoMachine *machine,
@@ -2796,7 +5016,8 @@ static bool rho_machine_select_rotating_successor(RhoMachine *machine,
     *out_quiescent = true;
 
     rho_successor_set_acc_init(&successor_acc);
-    if (!rho_collect_successors(machine->arena, machine->current, &successor_acc)) {
+    if (!rho_collect_successors(machine->arena, machine->current,
+                                machine->eval_context, &successor_acc)) {
         rho_successor_set_acc_free(&successor_acc);
         return false;
     }
@@ -2832,7 +5053,9 @@ static bool rho_machine_select_successor(RhoMachine *machine,
     return false;
 }
 
-static bool rho_collect_successors(Arena *arena, Atom *proc, RhoSuccessorSetAcc *out) {
+static bool rho_collect_successors(Arena *arena, Atom *proc,
+                                   const RhocalcEvalContext *eval_context,
+                                   RhoSuccessorSetAcc *out) {
     RhoAtomVec components;
     RhoEndpointVec sends;
     RhoEndpointVec recvs;
@@ -2876,13 +5099,10 @@ static bool rho_collect_successors(Arena *arena, Atom *proc, RhoSuccessorSetAcc 
 
         for (uint32_t r = recv_start; r < recv_pos; r++) {
             for (uint32_t s = send_start; s < send_pos; s++) {
-                Atom *next;
-                char *key;
-                if (!rho_compute_comm_result(arena, &components,
-                                             &sends.items[s],
-                                             &recvs.items[r],
-                                             &next, &key) ||
-                    !rho_successor_set_acc_push_keyed(out, next, key)) {
+                if (!rho_emit_comm_results(arena, &components,
+                                           &sends.items[s],
+                                           &recvs.items[r],
+                                           eval_context, out)) {
                     rho_endpoint_vec_free(&sends);
                     rho_endpoint_vec_free(&recvs);
                     rho_vec_free(&components);
@@ -2901,6 +5121,13 @@ static bool rho_collect_successors(Arena *arena, Atom *proc, RhoSuccessorSetAcc 
 bool rhocalc_reduce_to_quiescence_with_profile(Arena *arena, Atom *proc,
                                                const RhoRuntimeProfile *profile,
                                                RhoReductionResult *out) {
+    return rhocalc_reduce_to_quiescence_with_eval_context(arena, proc, profile,
+                                                          NULL, out);
+}
+
+bool rhocalc_reduce_to_quiescence_with_eval_context(
+    Arena *arena, Atom *proc, const RhoRuntimeProfile *profile,
+    const RhocalcEvalContext *eval_context, RhoReductionResult *out) {
     RhoMachine machine;
 
     if (!arena || !proc || !profile || !out) return false;
@@ -2911,8 +5138,12 @@ bool rhocalc_reduce_to_quiescence_with_profile(Arena *arena, Atom *proc,
     if (!rho_runtime_profile_supported(profile)) {
         return false;
     }
+    if (profile->threaded) {
+        return rhocalc_reduce_to_quiescence_threaded(arena, proc, profile,
+                                                     eval_context, out);
+    }
 
-    rho_machine_init(&machine, arena, profile);
+    rho_machine_init(&machine, arena, profile, eval_context);
     if (!rho_machine_load_process(&machine, proc)) {
         rho_machine_free(&machine);
         return false;
@@ -2955,6 +5186,10 @@ static bool rhocost_reduce_to_quiescence_with_profile(
     if (!rho_runtime_profile_supported(profile)) {
         return false;
     }
+    if (profile->threaded) {
+        rho_validation_set("rho threaded execution is strict-core only");
+        return false;
+    }
     if (!rhocost_term_well_formed(term)) {
         return false;
     }
@@ -2993,13 +5228,22 @@ static bool rhocost_reduce_to_quiescence_with_profile(
 bool rhocalc_reduce_to_quiescence_with_semantic_profile(
     Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile,
     const RhoRuntimeProfile *profile, RhoReductionResult *out) {
+    return rhocalc_reduce_to_quiescence_with_semantic_profile_and_eval_context(
+        arena, proc, semantic_profile, profile, NULL, out);
+}
+
+bool rhocalc_reduce_to_quiescence_with_semantic_profile_and_eval_context(
+    Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile,
+    const RhoRuntimeProfile *profile, const RhocalcEvalContext *eval_context,
+    RhoReductionResult *out) {
     if (!rhocalc_semantic_profile_runtime_supported(semantic_profile)) {
         return false;
     }
     if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_COST) {
         return rhocost_reduce_to_quiescence_with_profile(arena, proc, profile, out);
     }
-    return rhocalc_reduce_to_quiescence_with_profile(arena, proc, profile, out);
+    return rhocalc_reduce_to_quiescence_with_eval_context(arena, proc, profile,
+                                                          eval_context, out);
 }
 
 bool rhocalc_reduce_to_quiescence(Arena *arena, Atom *proc,

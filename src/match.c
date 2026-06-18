@@ -2,6 +2,7 @@
 #include "stats.h"
 #include "variant_shape.h"
 #include <assert.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -22,14 +23,37 @@ typedef struct BindingPoolBlock {
 } BindingPoolBlock;
 
 static const uint32_t BINDINGS_POOL_CAPS[BINDINGS_POOL_CLASS_COUNT] = {8, 16, 32, 64};
-static BindingPoolBlock *g_binding_entry_pools[BINDINGS_POOL_CLASS_COUNT];
-static BindingPoolBlock *g_binding_constraint_pools[BINDINGS_POOL_CLASS_COUNT];
-static size_t g_binding_entry_active_bytes = 0;
-static size_t g_binding_entry_pool_bytes = 0;
-static size_t g_binding_entry_retained_bytes = 0;
-static size_t g_binding_constraint_active_bytes = 0;
-static size_t g_binding_constraint_pool_bytes = 0;
-static size_t g_binding_constraint_retained_bytes = 0;
+static __thread BindingPoolBlock *g_binding_entry_pools[BINDINGS_POOL_CLASS_COUNT];
+static __thread BindingPoolBlock *g_binding_constraint_pools[BINDINGS_POOL_CLASS_COUNT];
+static __thread size_t g_binding_entry_active_bytes = 0;
+static __thread size_t g_binding_entry_pool_bytes = 0;
+static __thread size_t g_binding_entry_retained_bytes = 0;
+static __thread size_t g_binding_constraint_active_bytes = 0;
+static __thread size_t g_binding_constraint_pool_bytes = 0;
+static __thread size_t g_binding_constraint_retained_bytes = 0;
+
+static void bindings_pool_free_all(BindingPoolBlock **pools) {
+    for (uint32_t i = 0; i < BINDINGS_POOL_CLASS_COUNT; i++) {
+        BindingPoolBlock *block = pools[i];
+        while (block) {
+            BindingPoolBlock *next = block->next;
+            free(block);
+            block = next;
+        }
+        pools[i] = NULL;
+    }
+}
+
+void bindings_thread_cache_free(void) {
+    bindings_pool_free_all(g_binding_entry_pools);
+    bindings_pool_free_all(g_binding_constraint_pools);
+    g_binding_entry_active_bytes = 0;
+    g_binding_entry_pool_bytes = 0;
+    g_binding_entry_retained_bytes = 0;
+    g_binding_constraint_active_bytes = 0;
+    g_binding_constraint_pool_bytes = 0;
+    g_binding_constraint_retained_bytes = 0;
+}
 
 static void bindings_note_entry_pool_metrics(void) {
     cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_BINDINGS_ENTRY_POOL_BYTES,
@@ -226,6 +250,21 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
     bindings_note_constraint_pool_metrics();
 }
 
+static BindingConstraint *bindings_temp_constraints_alloc(
+    uint32_t cap, BindingConstraint *stack, uint32_t stack_cap) {
+    if (cap <= stack_cap)
+        return stack;
+    return bindings_constraints_alloc(cap);
+}
+
+static void bindings_temp_constraints_release(BindingConstraint *constraints,
+                                              uint32_t cap,
+                                              BindingConstraint *stack) {
+    if (!constraints || constraints == stack)
+        return;
+    bindings_constraints_release(constraints, cap);
+}
+
 static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling);
 
 static inline void bindings_lookup_cache_reset(Bindings *b) {
@@ -394,9 +433,8 @@ static bool bindings_add_constraint_internal(Bindings *b, Atom *lhs, Atom *rhs,
 static bool bindings_normalize_constraints(Bindings *b) {
     if (b->eq_len == 0) return true;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
-    BindingConstraint *pending = b->eq_len <= BINDINGS_TEMP_STACK_CAP
-        ? pending_stack
-        : cetta_malloc(sizeof(BindingConstraint) * b->eq_len);
+    BindingConstraint *pending = bindings_temp_constraints_alloc(
+        b->eq_len, pending_stack, BINDINGS_TEMP_STACK_CAP);
     uint32_t npending = b->eq_len;
     for (uint32_t i = 0; i < npending; i++)
         pending[i] = b->constraints[i];
@@ -404,13 +442,12 @@ static bool bindings_normalize_constraints(Bindings *b) {
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_add_constraint_inplace_internal(
                 b, pending[i].lhs, pending[i].rhs, false)) {
-            if (pending != pending_stack)
-                free(pending);
+            bindings_temp_constraints_release(pending, npending,
+                                              pending_stack);
             return false;
         }
     }
-    if (pending != pending_stack)
-        free(pending);
+    bindings_temp_constraints_release(pending, npending, pending_stack);
     return true;
 }
 
@@ -518,6 +555,10 @@ Atom *bindings_lookup_id(Bindings *b, VarId var_id) {
 
 Atom *bindings_lookup_var(Bindings *b, Atom *var) {
     return bindings_lookup_id(b, var->var_id);
+}
+
+Atom *bindings_resolve_atom_preview(Bindings *b, Atom *atom) {
+    return bindings_resolve_atom(b, atom, 0);
 }
 
 static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling) {
@@ -679,9 +720,8 @@ static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
     bindings_assert_no_private_variant_slots(src);
     uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
-    BindingConstraint *pending = pending_cap <= BINDINGS_TEMP_STACK_CAP
-        ? pending_stack
-        : cetta_malloc(sizeof(BindingConstraint) * pending_cap);
+    BindingConstraint *pending = bindings_temp_constraints_alloc(
+        pending_cap, pending_stack, BINDINGS_TEMP_STACK_CAP);
     uint32_t npending = 0;
     for (uint32_t i = 0; i < dst->eq_len; i++)
         pending[npending++] = dst->constraints[i];
@@ -694,21 +734,20 @@ static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
                                            src->entries[i].spelling, src->entries[i].val,
                                            false,
                                            src->entries[i].legacy_name_fallback)) {
-            if (pending != pending_stack)
-                free(pending);
+            bindings_temp_constraints_release(pending, pending_cap,
+                                              pending_stack);
             return false;
         }
     }
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_add_constraint_inplace_internal(
                 dst, pending[i].lhs, pending[i].rhs, false)) {
-            if (pending != pending_stack)
-                free(pending);
+            bindings_temp_constraints_release(pending, pending_cap,
+                                              pending_stack);
             return false;
         }
     }
-    if (pending != pending_stack)
-        free(pending);
+    bindings_temp_constraints_release(pending, pending_cap, pending_stack);
     if (!bindings_normalize_constraints(dst)) {
         return false;
     }
@@ -1343,9 +1382,8 @@ static bool bindings_builder_normalize_constraints(BindingsBuilder *bb) {
     if (bb->current.eq_len == 0)
         return true;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
-    BindingConstraint *pending = bb->current.eq_len <= BINDINGS_TEMP_STACK_CAP
-        ? pending_stack
-        : cetta_malloc(sizeof(BindingConstraint) * bb->current.eq_len);
+    BindingConstraint *pending = bindings_temp_constraints_alloc(
+        bb->current.eq_len, pending_stack, BINDINGS_TEMP_STACK_CAP);
     uint32_t npending = bb->current.eq_len;
     for (uint32_t i = 0; i < npending; i++)
         pending[i] = bb->current.constraints[i];
@@ -1353,13 +1391,12 @@ static bool bindings_builder_normalize_constraints(BindingsBuilder *bb) {
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_builder_add_constraint_internal(
                 bb, pending[i].lhs, pending[i].rhs, false)) {
-            if (pending != pending_stack)
-                free(pending);
+            bindings_temp_constraints_release(pending, npending,
+                                              pending_stack);
             return false;
         }
     }
-    if (pending != pending_stack)
-        free(pending);
+    bindings_temp_constraints_release(pending, npending, pending_stack);
     return true;
 }
 
@@ -1406,9 +1443,8 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     uint32_t mark = bindings_builder_save(bb);
     uint32_t pending_cap = bb->current.eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
-    BindingConstraint *pending = pending_cap <= BINDINGS_TEMP_STACK_CAP
-        ? pending_stack
-        : cetta_malloc(sizeof(BindingConstraint) * pending_cap);
+    BindingConstraint *pending = bindings_temp_constraints_alloc(
+        pending_cap, pending_stack, BINDINGS_TEMP_STACK_CAP);
     uint32_t npending = 0;
     for (uint32_t i = 0; i < bb->current.eq_len; i++)
         pending[npending++] = bb->current.constraints[i];
@@ -1421,8 +1457,8 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
                                               src->entries[i].spelling,
                                               src->entries[i].val,
                                               src->entries[i].legacy_name_fallback)) {
-            if (pending != pending_stack)
-                free(pending);
+            bindings_temp_constraints_release(pending, pending_cap,
+                                              pending_stack);
             bindings_builder_rollback(bb, mark);
             return false;
         }
@@ -1430,14 +1466,13 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_builder_add_constraint_internal(
                 bb, pending[i].lhs, pending[i].rhs, false)) {
-            if (pending != pending_stack)
-                free(pending);
+            bindings_temp_constraints_release(pending, pending_cap,
+                                              pending_stack);
             bindings_builder_rollback(bb, mark);
             return false;
         }
     }
-    if (pending != pending_stack)
-        free(pending);
+    bindings_temp_constraints_release(pending, pending_cap, pending_stack);
     if (!bindings_builder_normalize_constraints(bb)) {
         bindings_builder_rollback(bb, mark);
         return false;
@@ -1459,7 +1494,15 @@ void bindings_builder_take(BindingsBuilder *bb, Bindings *out) {
 
 /* ── Variable renaming (standardization apart) ─────────────────────────── */
 
-static uint32_t g_var_counter = 0;
+static _Atomic uint32_t g_var_counter = 1;
+#define FRESH_VAR_SUFFIX_BLOCK_SIZE 4096u
+
+typedef struct {
+    uint32_t next;
+    uint32_t remaining;
+} FreshVarSuffixBlockCache;
+
+static __thread FreshVarSuffixBlockCache g_fresh_var_suffix_block_cache = {0};
 
 typedef struct {
     VarId *items;
@@ -1481,10 +1524,19 @@ typedef struct {
 uint32_t fresh_var_suffix(void) {
     /* Epoch 0 means "no standardization-apart tag", so fresh suffixes must
        start at 1 and keep skipping 0 on unsigned wraparound. */
-    g_var_counter++;
-    if (g_var_counter == 0)
-        g_var_counter++;
-    return g_var_counter;
+    while (g_fresh_var_suffix_block_cache.remaining > 0) {
+        uint32_t suffix = g_fresh_var_suffix_block_cache.next++;
+        g_fresh_var_suffix_block_cache.remaining--;
+        if (suffix != 0)
+            return suffix;
+    }
+
+    uint32_t start = atomic_fetch_add_explicit(&g_var_counter,
+                                               FRESH_VAR_SUFFIX_BLOCK_SIZE,
+                                               memory_order_relaxed);
+    g_fresh_var_suffix_block_cache.next = start;
+    g_fresh_var_suffix_block_cache.remaining = FRESH_VAR_SUFFIX_BLOCK_SIZE;
+    return fresh_var_suffix();
 }
 
 static void var_id_set_init(VarIdSet *set) {

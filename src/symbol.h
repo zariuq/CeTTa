@@ -3,7 +3,9 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <stdint.h>
+#include <pthread.h>
 
 typedef uint32_t SymbolId;
 
@@ -22,14 +24,19 @@ typedef struct {
     SymbolId id;
 } SymbolSlot;
 
+#define SYMBOL_ENTRY_CHUNK_BITS 14u
+#define SYMBOL_ENTRY_CHUNK_SIZE (1u << SYMBOL_ENTRY_CHUNK_BITS)
+#define SYMBOL_ENTRY_CHUNK_MASK (SYMBOL_ENTRY_CHUNK_SIZE - 1u)
+#define SYMBOL_ENTRY_CHUNK_COUNT (1u << (32u - SYMBOL_ENTRY_CHUNK_BITS))
+
 typedef struct {
     SymbolSlot *slots;
     uint32_t slot_cap;
     uint32_t slot_used;
 
-    SymbolEntry *entries;
-    uint32_t entry_len;
-    uint32_t entry_cap;
+    SymbolEntry **entry_chunks;
+    _Atomic uint32_t entry_len;
+    pthread_mutex_t write_mutex;
 } SymbolTable;
 
 #define CETTA_BUILTIN_SYMBOLS(X) \
@@ -67,6 +74,7 @@ typedef struct {
     X(comma, ",") \
     X(match, "match") \
     X(superpose, "superpose") \
+    X(hyperpose, "hyperpose") \
     X(collapse, "collapse") \
     X(cons_atom, "cons-atom") \
     X(union_atom, "union-atom") \
@@ -211,6 +219,7 @@ typedef struct {
     X(isnan_math, "isnan-math") \
     X(isinf_math, "isinf-math") \
     /* ── Grounded internal helpers ── */ \
+    X(grounded_placeholder, "__grounded__") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
     X(cetta_surface_available, "__cetta_surface-available") \
@@ -247,6 +256,8 @@ typedef struct {
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \
     X(lib_lts_rho_cost_steps, "__cetta_lib_lts_rho_cost_steps") \
+    X(lib_rhometta_run, "__cetta_lib_rhometta_run") \
+    X(lib_rhometta_transitions, "__cetta_lib_rhometta_transitions") \
     X(lib_mork_space_new, "__cetta_lib_mork_space_new") \
     X(lib_mork_space_include, "__cetta_lib_mork_space_include") \
     X(lib_mork_space_open_act, "__cetta_lib_mork_space_open_act") \
