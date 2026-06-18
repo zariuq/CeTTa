@@ -1,0 +1,32 @@
+rhometta ECAN attention spreading
+
+Round-based ECAN-style importance (STI) spreading on a small Hebbian graph,
+following the diffusion dynamics of Goertzel et al.'s Economic Attention
+Networks (literature/Goertzel_Ben/Hyperon_Drafts/ECAN_final.pdf): per cycle
+the STI vector is multiplied by a LEFT-STOCHASTIC diffusion matrix built from
+the Hebbian connection weights with a MaxSpread constraint -- each atom keeps
+(1 - MaxSpread) of its STI and spreads at most MaxSpread, distributed
+proportionally to its outgoing Hebbian weights (atoms with no outgoing links
+keep everything).  Left-stochasticity gives the ECAN economy invariant:
+TOTAL STI IS CONSERVED ACROSS ROUNDS, which the demo checks each round.
+
+rho orchestrates the rounds: one spreading round = a confluent rhometta farm
+in which each atom's new STI is computed by a deferred MeTTa payload at its
+own COMM rendezvous (frozen shared Hebbian KB + the current STI vector carried
+as data in the payload).  MeTTa drives the iteration, re-embedding the
+extracted vector into the next round's payloads.  Under num-threads N the
+per-atom updates of a round genuinely run in parallel.
+
+Also shown: the attentional-focus readout (atoms with STI above a threshold)
+shifting across rounds as importance flows from the stimulated atom along
+the Hebbian structure.
+
+Scope note: this is the spreading/diffusion kernel of ECAN with its
+conservation economy.  The rent-and-wage step (s_i - rent + wages, charged
+to the attentional focus) and Hebbian weight learning are deliberately
+omitted here; full ECAN with mutable per-atom state belongs to the later
+actor-owned-space slice of rhometta.
+
+Run:
+  ./cetta --profile he-extended --lang he \
+      benchmarks/rho/rhometta-ecan-spreading/example.metta

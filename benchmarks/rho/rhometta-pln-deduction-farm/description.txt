@@ -1,0 +1,44 @@
+rhometta PLN deduction farm
+
+rho orchestrates parallel MeTTa/PLN inference: N independent deduction jobs are
+dispatched as deferred payloads on N channels, and each COMM rendezvous
+evaluates one job -- an L-hop Inheritance chain folded with PLN Truth_Deduction
+(lib_pln) over knowledge-base link truth values -- against a frozen shared
+knowledge base with payload-local transactional scratch. One job per channel
+makes the farm confluent by construction, so
+(rhometta:run farm) yields exactly one quiescent residual: the joint conclusion
+set (rho:par (rho:val concl_0) ... (rho:val concl_{N-1})).
+
+The deferred-eval payloads are MeTTa programs (KB matches + PLN truth-value
+arithmetic), so there is no .rho twin: plain Rholang has no analog of
+evaluate-a-MeTTa-term-at-COMM.
+
+Knobs:
+  size (sizes.tsv / generate.sh arg) : N parallel deduction jobs
+  CHAIN_LEN (env, default 64)        : L hops per job (eval weight per COMM)
+  THREADS_LIST (env, default 1 2 4 8): num-threads sweep in run.sh
+
+Node truth values are fixed at (stv 0.5 0.9), which makes Truth_Deduction's
+conditional-probability-consistency precondition hold for any link strengths,
+so no job silently degenerates to the (stv 1 0) fallback.
+
+PERFORMANCE NOTE (updated 2026-06-10): the faithful may-set (rhometta:run P)
+originally explored the full COMM interleaving lattice (~2.8x wall-clock per
+added cell; N=6 took 53s, N=8 timed out).  The engine now applies a
+quiet-frontier macro step (partial-order reduction): when no channel has an
+alternative pairing and every fired continuation is quiet (no further
+send/receive/drop), the whole independent frontier fires as one step,
+branching only on payload multiplicity -- the may-set is unchanged and
+N-scaling is linear (N=6: 1.5s, N=16: 6.1s at CHAIN_LEN=8).  Programs
+outside the side conditions fall back to the exact lattice exploration.
+Remaining cost axis: per-payload COMM-time evaluation overhead vs native
+MeTTa eval; threads do not yet help because macro-step payloads evaluate
+sequentially (parallel pair evaluation over the existing worker pool is the
+natural next step).
+
+Run the standalone example:
+  ./cetta --profile he-extended --lang he \
+      benchmarks/rho/rhometta-pln-deduction-farm/example.metta
+
+Run the timing sweep (writes runtime/benchmarks/rho/rhometta-pln-deduction-farm/results.tsv):
+  make bench-rho-rhometta-deduction-farm

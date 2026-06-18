@@ -103,10 +103,13 @@ typedef struct ArenaBlock {
 
 typedef struct {
     ArenaBlock *head;
+    ArenaBlock *spare;
     HashConsTable *hashcons;
     size_t live_bytes;
     size_t reserved_bytes;
+    size_t spare_bytes;
     uint32_t block_count;
+    uint32_t spare_block_count;
     CettaArenaRuntimeKind runtime_kind;
     ArenaFinalizer *finalizers;
 } Arena;
@@ -124,6 +127,7 @@ void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
 void  arena_free(Arena *a);
+void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
 ArenaMark arena_mark(const Arena *a);
@@ -162,10 +166,11 @@ uint32_t atom_hash(Atom *a);
 
 /* ── Variable identity intern/freshening ──────────────────────────────── */
 
+typedef _Atomic(VarId) VarInternEntry;
+
 typedef struct {
-    SymbolId *spellings;
-    VarId *ids;
-    uint32_t size, used;
+    _Atomic(VarInternEntry *) *chunks;
+    pthread_mutex_t write_mutex;
 } VarInternTable;
 
 void    var_intern_init(VarInternTable *t);
@@ -207,6 +212,8 @@ Atom *atom_space(Arena *a, void *space_ptr);
 typedef struct {
     Atom *value;
     Atom *content_type; /* for (StateMonad τ) */
+    uint64_t payload_owner_epoch; /* nonzero only for payload-local Rhometta scratch */
+    uint64_t payload_export_owner_epoch; /* nonzero only for escaped owned exports */
 } StateCell;
 
 typedef struct {

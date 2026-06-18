@@ -2,6 +2,7 @@
 #include "grounded.h"
 #include "search_machine.h"
 #include "stats.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1038,6 +1039,156 @@ static void space_note_atom_id_storage_peak(const Space *s) {
         (uint64_t)s->native.cap * (uint64_t)width);
 }
 
+static bool space_has_overlay_base(const Space *s) {
+    return s && s->overlay_base;
+}
+
+static void space_mark_indexes_dirty(Space *s);
+
+static CettaCount space_local_length64(const Space *s) {
+    return s ? (CettaCount)space_match_backend_logical_len64(s) : 0;
+}
+
+static AtomId space_local_get_atom_id_at64(const Space *s, CettaIndex idx) {
+    return s ? space_match_backend_get_atom_id_at64(s, idx) : CETTA_ATOM_ID_NONE;
+}
+
+static Atom *space_local_get_at64(const Space *s, CettaIndex idx) {
+    return s ? space_match_backend_get_at64(s, idx) : NULL;
+}
+
+static bool space_overlay_base_index_removed(const Space *s, CettaIndex idx) {
+    if (!space_has_overlay_base(s))
+        return false;
+    for (CettaIndex i = 0; i < s->overlay_removed_base_len; i++) {
+        if (s->overlay_removed_base_indices[i] == idx)
+            return true;
+    }
+    return false;
+}
+
+static void space_overlay_drop_removed_at_slot(Space *s, CettaIndex slot) {
+    if (!space_has_overlay_base(s) || slot >= s->overlay_removed_base_len)
+        return;
+    if (slot + 1u < s->overlay_removed_base_len) {
+        memmove(&s->overlay_removed_base_indices[slot],
+                &s->overlay_removed_base_indices[slot + 1u],
+                (size_t)(s->overlay_removed_base_len - slot - 1u) *
+                    sizeof(CettaIndex));
+    }
+    s->overlay_removed_base_len--;
+}
+
+static void space_overlay_clear_removed_at_or_after(Space *s, CettaIndex limit) {
+    if (!space_has_overlay_base(s))
+        return;
+    for (CettaIndex i = 0; i < s->overlay_removed_base_len;) {
+        if (s->overlay_removed_base_indices[i] >= limit) {
+            space_overlay_drop_removed_at_slot(s, i);
+            continue;
+        }
+        i++;
+    }
+}
+
+static void space_overlay_trim_base_tail(Space *s) {
+    if (!space_has_overlay_base(s))
+        return;
+    while (s->overlay_base_visible_len > 0) {
+        CettaIndex tail = s->overlay_base_visible_len - 1u;
+        bool removed = false;
+        for (CettaIndex i = 0; i < s->overlay_removed_base_len; i++) {
+            if (s->overlay_removed_base_indices[i] == tail) {
+                space_overlay_drop_removed_at_slot(s, i);
+                s->overlay_base_visible_len = tail;
+                removed = true;
+                break;
+            }
+        }
+        if (!removed)
+            break;
+    }
+}
+
+static bool space_overlay_mark_base_removed(Space *s, CettaIndex idx) {
+    if (!space_has_overlay_base(s) || idx >= s->overlay_base_visible_len)
+        return false;
+    if (space_overlay_base_index_removed(s, idx))
+        return true;
+    if (s->overlay_removed_base_len == s->overlay_removed_base_cap) {
+        CettaIndex next_cap =
+            s->overlay_removed_base_cap ? s->overlay_removed_base_cap * 2u : 8u;
+        CettaIndex *next = cetta_realloc(
+            s->overlay_removed_base_indices, sizeof(CettaIndex) * (size_t)next_cap);
+        if (!next)
+            return false;
+        s->overlay_removed_base_indices = next;
+        s->overlay_removed_base_cap = next_cap;
+    }
+    s->overlay_removed_base_indices[s->overlay_removed_base_len++] = idx;
+    if (idx + 1u == s->overlay_base_visible_len)
+        space_overlay_trim_base_tail(s);
+    return true;
+}
+
+static CettaCount space_overlay_visible_base_count(const Space *s) {
+    CettaCount visible = 0;
+    if (!space_has_overlay_base(s))
+        return 0;
+    for (CettaIndex i = 0; i < s->overlay_base_visible_len; i++) {
+        if (!space_overlay_base_index_removed(s, i))
+            visible++;
+    }
+    return visible;
+}
+
+static bool space_overlay_visible_base_raw_index(const Space *s,
+                                                 CettaCount visible_index,
+                                                 CettaIndex *out_raw) {
+    CettaCount seen = 0;
+    if (!space_has_overlay_base(s) || !out_raw)
+        return false;
+    for (CettaIndex i = 0; i < s->overlay_base_visible_len; i++) {
+        if (space_overlay_base_index_removed(s, i))
+            continue;
+        if (seen == visible_index) {
+            *out_raw = i;
+            return true;
+        }
+        seen++;
+    }
+    return false;
+}
+
+static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
+    if (!s)
+        return false;
+    if (!space_match_backend_materialize_native_storage(s, NULL))
+        return false;
+    if (space_is_queue(s))
+        space_linearize(s);
+    if (raw_idx >= s->native.len)
+        return false;
+    if (space_is_ordered(s)) {
+        size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+        memmove(s->native.atom_ids + ((size_t)raw_idx * width),
+                s->native.atom_ids + ((size_t)(raw_idx + 1u) * width),
+                (size_t)(s->native.len - raw_idx - 1u) * width);
+        s->native.len--;
+    } else {
+        AtomId tail_id = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, s->native.len - 1u);
+        s->native.len--;
+        (void)space_atom_id_storage_store_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, raw_idx, tail_id);
+    }
+    space_mark_indexes_dirty(s);
+    space_match_backend_note_remove(s);
+    s->revision++;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+    return true;
+}
+
 static void space_reserve_linear(Space *s, CettaIndex min_cap) {
     size_t width = 0;
     if (s->native.cap >= min_cap)
@@ -1346,6 +1497,11 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.has_non_exact_atoms = false;
     s->native.has_non_exact_atoms_dirty = false;
     s->native.secondary_index_deferral_depth = 0;
+    s->overlay_base = NULL;
+    s->overlay_base_visible_len = 0;
+    s->overlay_removed_base_indices = NULL;
+    s->overlay_removed_base_len = 0;
+    s->overlay_removed_base_cap = 0;
 }
 
 static void space_move_storage_and_backend(Space *dst, Space *src) {
@@ -1354,6 +1510,11 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
     dst->native = src->native;
     dst->kind = src->kind;
     dst->match_backend = src->match_backend;
+    dst->overlay_base = src->overlay_base;
+    dst->overlay_base_visible_len = src->overlay_base_visible_len;
+    dst->overlay_removed_base_indices = src->overlay_removed_base_indices;
+    dst->overlay_removed_base_len = src->overlay_removed_base_len;
+    dst->overlay_removed_base_cap = src->overlay_removed_base_cap;
 }
 
 static void space_reset_moved_from(Space *s) {
@@ -1373,6 +1534,17 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->revision = 0;
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
+    s->payload_owner_epoch = 0;
+    s->payload_export_owner_epoch = 0;
+}
+
+void space_init_overlay(Space *s, const Space *base) {
+    space_init_with_universe(s, base ? base->native.universe : NULL);
+    if (!base)
+        return;
+    s->kind = base->kind;
+    s->overlay_base = base;
+    s->overlay_base_visible_len = space_length64(base);
 }
 
 void space_init(Space *s) {
@@ -1396,6 +1568,14 @@ void space_free(Space *s) {
     s->native.has_non_exact_atoms = false;
     s->native.has_non_exact_atoms_dirty = false;
     s->native.secondary_index_deferral_depth = 0;
+    free(s->overlay_removed_base_indices);
+    s->overlay_base = NULL;
+    s->overlay_base_visible_len = 0;
+    s->overlay_removed_base_indices = NULL;
+    s->overlay_removed_base_len = 0;
+    s->overlay_removed_base_cap = 0;
+    s->payload_owner_epoch = 0;
+    s->payload_export_owner_epoch = 0;
 }
 
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
@@ -1774,9 +1954,10 @@ void space_replace_contents(Space *dst, Space *src) {
 /* ── Query Results ──────────────────────────────────────────────────────── */
 
 void query_results_init(QueryResults *qr) {
-    qr->items = NULL;
+    memset(qr->inline_items, 0, sizeof(qr->inline_items));
+    qr->items = qr->inline_items;
     qr->len = 0;
-    qr->cap = 0;
+    qr->cap = 1;
 }
 
 static CettaCount query_results_capacity_limit(void) {
@@ -1802,7 +1983,14 @@ static bool query_results_ensure_one(QueryResults *qr) {
         next = limit;
     if (next < need)
         return false;
-    qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * (size_t)next);
+    if (qr->items == qr->inline_items) {
+        QueryResult *heap = cetta_malloc(sizeof(QueryResult) * (size_t)next);
+        if (qr->len > 0)
+            memcpy(heap, qr->items, sizeof(QueryResult) * (size_t)qr->len);
+        qr->items = heap;
+    } else {
+        qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * (size_t)next);
+    }
     qr->cap = next;
     return true;
 }
@@ -1842,10 +2030,12 @@ CettaCount query_results_visit(const QueryResults *qr, QueryResultVisitor visito
 void query_results_free(QueryResults *qr) {
     for (CettaIndex i = 0; i < qr->len; i++)
         bindings_free(&qr->items[i].bindings);
-    free(qr->items);
-    qr->items = NULL;
+    if (qr->items != qr->inline_items)
+        free(qr->items);
+    memset(qr->inline_items, 0, sizeof(qr->inline_items));
+    qr->items = qr->inline_items;
     qr->len = 0;
-    qr->cap = 0;
+    qr->cap = 1;
 }
 
 typedef struct {
@@ -2098,7 +2288,56 @@ static bool project_query_visible_bindings(Arena *a,
 
 /* ── Space Registry ─────────────────────────────────────────────────────── */
 
-void registry_init(Registry *r) { r->len = 0; }
+void registry_init(Registry *r) {
+    if (!r) return;
+    r->entries = r->inline_entries;
+    r->len = 0;
+    r->cap = (uint32_t)(sizeof(r->inline_entries) /
+                        sizeof(r->inline_entries[0]));
+}
+
+void registry_free(Registry *r) {
+    if (!r) return;
+    if (r->entries && r->entries != r->inline_entries)
+        free(r->entries);
+    r->entries = r->inline_entries;
+    r->len = 0;
+    r->cap = (uint32_t)(sizeof(r->inline_entries) /
+                        sizeof(r->inline_entries[0]));
+}
+
+static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
+    uint32_t next_cap;
+    RegistryEntry *next;
+    if (!r)
+        return false;
+    if (!r->entries) {
+        r->entries = r->inline_entries;
+        r->cap = (uint32_t)(sizeof(r->inline_entries) /
+                            sizeof(r->inline_entries[0]));
+    }
+    if (r->cap >= min_needed)
+        return true;
+    next_cap = r->cap ? r->cap : 16u;
+    while (next_cap < min_needed) {
+        if (next_cap > UINT32_MAX / 2u)
+            return false;
+        next_cap *= 2u;
+    }
+    if ((size_t)next_cap > SIZE_MAX / sizeof(RegistryEntry))
+        return false;
+    if (r->entries == r->inline_entries) {
+        next = cetta_malloc(sizeof(RegistryEntry) * (size_t)next_cap);
+        if (r->len > 0)
+            memcpy(next, r->entries, sizeof(RegistryEntry) * (size_t)r->len);
+    } else {
+        next = cetta_realloc(r->entries,
+                             sizeof(RegistryEntry) * (size_t)next_cap);
+    }
+    r->entries = next;
+    r->cap = next_cap;
+    return true;
+}
 
 void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
     if (!r || key == SYMBOL_ID_NONE) return;
@@ -2109,11 +2348,11 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
             return;
         }
     }
-    if (r->len < MAX_REGISTRY) {
-        r->entries[r->len].key = key;
-        r->entries[r->len].value = value;
-        r->len++;
-    }
+    if (!registry_ensure_capacity(r, r->len + 1u))
+        return;
+    r->entries[r->len].key = key;
+    r->entries[r->len].value = value;
+    r->len++;
 }
 
 Atom *registry_lookup_id(Registry *r, SymbolId key) {
@@ -2148,6 +2387,60 @@ Space *resolve_space(Registry *r, Atom *ref) {
 bool space_remove(Space *s, Atom *atom) {
     if (!s)
         return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount base_visible = space_overlay_visible_base_count(s);
+        CettaIndex alpha_raw = 0;
+        CettaCount alpha_count = 0;
+        for (CettaCount i = 0; i < base_visible; i++) {
+            CettaIndex raw = 0;
+            Atom *candidate = NULL;
+            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+                continue;
+            candidate = space_get_at64(s->overlay_base, raw);
+            if (candidate && atom_eq(candidate, atom)) {
+                if (!space_overlay_mark_base_removed(s, raw))
+                    return false;
+                space_bump_revision(s);
+                return true;
+            }
+        }
+        for (CettaIndex i = 0; i < space_local_length64(s); i++) {
+            Atom *candidate = space_local_get_at64(s, i);
+            if (candidate && atom_eq(candidate, atom))
+                return space_overlay_remove_local_raw_index(s, i);
+        }
+        for (CettaCount i = 0; i < base_visible; i++) {
+            CettaIndex raw = 0;
+            Atom *candidate = NULL;
+            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+                continue;
+            candidate = space_get_at64(s->overlay_base, raw);
+            if (candidate && atom_alpha_eq(candidate, atom)) {
+                alpha_raw = raw;
+                alpha_count++;
+            }
+        }
+        for (CettaIndex i = 0; i < space_local_length64(s); i++) {
+            Atom *candidate = space_local_get_at64(s, i);
+            if (candidate && atom_alpha_eq(candidate, atom)) {
+                alpha_raw = i + (CettaIndex)base_visible;
+                alpha_count++;
+            }
+        }
+        if (alpha_count != 1u)
+            return false;
+        if (alpha_raw < (CettaIndex)base_visible) {
+            CettaIndex raw = 0;
+            if (!space_overlay_visible_base_raw_index(s, alpha_raw, &raw) ||
+                !space_overlay_mark_base_removed(s, raw)) {
+                return false;
+            }
+            space_bump_revision(s);
+            return true;
+        }
+        return space_overlay_remove_local_raw_index(
+            s, alpha_raw - (CettaIndex)base_visible);
+    }
     if (s->native.universe && atom) {
         AtomId atom_id = term_universe_lookup_atom_id(s->native.universe, atom);
         if (atom_id != CETTA_ATOM_ID_NONE &&
@@ -2233,6 +2526,25 @@ bool space_contains_atom_id(const Space *s, AtomId atom_id) {
 bool space_remove_atom_id(Space *s, AtomId atom_id) {
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount base_visible = space_overlay_visible_base_count(s);
+        for (CettaCount i = 0; i < base_visible; i++) {
+            CettaIndex raw = 0;
+            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+                continue;
+            if (space_get_atom_id_at64(s->overlay_base, raw) != atom_id)
+                continue;
+            if (!space_overlay_mark_base_removed(s, raw))
+                return false;
+            space_bump_revision(s);
+            return true;
+        }
+        for (CettaIndex i = 0; i < space_local_length64(s); i++) {
+            if (space_local_get_atom_id_at64(s, i) == atom_id)
+                return space_overlay_remove_local_raw_index(s, i);
+        }
+        return false;
+    }
     if (space_remove_via_backend_primary(s, atom_id))
         return true;
     if (!space_match_backend_materialize_native_storage(s, NULL))
@@ -2270,15 +2582,41 @@ AtomId space_get_atom_id_at(const Space *s, uint32_t idx) {
 }
 
 CettaCount space_length64(const Space *s) {
-    return (CettaCount)space_match_backend_logical_len64(s);
+    if (!s)
+        return 0;
+    if (!space_has_overlay_base(s))
+        return (CettaCount)space_match_backend_logical_len64(s);
+    return space_overlay_visible_base_count(s) + space_local_length64(s);
 }
 
 AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx) {
-    return space_match_backend_get_atom_id_at64(s, idx);
+    if (!s)
+        return CETTA_ATOM_ID_NONE;
+    if (!space_has_overlay_base(s))
+        return space_match_backend_get_atom_id_at64(s, idx);
+    CettaCount base_visible = space_overlay_visible_base_count(s);
+    if (idx < base_visible) {
+        CettaIndex raw = 0;
+        if (!space_overlay_visible_base_raw_index(s, idx, &raw))
+            return CETTA_ATOM_ID_NONE;
+        return space_get_atom_id_at64(s->overlay_base, raw);
+    }
+    return space_local_get_atom_id_at64(s, idx - base_visible);
 }
 
 Atom *space_get_at64(const Space *s, CettaIndex idx) {
-    return space_match_backend_get_at64(s, idx);
+    if (!s)
+        return NULL;
+    if (!space_has_overlay_base(s))
+        return space_match_backend_get_at64(s, idx);
+    CettaCount base_visible = space_overlay_visible_base_count(s);
+    if (idx < base_visible) {
+        CettaIndex raw = 0;
+        if (!space_overlay_visible_base_raw_index(s, idx, &raw))
+            return NULL;
+        return space_get_at64(s->overlay_base, raw);
+    }
+    return space_local_get_at64(s, idx - base_visible);
 }
 
 Atom *space_get_at(const Space *s, uint32_t idx) {
@@ -2298,6 +2636,30 @@ bool space_pop(Space *s, Atom **out) {
 
     if (!s)
         return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount base_visible = space_overlay_visible_base_count(s);
+        CettaCount local_len = space_local_length64(s);
+        logical_len = base_visible + local_len;
+        if (logical_len == 0)
+            return false;
+        top = space_peek(s);
+        if (!top)
+            return false;
+        if (out)
+            *out = top;
+        if (local_len > 0)
+            return space_overlay_remove_local_raw_index(s, local_len - 1u);
+        if (base_visible > 0) {
+            CettaIndex raw = 0;
+            if (!space_overlay_visible_base_raw_index(s, base_visible - 1u, &raw) ||
+                !space_overlay_mark_base_removed(s, raw)) {
+                return false;
+            }
+            space_bump_revision(s);
+            return true;
+        }
+        return false;
+    }
     logical_len = space_length64(s);
     if (logical_len == 0)
         return false;
@@ -2329,6 +2691,8 @@ bool space_truncate(Space *s, uint32_t new_len) {
 
     if (!s)
         return false;
+    if (space_has_overlay_base(s))
+        return space_truncate64(s, new_len);
     if (!space_length_u32_checked(s, &logical_len))
         return false;
     if (new_len > logical_len)
@@ -2353,6 +2717,45 @@ bool space_truncate64(Space *s, CettaCount new_len) {
 
     if (!s)
         return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount base_visible = space_overlay_visible_base_count(s);
+        CettaCount local_len = space_local_length64(s);
+        logical_len = base_visible + local_len;
+        if (new_len > logical_len)
+            return false;
+        if (new_len >= base_visible) {
+            CettaCount want_local = new_len - base_visible;
+            if (want_local == local_len)
+                return true;
+            if (!space_match_backend_materialize_native_storage(s, NULL))
+                return false;
+            s->native.len = want_local;
+            if (s->native.len == 0)
+                s->native.start = 0;
+            space_mark_indexes_dirty(s);
+            space_match_backend_note_remove(s);
+            space_bump_revision(s);
+            return true;
+        }
+        if (!space_match_backend_materialize_native_storage(s, NULL))
+            return false;
+        s->native.len = 0;
+        s->native.start = 0;
+        if (new_len == 0) {
+            s->overlay_base_visible_len = 0;
+            s->overlay_removed_base_len = 0;
+        } else {
+            CettaIndex raw = 0;
+            if (!space_overlay_visible_base_raw_index(s, new_len - 1u, &raw))
+                return false;
+            s->overlay_base_visible_len = raw + 1u;
+            space_overlay_clear_removed_at_or_after(s, s->overlay_base_visible_len);
+        }
+        space_mark_indexes_dirty(s);
+        space_match_backend_note_remove(s);
+        space_bump_revision(s);
+        return true;
+    }
     if (space_truncate_via_backend_primary64(s, new_len))
         return true;
     logical_len = space_length64(s);
@@ -2383,6 +2786,26 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     /* Exact index is maintained for ALL space kinds - enable for native too */
     if (!s || !atom || atom_has_variables(atom) || !atom_is_exact_indexable(atom))
         return 0;
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * (size_t)logical_len);
+        CettaIndex n = 0;
+        for (CettaIndex i = 0; i < logical_len; i++) {
+            Atom *candidate = space_get_at64(s, i);
+            if (candidate && atom_eq(candidate, atom))
+                matches[n++] = i;
+        }
+        if (n == 0) {
+            free(matches);
+            return 0;
+        }
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT, n);
+        if (out)
+            *out = matches;
+        else
+            free(matches);
+        return n;
+    }
     if (!space_sync_exact_membership_from_backend(s))
         return 0;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP);
@@ -2455,6 +2878,15 @@ bool space_contains_exact(Space *s, Atom *atom) {
 bool space_contains_only_exact_atoms(Space *s) {
     if (!s)
         return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex i = 0; i < logical_len; i++) {
+            Atom *atom = space_get_at64(s, i);
+            if (!atom || !atom_is_exact_indexable(atom))
+                return false;
+        }
+        return true;
+    }
     if (!ensure_has_non_exact_atoms(s))
         return false;
     return !s->native.has_non_exact_atoms;
@@ -2561,6 +2993,29 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
 /* Scan space for (: atom type) annotations */
 static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types) {
+    if (space_has_overlay_base(s)) {
+        Atom **types = NULL;
+        uint32_t count = 0, cap = 0;
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex i = 0; i < logical_len; i++) {
+            Atom *annotation = space_get_at64(s, i);
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3)
+                continue;
+            if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
+                continue;
+            if (!atom_eq(annotation->expr.elems[1], atom))
+                continue;
+            if (count >= cap) {
+                cap = cap ? cap * 2u : 4u;
+                types = cetta_realloc(types, sizeof(Atom *) * cap);
+            }
+            types[count++] = atom_freshen_epoch(a, annotation->expr.elems[2],
+                                                fresh_var_suffix());
+        }
+        *out_types = types;
+        return count;
+    }
     /* Use type annotation index for O(bucket_size) instead of O(N) */
     ensure_ty_ann_index(s);
     uint32_t h = atom_hash_for_index(atom);
@@ -3180,9 +3635,49 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
     }
 }
 
+static CettaCount query_equations_core_overlay(Space *s, Atom *query, Arena *a,
+                                               QueryResultSink *sink) {
+    QueryVisibleVarSet visible;
+    SymbolId query_head = eq_head_symbol(query);
+    CettaCount logical_len;
+    CettaCount considered = 0;
+
+    query_visible_var_set_init(&visible);
+    if (!collect_query_visible_vars_rec(query, &visible)) {
+        query_visible_var_set_free(&visible);
+        return 0;
+    }
+
+    logical_len = space_length64(s);
+    for (CettaIndex i = 0; i < logical_len && !sink->stop; i++) {
+        Atom *equation = space_get_at64(s, i);
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        SymbolId lhs_head;
+        if (!equation || !is_equation_atom(equation, &lhs, &rhs))
+            continue;
+        lhs_head = eq_head_symbol(lhs);
+        if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
+            lhs_head != query_head) {
+            continue;
+        }
+        considered++;
+        (void)query_equation_emit_decoded_epoch(
+            lhs, rhs, query, &visible, a, fresh_var_suffix(), NULL, sink);
+    }
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
+                            considered);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES, considered);
+    query_visible_var_set_free(&visible);
+    return sink->emitted;
+}
+
 static CettaCount query_equations_core(Space *s, Atom *query, Arena *a,
                                        QueryResultSink *sink) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
+    if (space_has_overlay_base(s))
+        return query_equations_core_overlay(s, query, a, sink);
     ensure_eq_index(s);
     QueryVisibleVarSet visible;
     query_visible_var_set_init(&visible);
@@ -3224,6 +3719,27 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
 bool space_equations_may_match_known_head(Space *s, SymbolId head) {
     if (!s || head == SYMBOL_ID_NONE)
         return true;
+    if (space_has_overlay_base(s)) {
+        /* Scan only the local scratch tail and delegate the base-visible
+         * prefix to the base's own (indexed) check.  Base equations removed
+         * through the overlay can yield a conservative true, which is
+         * harmless for a may-match predicate. */
+        CettaCount base_visible = space_overlay_visible_base_count(s);
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex i = base_visible; i < logical_len; i++) {
+            Atom *equation = space_get_at64(s, i);
+            Atom *lhs = NULL;
+            Atom *rhs = NULL;
+            SymbolId lhs_head;
+            if (!equation || !is_equation_atom(equation, &lhs, &rhs))
+                continue;
+            lhs_head = eq_head_symbol(lhs);
+            if (lhs_head == SYMBOL_ID_NONE || lhs_head == head)
+                return true;
+        }
+        return space_equations_may_match_known_head((Space *)s->overlay_base,
+                                                    head);
+    }
     ensure_eq_index(s);
     if (s->native.eq_idx.wildcard.len > 0)
         return true;

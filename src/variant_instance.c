@@ -257,3 +257,16 @@ Atom *variant_instance_materialize(Arena *dst, Atom *skeleton,
                                    variant_instance_rewrite_slot_var,
                                    &ctx, false);
 }
+
+Atom *variant_instance_peek_private_var(const VariantInstance *instance,
+                                        Atom *var) {
+    VariantInstanceStorage *storage = variant_instance_storage(instance);
+    if (!storage || !var || var->kind != ATOM_VAR ||
+        !variant_private_var_id(var->var_id)) {
+        return NULL;
+    }
+    uint32_t ordinal = variant_shape_slot_ordinal(var->var_id);
+    if (ordinal >= storage->slot_count)
+        return NULL;
+    return storage->slot_vals[ordinal];
+}

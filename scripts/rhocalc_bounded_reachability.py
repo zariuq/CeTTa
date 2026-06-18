@@ -95,8 +95,17 @@ def scheduler_residual(
         "--syntax",
         syntax,
     ]
-    if policy != "canonical":
+    if policy == "canonical":
+        pass
+    elif policy == "rotating":
         args.extend(["--rho-scheduler", policy])
+    elif policy.startswith("threaded") and policy[len("threaded"):].isdigit():
+        threads = policy[len("threaded"):]
+        if int(threads) < 2:
+            raise ValueError("threaded policy requires at least 2 threads")
+        args.extend(["--num-threads", threads])
+    else:
+        raise ValueError(f"unknown scheduler policy: {policy}")
     args.append(path)
     proc = run_cmd(args)
     if proc.returncode not in (0, 3):

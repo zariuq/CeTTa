@@ -148,9 +148,17 @@ typedef struct Space {
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
     SpaceMatchBackend match_backend;
+    const struct Space *overlay_base;
+    CettaIndex overlay_base_visible_len;
+    CettaIndex *overlay_removed_base_indices;
+    CettaIndex overlay_removed_base_len;
+    CettaIndex overlay_removed_base_cap;
+    uint64_t payload_owner_epoch;
+    uint64_t payload_export_owner_epoch;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
+void space_init_overlay(Space *s, const Space *base);
 void space_init(Space *s);
 void space_free(Space *s);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
@@ -203,6 +211,7 @@ typedef struct {
 typedef struct {
     QueryResult *items;
     CettaCount len, cap;
+    QueryResult inline_items[1];
 } QueryResults;
 
 typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
@@ -224,19 +233,19 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head);
 
 /* ── Space Registry (named spaces) ─────────────────────────────────────── */
 
-#define MAX_REGISTRY 64
-
 typedef struct {
     SymbolId key;
     Atom *value;  /* Usually a grounded space atom, but can be anything */
 } RegistryEntry;
 
 typedef struct {
-    RegistryEntry entries[MAX_REGISTRY];
-    uint32_t len;
+    RegistryEntry *entries;
+    uint32_t len, cap;
+    RegistryEntry inline_entries[16];
 } Registry;
 
 void registry_init(Registry *r);
+void registry_free(Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);
 void registry_bind(Registry *r, const char *name, Atom *value);

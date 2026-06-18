@@ -1,7 +1,9 @@
 # name	syntax	depth	policy	fixture
 # This matrix is intentionally limited to cases supported by the tiny
 # independent successor-set model used by scripts/rhocalc_bounded_reachability.py.
+# `threaded2` means `--num-threads 2` with no explicit scheduler knob.
 branching-relation-one-step	mrho	1	canonical	tests/rhocalc/branching_relation.mrho
+comm-par-chain-one-step	mrho	1	canonical	tests/rhocalc/comm_par_chain_h1.mrho
 capture-shadow-recv-one-step	mrho	1	canonical	tests/rhocalc/capture_shadow_ok_h1.mrho
 core-comm-one-step	mrho	1	canonical	tests/rhocalc/core_comm.mrho
 name-quote-drop-one-step	mrho	1	canonical	tests/rhocalc/name_quote_drop.mrho
@@ -33,6 +35,7 @@ surface-rotating-persistent-canonical-two-step	rho	2	canonical	tests/rhocalc/rot
 surface-primed-diamond-canonical-two-step	rho	2	canonical	tests/rhocalc/rotating_scheduler_primed_diamond.rho
 surface-primed-diamond-canonical-three-step	rho	3	canonical	tests/rhocalc/rotating_scheduler_primed_diamond.rho
 branching-relation-one-step-rotating	mrho	1	rotating	tests/rhocalc/branching_relation.mrho
+comm-par-chain-one-step-rotating	mrho	1	rotating	tests/rhocalc/comm_par_chain_h1.mrho
 capture-shadow-recv-one-step-rotating	mrho	1	rotating	tests/rhocalc/capture_shadow_ok_h1.mrho
 core-comm-one-step-rotating	mrho	1	rotating	tests/rhocalc/core_comm.mrho
 name-quote-drop-one-step-rotating	mrho	1	rotating	tests/rhocalc/name_quote_drop.mrho
@@ -63,3 +66,12 @@ surface-input-guarded-unfold-one-step-rotating	rho	1	rotating	tests/rhocalc/pape
 surface-rotating-persistent-rotating-two-step	rho	2	rotating	tests/rhocalc/rotating_scheduler_persistent_branch.rho
 surface-primed-diamond-rotating-two-step	rho	2	rotating	tests/rhocalc/rotating_scheduler_primed_diamond.rho
 surface-primed-diamond-rotating-three-step	rho	3	rotating	tests/rhocalc/rotating_scheduler_primed_diamond.rho
+branching-relation-one-step-threaded	mrho	1	threaded2	tests/rhocalc/branching_relation.mrho
+comm-par-chain-one-step-threaded	mrho	1	threaded2	tests/rhocalc/comm_par_chain_h1.mrho
+multistep-diamond-two-step-threaded	mrho	2	threaded2	tests/rhocalc/multistep_diamond_h3_setup.mrho
+rotating-persistent-two-step-threaded	mrho	2	threaded2	tests/rhocalc/rotating_scheduler_persistent_branch.mrho
+rotating-primed-diamond-two-step-threaded	mrho	2	threaded2	tests/rhocalc/rotating_scheduler_primed_diamond.mrho
+rotating-primed-diamond-three-step-threaded	mrho	3	threaded2	tests/rhocalc/rotating_scheduler_primed_diamond.mrho
+surface-rotating-persistent-two-step-threaded	rho	2	threaded2	tests/rhocalc/rotating_scheduler_persistent_branch.rho
+surface-primed-diamond-two-step-threaded	rho	2	threaded2	tests/rhocalc/rotating_scheduler_primed_diamond.rho
+surface-primed-diamond-three-step-threaded	rho	3	threaded2	tests/rhocalc/rotating_scheduler_primed_diamond.rho

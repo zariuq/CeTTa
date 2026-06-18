@@ -64,6 +64,7 @@ VALID_LANES = {
     "test-pathmap-lane",
     "test-profiles",
     "test-python",
+    "test-rhometta-payload-map-capacity-c",
     "test-runtime-stats-lane",
     "probe-core-lane",
     "probe-pathmap-lane",
@@ -92,6 +93,7 @@ LANE_ORDER = {
     "xfail-core-lane": 100,
     "test-fallback-eval-session": 110,
     "test-import-modes": 120,
+    "test-rhometta-payload-map-capacity-c": 130,
 }
 
 NO_EXPECT_CLASSIFICATION = {

@@ -4,11 +4,13 @@
 #include "symbol.h"
 
 #include <limits.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
 static uint64_t g_runtime_counters[CETTA_RUNTIME_COUNTER_COUNT];
 static bool g_runtime_stats_enabled = false;
+static pthread_mutex_t g_runtime_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT] = {
     "bindings-lookup",
@@ -189,6 +191,37 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "match-chain-query-bindings-constraint-delta-peak",
     "match-chain-seed-merge-bindings-entry-delta-peak",
     "match-chain-seed-merge-bindings-constraint-delta-peak",
+    "hyperpose-threaded-run",
+    "hyperpose-worker-started",
+    "hyperpose-result-emitted",
+    "hyperpose-cooperative-fallback",
+    "hyperpose-fallback-thread-limit",
+    "hyperpose-once-run",
+    "hyperpose-cancel-request",
+    "hyperpose-cancel-observed",
+    "hyperpose-select-k-run",
+    "parallel-queue-push",
+    "parallel-queue-pop",
+    "parallel-queue-wait",
+    "parallel-queue-depth-peak",
+    "parallel-queue-active-peak",
+    "parallel-worker-task",
+    "rho-async-endpoint-publish",
+    "rho-async-endpoint-queued",
+    "rho-async-endpoint-match",
+    "arena-spare-hit",
+    "arena-spare-miss",
+    "arena-spare-recycle-block",
+    "arena-spare-blocks-peak",
+    "arena-spare-bytes-peak",
+    "rho-quiet-macro-applied",
+    "rho-quiet-macro-full-fire",
+    "rho-quiet-macro-partial-fire",
+    "rho-quiet-macro-bail-exact",
+    "rho-quiet-macro-fallback-contention",
+    "rho-quiet-macro-fallback-nonquiet",
+    "rho-quiet-macro-fallback-unsafe-payload",
+    "rho-quiet-macro-fallback-child-cap",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -204,41 +237,72 @@ const char *cetta_runtime_counter_name(CettaRuntimeCounter counter) {
 }
 
 void cetta_runtime_stats_reset(void) {
+    pthread_mutex_lock(&g_runtime_stats_mutex);
     memset(g_runtime_counters, 0, sizeof(g_runtime_counters));
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
-void cetta_runtime_stats_enable(void) { g_runtime_stats_enabled = true; }
-void cetta_runtime_stats_disable(void) { g_runtime_stats_enabled = false; }
-bool cetta_runtime_stats_is_enabled(void) { return g_runtime_stats_enabled; }
+void cetta_runtime_stats_enable(void) {
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    g_runtime_stats_enabled = true;
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
+}
+
+void cetta_runtime_stats_disable(void) {
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    g_runtime_stats_enabled = false;
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
+}
+
+bool cetta_runtime_stats_is_enabled(void) {
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    bool enabled = g_runtime_stats_enabled;
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
+    return enabled;
+}
 
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
-    if (__builtin_expect(!g_runtime_stats_enabled, 1))
-        return;
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    if (__builtin_expect(!g_runtime_stats_enabled, 1)) {
+        pthread_mutex_unlock(&g_runtime_stats_mutex);
+        return;
+    }
     g_runtime_counters[counter] += delta;
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
 void cetta_runtime_stats_set(CettaRuntimeCounter counter, uint64_t value) {
-    if (__builtin_expect(!g_runtime_stats_enabled, 1))
-        return;
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    if (__builtin_expect(!g_runtime_stats_enabled, 1)) {
+        pthread_mutex_unlock(&g_runtime_stats_mutex);
+        return;
+    }
     g_runtime_counters[counter] = value;
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
 void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value) {
-    if (__builtin_expect(!g_runtime_stats_enabled, 1))
-        return;
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    if (__builtin_expect(!g_runtime_stats_enabled, 1)) {
+        pthread_mutex_unlock(&g_runtime_stats_mutex);
+        return;
+    }
     if (value > g_runtime_counters[counter])
         g_runtime_counters[counter] = value;
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     if (!out) return;
+    pthread_mutex_lock(&g_runtime_stats_mutex);
     memcpy(out->counters, g_runtime_counters, sizeof(g_runtime_counters));
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats) {

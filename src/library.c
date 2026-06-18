@@ -30,7 +30,8 @@ enum {
     CETTA_LIBRARY_STR = 1u << 2,
     CETTA_LIBRARY_LTS = 1u << 3,
     CETTA_LIBRARY_MORK = 1u << 4,
-    CETTA_LIBRARY_RHO = 1u << 5
+    CETTA_LIBRARY_RHO = 1u << 5,
+    CETTA_LIBRARY_RHOMETTA = 1u << 6
 };
 
 typedef struct {
@@ -45,6 +46,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"lts", CETTA_LIBRARY_LTS},
     {"mork", CETTA_LIBRARY_MORK},
     {"rho", CETTA_LIBRARY_RHO},
+    {"rhometta", CETTA_LIBRARY_RHOMETTA},
 };
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
@@ -2249,12 +2251,77 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
     return NULL;
 }
 
-static Atom *cetta_library_dispatch_rho(Arena *a, Atom *head,
-                                        Atom **args, uint32_t nargs) {
-    (void)a;
-    (void)head;
-    (void)args;
-    (void)nargs;
+static bool rhometta_eval_context_from_current(
+    const CettaLibraryContext *ctx, Space *space, RhocalcEvalContext *out) {
+    if (!ctx || !space || !out) return false;
+    out->space = space;
+    out->registry = eval_current_registry();
+    out->persistent_arena = eval_current_persistent_arena();
+    out->library_context = (CettaLibraryContext *)ctx;
+    return true;
+}
+
+static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
+                                             Space *space, Arena *a, Atom *head,
+                                             Atom **args, uint32_t nargs) {
+    RhocalcEvalContext eval_context;
+    const char *detail;
+
+    if (head->kind != ATOM_SYMBOL) return NULL;
+    if (!rhometta_eval_context_from_current(ctx, space, &eval_context)) {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "rhometta requires an active evaluation space"));
+    }
+
+    if (head->sym_id == g_builtin_syms.lib_rhometta_transitions) {
+        Atom *result;
+        if (nargs != 1) {
+            return library_signature_error(
+                a, head, args, nargs, "expected one rhometta process");
+        }
+        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+            detail = rhocalc_last_validation_error();
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, detail ? detail
+                                      : "expected rhometta process"));
+        }
+        result = rhocalc_successor_frontier_expr_with_eval_context(
+            a, args[0], &eval_context);
+        if (!result) {
+            detail = rhocalc_last_validation_error();
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, detail ? detail
+                                      : "rhometta successor frontier construction failed"));
+        }
+        return result;
+    }
+
+    if (head->sym_id == g_builtin_syms.lib_rhometta_run) {
+        Atom *result;
+        if (nargs != 1) {
+            return library_signature_error(
+                a, head, args, nargs, "expected one rhometta process");
+        }
+        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+            detail = rhocalc_last_validation_error();
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, detail ? detail
+                                      : "expected rhometta process"));
+        }
+        result = rhocalc_quiescent_frontier_expr_with_eval_context(
+            a, args[0], &eval_context);
+        if (!result) {
+            detail = rhocalc_last_validation_error();
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, detail ? detail : "rhometta reduction failed"));
+        }
+        return result;
+    }
+
     return NULL;
 }
 
@@ -6031,7 +6098,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                         persistent_arena ? persistent_arena : eval_arena,
                         atom_ids[i + 1]);
                     if (!eval_form) {
-                        free(rs.items);
+                        result_set_free(&rs);
                         ok = false;
                         *error_out = module_reason(ctx, eval_arena,
                                                    "ModuleParseFailed", path);
@@ -6041,7 +6108,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                                            eval_form, &rs);
                     Atom *first_error = result_set_first_error(eval_arena, &rs);
                     bool stop_after_error = first_error != NULL || result_set_has_error(&rs);
-                    free(rs.items);
+                    result_set_free(&rs);
                     eval_release_temporary_spaces();
                     if (stop_after_error) {
                         *error_out = first_error ? first_error :
@@ -6815,8 +6882,9 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
         Atom *result = cetta_library_dispatch_str(a, head, args, nargs);
         if (result) return result;
     }
-    if (ctx->active_mask & CETTA_LIBRARY_RHO) {
-        Atom *result = cetta_library_dispatch_rho(a, head, args, nargs);
+    if (ctx->active_mask & CETTA_LIBRARY_RHOMETTA) {
+        Atom *result = cetta_library_dispatch_rhometta(ctx, space, a, head,
+                                                       args, nargs);
         if (result) return result;
     }
     {
