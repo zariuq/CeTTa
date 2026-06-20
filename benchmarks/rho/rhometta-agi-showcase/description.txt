@@ -1,0 +1,32 @@
+rhometta Hyperon/AGI showcase: cognitive services as concurrent reactions
+
+rho supplies the coordination graph; MeTTa payloads run only when COMM fires.
+Three cognitive services run in parallel, each a deferred eval-at-COMM payload:
+  1. a PLN-style two-hop proof search with multiple possible proof paths,
+  2. overlap-corrected evidence revision from two agents (shared stamps
+     discounted, vs naive double-counting), and
+  3. one ECAN-style attention-spreading round.
+Their owned results are gathered through rho channels and fed to a final deferred
+MeTTa payload that synthesizes an action plan.  Because the proof search has
+several paths, the COMM forks and (rhometta:run) returns the may-set of one plan
+per proof path -- faithful branching plus causal chaining (a later payload reads
+an earlier payload's owned result through a channel).
+
+This is the fusion that neither substrate has alone: plain Rholang can pass names
+and spawn processes but has no evaluate-a-MeTTa-term-at-COMM; a bare MeTTa
+interpreter has the inference but no concurrent reduction, private channels, or
+may-set frontier.
+
+Imports lib_pln + lib_overlap_corrected_revision (both ship in lib/), so unlike
+the self-unfolding-prover demo this one needs those libraries on the import path
+(any non-core build, or core with lib/ available).
+
+Verified outcomes: two (agi-workflow-plan ...) residuals, one per PLN proof path
+(via Hyperon: stv ~0.66/0.44; via Rhometta: stv ~0.68/0.50), each carrying the
+selected proof, the overlap-corrected belief (stv ~0.75/0.857) alongside the
+naive double-counted one (~0.75/0.889), the ECAN attention round
+(AGI 36.0, Rhometta 26.4, Hyperon 15.6, ...), and the next-step plan.
+
+Run:
+  ./cetta --profile he-extended --lang he \
+      benchmarks/rho/rhometta-agi-showcase/example.metta

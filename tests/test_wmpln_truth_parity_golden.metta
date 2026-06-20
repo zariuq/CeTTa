@@ -32,3 +32,9 @@
               (stv 0.5 0.6666666666666666))
 !(assertEqual (Truth_Revision (stv 0.2 0.5) (stv 0.8 0.75))
               (stv 0.6500000000000001 0.8))
+; Negative canary for the old raw-confidence heuristic:
+; weighting by c directly would give about (stv 0.56 0.725), not the
+; evidence-weight revision above.
+!(assertEqual (== (Truth_Revision (stv 0.2 0.5) (stv 0.8 0.75))
+                  (stv 0.56 0.725))
+              False)
