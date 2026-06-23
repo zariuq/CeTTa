@@ -1,0 +1,97 @@
+rhometta-type-inference -- Curry-Howard type inference as concurrent backward chaining
+=====================================================================================
+
+THE IDEA
+--------
+Type-checking is proof search.  A typing judgment
+
+    (: <proof> (HasType <expr> <type>))
+
+is proved by backward chaining over typing rules, and the proof term IS the typing
+derivation (Curry-Howard).  rhometta runs that proof search as rho reactions: each
+resolution step is one eval-at-COMM, so an application's subgoals are inferred in
+PARALLEL rho cells, overloaded operators fork into a may-set, and the application
+rule's shared type variables are unified at the join -- pruning overloads that do
+not fit.
+
+This is the flagship of the pair; rhometta-typed-bc is the recognizability anchor
+(the nilbc mortal example).  Both use the identical machinery.
+
+THE KNOWLEDGE BASE (in &kb, a new-space)
+----------------------------------------
+    x    : Int
+    one  : Int            one : Float          (one is overloaded)
+    true : Bool
+    plus : Int   -> Int   -> Int               (overload, ranked stv 0.90)
+    plus : Float -> Float -> Float             (overload, ranked stv 0.60)
+
+    application rule (2-arg):
+      app : (HasType op (Fn2 A B C)) , (HasType a A) , (HasType b B)
+            |- (HasType (op a b) C)          proof term: (app pf pa pb)
+
+A, B, C are shared across the premises and the conclusion.  The premise cells run
+in parallel and resolve independently, so the join (combine3) re-matches the rule
+against the resolved premises; the shared variables then force agreement.
+
+WHAT EACH ACT SHOWS (all verified PASS, 0 errors)
+-------------------------------------------------
+ACT1  (plus one one)   -> 2 typings: Int and Float.  This is the OR may-set from
+                          the overloaded operator.  The truth value ranks them
+                          (Int 0.9 preferred over Float 0.6) -- PLN metadata, NOT
+                          part of the typing judgment.
+ACT2  (plus x one)     -> 1 typing (Int).  x is Int-only, so the Float overload
+                          fails to unify at the join and is PRUNED.  This is the
+                          payoff: parallel subgoals + join-time pruning.
+ACT3  (plus true one)  -> 0 typings.  true : Bool fits no plus overload; the bad
+                          branch vanishes cleanly (negative canary).
+ACT4  no-stuck gate    -> the may-set of (plus one one) contains only completed
+                          proofs and clean rho:nil; NO dangling rho:recv / rho:send
+                          / rho:eval-payload.  (A pruned overload reduces to rho:nil,
+                          not a stuck rendezvous -- combine3 is total.)
+ACT5  genuine fork     -> the overload lookup (HasType plus (Fn2 A B C)) has 2
+                          one-step successors: the fork is real COMM reduction, not
+                          post-hoc enumeration.
+ACT6  oracle           -> a sequential nilbc-style backward chainer (bc) over the
+                          SAME &kb yields the same proof count (2) and the same
+                          proof-term skeletons.  This is the differential check that
+                          rhometta computes backward chaining, not lookalike output.
+
+PROOF TERMS (Curry-Howard, pure)
+--------------------------------
+    (plus one one) : Int    proof  (app pplus-i pone-i pone-i)     tv (stv 0.9 0.9)
+    (plus one one) : Float  proof  (app pplus-f pone-f pone-f)     tv (stv 0.6 0.9)
+    (plus x one)   : Int    proof  (app pplus-i px     pone-i)     tv (stv 0.9 0.9)
+
+The judgment (: (app ...) (HasType ...)) is exactly the term a sequential chainer
+produces; the truth value lives OUTSIDE it in (proved <judgment> <stv>).
+
+WHY rho, AND WHY THIS KB IN &kb
+-------------------------------
+The KB lives in a separate space (&kb).  A proof term (app pf pa pb) has app in
+head position; if the typing rules were in &self the evaluator would type-CHECK the
+proof term as an application and reject the dependent domain (: $pf (HasType ...))
+with BadArgType (this is the HE' dependent-telescope gap).  With the rules in &kb,
+app is an unknown head in &self, so the proof term stays inert data -- as a proof
+term should.  This mirrors how the nilbc bench (tests/bench_backchain_heavy_nilbc.metta)
+keeps its KB in &kb.
+
+HONEST LIMITS
+-------------
+* The truth value is informative only where derivations COMPETE (the overload
+  choice).  A uniquely-typed term carries an uninformative default tv -- we do not
+  oversell it.
+* The examples are one resolution step deep (a 2-argument application rule).  That
+  is enough to show may-set + AND-parallel subgoals + join pruning.  Deep recursion
+  with a join (a premise that is itself an application whose proof must flow back to
+  the parent's channel) is future work: a compound subgoal's step returns a rho
+  process, which the engine delivers to the receiver as (rho:quote <process>) rather
+  than (rho:val <proof>), so the parent cannot unwrap it without channel-passing
+  result delivery.  rhometta-typed-bc shows the depth-1 shared-variable case; this
+  demo shows the overload/pruning case.
+
+RUN
+---
+    make BUILD=core
+    ./cetta --profile he-extended --lang he benchmarks/rho/rhometta-type-inference/example.metta
+
+Expect: every line tagged PASS, no Error, no *FAIL*.

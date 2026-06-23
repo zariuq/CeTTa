@@ -1,0 +1,75 @@
+rhometta-deployment-planner -- concurrent backward chaining for deployment planning
+==================================================================================
+
+WHAT MAKES THIS MORE INTERESTING
+--------------------------------
+This demo uses exactly the same rhometta backward-chaining machinery as the
+smaller typed-bc / type-inference examples, but the object language is a real
+constraint-composition problem rather than a toy syllogism or a single typing
+rule.
+
+The goal is to synthesize VALID deployment plans for concrete requests:
+
+  (Deploy eu-chat  provider model)
+  (Deploy eu-code  provider model)
+  (Deploy eu-voice provider model)
+
+A plan exists only if seven independently checkable judgments hold together:
+
+  ReqTask req task
+  ReqPrivacy req privacy
+  ModelTask model task
+  ModelPrivacy model privacy
+  ModelNeeds model gpu
+  ProviderOffer provider gpu region latency
+  ReqOffer req region latency
+
+The premises are solved in PARALLEL rho cells.  The join re-matches the rule
+against the resolved premises, so the shared variables req / model / provider /
+GPU / region / latency must agree.  Wrong task, wrong privacy regime, wrong GPU,
+wrong region, and wrong latency combinations are all pruned at the join.
+
+Honest scaling note: this benchmark is built to make the semantics visible.  The
+premise cells resolve independently, then the join prunes inconsistent
+cross-products.  That is fine for this small catalog and excellent as a
+correctness witness; a production planner would constrain or index the premise
+lookups earlier to avoid generating the full cross-product on large catalogs.
+
+WHY IT IS A REAL PARALLEL-CHAINING DEMO
+---------------------------------------
+The may-set is not post-hoc enumeration.  rhometta builds a reaction network in
+which the premise lookups run concurrently, and only globally consistent joins
+survive.
+
+For eu-chat there are exactly two valid plans:
+  - cloudA + llm70bq4   (premium H100 EU low-latency path)
+  - cloudB + llm7b      (efficient L40S EU low-latency path)
+
+For eu-code there is exactly one valid plan:
+  - cloudA + codegen
+
+For eu-voice there are zero plans because the available voice model is HIPAA-
+scoped while the request requires GDPR.
+
+VERIFIED ACTS
+-------------
+ACT1  eu-chat   -> 2 valid plans
+ACT2  eu-code   -> 1 valid plan
+ACT3  eu-voice  -> 0 valid plans
+ACT4  no stuck residuals after pruning
+ACT5  one top-level transition plants the full parallel premise network
+ACT6  sequential nilbc-style oracle over the same KB agrees on plan count
+
+RUN
+---
+  ./cetta --profile he-extended --lang he benchmarks/rho/rhometta-deployment-planner/example.metta
+
+EXPECTED HIGHLIGHT
+------------------
+  (Deploy eu-chat cloudA llm70bq4)
+  (Deploy eu-chat cloudB llm7b)
+
+This makes a better paper example because the reader can immediately see why
+parallel premise solving matters: deployment planning is exactly the sort of
+constraint-join problem where independent evidence channels should run at once
+and inconsistent combinations should die at the join.

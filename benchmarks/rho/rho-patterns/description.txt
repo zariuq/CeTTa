@@ -1,0 +1,29 @@
+rho-patterns -- strict-core rho interaction-pattern smoke tests
+================================================================
+
+This benchmark checks lib/rho/patterns.metta, starting with
+rho:patterns:!recv.  The combinator is the faithful Meredith--Radestock lazy
+replicated input encoding:
+
+    D(x)     = x(y).(x[y] | *y)
+    !u(v).P  = x< u(v).(D(x) | P) > | D(x)
+
+No engine primitive, extended profile, or nested rhometta:run is used.
+
+WHAT THE EXAMPLE DOES
+---------------------
+Three distinct output channels are sent on one input channel.  A single
+rho:patterns:!recv must handle all three messages.  Each handled message sends
+on its received output channel, and a downstream three-way join emits
+(rho:val all3) only if every distinct message was handled.
+
+The replicated receiver is persistent, so the residual intentionally retains an
+armed listener after the last currently available message.  That is expected.
+The no-stranded-eval gate checks the important bug condition instead: no
+rho:eval-payload is left behind waiting for a communication that never happened.
+
+RUN
+---
+    ./cetta --profile he-extended --lang he benchmarks/rho/rho-patterns/example.metta
+
+Expected: ACT1, ACT2, and ACT3 all report PASS, with no Error or *FAIL*.

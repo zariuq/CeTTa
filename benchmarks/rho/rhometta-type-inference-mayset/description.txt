@@ -1,0 +1,108 @@
+rhometta-type-inference-mayset -- GENUINE recursive may-set via replicated input
+================================================================================
+
+WHAT THIS DEMONSTRATES
+  (box (box one)) type-checked as concurrent backward chaining.  The inner
+  compound subgoal (box one) has TWO typings -- (Boxed Int) and (Boxed Float) --
+  DERIVED by the rho chainer over &kb (one : Int | Float is a real COMM overload
+  fork; nothing is hardcoded).  Those two derived sub-proofs FAN INTO the parent
+  (box _) join through rho:patterns:!recv (the Meredith--Radestock replicated-input
+  pattern), yielding the two outer typings (Boxed (Boxed Int)) and
+  (Boxed (Boxed Float)) with proof terms (boxc (boxc pone-i)) and (boxc (boxc pone-f)).
+
+  This is the may-set-at-depth that rhometta-type-inference-nested deferred: there
+  each nested subgoal had at most ONE typing; here a nested subgoal has TWO, so N
+  sub-proofs must feed ONE parent continuation.
+
+HOW THE FAN-IN IS GENUINE -- "derived-then-delivered" (the honest boundary)
+  The native reducer forks a multi-result payload into separate may-set BRANCHES
+  (one delivered message per branch), so a single send would give the parent's
+  replicated input nothing to fan in.  Genuine !recv fan-in needs several
+  SYNTACTICALLY DISTINCT sends on ONE channel (contention), which drives the
+  re-arming receive to consume them all in one branch.  So the demo:
+
+    1. DERIVES the inner proof set as a real rho may-set (the overload COMM fork);
+    2. COLLAPSES it to a tuple of data (one branch);
+    3. RE-LIFTS each derived proof as a parallel rho:send on the parent premise
+       channel (now N distinct sends on one channel);
+    4. the parent rho:patterns:!recv fans them in and applies the (box _) rule.
+
+  This collapse/re-lift bridge IS the subject of the demo and is stated proudly:
+  the inner proofs are genuinely derived from &kb, and the re-lift turns the
+  derived tuple into parallel messages so !recv has real fan-in to perform.  We do
+  NOT claim the inner search and the outer join are one uninterrupted rho
+  reduction; this demo intentionally exposes the collapse/re-lift boundary instead
+  of hiding it.  The bridge is an implementation pattern over the strict core, not
+  a primitive.
+
+  To avoid a re-entrant nested rhometta:run (the reducer is not re-entrant and
+  would stack-overflow), the inner derivation is HOISTED: it is computed in a
+  let-binding that grounds to data BEFORE the outer rhometta:run begins.
+
+WHY THE UNARY CORE COMES FIRST
+  ACTs 1--6 use the unary box rule because it isolates the replicated-input
+  mechanism: multiplicity comes from ONE overloaded premise (one : Int | Float),
+  so the reader can see derived proof messages fanning into one parent join
+  without also tracking a premise cross-product.
+
+  ACTs 7--9 then add the multi-premise case.  The inner subgoal
+  (plus one one) is solved by the 3-premise application rule: overloaded plus
+  (2) x overloaded one (2) x one (2), an 8-way cross-product pruned at the join
+  to the 2 consistent typings (Int and Float).  Those two derived application
+  proofs are boxed and fanned into the parent join through the SAME
+  rho:patterns:!recv.  The unary core is a teaching choice, not an
+  expressiveness limitation.
+
+INDEPENDENCE (anti-tautology)
+  The oracle is a SEPARATE sequential nilbc-style recursive chainer (let*-threaded)
+  over the SAME &kb; it DERIVES the same two boxed-boxed proof skeletons by its own
+  resolution.  The checks compare the rho-derived set against the bc-derived set by
+  PRESENCE and SOUNDNESS, never against a constant.  (The prior version of this
+  demo had a hardcoded (oracle) equal to its own expected output -- a tautology;
+  ACT4 here runs a different algorithm that must independently reach the same set.)
+
+WHY THE GATES ARE PRESENCE/SOUNDNESS, NOT A DISTINCT COUNT
+  rho:patterns:!recv is intentionally non-quiescent (an armed listener remains),
+  and the persistent run repeats each completed leaf across interleavings; the
+  stdlib unique-atom does not dedup terms reconstructed through collapse.  So the
+  gates are multiplicity-insensitive: PRESENCE ("does the proof set contain the
+  Int-box and Float-box skeletons?") and SOUNDNESS ("is every leaf one the oracle
+  derives -- nothing extra?").  Together with the oracle deriving exactly those two,
+  this pins the rho set to the bc set without depending on a fragile count.
+
+WHAT EACH ACT SHOWS (all verified PASS, exit 0, no Error)
+  ACT1 mayset       -> BOTH (box one) typings (Int and Float) are derived and fan
+                       into the (box _) join via !recv.
+  ACT2 inner-fork   -> the inner multiplicity is a GENUINE 2-way COMM overload fork
+                       (one : Int | Float), shown by rhometta:transitions = 2.
+  ACT3 fanin        -> the derived inner set delivered to the parent !recv has 2
+                       messages on one channel (real fan-in, not 1-per-branch).
+  ACT4 oracle       -> the INDEPENDENT nilbc oracle derives the same 2 boxed-boxed
+                       skeletons from the same &kb (not a constant).
+  ACT5 prune        -> (box x), x Int-only => exactly 1 typing; no spurious Float.
+  ACT6 no-unexpected-> every rho proof leaf is one the oracle derives; no skeleton
+                       outside the derived set.
+  ACT7 multi-rho    -> (box (plus one one)): a 2x2x2 multi-premise fork pruned
+                       to 2 fans both boxed typings into the parent join.
+  ACT8 multi-oracle -> the independent nilbc oracle derives the same two boxed
+                       application skeletons from the same &kb.
+  ACT9 multi-sound  -> every rho multi-premise proof leaf is one of those
+                       oracle-derived skeletons.
+
+TRUTH VALUES
+  PLN truth (overload rank, Int box .9 > Float box .6) rides OUTSIDE the judgment,
+  in (proved <pure Curry-Howard judgment> <stv>) -- derivation metadata, never part
+  of the typing.
+
+HONEST LIMITS
+  * "derived-then-delivered" fan-in (the collapse/re-lift bridge above), not one
+    seamless rho reduction.
+  * persistent input is intentionally non-quiescent; the consumer projects the
+    completed proof values and distinguishes the expected armed listener from
+    genuinely stuck protocol residue.
+
+RUN
+  make BUILD=core
+  ./cetta --profile he-extended --lang he benchmarks/rho/rhometta-type-inference-mayset/example.metta
+
+Expect: every ACT tagged PASS, no Error, no *FAIL*.
