@@ -1,0 +1,76 @@
+rhometta-type-inference-nested -- recursive backward chaining with a join
+========================================================================
+
+WHAT THIS ADDS
+--------------
+rhometta-type-inference is one resolution step deep.  This demo makes the
+"deeper recursive search with a join" caveat concrete: for a NESTED application
+like (f (g x)), the outer typing rule has a premise (HasType (g x) Int) that is
+itself an application.  It is solved by a separate reaction, and its proof term
+(app pg px) must travel back -- along a channel -- to the outer join, which then
+assembles the nested proof term (app pf (app pg px)).
+
+So this is the recursion-with-join the flagship deferred:
+
+    (f (g x))      => (app pf (app pg px))            : (HasType (f (g x)) Bool)
+    (f (g (g x)))  => (app pf (app pg (app pg px)))   : (HasType (f (g (g x))) Bool)
+
+HOW THE RECURSION IS DELIVERED (the crux)
+-----------------------------------------
+Each goal is solved by `solve`, which SENDS every proof it finds to a result
+channel; a parent join receives on that channel.  An APPLICATION goal is routed
+to the rule, an ATOMIC goal to a fact lookup.  Sub-channels are minted from a
+per-node base (4b+1 .. 4b+4) so no two nodes in the search tree collide -- the
+whole search is ONE rho term reduced by ONE rhometta:run.
+
+(A nested rhometta:run -- running the sub-search inside the parent's deferred
+payload -- is NOT an option: the native reducer is not re-entrant and stack-
+overflows.  Hence the single-term, channel-passing design.)
+
+A goal with no proof still sends a `none` sentinel, so a join never blocks on a
+message that never arrives (no dangling rho:recv).  `combine` maps any non-proof
+-- a sentinel, or an inconsistent premise pair -- to rho:nil, which the proof
+projection drops.
+
+WHAT EACH ACT SHOWS (all verified PASS, exit 0, no Error)
+---------------------------------------------------------
+ACT1  (g x)         -> 1 typing, proof (app pg px) : Int.
+ACT2  (f (g x))     -> 1 typing; the (g x) sub-proof flows back to the (f _) join
+                       => (app pf (app pg px)) : Bool.  THE recursion-with-join.
+ACT3  (f (g (g x))) -> 1 typing, depth-3 nesting.
+ACT4  (g f)         -> 0 typings.  f is not Int-typeable, so the argument premise
+                       fails; the branch reduces cleanly (no stuck residual).
+ACT5  no-stuck      -> the recursive search leaves NO dangling rho:recv / rho:send
+                       / rho:eval-payload.
+ACT6  oracle        -> a sequential nilbc-style chainer over the same &kb agrees
+                       on the nested proof count and terms.
+
+Curry-Howard proof terms stay pure; the PLN-style truth value rides outside in
+(proved <judgment> <stv>) as derivation metadata.
+
+HONEST LIMIT / FOLLOW-UP
+------------------------
+This cleanly handles DETERMINISTIC sub-derivations: each nested subgoal has at
+most one typing.  A genuine may-set INSIDE a nested call -- a compound subgoal
+with two typings (e.g. an overloaded operator applied under another application)
+-- would require that subgoal to deliver N proofs into ONE parent receive.
+rhometta's may-set fork is "one send, N payload results"; N independent sends
+into one single-shot receive leaves N-1 of them stuck.
+
+The clean fix is replicated fan-in.  That is now available as the pure
+strict-core library pattern rho:patterns:!recv, the Meredith--Radestock lazy
+replicated input encoding from reflection.  A primitive persistent receive would
+be a performance/cleanliness convenience, not an expressiveness requirement.
+The companion rhometta-type-inference-mayset demo uses rho:patterns:!recv to
+carry may-set multiplicity at depth.
+
+Division of labour for now:
+  * rhometta-type-inference  -- depth-1 may-set + overload pruning;
+  * rhometta-type-inference-nested (this)  -- the recursive join, deterministic.
+
+RUN
+---
+    make BUILD=core
+    ./cetta --profile he-extended --lang he benchmarks/rho/rhometta-type-inference-nested/example.metta
+
+Expect: every ACT tagged PASS, no Error, no *FAIL*.

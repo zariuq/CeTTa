@@ -1,0 +1,83 @@
+rhometta-typed-bc -- backward chaining in the standard Hyperon (nilbc) idiom
+===========================================================================
+
+THE IDEA
+--------
+This is the self-unfolding prover ported from its bespoke (have X)/(rule H BODY)
+encoding into the representation Nil Geisweiller's nilbc, Patrick Hammer's lib_pln,
+and the PeTTa chainer all use:
+
+    facts   (: <name> <type>)
+    rules   (: <r> (-> (: $p1 P1) (: $p2 P2) Concl))
+    proofs  Curry-Howard terms  (: (<r> p1 p2) Concl)
+
+Each backward-chaining resolution step is one eval-at-COMM.  Proving a goal plants
+the rho reactions that prove its premises; the premises run as PARALLEL cells;
+rhometta:run returns the may-set of complete typed proofs.  This is the
+recognizability anchor -- the "yes, this is the standard backward chainer"
+handshake.  rhometta-type-inference is the flagship that shows why the parallelism
+pays off.
+
+THE KNOWLEDGE BASE (in &kb, a new-space)
+----------------------------------------
+    r01 : researcher r01      r01c : curious r01
+    e01 : engineer  e01       e01c : curious e01
+    b01 : researcher b01      (NOT curious -- the negative canary)
+
+    r-mortal : (researcher x) , (curious x) |- (mortal x)   (stv 0.90)
+    e-mortal : (engineer  x) , (curious x) |- (mortal x)   (stv 0.85)
+    bake     : (have-flour)  , (have-egg)   |- (have-batter) (stv 0.95)
+
+Both premises of r-mortal/e-mortal SHARE the variable x.  The two premise cells run
+in parallel and resolve independently, so a free-variable goal (mortal $x) would
+pair researcher-r01 with curious-e01.  The join (combine2) re-matches the rule
+against the resolved (ground) premises; the rule's shared x then forces agreement.
+
+WHAT EACH ACT SHOWS (all verified PASS, 0 errors)
+-------------------------------------------------
+ACT1  (mortal $x)      -> 2 proofs: (r-mortal r01 r01c):(mortal r01) and the
+                          e-mortal one.  Two rules => an OR may-set.
+ACT2  (mortal b01)     -> 0 proofs.  b01 is a researcher but not curious; the
+                          evidence is incomplete (negative canary).
+ACT3  guard gate       -> the shared-x guard keeps the count at 2.  Without it the
+                          parallel cross-product (researcher r01/b01 x curious
+                          r01/e01) would give 6.
+ACT4  no-stuck gate    -> the may-set holds only completed proofs and clean rho:nil;
+                          NO dangling rho:recv / rho:send / rho:eval-payload.  A
+                          rejected cross-product reduces to rho:nil (combine2 is
+                          total), not a stuck rendezvous.
+ACT5  genuine fork     -> the one-step frontier of (mortal $x) has 2 successor
+                          networks (one per rule): real COMM reduction.
+ACT6  oracle           -> a sequential nilbc bc over the SAME &kb yields the same
+                          proof count and the same proof-term skeletons.  The
+                          differential check that rhometta executes backward
+                          chaining, not lookalike output.
+ACT7  (have-batter)    -> exactly 1 proof.  A single-rule goal is confluent by
+                          topology; you choose determinism by the rule graph.
+
+PROOF TERMS (Curry-Howard, pure; truth value as metadata OUTSIDE the judgment)
+-----------------------------------------------------------------------------
+    (proved (: (r-mortal r01 r01c) (mortal r01))     (stv 0.90 0.80))
+    (proved (: (e-mortal e01 e01c) (mortal e01))     (stv 0.85 0.80))
+    (proved (: (bake     f1  g1)   (have-batter))    (stv 0.95 0.90))
+
+The judgment (: (r-mortal r01 r01c) (mortal r01)) is exactly nilbc's proof term.
+The PLN truth value rides outside in (proved <judgment> <stv>) -- evidence metadata,
+not a probabilistic typing judgment.  (A Horn rule is not a syllogism, so we do not
+mis-apply lib_pln's Truth_Deduction; the premises are ground facts, so a proof's
+truth value is just the rule's strength.)
+
+WHY THE KB IS IN &kb
+--------------------
+A proof term (r-mortal r01 r01c) has r-mortal in head position; if r-mortal's arrow
+type were in &self the evaluator would type-CHECK it as an application and reject the
+dependent domain (: $r (researcher $x)) with BadArgType (the HE' telescope gap).
+With the rules in &kb, r-mortal is an unknown head in &self, so the proof term stays
+inert -- as a proof term should.  This mirrors tests/bench_backchain_heavy_nilbc.metta.
+
+RUN
+---
+    make BUILD=core
+    ./cetta --profile he-extended --lang he benchmarks/rho/rhometta-typed-bc/example.metta
+
+Expect: every line tagged PASS, no Error, no *FAIL*.
