@@ -1,6 +1,6 @@
 ; ===========================================================================
 ;  rhometta-type-inference  --  Curry-Howard type inference AS concurrent
-;  backward chaining.  The flagship rhometta demo.
+;  backward chaining.
 ;
 ;  Type-checking IS proof search: a typing judgment (: proof (HasType expr ty))
 ;  is proved by backward chaining over typing rules, and the proof term IS the
@@ -14,25 +14,29 @@
 ;               domains do not fit the arguments fails to unify and the branch
 ;               reduces cleanly to rho:nil (no dangling rendezvous).
 ;
-;  Curry-Howard proof terms stay PURE: a proof is exactly (: (app pf pa pb) Concl).
-;  A PLN-style truth value rides OUTSIDE, in (proved <judgment> <stv>); here it
-;  ranks competing overloads (Int addition preferred over Float) -- derivation
-;  metadata, never part of the typing judgment.
+;  Curry-Howard proof terms are crisp: a proof is exactly (: (app pf pa pb) Concl),
+;  and a typing either holds or it does not -- no truth value is attached to it.
+;  Inferring (op a b) returns the SET of its typings (the may-set).
 ;
-;  We use a 2-argument application rule, so the showcase examples are one
+;  We use a 2-argument application rule, so the worked examples are one
 ;  resolution step deep -- enough to exhibit may-set, parallel AND-subgoals, and
 ;  join-time pruning, without recursion.  (rhometta-typed-bc shows the recursive
 ;  shape; the deep-recursion-with-join variant is future work, see description.txt.)
 ;
-;  KB lives in &kb (a new-space) so the evaluator does not type-CHECK the proof
-;  term (app pf pa pb) as an application (the dependent domain (: $pf (HasType ..))
-;  would trip BadArgType in &self without the HE' telescope).
+;  The KB lives in a separate space (&kb) so the evaluator treats a proof term
+;  like (app pf pa pb) as inert data rather than a function call to type-check.
 ;
 ;  Runs on the core build:  make BUILD=core
-;     ./cetta --profile he-extended --lang he <this file>
+;     ./cetta --quiet --profile he-extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)
+
+; Standard rho notation used below:
+;   P | Q                 parallel composition
+;   x!(m)                send process m on channel x
+;   for (y <- x) { P }  receive from x, bind y in P
+;   *y                   drop: run the quoted process/name y
 
 ; --- typing context, as Curry-Howard judgments (: proofname (HasType expr ty)) -
 !(bind! &kb (new-space))
@@ -43,9 +47,7 @@
 ; plus is overloaded: (Fn2 Int Int Int) and (Fn2 Float Float Float).
 !(add-atom &kb (: pplus-i (HasType plus (Fn2 Int   Int   Int))))
 !(add-atom &kb (: pplus-f (HasType plus (Fn2 Float Float Float))))
-; overload ranking (PLN metadata): prefer Int addition over Float.
-!(add-atom &kb (op-stv (Fn2 Int   Int   Int)   (stv 0.90 0.90)))
-!(add-atom &kb (op-stv (Fn2 Float Float Float) (stv 0.60 0.90)))
+; (no truth values: a typing is crisp; inference returns the set of typings)
 
 ; THE typing rule: application elimination for a 2-argument operator.
 ;   pf : the operator has a 2-arg function type (Fn2 A B C)
@@ -67,6 +69,8 @@
 (= (cell $i $job)
    (rho:par (rho:send (chan $i) (rhometta:eval $job))
             (rho:recv (chan $i) $y (rho:drop $y))))
+; Standard reading:
+;   cell_i(job)  :=  c_i!(eval(job)) | for (y <- c_i) { *y }
 
 ; one resolution step: BASE = a typing fact; RULE = the application rule (3 premises).
 (= (step (: $prf $concl) $depth $b)
@@ -76,6 +80,12 @@
      (assemble3 $rule (: $p1 $t1) (: $p2 $t2) (: $p3 $t3) $d $b)))
 
 ; AND-node: infer the THREE subgoals in PARALLEL cells, then join.
+; Standard rho shape:
+;   c1!(eval(step prem1)) | c2!(eval(step prem2)) | c3!(eval(step prem3))
+; | for (r1 <- c1) { for (r2 <- c2) { for (r3 <- c3) {
+;       c4!(eval(combine3 rule (unval r1) (unval r2) (unval r3)))
+;   }}}
+; | for (z <- c4) { *z }
 (= (assemble3 $rule $prem1 $prem2 $prem3 $d $b)
    (let* (($c1 (+ (* $b 4) 1)) ($c2 (+ (* $b 4) 2)) ($c3 (+ (* $b 4) 3)) ($c4 (+ (* $b 4) 4)))
      (rho:par
@@ -90,26 +100,19 @@
        (rho:recv (chan $c4) $z (rho:drop $z)))))
 
 ; JOIN + unification guard, made TOTAL.  Re-match the rule against the resolved
-; premises: the shared A,B,C force consistency.  Compatible => a proof (ranked by
-; the overload's truth value); an overload that does not fit => rho:nil.
+; premises: the shared A,B,C force consistency.  A compatible triple yields the
+; proof term; an overload whose domains do not fit fails to unify => rho:nil.
 (= (combine3 $rule (: $p1 $t1) (: $p2 $t2) (: $p3 $t3))
    (let $res (collapse (match &kb (: $rule (-> (: $p1 $t1) (: $p2 $t2) (: $p3 $t3) $concl))
-                          (proved (: ($rule $p1 $p2 $p3) $concl) (app-tv $t1))))
+                          (: ($rule $p1 $p2 $p3) $concl)))
      (if (== $res ()) rho:nil (car-atom $res))))
-; truth value of an application = the overload rank of the operator's type.
-(= (app-tv (HasType $op $ft)) (overload-rank $ft))
-(= (overload-rank $ft)
-   (let $r (collapse (match &kb (op-stv $ft $tv) $tv))
-     (if (== $r ()) (stv 1.0 0.90) (car-atom $r))))
 
 ; --- projections over the may-set --------------------------------------------
 (= (count-tuple $t) (if (== $t ()) 0 (+ 1 (count-tuple (cdr-atom $t)))))
-(= (proof-of (rho:val (proved $j $tv))) (proved $j $tv))
+(= (proof-of (rho:val (: $p $c))) (: $p $c))
 (= (proof-of $other) (empty))
-(= (judgment-of (rho:val (proved $j $tv))) $j)
-(= (judgment-of $other) (empty))
 (= (stuck-of $r)
-   (case $r (((rho:val (proved $j $tv)) (empty)) (rho:nil (empty)) ($other $other))))
+   (case $r (((rho:val (: $p $c)) (empty)) (rho:nil (empty)) ($other $other))))
 
 ; --- ORACLE: sequential nilbc-style chainer over the SAME &kb -----------------
 (= (bc $kb $_ (: $proof $theorem))
@@ -127,13 +130,13 @@
 (= (run-proofs $goal) (collapse (proof-of (rhometta:run (cell 1 (step $goal (S Z) 1))))))
 (= (act $tag $exp $goal $desc)
    (let $ps (run-proofs $goal)
-     (=== $tag (verdict $exp (count-tuple $ps)) expect $exp got (count-tuple $ps) : $desc :: $ps)))
+     (=== $tag (verdict $exp (count-tuple $ps)) expect $exp got (count-tuple $ps) : $desc)))
 (= (gate $tag $exp $got $desc)
    (=== $tag (verdict $exp $got) expect $exp got $got : $desc))
 
 ; ===========================================================================
 !(act ACT1-may-set 2 (: $prf (HasType (plus one one) $T))
-   "overloaded (plus one one) => 2 typings, ranked Int(.9) > Float(.6)")
+   "overloaded (plus one one) => 2 typings: Int and Float")
 
 !(act ACT2-prune 1 (: $prf (HasType (plus x one) $T))
    "(plus x one): x is Int-only, so the Float overload is pruned at the join => 1 typing")
@@ -156,7 +159,7 @@
    (count-tuple (run-proofs (: $prf (HasType (plus one one) $T))))
    "sequential nilbc oracle on (plus one one) agrees on the proof count")
 
-!("---- proof terms (Curry-Howard derivations; TV = overload rank) ----")
+!("---- proof terms (Curry-Howard derivations: (: proof (HasType expr type))) ----")
 !("(plus one one):")
 !(run-proofs (: $prf (HasType (plus one one) $T)))
 !("(plus x one)  -- Float pruned, Int survives:")

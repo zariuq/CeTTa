@@ -1,5 +1,5 @@
 ; ===========================================================================
-;  self_unfolding_prover.metta  --  a showcase for rhometta
+;  self_unfolding_prover.metta  --  proof search as a self-growing reaction net
 ;
 ;  THE IDEA IN ONE LINE:
 ;     proving a goal PLANTS the reactions that prove its subgoals.
@@ -14,15 +14,21 @@
 ;  proof tree.
 ;
 ;  communication  =  computation  =  construction.
-;  Plain Rholang can pass names and spawn processes but has no
+;  Plain rho can pass names and spawn processes but has no
 ;  "evaluate-a-MeTTa-term-at-COMM"; a bare MeTTa interpreter has no concurrent
 ;  reduction, private channels, or may-set frontier.  rhometta is the fusion.
 ;
 ;  Self-contained: runs on the core build (no lib_pln, no MORK, no pathmap):
-;     make BUILD=core && ./cetta self_unfolding_prover.metta
+;     make BUILD=core && ./cetta --quiet --profile he-extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)
+
+; Standard rho notation used below:
+;   P | Q                 parallel composition
+;   x!(m)                send process m on channel x
+;   for (y <- x) { P }  receive from x, bind y in P
+;   *y                   drop: run the quoted process/name y
 
 ; --- knowledge base: a goal-decomposition graph --------------------------
 ;   (prim X)      X is a primitive you already have (a proof leaf)
@@ -54,6 +60,9 @@
 
 ; Turn a BODY tuple into the parallel cells for its subgoals.
 ; child index = parent*3 + k  keeps channels distinct across the whole tree.
+; Standard reading of one emitted child:
+;   c_k!(eval(expand subgoal)) | for (y <- c_k) { *y }
+; emit(body,...) is the parallel composition of all such child cells.
 (= (emit $body $b $k)
    (if (== $body ()) rho:nil
        (rho:par
@@ -70,27 +79,26 @@
        (leaf (prim-name $g))
        (match &self (rule $g $body) (emit $body $b 1))))
 
-; ===========================================================================
-;  ACT 1 -- run the whole search.  The seed is a SINGLE cell; everything else
-;  is planted by the reactions themselves.  Each residual is one complete
-;  proof tree, reported by the primitives it bottomed out at.
-; ===========================================================================
-!("ACT 1  proof may-set for (have cake)  -- expect 2 trees:")
-!("        {flour, egg, oven}   and   {mix, oven}")
-!(collapse (rhometta:run (cell 1 (expand (have cake) 1))))
+; --- readable output: show each proof tree as the SET of primitives it needs ---
+(= (leaf-of $r)
+   (case $r
+     (((rho:val (leaf $x)) $x)
+      ((rho:par $a $b) (superpose ((leaf-of $a) (leaf-of $b))))
+      ((rho:par $a $b $c) (superpose ((leaf-of $a) (leaf-of $b) (leaf-of $c))))
+      ((rho:par $a $b $c $d) (superpose ((leaf-of $a) (leaf-of $b) (leaf-of $c) (leaf-of $d))))
+      ($_ (empty)))))
+(= (tree-of $r) (collapse (leaf-of $r)))
 
 ; ===========================================================================
-;  ACT 2 -- the branching is GENUINE REDUCTION, not post-hoc enumeration.
-;  One step from the (have batter) goal shows two successor networks, one per
-;  rule -- the fork happens in the reducer, at the COMM.
+;  ACT 1 -- run the whole search from a SINGLE seed cell; the reactions plant
+;  everything else.  (have batter) has two rules, so (have cake) grows TWO proof
+;  trees, each shown as the primitives it bottoms out at.
 ; ===========================================================================
-!("ACT 2  one-step frontier of the (have batter) goal -- expect 2 successors:")
-!(collapse (rhometta:transitions (cell 1 (expand (have batter) 1))))
+!("(have cake): proof trees -- expect two, {flour egg oven} and {mix oven}:")
+!(tree-of (rhometta:run (cell 1 (expand (have cake) 1))))
 
 ; ===========================================================================
-;  ACT 3 -- you choose determinism by TOPOLOGY.  A goal with a single rule is
-;  confluent-by-construction: exactly one residual, no fork.
+;  ACT 2 -- a goal with a single rule is confluent: exactly one tree.
 ; ===========================================================================
-!("ACT 3  a single-rule goal is confluent -- expect exactly 1 residual:")
-!("        {bread, cheese}")
-!(collapse (rhometta:run (cell 1 (expand (have sandwich) 1))))
+!("(have sandwich): one rule => one tree -- expect {bread cheese}:")
+!(tree-of (rhometta:run (cell 1 (expand (have sandwich) 1))))

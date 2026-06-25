@@ -1,30 +1,30 @@
-rhometta evidence revision rendezvous
+rhometta-evidence-revision -- a truth value that is actually computed
+====================================================================
 
-Two agents compute evidence for the SAME hypothesis (Inheritance raven black)
-from their own observation slices, each carrying an evidence stamp.  The
-stamps OVERLAP -- both agents counted observations r3 and r4 -- so naive PLN
-Truth_Revision double-counts the shared evidence.  The demo merges the two
-agent conclusions with Truth_OverlapCorrectedRevision (lib_overlap_corrected_
-revision), which discounts the shared stamp elements, and prints the naive
-revision alongside for contrast.
+THE IDEA
+  Two agents each watch some ravens and form an opinion about "ravens are black" (written (Inheritance raven black))
+  -- a strength (fraction seen black) and a confidence (how much evidence backs
+  it). They happen to share two observations. If you merge their opinions
+  naively, that shared evidence gets counted twice and the confidence comes out
+  too high. Overlap-corrected revision discounts the shared observations and
+  reports the honest confidence. This is the one rho demo where a truth value
+  belongs: it is COUNTED FROM OBSERVATIONS, not hand-set (a typing or a proof, by
+  contrast, is simply true or not).
 
-Each agent's evidence is COMPUTED at COMM time by a deferred MeTTa payload
-(KB observation counting -> an stv), not read off a table: rho orchestrates,
-MeTTa infers.
+WHAT YOU SEE
+  Same strength either way (0.75 = 3 of 4 seen black). The honest difference is
+  the confidence:
+      naive (double-counts the shared evidence):  0.889
+      overlap-corrected (the honest value):       0.857
 
-Two shapes of the same inference:
+  Two shapes of the same computation:
+    Variant B -- both agents run in parallel; the revision happens after the run.
+    Variant A -- the revision happens AT the final rendezvous (communication is
+                 computation): the first agent's result is carried into the
+                 payload that revises it against the second.
 
-  Variant B (fan-in + combine): both agents run in parallel on their own
-  channels; the confluent residual carries both (evi ...) values; a MeTTa
-  equation pattern-matches the residual and revises after the run.
+  Each agent's opinion is computed at COMM time by a deferred MeTTa payload
+  (count observations -> build the stv), not read off a table.
 
-  Variant A (rendezvous chaining): the received evidence value is referenced
-  INSIDE the next deferred payload -- rho substitution carries the first
-  agent's conclusion into a third payload that performs the revision at the
-  final COMM.  Communication is computation: the revision itself happens at
-  a rendezvous.  (Received values arrive as quoted names (rho:quote
-  (rho:val v)); the combining equation pattern-matches that shape.)
-
-Run:
-  ./cetta --profile he-extended --lang he \
-      benchmarks/rho/rhometta-evidence-revision/example.metta
+RUN
+  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-evidence-revision/example.metta
