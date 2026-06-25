@@ -1,0 +1,29 @@
+rho-reflective-server -- a persistent server, with replication derived from reflection
+======================================================================================
+
+THE IDEA
+  A server should keep answering requests. But a plain receive in the rho-calculus
+  fires exactly once -- so to stay up, the server has to re-create its own listener
+  after every answer. The pure rho-calculus has no replication ("!") operator to do
+  that. Its one extra power is REFLECTION: a process can be quoted into a name, and a
+  name dropped back into a process (quote / drop). That turns out to be enough --
+  rho:patterns:!recv builds a persistent listener out of reflection alone (Meredith &
+  Radestock's encoding D(x) = x(y).(x[y] | *y)). So "a server that keeps running" --
+  and, more generally, replication and recursion -- are DERIVED from reflection, not
+  built in. That is the rho-calculus's signature result.
+
+WHAT YOU SEE
+  Three clients each hand the server a private reply-channel; the server answers all
+  three, re-arming after each. A single (non-reflective) receive could have served
+  only the first.
+      served:  served-one  served-one  served-one   (all 3)
+
+  Every reaction is a pure rho COMM (reflection only, no eval-at-COMM payload).
+  This is not a standalone --lang rhocalc file -- it imports the rho:patterns macro
+  and uses rhometta:run as the reducer plus a small projection for readable output --
+  but every reaction it performs is a core-rho COMM.
+
+RUN
+  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rho-reflective-server/example.metta
+
+Expect: ACT1 PASS (3 served), no Error.
