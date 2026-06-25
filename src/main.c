@@ -884,6 +884,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
+    fputs("       cetta --eval-hashcons <file.metta>      # experimental: hash-cons eval-arena atoms\n", out);
     fputs("       cetta --pretty-vars <file.metta>       # pretty-print result vars for humans\n", out);
     fputs("       cetta --raw-vars <file.metta>          # print raw internal var epochs\n", out);
     fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mork./runtime. namespace sugar\n", out);
@@ -1213,6 +1214,7 @@ int main(int argc, char **argv) {
     bool compile_stdlib_mode = false;
     bool count_only = false;
     bool emit_runtime_stats = false;
+    bool eval_hashcons = false;
     bool list_profiles = false;
     bool translate_mode = false;
     uint32_t lang_occurrences = 0;
@@ -1275,6 +1277,10 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
             emit_runtime_stats = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--eval-hashcons") == 0) {
+            eval_hashcons = true;
             continue;
         }
         if (strcmp(argv[i], "--pretty-vars") == 0) {
@@ -1669,7 +1675,7 @@ int main(int argc, char **argv) {
     cleanup.hashcons_initialized = true;
     g_hashcons = &hashcons_table;
     arena_set_hashcons(&arena, &hashcons_table);
-    arena_set_hashcons(&eval_arena, NULL);
+    arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
 
     if (lang_is_mm2) {
         n = inline_text
@@ -1833,7 +1839,7 @@ int main(int argc, char **argv) {
                 arena_free(&eval_arena);
                 arena_init(&eval_arena);
                 arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
-                arena_set_hashcons(&eval_arena, NULL);
+                arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
                 if (stop_after_error) break;
                 i += 2;
                 continue;
@@ -1875,7 +1881,7 @@ int main(int argc, char **argv) {
             arena_free(&eval_arena);
             arena_init(&eval_arena);
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
-            arena_set_hashcons(&eval_arena, NULL);
+            arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
             if (stop_after_error) break;
             i += 2;
             continue;

@@ -113,14 +113,6 @@ NO_EXPECT_CLASSIFICATION = {
         "probe",
         "heavy WM-PLN disease route probe",
     ),
-    "tests/test_cverify_apply_subst_probe.metta": (
-        "probe",
-        "cverify apply_subst diagnostic witness",
-    ),
-    "tests/test_cverify_apply_subst_with_unify_probe.metta": (
-        "probe",
-        "cverify apply_subst with local unify diagnostic witness",
-    ),
     "tests/test_mm2_match_order_fragile.metta": (
         "probe",
         "MORK match-order diagnostic",

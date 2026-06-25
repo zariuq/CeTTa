@@ -18,6 +18,7 @@
 /results/
 
 # Local checkpoints and backups
+/_archive/
 /src/*.checkpoint_*
 /src/*.old_backup
 

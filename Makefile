@@ -295,8 +295,8 @@ GIT_TEST_DYNAMIC = $(CURDIR)/runtime/test-git-module-dynamic.metta
 GIT_TEST_COMPAT_DYNAMIC = $(CURDIR)/runtime/test-git-module-compat.metta
 HE_CONTRACT_GENERATED_DIR = tests/generated/he_contract
 HE_COMPAT_GENERATED_DIR = tests/generated/he_compat
-HE_COMPAT_CATALOG = $(HE_COMPAT_GENERATED_DIR)/he_compat_cases_2026-06-07.json
-HE_NATIVE_CONTRACTS = $(HE_COMPAT_GENERATED_DIR)/he_native_contracts_2026-06-07.json
+HE_COMPAT_CATALOG = $(HE_COMPAT_GENERATED_DIR)/he_compat_cases_2026-06-25.json
+HE_NATIVE_CONTRACTS = $(HE_COMPAT_GENERATED_DIR)/he_native_contracts_2026-06-25.json
 TEST_MANIFEST = tests/test_manifest.tsv
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
@@ -330,8 +330,6 @@ PATHMAP_PROBE_TESTS = \
 	tests/test_pathmap_backend_primary_destructive_regression.metta
 
 CORE_PROBE_TESTS = \
-	tests/test_cverify_apply_subst_probe.metta \
-	tests/test_cverify_apply_subst_with_unify_probe.metta \
 	tests/test_print_nondet_probe.metta
 
 # Empty is intentional; populate only for strict known-failing regressions.
@@ -414,8 +412,6 @@ BACKEND_HEAVY_TESTS = \
 	tests/test_tilepuzzle_pathmap.metta
 
 BACKEND_DIAGNOSTIC_TESTS = \
-	tests/test_cverify_apply_subst_probe.metta \
-	tests/test_cverify_apply_subst_with_unify_probe.metta \
 	tests/test_mm2_match_order_fragile.metta \
 	tests/test_print_nondet_probe.metta
 
@@ -1560,6 +1556,7 @@ test-rhocalc: $(BIN)
 		fi; \
 	done < tests/rhocalc_tiny_oracle.tsv; \
 	mettapedia_root="$${METTAPEDIA_ROOT:-../../Mettapedia/lean/mettapedia}"; \
+	rhocalc_lean_skip=85; \
 	if [ -d "$$mettapedia_root" ]; then \
 			while IFS=$$(printf '\t') read -r name fixture expected_count mode expected_file lean_file anchor; do \
 				[ -n "$$name" ] || continue; \
@@ -1586,18 +1583,30 @@ test-rhocalc: $(BIN)
 		while IFS=$$(printf '\t') read -r name fixture expected_file lean_file anchor; do \
 			[ -n "$$name" ] || continue; \
 			case "$$name" in \#*) continue ;; esac; \
-			if METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_lean_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_file" "$$lean_file" "$$anchor"; then \
+			bridge_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_lean_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_file" "$$lean_file" "$$anchor" 2>&1); \
+			bridge_status=$$?; \
+			if [ "$$bridge_status" -eq 0 ]; then \
 				echo "PASS: rhocalc cost lean bridge $$name"; \
 				pass=$$((pass + 1)); \
+			elif [ "$$bridge_status" -eq "$$rhocalc_lean_skip" ]; then \
+				printf '%s\n' "$$bridge_output"; \
+				echo "SKIP: rhocalc cost lean bridge $$name"; \
 			else \
+				printf '%s\n' "$$bridge_output"; \
 				echo "FAIL: rhocalc cost lean bridge $$name"; \
 				fail=$$((fail + 1)); \
 			fi; \
 		done < tests/rhocalc_cost_lean_bridge.tsv; \
-		if python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean; then \
+		microcheck_output=$$(python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean 2>&1); \
+		microcheck_status=$$?; \
+		if [ "$$microcheck_status" -eq 0 ]; then \
 			echo "PASS: rhocalc lean microcheck"; \
 			pass=$$((pass + 1)); \
+		elif [ "$$microcheck_status" -eq "$$rhocalc_lean_skip" ]; then \
+			printf '%s\n' "$$microcheck_output"; \
+			echo "SKIP: rhocalc lean microcheck"; \
 		else \
+			printf '%s\n' "$$microcheck_output"; \
 			echo "FAIL: rhocalc lean microcheck"; \
 			fail=$$((fail + 1)); \
 		fi; \

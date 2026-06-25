@@ -18,7 +18,7 @@ DEFAULT_CATALOG = (
     / "tests"
     / "generated"
     / "he_compat"
-    / "he_compat_cases_2026-06-07.json"
+    / "he_compat_cases_2026-06-25.json"
 )
 DEFAULT_REPORT = ROOT / "runtime" / "he_compat" / "tier2_probe_latest.json"
 CLASSIFIED_DIVERGENCES = {

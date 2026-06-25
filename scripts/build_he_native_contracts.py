@@ -24,7 +24,7 @@ from mettapedia_paths import (
     workspace_display,
 )
 
-CONTRACT_DATE = "2026-06-07"
+CONTRACT_DATE = "2026-06-25"
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parents[1]
@@ -300,7 +300,7 @@ def profile_doc_surface_contracts() -> list[dict[str, Any]]:
                 "tests/support/profile_get_doc_compat_surface.metta",
             ],
             "spec_refs": [
-                "tests/generated/he_compat/he_compat_cases_2026-06-07.json:he_g1_docs",
+                "tests/generated/he_compat/he_compat_cases_2026-06-25.json:he_g1_docs",
             ],
             "status": "implemented-and-regression-tested",
         }
