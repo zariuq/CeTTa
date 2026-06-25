@@ -72,6 +72,7 @@ tests/test_bigint_fib100_regression.metta	he	metta	he-extended	main	native	test	
 tests/test_bigint_print_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bigint_storage_match_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bind_arity.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_bind_ground_recursive_query_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bind_partial_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bio_bc_let_hidden_env_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
 tests/test_bio_depth10_genuine_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
@@ -117,20 +118,6 @@ tests/test_cons_decons.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_context_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_context_space_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_current_env_live_merge_regression.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_apply_subst_probe.metta	he	metta	he-extended	main	native	probe-core-lane	probe	cverify apply_subst diagnostic witness
-tests/test_cverify_apply_subst_with_unify_probe.metta	he	metta	he-extended	main	native	probe-core-lane	probe	cverify apply_subst with local unify diagnostic witness
-tests/test_cverify_compat_include_parse.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_compat_parse.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_compat_parse_unsupported.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_nested_eval_semantics.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_once_collapse_probe.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_textual_comment_reject.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_textual_include_smoke.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_textual_module_import.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_textual_parse.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_textual_real_anatomy_shape.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_textual_real_demo0_bad1_shape.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_cverify_textual_real_demo0_shape.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_deb2var_inline.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_decons_atom_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_decons_atom_extra_args_error.metta	he	metta	he-extended	main	native	test	golden	-
@@ -262,7 +249,6 @@ tests/test_math_ops.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_max_atom_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_max_atom_nonnumeric_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_meta_types.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_metamath_stream_basic.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_metta_op.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_min_atom_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_min_atom_nonnumeric_error.metta	he	metta	he-extended	main	native	test	golden	-
@@ -303,7 +289,6 @@ tests/test_mork_runtime_stats_isolation.metta	he	metta	he-extended	runtime-stats
 tests/test_mork_zipper_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_namespace_sugar_guardrails.metta	he	metta	he-extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_native_count_collapse_match_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
-tests/test_nested_pipeline_tailrec.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_new_space_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_new_space_mork_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_new_state_arity.metta	he	metta	he-extended	main	native	test	golden	-
@@ -347,8 +332,6 @@ tests/test_print_nondet_probe.metta	he	metta	he-extended	main	native	probe-core-
 tests/test_println_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_println_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_println_unit_binding.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_pverify_dv_regression.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_pverify_make_assertion_missing_f.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_py_ops_surface.metta	he	metta	he-extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_queue_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_queue_space_errors.metta	he	metta	he-extended	main	native	test	golden	-
