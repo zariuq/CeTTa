@@ -1,37 +1,20 @@
-rhometta self-unfolding backward-chaining prover
+rhometta-self-unfolding-prover -- a proof search that builds itself
+==================================================================
 
-THE IDEA IN ONE LINE: proving a goal PLANTS the reactions that prove its
-subgoals, so the reaction network unfolds itself into a proof tree.
+THE IDEA
+  Proving a goal PLANTS the reactions that prove its subgoals. Each COMM evaluates
+  one backward-chaining step whose result is *more rho process* -- the cells for the
+  subgoals -- so the reaction network keeps reducing and unfolds itself into a proof
+  tree. When a goal has several rules the step has several results, so the COMM forks:
+  rhometta:run returns one finished tree per branch (the may-set), each shown as the
+  set of primitives it bottomed out at.
 
-A COMM rendezvous evaluates a deferred MeTTa payload (eval-at-COMM, the verified
-`eval_drop` bridge `rhometta_bridge_scObserved`).  Here the deferred term is one
-backward-chaining step, and its result is *more rho process* -- the cells for the
-subgoals.  (rhometta:run P) keeps reducing, so the network grows itself:
-communication = computation = construction.  When a goal has several rules the
-deferred eval has several results, so the COMM forks: nondeterministic inference
-becomes branching reduction, and the run returns the MAY-SET of every complete
-proof tree, each reported by the primitives it bottomed out at.
+  The knowledge base is a tiny "can I make cake?" graph. The seed is a SINGLE cell;
+  the reactions plant everything else.
 
-The decomposition graph is a tiny "can I make cake?" knowledge base.  The seed is
-a SINGLE cell; everything else is planted by the reactions.
+WHAT YOU SEE
+  (have cake)     -> two proof trees (batter has two rules):  {flour egg oven}  and  {mix oven}
+  (have sandwich) -> one tree (a single rule):                {bread cheese}
 
-Self-contained: no lib_pln, no MORK -- runs on a bare `make BUILD=core` binary.
-
-Verified outcomes:
-  ACT 1  proof may-set for (have cake) -> 2 trees:
-         (rho:par (rho:val (leaf egg)) (rho:val (leaf flour)) (rho:val (leaf oven)))
-         (rho:par (rho:val (leaf mix)) (rho:val (leaf oven)))
-  ACT 2  one-step frontier of (have batter) -> 2 successor networks
-         (the fork is genuine reduction at the COMM, not post-hoc enumeration)
-  ACT 3  a single-rule goal is confluent-by-construction -> exactly 1 residual
-         (rho:par (rho:val (leaf bread)) (rho:val (leaf cheese)))
-
-Hooks (left in code comments): fold PLN Truth_Deduction along each path and the
-leaf set becomes a truth-valued conclusion per proof (a self-growing
-deduction farm); and every cell here IS an eval_drop, so
-`rhometta_bridge_scObserved` is literally the theorem licensing "the quiescent
-residual = the proof."
-
-Run:
-  ./cetta --profile he-extended --lang he \
-      benchmarks/rho/rhometta-self-unfolding-prover/example.metta
+RUN
+  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-self-unfolding-prover/example.metta

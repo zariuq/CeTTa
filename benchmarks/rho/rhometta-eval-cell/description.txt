@@ -1,0 +1,29 @@
+rhometta-eval-cell -- communication does computation (the minimal demo)
+=======================================================================
+
+THE ONE IDEA
+  rhometta is the rho-calculus reaction machine with MeTTa terms as payloads
+  that are evaluated at the rendezvous (the COMM step). A "cell" is the smallest
+  program that shows it: a send carrying a deferred MeTTa term, next to a
+  receiver that runs whatever arrives. When the send and receive meet, the term
+  is evaluated -- so one act of communication is one computation step. If the
+  term has several results, the COMM forks into one branch per result, and
+  rhometta:run returns that set of outcomes (the "may-set").
+
+WHAT EACH LINE SHOWS
+  A  (cell (+ 2 3))             -> 5         a deterministic payload: one value.
+  B  (cell (superpose (a b c))) -> a, b, c   a multi-result payload: the COMM
+                                              forks, one branch per result.
+  C  rhometta:transitions ...   -> 3         the fork is a genuine one-step
+                                              reduction (3 successors), not a
+                                              filter applied afterward.
+
+API used (lib/rhometta.metta):
+  rhometta:eval         defer a MeTTa term to be run at COMM
+  rhometta:run          reduce a process to its quiescent outcome set (the may-set)
+  rhometta:transitions  one-step successors (for inspecting the frontier)
+
+RUN
+  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-eval-cell/example.metta
+
+Expect: A -> (5);  B -> (a b c);  C -> 3.
