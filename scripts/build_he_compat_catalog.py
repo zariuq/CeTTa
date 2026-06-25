@@ -24,7 +24,7 @@ from mettapedia_paths import (
     workspace_display,
 )
 
-CATALOG_DATE = "2026-06-07"
+CATALOG_DATE = "2026-06-25"
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parents[1]
@@ -170,20 +170,6 @@ BROAD_RUST_DRIFT_NOTES: dict[str, dict[str, Any]] = {
             "he_metta_official_specs.md:211-233 interpret_tuple specifies source-order head/tail recombination but not side-effect scheduling",
         ],
         "rule_ids": ["minimal.collapse-superpose", "nondet.visible-bag"],
-    },
-    "tests/test_cverify_once_collapse_probe.metta": {
-        "note": (
-            "Rust HE stops collapse(eval(coin)) at the singleton one-step eval "
-            "packet ((superpose ...)). CeTTa follows collapse-bind/interpret_tuple "
-            "frontier collection and exposes the visible superpose results as the "
-            "tuple (heads tails)."
-        ),
-        "spec_refs": [
-            "he_metta_official_specs.md:89 eval makes one evaluation step; collapse-bind collects all interpretation results",
-            "he_metta_official_specs.md:211-233 interpret_tuple source-order head/tail recombination",
-            "he_metta_official_specs.md:351-389 metta_call re-enters evaluator/query results and returns Empty only for zero results",
-        ],
-        "rule_ids": ["minimal.eval", "minimal.collapse-superpose", "nondet.visible-bag"],
     },
     "tests/test_stdlib_helper_tranche.metta": {
         "note": (
@@ -343,21 +329,16 @@ BROAD_LOCAL_LIBRARY_IMPORT_PATHS = {
     "tests/test_lts_surface.metta",
     "tests/test_math_lib_surface.metta",
     "tests/test_math_namespace_docs.metta",
-    "tests/test_nested_pipeline_tailrec.metta",
     "tests/test_string_escapes.metta",
 }
 
 BROAD_LOCAL_LIBRARY_IMPORT_MODULES = {
     "clist",
-    "cverify_compat",
-    "cverify_textual_parse",
     "fs",
     "list",
     "lts",
     "math",
-    "metamath",
     "path",
-    "pverify-utils",
     "rho",
     "str",
     "system",
@@ -1453,9 +1434,6 @@ def broad_local_library_import(row: dict[str, Any], upstream_head: str) -> bool:
     return any(
         token in path
         for token in [
-            "cverify",
-            "pverify",
-            "metamath",
             "rho",
             "pln",
             "bio",

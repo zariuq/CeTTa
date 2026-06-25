@@ -254,8 +254,6 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
         state->target_reusable = false;
         state->target_reserved_new = true;
         state->target_stale = false;
-        table_store_entry_init(&store->entries[store->len]);
-        store->len++;
     }
 
     state->staged.space = space;
@@ -417,7 +415,7 @@ bool table_store_commit_query(TableQueryHandle *handle) {
 
     TableQueryState *state = handle->impl;
     TableStoreEntry *target = &state->store->entries[state->target_index];
-    if (state->target_reusable || state->target_reserved_new) {
+    if (state->target_reusable) {
         table_store_entry_free(target);
         if (state->target_stale)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_REUSE);

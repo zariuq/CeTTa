@@ -192,7 +192,8 @@ theorem commInput_semantic_substituted_body_is_emptyBag :
 
 theorem commInput_semantic_reduct_SC_emptyBag :
     StructuralCongruence commInputSemanticReduct emptyBag := by
-  simpa [commInputSemanticReduct, emptyBag] using
+  simpa [commInputSemanticReduct, commInputReduct, emptyBag,
+    commInput_semantic_substituted_body_is_emptyBag] using
     StructuralCongruence.par_singleton emptyBag
 
 theorem commInput_live_reduct_agrees_with_semantic_target :
@@ -426,11 +427,13 @@ def literalDropStatic : Pattern :=
 
 theorem semanticCommSubst_collapses_drop_to_payload :
     semanticCommSubst (.apply "PDrop" [.bvar 0]) emptyBag = emptyBag := by
-  simpa [emptyBag] using semanticCommSubst_collapses_bound_drop emptyBag
+  simpa [emptyBag, semanticNormalizeProc, semanticNormalizeProcList] using
+    semanticCommSubst_collapses_bound_drop emptyBag
 
 theorem semanticCommSubst_preserves_literal_drop_static :
     semanticCommSubst literalDropStatic emptyBag = literalDropStatic := by
-  simpa [literalDropStatic, channel, payload, emptyBag] using
+  simpa [literalDropStatic, channel, payload, emptyBag,
+    semanticNormalizeName, semanticNormalizeProc, semanticNormalizeProcList] using
     semanticCommSubst_preserves_output_literal_drop channel payload emptyBag
 
 theorem semanticCommSubst_literal_drop_static_agrees_with_syntactic_open :
@@ -581,7 +584,7 @@ theorem costSurface_continued_contract_records_intrinsic_spent :
         { term := costBodyTerm, grade := zeroCostGrade }
         { term := costPayloadTerm, grade := zeroCostGrade }).spent
       = rhoIntrinsicCommLedger costChannel costPayloadTerm := by
-  simpa using
+  exact
     rhoContinuedCutPresentation_spent
       costChannel costChannel
       { term := costBodyTerm, grade := zeroCostGrade }
@@ -594,7 +597,7 @@ theorem costSurface_continued_contract_spent_shadow :
           { term := costBodyTerm, grade := zeroCostGrade }
           { term := costPayloadTerm, grade := zeroCostGrade }).spent) =
         rhoIntrinsicCommAccount costChannel costPayloadTerm := by
-  simpa using
+  exact
     rhoContinuedCutPresentation_spent_shadow
       costChannel costChannel
       { term := costBodyTerm, grade := zeroCostGrade }
@@ -612,7 +615,7 @@ theorem costSurface_continued_contract_spent_syntax_eq_shadow :
               costChannel costChannel
               { term := costBodyTerm, grade := zeroCostGrade }
               { term := costPayloadTerm, grade := zeroCostGrade }).spent) := by
-  simpa using
+  exact
     rhoContinuedCutPresentation_spent_syntax_eq_shadow
       costChannel costChannel
       { term := costBodyTerm, grade := zeroCostGrade }
@@ -624,12 +627,56 @@ theorem costSurface_continued_contract_left_term :
         { term := costBodyTerm, grade := zeroCostGrade }
         { term := costPayloadTerm, grade := zeroCostGrade }).left.term
       = costBodyTerm := by
-  have hfst :=
-    rhoContinuedCutPresentation.contractWrapped_fst_term
+  calc
+    (rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }).left.term
+        =
+      (rhoContinuedCutPresentation.symmetricCut.contract
+        costChannel costChannel costBodyTerm costPayloadTerm).1 := by
+          exact rhoContinuedCutPresentation.contractWrapped_fst_term
+            costChannel costChannel
+            { term := costBodyTerm, grade := zeroCostGrade }
+            { term := costPayloadTerm, grade := zeroCostGrade }
+    _ = semanticCommSubst costBodyTerm costPayloadTerm := by
+          simpa [rhoContinuedCutPresentation] using
+            rhoSymmetricCutPresentation_contract_fst
+              costChannel costChannel costBodyTerm costPayloadTerm
+    _ = costBodyTerm := by
+          exact costSurface_semantic_subst_body_ignores_payload
+
+theorem costSurface_continued_contract_right_term :
+    (rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }).right.term
+      = .apply "PZero" [] := by
+  rfl
+
+theorem costSurface_continued_contract_spent_wellFormed :
+    RhoLedger.WellFormedSpent
+      ((rhoContinuedCutPresentation.contractWrapped
+          costChannel costChannel
+          { term := costBodyTerm, grade := zeroCostGrade }
+          { term := costPayloadTerm, grade := zeroCostGrade }).spent) := by
+  exact rhoIntrinsicCommLedger_wellFormed costChannel costPayloadTerm
+
+theorem costSurface_continued_contract_left_grade :
+    (rhoContinuedCutPresentation.contractWrapped
+        costChannel costChannel
+        { term := costBodyTerm, grade := zeroCostGrade }
+        { term := costPayloadTerm, grade := zeroCostGrade }).left.grade
+      = zeroCostGrade := by
+  rfl
+
+theorem costSurface_continued_contract_right_grade :
+    (rhoContinuedCutPresentation.contractWrapped
       costChannel costChannel
       { term := costBodyTerm, grade := zeroCostGrade }
-      { term := costPayloadTerm, grade := zeroCostGrade }
-  simpa [costSurface_semantic_subst_body_ignores_payload] using hfst
+      { term := costPayloadTerm, grade := zeroCostGrade }).right.grade
+      = zeroCostGrade := by
+  rfl
 
 theorem costSurface_continued_contract_spent_and_left_term :
     let step :=
@@ -657,11 +704,16 @@ theorem costSurface_continued_contract_preserves_wrapped_structure :
       step.left.grade = zeroCostGrade ∧
       step.right.grade = zeroCostGrade ∧
       RhoLedger.WellFormedSpent step.spent := by
-  simpa [costSurface_semantic_subst_body_ignores_payload, zeroCostGrade] using
-    rhoContinuedCutPresentation_preserves_wrapped_structure
-      costChannel costChannel
-      { term := costBodyTerm, grade := zeroCostGrade }
-      { term := costPayloadTerm, grade := zeroCostGrade }
+  dsimp
+  constructor
+  · exact costSurface_continued_contract_left_term
+  · constructor
+    · exact costSurface_continued_contract_right_term
+    · constructor
+      · exact costSurface_continued_contract_left_grade
+      · constructor
+        · exact costSurface_continued_contract_right_grade
+        · exact costSurface_continued_contract_spent_wellFormed
 
 theorem costSurface_continued_contract_preserves_direct_witness :
     let step : Mettapedia.GSLT.Meredith.AccountedCutStep Pattern RhoLedger RhoLedger :=
@@ -715,9 +767,8 @@ theorem costSurface_continued_contract_preserves_direct_witness :
             _ = zeroCostGrade.spatial := by
                   exact congrArg RhoLedger.spatial hwrap.2.2.2.1
         · constructor
-          · simpa [costSurface_semantic_subst_body_ignores_payload, zeroCostGrade] using
-              hdirect.2.2.2.2.1
-          · simpa [zeroCostGrade] using hdirect.2.2.2.2.2
+          · exact hdirect.2.2.2.2.1
+          · exact hdirect.2.2.2.2.2
 
 theorem costSurface_continued_no_leak :
     let step : Mettapedia.GSLT.Meredith.AccountedCutStep Pattern RhoLedger RhoLedger :=
@@ -729,7 +780,7 @@ theorem costSurface_continued_no_leak :
       step.spent = rhoIntrinsicCommLedger costChannel costPayloadTerm ∧
       RhoLedger.WellFormedSpent step.spent ∧
       rhoLedgerShadow step.spent = rhoIntrinsicCommAccount costChannel costPayloadTerm := by
-  simpa [zeroCostGrade] using
+  exact
     rhoContinuedCutPresentation_balance_no_leak
       costChannel costChannel
       { term := costBodyTerm, grade := zeroCostGrade }
@@ -1584,7 +1635,7 @@ theorem commInput_continued_contract_transport_to_representative :
           { term := body, grade := zeroCostGrade }
           { term := payload, grade := zeroCostGrade }).left.term
       (semanticCommRepresentative body payload) := by
-  simpa [body, payload] using
+  exact
     rhoContinuedCutPresentation_contract_fst_transport_to_representative
       channel channel
       { term := body, grade := zeroCostGrade }
