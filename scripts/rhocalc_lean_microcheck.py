@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 
+SKIP_INCOMPATIBLE_TOOLCHAIN = 85
+
+
 def imported_modules(lean_file: Path) -> list[str]:
     modules: list[str] = []
     seen: set[str] = set()
@@ -19,6 +22,66 @@ def imported_modules(lean_file: Path) -> list[str]:
                 seen.add(module)
                 modules.append(module)
     return modules
+
+
+def expected_toolchain_file(lean_file: Path) -> Path:
+    return lean_file.with_suffix(".toolchain")
+
+
+def read_expected_toolchain(lean_file: Path) -> str | None:
+    toolchain_path = expected_toolchain_file(lean_file)
+    if not toolchain_path.is_file():
+        return None
+    try:
+        text = toolchain_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(str(exc)) from exc
+    if not text:
+        raise ValueError(f"empty expected toolchain file: {toolchain_path}")
+    return text
+
+
+def check_toolchain_compatibility(mettapedia_root: Path, lean_file: Path) -> int | None:
+    expected = read_expected_toolchain(lean_file)
+    if expected is None:
+        return None
+
+    actual_path = mettapedia_root / "lean-toolchain"
+    if not actual_path.is_file():
+        print(
+            "SKIP: rhocalc lean microcheck incompatible Mettapedia checkout "
+            f"(missing {actual_path})",
+            file=sys.stderr,
+        )
+        return SKIP_INCOMPATIBLE_TOOLCHAIN
+
+    try:
+        actual = actual_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        print(
+            "SKIP: rhocalc lean microcheck incompatible Mettapedia checkout "
+            f"({exc})",
+            file=sys.stderr,
+        )
+        return SKIP_INCOMPATIBLE_TOOLCHAIN
+
+    if not actual:
+        print(
+            "SKIP: rhocalc lean microcheck incompatible Mettapedia checkout "
+            f"(empty {actual_path})",
+            file=sys.stderr,
+        )
+        return SKIP_INCOMPATIBLE_TOOLCHAIN
+
+    if actual != expected:
+        print(
+            "SKIP: rhocalc lean microcheck incompatible Mettapedia toolchain "
+            f"(expected {expected}, found {actual})",
+            file=sys.stderr,
+        )
+        return SKIP_INCOMPATIBLE_TOOLCHAIN
+
+    return None
 
 
 def main() -> int:
@@ -38,6 +101,13 @@ def main() -> int:
     if not lean_file.is_file():
         print(f"missing Lean microcheck file: {lean_file}", file=sys.stderr)
         return 2
+    try:
+        compatibility = check_toolchain_compatibility(mettapedia_root, lean_file)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if compatibility is not None:
+        return compatibility
 
     build_targets = imported_modules(lean_file)
     if not build_targets:

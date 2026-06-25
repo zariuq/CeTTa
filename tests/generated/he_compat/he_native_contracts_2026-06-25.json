@@ -1,0 +1,1879 @@
+{
+  "contract_date": "2026-06-25",
+  "contracts": {
+    "allowed_successor_shape": [
+      {
+        "id": "error-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:error propagation paths",
+          "src/main.c:write_results"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:ErrorAtom",
+          "HELanguageDef.mettaHE:M_Error",
+          "HELanguageDef.mettaHE:MC_Error"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/test_bad_type_error.metta",
+          "tests/test_no_return_error.metta"
+        ],
+        "statement": "Error atoms propagate as visible Error successors and are not silently converted to Empty or ordinary values.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "lts-diamond-frontier-shape",
+        "implementation_anchors": [
+          "lib/lts/he.metta:lts:he:transitions",
+          "src/library.c:lts_he_transitions_frontier",
+          "src/eval.c:outcome_set_normalize_visible_frontier"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:rewrites",
+          "Mettapedia.OSLF.Framework.TypeSynthesis.langDiamondUsing"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta"
+        ],
+        "statement": "The visible lts:he transition frontier is the implementation counterpart of OSLF \u25c7: zero successors for quiescent/Empty, one successor per visible nondeterministic branch, and Error propagation as an Error successor.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "match-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:match minimal instruction path",
+          "lib/lts/he.metta:lts:he:transitions"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Match",
+          "HELanguageDef.mettaHE:MC_Match_Empty"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/generated/he_contract/test_match.metta",
+          "tests/test_match_atoms_bidir.metta"
+        ],
+        "statement": "match emits one successor per successful active-space match and emits Empty only for the no-match branch.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "unify-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:unify minimal instruction path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Unify_Match",
+          "HELanguageDef.mettaHE:MC_Unify_NoMatch"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/generated/he_contract/test_unify.metta"
+        ],
+        "statement": "unify emits the success continuation on local match and the failure continuation on local no-match.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "chain-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:chain minimal instruction path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:Metta",
+          "HELanguageDef.mettaHE:R_Done"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/test_chain_nondet.metta",
+          "tests/he_b1_equal_chain.metta"
+        ],
+        "statement": "chain emits successors obtained by substituting each evaluated input result into the continuation template.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "equation-query-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:equation application path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Equation",
+          "HELanguageDef.mettaHE:MC_NoMatch"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/io_he_simple_rewrite.metta",
+          "tests/io_he_unknown_expr_preserved.metta",
+          "tests/he_c3_pln_stv.metta"
+        ],
+        "statement": "Each equation query result becomes a successor that re-enters metta evaluation at the substituted right-hand side; no-match returns the original call unchanged.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "eval-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:eval compatibility branch",
+          "src/session.c:CETTA_PROFILE_HE_FORMAL_VALUE",
+          "src/session.c:CETTA_PROFILE_HE_COMPAT_VALUE"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Grounded",
+          "HELanguageDef.mettaHE:MC_NoMatch"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "regression_tests": [
+          "tests/test_eval_grounded.metta"
+        ],
+        "statement": "formal HE eval of an unreduced expression surfaces the inner expression, while he-compat surfaces Rust HE 0.2.10's wrapped eval expression.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "type-cast-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:type cast path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:TC_Match",
+          "HELanguageDef.mettaHE:TC_Mismatch"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "regression_tests": [
+          "tests/test_type_cast.metta",
+          "tests/test_bad_type_error.metta"
+        ],
+        "statement": "TypeCast either returns the original atom on a type match or returns Error(atom, BadType(expected, actual)) on mismatch.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "grounded-dispatch-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:grounded/native call dispatch"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Grounded"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "regression_tests": [
+          "tests/test_float_ops.metta",
+          "tests/test_string_ops.metta",
+          "tests/test_eval_grounded.metta"
+        ],
+        "statement": "A grounded/native result is treated as an opaque premise result and each returned atom re-enters metta evaluation with the caller expected type.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "function-return-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:function compatibility branch",
+          "src/session.c:rust_he_compat_semantics"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:Return",
+          "HELanguageDef.mettaHE:R_Done"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "regression_tests": [
+          "tests/test_no_return_error.metta"
+        ],
+        "statement": "formal HE reports NoReturn when a function body exits without return; he-compat reproduces Rust HE 0.2.10's fresh-result surface for the compatibility lane.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "superpose-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:superpose minimal instruction path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Superpose",
+          "HELanguageDef.mettaHE:MC_Superpose_Empty"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/generated/he_contract/test_superpose_collapse.metta",
+          "tests/test_he_frontier_algebra_regression.metta"
+        ],
+        "statement": "superpose emits one successor per tuple element and Empty for the empty tuple.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "collapse-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:collapse minimal instruction path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Collapse"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/generated/he_contract/test_superpose_collapse.metta"
+        ],
+        "statement": "collapse collects the terminal visible results of the nested evaluation frontier.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "context-space-successor-shape",
+        "implementation_anchors": [
+          "src/eval.c:context-space/evalc minimal instruction paths"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:State",
+          "HELanguageDef.mettaHE:Space"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "regression_tests": [
+          "tests/test_context_space.metta",
+          "tests/test_evalc.metta"
+        ],
+        "statement": "context-space and evalc use the active interpreter space as the successor context.",
+        "status": "implemented-and-regression-tested"
+      }
+    ],
+    "arity_surface": {
+      "contracts": [
+        {
+          "id": "constructor-arity-surface",
+          "implementation_anchors": [
+            "lib/lts.metta",
+            "lib/lts/he.metta",
+            "src/session.c:CETTA_SURFACE_POLICIES"
+          ],
+          "regression_tests": [
+            "tests/generated/he_contract/test_cons_decons.metta",
+            "tests/test_he_frontier_algebra_regression.metta"
+          ],
+          "statement": "Native surface declarations expose arity and result shape for structural constructors and lts:he helpers; future language surfaces should extend this table rather than hard-code arity checks per language.",
+          "status": "implemented-and-regression-tested"
+        }
+      ],
+      "lts_declarations": [
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:transitions",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:trace-2",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:is-normal-form",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts",
+          "name": "lts:is-can-step",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom",
+            "Atom"
+          ],
+          "arity": 3,
+          "module": "lts",
+          "name": "lts:box",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom",
+            "Atom"
+          ],
+          "arity": 3,
+          "module": "lts",
+          "name": "lts:diamond",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:transitions",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:step-state",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:trace-2",
+          "return_type": "%Undefined%"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:is-normal-form",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom"
+          ],
+          "arity": 1,
+          "module": "lts:he",
+          "name": "lts:he:is-can-step",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts:he",
+          "name": "lts:he:box",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [
+            "Atom",
+            "Atom"
+          ],
+          "arity": 2,
+          "module": "lts:he",
+          "name": "lts:he:diamond",
+          "return_type": "Bool"
+        },
+        {
+          "argument_types": [],
+          "arity": 0,
+          "module": "lts:he",
+          "name": "lts:he:step-rules",
+          "return_type": "%Undefined%"
+        }
+      ],
+      "profile_surface_policies": [
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "_minimal-foldl-atom"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "foldl-atom-in-space"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "foldl-atom"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "filter-atom"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
+          "profiles": [
+            "he",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "range-atom"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
+          "profiles": [
+            "he",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "repeat-atom"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
+          "profiles": [
+            "he",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "add-atom-nodup"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "extension_only",
+          "surface": "count-atoms"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "module-inventory!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "runtime-stats!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "reset-runtime-stats!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "register-module!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "git-module!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "import!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "include"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
+          "profiles": [
+            "he",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "include-space-target"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "mod-space!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "print-mods!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "capture"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "quote"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "unquote"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "keep_he_public_surface",
+          "surface": "sealed"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "collect"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "fold"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "fold-by-key"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "reduce"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "select"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "hyperpose"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "once"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_ALL",
+          "profiles": [
+            "he",
+            "he-compat",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "translator_compat_surface",
+          "surface": "singleton-visible-witness"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "search-policy"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "new-space-kind"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
+          "profiles": [
+            "he",
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "with-space-snapshot"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-set-backend!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "compat_alias",
+          "surface": "space-set-match-backend!"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "size"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-len"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-push"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-peek"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-pop"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-get"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "space-truncate"
+        },
+        {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
+          "profiles": [
+            "he-extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "surface": "step!"
+        }
+      ],
+      "profiles": [
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": true,
+          "name": "he",
+          "note": "Formal/spec-faithful HE base for OSLF/NTT/DTT work.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": true,
+          "name": "he-compat",
+          "note": "Rust Hyperon Experimental HE 0.2.10 compatibility lane.",
+          "rust_he_compat_semantics": true
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": true,
+          "name": "he-extended",
+          "note": "HE-compatible surface plus labeled CeTTa extensions.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": true,
+          "he_compatible_surface": false,
+          "name": "he-prime",
+          "note": "Binder-aware dependent telescope elaboration atop he-extended.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": false,
+          "name": "strict-core",
+          "note": "Strict-core rho-calculus without cost-layer extensions.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_surface": false,
+          "name": "cost",
+          "note": "Meredith cost-accounted rho extension (ground-signature token-gated slice).",
+          "rust_he_compat_semantics": false
+        }
+      ]
+    },
+    "module_policy": [
+      {
+        "catalog_category": "module-resolution-diff",
+        "expected_policy_row_count": 6,
+        "formal_he_obligation": "Pin CeTTa's local-path import, nested import, cycle detection, parse-failure reporting, and transactional rollback semantics as formal he module/import behavior.",
+        "he_compat_obligation": "Keep these rows out of core evaluator agreement counts unless Rust becomes runnable past the import/module-name boundary.",
+        "id": "module-import-policy-evidence-shape",
+        "implementation_anchors": [
+          "scripts/build_he_compat_catalog.py:BROAD_MODULE_RESOLUTION_NOTES",
+          "scripts/build_he_compat_catalog.py:module-resolution rows require explicit policy notes",
+          "src/library.c:cetta_library_include_module",
+          "lib/stdlib.metta:@doc import!",
+          "lib/stdlib.metta:@doc include"
+        ],
+        "policy_rows": [],
+        "regression_tests": [],
+        "spec_refs": [],
+        "statement": "Module-resolution rows are explicit policy evidence, not core he-compat evaluator obligations: Rust HE rejects these local-path or nested module names before shared semantics are reachable, while formal he owns the local-path, nested-import, cycle, parse-failure, and transactional rollback contract to pin next.",
+        "status": "policy-pinned-generated-evidence"
+      },
+      {
+        "catalog_category": "module-inventory-environment-diff",
+        "expected_policy_row_count": 1,
+        "formal_he_obligation": "Pin the module-inventory visible tree for explicitly loaded modules, including ordering and builtin-module visibility.",
+        "he_compat_obligation": "Keep host-specific builtin inventory differences out of core evaluator agreement counts.",
+        "id": "module-inventory-policy-evidence-shape",
+        "implementation_anchors": [
+          "scripts/build_he_compat_catalog.py:BROAD_MODULE_INVENTORY_NOTES",
+          "scripts/build_he_compat_catalog.py:module-inventory rows require explicit policy notes",
+          "tests/spec_print_mods_inventory.metta"
+        ],
+        "policy_rows": [],
+        "regression_tests": [],
+        "spec_refs": [],
+        "statement": "Module-inventory rows are explicit policy evidence, not core he-compat evaluator obligations: Rust HE prints host/builtin module inventory while CeTTa prints the explicitly loaded session graph. Formal he should pin the CeTTa inventory contract before this becomes a core semantic obligation.",
+        "status": "policy-pinned-generated-evidence"
+      }
+    ],
+    "premise_flow": [
+      {
+        "id": "function-type-applicability-premise-flow",
+        "implementation_anchors": [
+          "src/eval.c:type matching / function applicability paths",
+          "src/eval.c:infer_dependent_application_types"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:IE_FuncType",
+          "HELanguageDef.mettaHE:applicableFuncType premise",
+          "HELanguageDef.mettaHE:IF_AfterOp_EvalArgs"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "regression_tests": [
+          "tests/test_function_type_check.metta",
+          "tests/he_d4_type_prop.metta",
+          "tests/he_d5_auto_types.metta"
+        ],
+        "statement": "A function call may enter the typed function path only after the function type is applicable to the actual argument list and expected return type.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "argument-evaluation-premise-flow",
+        "implementation_anchors": [
+          "src/eval.c:eval expression/function argument paths",
+          "src/eval.c:result_set_filter_empty"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:IF_AfterOp_EvalArgs",
+          "HELanguageDef.mettaHE:IA_Start_Typed",
+          "HELanguageDef.mettaHE:IA_Head_Empty",
+          "HELanguageDef.mettaHE:IA_Tail_Empty"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/he_c3_pln_stv.metta",
+          "tests/test_he_frontier_algebra_regression.metta"
+        ],
+        "statement": "After the operator is evaluated, arguments are evaluated in the order and with the expected types dictated by the selected function type; Empty/Error short-circuit rather than becoming ordinary argument values.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "match-premise-flow",
+        "implementation_anchors": [
+          "src/eval.c:match builtins / space query path",
+          "lib/lts/he.metta:lts:he:transitions"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Match",
+          "HELanguageDef.mettaHE:MC_Match_Empty"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/generated/he_contract/test_match.metta",
+          "tests/test_match_atoms_bidir.metta"
+        ],
+        "statement": "match first parses the active-space query, then emits one successor for each space match and Empty for no-match.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "unify-premise-flow",
+        "implementation_anchors": [
+          "src/eval.c:unify minimal instruction path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Unify_Match",
+          "HELanguageDef.mettaHE:MC_Unify_NoMatch"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "regression_tests": [
+          "tests/generated/he_contract/test_unify.metta"
+        ],
+        "statement": "unify has exactly the local-match success branch and the local-no-match failure branch, each re-entering evaluation with the selected continuation term.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "chain-premise-flow",
+        "implementation_anchors": [
+          "src/eval.c:chain minimal instruction path"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:Metta",
+          "HELanguageDef.mettaHE:R_Done"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "regression_tests": [
+          "tests/test_chain_nondet.metta",
+          "tests/he_b1_equal_chain.metta"
+        ],
+        "statement": "chain evaluates its input term, substitutes the result through the named variable in the continuation template, and continues from that continuation.",
+        "status": "implemented-and-regression-tested"
+      }
+    ],
+    "profile_doc_surface": [
+      {
+        "id": "get-doc-respects-profile-surface",
+        "implementation_anchors": [
+          "src/session.c:CETTA_SURFACE_POLICIES",
+          "src/eval.c:__cetta_surface-available",
+          "lib/stdlib.metta:get-doc"
+        ],
+        "regression_tests": [
+          "tests/support/profile_get_doc_formal_surface.metta",
+          "tests/support/profile_get_doc_extended_surface.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:profile/lang surfaces"
+        ],
+        "statement": "get-doc only returns documentation for surfaces available in the active formal/extended HE language/profile; public HE surfaces remain documented, while extension-only surfaces are hidden from the formal HE base profile.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "he-compat-reproduces-rust-get-doc-arity",
+        "implementation_anchors": [
+          "src/session.c:CETTA_PROFILE_HE_COMPAT_VALUE",
+          "src/eval.c:get-doc Rust compatibility branch"
+        ],
+        "regression_tests": [
+          "tests/support/profile_get_doc_compat_surface.metta"
+        ],
+        "spec_refs": [
+          "tests/generated/he_compat/he_compat_cases_2026-06-25.json:he_g1_docs"
+        ],
+        "statement": "The he-compat lane reproduces upstream Hyperon Experimental 0.2.10's single-argument get-doc arity error, even though the formal HE lane keeps profile-aware documentation.",
+        "status": "implemented-and-regression-tested"
+      }
+    ],
+    "profile_surface": [
+      {
+        "id": "profile-he-formal-vs-rust-compat-split",
+        "implementation_anchors": [
+          "src/session.c:CETTA_PROFILE_HE_FORMAL_VALUE",
+          "src/session.c:CETTA_PROFILE_HE_COMPAT_VALUE",
+          "src/session.h:rust_he_compat_semantics"
+        ],
+        "regression_tests": [
+          "tests/test_eval_grounded.metta",
+          "tests/test_no_return_error.metta",
+          "tests/he_g1_docs.metta",
+          "tests/support/profile_get_doc_compat_surface.metta",
+          "tests/support/profile_get_doc_formal_surface.metta"
+        ],
+        "statement": "--profile he is the formal/spec-faithful HE lane used by OSLF/NTT/DTT work; --profile he-compat is the literal Rust HE 0.2.10 compatibility lane.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "profile-surface-policy-table",
+        "implementation_anchors": [
+          "src/session.c:CETTA_SURFACE_POLICIES",
+          "src/session.c:cetta_surface_available",
+          "src/eval.c:__cetta_surface-available"
+        ],
+        "regression_tests": [
+          "tests/support/profile_get_doc_formal_surface.metta",
+          "tests/support/profile_get_doc_extended_surface.metta"
+        ],
+        "statement": "Language/profile surface availability is recorded in one explicit inventory so future --lang petta and --lang pure surfaces can be compared and tested without forking ad hoc checks.",
+        "status": "implemented-and-regression-tested"
+      }
+    ],
+    "result_algebra": [
+      {
+        "id": "empty-zero-visible-result-bag",
+        "implementation_anchors": [
+          "src/eval.c:result_set_filter_empty",
+          "src/eval.c:outcome_set_normalize_visible_frontier",
+          "src/main.c:write_results"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta",
+          "tests/he_d4_type_prop.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:minimal-metta Empty result algebra"
+        ],
+        "statement": "Empty contributes no visible result when a non-Empty result survives in a finished HE result/frontier bag.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "empty-not-lts-successor",
+        "implementation_anchors": [
+          "src/library.c:lts_he_transitions_frontier"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta"
+        ],
+        "spec_refs": [
+          "lib/lts.metta:quiescent states are reported by zero results",
+          "lib/lts/he.metta:lts:he:transitions emits zero results on quiescent atoms"
+        ],
+        "statement": "Empty is not emitted as a quoted lts:he successor state.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "surviving-branch-reenters-evaluator",
+        "implementation_anchors": [
+          "src/eval.c:eval_delayed_outcome_for_caller",
+          "src/eval.c:atom_is_constructor_normal_form"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta",
+          "tests/he_c3_pln_stv.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:minimal-metta applicative evaluation order"
+        ],
+        "statement": "A surviving branch from an overlapping nondeterministic equation frontier is evaluated applicatively even when a sibling branch collapses to Empty.",
+        "status": "implemented-and-regression-tested"
+      },
+      {
+        "id": "success-frontier-filters-errors",
+        "implementation_anchors": [
+          "src/eval.c:outcome_set_filter_errors_if_success",
+          "src/eval.c:outcome_set_normalize_visible_frontier"
+        ],
+        "regression_tests": [
+          "tests/test_he_frontier_algebra_regression.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:minimal-metta result collection"
+        ],
+        "statement": "A visible successful frontier suppresses sibling Error outcomes; Empty alone does not count as success for that filter.",
+        "status": "implemented-and-regression-tested"
+      }
+    ]
+  },
+  "kind": "he-native-contract-ledger",
+  "profile_policy": {
+    "formal_he": {
+      "doc_surface_sentence": "get-doc and help! follow the documented stdlib documentation surface for the active language/profile; extension-only documented surfaces are hidden. Rust HE 0.2.10 get-doc arity failures are reproduced only by he-compat.",
+      "eval_surface_sentence": "When the eval instruction reaches a non-reducible expression E, the user-visible formal-HE result is E itself.",
+      "scope": "Spec-faithful HE interpretation used as the formal base for OSLF/NTT/DTT work. This is the default --lang he path and is also available explicitly as --profile he."
+    },
+    "he_compat": {
+      "scope": "Literal compatibility catalog for upstream Hyperon Experimental HE 0.2.10. This lane intentionally reproduces observed Rust HE surface quirks; formal/spec-faithful behavior belongs to --lang he / --profile he."
+    }
+  },
+  "provenance": {
+    "cetta_cli": {
+      "bytes": 70230,
+      "exists": true,
+      "path": "hyperon/CeTTa/src/main.c",
+      "sha256": "67276cdfc56ffda812a2991b6f55e1706b487584cc4f3ea03625323166d981d9"
+    },
+    "cetta_eval": {
+      "bytes": 643455,
+      "exists": true,
+      "path": "hyperon/CeTTa/src/eval.c",
+      "sha256": "18893116d878e1c3a271543af5c3547ffcd33d06caf2f5c9b6f538767f28aed2"
+    },
+    "cetta_library": {
+      "bytes": 282108,
+      "exists": true,
+      "path": "hyperon/CeTTa/src/library.c",
+      "sha256": "272a84710719c06cdafe777db64a20b46bd56dc873dcd4ada310f651c1f57775"
+    },
+    "cetta_session": {
+      "bytes": 25322,
+      "exists": true,
+      "path": "hyperon/CeTTa/src/session.c",
+      "sha256": "ce98f763a595bc658322c17b429d3f3da631355ced526fc8fdee4ab7790df318"
+    },
+    "cetta_session_header": {
+      "bytes": 10951,
+      "exists": true,
+      "path": "hyperon/CeTTa/src/session.h",
+      "sha256": "55c02108b8a74c6e16070780319f954e38a4012356f994b831d4f5987888f2da"
+    },
+    "frontier_regression": {
+      "bytes": 1418,
+      "exists": true,
+      "path": "hyperon/CeTTa/tests/test_he_frontier_algebra_regression.metta",
+      "sha256": "8a38eaf83d983d9d6ba98289e5f35010c72ec7580b6050c0f7aecab19903af84"
+    },
+    "he_c3_regression": {
+      "bytes": 2708,
+      "exists": true,
+      "path": "hyperon/CeTTa/tests/he_c3_pln_stv.metta",
+      "sha256": "fb1d38e28591e53bb017e810f83ea27ad6df96d13fa711db7be3c1f80363614f"
+    },
+    "he_compat_catalog": {
+      "bytes": 254126,
+      "exists": true,
+      "path": "hyperon/CeTTa/tests/generated/he_compat/he_compat_cases_2026-06-25.json",
+      "sha256": "989d9336302f99005362c8e95c2d740d685edbaa680a96c589f70c9f9c4e464f"
+    },
+    "he_d4_regression": {
+      "bytes": 5571,
+      "exists": true,
+      "path": "hyperon/CeTTa/tests/he_d4_type_prop.metta",
+      "sha256": "142acb1deebd51a2e4917bd0cdab856380a63119f4c71bf43247350d82190b82"
+    },
+    "lts_generic_surface": {
+      "bytes": 4908,
+      "exists": true,
+      "path": "hyperon/CeTTa/lib/lts.metta",
+      "sha256": "bb927f4452a26cfda6cbd4495af7de37af7c3443b6e1345dd0ac464401548b22"
+    },
+    "lts_he_surface": {
+      "bytes": 5447,
+      "exists": true,
+      "path": "hyperon/CeTTa/lib/lts/he.metta",
+      "sha256": "5f2369d57c05e0217f983b451bc5e9bbd9ebe8fd5324f1db69a38f8b24a1f9a1"
+    },
+    "official_he_spec_snapshot": {
+      "bytes": 22826,
+      "exists": true,
+      "path": "tmp/he_metta_official_specs.md",
+      "sha256": "1a968394c5b03ff9cb9233af1de2d07a1426c44a6d438d302d05a1f008827e08"
+    },
+    "profile_get_doc_compat_regression": {
+      "bytes": 19,
+      "exists": true,
+      "path": "hyperon/CeTTa/tests/support/profile_get_doc_compat_surface.metta",
+      "sha256": "1167679e96616407e4718435bb5d0f2c22d6ada8930b5554576f2750b9e1222d"
+    },
+    "profile_get_doc_extended_regression": {
+      "bytes": 97,
+      "exists": true,
+      "path": "hyperon/CeTTa/tests/support/profile_get_doc_extended_surface.metta",
+      "sha256": "b6fdc759e4a8178d553c7e29e6916b7a3ba04d988136c7cffda40be6af5683c2"
+    },
+    "profile_get_doc_formal_regression": {
+      "bytes": 86,
+      "exists": true,
+      "path": "hyperon/CeTTa/tests/support/profile_get_doc_formal_surface.metta",
+      "sha256": "82f701363be5066f366ba0102d77abf64f88d4923a36e2e56fc0dd4fff7c2009"
+    },
+    "stdlib_surface": {
+      "bytes": 34880,
+      "exists": true,
+      "path": "hyperon/CeTTa/lib/stdlib.metta",
+      "sha256": "ebcbe072a426bd07739ccbd101bd05addea75f8a5f0485c7e982dac4c96eed50"
+    },
+    "symbol_table": {
+      "bytes": 18677,
+      "exists": true,
+      "path": "hyperon/CeTTa/src/symbol.h",
+      "sha256": "05ec106476be52fce546649f04d04f0dd707e43f239a9e7442d1cc90c3985e3c"
+    }
+  },
+  "repositories": {
+    "algorithms": {
+      "dirty": true,
+      "head": "f909190387f8784bcfa04e0353c5e1e6a2d14677",
+      "path": "Mettapedia/lean/algorithms"
+    },
+    "cetta": {
+      "dirty": true,
+      "head": "253eed14b84b383ce7e4ff85a5bbcc1059fb4ba4",
+      "path": "hyperon/CeTTa"
+    },
+    "hyperon_experimental": {
+      "dirty": false,
+      "head": "3f76dc460da6961f57f69f6c3e550c59c74ada83",
+      "path": "hyperon/hyperon-experimental"
+    },
+    "mettapedia": {
+      "dirty": true,
+      "head": "f909190387f8784bcfa04e0353c5e1e6a2d14677",
+      "path": "Mettapedia/lean/mettapedia"
+    }
+  },
+  "rule_coverage": {
+    "by_spec_rule": {
+      "eval.applicative-arguments": 9,
+      "eval.grounded-dispatch": 4,
+      "grounded.numeric-exact": 12,
+      "minimal.chain": 4,
+      "minimal.collapse-superpose": 7,
+      "minimal.cons-decons": 1,
+      "minimal.eval": 7,
+      "minimal.evalc-context-space": 3,
+      "minimal.function-return": 4,
+      "minimal.match": 9,
+      "minimal.unify": 1,
+      "nondet.visible-bag": 67,
+      "profile.docs": 1,
+      "result.empty-zero": 5,
+      "result.error-shape": 12,
+      "special.eq-definition": 13,
+      "special.function-type": 12,
+      "special.type-assignment": 12,
+      "surface.atomspace-assertions": 9,
+      "surface.eval-bang": 67,
+      "surface.module-import": 2,
+      "surface.native-space": 2
+    },
+    "by_track_a_relation_lane": {
+      "reduction-span": 67,
+      "spatial-policy": 4,
+      "supporting-surface": 67
+    },
+    "capacity_rows": [
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "surface.eval-bang",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:Metta",
+          "M_Expression"
+        ],
+        "mapped_case_count": 67,
+        "native_contract_ids": [
+          "profile-he-formal-vs-rust-compat-split"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "status": "covered",
+        "title": "Top-level ! evaluation",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "surface.atomspace-assertions",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:Space",
+          "MC_Equation"
+        ],
+        "mapped_case_count": 9,
+        "native_contract_ids": [
+          "profile-surface-policy-table"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "status": "partial",
+        "title": "Atomspace declarations and assertion-style programs",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "special.eq-definition",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:EqAtom",
+          "MC_Equation",
+          "MC_NoMatch"
+        ],
+        "mapped_case_count": 13,
+        "native_contract_ids": [
+          "equation-query-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "status": "covered",
+        "title": "Equation definitions",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "special.type-assignment",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:TypeAnnotation",
+          "IE_FuncType",
+          "IE_TupleType",
+          "TC_Match",
+          "TC_Mismatch"
+        ],
+        "mapped_case_count": 12,
+        "native_contract_ids": [
+          "function-type-applicability-premise-flow",
+          "type-cast-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "status": "partial",
+        "title": "Type assignment and type lookup",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "special.function-type",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:ArrowType",
+          "IE_FuncType"
+        ],
+        "mapped_case_count": 12,
+        "native_contract_ids": [
+          "function-type-applicability-premise-flow"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "status": "partial",
+        "title": "Function type arrows",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "Current A2 authority is likewise layered: EvalSpec's empty_or_error constructor and the M_Empty / MC_Superpose_Empty / MC_Match_Empty LanguageDef rules pin the no-visible-result behavior, while the catalog and runtime contracts keep the visible bag/LTS consequences honest. This is a reduction-span rule in Track A, not a host-policy surface.",
+        "id": "result.empty-zero",
+        "lean_authority_refs": [
+          "EvalSpec.EvalAtom.empty_or_error",
+          "HELanguageDef.mettaHE:M_Empty",
+          "HELanguageDef.mettaHE:MC_Superpose_Empty",
+          "HELanguageDef.mettaHE:MC_Match_Empty",
+          "LanguageDefSimulation.evalSpec_families_covered",
+          "DeclarativeSpec.emptyOrErrorPassthrough_intro",
+          "Conformance.eval_empty_passthrough",
+          "ExecutableBoundary.EvalAtomCertified"
+        ],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:M_Empty",
+          "M_Empty",
+          "MC_Superpose_Empty",
+          "MC_Match_Empty"
+        ],
+        "mapped_case_count": 5,
+        "native_contract_ids": [
+          "empty-zero-visible-result-bag",
+          "empty-not-lts-successor"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langReduces/langDiamondUsing_spec/langBoxUsing_spec",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Formula.lean:sem_dia_eq_langDiamondUsing/sem_box_eq_langBoxUsing"
+        ],
+        "status": "covered",
+        "title": "Empty as no visible result",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "result.error-shape",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:ErrorAtom",
+          "M_Error",
+          "MC_Error",
+          "TC_Mismatch"
+        ],
+        "mapped_case_count": 12,
+        "native_contract_ids": [
+          "error-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "status": "covered",
+        "title": "Error propagation and error constructors",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "Current A2 authority is layered: the minimal instruction exists as MinimalMeTTa.MinimalStep.eval; the executable HE LanguageDef realizes the same observable slice through the MC_Grounded / MC_Equation / MC_NoMatch rewrite family; LanguageDefSimulation and Correctness provide the current Lean-side bridge into EvalSpec/executable support. Direct CeTTa\u2194Lean adequacy remains a tested catalog claim rather than a proved extraction theorem.",
+        "id": "minimal.eval",
+        "lean_authority_refs": [
+          "MinimalMeTTa.MinimalStep.eval",
+          "HELanguageDef.mettaHE:MC_Grounded",
+          "HELanguageDef.mettaHE:MC_Equation",
+          "HELanguageDef.mettaHE:MC_NoMatch",
+          "LanguageDefSimulation.evalSpec_families_covered",
+          "Conformance.mettaCall_no_match",
+          "Correctness.eqMatch_sound",
+          "ExecutableBoundary.EvalAtomCertified"
+        ],
+        "lean_language_def_refs": [
+          "MinimalMeTTa.MinimalStep.eval",
+          "HELanguageDef.mettaHE:MC_Grounded",
+          "HELanguageDef.mettaHE:MC_Equation",
+          "HELanguageDef.mettaHE:MC_NoMatch"
+        ],
+        "mapped_case_count": 7,
+        "native_contract_ids": [
+          "eval-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langReduces/langDiamondUsing_spec/langBoxUsing_spec"
+        ],
+        "status": "covered",
+        "title": "Minimal MeTTa eval instruction",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "minimal.evalc-context-space",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:State",
+          "HELanguageDef.mettaHE:Space"
+        ],
+        "mapped_case_count": 3,
+        "native_contract_ids": [
+          "context-space-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "status": "partial",
+        "title": "evalc and context-space",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "minimal.chain",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MettaCall",
+          "R_Done"
+        ],
+        "mapped_case_count": 4,
+        "native_contract_ids": [
+          "chain-premise-flow",
+          "chain-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "status": "covered",
+        "title": "chain premise flow",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "minimal.match",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "MC_Match",
+          "MC_Match_Empty"
+        ],
+        "mapped_case_count": 9,
+        "native_contract_ids": [
+          "match-premise-flow",
+          "match-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "status": "covered",
+        "title": "match against the active space",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "minimal.unify",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "MC_Unify_Match",
+          "MC_Unify_NoMatch"
+        ],
+        "mapped_case_count": 1,
+        "native_contract_ids": [
+          "unify-premise-flow",
+          "unify-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "status": "covered",
+        "title": "local unify success/failure branches",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "minimal.collapse-superpose",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "MC_Collapse",
+          "MC_Superpose",
+          "MC_Superpose_Empty"
+        ],
+        "mapped_case_count": 7,
+        "native_contract_ids": [
+          "superpose-successor-shape",
+          "collapse-successor-shape",
+          "empty-zero-visible-result-bag"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "status": "covered",
+        "title": "collapse/superpose nondeterministic bags",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "minimal.cons-decons",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:ExprCons",
+          "HELanguageDef.mettaHE:ExprNil"
+        ],
+        "mapped_case_count": 1,
+        "native_contract_ids": [
+          "constructor-arity-surface"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "status": "covered",
+        "title": "cons/decons atom structure",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "minimal.function-return",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:Return",
+          "R_Done"
+        ],
+        "mapped_case_count": 4,
+        "native_contract_ids": [
+          "function-return-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "status": "covered",
+        "title": "function/return control flow",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "eval.applicative-arguments",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "IE_FuncType",
+          "IF_Start",
+          "IF_AfterOp_EvalArgs",
+          "IA_Start_Typed",
+          "IA_Start_Undef"
+        ],
+        "mapped_case_count": 9,
+        "native_contract_ids": [
+          "argument-evaluation-premise-flow",
+          "surviving-branch-reenters-evaluator"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "status": "covered",
+        "title": "Applicative argument evaluation",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "eval.grounded-dispatch",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "MC_Grounded"
+        ],
+        "mapped_case_count": 4,
+        "native_contract_ids": [
+          "grounded-dispatch-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "status": "covered",
+        "title": "Grounded dispatch and native results",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "nondet.visible-bag",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "MC_Superpose",
+          "MC_Match",
+          "R_Done"
+        ],
+        "mapped_case_count": 67,
+        "native_contract_ids": [
+          "empty-zero-visible-result-bag",
+          "lts-diamond-frontier-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "status": "covered",
+        "title": "Nondeterministic visible result bags",
+        "track_a_relation_lane": "reduction-span"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "profile.docs",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [],
+        "mapped_case_count": 1,
+        "native_contract_ids": [
+          "get-doc-respects-profile-surface",
+          "he-compat-reproduces-rust-get-doc-arity"
+        ],
+        "oslf_refs": [],
+        "status": "covered",
+        "title": "Profile-aware documentation surface",
+        "track_a_relation_lane": "supporting-surface"
+      },
+      {
+        "alignment_note": "Current HELanguageDef models core HE evaluation rules, not the CeTTa profile/lang surface inventory. This rule is tracked by runtime policy tables plus OSLF-facing profile evidence.",
+        "authority_note": "",
+        "id": "profile.surface-policy",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [],
+        "mapped_case_count": 0,
+        "native_contract_ids": [
+          "profile-surface-policy-table"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
+        ],
+        "status": "partial",
+        "title": "Language/profile surface availability",
+        "track_a_relation_lane": "spatial-policy"
+      },
+      {
+        "alignment_note": "Module/import resolution is currently a runtime/meta-surface, not a first-class HELanguageDef rule family. The rule index keeps it visible as a formal-he policy surface and a he-compat boundary.",
+        "authority_note": "",
+        "id": "surface.module-import",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [],
+        "mapped_case_count": 2,
+        "native_contract_ids": [
+          "profile-surface-policy-table",
+          "module-import-policy-evidence-shape"
+        ],
+        "oslf_refs": [],
+        "status": "partial",
+        "title": "Module import/include resolution",
+        "track_a_relation_lane": "spatial-policy"
+      },
+      {
+        "alignment_note": "Visible module inventory is not represented in the current HELanguageDef rewrite relation. It remains a policy/documentation surface until we model module visibility at the LanguageDef/space layer.",
+        "authority_note": "",
+        "id": "surface.module-inventory",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [],
+        "mapped_case_count": 0,
+        "native_contract_ids": [
+          "profile-surface-policy-table",
+          "module-inventory-policy-evidence-shape"
+        ],
+        "oslf_refs": [],
+        "status": "open",
+        "title": "Module inventory and visible module tree",
+        "track_a_relation_lane": "spatial-policy"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "surface.native-space",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:Space",
+          "HELanguageDef.mettaHE:State"
+        ],
+        "mapped_case_count": 2,
+        "native_contract_ids": [
+          "context-space-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/Framework/TypeSynthesis.lean:langDiamondUsing/langBoxUsing/langGaloisUsing"
+        ],
+        "status": "partial",
+        "title": "Native space operations and space-kind extensions",
+        "track_a_relation_lane": "spatial-policy"
+      },
+      {
+        "alignment_note": "",
+        "authority_note": "",
+        "id": "grounded.numeric-exact",
+        "lean_authority_refs": [],
+        "lean_language_def_refs": [
+          "HELanguageDef.mettaHE:MC_Grounded"
+        ],
+        "mapped_case_count": 12,
+        "native_contract_ids": [
+          "grounded-dispatch-successor-shape"
+        ],
+        "oslf_refs": [
+          "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
+        ],
+        "status": "partial",
+        "title": "Grounded numeric and exact-rational extensions",
+        "track_a_relation_lane": "supporting-surface"
+      }
+    ],
+    "case_count": 67,
+    "catalog_date": "2026-06-25",
+    "covered_spec_rule_capacity_count": 22,
+    "exists": true,
+    "mapped_case_count": 67,
+    "mapped_case_count_by_lane": {
+      "reduction-span": 143,
+      "spatial-policy": 4,
+      "supporting-surface": 116
+    },
+    "rule_lane_counts": {
+      "reduction-span": 10,
+      "spatial-policy": 4,
+      "supporting-surface": 10
+    },
+    "rule_status_counts": {
+      "covered": 15,
+      "open": 1,
+      "partial": 8
+    },
+    "total_spec_rule_capacity_count": 24,
+    "uncovered_spec_rule_capacities": [
+      "profile.surface-policy",
+      "surface.module-inventory"
+    ]
+  },
+  "schema_version": 1,
+  "status": "generated-design-and-test-ledger-not-runtime-feature"
+}

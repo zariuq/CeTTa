@@ -411,7 +411,6 @@ Libraries:
 - `lib/lib_pln.metta`: upstream-compatible PeTTa PLN baseline for CeTTa
 - `lib/lib_wmpln.metta`: Lean-aligned wmPLN surface with evidence-backed extensions
 - `lib/mork.metta`: narrow MORK-facing helper surface
-- `lib/metamath.metta`: generic textual Metamath-facing helpers
 - `lib/fs.metta`, `lib/system.metta`, `lib/str.metta`, `lib/path.metta`:
   extension libraries used by the current profile surfaces
 

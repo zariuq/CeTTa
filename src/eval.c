@@ -5149,6 +5149,12 @@ eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
                         int fuel, const Bindings *prefix,
                         const Bindings *outer_env,
                         bool preserve_bindings, OutcomeSet *os);
+static bool branch_outer_env_begin(Bindings *owned,
+                                   const Bindings **effective_outer,
+                                   const Bindings *outer_env,
+                                   const Bindings *branch_env);
+static void branch_outer_env_finish(Bindings *owned,
+                                    const Bindings *effective_outer);
 
 typedef struct {
     OrderedOutcomeVisitor visitor;
@@ -6330,9 +6336,28 @@ static bool let_direct_branch_visit(Arena *a, Atom *atom,
              !bindings_has_loop(bindings_builder_bindings(&b));
     if (ok) {
         const Bindings *bb = bindings_builder_bindings(&b);
-        eval_for_current_caller(let_ctx->s, let_ctx->a, NULL, let_ctx->body,
-                                let_ctx->fuel, bb, let_ctx->outer_env,
+        Bindings visible;
+        if (!bindings_project_body_visible_env(let_ctx->a, let_ctx->body,
+                                               bb, &visible)) {
+            bindings_builder_free(&b);
+            return true;
+        }
+        Bindings branch_outer_owned;
+        const Bindings *branch_outer = let_ctx->outer_env;
+        if (!branch_outer_env_begin(&branch_outer_owned, &branch_outer,
+                                    let_ctx->outer_env, bb)) {
+            bindings_free(&visible);
+            bindings_builder_free(&b);
+            return true;
+        }
+        Atom *subst =
+            bindings_apply_projected_body_visible(&visible, let_ctx->a,
+                                                  let_ctx->body);
+        eval_for_current_caller(let_ctx->s, let_ctx->a, NULL, subst,
+                                let_ctx->fuel, &empty, branch_outer,
                                 let_ctx->preserve_bindings, let_ctx->os);
+        branch_outer_env_finish(&branch_outer_owned, branch_outer);
+        bindings_free(&visible);
     }
     bindings_builder_free(&b);
     return true;
@@ -9352,6 +9377,9 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
         return;
     }
     metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel, true, os);
+    if (os->len == 0 && !atom_contains_vars(atom)) {
+        metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel, false, os);
+    }
     outcome_set_normalize_visible_frontier(a, os);
 }
 
