@@ -1,4 +1,4 @@
-!(import! &self ../lib/lib_wmpln)
+!(import! &self ../../lib/lib_wmpln)
 
 ; Golden parity checks for the Lean BinaryEvidence view:
 ; total = n+ + n-, strength = n+ / total,

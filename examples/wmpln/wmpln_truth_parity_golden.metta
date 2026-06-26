@@ -1,4 +1,4 @@
-!(import! &self ../lib/lib_wmpln)
+!(import! &self ../../lib/lib_wmpln)
 
 ; Golden parity checks for the Lean PeTTa truth-function audit:
 ; confidence-weight conversion, induction/abduction weight-space min,
