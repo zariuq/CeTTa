@@ -1,4 +1,4 @@
-!(import! &self ../lib/lib_wmpln)
+!(import! &self ../../lib/lib_wmpln)
 
 ; Runtime canary for the Lean BinaryCounts strength taxonomy.
 ;

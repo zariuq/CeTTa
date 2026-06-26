@@ -1,4 +1,4 @@
-!(import! &self ../lib/lib_wmpln)
+!(import! &self ../../lib/lib_wmpln)
 
 ; Executable mirrors of the Lean didactic witnesses in
 ; Mettapedia/Logic/PLNDidacticWitnesses.lean.

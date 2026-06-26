@@ -1,0 +1,26 @@
+row	variant	depth	branch	proofs	count_cetta	count_petta	count_ok	cetta_s	petta_s	cetta_rss_kb	petta_rss_kb	notes
+08	linear	10	0	1	1	1	yes	0.00	0.06	-	-	noise->Noise; backward linear, 1 proof
+08	linear	10	8	1	1	1	yes	0.00	0.05	-	-	branching ignored by backward chaining
+08	linear	10	32	1	1	1	yes	0.00	0.07	-	-	-
+08	linear	25	0	1	1	1	yes	0.03	0.09	-	-	-
+08	linear	25	8	1	1	1	yes	0.05	0.15	-	-	gap ~constant in branching
+08	linear	25	32	1	1	1	yes	0.08	0.20	-	-	gap ~constant => per-step dispatch cost, not branching
+08b	branchy	10	1	1024	1024	1024	yes	0.14	0.30	-	-	derived multiplicity probe; small-scale gap startup-dominated
+08b	branchy	10	2	59049	59049	59049	yes	6.81	8.70	-	-	-
+08b	branchy	8	3	65536	65536	65536	yes	5.37	7.40	-	-	SAME count as d16/b1 but 4x faster => time is depth/term-size driven, NOT proof count
+08b	branchy	16	1	65536	65536	65536	yes	20.80	21.61	-	-	near-equal at d16; see d8/b3 (same count, 4x faster)
+08b	branchy	18	1	262144	262144	262144	yes	91.61	84.95	15314344	7591040	single-run; PeTTa ~8% faster here; RSS not output-matched (see caveats)
+# Engines: CeTTa `cetta --lang he --count-only` (v1.3.2-dev); PeTTa `run.sh --silent` (github.com/patham9/PeTTa, SWI-Prolog).
+# Problem generator: github.com/rTreutlein/PeTTaChainer (build_chain_problem); 08b is a DERIVED multiplicity variant we built, NOT the original PeTTaChainer benchmark.
+# Correctness gate: count_cetta == count_petta == (1+branch)^depth at every cell above (all verified by running both engines).
+#
+# CAVEATS (read before citing any number):
+#  - All timings are SINGLE-RUN on a SHARED host. No repeats, no error bars. Differences under ~2x are not reliable.
+#  - "Proof count" is NOT a valid time axis: d8/b3 and d16/b1 have the same 65536 proofs but differ 4x in time (depth/term-size dominates).
+#  - The d18/b1 RSS comparison (15.3 vs 7.6 GB) is a SINGLE point and NOT output-matched: CeTTa ran --count-only (may discard result terms) while PeTTa
+#    ran --silent and was solution-grep-counted (must enumerate). Treat as suggestive, not a controlled memory measurement.
+#
+# DEFENSIBLE READING: CeTTa's advantage over PeTTa here is a LOW-DEPTH startup (~40ms vs ~0) + per-step dispatch effect (linear lane, gap ~constant in
+# branching). That advantage erodes as recursion depth / solution multiplicity grow, and at the largest single-run cell PeTTa was competitive-to-faster.
+# This is consistent with CeTTa's edge being scale/shape-dependent rather than a general scaling advantage. NOT YET SHOWN: a replicated crossover with
+# dispersion, raw nondeterministic-branching counts (solutions explored before collapse), or anything PLN-truth-value specific (this probe has no PLN math).

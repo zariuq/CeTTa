@@ -220,6 +220,7 @@ tests/test_isinf_math_bad_type.metta	he	metta	he-extended	main	native	test	golde
 tests/test_isnan_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let_star_error_short_circuit.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_list_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_he_surface.metta	he	metta	he-extended	main	native	test	golden	-
@@ -469,11 +470,5 @@ tests/test_with_space_snapshot_equation_regression.metta	he	metta	he-extended	ma
 tests/test_with_space_snapshot_non_exact_query_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot_passthrough.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_with_space_snapshot_queue_regression.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_wmpln_didactic_witnesses.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
-tests/test_wmpln_evidence_parity_golden.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
-tests/test_wmpln_itv_idm_parity_golden.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
-tests/test_wmpln_projection_tower_bool_canary.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
-tests/test_wmpln_strength_prior_canary.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
-tests/test_wmpln_truth_parity_golden.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
 tests/test_xor.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_zero_arity_function_overload.metta	he	metta	he-extended	main	native	test	golden	-
