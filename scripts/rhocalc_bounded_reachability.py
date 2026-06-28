@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import subprocess
 import sys
 
@@ -31,7 +32,12 @@ def split_successor_set(text: str) -> list[str]:
 
 
 def run_cmd(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=False, text=True, capture_output=True)
+    return subprocess.run(
+        args,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
 
 
 def normalize_expr(bin_path: str, syntax: str, expr: str) -> str:
