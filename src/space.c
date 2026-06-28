@@ -2,6 +2,7 @@
 #include "grounded.h"
 #include "search_machine.h"
 #include "stats.h"
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2809,8 +2810,17 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     if (!space_sync_exact_membership_from_backend(s))
         return 0;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP);
+    if (!s->native.universe)
+        return 0;
+    AtomId query_id = term_universe_lookup_atom_id(s->native.universe, atom);
+    if (query_id == CETTA_ATOM_ID_NONE)
+        return 0;
+#ifndef NDEBUG
+    assert(term_universe_atom_id_eq(s->native.universe, query_id, atom));
+#endif
     ensure_exact_index(s);
-    ExactAtomBucket *bucket = &s->native.exact_idx.buckets[exact_atom_hash(atom)];
+    ExactAtomBucket *bucket =
+        &s->native.exact_idx.buckets[exact_atom_hash_id(s, query_id)];
     if (bucket->len == 0)
         return 0;
     CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * bucket->len);
@@ -2820,10 +2830,10 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
         if (idx >= s->native.len)
             continue;
         AtomId candidate_id = space_get_atom_id_at64(s, idx);
-        if (candidate_id == CETTA_ATOM_ID_NONE)
-            continue;
-        Atom *candidate = term_universe_get_atom(s->native.universe, candidate_id);
-        if (candidate && atom_eq(candidate, atom))
+#ifndef NDEBUG
+        assert(candidate_id != CETTA_ATOM_ID_NONE);
+#endif
+        if (candidate_id == query_id)
             matches[n++] = idx;
     }
     if (n == 0) {
@@ -2833,6 +2843,8 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT, n);
     if (out)
         *out = matches;
+    else
+        free(matches);
     return n;
 }
 

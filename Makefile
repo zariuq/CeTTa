@@ -670,6 +670,7 @@ test-mork-query-row-stream-abi:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) $(MORK_QUERY_ROW_STREAM_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(MORK_QUERY_ROW_STREAM_ABI_TEST_BIN))
 
+$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
 $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(LDFLAGS)

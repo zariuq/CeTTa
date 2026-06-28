@@ -303,6 +303,15 @@ static Atom *make_pair(Arena *a, SymbolId pair_sym, int64_t lhs, int64_t rhs) {
     return atom_expr(a, elems, 3);
 }
 
+static Atom *make_pair_var(Arena *a, SymbolId pair_sym) {
+    Atom *elems[3] = {
+        atom_symbol_id(a, pair_sym),
+        atom_var_with_id(a, "x", 1),
+        atom_int(a, 2),
+    };
+    return atom_expr(a, elems, 3);
+}
+
 static Atom *make_boxed_space(Arena *a, SymbolId box_sym, Space *space) {
     Atom *elems[2] = {
         atom_symbol_id(a, box_sym),
@@ -311,12 +320,38 @@ static Atom *make_boxed_space(Arena *a, SymbolId box_sym, Space *space) {
     return atom_expr(a, elems, 2);
 }
 
+static void reset_test_counters(void) {
+    test_runtime_stats_reset_counters();
+}
+
+static uint64_t test_counter(CettaRuntimeCounter counter) {
+    return test_runtime_stats_counter(counter);
+}
+
+static void assert_exact_match_one(Space *space, Atom *query, CettaIndex want) {
+    uint32_t *matches = NULL;
+    uint32_t nmatches = space_exact_match_indices(space, query, &matches);
+    assert(nmatches == 1);
+    assert(matches != NULL);
+    assert(matches[0] == want);
+    free(matches);
+}
+
+static void assert_exact_match_none(Space *space, Atom *query) {
+    uint32_t *matches = NULL;
+    uint32_t nmatches = space_exact_match_indices(space, query, &matches);
+    assert(nmatches == 0);
+    assert(matches == NULL);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
     Arena scratch_a;
     Arena scratch_b;
     Arena scratch_c;
+    Arena scratch_d;
+    Arena scratch_e;
     TermUniverse universe;
     Space left;
     Space right;
@@ -326,6 +361,8 @@ int main(void) {
     arena_init(&scratch_a);
     arena_init(&scratch_b);
     arena_init(&scratch_c);
+    arena_init(&scratch_d);
+    arena_init(&scratch_e);
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
     space_init_with_universe(&left, &universe);
@@ -363,6 +400,35 @@ int main(void) {
     assert(space_get_at64(&left, (CettaIndex)UINT32_MAX + 1u) == NULL);
     assert(space_match_backend_get_at64(&left, (uint64_t)UINT32_MAX + 1u) == NULL);
 
+    reset_test_counters();
+    left.exact_idx_dirty = true;
+    assert_exact_match_one(&left, pair_a, 0);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP) == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT) == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+
+    assert(term_universe_lookup_atom_id(&universe, pair_b) == pair_id);
+    reset_test_counters();
+    left.exact_idx_dirty = true;
+    assert_exact_match_one(&left, pair_b, 0);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP) == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT) == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+
+    Atom *absent_pair = make_pair(&scratch_d, pair_sym, 1, 3);
+    assert(term_universe_lookup_atom_id(&universe, absent_pair) ==
+           CETTA_ATOM_ID_NONE);
+    reset_test_counters();
+    left.exact_idx_dirty = true;
+    assert_exact_match_none(&left, absent_pair);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP) == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT) == 0);
+
+    Atom *var_pair = make_pair_var(&scratch_e, pair_sym);
+    reset_test_counters();
+    assert_exact_match_none(&left, var_pair);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP) == 0);
+
     space_add(&right, pair_b);
     assert(universe.len == 4);
     assert(test_space_native_atom_id_at(&right, 0) ==
@@ -370,6 +436,10 @@ int main(void) {
     assert(space_get_at(&right, 0) == space_get_at(&left, 0));
 
     Atom *boxed_space = make_boxed_space(&scratch_c, box_sym, &left);
+    reset_test_counters();
+    assert_exact_match_none(&left, boxed_space);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP) == 0);
+
     Atom *stored_boxed = space_store_atom(&left, &persistent, boxed_space);
     AtomId boxed_id = term_universe_store_atom_id(&universe, NULL, stored_boxed);
     assert(boxed_id != CETTA_ATOM_ID_NONE);
@@ -441,6 +511,8 @@ int main(void) {
     space_free(&right);
     space_free(&left);
     term_universe_free(&universe);
+    arena_free(&scratch_e);
+    arena_free(&scratch_d);
     arena_free(&scratch_c);
     arena_free(&scratch_b);
     arena_free(&scratch_a);
