@@ -76,9 +76,12 @@ tests/test_bind_ground_recursive_query_regression.metta	he	metta	he-extended	mai
 tests/test_bind_partial_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bio_bc_let_hidden_env_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
 tests/test_bio_depth10_genuine_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+tests/test_bio_wmpln_checkpoint_full_1p4m.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_bio_wmpln_checkpoint_petta_flat.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	heavy WM-PLN PeTTa flat-loader checkpoint count witness
+tests/test_bio_wmpln_checkpoint_petta_full_1p4m.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_bio_wmpln_checkpoint_petta_top.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	heavy WM-PLN PeTTa top-level checkpoint count witness
 tests/test_bio_wmpln_checkpoint_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+tests/test_bio_wmpln_flat_loader_probe.metta	he	metta	he-extended	main	native	test	probe	probe without golden oracle
 tests/test_bio_wmpln_pathway_route_regression.metta	he	metta	he-extended	main	native	test-heavy	property	heavy WM-PLN pathway route assertion property
 tests/test_bio_wmpln_revise_stv_tuple_stack_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
 tests/test_bio_wmpln_supported_key_unique_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
@@ -170,6 +173,32 @@ tests/test_get_type_space_arity.metta	he	metta	he-extended	main	native	test	gold
 tests/test_get_type_space_nonspace_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_git_module_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_git_module_missing.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_backend_report.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_dispatch.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_dual_forest_signature.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_forest_digest.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_generalized_corpus.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_generalized_integration.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_generalized_toys.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_gll_forest_data.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_gll_forest_summary.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_gll_parse_shared.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_glr_class.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_glr_forest_data.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_glr_forest_summary.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_glr_parse_shared.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_grammar_data.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_grammar_summary.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_metamath_context_ladder.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_metamath_context_theorem_matrix.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_metamath_corpus.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_metamath_defs_component_ladder.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_metamath_defs_theorem_length_ladder.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_metamath_frontier.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_rho_mrho_text.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_slr_parse_shared.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_slr_summary.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hash_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_compat_surface_regressions.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_frontier_algebra_regression.metta	he	metta	he-extended	main	native	test	golden	-
@@ -199,6 +228,7 @@ tests/test_import_fresh_name_conformance.metta	he	metta	he-extended	main	native	
 tests/test_import_mm2_module_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_import_mm2_mork_session_lowering.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_import_modules.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_import_named_space_reuse_petta_seam_repro.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_import_nested_depth.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_import_parse_failure.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_import_partial_arity.metta	he	metta	he-extended	main	native	test	golden	-
@@ -220,7 +250,38 @@ tests/test_isinf_math_bad_type.metta	he	metta	he-extended	main	native	test	golde
 tests/test_isnan_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let_star_error_short_circuit.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_binding_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_a1_block_pair_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_a1_db_v0.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_anatomy_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_axioms_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_block_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_defs_a1_block_pair_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_defs_a1_block_triplet_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_defs_block_pair_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_defs_db_v0.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_dv_multivar_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_dv_scope_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_grammar_v0.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_local_var_good_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_mini_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_mini_thm_compressed_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_mini_thm_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_mmtest_compressed_simple_db_v0.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_lib_parse_metamath_mmtest_compressed_z_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_mmtest_d_before_float_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_mmtest_min_found_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_mmtest_toplevel_e_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_nested_scope_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_prefix_frontier_native.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_raw_stmt_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_repeat_vars_db_v0.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_lib_parse_metamath_stmt_prefix_frontier_native.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_theorem_compressed_v0.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_theorem_length_ladder_native.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_metamath_theorem_normal_v0.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lib_parse_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_shared_cert_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_list_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_he_surface.metta	he	metta	he-extended	main	native	test	golden	-
@@ -290,6 +351,7 @@ tests/test_mork_runtime_stats_isolation.metta	he	metta	he-extended	runtime-stats
 tests/test_mork_zipper_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_namespace_sugar_guardrails.metta	he	metta	he-extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_native_count_collapse_match_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
+tests/test_nested_import_named_space_visibility_petta_repro.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_new_space_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_new_space_mork_surface.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_new_state_arity.metta	he	metta	he-extended	main	native	test	golden	-
@@ -360,6 +422,7 @@ tests/test_remove_type_annotation_updates_index.metta	he	metta	he-extended	main	
 tests/test_repr_parse_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rho_lib_hygiene_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rho_lib_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_rhocalc_lib_parse_translator_v3.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rhometta_demo_dedfarm.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rhometta_demo_ecan.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_rhometta_demo_mayset.metta	he	metta	he-extended	main	native	test	golden	-
@@ -393,6 +456,7 @@ tests/test_singleton_visible_witness_regression.metta	he	metta	he-extended	main	
 tests/test_size_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_sort_strings.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_space_batch_copy_optimizer_guards.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_space_batch_copy_petta_seam_repro.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_space_batch_copy_surfaces.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_space_engine_backend.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_space_ops.metta	he	metta	he-extended	main	native	test	golden	-
