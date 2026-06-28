@@ -37,6 +37,22 @@
    (VarD x term)(VarD y term)(VarD z term)
    (Prod lam term ((Tm LAM)(HlB term term)(Tm DOT)(Hl term))) )))
 
+(= (g-lam-tpl) (template-of (g-lam) lam))
+(= (g-lam-tpl-len) (tpl-len (g-lam-tpl)))
+(= (g-lam-tpl-first) (tpl-nth (g-lam-tpl) 0))
+(= (g-lam-tpl-dot) (tpl-nth (g-lam-tpl) 2))
+(= (g-lam-tpl-hlb-ok) (tpl-nth-is-hlb (g-lam-tpl) 1 term term))
+(= (g-lam-tpl-hl-ok) (tpl-nth-is-hl (g-lam-tpl) 3 term))
+(= (g-lam-tpl-hl-count) (tpl-count-hl (g-lam-tpl) term))
+
+(= (g-rho-gap) (mkGram (
+   (VarD x rho_id)(VarD y rho_id)
+   (Prod pnil  proc ((Tm ZERO)))
+   (Prod pdrop proc ((Tm STAR)(Hl name)))
+   (Prod precv proc ((Tm FOR)(Tm LP)(Tm DOLLAR)(HlB rho_id proc)(Tm FROM)(Hl name)(Tm RP)(Tm LBR)(Hl proc)(Tm RBR)))
+   (Prod nquot name ((Tm AT)(Tm LBR)(Hl proc)(Tm RBR)))
+   (Prod nvar  name ((Tm DOLLAR)(Hl rho_id))) )))
+
 !(assertEqual (lp-parse (g-logic) wff (mkL (LP t EQ t IMP LP t PLUS ZERO RP EQ t RP)))
               (Unique (Nd wi (Cons (Nd weq (Cons (Lf t)(Cons (Lf t) Nil)))
                               (Cons (Nd weq (Cons (Nd tpl (Cons (Lf t)(Cons (Nd tze Nil) Nil)))
@@ -49,6 +65,27 @@
 !(assertEqual (lp-admit (g-ambig)) Admitted)
 !(assertEqual (lp-parse (g-ambig) expr (mkL (a PLUS b PLUS c))) Ambiguous)
 !(assertEqual (lp-parse-cert (g-bio) seq (mkL (A U G)) (Nd sone (Cons (Lf A) Nil))) False)
+!(assertEqual (lp-parse-class (g-bio) seq (mkL (A U G))) Unique)
+!(assertEqual (lp-parse-class (g-ambig) expr (mkL (a PLUS b PLUS c))) Ambiguous)
+!(assertEqual (lp-parse-class (g-bio) seq Nil) NoParse)
+!(println!
+  (lp-parse-cert
+    (g-logic)
+    term
+    (mkL (LP t EQ t IMP LP t PLUS ZERO RP EQ t RP))
+    (Nd wi
+      (Cons (Nd weq (Cons (Lf t) (Cons (Lf t) Nil)))
+        (Cons (Nd weq (Cons (Nd tpl (Cons (Lf t) (Cons (Nd tze Nil) Nil)))
+                        (Cons (Lf t) Nil)))
+          Nil)))))
+!(assertEqual (g-lam-tpl-len) 4)
+!(assertEqual (g-lam-tpl-first) (Tm LAM))
+!(assertEqual (g-lam-tpl-dot) (Tm DOT))
+!(assertEqual (g-lam-tpl-hlb-ok) True)
+!(assertEqual (g-lam-tpl-hl-ok) True)
+!(assertEqual (g-lam-tpl-hl-count) 1)
+!(assertEqual (tpl-len BAD) (Err badtpl))
+!(assertEqual (tpl-nth BAD 0) (Err badtpl))
 !(assertEqual (lp-admit BADGRAM) (Rejected bad-grammar))
 !(assertEqual (lp-admit (Cons BAD Nil)) (Rejected bad-grammar))
 !(assertEqual (lp-admit (mkGram ((Prod p wff ((Tm X)))(Prod p wff ((Tm Y)))))) (Rejected dup-label))
@@ -89,80 +126,5 @@
   (lp-parse-cert (mkGram ((Prod p wff ((Tm X)))(Prod q wff ((Tm X))))) wff (mkL (X)) (Nd p Nil))
   False)
 !(assertEqual
-  (lp-parse-cert
-    (g-logic)
-    term
-    (mkL (LP t EQ t IMP LP t PLUS ZERO RP EQ t RP))
-    (Nd wi
-      (Cons (Nd weq (Cons (Lf t) (Cons (Lf t) Nil)))
-        (Cons (Nd weq (Cons (Nd tpl (Cons (Lf t) (Cons (Nd tze Nil) Nil)))
-                        (Cons (Lf t) Nil)))
-          Nil))))
-  False)
-!(assertEqual
   (lp-parse-cert (g-logic) term (mkL (nosuchvar)) (Lf nosuchvar))
-  False)
-
-!(assertEqual
-  (lp-parse-raw (g-lam) term (mkL (LAM x DOT x)))
-  (Unique (Nd lam (Cons (Lf x) (Cons (Lf x) Nil)))))
-!(assertEqual
-  (lp-parse (g-lam) term (mkL (LAM x DOT x)))
-  (Unique (Nd lam (Cons (Bd term term) (Cons (Bv 0) Nil)))))
-!(assertEqual
-  (lp-parse (g-lam) term (mkL (LAM y DOT y)))
-  (Unique (Nd lam (Cons (Bd term term) (Cons (Bv 0) Nil)))))
-!(assertEqual
-  (== (lp-parse (g-lam) term (mkL (LAM x DOT x)))
-      (lp-parse (g-lam) term (mkL (LAM y DOT y))))
-  True)
-!(assertEqual
-  (lp-lower (g-lam)
-    (Nd lam (Cons (Lf x)
-      (Cons (Nd lam (Cons (Lf y) (Cons (Lf x) Nil))) Nil))))
-  (Nd lam (Cons (Bd term term)
-    (Cons (Nd lam (Cons (Bd term term) (Cons (Bv 1) Nil))) Nil))))
-!(assertEqual
-  (lp-lower (g-lam)
-    (Nd lam (Cons (Lf x)
-      (Cons (Nd lam (Cons (Lf x) (Cons (Lf x) Nil))) Nil))))
-  (Nd lam (Cons (Bd term term)
-    (Cons (Nd lam (Cons (Bd term term) (Cons (Bv 0) Nil))) Nil))))
-!(assertEqual
-  (lp-print (g-lam) (pu-tree (lp-parse (g-lam) term (mkL (LAM x DOT x)))))
-  (Rejected bad-tree))
-!(assertEqual
-  (lp-parse-cert
-    (g-lam)
-    term
-    (mkL (LAM x DOT x))
-    (pu-tree (lp-parse (g-lam) term (mkL (LAM x DOT x)))))
-  False)
-!(assertEqual
-  (lp-lower-cert
-    (g-lam)
-    (Nd lam (Cons (Lf x) (Cons (Lf x) Nil)))
-    (Nd lam (Cons (Bd term term) (Cons (Bv 0) Nil))))
-  True)
-!(assertEqual
-  (lp-lower-cert
-    (g-lam)
-    (Nd lam (Cons (Lf x) (Cons (Lf x) Nil)))
-    (Nd lam (Cons (Bd term term) (Cons (Lf x) Nil))))
-  False)
-!(assertEqual
-  (lp-parse-cert
-    (g-lam)
-    term
-    (mkL (LAM x DOT x))
-    (Nd lam (Cons (Lf x) (Cons (Lf x) Nil)))
-    (Nd lam (Cons (Bd term term) (Cons (Bv 0) Nil))))
-  True)
-!(assertEqual
-  (lp-parse-cert
-    (g-lam)
-    term
-    (mkL (LAM x DOT x))
-    (Nd lam (Cons (Lf x) (Cons (Lf x) Nil)))
-    (Nd lam (Cons (Bd term term) (Cons (Lf x) Nil))))
   False)

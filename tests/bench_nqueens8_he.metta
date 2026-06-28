@@ -37,7 +37,14 @@
          (case (safe-col $col $placed 1)
            ((True (place-queens (- $n 1) (cons-atom $col $placed))))))))
 
-; Count all 8-queens solutions
-!(println! "8-queens: counting solutions (expect 92)")
+; Shared-fragment benchmark contract:
+; this file runs directly on CeTTa, PeTTa, and HE without translation.
+; Emit labeled data rather than a naked count stream.
+(= (nqueens-benchmark-result $solutions)
+   (nqueens-result board-size 8
+                   solution-count (size-atom $solutions)
+                   sample-solution (car-atom $solutions)))
+
+!(println! "8-queens: enumerating solutions with a labeled contract (expect 92)")
 !(let $solutions (collapse (place-queens 8 ()))
-   (size-atom $solutions))
+   (nqueens-benchmark-result $solutions))

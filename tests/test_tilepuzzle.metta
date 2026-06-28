@@ -78,7 +78,16 @@
           (() (space-push $q $start)))
      (bfs-step $q 0)))
 
+; The solved 8-puzzle reaches exactly 9!/2 = 181440 states in its solvable
+; parity class, including the start state. Older 181441 expectations count an
+; extra bookkeeping event, not an extra board configuration.
+(= (tilepuzzle-start) (___ 1 2 3 4 5 6 7 8))
+(= (tilepuzzle-labeled-result $reachable)
+   (tilepuzzle-reachable-state-count including-start $reachable))
+
 ; ---- Run -------------------------------------------------------------------
-!(println! "8-puzzle BFS: counting all reachable states from solved position...")
-!(bfs-all (___ 1 2 3 4 5 6 7 8))
-; Expected: 181441 (all reachable states of the 8-puzzle)
+!(println! "8-puzzle BFS: reachable states from solved position (including the start state)...")
+!(let $reachable (bfs-all (tilepuzzle-start))
+   (tilepuzzle-labeled-result $reachable))
+; Expected labeled result:
+;   (tilepuzzle-reachable-state-count including-start 181440)
