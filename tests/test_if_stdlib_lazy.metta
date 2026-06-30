@@ -22,3 +22,15 @@
       impossible
       (fallback))
   (fallback))
+
+; Well-typed symbolic conditions stay inert until they reduce to True/False.
+!(assertEqualToResult (if (<= $c 0.9999) 1 2)
+  ((if (<= $c 0.9999) 1 2)))
+!(assertEqualToResult (if (<= $c 0.9999) (revise 8) (keep))
+  ((if (<= $c 0.9999) (revise 8) (keep))))
+
+; Concrete non-Bool conditions must still fail loudly.
+!(assertEqualToResult (if 5 1 2)
+  ((Error (if 5 1 2) (BadArgType 1 Bool Number))))
+!(assertEqualToResult (if "hi" 1 2)
+  ((Error (if "hi" 1 2) (BadArgType 1 Bool String))))
