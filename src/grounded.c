@@ -805,9 +805,12 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
                                 uint32_t nargs, bool require_all_input) {
     if (nargs != 1)
         return grounded_incorrect_arity(a, head, args, nargs);
-    if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING))
+    if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING)) {
+        if (args[0]->kind != ATOM_GROUNDED)
+            return NULL;
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "String"), args[0]);
+    }
 
     if (require_all_input && !parser_text_well_formed(args[0]->ground.sval))
         return atom_error(a, grounded_call_expr(a, head, args, nargs),

@@ -71,6 +71,14 @@
   (rho->canon (rho-pure-surface-toks)))
 
 !(assertEqual
+  (rho-canon->mrho-text (rho:send (rho:quote rho:nil) rho:nil))
+  "(rho:send (rho:quote rho:nil) rho:nil)")
+
+!(assertEqual
+  (rho-file->mrho-text "tests/rhocalc/pure_surface.rho")
+  "(rho:par (rho:send (rho:quote rho:nil) rho:nil) (rho:recv (rho:quote rho:nil) $x (rho:drop $x)))")
+
+!(assertEqual
   (rho-file->canon "tests/rhocalc/surface_shadowing.rho")
   (rho->canon (rho-shadowing-surface-toks)))
 

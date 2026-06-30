@@ -292,14 +292,70 @@
       (NoParse (Rejected noparse))
       ($o (Rejected bad-parse-result)))))
 
+(= (fresh-name-text $i)
+   (nth (mkL ("x" "y" "z" "x_rho1" "y_rho1" "z_rho1" "x_rho2" "y_rho2" "z_rho2")) $i))
+
+(= (rho-ok-append (Ok $lhs) (Ok $rhs))
+   (Ok (str:concat $lhs $rhs)))
+(= (rho-ok-append (Err $msg) $rhs) (Err $msg))
+(= (rho-ok-append (Ok $lhs) (Err $msg)) (Err $msg))
+
+(= (rho-canon-render-name (rho:quote $proc) $env)
+   (rho-ok-append
+     (rho-ok-append (Ok "(rho:quote ") (rho-canon-render-proc $proc $env))
+     (Ok ")")))
+(= (rho-canon-render-name (rho:bound $i) $env)
+   (if (and (>= $i 0) (< $i (llen $env)))
+       (Ok (str:concat "$" (nth $env $i)))
+       (Err "rho:bound index out of scope")))
+(= (rho-canon-render-name (rho:free $v) $env)
+   (Ok (str:concat "$" (repr $v))))
+
+(= (rho-canon-render-proc rho:nil $env)
+   (Ok "rho:nil"))
+(= (rho-canon-render-proc (rho:send $name $proc) $env)
+   (rho-ok-append
+     (rho-ok-append
+       (rho-ok-append
+         (rho-ok-append (Ok "(rho:send ") (rho-canon-render-name $name $env))
+         (Ok " "))
+       (rho-canon-render-proc $proc $env))
+     (Ok ")")))
+(= (rho-canon-render-proc (rho:drop $name) $env)
+   (rho-ok-append
+     (rho-ok-append (Ok "(rho:drop ") (rho-canon-render-name $name $env))
+     (Ok ")")))
+(= (rho-canon-render-proc (rho:par $lhs $rhs) $env)
+   (rho-ok-append
+     (rho-ok-append
+       (rho-ok-append
+         (rho-ok-append (Ok "(rho:par ") (rho-canon-render-proc $lhs $env))
+         (Ok " "))
+       (rho-canon-render-proc $rhs $env))
+     (Ok ")")))
+(= (rho-canon-render-proc (rho:recv-db $name $body) $env)
+   (let $binder (fresh-name-text (llen $env))
+     (rho-ok-append
+       (rho-ok-append
+         (rho-ok-append
+           (rho-ok-append
+             (rho-ok-append (Ok "(rho:recv ") (rho-canon-render-name $name $env))
+             (Ok (str:concat " $" $binder)))
+           (Ok " "))
+         (rho-canon-render-proc $body (Cons $binder $env)))
+       (Ok ")"))))
+
+(= (rho-native-canon->mrho-text $ast)
+   (rho-canon-render-proc $ast Nil))
+
 (= (rho-canon-result->mrho-text (Ok $ast))
-   (case (gparse:rho-canon->mrho-text $ast)
+   (case (rho-native-canon->mrho-text $ast)
      (((Ok $text) $text)
       ($o $o))))
 (= (rho-canon-result->mrho-text (Rejected $e)) (Rejected $e))
 
 (= (rho-canon->mrho-text $ast)
-   (case (gparse:rho-canon->mrho-text $ast)
+   (case (rho-native-canon->mrho-text $ast)
      (((Ok $text) $text)
       ($o $o))))
 

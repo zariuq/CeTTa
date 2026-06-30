@@ -12581,16 +12581,22 @@ tail_call: ;
 
             Atom **actual_types = NULL;
             uint32_t ntypes = get_atom_types_profiled(s, a, cond, &actual_types);
-            bool has_concrete_type = false;
+            Atom *bool_type = atom_symbol(a, "Bool");
+            bool has_nonbool_concrete_type = false;
+            bool may_be_bool = false;
             for (uint32_t ti = 0; ti < ntypes; ti++) {
-                if (!atom_is_symbol_id(actual_types[ti], g_builtin_syms.undefined_type) &&
-                    !atom_is_meta_type(actual_types[ti])) {
-                    has_concrete_type = true;
-                    break;
+                if (atom_is_symbol_id(actual_types[ti], g_builtin_syms.undefined_type) ||
+                    atom_is_meta_type(actual_types[ti])) {
+                    continue;
                 }
+                if (atom_eq_fast(actual_types[ti], bool_type)) {
+                    may_be_bool = true;
+                    continue;
+                }
+                has_nonbool_concrete_type = true;
             }
             free(actual_types);
-            if (has_concrete_type || cond->kind == ATOM_GROUNDED) {
+            if ((has_nonbool_concrete_type || cond->kind == ATOM_GROUNDED) && !may_be_bool) {
                 outcome_set_add(os,
                     bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "Bool"), cond),
                     cond_env);
