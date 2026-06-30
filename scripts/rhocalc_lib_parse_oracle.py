@@ -25,8 +25,6 @@ def run_metta_expr(bin_path: str, expr: str) -> str:
             "-e",
             f"!(import! &self {SUPPORT_IMPORT})",
             "-e",
-            "!(import! &self gparse)",
-            "-e",
             f"!(println! {expr})",
         ],
         check=False,
@@ -48,9 +46,11 @@ def decode_metta_string(text: str) -> str:
     try:
         decoded = ast.literal_eval(text)
     except (SyntaxError, ValueError) as exc:
-        raise RuntimeError(f"expected native .mrho string payload, got: {text}") from exc
+        if text.startswith("(Err ") or text.startswith("(Rejected "):
+            raise RuntimeError(f"expected native .mrho text payload, got: {text}") from exc
+        return text
     if not isinstance(decoded, str):
-        raise RuntimeError(f"expected native .mrho string payload, got: {text}")
+        raise RuntimeError(f"expected native .mrho text payload, got: {text}")
     return decoded
 
 def generated_mrho(bin_path: str, expr: str) -> str:
