@@ -60,10 +60,10 @@ run_case() {
     "$backend" "$label" "${count:-NA}" "$wall" "$rss" "$status" "$log" >> "$tsv"
 }
 
-run_case native  d3_dup   tests/bench_fc_d3_count.metta                 120
-run_case pathmap d3_dup   tests/bench_fc_d3_pathmap_count.metta         120
-run_case native  d3_nodup tests/bench_fc_d3_nodup_count.metta           120
-run_case pathmap d3_nodup tests/bench_fc_d3_pathmap_nodup_count.metta   120
+run_case native  d3_dup   benchmarks/bench_fc_d3_count.metta                 120
+run_case pathmap d3_dup   benchmarks/bench_fc_d3_pathmap_count.metta         120
+run_case native  d3_nodup benchmarks/bench_fc_d3_nodup_count.metta           120
+run_case pathmap d3_nodup benchmarks/bench_fc_d3_pathmap_nodup_count.metta   120
 
 echo "FC backend matrix written to: $tsv"
 column -t -s $'\t' "$tsv"

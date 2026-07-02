@@ -2,7 +2,7 @@
 ; PeTTa is a distinct MeTTa dialect, but this benchmark keeps the body simple:
 ; integer evidence counts are the cross-engine contract.
 
-!(import! &self ../../tests/bio_kb_chr16.metta)
+!(import! &self ../data/kb_chr16_variants.metta)
 
 (= (bio-evidence-counts $snp $gene)
    (match &self

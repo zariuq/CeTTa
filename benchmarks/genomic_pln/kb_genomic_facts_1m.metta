@@ -6,8 +6,8 @@
 ; hard-code imports into benchmark frontends and make future 5M/15M scaling
 ; a semantic rewrite instead of a data swap.
 
-!(import! &self ../eqtl_for_mining.metta)
-!(import! &self ../bio_refseq_723k.metta)
-!(import! &self ../bio_multirelational_kb_scaled.metta)
-!(import! &self ../bio_hetionet_kb.metta)
-!(import! &self ../discovered_patterns_1k.metta)
+!(import! &self ../data/kb_eqtl_gene_links.metta)
+!(import! &self ../data/kb_refseq_gene_annotations.metta)
+!(import! &self ../data/kb_multirelational_scaled.metta)
+!(import! &self ../data/kb_hetionet_biomedical_graph.metta)
+!(import! &self ../data/kb_mined_patterns.metta)

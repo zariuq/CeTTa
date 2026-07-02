@@ -43,8 +43,8 @@
            (bc $kb $d (: $p2 $t2))))
      (: ($r $p1 $p2) $thm)))
 
-!(import! &self ../../tests/eqtl_for_mining.metta)
-!(import! &self ../../tests/discovered_patterns_1k.metta)
+!(import! &self ../data/kb_eqtl_gene_links.metta)
+!(import! &self ../data/kb_mined_patterns.metta)
 
 (rule-sig dt (-> (: $e (eqtl $snp $gene))
                  (target $snp $gene)))

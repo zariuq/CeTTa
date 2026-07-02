@@ -415,11 +415,11 @@ BACKEND_DEDICATED_TESTS = \
 
 BACKEND_HEAVY_GOLDEN_TESTS = \
 	tests/test_bio_bc_let_hidden_env_regression.metta \
-	tests/test_bio_depth10_genuine_regression.metta \
-	tests/test_bio_wmpln_checkpoint_regression.metta \
-	tests/test_bio_wmpln_pathway_route_regression.metta \
-	tests/test_bio_wmpln_revise_stv_tuple_stack_regression.metta \
-	tests/test_bio_wmpln_supported_key_unique_regression.metta \
+	benchmarks/bc_depth10_spine_regression.metta \
+	benchmarks/genomic_pln/bench_drug_hypothesis_1m.metta \
+	benchmarks/genomic_pln/test_proof_route_convergence.metta \
+	benchmarks/genomic_pln/test_stv_revision.metta \
+	benchmarks/genomic_pln/test_hypothesis_key_uniqueness.metta \
 	tests/test_checkpoint_group_extract_cross_form_regression.metta \
 	tests/test_gparse_native_metamath_corpus.metta \
 	tests/test_lib_parse_metamath_a1_db_v0.metta \
@@ -430,14 +430,14 @@ BACKEND_HEAVY_GOLDEN_TESTS = \
 	tests/test_lib_parse_metamath_theorem_compressed_v0.metta \
 	tests/test_lib_parse_metamath_theorem_length_ladder_native.metta \
 	tests/test_lib_parse_metamath_theorem_normal_v0.metta \
-	tests/test_tilepuzzle.metta
+	benchmarks/test_tilepuzzle.metta
 
 BACKEND_HEAVY_DIAGNOSTIC_TESTS = \
-	tests/test_bio_wmpln_checkpoint_full_1p4m.metta \
-	tests/test_bio_wmpln_checkpoint_petta_full_1p4m.metta \
-	tests/test_bio_wmpln_checkpoint_petta_flat.metta \
-	tests/test_bio_wmpln_checkpoint_petta_top.metta \
-	tests/test_bio_wmpln_flat_loader_probe.metta \
+	benchmarks/genomic_pln/bench_drug_hypothesis_1_4m.metta \
+	benchmarks/genomic_pln/bench_drug_hypothesis_1_4m_petta.metta \
+	benchmarks/genomic_pln/bench_drug_hypothesis_petta_flat.metta \
+	benchmarks/genomic_pln/bench_drug_hypothesis_petta_top.metta \
+	benchmarks/genomic_pln/test_flat_loader.metta \
 	tests/test_checkpoint_disease_route_probe.metta \
 	tests/test_lib_parse_metamath_a1_block_pair_db_v0.metta \
 	tests/test_lib_parse_metamath_anatomy_db_v0.metta \
@@ -452,7 +452,7 @@ BACKEND_HEAVY_DIAGNOSTIC_TESTS = \
 	tests/test_lib_parse_metamath_mini_db_v0.metta \
 	tests/test_lib_parse_metamath_mini_thm_compressed_db_v0.metta \
 	tests/test_lib_parse_metamath_mini_thm_db_v0.metta \
-	tests/test_lib_parse_metamath_mmtest_compressed_simple_db_v0.metta \
+	benchmarks/test_lib_parse_metamath_mmtest_compressed_simple_db_v0.metta \
 	tests/test_lib_parse_metamath_mmtest_compressed_z_db_v0.metta \
 	tests/test_lib_parse_metamath_mmtest_d_before_float_db_v0.metta \
 	tests/test_lib_parse_metamath_mmtest_min_found_db_v0.metta \
@@ -460,7 +460,7 @@ BACKEND_HEAVY_DIAGNOSTIC_TESTS = \
 	tests/test_lib_parse_metamath_nested_scope_db_v0.metta \
 	tests/test_lib_parse_metamath_raw_stmt_v0.metta \
 	tests/test_lib_parse_metamath_repeat_vars_db_v0.metta \
-	tests/test_tilepuzzle_pathmap.metta
+	benchmarks/test_tilepuzzle_pathmap.metta
 
 BACKEND_HEAVY_TESTS = \
 	$(BACKEND_HEAVY_GOLDEN_TESTS) \
@@ -2515,6 +2515,16 @@ perf-compare-tu:
 	@./scripts/compare_witness.sh tu_tail_special_forms
 	@./scripts/compare_witness.sh tu_tilepuzzle
 
+list:
+	@awk -F'\t' -v lane="$(LANE)" 'NR>1 && (lane=="" || $$7==lane) {printf "%-28s %s\n", $$7, $$1}' tests/test_manifest.tsv
+
+bench-index:
+	@{ printf 'kind\tname_or_path\tinfo\n'; \
+	awk -F'\t' 'NR>1{print "witness\t"$$1"\t"$$2}' benchmarks/witness_catalog.tsv; \
+	awk -F'\t' 'NR>1 && $$1 ~ /^benchmarks\// {print "heavy\t"$$1"\t"$$8}' tests/test_manifest.tsv; \
+	for f in benchmarks/bench_*.metta; do printf 'driver\t%s\t-\n' "$$f"; done; } > benchmarks/INDEX.tsv
+	@wc -l benchmarks/INDEX.tsv
+
 test-manifest test-manifest-check:
 	@./scripts/sync_test_manifest.py --check
 
@@ -4215,7 +4225,7 @@ probe-fc-native-memory: $(BIN)
 
 bench-conj-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_conjunction_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only benchmarks/bench_conjunction_he.metta 2>&1 | tail -1); \
 		echo "$$backend conjunction total: $$count results"; \
 		if [ "$$count" = "216" ]; then \
 			echo "PASS: $$backend conjunction count matches"; \
@@ -4226,7 +4236,7 @@ bench-conj-backends: $(BIN)
 
 bench-conj12-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_conjunction12_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only benchmarks/bench_conjunction12_he.metta 2>&1 | tail -1); \
 		echo "$$backend conjunction12 total: $$count results"; \
 		if [ "$$count" = "20736" ]; then \
 			echo "PASS: $$backend conjunction12 count matches"; \
@@ -4237,7 +4247,7 @@ bench-conj12-backends: $(BIN)
 
 bench-join8-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_matchjoin8_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only benchmarks/bench_matchjoin8_he.metta 2>&1 | tail -1); \
 		echo "$$backend join8 total: $$count results"; \
 		if [ "$$count" = "4096" ]; then \
 			echo "PASS: $$backend join8 count matches"; \
@@ -4259,13 +4269,13 @@ bench-join12-backends: $(BIN)
 
 bench-conj12-runtime-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		./scripts/bench_space_match_runtime.sh tests/bench_conjunction12_he.metta "$$backend"; \
+		./scripts/bench_space_match_runtime.sh benchmarks/bench_conjunction12_he.metta "$$backend"; \
 		echo "---"; \
 	done
 
 bench-dup-conj-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/bench_duplicate_conjunction_he.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only benchmarks/bench_duplicate_conjunction_he.metta 2>&1 | tail -1); \
 		echo "$$backend duplicate conjunction total: $$count results"; \
 		if [ "$$count" = "4096" ]; then \
 			echo "PASS: $$backend duplicate conjunction count matches"; \
@@ -4276,13 +4286,13 @@ bench-dup-conj-backends: $(BIN)
 
 bench-dup-conj-runtime-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		./scripts/bench_space_match_runtime.sh tests/bench_duplicate_conjunction_he.metta "$$backend"; \
+		./scripts/bench_space_match_runtime.sh benchmarks/bench_duplicate_conjunction_he.metta "$$backend"; \
 		echo "---"; \
 	done
 
 bench-join8-runtime-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		./scripts/bench_space_match_runtime.sh tests/bench_matchjoin8_he.metta "$$backend"; \
+		./scripts/bench_space_match_runtime.sh benchmarks/bench_matchjoin8_he.metta "$$backend"; \
 		echo "---"; \
 	done
 
@@ -4465,7 +4475,7 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-lowering-core test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

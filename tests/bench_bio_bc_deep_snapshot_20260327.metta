@@ -81,10 +81,10 @@
 ; ============================================================================
 ; Load data
 ; ============================================================================
-!(import! &self eqtl_for_mining)
-!(import! &self discovered_patterns_1k)
-!(import! &self bio_multirelational_kb_scaled)
-!(import! &self bio_hetionet_kb)
+!(import! &self ../benchmarks/data/kb_eqtl_gene_links)
+!(import! &self ../benchmarks/data/kb_mined_patterns)
+!(import! &self ../benchmarks/data/kb_multirelational_scaled)
+!(import! &self ../benchmarks/data/kb_hetionet_biomedical_graph)
 
 ; ============================================================================
 ; PLN rules — 9 relation types, using (rule-sig ...) to avoid type-checker

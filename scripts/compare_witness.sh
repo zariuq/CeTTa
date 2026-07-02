@@ -13,7 +13,7 @@ EOF
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-baseline_file="$repo_root/perf/baseline_records.tsv"
+baseline_file="$repo_root/benchmarks/baseline_records.tsv"
 
 if [[ $# -ne 1 ]]; then
     usage >&2

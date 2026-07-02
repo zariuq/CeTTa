@@ -6,7 +6,7 @@ and emits a MeTTa file with one (evidence-for SNP Gene eqtl+ eqtl- abc+ abc- reg
 atom per (SNP, Gene) pair, zero-filling missing channels.
 
 Usage:
-    python3 scripts/extract_bio_kb.py > tests/bio_kb_chr16.metta
+    python3 scripts/extract_bio_kb.py > benchmarks/data/kb_chr16_variants.metta
 """
 
 import json

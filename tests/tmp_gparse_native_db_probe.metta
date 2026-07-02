@@ -1,5 +1,0 @@
-!(import! &self gparse)
-!(import! &self ./support/lib_parse_metamath_grammar_v0.metta)
-!(println! (mm-db-toks (mm-mini-db-path)))
-!(println! (gparse:slr-parse-shared "/home/aimama/aihub/hyperon/CeTTa/tests/support/lib_parse_metamath_grammar_v0.metta" mm-db-g db (mm-db-toks (mm-mini-db-path))))
-!(println! (case (gparse:slr-parse-shared "/home/aimama/aihub/hyperon/CeTTa/tests/support/lib_parse_metamath_grammar_v0.metta" mm-db-g db (mm-db-toks (mm-mini-db-path))) (((Unique $cert) (lp-shared-parse-cert (mm-db-g) db (mm-db-toks (mm-mini-db-path)) $cert)) ($o False))))

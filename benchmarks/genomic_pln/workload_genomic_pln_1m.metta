@@ -7,8 +7,8 @@
 ; mix raw data, leaf adapters, and rule declarations into the evaluator space
 ; and then pretend bc is generic.
 
-!(import! &self ./bio_wmpln_workload_rules.metta)
+!(import! &self ./lib_pln_inference_rules.metta)
 
-!(import! &bio-wmpln-rb ./bio_wmpln_rulebase_1m.metta)
+!(import! &bio-wmpln-rb ./lib_pln_bridge_rules.metta)
 
-!(import! &bio-wmpln-kb ./bio_wmpln_data_1m.metta)
+!(import! &bio-wmpln-kb ./kb_genomic_facts_1m.metta)

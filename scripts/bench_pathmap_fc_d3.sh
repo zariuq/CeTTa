@@ -36,5 +36,5 @@ run_case() {
   echo
 }
 
-run_case "native-fc-d3" "tests/bench_outcome_variant_fc_d3.metta" "native"
-run_case "pathmap-fc-d3" "tests/bench_pathmap_fc_d3.metta" "pathmap"
+run_case "native-fc-d3" "benchmarks/bench_outcome_variant_fc_d3.metta" "native"
+run_case "pathmap-fc-d3" "benchmarks/bench_pathmap_fc_d3.metta" "pathmap"
