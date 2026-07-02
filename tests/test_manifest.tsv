@@ -178,6 +178,7 @@ tests/test_get_type_space_arity.metta	he	metta	he-extended	main	native	test	gold
 tests/test_get_type_space_nonspace_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_git_module_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_git_module_missing.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_gslt_core.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
 tests/test_gparse_native_backend_report.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_dispatch.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_dual_forest_signature.metta	he	metta	he-extended	main	native	test	golden	-

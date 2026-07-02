@@ -22,3 +22,7 @@
   (Prod s S ((Hl a_tok)(Hl B)(Hl c_tok)))
   (Prod b1 B ((Hl b_tok)))
   (Prod b0 B ()) )))
+
+(= (toy-lex-g) (mkGram (
+  (LexD WORD W)
+  (Prod s S ((Hl W)(Hl W))) )))
