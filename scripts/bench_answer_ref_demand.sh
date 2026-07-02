@@ -34,7 +34,7 @@ emit_multi_expected() {
     local j
     for ((i = 0; i < SEED_COUNT; i++)); do
         for ((j = 0; j < SEED_COUNT; j++)); do
-            printf '           (Pair (Seed %d $a $b) (Seed %d $c $d))\n' "$i" "$j"
+            printf '           (Pair (Seed-%d $a $b) (Seed-%d $c $d))\n' "$i" "$j"
         done
     done
 }
@@ -57,7 +57,7 @@ prepare_program() {
             printf '       (project2 $body $body2))))\n\n'
             printf '!(bind! &ss (new-space))\n'
             for ((i = 0; i < SEED_COUNT; i++)); do
-                printf '!(add-atom &ss (: ax-%d (Seed %d $x $y)))\n' "$i" "$i"
+                printf '!(add-atom &ss (: ax-%d (Seed-%d $p $q)))\n' "$i" "$i"
             done
             printf '\n'
             printf '!(let* (\n'
@@ -83,7 +83,7 @@ prepare_program() {
             printf '   (match $ss (: only $body)\n'
             printf '     (project1 $body)))\n\n'
             printf '!(bind! &ss (new-space))\n'
-            printf '!(add-atom &ss (: only (Seed only $x $y)))\n'
+            printf '!(add-atom &ss (: only (SeedOnly $p $q)))\n'
             for ((i = 0; i < SEED_COUNT; i++)); do
                 printf '!(add-atom &ss (: filler-%d (Noise %d)))\n' "$i" "$i"
             done
@@ -92,11 +92,11 @@ prepare_program() {
             printf '    (() (pragma! search-table-mode variant))\n'
             printf '    (() (assertAlphaEqualToResult\n'
             printf '          (single-via-eq &ss)\n'
-            printf '          ((Pair (Seed only $a $b)))))\n'
+            printf '          ((Pair (SeedOnly $a $b)))))\n'
             printf '    (() (reset-runtime-stats!))\n'
             printf '    (() (assertAlphaEqualToResult\n'
             printf '          (single-via-eq &ss)\n'
-            printf '          ((Pair (Seed only $a $b)))))\n'
+            printf '          ((Pair (SeedOnly $a $b)))))\n'
             printf '  )\n'
             printf '  ())\n'
         fi

@@ -123,7 +123,7 @@ set +e
 (
     cd "$repo_root"
     /usr/bin/time -f 'ELAPSED=%E\nRSS_KB=%M\nEXIT=%x' \
-        timeout "$timeout_s" bash -lc "$run_command"
+        timeout "$timeout_s" bash --noprofile --norc -lc "$run_command"
 ) >"$logfile" 2>&1
 shell_status=$?
 set -e
