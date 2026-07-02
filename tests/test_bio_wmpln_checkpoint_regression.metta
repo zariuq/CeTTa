@@ -44,26 +44,34 @@
                                 (proof-trace-bound-gene $proof))))
    (supported-drug-proof-count (size-atom $hits)))
 
-(= (checkpoint-supported-drug-groups)
-   (fold-by-key
-     (let (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue))
-          (bc &bio-wmpln-kb &bio-wmpln-rb (fromNumber 8)
-              (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue)))
-       (pair (supported-key $gene $disease $drug $tissue) (proof-stv $proof)))
-     (stv 0.0 0.0)
-     $acc
-     $item
-     (let (pair $key $next) $item $key)
-     (let (pair $key $next) $item
-       (eval (revise-stv-step $acc $next)))))
-
 !(let $groups
-      (collapse (checkpoint-supported-drug-groups))
+      (collapse
+        (fold-by-key
+          (let (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue))
+               (bc &bio-wmpln-kb &bio-wmpln-rb (fromNumber 8)
+                   (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue)))
+            (pair (supported-key $gene $disease $drug $tissue) (proof-stv $proof)))
+          (stv 0.0 0.0)
+          $acc
+          $item
+          (let (pair $key $next) $item $key)
+          (let (pair $key $next) $item
+            (eval (revise-stv-step $acc $next)))))
    (supported-drug-hyp-count (size-atom $groups)))
 
 !(collapse
     (let ($key $revised)
-         (checkpoint-supported-drug-groups)
+         (fold-by-key
+           (let (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue))
+                (bc &bio-wmpln-kb &bio-wmpln-rb (fromNumber 8)
+                    (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue)))
+             (pair (supported-key $gene $disease $drug $tissue) (proof-stv $proof)))
+           (stv 0.0 0.0)
+           $acc
+           $item
+           (let (pair $key $next) $item $key)
+           (let (pair $key $next) $item
+             (eval (revise-stv-step $acc $next))))
       (let (supported-key $gene $disease $drug $tissue) $key
         (let $score (wm-posterior-mean $revised)
           (if (> $score 0.30)
@@ -74,7 +82,17 @@
 
 !(threshold-count
     (fold
-      (checkpoint-supported-drug-groups)
+      (fold-by-key
+        (let (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue))
+             (bc &bio-wmpln-kb &bio-wmpln-rb (fromNumber 8)
+                 (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue)))
+          (pair (supported-key $gene $disease $drug $tissue) (proof-stv $proof)))
+        (stv 0.0 0.0)
+        $acc
+        $item
+        (let (pair $key $next) $item $key)
+        (let (pair $key $next) $item
+          (eval (revise-stv-step $acc $next))))
       0
       $count
       $group

@@ -15,4 +15,4 @@
         (support-route $gene $disease $drug $tissue
                        (proof-trace-route $proof)
                        (proof-trace-mode $proof)
-                       (proof-trace-bound-gene $proof))))))
+                       (proof-trace-bound-gene $proof)))))

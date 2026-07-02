@@ -270,6 +270,8 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
         table_query_state_free(state, true);
         return false;
     }
+    cetta_provenance_assert_not_transient(state->staged.goal_key,
+                                         "table_store.staged.goal_key");
     if (!cetta_var_map_clone_live(&state->staged.arena,
                                   &state->goal_instantiation,
                                   &goal_instantiation)) {
@@ -414,17 +416,25 @@ bool table_store_commit_query(TableQueryHandle *handle) {
         return false;
 
     TableQueryState *state = handle->impl;
-    TableStoreEntry *target = &state->store->entries[state->target_index];
+    TableStoreEntry *target = NULL;
     if (state->target_reusable) {
+        target = &state->store->entries[state->target_index];
         table_store_entry_free(target);
         if (state->target_stale)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_REUSE);
     } else {
+        /* Table queries can re-enter the same store before an outer query
+           commits. Pick the append slot at commit time so nested commits cannot
+           reserve the same store->len slot and leave a counted hole behind. */
+        if (!table_store_reserve(state->store, state->store->len + 1))
+            return false;
+        target = &state->store->entries[state->store->len];
         state->store->len++;
     }
 
     *target = state->staged;
     cetta_var_map_free(&state->query_map);
+    cetta_var_map_free(&state->goal_instantiation);
     free(state);
     handle->impl = NULL;
     return true;

@@ -3781,6 +3781,8 @@ Atom *cetta_lp_native_glr_parse_class(const CettaLpNativeGrammar *grammar,
         uint32_t config_idx = work.data[work.len - 1];
         CettaLpNativeBranch *cur = &configs.data[config_idx];
         uint32_t delta;
+        uint32_t cur_pos;
+        CettaLpNativeU32Vec cur_state_stack;
         uint32_t state;
         uint32_t token_idx;
         uint32_t action_idx;
@@ -3794,9 +3796,11 @@ Atom *cetta_lp_native_glr_parse_class(const CettaLpNativeGrammar *grammar,
             continue;
         delta = (uint32_t)(cur->ways_total - cur->ways_done);
         cur->ways_done = cur->ways_total;
-        state = cur->state_stack.data[cur->state_stack.len - 1];
-        if (cur->pos < tokens.len) {
-            int32_t term_idx = idvec_find(&terminals, tokens.data[cur->pos].term_kind);
+        cur_pos = cur->pos;
+        cur_state_stack = cur->state_stack;
+        state = cur_state_stack.data[cur_state_stack.len - 1];
+        if (cur_pos < tokens.len) {
+            int32_t term_idx = idvec_find(&terminals, tokens.data[cur_pos].term_kind);
             if (term_idx < 0) {
                 continue;
             }
@@ -3808,12 +3812,12 @@ Atom *cetta_lp_native_glr_parse_class(const CettaLpNativeGrammar *grammar,
         for (action_idx = 0; action_idx < actions.len && accept_count < 2; action_idx++) {
             const CettaLpNativeAction *action = &actions.data[action_idx];
             CettaLpNativeU32Vec next_stack = {0};
-            uint32_t next_pos = cur->pos;
+            uint32_t next_pos = cur_pos;
 
             if (action->state != state || action->token_idx != token_idx)
                 continue;
             if (action->kind == 'a') {
-                if (cur->pos == tokens.len) {
+                if (cur_pos == tokens.len) {
                     accept_count += delta;
                     if (accept_count > 2)
                         accept_count = 2;
@@ -3821,15 +3825,15 @@ Atom *cetta_lp_native_glr_parse_class(const CettaLpNativeGrammar *grammar,
                 continue;
             }
             if (action->kind == 's') {
-                if (cur->pos >= tokens.len ||
-                    !u32vec_copy(&next_stack, &cur->state_stack) ||
+                if (cur_pos >= tokens.len ||
+                    !u32vec_copy(&next_stack, &cur_state_stack) ||
                     !u32vec_push(&next_stack, (uint32_t)action->value)) {
                     free(next_stack.data);
                     slr_summary_set_error(error_buf, error_buf_size,
                                           "failed to fork GLR shift branch");
                     goto fail;
                 }
-                next_pos = cur->pos + 1;
+                next_pos = cur_pos + 1;
             } else if (action->kind == 'r') {
                 int32_t prod_idx = action->value;
                 SymbolId lhs = 0;
@@ -3840,7 +3844,7 @@ Atom *cetta_lp_native_glr_parse_class(const CettaLpNativeGrammar *grammar,
 
                 slr_get_prod(productions, production_len, start_nt,
                              prod_idx, &lhs, &rhs, &rhs_len);
-                if (!u32vec_copy(&next_stack, &cur->state_stack)) {
+                if (!u32vec_copy(&next_stack, &cur_state_stack)) {
                     slr_summary_set_error(error_buf, error_buf_size,
                                           "failed to fork GLR reduce branch");
                     goto fail;
@@ -4094,6 +4098,9 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
         uint32_t config_idx = work.data[work.len - 1];
         CettaLpNativeBranch *cur = &configs.data[config_idx];
         uint32_t delta;
+        uint32_t cur_pos;
+        CettaLpNativeU32Vec cur_state_stack;
+        CettaLpNativeParseValueVec cur_value_stack;
         uint32_t state;
         uint32_t token_idx;
         uint32_t action_idx;
@@ -4106,9 +4113,12 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
             continue;
         delta = (uint32_t)(cur->ways_total - cur->ways_done);
         cur->ways_done = cur->ways_total;
-        state = cur->state_stack.data[cur->state_stack.len - 1];
-        if (cur->pos < tokens.len) {
-            int32_t term_idx = idvec_find(&terminals, tokens.data[cur->pos].term_kind);
+        cur_pos = cur->pos;
+        cur_state_stack = cur->state_stack;
+        cur_value_stack = cur->value_stack;
+        state = cur_state_stack.data[cur_state_stack.len - 1];
+        if (cur_pos < tokens.len) {
+            int32_t term_idx = idvec_find(&terminals, tokens.data[cur_pos].term_kind);
             if (term_idx < 0)
                 continue;
             token_idx = (uint32_t)term_idx;
@@ -4120,19 +4130,19 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
             const CettaLpNativeAction *action = &actions.data[action_idx];
             CettaLpNativeU32Vec next_stack = {0};
             CettaLpNativeParseValueVec next_values = {0};
-            uint32_t next_pos = cur->pos;
+            uint32_t next_pos = cur_pos;
 
             if (action->state != state || action->token_idx != token_idx)
                 continue;
             if (action->kind == 'a') {
-                if (cur->pos == tokens.len &&
-                    cur->value_stack.len == 1 &&
-                    cur->value_stack.data[0].is_cert &&
-                    cur->value_stack.data[0].cert &&
-                    cur->value_stack.data[0].start == 0 &&
-                    cur->value_stack.data[0].end == tokens.len) {
+                if (cur_pos == tokens.len &&
+                    cur_value_stack.len == 1 &&
+                    cur_value_stack.data[0].is_cert &&
+                    cur_value_stack.data[0].cert &&
+                    cur_value_stack.data[0].start == 0 &&
+                    cur_value_stack.data[0].end == tokens.len) {
                     if (accept_count == 0)
-                        accept_cert = cur->value_stack.data[0].cert;
+                        accept_cert = cur_value_stack.data[0].cert;
                     accept_count += delta;
                     if (accept_count > 2)
                         accept_count = 2;
@@ -4146,9 +4156,9 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
             if (action->kind == 's') {
                 CettaLpNativeParseValue value;
 
-                if (cur->pos >= tokens.len ||
-                    !u32vec_copy(&next_stack, &cur->state_stack) ||
-                    !parsevaluevec_copy(&next_values, &cur->value_stack) ||
+                if (cur_pos >= tokens.len ||
+                    !u32vec_copy(&next_stack, &cur_state_stack) ||
+                    !parsevaluevec_copy(&next_values, &cur_value_stack) ||
                     !u32vec_push(&next_stack, (uint32_t)action->value)) {
                     free(next_stack.data);
                     free(next_values.data);
@@ -4157,10 +4167,10 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
                     goto fail;
                 }
                 value.is_cert = false;
-                value.token_atom = tokens.data[cur->pos].token_atom;
-                value.term_kind = tokens.data[cur->pos].term_kind;
-                value.start = cur->pos;
-                value.end = cur->pos + 1;
+                value.token_atom = tokens.data[cur_pos].token_atom;
+                value.term_kind = tokens.data[cur_pos].term_kind;
+                value.start = cur_pos;
+                value.end = cur_pos + 1;
                 value.forest_idx = UINT32_MAX;
                 value.cert = NULL;
                 if (!parsevaluevec_push(&next_values, &value)) {
@@ -4170,7 +4180,7 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
                                           "failed to push GLR shared shift value");
                     goto fail;
                 }
-                next_pos = cur->pos + 1;
+                next_pos = cur_pos + 1;
             } else if (action->kind == 'r') {
                 int32_t prod_idx = action->value;
                 SymbolId lhs = 0;
@@ -4182,8 +4192,8 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
 
                 slr_get_prod(productions, production_len, start_nt,
                              prod_idx, &lhs, &rhs, &rhs_len);
-                if (!u32vec_copy(&next_stack, &cur->state_stack) ||
-                    !parsevaluevec_copy(&next_values, &cur->value_stack)) {
+                if (!u32vec_copy(&next_stack, &cur_state_stack) ||
+                    !parsevaluevec_copy(&next_values, &cur_value_stack)) {
                     free(next_stack.data);
                     free(next_values.data);
                     slr_summary_set_error(error_buf, error_buf_size,
@@ -4219,12 +4229,12 @@ Atom *cetta_lp_native_glr_parse_shared(const CettaLpNativeGrammar *grammar,
                     next_value.is_cert = true;
                     next_value.token_atom = NULL;
                     next_value.term_kind = 0;
-                    next_value.start = cur->pos;
-                    next_value.end = cur->pos;
+                    next_value.start = cur_pos;
+                    next_value.end = cur_pos;
                     next_value.forest_idx = UINT32_MAX;
                     next_value.cert = make_node_cert(
                         arena, grammar->productions[prod_idx].label, lhs,
-                        cur->pos, cur->pos, kids, 1);
+                        cur_pos, cur_pos, kids, 1);
                 } else {
                     uint32_t base = next_values.len - rhs_len;
                     uint32_t j;
@@ -4522,6 +4532,9 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
         uint32_t config_idx = work.data[work.len - 1];
         CettaLpNativeBranch *cur = &configs.data[config_idx];
         uint32_t delta;
+        uint32_t cur_pos;
+        CettaLpNativeU32Vec cur_state_stack;
+        CettaLpNativeParseValueVec cur_value_stack;
         uint32_t state;
         uint32_t token_idx;
         uint32_t action_idx;
@@ -4534,9 +4547,12 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
             continue;
         delta = (uint32_t)(cur->ways_total - cur->ways_done);
         cur->ways_done = cur->ways_total;
-        state = cur->state_stack.data[cur->state_stack.len - 1];
-        if (cur->pos < tokens.len) {
-            int32_t term_idx = idvec_find(&terminals, tokens.data[cur->pos].term_kind);
+        cur_pos = cur->pos;
+        cur_state_stack = cur->state_stack;
+        cur_value_stack = cur->value_stack;
+        state = cur_state_stack.data[cur_state_stack.len - 1];
+        if (cur_pos < tokens.len) {
+            int32_t term_idx = idvec_find(&terminals, tokens.data[cur_pos].term_kind);
             if (term_idx < 0)
                 continue;
             token_idx = (uint32_t)term_idx;
@@ -4548,16 +4564,16 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
             const CettaLpNativeAction *action = &actions.data[action_idx];
             CettaLpNativeU32Vec next_stack = {0};
             CettaLpNativeParseValueVec next_values = {0};
-            uint32_t next_pos = cur->pos;
+            uint32_t next_pos = cur_pos;
 
             if (action->state != state || action->token_idx != token_idx)
                 continue;
             if (action->kind == 'a') {
-                if (cur->pos == tokens.len &&
-                    cur->value_stack.len == 1 &&
-                    cur->value_stack.data[0].forest_idx != UINT32_MAX) {
+                if (cur_pos == tokens.len &&
+                    cur_value_stack.len == 1 &&
+                    cur_value_stack.data[0].forest_idx != UINT32_MAX) {
                     if (accept_count == 0)
-                        accept_root = (int32_t)cur->value_stack.data[0].forest_idx;
+                        accept_root = (int32_t)cur_value_stack.data[0].forest_idx;
                     accept_count += delta;
                     if (accept_count > 2)
                         accept_count = 2;
@@ -4572,9 +4588,9 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
                 CettaLpNativeParseValue value;
                 int32_t term_node;
 
-                if (cur->pos >= tokens.len ||
-                    !u32vec_copy(&next_stack, &cur->state_stack) ||
-                    !parsevaluevec_copy(&next_values, &cur->value_stack) ||
+                if (cur_pos >= tokens.len ||
+                    !u32vec_copy(&next_stack, &cur_state_stack) ||
+                    !parsevaluevec_copy(&next_values, &cur_value_stack) ||
                     !u32vec_push(&next_stack, (uint32_t)action->value)) {
                     free(next_stack.data);
                     free(next_values.data);
@@ -4582,8 +4598,8 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
                                           "failed to fork GLR forest shift branch");
                     goto fail;
                 }
-                term_node = gll_node_get_term(&nodes, tokens.data[cur->pos].term_kind,
-                                              cur->pos);
+                term_node = gll_node_get_term(&nodes, tokens.data[cur_pos].term_kind,
+                                              cur_pos);
                 if (term_node < 0) {
                     free(next_stack.data);
                     free(next_values.data);
@@ -4592,10 +4608,10 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
                     goto fail;
                 }
                 value.is_cert = false;
-                value.token_atom = tokens.data[cur->pos].token_atom;
-                value.term_kind = tokens.data[cur->pos].term_kind;
-                value.start = cur->pos;
-                value.end = cur->pos + 1;
+                value.token_atom = tokens.data[cur_pos].token_atom;
+                value.term_kind = tokens.data[cur_pos].term_kind;
+                value.start = cur_pos;
+                value.end = cur_pos + 1;
                 value.forest_idx = (uint32_t)term_node;
                 value.cert = NULL;
                 if (!parsevaluevec_push(&next_values, &value)) {
@@ -4605,7 +4621,7 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
                                           "failed to push GLR forest shift value");
                     goto fail;
                 }
-                next_pos = cur->pos + 1;
+                next_pos = cur_pos + 1;
             } else if (action->kind == 'r') {
                 int32_t prod_idx = action->value;
                 SymbolId lhs = 0;
@@ -4617,8 +4633,8 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
 
                 slr_get_prod(productions, production_len, start_nt,
                              prod_idx, &lhs, &rhs, &rhs_len);
-                if (!u32vec_copy(&next_stack, &cur->state_stack) ||
-                    !parsevaluevec_copy(&next_values, &cur->value_stack)) {
+                if (!u32vec_copy(&next_stack, &cur_state_stack) ||
+                    !parsevaluevec_copy(&next_values, &cur_value_stack)) {
                     free(next_stack.data);
                     free(next_values.data);
                     slr_summary_set_error(error_buf, error_buf_size,
@@ -4661,15 +4677,15 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
                     next_value.cert = make_leaf_cert(arena, child->token_atom,
                                                      child->start, child->end);
                 } else if (rhs_len == 0) {
-                    int32_t sym_idx = gll_node_get_sym(&nodes, lhs, cur->pos, cur->pos);
-                    int32_t eps_idx = gll_node_get_eps(&nodes, cur->pos);
+                    int32_t sym_idx = gll_node_get_sym(&nodes, lhs, cur_pos, cur_pos);
+                    int32_t eps_idx = gll_node_get_eps(&nodes, cur_pos);
                     Atom *eps = make_eps_cert(arena);
                     Atom *kids[1] = {eps};
                     if (sym_idx < 0 || eps_idx < 0 ||
                         !gll_packedvec_push_unique(&nodes.data[sym_idx].packed,
                                                    CETTA_LP_NATIVE_NODE_NONE,
                                                    (uint32_t)eps_idx,
-                                                   cur->pos,
+                                                   cur_pos,
                                                    prod_idx)) {
                         free(next_stack.data);
                         free(next_values.data);
@@ -4680,12 +4696,12 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
                     next_value.is_cert = true;
                     next_value.token_atom = NULL;
                     next_value.term_kind = 0;
-                    next_value.start = cur->pos;
-                    next_value.end = cur->pos;
+                    next_value.start = cur_pos;
+                    next_value.end = cur_pos;
                     next_value.forest_idx = (uint32_t)sym_idx;
                     next_value.cert = make_node_cert(
                         arena, grammar->productions[prod_idx].label, lhs,
-                        cur->pos, cur->pos, kids, 1);
+                        cur_pos, cur_pos, kids, 1);
                 } else {
                     uint32_t base = next_values.len - rhs_len;
                     uint32_t j;

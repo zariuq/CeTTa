@@ -3,6 +3,7 @@
 
 (= (coin) (superpose (heads tails)))
 (= (words) (superpose (b aa ab)))
+(= (identity $x) $x)
 
 !(assertEqual
   (search-policy recursive-dependent-proof)
@@ -34,3 +35,9 @@
 !(assertEqual
   (collect (search-policy recursive-dependent-proof (order shortlex)) (words))
   (b aa ab))
+!(assertEqualToResult
+  (select (identity (search-policy recursive-dependent-proof)) (coin))
+  (heads))
+!(assertEqual
+  (collect (identity (search-policy recursive-dependent-proof)) (coin))
+  (heads tails))

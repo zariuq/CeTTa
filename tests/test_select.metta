@@ -11,3 +11,5 @@
 !(assertEqual (select 2 (superpose (a Empty b c))) (a b))
 !(assertEqual (select 5 (coin)) (heads tails))
 !(assertEqual (select 0 (coin)) ())
+!(assertEqual (select (+ 1 1) (coin)) (heads tails))
+!(assertEqualToResult (select $n (coin)) ((select $n heads) (select $n tails)))

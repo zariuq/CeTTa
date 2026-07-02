@@ -22,6 +22,7 @@
 #include <time.h>
 #include <sys/resource.h>
 #include <assert.h>
+#include "eval_gc.h"
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static __thread Registry *g_registry = NULL;
@@ -5156,6 +5157,85 @@ static bool branch_outer_env_begin(Bindings *owned,
 static void branch_outer_env_finish(Bindings *owned,
                                     const Bindings *effective_outer);
 
+static Atom *bindings_apply_if_vars_chain(Arena *a,
+                                          const Bindings *base_env,
+                                          const Bindings *extra_env,
+                                          Atom *atom) {
+    Atom *applied = atom;
+    if (base_env && (base_env->len > 0 || base_env->eq_len > 0))
+        applied = bindings_apply_if_vars(base_env, a, applied);
+    if (extra_env && (extra_env->len > 0 || extra_env->eq_len > 0))
+        applied = bindings_apply_if_vars(extra_env, a, applied);
+    return applied;
+}
+
+static Atom *rebuild_stream_call_with_replaced_arg(Arena *a,
+                                                   Atom *atom,
+                                                   const Bindings *base_env,
+                                                   const Bindings *extra_env,
+                                                   CettaExprIndex arg_idx,
+                                                   Atom *replacement) {
+    Atom **elems;
+    CettaExprLen nargs;
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0)
+        return atom;
+    nargs = expr_nargs(atom);
+    elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+    elems[0] = atom->expr.elems[0];
+    for (CettaExprIndex i = 0; i < nargs; i++) {
+        elems[i + 1] = (i == arg_idx)
+            ? replacement
+            : bindings_apply_if_vars_chain(a, base_env, extra_env, expr_arg(atom, i));
+    }
+    return atom_expr(a, elems, atom->expr.len);
+}
+
+static void eval_stream_call_non_ground_arg(Space *s, Arena *a, Atom *atom,
+                                            const Bindings *base_env,
+                                            CettaExprIndex arg_idx,
+                                            CettaExprIndex stream_arg_idx,
+                                            int fuel,
+                                            bool preserve_bindings,
+                                            OutcomeSet *os) {
+    Atom *applied_arg;
+    Bindings empty;
+    OutcomeSet values;
+
+    if (!atom || atom->kind != ATOM_EXPR || arg_idx >= expr_nargs(atom))
+        return;
+
+    bindings_init(&empty);
+    applied_arg = bindings_apply_if_vars(base_env, a, expr_arg(atom, arg_idx));
+    outcome_set_init(&values);
+    metta_eval_bind(s, a, applied_arg, fuel, &values);
+
+    for (CettaCount i = 0; i < values.len; i++) {
+        Atom *value = outcome_atom_materialize(a, &values.items[i]);
+        Atom *ready_call;
+        bool progressed;
+        if (!value)
+            continue;
+        if (atom_is_empty_or_error(value)) {
+            outcome_set_add(os, value, &empty);
+            continue;
+        }
+        ready_call = rebuild_stream_call_with_replaced_arg(
+            a, atom, base_env, &values.items[i].env, arg_idx, value);
+        progressed = !atom_eq(value, applied_arg) ||
+                     values.items[i].env.len > 0 ||
+                     values.items[i].env.eq_len > 0;
+        if (progressed) {
+            eval_for_current_caller(s, a, NULL, ready_call, fuel, &empty, &empty,
+                                    preserve_bindings, os);
+        } else {
+            emit_policy_stream_call_inert(s, a, ready_call, stream_arg_idx,
+                                          &empty, fuel, os);
+        }
+    }
+
+    outcome_set_free(&values);
+}
+
 typedef struct {
     OrderedOutcomeVisitor visitor;
     void *ctx;
@@ -5915,18 +5995,27 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
                     free(space_clone);
                     return false;
                 }
-                registry_bind_id(dst, key, atom_space(owner, space_clone));
+                Atom *registry_space_atom = atom_space(owner, space_clone);
+                cetta_provenance_assert_not_transient(
+                    registry_space_atom, "hyperpose.registry.space");
+                registry_bind_id(dst, key, registry_space_atom);
             } else {
                 Atom *cloned_value =
                     hyperpose_clone_atom_materialized(owner, value);
                 if (!cloned_value)
                     return false;
+                cetta_provenance_assert_not_transient(
+                    cloned_value, "hyperpose.registry.value");
                 registry_bind_id(dst, key, cloned_value);
             }
         }
     }
-    if (!saw_self)
-        registry_bind_id(dst, g_builtin_syms.self, atom_space(owner, root_clone));
+    if (!saw_self) {
+        Atom *self_value = atom_space(owner, root_clone);
+        cetta_provenance_assert_not_transient(
+            self_value, "hyperpose.registry.self");
+        registry_bind_id(dst, g_builtin_syms.self, self_value);
+    }
     return true;
 }
 
@@ -7408,6 +7497,10 @@ void eval_release_temporary_spaces(void) {
     g_temp_spaces.cap = 0;
 }
 
+void eval_reset_form_gc_survivor(void) {
+    eval_gc_survivor_reset();
+}
+
 Registry *eval_current_registry(void) {
     return g_registry;
 }
@@ -7488,7 +7581,12 @@ static ImportDestination resolve_import_destination(Arena *a, Atom *target, Atom
         return dest;
     }
 
-    Space *ns = cetta_malloc(sizeof(Space));
+    Arena *pa = eval_storage_arena(a);
+    Space *ns = arena_alloc(pa, sizeof(Space));
+    if (!ns) {
+        *error_out = atom_symbol(a, "OutOfMemory");
+        return dest;
+    }
     space_init_with_universe(ns, eval_current_term_universe());
     dest.space = ns;
     dest.bind_key = target->sym_id;
@@ -12435,6 +12533,8 @@ static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     if (!bindings_builder_init(&current_env_builder, NULL))
         return;
     if (!etype) etype = atom_undefined_type(a);
+    ArenaMark eval_gc_anchor = arena_mark(a);
+    bool eval_gc_query_closed = eval_gc_enabled() && !atom_contains_vars(atom);
 #define CURRENT_ENV bindings_builder_bindings(&current_env_builder)
 #define TAIL_REENTER_ENV(next_atom, extra_env) do { \
     if ((extra_env) != NULL && \
@@ -12448,6 +12548,13 @@ static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
 #define outcome_set_add(_os, _atom, _env) \
     outcome_set_add_prefixed(a, (_os), (_atom), (_env), CURRENT_ENV, preserve_bindings)
 tail_call: ;
+    size_t eval_gc_live_above_anchor =
+        (a->live_bytes >= eval_gc_anchor.live_bytes)
+            ? (a->live_bytes - eval_gc_anchor.live_bytes)
+            : 0;
+    if (eval_gc_safe_point(a, (size_t)os->len, eval_gc_live_above_anchor))
+        eval_gc_collect(a, eval_gc_anchor, &atom,
+                        &current_env_builder.current, &etype);
     if (eval_cancel_check())
         return;
     atom = materialize_runtime_token(s, a, atom);
@@ -13168,7 +13275,7 @@ tail_call: ;
                     }
                     Atom *next_atom =
                         bindings_apply_projected_body_visible(&visible, a, body_let);
-                    if (preserve_bindings &&
+                    if (preserve_bindings && !eval_gc_query_closed &&
                         !bindings_builder_merge_commit(&current_env_builder, bb)) {
                         bindings_free(&visible);
                         bindings_builder_free(&b);
@@ -13200,7 +13307,7 @@ tail_call: ;
                     }
                     Atom *next_atom =
                         bindings_apply_projected_body_visible(&visible, a, body_let);
-                    if (preserve_bindings &&
+                    if (preserve_bindings && !eval_gc_query_closed &&
                         !bindings_builder_merge_commit(&current_env_builder, bb)) {
                         bindings_free(&visible);
                         bindings_builder_free(&b);
@@ -13462,6 +13569,11 @@ tail_call: ;
                 CettaSearchPolicyParseStatus parsed =
                     parse_search_policy_atom(a, expr_arg(atom, 0), &policy, &reason);
                 if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                    if (expr_arg(atom, 0)->kind != ATOM_GROUNDED) {
+                        eval_stream_call_non_ground_arg(s, a, atom, CURRENT_ENV, 0, 1, fuel,
+                                                        preserve_bindings, os);
+                        return;
+                    }
                     outcome_set_add(os,
                         bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "SearchPolicy"),
                                            expr_arg(atom, 0)),
@@ -13506,6 +13618,11 @@ tail_call: ;
                 CettaSearchPolicyParseStatus parsed =
                     parse_search_policy_atom(a, expr_arg(atom, 0), &policy, &reason);
                 if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                    if (expr_arg(atom, 0)->kind != ATOM_GROUNDED) {
+                        eval_stream_call_non_ground_arg(s, a, atom, CURRENT_ENV, 0, 1, fuel,
+                                                        preserve_bindings, os);
+                        return;
+                    }
                     outcome_set_add(os,
                         bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "SearchPolicy"),
                                            expr_arg(atom, 0)),
@@ -13579,6 +13696,11 @@ tail_call: ;
                 CettaSearchPolicyParseStatus parsed =
                     parse_search_policy_atom(a, expr_arg(atom, 0), &policy, &reason);
                 if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                    if (expr_arg(atom, 0)->kind != ATOM_GROUNDED) {
+                        eval_stream_call_non_ground_arg(s, a, atom, CURRENT_ENV, 0, 1, fuel,
+                                                        preserve_bindings, os);
+                        return;
+                    }
                     outcome_set_add(os,
                         bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "SearchPolicy"),
                                            expr_arg(atom, 0)),
@@ -13642,6 +13764,11 @@ tail_call: ;
                 CettaSearchPolicyParseStatus parsed =
                     parse_search_policy_atom(a, expr_arg(atom, 0), &policy, &reason);
                 if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                    if (expr_arg(atom, 0)->kind != ATOM_GROUNDED) {
+                        eval_stream_call_non_ground_arg(s, a, atom, CURRENT_ENV, 0, 1, fuel,
+                                                        preserve_bindings, os);
+                        return;
+                    }
                     outcome_set_add(os,
                         bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "SearchPolicy"),
                                            expr_arg(atom, 0)),
@@ -13676,6 +13803,11 @@ tail_call: ;
                 return;
             } else {
                 Atom *limit_atom = expr_arg(atom, 0);
+                if (limit_atom->kind != ATOM_GROUNDED) {
+                    eval_stream_call_non_ground_arg(s, a, atom, CURRENT_ENV, 0, 1, fuel,
+                                                    preserve_bindings, os);
+                    return;
+                }
                 if (limit_atom->kind != ATOM_GROUNDED || limit_atom->ground.gkind != GV_INT) {
                     outcome_set_add(os,
                         bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "Number"), limit_atom),
@@ -13696,6 +13828,11 @@ tail_call: ;
             Atom *reason = NULL;
             CettaSearchPolicyParseStatus parsed =
                 parse_search_policy_atom(a, expr_arg(atom, 1), &policy, &reason);
+            if (limit_atom->kind != ATOM_GROUNDED) {
+                eval_stream_call_non_ground_arg(s, a, atom, CURRENT_ENV, 0, 2, fuel,
+                                                preserve_bindings, os);
+                return;
+            }
             if (limit_atom->kind != ATOM_GROUNDED || limit_atom->ground.gkind != GV_INT) {
                 outcome_set_add(os,
                     bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "Number"), limit_atom),
@@ -13709,6 +13846,11 @@ tail_call: ;
                 return;
             }
             if (parsed == CETTA_SEARCH_POLICY_PARSE_NOT_POLICY) {
+                if (expr_arg(atom, 1)->kind != ATOM_GROUNDED) {
+                    eval_stream_call_non_ground_arg(s, a, atom, CURRENT_ENV, 1, 2, fuel,
+                                                    preserve_bindings, os);
+                    return;
+                }
                 outcome_set_add(os,
                     bad_arg_type_error(s, a, atom, 2, atom_symbol(a, "SearchPolicy"),
                                        expr_arg(atom, 1)),
@@ -14033,13 +14175,17 @@ tail_call: ;
                                         g_registry, fuel, &error)) {
             if (dest.is_fresh) {
                 Arena *pa = eval_storage_arena(a);
-                registry_bind_id(g_registry, dest.bind_key, atom_space(pa, dest.space));
+                Atom *space_value = atom_space(pa, dest.space);
+                if (eval_storage_is_persistent(pa)) {
+                    cetta_provenance_assert_not_transient(
+                        space_value, "import.registry.fresh-space");
+                }
+                registry_bind_id(g_registry, dest.bind_key, space_value);
             }
             outcome_set_add(os, atom_unit(a), &_empty);
         } else if (error) {
             if (dest.is_fresh && dest.space) {
                 space_free(dest.space);
-                free(dest.space);
             }
             outcome_set_add(os, atom_error(a, atom, error), &_empty);
         }
@@ -14661,6 +14807,7 @@ tail_call: ;
             } else {
                 stored = eval_store_atom(dst, val);
             }
+            cetta_provenance_assert_not_transient(stored, "bind.registry.value");
             registry_bind_id(g_registry, name->sym_id, stored);
         }
         result_set_free(&val_rs);
@@ -15092,6 +15239,9 @@ tail_call: ;
         cell->payload_owner_epoch = eval_payload_owner_epoch();
         cell->payload_export_owner_epoch = 0;
         free(itypes);
+        if (eval_storage_is_persistent(pa))
+            cetta_provenance_assert_state_cell_not_transient(cell,
+                                                            "new-state.cell");
         if (g_eval_payload_transactional &&
             !eval_payload_track_scratch_state(cell)) {
             free(cell);
@@ -15196,6 +15346,9 @@ tail_call: ;
                     cell->value = eval_persistent_arena()
                         ? eval_store_atom(eval_persistent_arena(), new_v)
                         : new_v;
+                    if (eval_persistent_arena())
+                        cetta_provenance_assert_state_cell_not_transient(
+                            cell, "change-state.cell");
                     outcome_set_add(os, state_ref, attempt.env);
                 } else {
                     Atom *error_state_arg = expr_arg(atom, 0);

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-"""Oracle-only rho runtime comparison for native lib_parse translation outputs."""
+"""Oracle-only reference comparison for WIP lib_parse rho parser outputs.
+
+Production rho <-> mrho translator checks live in the rhocalc runtime test lane.
+This script keeps the bounded lib_parse/gparse research lane honest against the
+runtime semantics.
+"""
 
 import ast
 import os
@@ -46,9 +51,15 @@ def decode_metta_string(text: str) -> str:
     try:
         decoded = ast.literal_eval(text)
     except (SyntaxError, ValueError) as exc:
-        if text.startswith("(Err ") or text.startswith("(Rejected "):
+        if (
+            text.startswith("(Err ")
+            or text.startswith("(Rejected ")
+            or text.startswith("(Error ")
+        ):
             raise RuntimeError(f"expected native .mrho text payload, got: {text}") from exc
-        return text
+        if text == "rho:nil" or text.startswith("(rho:"):
+            return text
+        raise RuntimeError(f"expected native .mrho text payload, got: {text}") from exc
     if not isinstance(decoded, str):
         raise RuntimeError(f"expected native .mrho text payload, got: {text}")
     return decoded

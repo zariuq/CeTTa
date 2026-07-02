@@ -104,10 +104,14 @@ static int test_atom_hashflags_soundness(void) {
 
 static int test_registry_growth(void) {
     Registry registry;
+    Arena arena;
+    Atom *values[80];
+
+    arena_init(&arena);
     registry_init(&registry);
     for (uintptr_t i = 1; i <= 80; i++) {
-        registry_bind_id(&registry, (SymbolId)i,
-                         (Atom *)(uintptr_t)(0x1000u + i));
+        values[i - 1u] = atom_int(&arena, (int64_t)i);
+        registry_bind_id(&registry, (SymbolId)i, values[i - 1u]);
     }
     if (registry.len != 80)
         return fail("registry did not retain 80 entries");
@@ -115,10 +119,11 @@ static int test_registry_growth(void) {
         return fail("registry did not spill from inline storage");
     for (uintptr_t i = 1; i <= 80; i++) {
         Atom *value = registry_lookup_id(&registry, (SymbolId)i);
-        if (value != (Atom *)(uintptr_t)(0x1000u + i))
+        if (value != values[i - 1u])
             return fail("registry lookup changed after spill");
     }
     registry_free(&registry);
+    arena_free(&arena);
     if (registry.len != 0 || registry.entries != registry.inline_entries)
         return fail("registry did not reset to inline storage");
     return 0;

@@ -2888,5 +2888,8 @@ Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,
         return NULL;
     }
     Atom *stored = term_universe_get_atom(universe, id);
-    return stored ? stored : term_universe_store_persistent_atom(universe, src);
+    if (!stored)
+        stored = term_universe_store_persistent_atom(universe, src);
+    cetta_provenance_assert_not_transient(stored, "term_universe.store_atom");
+    return stored;
 }
