@@ -143,12 +143,50 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                        char *error_buf,
                                        size_t error_buf_size);
 
+Atom *cetta_lp_native_gll_recognize(const CettaLpNativeGrammar *grammar,
+                                    SymbolId start_nt,
+                                    Atom *token_list,
+                                    Arena *arena,
+                                    char *error_buf,
+                                    size_t error_buf_size);
+
+Atom *cetta_lp_native_gll_recognize_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
+Atom *cetta_lp_native_gll_span_summary(const CettaLpNativeGrammar *grammar,
+                                       SymbolId start_nt,
+                                       Atom *token_list,
+                                       Arena *arena,
+                                       char *error_buf,
+                                       size_t error_buf_size);
+
+Atom *cetta_lp_native_gll_span_summary_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
 Atom *cetta_lp_native_gll_forest_summary(const CettaLpNativeGrammar *grammar,
                                          SymbolId start_nt,
                                          Atom *token_list,
                                          Arena *arena,
                                          char *error_buf,
                                          size_t error_buf_size);
+
+Atom *cetta_lp_native_gll_forest_summary_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
 
 Atom *cetta_lp_native_gll_forest_signature(const CettaLpNativeGrammar *grammar,
                                            SymbolId start_nt,
@@ -163,6 +201,14 @@ Atom *cetta_lp_native_gll_forest_signature_digest(const CettaLpNativeGrammar *gr
                                                   Arena *arena,
                                                   char *error_buf,
                                                   size_t error_buf_size);
+
+Atom *cetta_lp_native_gll_forest_signature_digest_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
 
 Atom *cetta_lp_native_gll_forest_data(const CettaLpNativeGrammar *grammar,
                                       SymbolId start_nt,

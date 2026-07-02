@@ -7,6 +7,10 @@
 
 #include "parser.h"
 
+#ifndef CETTA_LP_NATIVE_GLL_DISABLE_INDEX
+#define CETTA_LP_NATIVE_GLL_DISABLE_INDEX 0
+#endif
+
 static void grammar_set_error(char *buf, size_t size, const char *fmt, ...) {
     va_list args;
 
@@ -1691,6 +1695,140 @@ static bool input_tokens_from_list(Atom *token_list,
     return true;
 }
 
+static char *input_token_file_read_line(FILE *fp, size_t *out_len) {
+    char *buf = NULL;
+    size_t len = 0;
+    size_t cap = 0;
+    int ch;
+
+    while ((ch = fgetc(fp)) != EOF) {
+        if (len + 1u >= cap) {
+            size_t next_cap = cap ? cap * 2u : 128u;
+            if (next_cap <= len + 1u)
+                next_cap = len + 2u;
+            buf = cetta_realloc(buf, next_cap);
+            cap = next_cap;
+        }
+        if (ch == '\n')
+            break;
+        buf[len++] = (char)ch;
+    }
+    if (!buf && ch == EOF)
+        return NULL;
+    if (len + 1u >= cap) {
+        size_t next_cap = cap ? cap + 1u : 1u;
+        buf = cetta_realloc(buf, next_cap);
+        cap = next_cap;
+    }
+    if (len > 0 && buf[len - 1u] == '\r')
+        len--;
+    buf[len] = '\0';
+    if (out_len)
+        *out_len = len;
+    return buf;
+}
+
+static char *input_token_file_take_field(char **cursor) {
+    char *start;
+    char *tab;
+
+    if (!cursor || !*cursor)
+        return NULL;
+    start = *cursor;
+    tab = strchr(start, '\t');
+    if (!tab) {
+        *cursor = NULL;
+        return start;
+    }
+    *tab = '\0';
+    *cursor = tab + 1;
+    return start;
+}
+
+static bool input_tokens_from_file(Arena *arena,
+                                   const char *filename,
+                                   CettaLpNativeInputTokenVec *out,
+                                   char *error_buf,
+                                   size_t error_buf_size) {
+    FILE *fp;
+    char *line;
+    size_t line_len;
+    uint32_t line_no = 0;
+
+    if (!arena || !filename || !out) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "bad token-file args");
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    fp = fopen(filename, "rb");
+    if (!fp) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "failed to open token file");
+        return false;
+    }
+    while ((line = input_token_file_read_line(fp, &line_len)) != NULL) {
+        char *cursor = line;
+        char *kind;
+
+        line_no++;
+        if (line_len == 0 || line[0] == '#') {
+            free(line);
+            continue;
+        }
+        kind = input_token_file_take_field(&cursor);
+        if (kind && strcmp(kind, "sym") == 0) {
+            Atom *tok;
+            if (!cursor || cursor[0] == '\0' || strchr(cursor, '\t')) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "bad sym token-file line %u", line_no);
+                free(line);
+                goto fail;
+            }
+            tok = atom_symbol(arena, cursor);
+            if (!input_tokenvec_push(out, NULL, tok->sym_id, out->len)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to store sym token-file line %u", line_no);
+                free(line);
+                goto fail;
+            }
+        } else if (kind && (strcmp(kind, "lex") == 0 ||
+                            strcmp(kind, "lex-text") == 0)) {
+            char *klass = input_token_file_take_field(&cursor);
+            Atom *klass_atom;
+
+            if (!klass || klass[0] == '\0' || !cursor || cursor[0] == '\0' ||
+                (strcmp(kind, "lex") == 0 && strchr(cursor, '\t'))) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "bad lex token-file line %u", line_no);
+                free(line);
+                goto fail;
+            }
+            klass_atom = atom_symbol(arena, klass);
+            if (!input_tokenvec_push(out, NULL, klass_atom->sym_id, out->len)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to store lex token-file line %u", line_no);
+                free(line);
+                goto fail;
+            }
+        } else {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "unknown token-file line %u", line_no);
+            free(line);
+            goto fail;
+        }
+        free(line);
+    }
+    fclose(fp);
+    return true;
+
+fail:
+    fclose(fp);
+    free(out->data);
+    memset(out, 0, sizeof(*out));
+    return false;
+}
+
 static Atom *make_cons_list(Arena *arena, Atom **items, uint32_t len) {
     Atom *out = atom_symbol(arena, "Nil");
     uint32_t i;
@@ -2098,30 +2236,40 @@ typedef enum {
 typedef struct {
     uint32_t left_idx;
     uint32_t right_idx;
-    uint32_t pivot;
-    int32_t prod_idx;
+    uint32_t next_idx;
 } CettaLpNativeGllPackedChoice;
 
 typedef struct {
     CettaLpNativeGllPackedChoice *data;
+    uint16_t *prod_idx16;
+    int32_t *prod_idx32;
     uint32_t len;
     uint32_t cap;
-} CettaLpNativeGllPackedVec;
+    bool wide_prod_idx;
+} CettaLpNativeGllPackedStore;
 
 typedef struct {
-    CettaLpNativeGllNodeKind kind;
-    SymbolId symbol;
-    int32_t prod_idx;
-    uint32_t dot;
+    uint32_t *slots;
+    uint32_t cap;
+} CettaLpNativeGllIndex;
+
+#define CETTA_LP_NATIVE_GLL_NODE_KIND_SHIFT 30u
+#define CETTA_LP_NATIVE_GLL_NODE_VALUE_MASK 0x3fffffffu
+
+typedef struct {
+    uint32_t key0;
+    uint32_t key1_kind;
     uint32_t left;
     uint32_t right;
-    CettaLpNativeGllPackedVec packed;
+    uint32_t first_choice;
 } CettaLpNativeGllNode;
 
 typedef struct {
     CettaLpNativeGllNode *data;
     uint32_t len;
     uint32_t cap;
+    CettaLpNativeGllIndex index;
+    CettaLpNativeGllPackedStore packed;
 } CettaLpNativeGllNodeVec;
 
 typedef struct {
@@ -2148,7 +2296,47 @@ typedef struct {
     CettaLpNativeGllGssNode *data;
     uint32_t len;
     uint32_t cap;
+    CettaLpNativeGllIndex index;
 } CettaLpNativeGllGssNodeVec;
+
+typedef struct {
+    uint64_t **wide_chunks;
+    uint32_t **lo_chunks;
+    uint16_t **hi_chunks;
+    uint32_t len;
+    uint32_t cap;
+    bool wide;
+} CettaLpNativeGllRecLinkStore;
+
+typedef CettaLpNativeGllRecLinkStore CettaLpNativeGllRecGssEdgeStore;
+typedef CettaLpNativeGllRecLinkStore CettaLpNativeGllRecGssPoppedStore;
+
+typedef struct {
+    uint8_t prod_bits;
+    uint8_t dot_bits;
+    uint8_t pos_bits;
+    uint8_t dot_shift;
+    uint8_t prod_shift;
+    uint64_t prod_mask;
+    uint64_t dot_mask;
+    uint64_t pos_mask;
+} CettaLpNativeGllRecGssPacking;
+
+typedef struct {
+    uint64_t key;
+    uint32_t first_edge;
+    uint32_t first_popped;
+} CettaLpNativeGllRecGssNode;
+
+typedef struct {
+    CettaLpNativeGllRecGssNode *data;
+    uint32_t len;
+    uint32_t cap;
+    CettaLpNativeGllIndex index;
+    CettaLpNativeGllRecGssPacking packing;
+    CettaLpNativeGllRecGssEdgeStore edges;
+    CettaLpNativeGllRecGssPoppedStore popped;
+} CettaLpNativeGllRecGssNodeVec;
 
 typedef struct {
     int32_t prod_idx;
@@ -2159,67 +2347,780 @@ typedef struct {
 } CettaLpNativeGllDescriptor;
 
 typedef struct {
+    uint8_t prod_bits;
+    uint8_t dot_bits;
+    uint8_t pos_bits;
+    uint8_t gss_bits;
+    uint8_t dot_shift;
+    uint8_t pos_shift;
+    uint8_t left_shift;
+    uint8_t gss_shift;
+    uint64_t prod_mask;
+    uint64_t dot_mask;
+    uint64_t pos_mask;
+    uint64_t gss_mask;
+} CettaLpNativeGllDescCompactPacking;
+
+typedef struct {
     CettaLpNativeGllDescriptor *data;
+    uint64_t *compact_lo;
+    uint32_t *compact_hi;
     uint32_t len;
     uint32_t cap;
+    CettaLpNativeGllIndex index;
+    CettaLpNativeGllDescCompactPacking packing;
+    bool compact;
 } CettaLpNativeGllDescriptorVec;
 
-static bool u32vec_push_unique(CettaLpNativeU32Vec *vec, uint32_t value) {
-    uint32_t i;
+typedef struct {
+    uint64_t **slot_chunks;
+    uint32_t **slot_lo_chunks;
+    uint16_t **slot_hi_chunks;
+    uint32_t len;
+    uint32_t cap;
+    bool wide_slots;
+} CettaLpNativeGllRecDescSet;
 
-    for (i = 0; i < vec->len; i++) {
-        if (vec->data[i] == value)
-            return true;
-    }
-    return u32vec_push(vec, value);
+typedef struct {
+    uint64_t *data;
+    uint32_t len;
+    uint32_t cap;
+} CettaLpNativeU64Vec;
+
+typedef struct {
+    uint64_t **blocks;
+    uint32_t len;
+    uint32_t block_len;
+    uint32_t block_cap;
+} CettaLpNativeU64Stack;
+
+typedef struct {
+    uint8_t prod_bits;
+    uint8_t dot_bits;
+    uint8_t gss_bits;
+    uint8_t pos_bits;
+    uint8_t dot_shift;
+    uint8_t gss_shift;
+    uint8_t prod_shift;
+    uint64_t dot_mask;
+    uint64_t gss_mask;
+    uint64_t pos_mask;
+} CettaLpNativeGllRecDescPacking;
+
+typedef struct {
+    uint8_t prod_bits;
+    uint8_t pos_bits;
+    uint8_t origin_shift;
+    uint8_t end_shift;
+    uint64_t prod_mask;
+    uint64_t pos_mask;
+} CettaLpNativeGllSpanPacking;
+
+static uint64_t gll_hash_u32(uint64_t hash, uint32_t value) {
+    hash ^= (uint64_t)value;
+    return hash * 1099511628211ull;
 }
 
-static bool u32vec_contains(const CettaLpNativeU32Vec *vec, uint32_t value) {
-    uint32_t i;
-
-    for (i = 0; i < vec->len; i++) {
-        if (vec->data[i] == value)
-            return true;
-    }
-    return false;
+static uint64_t gll_hash_u64(uint64_t hash, uint64_t value) {
+    hash ^= value;
+    return hash * 1099511628211ull;
 }
 
-static bool gll_packedvec_push_unique(CettaLpNativeGllPackedVec *vec,
-                                      uint32_t left_idx,
-                                      uint32_t right_idx,
-                                      uint32_t pivot,
-                                      int32_t prod_idx) {
+static uint32_t gll_hash_slot(uint64_t hash, uint32_t cap) {
+    hash ^= hash >> 32;
+    return (uint32_t)hash & (cap - 1u);
+}
+
+static uint32_t gll_hash_slot_mod(uint64_t hash, uint32_t cap) {
+    hash ^= hash >> 32;
+    return (uint32_t)(hash % cap);
+}
+
+static uint32_t gll_index_next_slot(uint32_t slot, uint32_t cap) {
+    return (slot + 1u) & (cap - 1u);
+}
+
+static bool gll_index_capacity_for(uint32_t min_len, uint32_t *out) {
+    uint32_t cap = 16u;
+    uint64_t needed = ((uint64_t)min_len * 4u + 2u) / 3u;
+
+    if (!out)
+        return false;
+    while ((uint64_t)cap < needed) {
+        if (cap > UINT32_MAX / 2u)
+            return false;
+        cap *= 2u;
+    }
+    *out = cap;
+    return true;
+}
+
+static bool gll_index_needs_grow(const CettaLpNativeGllIndex *index,
+                                 uint32_t next_len) {
+    if (CETTA_LP_NATIVE_GLL_DISABLE_INDEX)
+        return false;
+    if (!index || index->cap == 0)
+        return true;
+    return ((uint64_t)next_len * 10u) >= ((uint64_t)index->cap * 9u);
+}
+
+static CettaLpNativeGllNodeKind gll_node_kind_value(
+    const CettaLpNativeGllNode *node) {
+    if (!node)
+        return CETTA_LP_NATIVE_GLL_NODE_TERM;
+    return (CettaLpNativeGllNodeKind)
+        (node->key1_kind >> CETTA_LP_NATIVE_GLL_NODE_KIND_SHIFT);
+}
+
+static bool gll_node_set_key(CettaLpNativeGllNode *node,
+                             CettaLpNativeGllNodeKind kind,
+                             SymbolId symbol,
+                             int32_t prod_idx,
+                             uint32_t dot) {
+    uint32_t key1;
+
+    if (!node || (uint32_t)kind > (uint32_t)CETTA_LP_NATIVE_GLL_NODE_INTER)
+        return false;
+    key1 = ((uint32_t)kind) << CETTA_LP_NATIVE_GLL_NODE_KIND_SHIFT;
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_INTER) {
+        if (prod_idx < 0 || dot > CETTA_LP_NATIVE_GLL_NODE_VALUE_MASK)
+            return false;
+        node->key0 = (uint32_t)prod_idx;
+        node->key1_kind = key1 | dot;
+    } else {
+        node->key0 = symbol;
+        node->key1_kind = key1;
+    }
+    return true;
+}
+
+static SymbolId gll_node_symbol_value(const CettaLpNativeGllNode *node) {
+    if (!node || gll_node_kind_value(node) == CETTA_LP_NATIVE_GLL_NODE_INTER)
+        return 0;
+    return node->key0;
+}
+
+static int32_t gll_node_prod_idx_value(const CettaLpNativeGllNode *node) {
+    if (!node || gll_node_kind_value(node) != CETTA_LP_NATIVE_GLL_NODE_INTER)
+        return -1;
+    return (int32_t)node->key0;
+}
+
+static uint32_t gll_node_dot_value(const CettaLpNativeGllNode *node) {
+    if (!node || gll_node_kind_value(node) != CETTA_LP_NATIVE_GLL_NODE_INTER)
+        return 0;
+    return node->key1_kind & CETTA_LP_NATIVE_GLL_NODE_VALUE_MASK;
+}
+
+static bool gll_node_key_equals(const CettaLpNativeGllNode *node,
+                                CettaLpNativeGllNodeKind kind,
+                                SymbolId symbol,
+                                int32_t prod_idx,
+    uint32_t dot,
+    uint32_t left,
+    uint32_t right) {
+    return gll_node_kind_value(node) == kind &&
+        gll_node_symbol_value(node) == symbol &&
+        gll_node_prod_idx_value(node) == prod_idx &&
+        gll_node_dot_value(node) == dot &&
+        node->left == left &&
+        node->right == right;
+}
+
+static uint64_t gll_node_key_hash(CettaLpNativeGllNodeKind kind,
+                                  SymbolId symbol,
+                                  int32_t prod_idx,
+                                  uint32_t dot,
+                                  uint32_t left,
+                                  uint32_t right) {
+    uint64_t hash = 1469598103934665603ull;
+
+    hash = gll_hash_u32(hash, (uint32_t)kind);
+    hash = gll_hash_u32(hash, symbol);
+    hash = gll_hash_u32(hash, (uint32_t)prod_idx);
+    hash = gll_hash_u32(hash, dot);
+    hash = gll_hash_u32(hash, left);
+    hash = gll_hash_u32(hash, right);
+    return hash;
+}
+
+static void gll_node_index_insert_existing(CettaLpNativeGllNodeVec *nodes,
+                                           uint32_t node_idx) {
+    const CettaLpNativeGllNode *node = &nodes->data[node_idx];
+    uint32_t slot;
+
+    if (!nodes->index.slots || nodes->index.cap == 0)
+        return;
+    slot = gll_hash_slot(
+        gll_node_key_hash(gll_node_kind_value(node), gll_node_symbol_value(node),
+                          gll_node_prod_idx_value(node),
+                          gll_node_dot_value(node), node->left, node->right),
+        nodes->index.cap);
+    while (nodes->index.slots[slot] != 0)
+        slot = gll_index_next_slot(slot, nodes->index.cap);
+    nodes->index.slots[slot] = node_idx + 1u;
+}
+
+static bool gll_node_index_rebuild(CettaLpNativeGllNodeVec *nodes,
+                                   uint32_t min_len) {
+    uint32_t cap;
+    uint32_t *slots;
     uint32_t i;
 
-    for (i = 0; i < vec->len; i++) {
-        CettaLpNativeGllPackedChoice *cur = &vec->data[i];
-        if (cur->left_idx == left_idx &&
-            cur->right_idx == right_idx &&
-            cur->pivot == pivot &&
-            cur->prod_idx == prod_idx) {
-            return true;
-        }
+    if (!gll_index_capacity_for(min_len, &cap))
+        return false;
+    slots = cetta_malloc(sizeof(*slots) * cap);
+    memset(slots, 0, sizeof(*slots) * cap);
+    free(nodes->index.slots);
+    nodes->index.slots = slots;
+    nodes->index.cap = cap;
+    for (i = 0; i < nodes->len; i++)
+        gll_node_index_insert_existing(nodes, i);
+    return true;
+}
+
+static bool gll_node_index_ensure(CettaLpNativeGllNodeVec *nodes,
+                                  uint32_t next_len) {
+    if (!gll_index_needs_grow(&nodes->index, next_len))
+        return true;
+    return gll_node_index_rebuild(nodes, next_len);
+}
+
+static bool gll_gss_key_equals(const CettaLpNativeGllGssNode *node,
+                               bool is_root,
+                               int32_t prod_idx,
+                               uint32_t dot,
+                               uint32_t pos) {
+    return node->is_root == is_root &&
+        node->prod_idx == prod_idx &&
+        node->dot == dot &&
+        node->pos == pos;
+}
+
+static uint64_t gll_gss_key_hash(bool is_root,
+                                 int32_t prod_idx,
+                                 uint32_t dot,
+                                 uint32_t pos) {
+    uint64_t hash = 1469598103934665603ull;
+
+    hash = gll_hash_u32(hash, is_root ? 1u : 0u);
+    hash = gll_hash_u32(hash, (uint32_t)prod_idx);
+    hash = gll_hash_u32(hash, dot);
+    hash = gll_hash_u32(hash, pos);
+    return hash;
+}
+
+static void gll_gss_index_insert_existing(CettaLpNativeGllGssNodeVec *nodes,
+                                          uint32_t node_idx) {
+    const CettaLpNativeGllGssNode *node = &nodes->data[node_idx];
+    uint32_t slot;
+
+    if (!nodes->index.slots || nodes->index.cap == 0)
+        return;
+    slot = gll_hash_slot(
+        gll_gss_key_hash(node->is_root, node->prod_idx, node->dot, node->pos),
+        nodes->index.cap);
+    while (nodes->index.slots[slot] != 0)
+        slot = gll_index_next_slot(slot, nodes->index.cap);
+    nodes->index.slots[slot] = node_idx + 1u;
+}
+
+static bool gll_gss_index_rebuild(CettaLpNativeGllGssNodeVec *nodes,
+                                  uint32_t min_len) {
+    uint32_t cap;
+    uint32_t *slots;
+    uint32_t i;
+
+    if (!gll_index_capacity_for(min_len, &cap))
+        return false;
+    slots = cetta_malloc(sizeof(*slots) * cap);
+    memset(slots, 0, sizeof(*slots) * cap);
+    free(nodes->index.slots);
+    nodes->index.slots = slots;
+    nodes->index.cap = cap;
+    for (i = 0; i < nodes->len; i++)
+        gll_gss_index_insert_existing(nodes, i);
+    return true;
+}
+
+static bool gll_gss_index_ensure(CettaLpNativeGllGssNodeVec *nodes,
+                                 uint32_t next_len) {
+    if (!gll_index_needs_grow(&nodes->index, next_len))
+        return true;
+    return gll_gss_index_rebuild(nodes, next_len);
+}
+
+static bool gll_rec_gss_key_pack(
+    const CettaLpNativeGllRecGssPacking *packing,
+    bool is_root,
+    int32_t prod_idx,
+    uint32_t dot,
+    uint32_t pos,
+    uint64_t *out) {
+    uint64_t prod_field;
+    uint64_t key;
+
+    if (!packing || !out)
+        return false;
+    if (is_root) {
+        if (prod_idx != -1)
+            return false;
+        prod_field = 0;
+    } else {
+        if (prod_idx < 0)
+            return false;
+        prod_field = (uint64_t)(uint32_t)prod_idx + 1u;
     }
-    if (!grow_storage((void **)&vec->data, &vec->len, &vec->cap,
-                      sizeof(*vec->data))) {
+    if ((prod_field >> packing->prod_bits) != 0 ||
+        ((uint64_t)dot >> packing->dot_bits) != 0 ||
+        ((uint64_t)pos >> packing->pos_bits) != 0) {
         return false;
     }
-    vec->data[vec->len].left_idx = left_idx;
-    vec->data[vec->len].right_idx = right_idx;
-    vec->data[vec->len].pivot = pivot;
-    vec->data[vec->len].prod_idx = prod_idx;
+    key = (uint64_t)pos;
+    key |= ((uint64_t)dot << packing->dot_shift);
+    key |= (prod_field << packing->prod_shift);
+    *out = key;
+    return true;
+}
+
+static bool gll_rec_gss_key_equals(const CettaLpNativeGllRecGssNode *node,
+                                   uint64_t key) {
+    return node->key == key;
+}
+
+static void gll_rec_gss_index_insert_existing(
+    CettaLpNativeGllRecGssNodeVec *nodes,
+    uint32_t node_idx) {
+    const CettaLpNativeGllRecGssNode *node = &nodes->data[node_idx];
+    uint32_t slot;
+
+    if (!nodes->index.slots || nodes->index.cap == 0)
+        return;
+    slot = gll_hash_slot(gll_hash_u64(UINT64_C(1469598103934665603),
+                                      node->key),
+                         nodes->index.cap);
+    while (nodes->index.slots[slot] != 0)
+        slot = gll_index_next_slot(slot, nodes->index.cap);
+    nodes->index.slots[slot] = node_idx + 1u;
+}
+
+static bool gll_rec_gss_index_rebuild(CettaLpNativeGllRecGssNodeVec *nodes,
+                                      uint32_t min_len) {
+    uint32_t cap;
+    uint32_t *slots;
+    uint32_t i;
+
+    if (!gll_index_capacity_for(min_len, &cap))
+        return false;
+    slots = cetta_malloc(sizeof(*slots) * cap);
+    memset(slots, 0, sizeof(*slots) * cap);
+    free(nodes->index.slots);
+    nodes->index.slots = slots;
+    nodes->index.cap = cap;
+    for (i = 0; i < nodes->len; i++)
+        gll_rec_gss_index_insert_existing(nodes, i);
+    return true;
+}
+
+static bool gll_rec_gss_index_ensure(CettaLpNativeGllRecGssNodeVec *nodes,
+                                     uint32_t next_len) {
+    if (!gll_index_needs_grow(&nodes->index, next_len))
+        return true;
+    return gll_rec_gss_index_rebuild(nodes, next_len);
+}
+
+static bool gll_desc_key_equals(const CettaLpNativeGllDescriptor *desc,
+                                int32_t prod_idx,
+                                uint32_t dot,
+                                uint32_t gss_idx,
+                                uint32_t left_label,
+                                uint32_t pos) {
+    return desc->prod_idx == prod_idx &&
+        desc->dot == dot &&
+        desc->gss_idx == gss_idx &&
+        desc->left_label == left_label &&
+        desc->pos == pos;
+}
+
+static uint8_t gll_desc_bits_needed(uint32_t max_value) {
+    uint8_t bits = 0;
+
+    do {
+        bits++;
+        max_value >>= 1;
+    } while (max_value != 0);
+    return bits;
+}
+
+static uint64_t gll_desc_bits_mask(uint8_t bits) {
+    if (bits >= 64)
+        return UINT64_MAX;
+    return (UINT64_C(1) << bits) - UINT64_C(1);
+}
+
+static void gll_descvec_init_compact(CettaLpNativeGllDescriptorVec *vec,
+                                     uint32_t production_len,
+                                     uint32_t max_rhs_len,
+                                     uint32_t token_len) {
+    uint32_t used;
+
+    if (!vec || production_len == 0)
+        return;
+    vec->packing.prod_bits = gll_desc_bits_needed(production_len - 1u);
+    vec->packing.dot_bits = gll_desc_bits_needed(max_rhs_len + 1u);
+    vec->packing.pos_bits = gll_desc_bits_needed(token_len);
+    used = (uint32_t)vec->packing.prod_bits +
+        (uint32_t)vec->packing.dot_bits +
+        (uint32_t)vec->packing.pos_bits + 32u;
+    if (used >= 96u)
+        return;
+    vec->packing.gss_bits = (uint8_t)(96u - used);
+    vec->packing.dot_shift = vec->packing.prod_bits;
+    vec->packing.pos_shift = (uint8_t)(vec->packing.dot_shift +
+                                       vec->packing.dot_bits);
+    vec->packing.left_shift = (uint8_t)(vec->packing.pos_shift +
+                                        vec->packing.pos_bits);
+    vec->packing.gss_shift = (uint8_t)(vec->packing.left_shift + 32u);
+    vec->packing.prod_mask = gll_desc_bits_mask(vec->packing.prod_bits);
+    vec->packing.dot_mask = gll_desc_bits_mask(vec->packing.dot_bits);
+    vec->packing.pos_mask = gll_desc_bits_mask(vec->packing.pos_bits);
+    vec->packing.gss_mask = gll_desc_bits_mask(vec->packing.gss_bits);
+    vec->compact = true;
+}
+
+static bool gll_descvec_pack_compact(
+    const CettaLpNativeGllDescriptorVec *vec,
+    const CettaLpNativeGllDescriptor *desc,
+    uint64_t *lo,
+    uint32_t *hi) {
+    __uint128_t raw;
+
+    if (!vec || !desc || !lo || !hi || !vec->compact || desc->prod_idx < 0)
+        return false;
+    if (((uint64_t)(uint32_t)desc->prod_idx >> vec->packing.prod_bits) != 0 ||
+        ((uint64_t)desc->dot >> vec->packing.dot_bits) != 0 ||
+        ((uint64_t)desc->pos >> vec->packing.pos_bits) != 0 ||
+        ((uint64_t)desc->gss_idx >> vec->packing.gss_bits) != 0) {
+        return false;
+    }
+    raw = (__uint128_t)(uint32_t)desc->prod_idx;
+    raw |= (__uint128_t)desc->dot << vec->packing.dot_shift;
+    raw |= (__uint128_t)desc->pos << vec->packing.pos_shift;
+    raw |= (__uint128_t)desc->left_label << vec->packing.left_shift;
+    raw |= (__uint128_t)desc->gss_idx << vec->packing.gss_shift;
+    *lo = (uint64_t)raw;
+    *hi = (uint32_t)(raw >> 64);
+    return true;
+}
+
+static bool gll_descvec_get(const CettaLpNativeGllDescriptorVec *vec,
+                            uint32_t idx,
+                            CettaLpNativeGllDescriptor *out) {
+    __uint128_t raw;
+
+    if (!vec || !out || idx >= vec->len)
+        return false;
+    if (!vec->compact) {
+        if (!vec->data)
+            return false;
+        *out = vec->data[idx];
+        return true;
+    }
+    if (!vec->compact_lo || !vec->compact_hi)
+        return false;
+    raw = (__uint128_t)vec->compact_lo[idx] |
+        ((__uint128_t)vec->compact_hi[idx] << 64);
+    out->prod_idx = (int32_t)((uint64_t)raw & vec->packing.prod_mask);
+    out->dot = (uint32_t)((uint64_t)(raw >> vec->packing.dot_shift) &
+                          vec->packing.dot_mask);
+    out->pos = (uint32_t)((uint64_t)(raw >> vec->packing.pos_shift) &
+                          vec->packing.pos_mask);
+    out->left_label = (uint32_t)((raw >> vec->packing.left_shift) &
+                                 UINT32_MAX);
+    out->gss_idx = (uint32_t)((uint64_t)(raw >> vec->packing.gss_shift) &
+                              vec->packing.gss_mask);
+    return true;
+}
+
+static bool gll_descvec_promote(CettaLpNativeGllDescriptorVec *vec) {
+    CettaLpNativeGllDescriptor *data;
+    uint32_t i;
+
+    if (!vec || !vec->compact)
+        return true;
+    data = cetta_malloc(sizeof(*data) * vec->cap);
+    for (i = 0; i < vec->len; i++) {
+        if (!gll_descvec_get(vec, i, &data[i])) {
+            free(data);
+            return false;
+        }
+    }
+    free(vec->compact_lo);
+    free(vec->compact_hi);
+    vec->compact_lo = NULL;
+    vec->compact_hi = NULL;
+    vec->data = data;
+    vec->compact = false;
+    return true;
+}
+
+static bool gll_descvec_ensure_cap(CettaLpNativeGllDescriptorVec *vec,
+                                   uint32_t next_len) {
+    uint32_t next_cap;
+
+    if (!vec)
+        return false;
+    if (vec->cap >= next_len)
+        return true;
+    next_cap = vec->cap == 0 ? 8u : vec->cap;
+    while (next_cap < next_len) {
+        if (next_cap > UINT32_MAX / 2u)
+            return false;
+        next_cap *= 2u;
+    }
+    if (vec->compact) {
+        vec->compact_lo =
+            cetta_realloc(vec->compact_lo, sizeof(*vec->compact_lo) * next_cap);
+        vec->compact_hi =
+            cetta_realloc(vec->compact_hi, sizeof(*vec->compact_hi) * next_cap);
+    } else {
+        vec->data = cetta_realloc(vec->data, sizeof(*vec->data) * next_cap);
+    }
+    vec->cap = next_cap;
+    return true;
+}
+
+static bool gll_descvec_append(CettaLpNativeGllDescriptorVec *vec,
+                               const CettaLpNativeGllDescriptor *desc,
+                               uint32_t *out_idx) {
+    uint64_t lo;
+    uint32_t hi;
+
+    if (!vec || !desc || !out_idx ||
+        !gll_descvec_ensure_cap(vec, vec->len + 1u)) {
+        return false;
+    }
+    if (vec->compact) {
+        if (!gll_descvec_pack_compact(vec, desc, &lo, &hi)) {
+            if (!gll_descvec_promote(vec))
+                return false;
+        }
+    }
+    *out_idx = vec->len;
+    if (vec->compact) {
+        vec->compact_lo[vec->len] = lo;
+        vec->compact_hi[vec->len] = hi;
+    } else {
+        vec->data[vec->len] = *desc;
+    }
     vec->len++;
     return true;
 }
 
-static void gll_nodevec_free(CettaLpNativeGllNodeVec *vec) {
+static uint64_t gll_desc_key_hash(int32_t prod_idx,
+                                  uint32_t dot,
+                                  uint32_t gss_idx,
+                                  uint32_t left_label,
+                                  uint32_t pos) {
+    uint64_t hash = 1469598103934665603ull;
+
+    hash = gll_hash_u32(hash, (uint32_t)prod_idx);
+    hash = gll_hash_u32(hash, dot);
+    hash = gll_hash_u32(hash, gss_idx);
+    hash = gll_hash_u32(hash, left_label);
+    hash = gll_hash_u32(hash, pos);
+    return hash;
+}
+
+static void gll_desc_index_insert_existing(CettaLpNativeGllDescriptorVec *descs,
+                                           uint32_t desc_idx) {
+    CettaLpNativeGllDescriptor desc;
+    uint32_t slot;
+
+    if (!gll_descvec_get(descs, desc_idx, &desc) ||
+        !descs->index.slots || descs->index.cap == 0)
+        return;
+    slot = gll_hash_slot(
+        gll_desc_key_hash(desc.prod_idx, desc.dot, desc.gss_idx,
+                          desc.left_label, desc.pos),
+        descs->index.cap);
+    while (descs->index.slots[slot] != 0)
+        slot = gll_index_next_slot(slot, descs->index.cap);
+    descs->index.slots[slot] = desc_idx + 1u;
+}
+
+static bool gll_desc_index_rebuild(CettaLpNativeGllDescriptorVec *descs,
+                                   uint32_t min_len) {
+    uint32_t cap;
+    uint32_t *slots;
     uint32_t i;
 
+    if (!gll_index_capacity_for(min_len, &cap))
+        return false;
+    slots = cetta_malloc(sizeof(*slots) * cap);
+    memset(slots, 0, sizeof(*slots) * cap);
+    free(descs->index.slots);
+    descs->index.slots = slots;
+    descs->index.cap = cap;
+    for (i = 0; i < descs->len; i++)
+        gll_desc_index_insert_existing(descs, i);
+    return true;
+}
+
+static bool gll_desc_index_ensure(CettaLpNativeGllDescriptorVec *descs,
+                                  uint32_t next_len) {
+    if (!gll_index_needs_grow(&descs->index, next_len))
+        return true;
+    return gll_desc_index_rebuild(descs, next_len);
+}
+
+static bool gll_packed_store_ensure(CettaLpNativeGllPackedStore *store) {
+    uint32_t next_cap;
+
+    if (!store)
+        return false;
+    if (store->len < store->cap)
+        return true;
+    next_cap = store->cap == 0 ? 8u : store->cap * 2u;
+    store->data = cetta_realloc(store->data,
+                                sizeof(*store->data) * next_cap);
+    if (store->wide_prod_idx) {
+        store->prod_idx32 = cetta_realloc(store->prod_idx32,
+                                          sizeof(*store->prod_idx32) * next_cap);
+    } else {
+        store->prod_idx16 = cetta_realloc(store->prod_idx16,
+                                          sizeof(*store->prod_idx16) * next_cap);
+    }
+    store->cap = next_cap;
+    return true;
+}
+
+static bool gll_packed_store_promote_prod(CettaLpNativeGllPackedStore *store) {
+    int32_t *prod_idx32;
+    uint32_t i;
+
+    if (!store)
+        return false;
+    if (store->wide_prod_idx)
+        return true;
+    prod_idx32 = cetta_malloc(sizeof(*prod_idx32) * store->cap);
+    for (i = 0; i < store->len; i++)
+        prod_idx32[i] = store->prod_idx16 && store->prod_idx16[i] != 0
+            ? (int32_t)store->prod_idx16[i] - 1
+            : -1;
+    free(store->prod_idx16);
+    store->prod_idx16 = NULL;
+    store->prod_idx32 = prod_idx32;
+    store->wide_prod_idx = true;
+    return true;
+}
+
+static bool gll_packed_store_set_prod(CettaLpNativeGllPackedStore *store,
+                                      uint32_t choice_idx,
+                                      int32_t prod_idx) {
+    if (!store || choice_idx >= store->cap || prod_idx < -1)
+        return false;
+    if (prod_idx >= (int32_t)UINT16_MAX &&
+        !gll_packed_store_promote_prod(store)) {
+        return false;
+    }
+    if (store->wide_prod_idx) {
+        store->prod_idx32[choice_idx] = prod_idx;
+    } else {
+        store->prod_idx16[choice_idx] = (uint16_t)(prod_idx + 1);
+    }
+    return true;
+}
+
+static int32_t gll_choice_prod_idx(const CettaLpNativeGllNodeVec *nodes,
+                                   const CettaLpNativeGllPackedChoice *choice) {
+    uintptr_t choice_idx;
+
+    if (!nodes || !choice || !nodes->packed.data)
+        return -1;
+    if (choice < nodes->packed.data)
+        return -1;
+    choice_idx = (uintptr_t)(choice - nodes->packed.data);
+    if (choice_idx >= nodes->packed.len)
+        return -1;
+    if (nodes->packed.wide_prod_idx)
+        return nodes->packed.prod_idx32[choice_idx];
+    if (!nodes->packed.prod_idx16 || nodes->packed.prod_idx16[choice_idx] == 0)
+        return -1;
+    return (int32_t)nodes->packed.prod_idx16[choice_idx] - 1;
+}
+
+static uint32_t gll_choice_pivot(const CettaLpNativeGllNodeVec *nodes,
+                                 const CettaLpNativeGllPackedChoice *choice) {
+    if (!nodes || !choice || choice->right_idx >= nodes->len)
+        return CETTA_LP_NATIVE_NODE_NONE;
+    return nodes->data[choice->right_idx].left;
+}
+
+static bool gll_choice_equals(const CettaLpNativeGllNodeVec *nodes,
+                              const CettaLpNativeGllPackedChoice *choice,
+                              uint32_t left_idx,
+                              uint32_t right_idx,
+                              uint32_t pivot,
+                              int32_t prod_idx) {
+    return choice->left_idx == left_idx &&
+        choice->right_idx == right_idx &&
+        gll_choice_pivot(nodes, choice) == pivot &&
+        gll_choice_prod_idx(nodes, choice) == prod_idx;
+}
+
+static bool gll_node_push_packed_unique(CettaLpNativeGllNodeVec *nodes,
+                                        uint32_t node_idx,
+                                        uint32_t left_idx,
+                                        uint32_t right_idx,
+                                        uint32_t pivot,
+                                        int32_t prod_idx) {
+    CettaLpNativeGllNode *node;
+    CettaLpNativeGllPackedChoice *choice;
+    uint32_t choice_idx;
+    uint32_t prev_idx = CETTA_LP_NATIVE_NODE_NONE;
+
+    if (!nodes || node_idx >= nodes->len)
+        return false;
+    node = &nodes->data[node_idx];
+    for (choice_idx = node->first_choice;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        if (choice_idx >= nodes->packed.len)
+            return false;
+        if (gll_choice_equals(nodes, &nodes->packed.data[choice_idx],
+                              left_idx, right_idx, pivot, prod_idx)) {
+            return true;
+        }
+        prev_idx = choice_idx;
+    }
+    if (!gll_packed_store_ensure(&nodes->packed)) {
+        return false;
+    }
+    choice_idx = nodes->packed.len;
+    choice = &nodes->packed.data[choice_idx];
+    choice->left_idx = left_idx;
+    choice->right_idx = right_idx;
+    choice->next_idx = CETTA_LP_NATIVE_NODE_NONE;
+    if (!gll_packed_store_set_prod(&nodes->packed, choice_idx, prod_idx))
+        return false;
+    nodes->packed.len++;
+    if (prev_idx == CETTA_LP_NATIVE_NODE_NONE) {
+        node->first_choice = choice_idx;
+    } else {
+        nodes->packed.data[prev_idx].next_idx = choice_idx;
+    }
+    return true;
+}
+
+static void gll_nodevec_free(CettaLpNativeGllNodeVec *vec) {
     if (!vec)
         return;
-    for (i = 0; i < vec->len; i++)
-        free(vec->data[i].packed.data);
+    free(vec->packed.data);
+    free(vec->packed.prod_idx16);
+    free(vec->packed.prod_idx32);
     free(vec->data);
+    free(vec->index.slots);
     memset(vec, 0, sizeof(*vec));
 }
 
@@ -2233,7 +3134,959 @@ static void gll_gssvec_free(CettaLpNativeGllGssNodeVec *vec) {
         free(vec->data[i].popped.data);
     }
     free(vec->data);
+    free(vec->index.slots);
     memset(vec, 0, sizeof(*vec));
+}
+
+enum { CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN = 65536u };
+enum { CETTA_LP_NATIVE_GLL_REC_LINK_BITS = 24u };
+enum { CETTA_LP_NATIVE_GLL_REC_LINK_MASK = 0xFFFFFFu };
+enum { CETTA_LP_NATIVE_GLL_REC_LINK_NONE = 0xFFFFFFu };
+
+static uint32_t gll_rec_link_chunk_count(uint32_t cap) {
+    return (cap + CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN - 1u) /
+        CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN;
+}
+
+static bool gll_rec_link_can_compact(uint32_t value, uint32_t next_idx) {
+    if (value > CETTA_LP_NATIVE_GLL_REC_LINK_MASK)
+        return false;
+    if (next_idx == CETTA_LP_NATIVE_NODE_NONE)
+        return true;
+    return next_idx < CETTA_LP_NATIVE_GLL_REC_LINK_NONE;
+}
+
+static uint64_t gll_rec_link_pack_compact(uint32_t value, uint32_t next_idx) {
+    uint32_t encoded_next = next_idx == CETTA_LP_NATIVE_NODE_NONE
+        ? CETTA_LP_NATIVE_GLL_REC_LINK_NONE
+        : next_idx;
+
+    return (uint64_t)value |
+        ((uint64_t)encoded_next << CETTA_LP_NATIVE_GLL_REC_LINK_BITS);
+}
+
+static void gll_rec_link_unpack_compact(uint64_t raw,
+                                        uint32_t *value,
+                                        uint32_t *next_idx) {
+    uint32_t encoded_next;
+
+    *value = (uint32_t)(raw & CETTA_LP_NATIVE_GLL_REC_LINK_MASK);
+    encoded_next = (uint32_t)((raw >> CETTA_LP_NATIVE_GLL_REC_LINK_BITS) &
+                              CETTA_LP_NATIVE_GLL_REC_LINK_MASK);
+    *next_idx = encoded_next == CETTA_LP_NATIVE_GLL_REC_LINK_NONE
+        ? CETTA_LP_NATIVE_NODE_NONE
+        : encoded_next;
+}
+
+static uint64_t gll_rec_link_pack_wide(uint32_t value, uint32_t next_idx) {
+    return (uint64_t)value | ((uint64_t)next_idx << 32);
+}
+
+static void gll_rec_link_unpack_wide(uint64_t raw,
+                                     uint32_t *value,
+                                     uint32_t *next_idx) {
+    *value = (uint32_t)raw;
+    *next_idx = (uint32_t)(raw >> 32);
+}
+
+static bool gll_rec_link_ensure_cap(CettaLpNativeGllRecLinkStore *store,
+                                    uint32_t next_len) {
+    uint32_t old_chunk_count;
+    uint32_t new_chunk_count;
+    uint32_t next_cap;
+
+    if (store->cap >= next_len)
+        return true;
+    next_cap = store->cap == 0 ? 8u : store->cap;
+    while (next_cap < next_len) {
+        if (next_cap > UINT32_MAX / 2u)
+            return false;
+        next_cap *= 2u;
+    }
+    old_chunk_count = gll_rec_link_chunk_count(store->cap);
+    new_chunk_count = gll_rec_link_chunk_count(next_cap);
+    if (store->wide) {
+        store->wide_chunks =
+            cetta_realloc(store->wide_chunks,
+                          sizeof(*store->wide_chunks) * new_chunk_count);
+        memset(&store->wide_chunks[old_chunk_count], 0,
+               sizeof(*store->wide_chunks) *
+               (new_chunk_count - old_chunk_count));
+    } else {
+        store->lo_chunks =
+            cetta_realloc(store->lo_chunks,
+                          sizeof(*store->lo_chunks) * new_chunk_count);
+        store->hi_chunks =
+            cetta_realloc(store->hi_chunks,
+                          sizeof(*store->hi_chunks) * new_chunk_count);
+        memset(&store->lo_chunks[old_chunk_count], 0,
+               sizeof(*store->lo_chunks) *
+               (new_chunk_count - old_chunk_count));
+        memset(&store->hi_chunks[old_chunk_count], 0,
+               sizeof(*store->hi_chunks) *
+               (new_chunk_count - old_chunk_count));
+    }
+    store->cap = next_cap;
+    return true;
+}
+
+static bool gll_rec_link_alloc_compact_chunk(
+    CettaLpNativeGllRecLinkStore *store,
+    uint32_t chunk_idx) {
+    if (!store->lo_chunks[chunk_idx]) {
+        store->lo_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*store->lo_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+        memset(store->lo_chunks[chunk_idx], 0,
+               sizeof(*store->lo_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+    }
+    if (!store->hi_chunks[chunk_idx]) {
+        store->hi_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*store->hi_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+        memset(store->hi_chunks[chunk_idx], 0,
+               sizeof(*store->hi_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+    }
+    return true;
+}
+
+static bool gll_rec_link_alloc_wide_chunk(
+    CettaLpNativeGllRecLinkStore *store,
+    uint32_t chunk_idx) {
+    if (!store->wide_chunks[chunk_idx]) {
+        store->wide_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*store->wide_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+        memset(store->wide_chunks[chunk_idx], 0,
+               sizeof(*store->wide_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+    }
+    return true;
+}
+
+static bool gll_rec_link_promote(CettaLpNativeGllRecLinkStore *store) {
+    uint32_t chunk_count;
+    uint32_t chunk_idx;
+    uint32_t i;
+    uint64_t **wide_chunks;
+
+    if (!store || store->wide)
+        return true;
+    chunk_count = gll_rec_link_chunk_count(store->cap);
+    wide_chunks = cetta_malloc(sizeof(*wide_chunks) * chunk_count);
+    memset(wide_chunks, 0, sizeof(*wide_chunks) * chunk_count);
+    for (chunk_idx = 0; chunk_idx < chunk_count; chunk_idx++) {
+        uint32_t base = chunk_idx * CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN;
+        uint32_t limit = store->len > base ? store->len - base : 0;
+        if (limit > CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN)
+            limit = CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN;
+        if (limit == 0)
+            break;
+        if (!store->lo_chunks || !store->hi_chunks ||
+            !store->lo_chunks[chunk_idx] || !store->hi_chunks[chunk_idx]) {
+            continue;
+        }
+        wide_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*wide_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+        memset(wide_chunks[chunk_idx], 0,
+               sizeof(*wide_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN);
+        for (i = 0; i < limit; i++) {
+            uint32_t value;
+            uint32_t next_idx;
+            uint64_t raw = (uint64_t)store->lo_chunks[chunk_idx][i] |
+                ((uint64_t)store->hi_chunks[chunk_idx][i] << 32);
+            gll_rec_link_unpack_compact(raw, &value, &next_idx);
+            wide_chunks[chunk_idx][i] =
+                gll_rec_link_pack_wide(value, next_idx);
+        }
+        free(store->lo_chunks[chunk_idx]);
+        free(store->hi_chunks[chunk_idx]);
+    }
+    free(store->lo_chunks);
+    free(store->hi_chunks);
+    store->lo_chunks = NULL;
+    store->hi_chunks = NULL;
+    store->wide_chunks = wide_chunks;
+    store->wide = true;
+    return true;
+}
+
+static bool gll_rec_link_push(CettaLpNativeGllRecLinkStore *store,
+                              uint32_t value,
+                              uint32_t next_idx,
+                              uint32_t *out_idx) {
+    uint32_t idx;
+    uint32_t chunk_idx;
+    uint32_t offset;
+
+    if (!store || !out_idx)
+        return false;
+    if (!gll_rec_link_ensure_cap(store, store->len + 1u))
+        return false;
+    if (!store->wide && !gll_rec_link_can_compact(value, next_idx)) {
+        if (!gll_rec_link_promote(store))
+            return false;
+    }
+    idx = store->len;
+    chunk_idx = idx / CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN;
+    offset = idx % CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN;
+    if (store->wide) {
+        if (!gll_rec_link_alloc_wide_chunk(store, chunk_idx))
+            return false;
+        store->wide_chunks[chunk_idx][offset] =
+            gll_rec_link_pack_wide(value, next_idx);
+    } else {
+        uint64_t raw;
+        if (!gll_rec_link_alloc_compact_chunk(store, chunk_idx))
+            return false;
+        raw = gll_rec_link_pack_compact(value, next_idx);
+        store->lo_chunks[chunk_idx][offset] = (uint32_t)raw;
+        store->hi_chunks[chunk_idx][offset] = (uint16_t)(raw >> 32);
+    }
+    store->len++;
+    *out_idx = idx;
+    return true;
+}
+
+static bool gll_rec_link_get(const CettaLpNativeGllRecLinkStore *store,
+                             uint32_t idx,
+                             uint32_t *value,
+                             uint32_t *next_idx) {
+    uint32_t chunk_idx;
+    uint32_t offset;
+
+    if (!store || !value || !next_idx || idx >= store->len)
+        return false;
+    chunk_idx = idx / CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN;
+    offset = idx % CETTA_LP_NATIVE_GLL_REC_LINK_CHUNK_LEN;
+    if (store->wide) {
+        if (!store->wide_chunks || !store->wide_chunks[chunk_idx])
+            return false;
+        gll_rec_link_unpack_wide(store->wide_chunks[chunk_idx][offset],
+                                 value, next_idx);
+        return true;
+    }
+    if (!store->lo_chunks || !store->hi_chunks ||
+        !store->lo_chunks[chunk_idx] || !store->hi_chunks[chunk_idx]) {
+        return false;
+    }
+    gll_rec_link_unpack_compact(
+        (uint64_t)store->lo_chunks[chunk_idx][offset] |
+        ((uint64_t)store->hi_chunks[chunk_idx][offset] << 32),
+        value, next_idx);
+    return true;
+}
+
+static void gll_rec_link_free(CettaLpNativeGllRecLinkStore *store) {
+    uint32_t chunk_count;
+    uint32_t i;
+
+    if (!store)
+        return;
+    chunk_count = gll_rec_link_chunk_count(store->cap);
+    for (i = 0; i < chunk_count; i++) {
+        free(store->wide_chunks ? store->wide_chunks[i] : NULL);
+        free(store->lo_chunks ? store->lo_chunks[i] : NULL);
+        free(store->hi_chunks ? store->hi_chunks[i] : NULL);
+    }
+    free(store->wide_chunks);
+    free(store->lo_chunks);
+    free(store->hi_chunks);
+    memset(store, 0, sizeof(*store));
+}
+
+static void gll_rec_gssvec_free(CettaLpNativeGllRecGssNodeVec *vec) {
+    if (!vec)
+        return;
+    free(vec->data);
+    free(vec->index.slots);
+    gll_rec_link_free(&vec->edges);
+    gll_rec_link_free(&vec->popped);
+    memset(vec, 0, sizeof(*vec));
+}
+
+static void gll_descvec_free(CettaLpNativeGllDescriptorVec *vec) {
+    if (!vec)
+        return;
+    free(vec->data);
+    free(vec->compact_lo);
+    free(vec->compact_hi);
+    free(vec->index.slots);
+    memset(vec, 0, sizeof(*vec));
+}
+
+static bool u32vec_push_unique(CettaLpNativeU32Vec *vec, uint32_t value) {
+    uint32_t i;
+
+    for (i = 0; i < vec->len; i++) {
+        if (vec->data[i] == value)
+            return true;
+    }
+    return u32vec_push(vec, value);
+}
+
+/* Recognizer GSS events may repeat; the descriptor set is the exact deduplicator. */
+static bool gll_rec_gss_add_popped(CettaLpNativeGllRecGssNodeVec *nodes,
+                                   uint32_t gss_idx,
+                                   uint32_t pos) {
+    CettaLpNativeGllRecGssNode *node;
+    uint32_t popped_idx;
+
+    if (!nodes || gss_idx >= nodes->len)
+        return false;
+    node = &nodes->data[gss_idx];
+    if (!gll_rec_link_push(&nodes->popped, pos, node->first_popped,
+                           &popped_idx)) {
+        return false;
+    }
+    node->first_popped = popped_idx;
+    return true;
+}
+
+static bool u32vec_contains(const CettaLpNativeU32Vec *vec, uint32_t value) {
+    uint32_t i;
+
+    for (i = 0; i < vec->len; i++) {
+        if (vec->data[i] == value)
+            return true;
+    }
+    return false;
+}
+
+static uint8_t gll_bits_needed(uint32_t max_value) {
+    uint8_t bits = 0;
+
+    do {
+        bits++;
+        max_value >>= 1;
+    } while (max_value != 0);
+    return bits;
+}
+
+static uint64_t gll_bits_mask(uint8_t bits) {
+    if (bits >= 64)
+        return UINT64_MAX;
+    return (UINT64_C(1) << bits) - UINT64_C(1);
+}
+
+static bool gll_rec_gss_packing_init(
+    CettaLpNativeGllRecGssPacking *packing,
+    uint32_t production_len,
+    uint32_t max_rhs_len,
+    uint32_t token_len) {
+    uint32_t used;
+
+    if (!packing || production_len == UINT32_MAX)
+        return false;
+    memset(packing, 0, sizeof(*packing));
+    packing->prod_bits = gll_bits_needed(production_len);
+    packing->dot_bits = gll_bits_needed(max_rhs_len);
+    packing->pos_bits = gll_bits_needed(token_len);
+    used = (uint32_t)packing->prod_bits +
+        (uint32_t)packing->dot_bits +
+        (uint32_t)packing->pos_bits;
+    if (used > 64u)
+        return false;
+    packing->pos_mask = gll_bits_mask(packing->pos_bits);
+    packing->dot_mask = gll_bits_mask(packing->dot_bits);
+    packing->prod_mask = gll_bits_mask(packing->prod_bits);
+    packing->dot_shift = packing->pos_bits;
+    packing->prod_shift = (uint8_t)(packing->dot_shift + packing->dot_bits);
+    return true;
+}
+
+static void gll_rec_gss_key_unpack(
+    const CettaLpNativeGllRecGssPacking *packing,
+    uint64_t key,
+    bool *is_root,
+    int32_t *prod_idx,
+    uint32_t *dot,
+    uint32_t *pos) {
+    uint32_t prod_field;
+
+    *pos = (uint32_t)(key & packing->pos_mask);
+    *dot = (uint32_t)((key >> packing->dot_shift) & packing->dot_mask);
+    prod_field = (uint32_t)((key >> packing->prod_shift) &
+                            packing->prod_mask);
+    *is_root = prod_field == 0;
+    *prod_idx = prod_field == 0 ? -1 : (int32_t)(prod_field - 1u);
+}
+
+static uint32_t gll_max_rhs_len(CettaLpNativeSlrProduction *productions,
+                                uint32_t production_len) {
+    uint32_t max_rhs = 0;
+    uint32_t i;
+
+    for (i = 0; i < production_len; i++) {
+        if (productions[i].rhs_len > max_rhs)
+            max_rhs = productions[i].rhs_len;
+    }
+    return max_rhs;
+}
+
+static bool gll_rec_desc_packing_init(
+    CettaLpNativeGllRecDescPacking *packing,
+    uint32_t production_len,
+    uint32_t max_rhs_len,
+    uint32_t token_len) {
+    uint32_t used;
+
+    if (!packing || production_len == 0)
+        return false;
+    memset(packing, 0, sizeof(*packing));
+    packing->prod_bits = gll_bits_needed(production_len - 1u);
+    packing->dot_bits = gll_bits_needed(max_rhs_len + 1u);
+    packing->pos_bits = gll_bits_needed(token_len);
+    used = (uint32_t)packing->prod_bits +
+        (uint32_t)packing->dot_bits +
+        (uint32_t)packing->pos_bits;
+    if (used >= 64u)
+        return false;
+    packing->gss_bits = (uint8_t)(64u - used);
+    packing->pos_mask = gll_bits_mask(packing->pos_bits);
+    packing->gss_mask = gll_bits_mask(packing->gss_bits);
+    packing->dot_mask = gll_bits_mask(packing->dot_bits);
+    packing->dot_shift = packing->pos_bits;
+    packing->prod_shift = (uint8_t)(packing->dot_shift + packing->dot_bits);
+    packing->gss_shift = (uint8_t)(packing->prod_shift + packing->prod_bits);
+    return true;
+}
+
+static bool gll_rec_desc_pack(const CettaLpNativeGllRecDescPacking *packing,
+                              int32_t prod_idx,
+                              uint32_t dot,
+                              uint32_t gss_idx,
+                              uint32_t pos,
+                              uint64_t *out) {
+    uint64_t key;
+
+    if (!packing || !out || prod_idx < 0)
+        return false;
+    if (((uint64_t)(uint32_t)prod_idx >> packing->prod_bits) != 0 ||
+        ((uint64_t)dot >> packing->dot_bits) != 0 ||
+        ((uint64_t)gss_idx >> packing->gss_bits) != 0 ||
+        ((uint64_t)pos >> packing->pos_bits) != 0) {
+        return false;
+    }
+    key = (uint64_t)pos;
+    key |= ((uint64_t)dot << packing->dot_shift);
+    key |= ((uint64_t)(uint32_t)prod_idx << packing->prod_shift);
+    key |= ((uint64_t)gss_idx << packing->gss_shift);
+    if (key == UINT64_MAX)
+        return false;
+    *out = key;
+    return true;
+}
+
+static void gll_rec_desc_unpack(const CettaLpNativeGllRecDescPacking *packing,
+                                uint64_t key,
+                                int32_t *prod_idx,
+                                uint32_t *dot,
+                                uint32_t *gss_idx,
+                                uint32_t *pos) {
+    *pos = (uint32_t)(key & packing->pos_mask);
+    *dot = (uint32_t)((key >> packing->dot_shift) & packing->dot_mask);
+    *prod_idx = (int32_t)((key >> packing->prod_shift) &
+                          gll_bits_mask(packing->prod_bits));
+    *gss_idx = (uint32_t)((key >> packing->gss_shift) & packing->gss_mask);
+}
+
+static bool gll_span_packing_init(CettaLpNativeGllSpanPacking *packing,
+                                  uint32_t production_len,
+                                  uint32_t token_len) {
+    uint32_t used;
+
+    if (!packing || production_len == 0)
+        return false;
+    memset(packing, 0, sizeof(*packing));
+    packing->prod_bits = gll_bits_needed(production_len - 1u);
+    packing->pos_bits = gll_bits_needed(token_len);
+    used = (uint32_t)packing->prod_bits + 2u * (uint32_t)packing->pos_bits;
+    if (used >= 64u)
+        return false;
+    packing->prod_mask = gll_bits_mask(packing->prod_bits);
+    packing->pos_mask = gll_bits_mask(packing->pos_bits);
+    packing->origin_shift = packing->prod_bits;
+    packing->end_shift = (uint8_t)(packing->origin_shift + packing->pos_bits);
+    return true;
+}
+
+static bool gll_span_pack(const CettaLpNativeGllSpanPacking *packing,
+                          int32_t prod_idx,
+                          uint32_t origin,
+                          uint32_t end,
+                          uint64_t *out) {
+    uint64_t key;
+
+    if (!packing || !out || prod_idx < 0)
+        return false;
+    if (((uint64_t)(uint32_t)prod_idx >> packing->prod_bits) != 0 ||
+        ((uint64_t)origin >> packing->pos_bits) != 0 ||
+        ((uint64_t)end >> packing->pos_bits) != 0) {
+        return false;
+    }
+    key = (uint64_t)(uint32_t)prod_idx;
+    key |= ((uint64_t)origin << packing->origin_shift);
+    key |= ((uint64_t)end << packing->end_shift);
+    if (key == UINT64_MAX)
+        return false;
+    *out = key;
+    return true;
+}
+
+static bool u64stack_push(CettaLpNativeU64Stack *stack, uint64_t value) {
+    enum { BLOCK_LEN = 65536u };
+    uint32_t block_idx;
+    uint32_t offset;
+
+    if (!stack)
+        return false;
+    if (stack->len == stack->block_len * BLOCK_LEN) {
+        if (!grow_storage((void **)&stack->blocks, &stack->block_len,
+                          &stack->block_cap, sizeof(*stack->blocks))) {
+            return false;
+        }
+        stack->blocks[stack->block_len] =
+            cetta_malloc(sizeof(*stack->blocks[stack->block_len]) * BLOCK_LEN);
+        stack->block_len++;
+    }
+    block_idx = stack->len / BLOCK_LEN;
+    offset = stack->len % BLOCK_LEN;
+    stack->blocks[block_idx][offset] = value;
+    stack->len++;
+    return true;
+}
+
+static bool u64stack_pop(CettaLpNativeU64Stack *stack, uint64_t *out) {
+    enum { BLOCK_LEN = 65536u };
+    uint32_t block_idx;
+    uint32_t offset;
+
+    if (!stack || !out || stack->len == 0)
+        return false;
+    stack->len--;
+    block_idx = stack->len / BLOCK_LEN;
+    offset = stack->len % BLOCK_LEN;
+    *out = stack->blocks[block_idx][offset];
+    if (offset == 0) {
+        free(stack->blocks[block_idx]);
+        stack->blocks[block_idx] = NULL;
+        stack->block_len--;
+    }
+    return true;
+}
+
+static void u64stack_free(CettaLpNativeU64Stack *stack) {
+    uint32_t i;
+
+    if (!stack)
+        return;
+    for (i = 0; i < stack->block_len; i++)
+        free(stack->blocks[i]);
+    free(stack->blocks);
+    memset(stack, 0, sizeof(*stack));
+}
+
+static bool gll_rec_desc_capacity_for(uint32_t min_len,
+                                      uint32_t old_cap,
+                                      uint32_t *out) {
+    uint64_t needed = ((uint64_t)min_len * 9u + 6u) / 7u;
+    uint64_t geometric;
+
+    if (!out)
+        return false;
+    if (needed < 16u)
+        needed = 16u;
+    if (old_cap > 0) {
+        geometric = ((uint64_t)old_cap * 13u + 7u) / 8u;
+        if (geometric > needed)
+            needed = geometric;
+    }
+    if (needed > UINT32_MAX)
+        return false;
+    *out = (uint32_t)needed;
+    return true;
+}
+
+enum { CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN = 65536u };
+enum { CETTA_LP_NATIVE_GLL_REC_DESC_COMPACT_BITS = 48u };
+
+static uint32_t gll_rec_desc_chunk_count(uint32_t cap) {
+    return (cap + CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN - 1u) /
+        CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+}
+
+static uint64_t gll_rec_desc_compact_max(void) {
+    return (UINT64_C(1) << CETTA_LP_NATIVE_GLL_REC_DESC_COMPACT_BITS) - 1u;
+}
+
+static bool gll_rec_desc_alloc_compact_chunk(
+    CettaLpNativeGllRecDescSet *set,
+    uint32_t chunk_idx) {
+    if (!set->slot_lo_chunks[chunk_idx]) {
+        set->slot_lo_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*set->slot_lo_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+        memset(set->slot_lo_chunks[chunk_idx], 0,
+               sizeof(*set->slot_lo_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+    }
+    if (!set->slot_hi_chunks[chunk_idx]) {
+        set->slot_hi_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*set->slot_hi_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+        memset(set->slot_hi_chunks[chunk_idx], 0,
+               sizeof(*set->slot_hi_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+    }
+    return true;
+}
+
+static bool gll_rec_desc_alloc_wide_chunk(CettaLpNativeGllRecDescSet *set,
+                                          uint32_t chunk_idx) {
+    if (!set->slot_chunks[chunk_idx]) {
+        set->slot_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*set->slot_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+        memset(set->slot_chunks[chunk_idx], 0,
+               sizeof(*set->slot_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+    }
+    return true;
+}
+
+static bool gll_rec_desc_promote_slots(CettaLpNativeGllRecDescSet *set);
+
+static uint64_t gll_rec_desc_slot_get(CettaLpNativeGllRecDescSet *set,
+                                      uint32_t slot) {
+    uint32_t chunk_idx;
+    uint32_t offset;
+
+    if (!set || slot >= set->cap)
+        return 0;
+    chunk_idx = slot / CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+    offset = slot % CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+    if (set->wide_slots) {
+        if (!set->slot_chunks || !set->slot_chunks[chunk_idx])
+            return 0;
+        return set->slot_chunks[chunk_idx][offset];
+    }
+    if (!set->slot_lo_chunks || !set->slot_hi_chunks ||
+        !set->slot_lo_chunks[chunk_idx] || !set->slot_hi_chunks[chunk_idx]) {
+        return 0;
+    }
+    return (uint64_t)set->slot_lo_chunks[chunk_idx][offset] |
+        ((uint64_t)set->slot_hi_chunks[chunk_idx][offset] << 32);
+}
+
+static bool gll_rec_desc_slot_set(CettaLpNativeGllRecDescSet *set,
+                                  uint32_t slot,
+                                  uint64_t value) {
+    uint32_t chunk_idx;
+    uint32_t offset;
+
+    if (!set || slot >= set->cap)
+        return false;
+    chunk_idx = slot / CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+    offset = slot % CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+    if (!set->wide_slots && value > gll_rec_desc_compact_max()) {
+        if (!gll_rec_desc_promote_slots(set))
+            return false;
+    }
+    if (set->wide_slots) {
+        if (!gll_rec_desc_alloc_wide_chunk(set, chunk_idx))
+            return false;
+        set->slot_chunks[chunk_idx][offset] = value;
+        return true;
+    }
+    if (!gll_rec_desc_alloc_compact_chunk(set, chunk_idx))
+        return false;
+    set->slot_lo_chunks[chunk_idx][offset] = (uint32_t)value;
+    set->slot_hi_chunks[chunk_idx][offset] = (uint16_t)(value >> 32);
+    return true;
+}
+
+static uint64_t gll_rec_desc_slot_value(uint64_t key) {
+    return key + UINT64_C(1);
+}
+
+static uint64_t gll_rec_desc_key_value(uint64_t slot_value) {
+    return slot_value - UINT64_C(1);
+}
+
+static bool gll_rec_desc_insert_existing(CettaLpNativeGllRecDescSet *set,
+                                         uint64_t key) {
+    uint32_t slot;
+
+    if (set->cap == 0 ||
+        (set->wide_slots && !set->slot_chunks) ||
+        (!set->wide_slots && (!set->slot_lo_chunks || !set->slot_hi_chunks)))
+        return false;
+    slot = gll_hash_slot_mod(gll_hash_u64(UINT64_C(1469598103934665603), key),
+                             set->cap);
+    while (gll_rec_desc_slot_get(set, slot) != 0)
+        slot = (slot + 1u == set->cap) ? 0 : slot + 1u;
+    return gll_rec_desc_slot_set(set, slot, gll_rec_desc_slot_value(key));
+}
+
+static bool gll_rec_desc_promote_slots(CettaLpNativeGllRecDescSet *set) {
+    uint64_t **wide_chunks;
+    uint32_t chunk_count;
+    uint32_t chunk_idx;
+    uint32_t i;
+
+    if (!set || set->wide_slots)
+        return true;
+    chunk_count = gll_rec_desc_chunk_count(set->cap);
+    wide_chunks = cetta_malloc(sizeof(*wide_chunks) * chunk_count);
+    memset(wide_chunks, 0, sizeof(*wide_chunks) * chunk_count);
+    for (chunk_idx = 0; chunk_idx < chunk_count; chunk_idx++) {
+        uint32_t base = chunk_idx * CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+        uint32_t limit = set->cap - base;
+        if (limit > CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN)
+            limit = CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+        if (!set->slot_lo_chunks || !set->slot_hi_chunks ||
+            !set->slot_lo_chunks[chunk_idx] || !set->slot_hi_chunks[chunk_idx]) {
+            continue;
+        }
+        wide_chunks[chunk_idx] =
+            cetta_malloc(sizeof(*wide_chunks[chunk_idx]) *
+                         CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+        memset(wide_chunks[chunk_idx], 0,
+               sizeof(*wide_chunks[chunk_idx]) *
+               CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN);
+        for (i = 0; i < limit; i++) {
+            wide_chunks[chunk_idx][i] =
+                (uint64_t)set->slot_lo_chunks[chunk_idx][i] |
+                ((uint64_t)set->slot_hi_chunks[chunk_idx][i] << 32);
+        }
+        free(set->slot_lo_chunks[chunk_idx]);
+        free(set->slot_hi_chunks[chunk_idx]);
+    }
+    free(set->slot_lo_chunks);
+    free(set->slot_hi_chunks);
+    set->slot_lo_chunks = NULL;
+    set->slot_hi_chunks = NULL;
+    set->slot_chunks = wide_chunks;
+    set->wide_slots = true;
+    return true;
+}
+
+static bool gll_rec_desc_rebuild(CettaLpNativeGllRecDescSet *set,
+                                 uint32_t min_len) {
+    CettaLpNativeGllRecDescSet old = *set;
+    uint32_t old_cap = set->cap;
+    uint32_t old_chunk_count = gll_rec_desc_chunk_count(old_cap);
+    uint32_t cap;
+    uint32_t chunk_count;
+    uint32_t chunk_idx;
+    uint32_t i;
+
+    if (!gll_rec_desc_capacity_for(min_len, old_cap, &cap))
+        return false;
+    chunk_count = gll_rec_desc_chunk_count(cap);
+    set->slot_chunks = NULL;
+    set->slot_lo_chunks = NULL;
+    set->slot_hi_chunks = NULL;
+    if (old.wide_slots) {
+        set->slot_chunks = cetta_malloc(sizeof(*set->slot_chunks) * chunk_count);
+        memset(set->slot_chunks, 0, sizeof(*set->slot_chunks) * chunk_count);
+    } else {
+        set->slot_lo_chunks =
+            cetta_malloc(sizeof(*set->slot_lo_chunks) * chunk_count);
+        set->slot_hi_chunks =
+            cetta_malloc(sizeof(*set->slot_hi_chunks) * chunk_count);
+        memset(set->slot_lo_chunks, 0,
+               sizeof(*set->slot_lo_chunks) * chunk_count);
+        memset(set->slot_hi_chunks, 0,
+               sizeof(*set->slot_hi_chunks) * chunk_count);
+    }
+    set->cap = cap;
+    set->wide_slots = old.wide_slots;
+    for (chunk_idx = 0; chunk_idx < old_chunk_count; chunk_idx++) {
+        uint32_t base = chunk_idx * CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+        uint32_t limit = old_cap - base;
+        if (limit > CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN)
+            limit = CETTA_LP_NATIVE_GLL_REC_DESC_CHUNK_LEN;
+        for (i = 0; i < limit; i++) {
+            uint64_t old_slot = gll_rec_desc_slot_get(&old, base + i);
+            if (old_slot != 0 &&
+                !gll_rec_desc_insert_existing(
+                    set, gll_rec_desc_key_value(old_slot))) {
+                return false;
+            }
+        }
+        if (old.wide_slots) {
+            free(old.slot_chunks ? old.slot_chunks[chunk_idx] : NULL);
+            if (old.slot_chunks)
+                old.slot_chunks[chunk_idx] = NULL;
+        } else {
+            free(old.slot_lo_chunks ? old.slot_lo_chunks[chunk_idx] : NULL);
+            free(old.slot_hi_chunks ? old.slot_hi_chunks[chunk_idx] : NULL);
+            if (old.slot_lo_chunks)
+                old.slot_lo_chunks[chunk_idx] = NULL;
+            if (old.slot_hi_chunks)
+                old.slot_hi_chunks[chunk_idx] = NULL;
+        }
+    }
+    free(old.slot_chunks);
+    free(old.slot_lo_chunks);
+    free(old.slot_hi_chunks);
+    return true;
+}
+
+static bool gll_rec_desc_set_insert(CettaLpNativeGllRecDescSet *seen,
+                                    uint64_t key,
+                                    bool *inserted) {
+    uint32_t slot;
+
+    if (!seen)
+        return false;
+    if (inserted)
+        *inserted = false;
+    if (seen->cap == 0 ||
+        ((uint64_t)(seen->len + 1u) * 10u) >= ((uint64_t)seen->cap * 9u)) {
+        if (!gll_rec_desc_rebuild(seen, seen->len + 1u))
+            return false;
+    }
+    slot = gll_hash_slot_mod(gll_hash_u64(UINT64_C(1469598103934665603), key),
+                             seen->cap);
+    while (true) {
+        uint64_t slot_value = gll_rec_desc_slot_get(seen, slot);
+        if (slot_value == 0)
+            break;
+        if (gll_rec_desc_key_value(slot_value) == key)
+            return true;
+        slot = (slot + 1u == seen->cap) ? 0 : slot + 1u;
+    }
+    if (!gll_rec_desc_slot_set(seen, slot, gll_rec_desc_slot_value(key)))
+        return false;
+    seen->len++;
+    if (inserted)
+        *inserted = true;
+    return true;
+}
+
+static bool gll_rec_desc_enqueue(CettaLpNativeGllRecDescSet *seen,
+                                 CettaLpNativeU64Stack *work,
+                                 uint64_t key) {
+    bool inserted = false;
+
+    if (!work)
+        return false;
+    if (!gll_rec_desc_set_insert(seen, key, &inserted))
+        return false;
+    if (!inserted)
+        return true;
+    return u64stack_push(work, key);
+}
+
+static void gll_rec_desc_set_free(CettaLpNativeGllRecDescSet *set) {
+    uint32_t chunk_count;
+    uint32_t i;
+
+    if (!set)
+        return;
+    chunk_count = gll_rec_desc_chunk_count(set->cap);
+    for (i = 0; i < chunk_count; i++) {
+        free(set->slot_chunks ? set->slot_chunks[i] : NULL);
+        free(set->slot_lo_chunks ? set->slot_lo_chunks[i] : NULL);
+        free(set->slot_hi_chunks ? set->slot_hi_chunks[i] : NULL);
+    }
+    free(set->slot_chunks);
+    free(set->slot_lo_chunks);
+    free(set->slot_hi_chunks);
+    memset(set, 0, sizeof(*set));
+}
+
+static bool gll_rec_desc_pack_enqueue(
+    const CettaLpNativeGllRecDescPacking *packing,
+    CettaLpNativeGllRecDescSet *seen,
+    CettaLpNativeU64Stack *work,
+    int32_t prod_idx,
+    uint32_t dot,
+    uint32_t gss_idx,
+    uint32_t pos) {
+    uint64_t key;
+
+    if (!gll_rec_desc_pack(packing, prod_idx, dot, gss_idx, pos, &key))
+        return false;
+    return gll_rec_desc_enqueue(seen, work, key);
+}
+
+static int32_t gll_rec_gss_find_key(const CettaLpNativeGllRecGssNodeVec *nodes,
+                                    uint64_t key) {
+    uint32_t i;
+
+    if (nodes->index.slots && nodes->index.cap > 0) {
+        uint32_t slot = gll_hash_slot(gll_hash_u64(
+            UINT64_C(1469598103934665603), key), nodes->index.cap);
+        while (nodes->index.slots[slot] != 0) {
+            uint32_t idx = nodes->index.slots[slot] - 1u;
+            if (idx < nodes->len &&
+                gll_rec_gss_key_equals(&nodes->data[idx], key)) {
+                return (int32_t)idx;
+            }
+            slot = gll_index_next_slot(slot, nodes->index.cap);
+        }
+        return -1;
+    }
+    for (i = 0; i < nodes->len; i++) {
+        if (gll_rec_gss_key_equals(&nodes->data[i], key)) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
+
+static int32_t gll_rec_gss_get(CettaLpNativeGllRecGssNodeVec *nodes,
+                               bool is_root,
+                               int32_t prod_idx,
+                               uint32_t dot,
+                               uint32_t pos) {
+    int32_t found;
+    uint64_t key;
+
+    if (!gll_rec_gss_key_pack(&nodes->packing, is_root, prod_idx, dot, pos,
+                              &key))
+        return -1;
+    if (!gll_rec_gss_index_ensure(nodes, nodes->len + 1u))
+        return -1;
+    found = gll_rec_gss_find_key(nodes, key);
+    if (found >= 0)
+        return found;
+    if (!grow_storage((void **)&nodes->data, &nodes->len, &nodes->cap,
+                      sizeof(*nodes->data))) {
+        return -1;
+    }
+    memset(&nodes->data[nodes->len], 0, sizeof(nodes->data[nodes->len]));
+    nodes->data[nodes->len].key = key;
+    nodes->data[nodes->len].first_edge = CETTA_LP_NATIVE_NODE_NONE;
+    nodes->data[nodes->len].first_popped = CETTA_LP_NATIVE_NODE_NONE;
+    nodes->len++;
+    gll_rec_gss_index_insert_existing(nodes, nodes->len - 1u);
+    return (int32_t)(nodes->len - 1);
+}
+
+static bool gll_rec_gss_add_edge(CettaLpNativeGllRecGssNodeVec *nodes,
+                                 uint32_t gss_idx,
+                                 uint32_t parent_gss) {
+    CettaLpNativeGllRecGssNode *node;
+    uint32_t edge_idx;
+
+    if (!nodes || gss_idx >= nodes->len)
+        return false;
+    node = &nodes->data[gss_idx];
+    if (!gll_rec_link_push(&nodes->edges, parent_gss, node->first_edge,
+                           &edge_idx)) {
+        return false;
+    }
+    node->first_edge = edge_idx;
+    return true;
 }
 
 static int32_t gll_node_find(const CettaLpNativeGllNodeVec *nodes,
@@ -2245,14 +4098,24 @@ static int32_t gll_node_find(const CettaLpNativeGllNodeVec *nodes,
                              uint32_t right) {
     uint32_t i;
 
+    if (nodes->index.slots && nodes->index.cap > 0) {
+        uint32_t slot = gll_hash_slot(
+            gll_node_key_hash(kind, symbol, prod_idx, dot, left, right),
+            nodes->index.cap);
+        while (nodes->index.slots[slot] != 0) {
+            uint32_t idx = nodes->index.slots[slot] - 1u;
+            if (idx < nodes->len &&
+                gll_node_key_equals(&nodes->data[idx], kind, symbol, prod_idx,
+                                    dot, left, right)) {
+                return (int32_t)idx;
+            }
+            slot = gll_index_next_slot(slot, nodes->index.cap);
+        }
+        return -1;
+    }
     for (i = 0; i < nodes->len; i++) {
         const CettaLpNativeGllNode *cur = &nodes->data[i];
-        if (cur->kind == kind &&
-            cur->symbol == symbol &&
-            cur->prod_idx == prod_idx &&
-            cur->dot == dot &&
-            cur->left == left &&
-            cur->right == right) {
+        if (gll_node_key_equals(cur, kind, symbol, prod_idx, dot, left, right)) {
             return (int32_t)i;
         }
     }
@@ -2266,8 +4129,11 @@ static int32_t gll_node_get(CettaLpNativeGllNodeVec *nodes,
                             uint32_t dot,
                             uint32_t left,
                             uint32_t right) {
-    int32_t found = gll_node_find(nodes, kind, symbol, prod_idx, dot, left, right);
+    int32_t found;
 
+    if (!gll_node_index_ensure(nodes, nodes->len + 1u))
+        return -1;
+    found = gll_node_find(nodes, kind, symbol, prod_idx, dot, left, right);
     if (found >= 0)
         return found;
     if (!grow_storage((void **)&nodes->data, &nodes->len, &nodes->cap,
@@ -2275,13 +4141,15 @@ static int32_t gll_node_get(CettaLpNativeGllNodeVec *nodes,
         return -1;
     }
     memset(&nodes->data[nodes->len], 0, sizeof(nodes->data[nodes->len]));
-    nodes->data[nodes->len].kind = kind;
-    nodes->data[nodes->len].symbol = symbol;
-    nodes->data[nodes->len].prod_idx = prod_idx;
-    nodes->data[nodes->len].dot = dot;
+    if (!gll_node_set_key(&nodes->data[nodes->len], kind, symbol, prod_idx,
+                          dot)) {
+        return -1;
+    }
     nodes->data[nodes->len].left = left;
     nodes->data[nodes->len].right = right;
+    nodes->data[nodes->len].first_choice = CETTA_LP_NATIVE_NODE_NONE;
     nodes->len++;
+    gll_node_index_insert_existing(nodes, nodes->len - 1u);
     return (int32_t)(nodes->len - 1);
 }
 
@@ -2338,22 +4206,39 @@ static SymbolId gll_prod_label(const CettaLpNativeGrammar *grammar,
 }
 
 static const CettaLpNativeGllPackedChoice *gll_pick_choice(
-    const CettaLpNativeGllPackedVec *choices) {
+    const CettaLpNativeGllNodeVec *nodes,
+    const CettaLpNativeGllNode *node) {
     const CettaLpNativeGllPackedChoice *best;
-    uint32_t i;
+    uint32_t choice_idx;
 
-    if (!choices || choices->len == 0)
+    if (!nodes || !node ||
+        node->first_choice == CETTA_LP_NATIVE_NODE_NONE ||
+        node->first_choice >= nodes->packed.len) {
         return NULL;
-    best = &choices->data[0];
-    for (i = 1; i < choices->len; i++) {
-        const CettaLpNativeGllPackedChoice *cur = &choices->data[i];
+    }
+    best = &nodes->packed.data[node->first_choice];
+    for (choice_idx = best->next_idx;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        const CettaLpNativeGllPackedChoice *cur;
+        uint32_t cur_pivot;
+        uint32_t best_pivot;
+        int32_t cur_prod_idx;
+        int32_t best_prod_idx;
+        if (choice_idx >= nodes->packed.len)
+            return NULL;
+        cur = &nodes->packed.data[choice_idx];
+        cur_pivot = gll_choice_pivot(nodes, cur);
+        best_pivot = gll_choice_pivot(nodes, best);
+        cur_prod_idx = gll_choice_prod_idx(nodes, cur);
+        best_prod_idx = gll_choice_prod_idx(nodes, best);
         if (cur->left_idx < best->left_idx ||
             (cur->left_idx == best->left_idx &&
              (cur->right_idx < best->right_idx ||
               (cur->right_idx == best->right_idx &&
-               (cur->pivot < best->pivot ||
-                (cur->pivot == best->pivot &&
-                 cur->prod_idx < best->prod_idx)))))) {
+               (cur_pivot < best_pivot ||
+                (cur_pivot == best_pivot &&
+                 cur_prod_idx < best_prod_idx)))))) {
             best = cur;
         }
     }
@@ -2395,8 +4280,8 @@ static int32_t gll_sppf_get_node(CettaLpNativeGllNodeVec *nodes,
     if (is_end) {
         node_idx = gll_node_get_sym(nodes, lhs, left, right);
         if (node_idx < 0 ||
-            !gll_packedvec_push_unique(&nodes->data[node_idx].packed,
-                                       left_idx, right_idx, pivot, prod_idx)) {
+            !gll_node_push_packed_unique(nodes, (uint32_t)node_idx,
+                                         left_idx, right_idx, pivot, prod_idx)) {
             slr_summary_set_error(error_buf, error_buf_size,
                                   "failed to record GLL SPPF symbol node");
             return -1;
@@ -2405,8 +4290,8 @@ static int32_t gll_sppf_get_node(CettaLpNativeGllNodeVec *nodes,
     }
     node_idx = gll_node_get_inter(nodes, prod_idx, dot, left, right);
     if (node_idx < 0 ||
-        !gll_packedvec_push_unique(&nodes->data[node_idx].packed,
-                                   left_idx, right_idx, pivot, -1)) {
+        !gll_node_push_packed_unique(nodes, (uint32_t)node_idx,
+                                     left_idx, right_idx, pivot, -1)) {
         slr_summary_set_error(error_buf, error_buf_size,
                               "failed to record GLL SPPF intermediate node");
         return -1;
@@ -2421,12 +4306,22 @@ static int32_t gll_gss_find(const CettaLpNativeGllGssNodeVec *nodes,
                             uint32_t pos) {
     uint32_t i;
 
+    if (nodes->index.slots && nodes->index.cap > 0) {
+        uint32_t slot = gll_hash_slot(
+            gll_gss_key_hash(is_root, prod_idx, dot, pos), nodes->index.cap);
+        while (nodes->index.slots[slot] != 0) {
+            uint32_t idx = nodes->index.slots[slot] - 1u;
+            if (idx < nodes->len &&
+                gll_gss_key_equals(&nodes->data[idx], is_root, prod_idx, dot, pos)) {
+                return (int32_t)idx;
+            }
+            slot = gll_index_next_slot(slot, nodes->index.cap);
+        }
+        return -1;
+    }
     for (i = 0; i < nodes->len; i++) {
         const CettaLpNativeGllGssNode *cur = &nodes->data[i];
-        if (cur->is_root == is_root &&
-            cur->prod_idx == prod_idx &&
-            cur->dot == dot &&
-            cur->pos == pos) {
+        if (gll_gss_key_equals(cur, is_root, prod_idx, dot, pos)) {
             return (int32_t)i;
         }
     }
@@ -2438,8 +4333,11 @@ static int32_t gll_gss_get(CettaLpNativeGllGssNodeVec *nodes,
                            int32_t prod_idx,
                            uint32_t dot,
                            uint32_t pos) {
-    int32_t found = gll_gss_find(nodes, is_root, prod_idx, dot, pos);
+    int32_t found;
 
+    if (!gll_gss_index_ensure(nodes, nodes->len + 1u))
+        return -1;
+    found = gll_gss_find(nodes, is_root, prod_idx, dot, pos);
     if (found >= 0)
         return found;
     if (!grow_storage((void **)&nodes->data, &nodes->len, &nodes->cap,
@@ -2452,6 +4350,7 @@ static int32_t gll_gss_get(CettaLpNativeGllGssNodeVec *nodes,
     nodes->data[nodes->len].dot = dot;
     nodes->data[nodes->len].pos = pos;
     nodes->len++;
+    gll_gss_index_insert_existing(nodes, nodes->len - 1u);
     return (int32_t)(nodes->len - 1);
 }
 
@@ -2481,40 +4380,64 @@ static bool gll_gss_add_edge(CettaLpNativeGllGssNodeVec *nodes,
 
 static bool gll_desc_equals(const CettaLpNativeGllDescriptor *lhs,
                             const CettaLpNativeGllDescriptor *rhs) {
-    return lhs->prod_idx == rhs->prod_idx &&
-        lhs->dot == rhs->dot &&
-        lhs->gss_idx == rhs->gss_idx &&
-        lhs->left_label == rhs->left_label &&
-        lhs->pos == rhs->pos;
+    return gll_desc_key_equals(lhs, rhs->prod_idx, rhs->dot, rhs->gss_idx,
+                               rhs->left_label, rhs->pos);
+}
+
+static int32_t gll_desc_find(const CettaLpNativeGllDescriptorVec *descs,
+                             const CettaLpNativeGllDescriptor *desc) {
+    uint32_t i;
+
+    if (descs->index.slots && descs->index.cap > 0) {
+        uint32_t slot = gll_hash_slot(
+            gll_desc_key_hash(desc->prod_idx, desc->dot, desc->gss_idx,
+                              desc->left_label, desc->pos),
+            descs->index.cap);
+        while (descs->index.slots[slot] != 0) {
+            uint32_t idx = descs->index.slots[slot] - 1u;
+            CettaLpNativeGllDescriptor cur;
+            if (gll_descvec_get(descs, idx, &cur) &&
+                gll_desc_equals(&cur, desc)) {
+                return (int32_t)idx;
+            }
+            slot = gll_index_next_slot(slot, descs->index.cap);
+        }
+        return -1;
+    }
+    for (i = 0; i < descs->len; i++) {
+        CettaLpNativeGllDescriptor cur;
+        if (gll_descvec_get(descs, i, &cur) &&
+            gll_desc_equals(&cur, desc)) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
 }
 
 static bool gll_desc_enqueue(CettaLpNativeGllDescriptorVec *seen,
-                             CettaLpNativeGllDescriptorVec *work,
+                             CettaLpNativeU32Vec *work,
                              int32_t prod_idx,
                              uint32_t dot,
                              uint32_t gss_idx,
                              uint32_t left_label,
                              uint32_t pos) {
     CettaLpNativeGllDescriptor desc;
-    uint32_t i;
+    uint32_t desc_idx;
 
     desc.prod_idx = prod_idx;
     desc.dot = dot;
     desc.gss_idx = gss_idx;
     desc.left_label = left_label;
     desc.pos = pos;
-    for (i = 0; i < seen->len; i++) {
-        if (gll_desc_equals(&seen->data[i], &desc))
-            return true;
-    }
-    if (!grow_storage((void **)&seen->data, &seen->len, &seen->cap,
-                      sizeof(*seen->data)) ||
-        !grow_storage((void **)&work->data, &work->len, &work->cap,
-                      sizeof(*work->data))) {
+    if (!gll_desc_index_ensure(seen, seen->len + 1u))
         return false;
-    }
-    seen->data[seen->len++] = desc;
-    work->data[work->len++] = desc;
+    if (gll_desc_find(seen, &desc) >= 0)
+        return true;
+    if (!gll_descvec_append(seen, &desc, &desc_idx))
+        return false;
+    gll_desc_index_insert_existing(seen, desc_idx);
+    if (!u32vec_push(work, desc_idx))
+        return false;
     return true;
 }
 
@@ -2524,21 +4447,28 @@ static int32_t gll_count_node(const CettaLpNativeGllNodeVec *nodes,
                               uint8_t *memo_value) {
     const CettaLpNativeGllNode *node;
     int32_t total = 0;
-    uint32_t i;
+    uint32_t choice_idx;
+    CettaLpNativeGllNodeKind kind;
 
     node = &nodes->data[node_idx];
-    if (node->kind == CETTA_LP_NATIVE_GLL_NODE_TERM ||
-        node->kind == CETTA_LP_NATIVE_GLL_NODE_EPS) {
+    kind = gll_node_kind_value(node);
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_TERM ||
+        kind == CETTA_LP_NATIVE_GLL_NODE_EPS) {
         return 1;
     }
     if (memo_seen[node_idx])
         return memo_value[node_idx];
     memo_seen[node_idx] = 1;
     memo_value[node_idx] = 0;
-    for (i = 0; i < node->packed.len; i++) {
-        const CettaLpNativeGllPackedChoice *choice = &node->packed.data[i];
+    for (choice_idx = node->first_choice;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        const CettaLpNativeGllPackedChoice *choice;
         int32_t left_count = 1;
         int32_t right_count;
+        if (choice_idx >= nodes->packed.len)
+            return 0;
+        choice = &nodes->packed.data[choice_idx];
         if (choice->left_idx != CETTA_LP_NATIVE_NODE_NONE) {
             left_count = gll_count_node(nodes, choice->left_idx,
                                         memo_seen, memo_value);
@@ -2563,8 +4493,8 @@ static bool gll_collect_spine(const CettaLpNativeGllNodeVec *nodes,
 
     if (left_idx != CETTA_LP_NATIVE_NODE_NONE) {
         const CettaLpNativeGllNode *left = &nodes->data[left_idx];
-        if (left->kind == CETTA_LP_NATIVE_GLL_NODE_INTER) {
-            choice = gll_pick_choice(&left->packed);
+        if (gll_node_kind_value(left) == CETTA_LP_NATIVE_GLL_NODE_INTER) {
+            choice = gll_pick_choice(nodes, left);
             if (!choice ||
                 !gll_collect_spine(nodes, choice->left_idx, choice->right_idx, out)) {
                 return false;
@@ -2575,6 +4505,14 @@ static bool gll_collect_spine(const CettaLpNativeGllNodeVec *nodes,
     }
     return u32vec_push(out, right_idx);
 }
+
+static Atom *cetta_lp_native_gll_recognize_tokens(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const CettaLpNativeInputTokenVec *tokens,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
 
 static Atom *gll_cert_from_node(const CettaLpNativeGrammar *grammar,
                                 CettaLpNativeSlrProduction *productions,
@@ -2591,32 +4529,35 @@ static Atom *gll_cert_from_node(const CettaLpNativeGrammar *grammar,
     CettaLpNativeU32Vec kids = {0};
     Atom *result = NULL;
     uint32_t i;
+    CettaLpNativeGllNodeKind kind = gll_node_kind_value(node);
+    int32_t choice_prod_idx;
 
-    if (node->kind == CETTA_LP_NATIVE_GLL_NODE_TERM) {
-        return make_tok_cert(arena, node->symbol, node->left);
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_TERM) {
+        return make_tok_cert(arena, gll_node_symbol_value(node), node->left);
     }
-    if (node->kind == CETTA_LP_NATIVE_GLL_NODE_EPS) {
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_EPS) {
         return make_eps_cert(arena);
     }
 
-    choice = gll_pick_choice(&node->packed);
+    choice = gll_pick_choice(nodes, node);
     if (!choice) {
         slr_summary_set_error(error_buf, error_buf_size,
                               "GLL cert extraction found node without packed choice");
         return NULL;
     }
+    choice_prod_idx = gll_choice_prod_idx(nodes, choice);
     if (!gll_collect_spine(nodes, choice->left_idx, choice->right_idx, &kids)) {
         slr_summary_set_error(error_buf, error_buf_size,
                               "failed to flatten GLL cert spine");
         goto fail;
     }
 
-    if (node->kind == CETTA_LP_NATIVE_GLL_NODE_SYM) {
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_SYM) {
         SymbolId lhs = 0;
         const CettaLpNativeSymbol *rhs = NULL;
         uint32_t rhs_len = 0;
         slr_get_prod(productions, production_len, start_nt,
-                     choice->prod_idx, &lhs, &rhs, &rhs_len);
+                     choice_prod_idx, &lhs, &rhs, &rhs_len);
         if (gll_nt_is_leaf(grammar, lhs) &&
             rhs_len == 1 &&
             rhs[0].kind == CETTA_LP_NATIVE_SYMBOL_TM) {
@@ -2629,7 +4570,7 @@ static Atom *gll_cert_from_node(const CettaLpNativeGrammar *grammar,
             }
             child_idx = kids.data[0];
             child = &nodes->data[child_idx];
-            if (child->kind != CETTA_LP_NATIVE_GLL_NODE_TERM ||
+            if (gll_node_kind_value(child) != CETTA_LP_NATIVE_GLL_NODE_TERM ||
                 child->left >= tokens->len) {
                 slr_summary_set_error(error_buf, error_buf_size,
                                       "leaf production child was not a terminal token");
@@ -2643,7 +4584,7 @@ static Atom *gll_cert_from_node(const CettaLpNativeGrammar *grammar,
             Atom *eps = make_eps_cert(arena);
             Atom **items = arena_alloc(arena, sizeof(Atom *));
             items[0] = eps;
-            result = make_node_cert(arena, gll_prod_label(grammar, choice->prod_idx), lhs,
+            result = make_node_cert(arena, gll_prod_label(grammar, choice_prod_idx), lhs,
                                     node->left, node->right, items, 1);
             goto fail;
         }
@@ -2656,7 +4597,7 @@ static Atom *gll_cert_from_node(const CettaLpNativeGrammar *grammar,
                 if (!items[i])
                     goto fail;
             }
-            result = make_node_cert(arena, gll_prod_label(grammar, choice->prod_idx), lhs,
+            result = make_node_cert(arena, gll_prod_label(grammar, choice_prod_idx), lhs,
                                     node->left, node->right, items, kids.len);
             goto fail;
         }
@@ -2682,8 +4623,9 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
     CettaLpNativeGllNodeVec nodes = {0};
     CettaLpNativeGllGssNodeVec gss_nodes = {0};
     CettaLpNativeGllDescriptorVec seen = {0};
-    CettaLpNativeGllDescriptorVec work = {0};
+    CettaLpNativeU32Vec work = {0};
     uint32_t root_idx = CETTA_LP_NATIVE_NODE_NONE;
+    uint32_t max_rhs_len = 0;
     Atom *result = NULL;
 
     if (!grammar || !arena) {
@@ -2698,6 +4640,8 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
         !slr_grammar_mentions_nonterminal(productions, production_len, start_nt)) {
         goto fail;
     }
+    max_rhs_len = gll_max_rhs_len(productions, production_len);
+    gll_descvec_init_compact(&seen, production_len, max_rhs_len, tokens.len);
     if (gll_gss_get(&gss_nodes, true, -1, 0, 0) != 0) {
         slr_summary_set_error(error_buf, error_buf_size,
                               "failed to initialize GLL root");
@@ -2725,12 +4669,18 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
     }
 
     while (work.len > 0) {
-        CettaLpNativeGllDescriptor cur = work.data[work.len - 1];
+        uint32_t cur_idx = work.data[work.len - 1];
+        CettaLpNativeGllDescriptor cur;
         SymbolId lhs = 0;
         const CettaLpNativeSymbol *rhs = NULL;
         uint32_t rhs_len = 0;
 
         work.len--;
+        if (!gll_descvec_get(&seen, cur_idx, &cur)) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "bad GLL descriptor index");
+            goto fail;
+        }
         slr_get_prod(productions, production_len, start_nt,
                      cur.prod_idx, &lhs, &rhs, &rhs_len);
         if (cur.dot < rhs_len) {
@@ -2814,11 +4764,11 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                 int32_t sym_idx = gll_node_get_sym(&nodes, lhs, cur.pos, cur.pos);
                 int32_t eps_idx = gll_node_get_eps(&nodes, cur.pos);
                 if (sym_idx < 0 || eps_idx < 0 ||
-                    !gll_packedvec_push_unique(&nodes.data[sym_idx].packed,
-                                               CETTA_LP_NATIVE_NODE_NONE,
-                                               (uint32_t)eps_idx,
-                                               cur.pos,
-                                               cur.prod_idx)) {
+                    !gll_node_push_packed_unique(&nodes, (uint32_t)sym_idx,
+                                                 CETTA_LP_NATIVE_NODE_NONE,
+                                                 (uint32_t)eps_idx,
+                                                 cur.pos,
+                                                 cur.prod_idx)) {
                     slr_summary_set_error(error_buf, error_buf_size,
                                           "failed to record GLL epsilon completion");
                     goto fail;
@@ -2905,7 +4855,7 @@ cleanup:
     free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
-    free(seen.data);
+    gll_descvec_free(&seen);
     free(work.data);
     slr_productions_free(productions, production_len);
     return result;
@@ -2914,19 +4864,31 @@ fail:
     free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
-    free(seen.data);
+    gll_descvec_free(&seen);
     free(work.data);
     slr_productions_free(productions, production_len);
     return NULL;
 }
 
-static uint32_t gll_total_packed_choices(const CettaLpNativeGllNodeVec *nodes) {
-    uint32_t total = 0;
-    uint32_t i;
+Atom *cetta_lp_native_gll_recognize(const CettaLpNativeGrammar *grammar,
+                                    SymbolId start_nt,
+                                    Atom *token_list,
+                                    Arena *arena,
+                                    char *error_buf,
+                                    size_t error_buf_size) {
+    CettaLpNativeInputTokenVec tokens = {0};
+    Atom *result;
 
-    for (i = 0; i < nodes->len; i++)
-        total += nodes->data[i].packed.len;
-    return total;
+    if (!input_tokens_from_list(token_list, &tokens, error_buf, error_buf_size))
+        return NULL;
+    result = cetta_lp_native_gll_recognize_tokens(
+        grammar, start_nt, &tokens, arena, error_buf, error_buf_size);
+    free(tokens.data);
+    return result;
+}
+
+static uint32_t gll_total_packed_choices(const CettaLpNativeGllNodeVec *nodes) {
+    return nodes ? nodes->packed.len : 0;
 }
 
 static uint32_t gll_kind_count(const CettaLpNativeGllNodeVec *nodes,
@@ -2935,7 +4897,7 @@ static uint32_t gll_kind_count(const CettaLpNativeGllNodeVec *nodes,
     uint32_t i;
 
     for (i = 0; i < nodes->len; i++) {
-        if (nodes->data[i].kind == kind)
+        if (gll_node_kind_value(&nodes->data[i]) == kind)
             total++;
     }
     return total;
@@ -2966,6 +4928,38 @@ static Atom *gll_forest_summary_atom(Arena *arena,
                         gll_kind_count(nodes, CETTA_LP_NATIVE_GLL_NODE_INTER));
     elems[10] = atom_int(arena, gss_nodes->len + descriptor_len);
     return atom_expr(arena, elems, 11);
+}
+
+static Atom *gll_recognize_atom(Arena *arena,
+                                const char *status,
+                                uint32_t token_len,
+                                uint32_t gss_len,
+                                uint32_t descriptor_len) {
+    Atom **elems = arena_alloc(arena, sizeof(Atom *) * 5);
+
+    elems[0] = atom_symbol(arena, "GParseGLLRecognize");
+    elems[1] = atom_symbol(arena, status);
+    elems[2] = atom_int(arena, token_len);
+    elems[3] = atom_int(arena, gss_len);
+    elems[4] = atom_int(arena, descriptor_len);
+    return atom_expr(arena, elems, 5);
+}
+
+static Atom *gll_span_summary_atom(Arena *arena,
+                                   const char *status,
+                                   uint32_t token_len,
+                                   uint32_t span_len,
+                                   uint32_t gss_len,
+                                   uint32_t descriptor_len) {
+    Atom **elems = arena_alloc(arena, sizeof(Atom *) * 6);
+
+    elems[0] = atom_symbol(arena, "GParseGLLSpanSummary");
+    elems[1] = atom_symbol(arena, status);
+    elems[2] = atom_int(arena, token_len);
+    elems[3] = atom_int(arena, span_len);
+    elems[4] = atom_int(arena, gss_len);
+    elems[5] = atom_int(arena, descriptor_len);
+    return atom_expr(arena, elems, 6);
 }
 
 static Atom *glr_forest_summary_atom(Arena *arena,
@@ -3041,7 +5035,7 @@ static void gll_mark_reachable(const CettaLpNativeGllNodeVec *nodes,
                                uint32_t idx,
                                uint8_t *seen) {
     const CettaLpNativeGllNode *node;
-    uint32_t i;
+    uint32_t choice_idx;
 
     if (!nodes || idx == CETTA_LP_NATIVE_NODE_NONE || idx >= nodes->len)
         return;
@@ -3049,12 +5043,17 @@ static void gll_mark_reachable(const CettaLpNativeGllNodeVec *nodes,
         return;
     seen[idx] = 1;
     node = &nodes->data[idx];
-    if (node->kind != CETTA_LP_NATIVE_GLL_NODE_SYM &&
-        node->kind != CETTA_LP_NATIVE_GLL_NODE_INTER) {
+    if (gll_node_kind_value(node) != CETTA_LP_NATIVE_GLL_NODE_SYM &&
+        gll_node_kind_value(node) != CETTA_LP_NATIVE_GLL_NODE_INTER) {
         return;
     }
-    for (i = 0; i < node->packed.len; i++) {
-        const CettaLpNativeGllPackedChoice *choice = &node->packed.data[i];
+    for (choice_idx = node->first_choice;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        const CettaLpNativeGllPackedChoice *choice;
+        if (choice_idx >= nodes->packed.len)
+            return;
+        choice = &nodes->packed.data[choice_idx];
         if (choice->left_idx != CETTA_LP_NATIVE_NODE_NONE)
             gll_mark_reachable(nodes, choice->left_idx, seen);
         gll_mark_reachable(nodes, choice->right_idx, seen);
@@ -3081,14 +5080,14 @@ static bool gll_collect_reachable_spans(const CettaLpNativeGllNodeVec *nodes,
         if (!seen[i])
             continue;
         node = &nodes->data[i];
-        if (node->kind == CETTA_LP_NATIVE_GLL_NODE_TERM) {
+        if (gll_node_kind_value(node) == CETTA_LP_NATIVE_GLL_NODE_TERM) {
             kind = 0;
-            symbol = node->symbol;
-        } else if (node->kind == CETTA_LP_NATIVE_GLL_NODE_EPS) {
+            symbol = gll_node_symbol_value(node);
+        } else if (gll_node_kind_value(node) == CETTA_LP_NATIVE_GLL_NODE_EPS) {
             kind = 1;
-        } else if (node->kind == CETTA_LP_NATIVE_GLL_NODE_SYM) {
+        } else if (gll_node_kind_value(node) == CETTA_LP_NATIVE_GLL_NODE_SYM) {
             kind = 2;
-            symbol = node->symbol;
+            symbol = gll_node_symbol_value(node);
         } else {
             continue;
         }
@@ -3249,27 +5248,44 @@ static Atom *gll_idx_atom(Arena *arena, uint32_t idx) {
 }
 
 static Atom *gll_choice_atom(Arena *arena,
+                             const CettaLpNativeGllNodeVec *nodes,
                              const CettaLpNativeGllPackedChoice *choice) {
     Atom **elems = arena_alloc(arena, sizeof(Atom *) * 5);
 
     elems[0] = atom_symbol(arena, "GChoice");
     elems[1] = gll_idx_atom(arena, choice->left_idx);
     elems[2] = gll_idx_atom(arena, choice->right_idx);
-    elems[3] = atom_int(arena, choice->pivot);
-    elems[4] = atom_int(arena, choice->prod_idx);
+    elems[3] = atom_int(arena, gll_choice_pivot(nodes, choice));
+    elems[4] = atom_int(arena, gll_choice_prod_idx(nodes, choice));
     return atom_expr(arena, elems, 5);
 }
 
 static Atom *gll_choices_list_atom(Arena *arena,
-                                   const CettaLpNativeGllPackedVec *choices) {
+                                   const CettaLpNativeGllNodeVec *nodes,
+                                   const CettaLpNativeGllNode *node) {
     Atom **items = NULL;
-    uint32_t i;
+    uint32_t item_idx = 0;
+    uint32_t count = 0;
+    uint32_t choice_idx;
 
-    if (choices->len > 0)
-        items = arena_alloc(arena, sizeof(Atom *) * choices->len);
-    for (i = 0; i < choices->len; i++)
-        items[i] = gll_choice_atom(arena, &choices->data[i]);
-    return make_cons_list(arena, items, choices->len);
+    for (choice_idx = node->first_choice;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        if (choice_idx >= nodes->packed.len)
+            break;
+        count++;
+    }
+    if (count > 0)
+        items = arena_alloc(arena, sizeof(Atom *) * count);
+    for (choice_idx = node->first_choice;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        if (choice_idx >= nodes->packed.len)
+            break;
+        items[item_idx++] = gll_choice_atom(arena, nodes,
+                                            &nodes->packed.data[choice_idx]);
+    }
+    return make_cons_list(arena, items, item_idx);
 }
 
 static Atom *gll_node_data_atom(Arena *arena,
@@ -3277,17 +5293,18 @@ static Atom *gll_node_data_atom(Arena *arena,
                                 uint32_t idx) {
     const CettaLpNativeGllNode *node = &nodes->data[idx];
     Atom **elems;
+    CettaLpNativeGllNodeKind kind = gll_node_kind_value(node);
 
-    if (node->kind == CETTA_LP_NATIVE_GLL_NODE_TERM) {
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_TERM) {
         elems = arena_alloc(arena, sizeof(Atom *) * 5);
         elems[0] = atom_symbol(arena, "GNodeTerm");
         elems[1] = atom_int(arena, idx);
-        elems[2] = atom_symbol_id(arena, node->symbol);
+        elems[2] = atom_symbol_id(arena, gll_node_symbol_value(node));
         elems[3] = atom_int(arena, node->left);
         elems[4] = atom_int(arena, node->right);
         return atom_expr(arena, elems, 5);
     }
-    if (node->kind == CETTA_LP_NATIVE_GLL_NODE_EPS) {
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_EPS) {
         elems = arena_alloc(arena, sizeof(Atom *) * 4);
         elems[0] = atom_symbol(arena, "GNodeEps");
         elems[1] = atom_int(arena, idx);
@@ -3295,25 +5312,25 @@ static Atom *gll_node_data_atom(Arena *arena,
         elems[3] = atom_int(arena, node->right);
         return atom_expr(arena, elems, 4);
     }
-    if (node->kind == CETTA_LP_NATIVE_GLL_NODE_SYM) {
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_SYM) {
         elems = arena_alloc(arena, sizeof(Atom *) * 6);
         elems[0] = atom_symbol(arena, "GNodeSym");
         elems[1] = atom_int(arena, idx);
-        elems[2] = atom_symbol_id(arena, node->symbol);
+        elems[2] = atom_symbol_id(arena, gll_node_symbol_value(node));
         elems[3] = atom_int(arena, node->left);
         elems[4] = atom_int(arena, node->right);
-        elems[5] = gll_choices_list_atom(arena, &node->packed);
+        elems[5] = gll_choices_list_atom(arena, nodes, node);
         return atom_expr(arena, elems, 6);
     }
 
     elems = arena_alloc(arena, sizeof(Atom *) * 7);
     elems[0] = atom_symbol(arena, "GNodeInter");
     elems[1] = atom_int(arena, idx);
-    elems[2] = atom_int(arena, node->prod_idx);
-    elems[3] = atom_int(arena, node->dot);
+    elems[2] = atom_int(arena, gll_node_prod_idx_value(node));
+    elems[3] = atom_int(arena, gll_node_dot_value(node));
     elems[4] = atom_int(arena, node->left);
     elems[5] = atom_int(arena, node->right);
-    elems[6] = gll_choices_list_atom(arena, &node->packed);
+    elems[6] = gll_choices_list_atom(arena, nodes, node);
     return atom_expr(arena, elems, 7);
 }
 
@@ -3346,37 +5363,255 @@ static Atom *gll_forest_data_atom(Arena *arena,
     return atom_expr(arena, elems, 6);
 }
 
-static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *grammar,
-                                               SymbolId start_nt,
-                                               Atom *token_list,
-                                               Arena *arena,
-                                               char *error_buf,
-                                               size_t error_buf_size,
-                                               CettaLpNativeForestOutput output) {
+static Atom *cetta_lp_native_gll_recognize_tokens(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const CettaLpNativeInputTokenVec *tokens,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
     CettaLpNativeSlrProduction *productions = NULL;
     uint32_t production_len = 0;
-    CettaLpNativeInputTokenVec tokens = {0};
-    CettaLpNativeGllNodeVec nodes = {0};
-    CettaLpNativeGllGssNodeVec gss_nodes = {0};
-    CettaLpNativeGllDescriptorVec seen = {0};
-    CettaLpNativeGllDescriptorVec work = {0};
-    uint32_t root_count = 0;
-    int32_t root_idx = -1;
-    const char *status = "NoParse";
+    CettaLpNativeGllRecGssNodeVec gss_nodes = {0};
+    CettaLpNativeGllRecDescSet seen = {0};
+    CettaLpNativeU64Stack work = {0};
+    CettaLpNativeGllRecDescPacking packing;
+    uint32_t max_rhs_len = 0;
+    bool accepted = false;
     Atom *result = NULL;
 
-    if (!grammar || !arena) {
+    if (!grammar || !tokens || !arena) {
         slr_summary_set_error(error_buf, error_buf_size,
-                              "bad GLL forest-summary args");
+                              "bad GLL recognize args");
         return NULL;
     }
-    if (!input_tokens_from_list(token_list, &tokens, error_buf, error_buf_size))
-        return NULL;
     if (!slr_build_productions(grammar, &productions, &production_len,
                                error_buf, error_buf_size) ||
         !slr_grammar_mentions_nonterminal(productions, production_len, start_nt)) {
         goto fail;
     }
+    max_rhs_len = gll_max_rhs_len(productions, production_len);
+    if (!gll_rec_desc_packing_init(&packing, production_len,
+                                   max_rhs_len, tokens->len)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "GLL recognizer descriptor key is too wide");
+        goto fail;
+    }
+    if (!gll_rec_gss_packing_init(&gss_nodes.packing, production_len,
+                                  max_rhs_len, tokens->len)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "GLL recognizer GSS key is too wide");
+        goto fail;
+    }
+    if (gll_rec_gss_get(&gss_nodes, true, -1, 0, 0) != 0) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "failed to initialize GLL recognizer root");
+        goto fail;
+    }
+    {
+        uint32_t prod_idx;
+        for (prod_idx = 0; prod_idx < production_len; prod_idx++) {
+            SymbolId lhs = 0;
+            const CettaLpNativeSymbol *rhs = NULL;
+            uint32_t rhs_len = 0;
+            slr_get_prod(productions, production_len, start_nt,
+                         (int32_t)prod_idx, &lhs, &rhs, &rhs_len);
+            (void)rhs;
+            (void)rhs_len;
+            if (lhs != start_nt)
+                continue;
+            if (!gll_rec_desc_pack_enqueue(&packing, &seen, &work,
+                                           (int32_t)prod_idx, 0, 0, 0)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to seed GLL recognizer descriptors");
+                goto fail;
+            }
+        }
+    }
+
+    while (work.len > 0) {
+        uint64_t cur_key;
+        int32_t cur_prod_idx;
+        uint32_t cur_dot;
+        uint32_t cur_gss_idx;
+        uint32_t cur_pos;
+        SymbolId lhs = 0;
+        const CettaLpNativeSymbol *rhs = NULL;
+        uint32_t rhs_len = 0;
+
+        if (!u64stack_pop(&work, &cur_key)) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "failed to pop GLL recognizer descriptor");
+            goto fail;
+        }
+        gll_rec_desc_unpack(&packing, cur_key, &cur_prod_idx, &cur_dot,
+                            &cur_gss_idx, &cur_pos);
+        slr_get_prod(productions, production_len, start_nt,
+                     cur_prod_idx, &lhs, &rhs, &rhs_len);
+        if (cur_dot < rhs_len) {
+            CettaLpNativeSymbol sym = rhs[cur_dot];
+            if (sym.kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+                if (cur_pos >= tokens->len ||
+                    tokens->data[cur_pos].term_kind != sym.name) {
+                    continue;
+                }
+                if (!gll_rec_desc_pack_enqueue(&packing, &seen, &work,
+                                               cur_prod_idx, cur_dot + 1,
+                                               cur_gss_idx, cur_pos + 1)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to advance GLL recognizer terminal");
+                    goto fail;
+                }
+                continue;
+            }
+            {
+                int32_t next_gss = gll_rec_gss_get(&gss_nodes, false,
+                                                   cur_prod_idx, cur_dot + 1,
+                                                   cur_pos);
+                uint32_t prod_idx;
+                uint32_t popped_idx;
+                if (next_gss < 0 ||
+                    !gll_rec_gss_add_edge(&gss_nodes, (uint32_t)next_gss,
+                                          cur_gss_idx)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to create GLL recognizer continuation");
+                    goto fail;
+                }
+                for (popped_idx = gss_nodes.data[next_gss].first_popped;
+                     popped_idx != CETTA_LP_NATIVE_NODE_NONE;
+                     ) {
+                    uint32_t done_pos;
+                    uint32_t next_popped;
+                    if (!gll_rec_link_get(&gss_nodes.popped, popped_idx,
+                                          &done_pos, &next_popped)) {
+                        slr_summary_set_error(error_buf, error_buf_size,
+                                              "bad GLL recognizer popped index");
+                        goto fail;
+                    }
+                    if (!gll_rec_desc_pack_enqueue(&packing, &seen, &work,
+                                                   cur_prod_idx, cur_dot + 1,
+                                                   cur_gss_idx, done_pos)) {
+                        slr_summary_set_error(error_buf, error_buf_size,
+                                              "failed to resume GLL recognizer continuation");
+                        goto fail;
+                    }
+                    popped_idx = next_popped;
+                }
+                for (prod_idx = 0; prod_idx < production_len; prod_idx++) {
+                    SymbolId child_lhs = 0;
+                    const CettaLpNativeSymbol *child_rhs = NULL;
+                    uint32_t child_rhs_len = 0;
+                    slr_get_prod(productions, production_len, start_nt,
+                                 (int32_t)prod_idx, &child_lhs, &child_rhs,
+                                 &child_rhs_len);
+                    (void)child_rhs;
+                    (void)child_rhs_len;
+                    if (child_lhs != sym.name)
+                        continue;
+                    if (!gll_rec_desc_pack_enqueue(&packing, &seen, &work,
+                                                   (int32_t)prod_idx, 0,
+                                                   (uint32_t)next_gss, cur_pos)) {
+                        slr_summary_set_error(error_buf, error_buf_size,
+                                              "failed to seed GLL recognizer child");
+                        goto fail;
+                    }
+                }
+                continue;
+            }
+        }
+        {
+            uint32_t edge_idx;
+            bool resume_root;
+            int32_t resume_prod_idx;
+            uint32_t resume_dot;
+            uint32_t resume_pos;
+            if (cur_gss_idx == 0) {
+                if (cur_pos == tokens->len)
+                    accepted = true;
+                continue;
+            }
+            if (!gll_rec_gss_add_popped(&gss_nodes, cur_gss_idx, cur_pos)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to record GLL recognizer completion");
+                goto fail;
+            }
+            gll_rec_gss_key_unpack(&gss_nodes.packing,
+                                   gss_nodes.data[cur_gss_idx].key,
+                                   &resume_root, &resume_prod_idx,
+                                   &resume_dot, &resume_pos);
+            (void)resume_root;
+            (void)resume_pos;
+            for (edge_idx = gss_nodes.data[cur_gss_idx].first_edge;
+                 edge_idx != CETTA_LP_NATIVE_NODE_NONE;
+                 ) {
+                uint32_t parent_gss;
+                uint32_t next_edge;
+                if (!gll_rec_link_get(&gss_nodes.edges, edge_idx,
+                                      &parent_gss, &next_edge)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "bad GLL recognizer edge index");
+                    goto fail;
+                }
+                if (!gll_rec_desc_pack_enqueue(&packing, &seen, &work,
+                                               resume_prod_idx, resume_dot,
+                                               parent_gss, cur_pos)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to propagate GLL recognizer completion");
+                    goto fail;
+                }
+                edge_idx = next_edge;
+            }
+        }
+    }
+
+    result = gll_recognize_atom(arena, accepted ? "Accepted" : "Rejected",
+                                tokens->len, gss_nodes.len, seen.len);
+    gll_rec_gssvec_free(&gss_nodes);
+    gll_rec_desc_set_free(&seen);
+    u64stack_free(&work);
+    slr_productions_free(productions, production_len);
+    return result;
+
+fail:
+    gll_rec_gssvec_free(&gss_nodes);
+    gll_rec_desc_set_free(&seen);
+    u64stack_free(&work);
+    slr_productions_free(productions, production_len);
+    return NULL;
+}
+
+static Atom *cetta_lp_native_gll_forest_result_tokens(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const CettaLpNativeInputTokenVec *tokens,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size,
+    CettaLpNativeForestOutput output) {
+    CettaLpNativeSlrProduction *productions = NULL;
+    uint32_t production_len = 0;
+    CettaLpNativeGllNodeVec nodes = {0};
+    CettaLpNativeGllGssNodeVec gss_nodes = {0};
+    CettaLpNativeGllDescriptorVec seen = {0};
+    CettaLpNativeU32Vec work = {0};
+    uint32_t root_count = 0;
+    int32_t root_idx = -1;
+    const char *status = "NoParse";
+    uint32_t max_rhs_len = 0;
+    Atom *result = NULL;
+
+    if (!grammar || !tokens || !arena) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "bad GLL forest-summary args");
+        return NULL;
+    }
+    if (!slr_build_productions(grammar, &productions, &production_len,
+                               error_buf, error_buf_size) ||
+        !slr_grammar_mentions_nonterminal(productions, production_len, start_nt)) {
+        goto fail;
+    }
+    max_rhs_len = gll_max_rhs_len(productions, production_len);
+    gll_descvec_init_compact(&seen, production_len, max_rhs_len, tokens->len);
     if (gll_gss_get(&gss_nodes, true, -1, 0, 0) != 0) {
         slr_summary_set_error(error_buf, error_buf_size,
                               "failed to initialize GLL root");
@@ -3404,12 +5639,18 @@ static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *gramm
     }
 
     while (work.len > 0) {
-        CettaLpNativeGllDescriptor cur = work.data[work.len - 1];
+        uint32_t cur_idx = work.data[work.len - 1];
+        CettaLpNativeGllDescriptor cur;
         SymbolId lhs = 0;
         const CettaLpNativeSymbol *rhs = NULL;
         uint32_t rhs_len = 0;
 
         work.len--;
+        if (!gll_descvec_get(&seen, cur_idx, &cur)) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "bad GLL descriptor index");
+            goto fail;
+        }
         slr_get_prod(productions, production_len, start_nt,
                      cur.prod_idx, &lhs, &rhs, &rhs_len);
         if (cur.dot < rhs_len) {
@@ -3417,7 +5658,7 @@ static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *gramm
             if (sym.kind == CETTA_LP_NATIVE_SYMBOL_TM) {
                 int32_t term_idx;
                 int32_t parent_idx;
-                if (cur.pos >= tokens.len || tokens.data[cur.pos].term_kind != sym.name)
+                if (cur.pos >= tokens->len || tokens->data[cur.pos].term_kind != sym.name)
                     continue;
                 term_idx = gll_node_get_term(&nodes, sym.name, cur.pos);
                 if (term_idx < 0) {
@@ -3493,11 +5734,11 @@ static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *gramm
                 int32_t sym_idx = gll_node_get_sym(&nodes, lhs, cur.pos, cur.pos);
                 int32_t eps_idx = gll_node_get_eps(&nodes, cur.pos);
                 if (sym_idx < 0 || eps_idx < 0 ||
-                    !gll_packedvec_push_unique(&nodes.data[sym_idx].packed,
-                                               CETTA_LP_NATIVE_NODE_NONE,
-                                               (uint32_t)eps_idx,
-                                               cur.pos,
-                                               cur.prod_idx)) {
+                    !gll_node_push_packed_unique(&nodes, (uint32_t)sym_idx,
+                                                 CETTA_LP_NATIVE_NODE_NONE,
+                                                 (uint32_t)eps_idx,
+                                                 cur.pos,
+                                                 cur.prod_idx)) {
                     slr_summary_set_error(error_buf, error_buf_size,
                                           "failed to record GLL epsilon completion");
                     goto fail;
@@ -3540,7 +5781,7 @@ static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *gramm
 
     {
         root_idx = gll_node_find(&nodes, CETTA_LP_NATIVE_GLL_NODE_SYM,
-                                 start_nt, -1, 0, 0, tokens.len);
+                                 start_nt, -1, 0, 0, tokens->len);
         if (root_idx >= 0 &&
             u32vec_contains(&gss_nodes.data[0].popped, (uint32_t)root_idx)) {
             uint8_t *memo_seen = cetta_malloc(sizeof(*memo_seen) * nodes.len);
@@ -3561,10 +5802,10 @@ static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *gramm
     }
 
     if (output == CETTA_LP_NATIVE_FOREST_OUT_DATA) {
-        result = gll_forest_data_atom(arena, status, tokens.len, root_count,
+        result = gll_forest_data_atom(arena, status, tokens->len, root_count,
                                       root_idx, &nodes);
     } else if (output == CETTA_LP_NATIVE_FOREST_OUT_SIGNATURE) {
-        result = gll_forest_signature_atom(arena, status, tokens.len,
+        result = gll_forest_signature_atom(arena, status, tokens->len,
                                            root_count, root_idx, &nodes);
         if (!result) {
             slr_summary_set_error(error_buf, error_buf_size,
@@ -3572,7 +5813,7 @@ static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *gramm
             goto fail;
         }
     } else if (output == CETTA_LP_NATIVE_FOREST_OUT_SIGNATURE_DIGEST) {
-        result = gll_forest_signature_digest_atom(arena, status, tokens.len,
+        result = gll_forest_signature_digest_atom(arena, status, tokens->len,
                                                   root_count, root_idx, &nodes);
         if (!result) {
             slr_summary_set_error(error_buf, error_buf_size,
@@ -3580,26 +5821,356 @@ static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *gramm
             goto fail;
         }
     } else {
-        result = gll_forest_summary_atom(arena, status, tokens.len, &nodes,
+        result = gll_forest_summary_atom(arena, status, tokens->len, &nodes,
                                          &gss_nodes, seen.len, root_count);
     }
 
-    free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
-    free(seen.data);
+    gll_descvec_free(&seen);
     free(work.data);
     slr_productions_free(productions, production_len);
     return result;
 
 fail:
-    free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
-    free(seen.data);
+    gll_descvec_free(&seen);
     free(work.data);
     slr_productions_free(productions, production_len);
     return NULL;
+}
+
+static Atom *cetta_lp_native_gll_forest_result(const CettaLpNativeGrammar *grammar,
+                                               SymbolId start_nt,
+                                               Atom *token_list,
+                                               Arena *arena,
+                                               char *error_buf,
+                                               size_t error_buf_size,
+                                               CettaLpNativeForestOutput output) {
+    CettaLpNativeInputTokenVec tokens = {0};
+    Atom *result;
+
+    if (!input_tokens_from_list(token_list, &tokens, error_buf, error_buf_size))
+        return NULL;
+    result = cetta_lp_native_gll_forest_result_tokens(
+        grammar, start_nt, &tokens, arena, error_buf, error_buf_size, output);
+    free(tokens.data);
+    return result;
+}
+
+static Atom *cetta_lp_native_gll_forest_result_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size,
+    CettaLpNativeForestOutput output) {
+    CettaLpNativeInputTokenVec tokens = {0};
+    Atom *result;
+
+    if (!input_tokens_from_file(arena, token_filename, &tokens,
+                                error_buf, error_buf_size))
+        return NULL;
+    result = cetta_lp_native_gll_forest_result_tokens(
+        grammar, start_nt, &tokens, arena, error_buf, error_buf_size, output);
+    free(tokens.data);
+    return result;
+}
+
+static Atom *cetta_lp_native_gll_span_summary_tokens(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const CettaLpNativeInputTokenVec *tokens,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeSlrProduction *productions = NULL;
+    uint32_t production_len = 0;
+    CettaLpNativeGllRecGssNodeVec gss_nodes = {0};
+    CettaLpNativeGllRecDescSet seen = {0};
+    CettaLpNativeGllRecDescSet spans = {0};
+    CettaLpNativeU64Stack work = {0};
+    CettaLpNativeGllRecDescPacking desc_packing;
+    CettaLpNativeGllSpanPacking span_packing;
+    uint32_t max_rhs_len = 0;
+    bool accepted = false;
+    Atom *result = NULL;
+
+    if (!grammar || !tokens || !arena) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "bad GLL span-summary args");
+        return NULL;
+    }
+    if (!slr_build_productions(grammar, &productions, &production_len,
+                               error_buf, error_buf_size) ||
+        !slr_grammar_mentions_nonterminal(productions, production_len, start_nt)) {
+        goto fail;
+    }
+    max_rhs_len = gll_max_rhs_len(productions, production_len);
+    if (!gll_rec_desc_packing_init(&desc_packing, production_len,
+                                   max_rhs_len, tokens->len)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "GLL span-summary descriptor key is too wide");
+        goto fail;
+    }
+    if (!gll_span_packing_init(&span_packing, production_len, tokens->len)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "GLL span-summary relation key is too wide");
+        goto fail;
+    }
+    if (!gll_rec_gss_packing_init(&gss_nodes.packing, production_len,
+                                  max_rhs_len, tokens->len)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "GLL span-summary GSS key is too wide");
+        goto fail;
+    }
+    if (gll_rec_gss_get(&gss_nodes, true, -1, 0, 0) != 0) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "failed to initialize GLL span-summary root");
+        goto fail;
+    }
+    {
+        uint32_t prod_idx;
+        for (prod_idx = 0; prod_idx < production_len; prod_idx++) {
+            SymbolId lhs = 0;
+            const CettaLpNativeSymbol *rhs = NULL;
+            uint32_t rhs_len = 0;
+            slr_get_prod(productions, production_len, start_nt,
+                         (int32_t)prod_idx, &lhs, &rhs, &rhs_len);
+            (void)rhs;
+            (void)rhs_len;
+            if (lhs != start_nt)
+                continue;
+            if (!gll_rec_desc_pack_enqueue(&desc_packing, &seen, &work,
+                                           (int32_t)prod_idx, 0, 0, 0)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to seed GLL span-summary descriptors");
+                goto fail;
+            }
+        }
+    }
+
+    while (work.len > 0) {
+        uint64_t cur_key;
+        int32_t cur_prod_idx;
+        uint32_t cur_dot;
+        uint32_t cur_gss_idx;
+        uint32_t cur_pos;
+        SymbolId lhs = 0;
+        const CettaLpNativeSymbol *rhs = NULL;
+        uint32_t rhs_len = 0;
+
+        if (!u64stack_pop(&work, &cur_key)) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "failed to pop GLL span-summary descriptor");
+            goto fail;
+        }
+        gll_rec_desc_unpack(&desc_packing, cur_key, &cur_prod_idx, &cur_dot,
+                            &cur_gss_idx, &cur_pos);
+        slr_get_prod(productions, production_len, start_nt,
+                     cur_prod_idx, &lhs, &rhs, &rhs_len);
+        if (cur_dot < rhs_len) {
+            CettaLpNativeSymbol sym = rhs[cur_dot];
+            if (sym.kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+                if (cur_pos >= tokens->len ||
+                    tokens->data[cur_pos].term_kind != sym.name) {
+                    continue;
+                }
+                if (!gll_rec_desc_pack_enqueue(&desc_packing, &seen, &work,
+                                               cur_prod_idx, cur_dot + 1,
+                                               cur_gss_idx, cur_pos + 1)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to advance GLL span-summary terminal");
+                    goto fail;
+                }
+                continue;
+            }
+            {
+                int32_t next_gss = gll_rec_gss_get(&gss_nodes, false,
+                                                   cur_prod_idx, cur_dot + 1,
+                                                   cur_pos);
+                uint32_t prod_idx;
+                uint32_t popped_idx;
+                if (next_gss < 0 ||
+                    !gll_rec_gss_add_edge(&gss_nodes, (uint32_t)next_gss,
+                                          cur_gss_idx)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to create GLL span-summary continuation");
+                    goto fail;
+                }
+                for (popped_idx = gss_nodes.data[next_gss].first_popped;
+                     popped_idx != CETTA_LP_NATIVE_NODE_NONE;
+                     ) {
+                    uint32_t done_pos;
+                    uint32_t next_popped;
+                    if (!gll_rec_link_get(&gss_nodes.popped, popped_idx,
+                                          &done_pos, &next_popped)) {
+                        slr_summary_set_error(error_buf, error_buf_size,
+                                              "bad GLL span-summary popped index");
+                        goto fail;
+                    }
+                    if (!gll_rec_desc_pack_enqueue(&desc_packing, &seen, &work,
+                                                   cur_prod_idx, cur_dot + 1,
+                                                   cur_gss_idx, done_pos)) {
+                        slr_summary_set_error(error_buf, error_buf_size,
+                                              "failed to resume GLL span-summary continuation");
+                        goto fail;
+                    }
+                    popped_idx = next_popped;
+                }
+                for (prod_idx = 0; prod_idx < production_len; prod_idx++) {
+                    SymbolId child_lhs = 0;
+                    const CettaLpNativeSymbol *child_rhs = NULL;
+                    uint32_t child_rhs_len = 0;
+                    slr_get_prod(productions, production_len, start_nt,
+                                 (int32_t)prod_idx, &child_lhs, &child_rhs,
+                                 &child_rhs_len);
+                    (void)child_rhs;
+                    (void)child_rhs_len;
+                    if (child_lhs != sym.name)
+                        continue;
+                    if (!gll_rec_desc_pack_enqueue(&desc_packing, &seen, &work,
+                                                   (int32_t)prod_idx, 0,
+                                                   (uint32_t)next_gss, cur_pos)) {
+                        slr_summary_set_error(error_buf, error_buf_size,
+                                              "failed to seed GLL span-summary child");
+                        goto fail;
+                    }
+                }
+                continue;
+            }
+        }
+        {
+            uint64_t span_key;
+            uint32_t edge_idx;
+            bool resume_root = false;
+            int32_t resume_prod_idx = -1;
+            uint32_t resume_dot = 0;
+            uint32_t resume_pos = 0;
+            uint32_t origin = 0;
+
+            if (cur_gss_idx != 0) {
+                gll_rec_gss_key_unpack(&gss_nodes.packing,
+                                       gss_nodes.data[cur_gss_idx].key,
+                                       &resume_root, &resume_prod_idx,
+                                       &resume_dot, &resume_pos);
+                (void)resume_root;
+                origin = resume_pos;
+            }
+            if (!gll_span_pack(&span_packing, cur_prod_idx, origin, cur_pos,
+                               &span_key) ||
+                !gll_rec_desc_set_insert(&spans, span_key, NULL)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to record GLL completed span");
+                goto fail;
+            }
+            if (cur_gss_idx == 0) {
+                if (cur_pos == tokens->len)
+                    accepted = true;
+                continue;
+            }
+            if (!gll_rec_gss_add_popped(&gss_nodes, cur_gss_idx, cur_pos)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to record GLL span-summary completion");
+                goto fail;
+            }
+            for (edge_idx = gss_nodes.data[cur_gss_idx].first_edge;
+                 edge_idx != CETTA_LP_NATIVE_NODE_NONE;
+                 ) {
+                uint32_t parent_gss;
+                uint32_t next_edge;
+                if (!gll_rec_link_get(&gss_nodes.edges, edge_idx,
+                                      &parent_gss, &next_edge)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "bad GLL span-summary edge index");
+                    goto fail;
+                }
+                if (!gll_rec_desc_pack_enqueue(&desc_packing, &seen, &work,
+                                               resume_prod_idx, resume_dot,
+                                               parent_gss, cur_pos)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to propagate GLL span-summary completion");
+                    goto fail;
+                }
+                edge_idx = next_edge;
+            }
+        }
+    }
+
+    result = gll_span_summary_atom(arena, accepted ? "Accepted" : "Rejected",
+                                   tokens->len, spans.len, gss_nodes.len,
+                                   seen.len);
+    gll_rec_gssvec_free(&gss_nodes);
+    gll_rec_desc_set_free(&seen);
+    gll_rec_desc_set_free(&spans);
+    u64stack_free(&work);
+    slr_productions_free(productions, production_len);
+    return result;
+
+fail:
+    gll_rec_gssvec_free(&gss_nodes);
+    gll_rec_desc_set_free(&seen);
+    gll_rec_desc_set_free(&spans);
+    u64stack_free(&work);
+    slr_productions_free(productions, production_len);
+    return NULL;
+}
+
+Atom *cetta_lp_native_gll_span_summary(const CettaLpNativeGrammar *grammar,
+                                       SymbolId start_nt,
+                                       Atom *token_list,
+                                       Arena *arena,
+                                       char *error_buf,
+                                       size_t error_buf_size) {
+    CettaLpNativeInputTokenVec tokens = {0};
+    Atom *result;
+
+    if (!input_tokens_from_list(token_list, &tokens, error_buf, error_buf_size))
+        return NULL;
+    result = cetta_lp_native_gll_span_summary_tokens(
+        grammar, start_nt, &tokens, arena, error_buf, error_buf_size);
+    free(tokens.data);
+    return result;
+}
+
+Atom *cetta_lp_native_gll_recognize_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeInputTokenVec tokens = {0};
+    Atom *result;
+
+    if (!input_tokens_from_file(arena, token_filename, &tokens,
+                                error_buf, error_buf_size))
+        return NULL;
+    result = cetta_lp_native_gll_recognize_tokens(
+        grammar, start_nt, &tokens, arena, error_buf, error_buf_size);
+    free(tokens.data);
+    return result;
+}
+
+Atom *cetta_lp_native_gll_span_summary_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeInputTokenVec tokens = {0};
+    Atom *result;
+
+    if (!input_tokens_from_file(arena, token_filename, &tokens,
+                                error_buf, error_buf_size))
+        return NULL;
+    result = cetta_lp_native_gll_span_summary_tokens(
+        grammar, start_nt, &tokens, arena, error_buf, error_buf_size);
+    free(tokens.data);
+    return result;
 }
 
 Atom *cetta_lp_native_gll_forest_summary(const CettaLpNativeGrammar *grammar,
@@ -3611,6 +6182,18 @@ Atom *cetta_lp_native_gll_forest_summary(const CettaLpNativeGrammar *grammar,
     return cetta_lp_native_gll_forest_result(grammar, start_nt, token_list,
                                              arena, error_buf, error_buf_size,
                                              CETTA_LP_NATIVE_FOREST_OUT_SUMMARY);
+}
+
+Atom *cetta_lp_native_gll_forest_summary_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    return cetta_lp_native_gll_forest_result_token_file(
+        grammar, start_nt, token_filename, arena, error_buf, error_buf_size,
+        CETTA_LP_NATIVE_FOREST_OUT_SUMMARY);
 }
 
 Atom *cetta_lp_native_gll_forest_signature(const CettaLpNativeGrammar *grammar,
@@ -3632,6 +6215,18 @@ Atom *cetta_lp_native_gll_forest_signature_digest(const CettaLpNativeGrammar *gr
                                                   size_t error_buf_size) {
     return cetta_lp_native_gll_forest_result(
         grammar, start_nt, token_list, arena, error_buf, error_buf_size,
+        CETTA_LP_NATIVE_FOREST_OUT_SIGNATURE_DIGEST);
+}
+
+Atom *cetta_lp_native_gll_forest_signature_digest_token_file(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    const char *token_filename,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    return cetta_lp_native_gll_forest_result_token_file(
+        grammar, start_nt, token_filename, arena, error_buf, error_buf_size,
         CETTA_LP_NATIVE_FOREST_OUT_SIGNATURE_DIGEST);
 }
 
@@ -4682,11 +7277,11 @@ static Atom *cetta_lp_native_glr_forest_result(const CettaLpNativeGrammar *gramm
                     Atom *eps = make_eps_cert(arena);
                     Atom *kids[1] = {eps};
                     if (sym_idx < 0 || eps_idx < 0 ||
-                        !gll_packedvec_push_unique(&nodes.data[sym_idx].packed,
-                                                   CETTA_LP_NATIVE_NODE_NONE,
-                                                   (uint32_t)eps_idx,
-                                                   cur_pos,
-                                                   prod_idx)) {
+                        !gll_node_push_packed_unique(&nodes, (uint32_t)sym_idx,
+                                                     CETTA_LP_NATIVE_NODE_NONE,
+                                                     (uint32_t)eps_idx,
+                                                     cur_pos,
+                                                     prod_idx)) {
                         free(next_stack.data);
                         free(next_values.data);
                         slr_summary_set_error(error_buf, error_buf_size,

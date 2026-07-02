@@ -72,6 +72,12 @@
      (case (__cetta_lib_gparse_gll_forest_summary $path $def $start $toks)
        (($result (return $result))))))
 
+(= (gparse:gll-forest-summary-token-file $path $def $start $token-path)
+   (function
+     (case (__cetta_lib_gparse_gll_forest_summary_token_file
+             $path $def $start $token-path)
+       (($result (return $result))))))
+
 (= (gparse:gll-forest-signature $path $def $start $toks)
    (function
      (case (__cetta_lib_gparse_gll_forest_signature $path $def $start $toks)
@@ -80,6 +86,12 @@
 (= (gparse:gll-forest-signature-digest $path $def $start $toks)
    (function
      (case (__cetta_lib_gparse_gll_forest_signature_digest $path $def $start $toks)
+       (($result (return $result))))))
+
+(= (gparse:gll-forest-signature-digest-token-file $path $def $start $token-path)
+   (function
+     (case (__cetta_lib_gparse_gll_forest_signature_digest_token_file
+             $path $def $start $token-path)
        (($result (return $result))))))
 
 (= (gparse:gll-forest-data $path $def $start $toks)
