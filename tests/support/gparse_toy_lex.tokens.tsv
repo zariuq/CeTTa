@@ -1,0 +1,2 @@
+lex	WORD	alpha
+lex-text	WORD	beta gamma

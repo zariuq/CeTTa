@@ -361,6 +361,7 @@ static Atom *gparse_dispatch(struct CettaLibraryContext *ctx,
                              uint32_t nargs) {
     const char *filename = NULL;
     const char *def_name = NULL;
+    const char *token_filename = NULL;
     SymbolId start_nt = 0;
     CettaLpNativeGrammar grammar;
     CettaLpNativeGrammarSummary summary;
@@ -683,7 +684,7 @@ maybe_glr_forest_data:
 
 maybe_gll_shared:
     if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_parse_shared"))
-        goto maybe_gll_forest_summary;
+        goto maybe_gll_recognize;
     if (nargs != 4 ||
         !native_text_arg(args[0], &filename) ||
         !native_text_arg(args[1], &def_name) ||
@@ -712,9 +713,135 @@ maybe_gll_shared:
         return parsed;
     }
 
+maybe_gll_recognize:
+    if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_recognize"))
+        goto maybe_gll_recognize_token_file;
+    if (nargs != 4 ||
+        !native_text_arg(args[0], &filename) ||
+        !native_text_arg(args[1], &def_name) ||
+        !native_symbol_arg(a, args[2], &start_nt)) {
+        return native_module_error(
+            a, head,
+            "__cetta_lib_gparse_gll_recognize expects filename, definition, start, and tokens");
+    }
+    cetta_lp_native_grammar_init(&grammar);
+    error_buf[0] = '\0';
+    if (!cetta_lp_native_grammar_load_file(&grammar, filename, def_name,
+                                           error_buf, sizeof(error_buf))) {
+        cetta_lp_native_grammar_free(&grammar);
+        return native_module_error(
+            a, head, error_buf[0] ? error_buf : "gparse grammar load failed");
+    }
+    {
+        Atom *recognized =
+            cetta_lp_native_gll_recognize(&grammar, start_nt, args[3], a,
+                                          error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!recognized) {
+            return native_module_error(
+                a, head, error_buf[0] ? error_buf : "gparse GLL recognize failed");
+        }
+        return recognized;
+    }
+
+maybe_gll_recognize_token_file:
+    if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_recognize_token_file"))
+        goto maybe_gll_span_summary;
+    if (nargs != 4 ||
+        !native_text_arg(args[0], &filename) ||
+        !native_text_arg(args[1], &def_name) ||
+        !native_symbol_arg(a, args[2], &start_nt) ||
+        !native_text_arg(args[3], &token_filename)) {
+        return native_module_error(
+            a, head,
+            "__cetta_lib_gparse_gll_recognize_token_file expects filename, definition, start, and token filename");
+    }
+    cetta_lp_native_grammar_init(&grammar);
+    error_buf[0] = '\0';
+    if (!cetta_lp_native_grammar_load_file(&grammar, filename, def_name,
+                                           error_buf, sizeof(error_buf))) {
+        cetta_lp_native_grammar_free(&grammar);
+        return native_module_error(
+            a, head, error_buf[0] ? error_buf : "gparse grammar load failed");
+    }
+    {
+        Atom *recognized =
+            cetta_lp_native_gll_recognize_token_file(
+                &grammar, start_nt, token_filename, a, error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!recognized) {
+            return native_module_error(
+                a, head, error_buf[0] ? error_buf : "gparse GLL recognize token file failed");
+        }
+        return recognized;
+    }
+
+maybe_gll_span_summary:
+    if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_span_summary"))
+        goto maybe_gll_span_summary_token_file;
+    if (nargs != 4 ||
+        !native_text_arg(args[0], &filename) ||
+        !native_text_arg(args[1], &def_name) ||
+        !native_symbol_arg(a, args[2], &start_nt)) {
+        return native_module_error(
+            a, head,
+            "__cetta_lib_gparse_gll_span_summary expects filename, definition, start, and tokens");
+    }
+    cetta_lp_native_grammar_init(&grammar);
+    error_buf[0] = '\0';
+    if (!cetta_lp_native_grammar_load_file(&grammar, filename, def_name,
+                                           error_buf, sizeof(error_buf))) {
+        cetta_lp_native_grammar_free(&grammar);
+        return native_module_error(
+            a, head, error_buf[0] ? error_buf : "gparse grammar load failed");
+    }
+    {
+        Atom *summary =
+            cetta_lp_native_gll_span_summary(&grammar, start_nt, args[3], a,
+                                             error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!summary) {
+            return native_module_error(
+                a, head, error_buf[0] ? error_buf : "gparse GLL span summary failed");
+        }
+        return summary;
+    }
+
+maybe_gll_span_summary_token_file:
+    if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_span_summary_token_file"))
+        goto maybe_gll_forest_summary;
+    if (nargs != 4 ||
+        !native_text_arg(args[0], &filename) ||
+        !native_text_arg(args[1], &def_name) ||
+        !native_symbol_arg(a, args[2], &start_nt) ||
+        !native_text_arg(args[3], &token_filename)) {
+        return native_module_error(
+            a, head,
+            "__cetta_lib_gparse_gll_span_summary_token_file expects filename, definition, start, and token filename");
+    }
+    cetta_lp_native_grammar_init(&grammar);
+    error_buf[0] = '\0';
+    if (!cetta_lp_native_grammar_load_file(&grammar, filename, def_name,
+                                           error_buf, sizeof(error_buf))) {
+        cetta_lp_native_grammar_free(&grammar);
+        return native_module_error(
+            a, head, error_buf[0] ? error_buf : "gparse grammar load failed");
+    }
+    {
+        Atom *summary =
+            cetta_lp_native_gll_span_summary_token_file(
+                &grammar, start_nt, token_filename, a, error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!summary) {
+            return native_module_error(
+                a, head, error_buf[0] ? error_buf : "gparse GLL span summary token file failed");
+        }
+        return summary;
+    }
+
 maybe_gll_forest_summary:
     if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_forest_summary"))
-        goto maybe_gll_forest_signature;
+        goto maybe_gll_forest_summary_token_file;
     if (nargs != 4 ||
         !native_text_arg(args[0], &filename) ||
         !native_text_arg(args[1], &def_name) ||
@@ -739,6 +866,38 @@ maybe_gll_forest_summary:
         if (!summary) {
             return native_module_error(
                 a, head, error_buf[0] ? error_buf : "gparse GLL forest summary failed");
+        }
+        return summary;
+    }
+
+maybe_gll_forest_summary_token_file:
+    if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_forest_summary_token_file"))
+        goto maybe_gll_forest_signature;
+    if (nargs != 4 ||
+        !native_text_arg(args[0], &filename) ||
+        !native_text_arg(args[1], &def_name) ||
+        !native_symbol_arg(a, args[2], &start_nt) ||
+        !native_text_arg(args[3], &token_filename)) {
+        return native_module_error(
+            a, head,
+            "__cetta_lib_gparse_gll_forest_summary_token_file expects filename, definition, start, and token filename");
+    }
+    cetta_lp_native_grammar_init(&grammar);
+    error_buf[0] = '\0';
+    if (!cetta_lp_native_grammar_load_file(&grammar, filename, def_name,
+                                           error_buf, sizeof(error_buf))) {
+        cetta_lp_native_grammar_free(&grammar);
+        return native_module_error(
+            a, head, error_buf[0] ? error_buf : "gparse grammar load failed");
+    }
+    {
+        Atom *summary =
+            cetta_lp_native_gll_forest_summary_token_file(
+                &grammar, start_nt, token_filename, a, error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!summary) {
+            return native_module_error(
+                a, head, error_buf[0] ? error_buf : "gparse GLL forest summary token file failed");
         }
         return summary;
     }
@@ -776,7 +935,7 @@ maybe_gll_forest_signature:
 
 maybe_gll_forest_signature_digest:
     if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_forest_signature_digest"))
-        goto maybe_gll_forest_data;
+        goto maybe_gll_forest_signature_digest_token_file;
     if (nargs != 4 ||
         !native_text_arg(args[0], &filename) ||
         !native_text_arg(args[1], &def_name) ||
@@ -801,6 +960,38 @@ maybe_gll_forest_signature_digest:
         if (!digest) {
             return native_module_error(
                 a, head, error_buf[0] ? error_buf : "gparse GLL forest signature digest failed");
+        }
+        return digest;
+    }
+
+maybe_gll_forest_signature_digest_token_file:
+    if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_forest_signature_digest_token_file"))
+        goto maybe_gll_forest_data;
+    if (nargs != 4 ||
+        !native_text_arg(args[0], &filename) ||
+        !native_text_arg(args[1], &def_name) ||
+        !native_symbol_arg(a, args[2], &start_nt) ||
+        !native_text_arg(args[3], &token_filename)) {
+        return native_module_error(
+            a, head,
+            "__cetta_lib_gparse_gll_forest_signature_digest_token_file expects filename, definition, start, and token filename");
+    }
+    cetta_lp_native_grammar_init(&grammar);
+    error_buf[0] = '\0';
+    if (!cetta_lp_native_grammar_load_file(&grammar, filename, def_name,
+                                           error_buf, sizeof(error_buf))) {
+        cetta_lp_native_grammar_free(&grammar);
+        return native_module_error(
+            a, head, error_buf[0] ? error_buf : "gparse grammar load failed");
+    }
+    {
+        Atom *digest =
+            cetta_lp_native_gll_forest_signature_digest_token_file(
+                &grammar, start_nt, token_filename, a, error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!digest) {
+            return native_module_error(
+                a, head, error_buf[0] ? error_buf : "gparse GLL forest signature digest token file failed");
         }
         return digest;
     }
