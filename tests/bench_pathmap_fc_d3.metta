@@ -1,7 +1,7 @@
 ; PathMap-backed variant of the depth-3 propositional forward chainer.
 ;
 ; Recommended:
-;   ./cetta --quiet tests/bench_pathmap_fc_d3.metta
+;   ./cetta --quiet --profile he-extended --space-engine pathmap --lang he tests/bench_pathmap_fc_d3.metta
 
 (= (depth) 3)
 
@@ -46,6 +46,13 @@
 
 !(assertEqualToResult (count-atoms &ss) (3421))
 !(bind! &all-results (get-atoms &ss))
+!(assertEqualToResult
+  (match &ss
+    (: (ax-mp (ax-mp ax-2 ax-2)
+              (ax-mp (ax-mp ax-2 ax-2) (ax-mp ax-1 ax-2)))
+       $t)
+    witness)
+  (witness witness))
 
 !(bind! &stats (runtime-stats!))
 !(println! (count-atoms &ss))
