@@ -1753,7 +1753,9 @@ int main(int argc, char **argv) {
 
     registry_init(&registry);
     cleanup.registry_initialized = true;
-    registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
+    Atom *self_value = atom_space(&arena, &space);
+    cetta_provenance_assert_not_transient(self_value, "main.registry.self");
+    registry_bind_id(&registry, g_builtin_syms.self, self_value);
 
     if (!lang_is_mm2) {
         n = inline_text
@@ -1834,6 +1836,7 @@ int main(int argc, char **argv) {
                 bool stop_after_error = result_set_has_error(&rs);
                 result_set_free(&rs);
                 eval_release_temporary_spaces();
+                eval_reset_form_gc_survivor();
                 /* Reset ephemeral arena — frees all intermediate eval atoms.
                    This makes CeTTa safe for unlimited chaining iterations. */
                 arena_free(&eval_arena);
@@ -1878,6 +1881,7 @@ int main(int argc, char **argv) {
             bool stop_after_error = result_set_has_error(&rs);
             result_set_free(&rs);
             eval_release_temporary_spaces();
+            eval_reset_form_gc_survivor();
             arena_free(&eval_arena);
             arena_init(&eval_arena);
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);

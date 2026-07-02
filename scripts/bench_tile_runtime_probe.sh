@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/cetta"
+BIN="${CETTA_BIN:-$ROOT/cetta}"
 BACKEND="${1:-native}"
 PROBE="$ROOT/benchmarks/bench_tilepuzzle_probe.metta"
 
@@ -19,7 +19,7 @@ time_file="$ROOT/runtime/tile_runtime_probe_${BACKEND}.time"
 mkdir -p "$ROOT/runtime"
 
 /usr/bin/time -v -o "$time_file" \
-    bash -lc "cd '$ROOT' && ./cetta --count-only --emit-runtime-stats --profile he-extended --space-engine '$BACKEND' --lang he '$PROBE'" \
+    bash -lc "cd '$ROOT' && '$BIN' --count-only --emit-runtime-stats --profile he-extended --space-engine '$BACKEND' --lang he '$PROBE'" \
     > "$out_file" 2> "$stats_file"
 
 counter() {
@@ -65,5 +65,11 @@ printf 'bindings_released_constraint_capacity=%s\n' "$(counter bindings-released
 printf 'query_subst_emitted=%s\n' "$(counter query-equation-subst-emitted)"
 printf 'query_subst_candidate_fallback=%s\n' "$(counter query-equation-subst-candidate-fallback)"
 printf 'query_subst_bucket_fallback=%s\n' "$(counter query-equation-subst-bucket-fallback)"
+printf 'eval_tail_safe_point_count=%s\n' "$(counter eval-tail-safe-point-count)"
+printf 'eval_tail_reclaimed_bytes=%s\n' "$(counter eval-tail-reclaimed-bytes)"
+printf 'eval_tail_survivor_live_bytes_peak=%s\n' "$(counter eval-tail-survivor-arena-live-bytes-peak)"
+printf 'eval_tail_survivor_reserved_bytes_peak=%s\n' "$(counter eval-tail-survivor-arena-reserved-bytes-peak)"
+printf 'eval_tail_survivor_reset_count=%s\n' "$(counter eval-tail-survivor-reset-count)"
+printf 'eval_tail_survivor_reset_bytes=%s\n' "$(counter eval-tail-survivor-reset-bytes)"
 printf 'wall=%s\n' "$elapsed"
 printf 'rss_kb=%s\n' "$rss"
