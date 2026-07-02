@@ -6049,8 +6049,10 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     Atom *prev_self = NULL;
     if (registry) {
         prev_self = registry_lookup_id(registry, g_builtin_syms.self);
-        registry_bind_id(registry, g_builtin_syms.self,
-                         atom_space(persistent_arena, work_space));
+        Atom *self_value = atom_space(persistent_arena, work_space);
+        cetta_provenance_assert_not_transient(self_value,
+                                             "library.registry.self");
+        registry_bind_id(registry, g_builtin_syms.self, self_value);
     }
 
     Atom **atoms = NULL;
@@ -6126,6 +6128,8 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
 
     if (registry) {
         if (prev_self) {
+            cetta_provenance_assert_not_transient(
+                prev_self, "library.registry.restore-self");
             registry_bind_id(registry, g_builtin_syms.self, prev_self);
         }
     }

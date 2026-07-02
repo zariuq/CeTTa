@@ -1,0 +1,4 @@
+8-puzzle BFS: reachable states from solved position (including the start state)...
+[()]
+[()]
+[(tilepuzzle-reachable-state-count including-start 181440)]

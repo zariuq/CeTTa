@@ -29,6 +29,7 @@ INVENTORY_PATTERNS = (
     "tests/test_*.metta",
     "tests/spec_*.metta",
     "tests/he_*.metta",
+    "tests/gc/test_*.metta",
 )
 
 MAKEFILE_LISTS = (
@@ -38,6 +39,7 @@ MAKEFILE_LISTS = (
     "CORE_PROBE_TESTS",
     "CORE_XFAIL_TESTS",
     "RUNTIME_STATS_METTA_TESTS",
+    "GC_ADVERSARIAL_TESTS",
     "BACKEND_DEDICATED_TESTS",
     "BACKEND_HEAVY_TESTS",
     "BACKEND_DIAGNOSTIC_TESTS",
@@ -66,6 +68,7 @@ VALID_LANES = {
     "test-python",
     "test-rhometta-payload-map-capacity-c",
     "test-runtime-stats-lane",
+    "test-eval-gc-adversarial",
     "probe-core-lane",
     "probe-pathmap-lane",
     "xfail-core-lane",
@@ -85,6 +88,7 @@ LANE_ORDER = {
     "test-profiles": 20,
     "test-python": 30,
     "test-runtime-stats-lane": 40,
+    "test-eval-gc-adversarial": 45,
     "test-heavy": 50,
     "test-backend-dedicated": 60,
     "test-pathmap-lane": 70,
@@ -104,10 +108,6 @@ NO_EXPECT_CLASSIFICATION = {
     "tests/test_bio_wmpln_checkpoint_petta_top.metta": (
         "diagnostic",
         "heavy WM-PLN PeTTa top-level checkpoint count witness",
-    ),
-    "tests/test_bio_wmpln_pathway_route_regression.metta": (
-        "property",
-        "heavy WM-PLN pathway route assertion property",
     ),
     "tests/test_checkpoint_disease_route_probe.metta": (
         "probe",
@@ -352,6 +352,16 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             test_path, "he", "metta", "he-extended", "runtime-stats", "native",
             "test-runtime-stats-lane", expect, note,
         )
+    if test_path in sets["GC_ADVERSARIAL_TESTS"]:
+        expect, note = generated_expect_and_note(
+            repo,
+            test_path,
+            "tail-safe eval GC adversarial golden regression",
+        )
+        return ManifestRow(
+            test_path, "he", "metta", "he-extended", "main", "native",
+            "test-eval-gc-adversarial", expect, note,
+        )
     if test_path in sets["PYTHON_TESTS"]:
         expect, note = generated_expect_and_note(
             repo,
@@ -550,6 +560,13 @@ def validate_manifest(repo: Path, rows: list[ManifestRow]) -> list[str]:
         sets["RUNTIME_STATS_METTA_TESTS"],
         "test-runtime-stats-lane",
         "RUNTIME_STATS_METTA_TESTS",
+        errors,
+    )
+    check_exact_lane(
+        rows,
+        sets["GC_ADVERSARIAL_TESTS"],
+        "test-eval-gc-adversarial",
+        "GC_ADVERSARIAL_TESTS",
         errors,
     )
     check_exact_lane(

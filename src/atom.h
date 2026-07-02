@@ -9,6 +9,10 @@
 #include "session.h"
 #include "symbol.h"
 
+#ifndef CETTA_PROVENANCE_ASSERT
+#define CETTA_PROVENANCE_ASSERT 0
+#endif
+
 #ifndef CETTA_BUILD_WITH_GMP
 #define CETTA_BUILD_WITH_GMP 0
 #endif
@@ -136,6 +140,7 @@ ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
+bool  arena_owns_ptr(const Arena *a, const void *ptr);
 char *cetta_bigint_canonicalize_owned(const char *text);
 bool  cetta_bigint_text_fits_i64(const char *text, int64_t *out);
 int   cetta_bigint_compare_cstr(const char *lhs, const char *rhs);
@@ -217,6 +222,31 @@ typedef struct {
     uint64_t payload_owner_epoch; /* nonzero only for payload-local Rhometta scratch */
     uint64_t payload_export_owner_epoch; /* nonzero only for escaped owned exports */
 } StateCell;
+
+#if CETTA_PROVENANCE_ASSERT
+void cetta_provenance_assert_not_transient(Atom *atom, const char *site);
+void cetta_provenance_assert_not_transient_except(Atom *atom, const char *site,
+                                                 const Arena *allowed_owner);
+void cetta_provenance_assert_state_cell_not_transient(const StateCell *cell,
+                                                     const char *site);
+#else
+static inline void cetta_provenance_assert_not_transient(Atom *atom,
+                                                        const char *site) {
+    (void)atom;
+    (void)site;
+}
+static inline void cetta_provenance_assert_not_transient_except(
+    Atom *atom, const char *site, const Arena *allowed_owner) {
+    (void)atom;
+    (void)site;
+    (void)allowed_owner;
+}
+static inline void cetta_provenance_assert_state_cell_not_transient(
+    const StateCell *cell, const char *site) {
+    (void)cell;
+    (void)site;
+}
+#endif
 
 typedef struct {
     void *space_ptr;

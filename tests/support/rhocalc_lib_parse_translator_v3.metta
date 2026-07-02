@@ -3,7 +3,10 @@
 !(import! &self str)
 !(import! &self text_stream)
 
-; Strict-core rho surface via live lib_parse v3.
+; Strict-core rho grammar fixtures for lib_parse/gparse experiments.
+; The production rho <-> mrho translator is the runtime rhocalc syntax path
+; (`--lang rhocalc --translate`). This file keeps a bounded reference lane for
+; parser research and differential checks.
 ; Surface syntax matches the current runtime surface:
 ;   @{P}
 ;   N!(P)
@@ -261,7 +264,9 @@
      (((Error $call $why) (Rejected (lex fs-read $path $why)))
       ($text (rho-lex-string $text)))))
 
-; --- entry points through live lib_parse ---
+; --- bounded reference entry points through exhaustive lib_parse ---
+; These are intentionally small-input helpers. Nontrivial rho corpora should use
+; the runtime rhocalc translator or gparse shared parse forests instead.
 (= (rho-parse-raw $toks) (lp-parse-raw (rho-g) proc $toks))
 (= (rho-parse-tree $toks) (lp-parse (rho-g) proc $toks))
 (= (rho-raw-tree $toks) (pu-tree (rho-parse-raw $toks)))
@@ -292,8 +297,20 @@
       (NoParse (Rejected noparse))
       ($o (Rejected bad-parse-result)))))
 
+(= (rho-fresh-name-stem-text $i)
+   (nth (mkL ("x" "y" "z")) (% $i 3)))
+(= (rho-fresh-name-suffix $i)
+   (if (< $i 3)
+       1
+       (+ 1 (rho-fresh-name-suffix (- $i 3)))))
 (= (fresh-name-text $i)
-   (nth (mkL ("x" "y" "z" "x_rho1" "y_rho1" "z_rho1" "x_rho2" "y_rho2" "z_rho2")) $i))
+   (if (< $i 3)
+       (rho-fresh-name-stem-text $i)
+       (let $j (- $i 3)
+         (let $suffix (rho-fresh-name-suffix $j)
+           (str:concat
+             (rho-fresh-name-stem-text $j)
+             (str:concat "_rho" (repr $suffix)))))))
 
 (= (rho-ok-append (Ok $lhs) (Ok $rhs))
    (Ok (str:concat $lhs $rhs)))

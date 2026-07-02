@@ -530,44 +530,6 @@
      ($o False)))
   False)
 
-!(assertEqual
-  (gparse:glr-class
-    (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
-    rho-g
-    proc
-    (rho-bad-toks))
-  NoParse)
-
-!(assertEqual
-  (gparse:glr-class
-    (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
-    rho-g-ambig
-    proc
-    (mkL (x BAR x BAR x)))
-  Ambiguous)
-
-!(assertEqual
-  (gparse:dual-parse-compare
-    (rho-g)
-    (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
-    rho-g
-    proc
-    (rho-bad-toks))
-  (GParseDualClass NoParse))
-
-!(assertEqual
-  (gparse:dual-parse-compare
-    (rho-g-ambig)
-    (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
-    rho-g-ambig
-    proc
-    (mkL (x BAR x BAR x)))
-  (GParseDualClass Ambiguous))
-
-!(assertEqual
-  (gparse:gll-parse-shared
-    (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
-    rho-g-ambig
-    proc
-    (mkL (x BAR x BAR x)))
-  Ambiguous)
+; Negative class coverage for rho-g / rho-g-ambig lives in the focused
+; native generalized parser lanes. Keep this integration lane centered on
+; the shared-cert and dual-backend witness checks.

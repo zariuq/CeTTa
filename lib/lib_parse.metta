@@ -2,6 +2,8 @@
 ; ONE grammar-generic engine. Same code parses logic, bio sequences, tensor arrays, ...
 ; TRUST BOUNDARY:  p-all / lp-parse-raw = UNTRUSTED search (returns a FOREST, never theoremhood)
 ;                  lp-lower / lp-admit / lp-print / lp-parse-cert = TRUSTED, total, fail-closed.
+;                  p-all is a bounded reference enumerator. Use gparse shared parsers
+;                  for production-scale or ambiguous grammars.
 
 ; ---- total list utils ----
 (= (app2 Nil $y) $y)
@@ -257,7 +259,10 @@
    (if (and (== $d 1) (== $x $close))
        (WrapSplit (rev $prerev) $rest)
        (wrap-scan $open $close $rest (wrap-depth-adj $open $close $x $d) (Cons $x $prerev))))
-; =============== UNTRUSTED L2: p-all — full forest enumerator (all parses) ===============
+; =============== UNTRUSTED L2: p-all — bounded reference enumerator (all parses) ===============
+; Deprecated for production-scale parsing: recursive ambiguous grammars can materialize
+; exponentially many trees. Keep this path for small reference witnesses; use gparse
+; shared parse forests for large or ambiguous grammars.
 ; bounded for non-left-cyclic grammars: a non-trailing hole takes a PROPER prefix (>=1, leaves >=1).
 (= (p-all $g $nt $toks) (if (== $toks Nil) Nil (p-all-ne $g $nt $toks)))
 (= (p-all-ne $g $nt $toks) (p-cand $g $nt $toks))

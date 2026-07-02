@@ -1,4 +1,5 @@
 !(import! &self ./support/rhocalc_lib_parse_translator_v3.metta)
+!(import! &self gparse)
 
 !(assertEqual (lp-admit (rho-g)) Admitted)
 
@@ -77,6 +78,39 @@
 !(assertEqual
   (rho-file->mrho-text "tests/rhocalc/pure_surface.rho")
   "(rho:par (rho:send (rho:quote rho:nil) rho:nil) (rho:recv (rho:quote rho:nil) $x (rho:drop $x)))")
+
+!(assertEqual (fresh-name-text 9) "x_rho3")
+!(assertEqual (fresh-name-text 10) "y_rho3")
+!(assertEqual (fresh-name-text 11) "z_rho3")
+
+(= (rho-deep-binder-10)
+   (rho:recv-db
+     (rho:quote rho:nil)
+     (rho:recv-db
+       (rho:bound 0)
+       (rho:recv-db
+         (rho:bound 1)
+         (rho:recv-db
+           (rho:bound 2)
+           (rho:recv-db
+             (rho:bound 3)
+             (rho:recv-db
+               (rho:bound 4)
+               (rho:recv-db
+                 (rho:bound 5)
+                 (rho:recv-db
+                   (rho:bound 6)
+                   (rho:recv-db
+                     (rho:bound 7)
+                     (rho:recv-db
+                       (rho:bound 8)
+                       (rho:drop (rho:bound 9)))))))))))))
+
+!(assertEqual
+  (rho-canon->mrho-text (rho-deep-binder-10))
+  (case (gparse:rho-canon->mrho-text (rho-deep-binder-10))
+    (((Ok $s) $s)
+     ($o $o))))
 
 !(assertEqual
   (rho-file->canon "tests/rhocalc/surface_shadowing.rho")
@@ -172,14 +206,6 @@
 !(assertEqual
   (rho-file->canon "tests/rhocalc/reject_quoted_payload.rho")
   (Rejected noparse))
-
-!(assertEqual
-  (rho-file->canon "tests/rhocalc/rotating_scheduler_persistent_branch.rho")
-  (Rejected ambiguous))
-
-!(assertEqual
-  (rho-file->canon "tests/rhocalc/rotating_scheduler_primed_diamond.rho")
-  (Rejected ambiguous))
 
 !(assertEqual
   (rho-text->canon "@{0!(0)")

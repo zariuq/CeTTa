@@ -1763,10 +1763,14 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     bool defer_secondary =
         space_defer_incremental_secondary_indices(s);
     if (backend_needs_atom && space_tracks_atom_ids(s) &&
-        atom_id != CETTA_ATOM_ID_NONE && !backend_atom) {
-        backend_atom = term_universe_get_atom(s->native.universe, atom_id);
-        if (!backend_atom)
+        atom_id != CETTA_ATOM_ID_NONE) {
+        Atom *stored_backend_atom =
+            term_universe_get_atom(s->native.universe, atom_id);
+        if (stored_backend_atom) {
+            backend_atom = stored_backend_atom;
+        } else if (!backend_atom) {
             return;
+        }
     }
     CettaIndex idx = s->native.len;
     if (space_is_queue(s)) {
@@ -1826,6 +1830,9 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
             s->native.has_non_exact_atoms = true;
     }
     /* Match backend owns its own incremental indexing policy. */
+    if (backend_needs_atom)
+        cetta_provenance_assert_not_transient(backend_atom,
+                                             "space.backend.note_add");
     space_match_backend_note_add(s, atom_id,
                                  backend_needs_atom ? backend_atom : NULL, idx);
 }

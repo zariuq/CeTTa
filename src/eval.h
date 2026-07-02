@@ -67,6 +67,7 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
 void eval_release_temporary_spaces(void);
+void eval_reset_form_gc_survivor(void);
 void eval_set_default_fuel(int fuel);
 int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);

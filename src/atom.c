@@ -208,6 +208,213 @@ static void arena_push_spare_list(Arena *a, ArenaBlock *blocks) {
     arena_runtime_note_spare(a);
 }
 
+static bool arena_block_list_owns_ptr(const ArenaBlock *head, const void *ptr) {
+    const char *p = (const char *)ptr;
+    for (const ArenaBlock *b = head; b; b = b->next) {
+        const char *lo = b->data;
+        const char *hi = b->data + b->capacity;
+        if (p >= lo && p < hi)
+            return true;
+    }
+    return false;
+}
+
+bool arena_owns_ptr(const Arena *a, const void *ptr) {
+    if (!a || !ptr)
+        return false;
+    return arena_block_list_owns_ptr(a->head, ptr) ||
+           arena_block_list_owns_ptr(a->spare, ptr);
+}
+
+#if CETTA_PROVENANCE_ASSERT
+typedef struct ProvenanceArenaNode {
+    const Arena *arena;
+    struct ProvenanceArenaNode *next;
+} ProvenanceArenaNode;
+
+static pthread_mutex_t g_provenance_arena_mutex = PTHREAD_MUTEX_INITIALIZER;
+static ProvenanceArenaNode *g_provenance_arenas = NULL;
+
+static const char *arena_runtime_kind_name(CettaArenaRuntimeKind kind) {
+    switch (kind) {
+    case CETTA_ARENA_RUNTIME_KIND_PERSISTENT: return "PERSISTENT";
+    case CETTA_ARENA_RUNTIME_KIND_EVAL: return "EVAL";
+    case CETTA_ARENA_RUNTIME_KIND_SCRATCH: return "SCRATCH";
+    case CETTA_ARENA_RUNTIME_KIND_SURVIVOR: return "SURVIVOR";
+    default: return "OTHER";
+    }
+}
+
+static bool provenance_tracks_kind(CettaArenaRuntimeKind kind) {
+    return kind == CETTA_ARENA_RUNTIME_KIND_EVAL ||
+           kind == CETTA_ARENA_RUNTIME_KIND_SURVIVOR;
+}
+
+static void provenance_unregister_arena(const Arena *arena) {
+    if (!arena)
+        return;
+    pthread_mutex_lock(&g_provenance_arena_mutex);
+    ProvenanceArenaNode **link = &g_provenance_arenas;
+    while (*link) {
+        ProvenanceArenaNode *node = *link;
+        if (node->arena == arena) {
+            *link = node->next;
+            free(node);
+            pthread_mutex_unlock(&g_provenance_arena_mutex);
+            return;
+        }
+        link = &node->next;
+    }
+    pthread_mutex_unlock(&g_provenance_arena_mutex);
+}
+
+static void provenance_register_arena(const Arena *arena) {
+    if (!arena || !provenance_tracks_kind(arena->runtime_kind))
+        return;
+    pthread_mutex_lock(&g_provenance_arena_mutex);
+    for (ProvenanceArenaNode *node = g_provenance_arenas; node;
+         node = node->next) {
+        if (node->arena == arena) {
+            pthread_mutex_unlock(&g_provenance_arena_mutex);
+            return;
+        }
+    }
+    ProvenanceArenaNode *node = cetta_malloc(sizeof(*node));
+    node->arena = arena;
+    node->next = g_provenance_arenas;
+    g_provenance_arenas = node;
+    pthread_mutex_unlock(&g_provenance_arena_mutex);
+}
+
+static const Arena *provenance_transient_owner_of(const void *ptr,
+                                                  const Arena *allowed_owner) {
+    const Arena *owner = NULL;
+    if (!ptr)
+        return NULL;
+    pthread_mutex_lock(&g_provenance_arena_mutex);
+    for (ProvenanceArenaNode *node = g_provenance_arenas; node;
+         node = node->next) {
+        const Arena *arena = node->arena;
+        if (arena == allowed_owner)
+            continue;
+        if (arena_owns_ptr(arena, ptr)) {
+            owner = arena;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_provenance_arena_mutex);
+    return owner;
+}
+
+static void provenance_fail(Atom *root, const char *site, const char *what,
+                            const void *ptr, const Arena *owner) {
+    fprintf(stderr,
+            "fatal: CETTA_PROVENANCE_ASSERT: %s retains %s pointer %p "
+            "from %s arena\n",
+            site ? site : "<unknown-site>", what ? what : "unknown",
+            ptr, owner ? arena_runtime_kind_name(owner->runtime_kind) : "unknown");
+    if (root) {
+        fprintf(stderr, "  root atom: ");
+        atom_print(root, stderr);
+        fputc('\n', stderr);
+    }
+    abort();
+}
+
+static void provenance_check_ptr(Atom *root, const char *site,
+                                 const Arena *allowed_owner,
+                                 const char *what, const void *ptr) {
+    const Arena *owner = provenance_transient_owner_of(ptr, allowed_owner);
+    if (owner)
+        provenance_fail(root, site, what, ptr, owner);
+}
+
+static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
+                                  const Arena *allowed_owner,
+                                  uint32_t depth) {
+    if (!atom)
+        return;
+    if (depth > 8192u)
+        provenance_fail(root, site, "atom walk depth-limit", atom, NULL);
+
+    provenance_check_ptr(root, site, allowed_owner, "Atom", atom);
+    switch (atom->kind) {
+    case ATOM_SYMBOL:
+    case ATOM_VAR:
+        return;
+    case ATOM_GROUNDED:
+        switch (atom->ground.gkind) {
+        case GV_STRING:
+            provenance_check_ptr(root, site, allowed_owner, "string payload",
+                                 atom->ground.sval);
+            break;
+        case GV_BIGINT:
+            provenance_check_ptr(root, site, allowed_owner, "bigint payload",
+                                 atom->ground.bigint);
+            if (atom->ground.bigint) {
+                provenance_check_ptr(root, site, allowed_owner, "bigint text",
+                                     atom->ground.bigint->text);
+            }
+            break;
+        case GV_RATIONAL:
+            provenance_check_ptr(root, site, allowed_owner, "rational payload",
+                                 atom->ground.rational);
+            if (atom->ground.rational) {
+                provenance_check_ptr(root, site, allowed_owner, "rational text",
+                                     atom->ground.rational->text);
+            }
+            break;
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            provenance_check_ptr(root, site, allowed_owner, "grounded handle",
+                                 atom->ground.ptr);
+            break;
+        case GV_INT:
+        case GV_FLOAT:
+        case GV_BOOL:
+            break;
+        }
+        return;
+    case ATOM_EXPR:
+        provenance_check_ptr(root, site, allowed_owner, "expr elems",
+                             atom->expr.elems);
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+            provenance_check_atom(root, atom->expr.elems[i], site,
+                                  allowed_owner, depth + 1u);
+        }
+        return;
+    }
+}
+
+void cetta_provenance_assert_not_transient(Atom *atom, const char *site) {
+    cetta_provenance_assert_not_transient_except(atom, site, NULL);
+}
+
+void cetta_provenance_assert_not_transient_except(Atom *atom, const char *site,
+                                                 const Arena *allowed_owner) {
+    provenance_check_atom(atom, atom, site, allowed_owner, 0);
+}
+
+void cetta_provenance_assert_state_cell_not_transient(const StateCell *cell,
+                                                     const char *site) {
+    if (!cell)
+        return;
+    provenance_check_ptr(NULL, site, NULL, "StateCell", cell);
+    provenance_check_atom(cell->value, cell->value, site, NULL, 0);
+    provenance_check_atom(cell->content_type, cell->content_type, site, NULL, 0);
+}
+#else
+static void provenance_unregister_arena(const Arena *arena) {
+    (void)arena;
+}
+
+static void provenance_register_arena(const Arena *arena) {
+    (void)arena;
+}
+#endif
+
 void arena_init(Arena *a) {
     a->head = NULL;
     a->spare = NULL;
@@ -241,6 +448,7 @@ static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
 #endif
 
 void arena_free(Arena *a) {
+    provenance_unregister_arena(a);
     arena_run_finalizers_until(a, NULL);
     arena_free_block_list(a->head);
     arena_free_block_list(a->spare);
@@ -277,7 +485,9 @@ void arena_set_hashcons(Arena *a, HashConsTable *hc) {
 
 void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
     if (!a) return;
+    provenance_unregister_arena(a);
     a->runtime_kind = kind;
+    provenance_register_arena(a);
     arena_runtime_note_usage(a);
 }
 

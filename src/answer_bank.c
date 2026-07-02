@@ -72,6 +72,23 @@ static bool answer_bank_promote_bindings(Arena *dst, Bindings *bindings) {
     return true;
 }
 
+static void answer_bank_assert_bindings_owned(const AnswerBank *bank,
+                                              const Bindings *bindings,
+                                              const char *site) {
+    if (!bank || !bindings)
+        return;
+    for (uint32_t i = 0; i < bindings->len; i++) {
+        cetta_provenance_assert_not_transient_except(bindings->entries[i].val,
+                                                     site, &bank->arena);
+    }
+    for (uint32_t i = 0; i < bindings->eq_len; i++) {
+        cetta_provenance_assert_not_transient_except(
+            bindings->constraints[i].lhs, site, &bank->arena);
+        cetta_provenance_assert_not_transient_except(
+            bindings->constraints[i].rhs, site, &bank->arena);
+    }
+}
+
 void answer_bank_init(AnswerBank *bank) {
     if (!bank)
         return;
@@ -119,6 +136,11 @@ bool answer_bank_add(AnswerBank *bank, Atom *result,
     if (variant && !variant_instance_promote_atoms_to_arena(&bank->arena,
                                                             &staged.variant))
         goto fail;
+    cetta_provenance_assert_not_transient_except(staged.result,
+                                                 "answer_bank.add.result",
+                                                 &bank->arena);
+    answer_bank_assert_bindings_owned(bank, &staged.bindings,
+                                      "answer_bank.add.bindings");
 
     bank->items[bank->len] = staged;
     if (out_ref)
