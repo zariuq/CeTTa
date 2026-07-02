@@ -1,4 +1,4 @@
-!(import! &self support/bio_wmpln_core_1m.metta)
+!(import! &self ../benchmarks/genomic_pln/workload_genomic_pln_1m.metta)
 
 ; Regression for a let/bc interaction where the outer rule-sig match leaked
 ; hidden derivation bindings into the inner let that consumed a bc result.

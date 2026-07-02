@@ -1,5 +1,5 @@
 !(import! &self mork)
-!(import! &kb ../bio_hetionet_kb)
+!(import! &kb ../../benchmarks/data/kb_hetionet_biomedical_graph)
 !(space-set-match-backend! &kb pathmap-imported)
 !(bind! &compiled (mork:new-space))
 !(match &kb $atom (mork:add-atom &compiled $atom))

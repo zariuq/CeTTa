@@ -7,7 +7,7 @@
 ; widen the biology and then lose track of whether a behavior change came from
 ; the data expansion or from a regression in the generic chainer.
 
-!(import! &self ./support/bio_wmpln_core_1m.metta)
+!(import! &self ./workload_genomic_pln_1m.metta)
 
 !(let $hits
       (collapse

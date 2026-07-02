@@ -1,5 +1,5 @@
 !(import! &self mork)
-!(import! &kb ../bio_refseq_723k)
+!(import! &kb ../../benchmarks/data/kb_refseq_gene_annotations)
 !(space-set-match-backend! &kb pathmap-imported)
 !(bind! &compiled (mork:new-space))
 !(match &kb $atom (mork:add-atom &compiled $atom))

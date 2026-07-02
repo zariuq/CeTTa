@@ -1,6 +1,0 @@
-!(import! &self ./support/rhocalc_lib_parse_translator_v3.metta)
-!(println! (rho-parse-raw (rho-recv-drop-x-toks)))
-!(println! (rho-parse-tree (rho-recv-drop-x-toks)))
-!(println! (rho-raw-tree (rho-recv-drop-x-toks)))
-!(println! (rho-canon-tree (rho-recv-drop-x-toks)))
-!(println! (lp-lower (rho-g) (rho-raw-tree (rho-recv-drop-x-toks))))

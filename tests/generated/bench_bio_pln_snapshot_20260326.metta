@@ -15,7 +15,7 @@
 !(import! &self ../support/pln_portable/pln_evidence.metta)
 
 ; --- Load bio KB into &self ---
-!(import! &self ../bio_kb_chr16.metta)
+!(import! &self ../../benchmarks/data/kb_chr16_variants.metta)
 
 ; --- Combine 3 evidence channels via PLN revision ---
 (= (combine-evidence $snp $gene)

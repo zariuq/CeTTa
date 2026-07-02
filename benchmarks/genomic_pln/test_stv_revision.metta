@@ -2,7 +2,7 @@
 ; collected tuple of STVs. The original linear recursive reducer overflowed on
 ; the widened 5M threshold lane.
 
-!(import! &self ./support/bio_wmpln_workload_rules.metta)
+!(import! &self ./lib_pln_inference_rules.metta)
 
 (= (long-stv-input)
    (

@@ -6,7 +6,7 @@
 ; Negative example:
 ; over-admitting those restored hits as if they were direct disease routes.
 
-!(import! &self support/bio_wmpln_core_1m.metta)
+!(import! &self ./workload_genomic_pln_1m.metta)
 
 !(assertEqualToResult
   (collapse

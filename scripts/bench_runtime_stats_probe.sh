@@ -90,7 +90,7 @@ printf '%-12s %8s %10s %10s %10s %10s %10s %10s %10s %10s %10s %10s\n' \
     "--------" "-------" "----------" "------" "--------" "----------" \
     "----------" "------" "---------" "---------" "--------" "--------"
 
-run_probe "backchain" "$ROOT/tests/bench_backchain_he.metta" \
+run_probe "backchain" "$ROOT/benchmarks/bench_backchain_he.metta" \
     "ift (deduce (Evaluation (mortal \$x))) \$x"
-run_probe "matchjoin3" "$ROOT/tests/bench_matchjoin3_he.metta" \
+run_probe "matchjoin3" "$ROOT/benchmarks/bench_matchjoin3_he.metta" \
     "threehop"

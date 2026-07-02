@@ -1,5 +1,5 @@
 !(import! &self mork)
-!(import! &kb ../bio_tfbs_415k)
+!(import! &kb ../../benchmarks/data/kb_tf_binding_sites)
 !(space-set-match-backend! &kb pathmap-imported)
 !(bind! &compiled (mork:new-space))
 !(match &kb $atom (mork:add-atom &compiled $atom))

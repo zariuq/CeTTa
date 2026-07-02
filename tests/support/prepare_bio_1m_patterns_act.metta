@@ -1,5 +1,5 @@
 !(import! &self mork)
-!(import! &kb ../discovered_patterns_1k)
+!(import! &kb ../../benchmarks/data/kb_mined_patterns)
 !(space-set-match-backend! &kb pathmap-imported)
 !(bind! &compiled (mork:new-space))
 !(match &kb $atom (mork:add-atom &compiled $atom))

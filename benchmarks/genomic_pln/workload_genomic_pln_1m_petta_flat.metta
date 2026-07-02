@@ -8,15 +8,15 @@
 ; rewrite the shared benchmark architecture around a runtime-specific import
 ; quirk.
 
-!(import! &self ./bio_wmpln_workload_rules.metta)
+!(import! &self ./lib_pln_inference_rules.metta)
 
-!(import! &bio-wmpln-rb ./bio_wmpln_rulebase_1m.metta)
+!(import! &bio-wmpln-rb ./lib_pln_bridge_rules.metta)
 
-!(import! &bio-wmpln-kb ../eqtl_for_mining.metta)
-!(import! &bio-wmpln-kb-refseq ../bio_refseq_723k.metta)
-!(import! &bio-wmpln-kb-tfbs ../bio_multirelational_kb_scaled.metta)
-!(import! &bio-wmpln-kb-hetionet ../bio_hetionet_kb.metta)
-!(import! &bio-wmpln-kb-patterns ../discovered_patterns_1k.metta)
+!(import! &bio-wmpln-kb ../data/kb_eqtl_gene_links.metta)
+!(import! &bio-wmpln-kb-refseq ../data/kb_refseq_gene_annotations.metta)
+!(import! &bio-wmpln-kb-tfbs ../data/kb_multirelational_scaled.metta)
+!(import! &bio-wmpln-kb-hetionet ../data/kb_hetionet_biomedical_graph.metta)
+!(import! &bio-wmpln-kb-patterns ../data/kb_mined_patterns.metta)
 
 ; Keep the public seam unchanged for PeTTa, but avoid both:
 ; - CeTTa's restriction that import! may only target a fresh &name or &self

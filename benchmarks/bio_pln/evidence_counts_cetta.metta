@@ -3,7 +3,7 @@
 ;   positive = eQTL-positive + ABC-positive + regulatory-positive
 ;   negative = eQTL-negative + ABC-negative + regulatory-negative
 
-!(import! &self ../../tests/bio_kb_chr16.metta)
+!(import! &self ../data/kb_chr16_variants.metta)
 
 (= (bio-evidence-counts $snp $gene)
    (match &self
