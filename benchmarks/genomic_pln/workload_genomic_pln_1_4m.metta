@@ -2,8 +2,8 @@
 ; Keep this separate from the post-split checkpoint tier so benchmark rows can
 ; say exactly which workload they ran.
 
-!(import! &self ./bio_wmpln_workload_rules.metta)
+!(import! &self ./lib_pln_inference_rules.metta)
 
-!(import! &bio-wmpln-rb ./bio_wmpln_rulebase_1m.metta)
+!(import! &bio-wmpln-rb ./lib_pln_bridge_rules.metta)
 
-!(import! &bio-wmpln-kb ./bio_wmpln_data_full_1p4m.metta)
+!(import! &bio-wmpln-kb ./kb_genomic_facts_1_4m.metta)

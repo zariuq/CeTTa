@@ -32,6 +32,10 @@
 /.cetta_*.metta
 /tmp_*.metta
 /tmp_cetta_logs/
+/logs/
+/benchmarks/INDEX.tsv
+/tests/tmp_*.metta
+/tests/scratch/
 /callgrind.*
 /fc_probe_*.metta
 /bench_mork.metta

@@ -1,4 +1,17 @@
 path	lang	syntax	profile	build	space_engine	lane	expect	notes
+benchmarks/bc_depth10_spine_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+benchmarks/genomic_pln/bench_drug_hypothesis_1_4m.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	diagnostic witness without golden oracle
+benchmarks/genomic_pln/bench_drug_hypothesis_1_4m_petta.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	diagnostic witness without golden oracle
+benchmarks/genomic_pln/bench_drug_hypothesis_1m.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+benchmarks/genomic_pln/bench_drug_hypothesis_petta_flat.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	heavy WM-PLN PeTTa flat-loader checkpoint count witness
+benchmarks/genomic_pln/bench_drug_hypothesis_petta_top.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	heavy WM-PLN PeTTa top-level checkpoint count witness
+benchmarks/genomic_pln/test_flat_loader.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	heavy WM-PLN flat-loader count witness without golden oracle
+benchmarks/genomic_pln/test_hypothesis_key_uniqueness.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+benchmarks/genomic_pln/test_proof_route_convergence.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+benchmarks/genomic_pln/test_stv_revision.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+benchmarks/test_lib_parse_metamath_mmtest_compressed_simple_db_v0.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	diagnostic witness without golden oracle
+benchmarks/test_tilepuzzle.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
+benchmarks/test_tilepuzzle_pathmap.metta	he	metta	he-extended	pathmap	pathmap	test-heavy	diagnostic	heavy 8-puzzle BFS pathmap witness without golden oracle
 tests/gc/test_eval_gc_adversarial.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/gc/test_eval_gc_indirect_state_stream.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/he_a1_symbols.metta	he	metta	he-extended	main	native	test	golden	-
@@ -77,16 +90,6 @@ tests/test_bind_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bind_ground_recursive_query_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bind_partial_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bio_bc_let_hidden_env_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_bio_depth10_genuine_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_bio_wmpln_checkpoint_full_1p4m.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	diagnostic witness without golden oracle
-tests/test_bio_wmpln_checkpoint_petta_flat.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	heavy WM-PLN PeTTa flat-loader checkpoint count witness
-tests/test_bio_wmpln_checkpoint_petta_full_1p4m.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	diagnostic witness without golden oracle
-tests/test_bio_wmpln_checkpoint_petta_top.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	heavy WM-PLN PeTTa top-level checkpoint count witness
-tests/test_bio_wmpln_checkpoint_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_bio_wmpln_flat_loader_probe.metta	he	metta	he-extended	main	native	test-heavy	probe	probe without golden oracle
-tests/test_bio_wmpln_pathway_route_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_bio_wmpln_revise_stv_tuple_stack_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_bio_wmpln_supported_key_unique_regression.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
 tests/test_body_visible_projection_many_vars.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bool_grounded_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_call_native_surface.metta	he	metta	he-extended	main	native	test	golden	-
@@ -269,7 +272,6 @@ tests/test_lib_parse_metamath_local_var_good_db_v0.metta	he	metta	he-extended	ma
 tests/test_lib_parse_metamath_mini_db_v0.metta	he	metta	he-extended	main	native	test-heavy	property	assertion-only property without golden oracle
 tests/test_lib_parse_metamath_mini_thm_compressed_db_v0.metta	he	metta	he-extended	main	native	test-heavy	property	assertion-only property without golden oracle
 tests/test_lib_parse_metamath_mini_thm_db_v0.metta	he	metta	he-extended	main	native	test-heavy	property	assertion-only property without golden oracle
-tests/test_lib_parse_metamath_mmtest_compressed_simple_db_v0.metta	he	metta	he-extended	main	native	test-heavy	diagnostic	diagnostic witness without golden oracle
 tests/test_lib_parse_metamath_mmtest_compressed_z_db_v0.metta	he	metta	he-extended	main	native	test-heavy	property	assertion-only property without golden oracle
 tests/test_lib_parse_metamath_mmtest_d_before_float_db_v0.metta	he	metta	he-extended	main	native	test-heavy	property	assertion-only property without golden oracle
 tests/test_lib_parse_metamath_mmtest_min_found_db_v0.metta	he	metta	he-extended	main	native	test-heavy	property	assertion-only property without golden oracle
@@ -506,8 +508,6 @@ tests/test_tail_recursion_deep_regression.metta	he	metta	he-extended	main	native
 tests/test_tail_special_forms.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_text_cursor.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_text_stream.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_tilepuzzle.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_tilepuzzle_pathmap.metta	he	metta	he-extended	pathmap	pathmap	test-heavy	diagnostic	heavy 8-puzzle BFS pathmap witness without golden oracle
 tests/test_top_level_output_order.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_trace_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_trace_surface.metta	he	metta	he-extended	main	native	test	golden	-

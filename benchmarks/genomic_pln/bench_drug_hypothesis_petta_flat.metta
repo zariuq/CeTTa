@@ -1,15 +1,15 @@
 ; PeTTa flat-loader checkpoint validation for the post-split WM-PLN workload.
 ; Keep the loader top-level so PeTTa can see the named spaces it binds.
 
-!(import! &self ./support/bio_wmpln_workload_rules.metta)
+!(import! &self ./lib_pln_inference_rules.metta)
 
-!(import! &bio-wmpln-rb ./support/bio_wmpln_rulebase_1m.metta)
+!(import! &bio-wmpln-rb ./lib_pln_bridge_rules.metta)
 
-!(import! &bio-wmpln-kb ./eqtl_for_mining.metta)
-!(import! &bio-wmpln-kb-refseq ./bio_refseq_723k.metta)
-!(import! &bio-wmpln-kb-tfbs ./bio_multirelational_kb_scaled.metta)
-!(import! &bio-wmpln-kb-hetionet ./bio_hetionet_kb.metta)
-!(import! &bio-wmpln-kb-patterns ./discovered_patterns_1k.metta)
+!(import! &bio-wmpln-kb ../data/kb_eqtl_gene_links.metta)
+!(import! &bio-wmpln-kb-refseq ../data/kb_refseq_gene_annotations.metta)
+!(import! &bio-wmpln-kb-tfbs ../data/kb_multirelational_scaled.metta)
+!(import! &bio-wmpln-kb-hetionet ../data/kb_hetionet_biomedical_graph.metta)
+!(import! &bio-wmpln-kb-patterns ../data/kb_mined_patterns.metta)
 
 (: copy-space-atoms-fold (-> Atom Atom Number))
 (= (copy-space-atoms-fold $src $dst)

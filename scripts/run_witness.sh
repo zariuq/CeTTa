@@ -8,15 +8,15 @@ Usage:
   scripts/run_witness.sh --list
   scripts/run_witness.sh --show-baselines
 
-Runs a named witness from perf/witness_catalog.tsv with the recorded timeout and
+Runs a named witness from benchmarks/witness_catalog.tsv with the recorded timeout and
 witness metadata, then prints a stable machine-readable summary plus a TSV record
-line that can be copied into perf/baseline_records.tsv when desired.
+line that can be copied into benchmarks/baseline_records.tsv when desired.
 EOF
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-catalog="$repo_root/perf/witness_catalog.tsv"
-baselines="$repo_root/perf/baseline_records.tsv"
+catalog="$repo_root/benchmarks/witness_catalog.tsv"
+baselines="$repo_root/benchmarks/baseline_records.tsv"
 
 if [[ "${1:-}" == "--list" ]]; then
     cat "$catalog"

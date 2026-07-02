@@ -1,5 +1,5 @@
 !(import! &self mork)
-!(import! &kb ../eqtl_for_mining)
+!(import! &kb ../../benchmarks/data/kb_eqtl_gene_links)
 !(space-set-match-backend! &kb pathmap-imported)
 !(bind! &compiled (mork:new-space))
 !(match &kb $atom (mork:add-atom &compiled $atom))

@@ -101,13 +101,17 @@ LANE_ORDER = {
 }
 
 NO_EXPECT_CLASSIFICATION = {
-    "tests/test_bio_wmpln_checkpoint_petta_flat.metta": (
+    "benchmarks/genomic_pln/bench_drug_hypothesis_petta_flat.metta": (
         "diagnostic",
         "heavy WM-PLN PeTTa flat-loader checkpoint count witness",
     ),
-    "tests/test_bio_wmpln_checkpoint_petta_top.metta": (
+    "benchmarks/genomic_pln/bench_drug_hypothesis_petta_top.metta": (
         "diagnostic",
         "heavy WM-PLN PeTTa top-level checkpoint count witness",
+    ),
+    "benchmarks/genomic_pln/test_flat_loader.metta": (
+        "diagnostic",
+        "heavy WM-PLN flat-loader count witness without golden oracle",
     ),
     "tests/test_checkpoint_disease_route_probe.metta": (
         "probe",
@@ -129,11 +133,11 @@ NO_EXPECT_CLASSIFICATION = {
         "probe",
         "print nondeterminism diagnostic witness",
     ),
-    "tests/test_tilepuzzle.metta": (
+    "benchmarks/test_tilepuzzle.metta": (
         "diagnostic",
         "heavy 8-puzzle BFS native witness without golden oracle",
     ),
-    "tests/test_tilepuzzle_pathmap.metta": (
+    "benchmarks/test_tilepuzzle_pathmap.metta": (
         "diagnostic",
         "heavy 8-puzzle BFS pathmap witness without golden oracle",
     ),
@@ -262,7 +266,7 @@ def expand_make_tokens(
         ref = re.fullmatch(r"\$\(([^)]+)\)", token)
         if ref:
             expanded.extend(expand_make_tokens(variables, ref.group(1), stack + (name,)))
-        elif token.startswith("tests/"):
+        elif token.startswith("tests/") or token.startswith("benchmarks/"):
             expanded.append(token)
     return expanded
 
@@ -450,8 +454,16 @@ def row_sort_key(row: ManifestRow) -> tuple[str, int, str, str, str, str]:
 
 def generate_manifest(repo: Path, existing_rows: list[ManifestRow]) -> list[ManifestRow]:
     sets = makefile_sets(repo)
-    inventory = set(inventory_paths(repo))
-    rows = [row for row in existing_rows if row.path not in inventory]
+    # Inventory = tests/ globs plus every file a gated Makefile lane references, so a gated
+    # benchmarks/ entry becomes a tool-generated row (perf-only benches and fixtures, which
+    # live in no MAKEFILE_LISTS lane, stay out). Existing rows are preserved only when their
+    # file still exists — a moved/deleted file drops its stale row instead of orphaning it.
+    inventory = set(inventory_paths(repo)) | set().union(*sets.values())
+    rows = [
+        row
+        for row in existing_rows
+        if row.path not in inventory and (repo / row.path).is_file()
+    ]
 
     for test_path in sorted(inventory):
         if test_path in SPECIAL_INVENTORY_ROWS:

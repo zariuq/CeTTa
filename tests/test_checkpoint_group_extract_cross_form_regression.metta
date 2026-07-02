@@ -7,7 +7,7 @@
 ; a shared copy into the ephemeral eval arena used to leave dangling
 ; structure behind, so the second top-level form miscounted 4 groups.
 
-!(import! &self ./support/bio_wmpln_core_1m.metta)
+!(import! &self ../benchmarks/genomic_pln/workload_genomic_pln_1m.metta)
 
 (= (checkpoint-supported-key-groups)
    (fold-by-key

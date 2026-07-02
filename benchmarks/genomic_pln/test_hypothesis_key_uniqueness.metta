@@ -6,7 +6,7 @@
 ; Negative example: treating every proof path as a distinct hypothesis even
 ; after projecting away the proof metadata.
 
-!(import! &self support/bio_wmpln_core_1m.metta)
+!(import! &self ./workload_genomic_pln_1m.metta)
 
 !(assertEqualToResult
   (let $hits

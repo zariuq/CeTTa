@@ -2,7 +2,7 @@
 ; Keeps score arithmetic local and explicitly floating-point so HE-style
 ; runtimes do not integer-divide strength/confidence to zero.
 
-!(import! &self ../../tests/bio_kb_chr16.metta)
+!(import! &self ../data/kb_chr16_variants.metta)
 
 (= (evidence-strength $pos $neg)
    (/ (* 1.0 $pos) (+ $pos $neg)))

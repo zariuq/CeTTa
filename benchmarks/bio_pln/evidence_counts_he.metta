@@ -1,7 +1,7 @@
 ; Portable PLN evidence-count benchmark, HE import wrapper.
-; Run HE with tests/ on the include path so module bio_kb_chr16 resolves.
+; Run HE with tests/ on the include path so module kb_chr16_variants resolves.
 
-!(import! &self bio_kb_chr16)
+!(import! &self kb_chr16_variants)
 
 (= (bio-evidence-counts $snp $gene)
    (match &self

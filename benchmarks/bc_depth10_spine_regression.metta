@@ -1,5 +1,5 @@
-; Genuine depth-10 backward chaining regression.
-; The final theorem has exactly one derivation spine of 10 rule applications.
+; Depth-10 backward-chaining spine regression (synthetic; NOT PLN — pure typed BC,
+; genomic vocabulary is cosmetic). One derivation spine of exactly 10 rule applications.
 ; Depth 9 must fail; depth 10 must succeed.
 
 (: Nat Type)

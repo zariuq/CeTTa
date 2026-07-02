@@ -1,27 +1,13 @@
-; Native PeTTa lane for the true full-1.4M WM-PLN checkpoint.
-; Keep the loader top-level so PeTTa can see the named spaces it binds, while
-; matching the same raw-loader tier as the CeTTa full checkpoint.
+; True full-1.4M WM-PLN checkpoint over the raw-loader tier.
+; Positive example:
+; emit labeled benchmark data that says which workload ran and why proof-count
+; can exceed hypothesis-count.
+;
+; Negative example:
+; reuse the shorter post-split checkpoint row and call it the same thing as the
+; older full raw-loader benchmark.
 
-!(import! &self ./support/bio_wmpln_workload_rules.metta)
-
-!(import! &bio-wmpln-rb ./support/bio_wmpln_rulebase_1m.metta)
-
-!(import! &bio-wmpln-kb ./eqtl_for_mining.metta)
-!(import! &bio-wmpln-kb-refseq ./bio_refseq_723k.metta)
-!(import! &bio-wmpln-kb-tfbs ./bio_tfbs_415k.metta)
-!(import! &bio-wmpln-kb-multirel ./bio_multirelational_kb_scaled.metta)
-!(import! &bio-wmpln-kb-hetionet ./bio_hetionet_kb.metta)
-!(import! &bio-wmpln-kb-patterns ./discovered_patterns_1k.metta)
-
-(: copy-space-atoms-fold (-> Atom Atom Number))
-(= (copy-space-atoms-fold $src $dst)
-   (foldall + (match $src $x (let $u (add-atom $dst $x) 0)) 0))
-
-!(let $ignored (copy-space-atoms-fold &bio-wmpln-kb-refseq &bio-wmpln-kb) ())
-!(let $ignored (copy-space-atoms-fold &bio-wmpln-kb-tfbs &bio-wmpln-kb) ())
-!(let $ignored (copy-space-atoms-fold &bio-wmpln-kb-multirel &bio-wmpln-kb) ())
-!(let $ignored (copy-space-atoms-fold &bio-wmpln-kb-hetionet &bio-wmpln-kb) ())
-!(let $ignored (copy-space-atoms-fold &bio-wmpln-kb-patterns &bio-wmpln-kb) ())
+!(import! &self ./workload_genomic_pln_1_4m.metta)
 
 !(wmpln-dataset-tier full-1p4m-raw-loader 1399997 tfbs-included yes)
 
@@ -60,6 +46,13 @@
                                 (proof-trace-bound-gene $proof))))
    (supported-drug-proof-count (size-atom $hits)))
 
+!(collapse
+    (unique
+      (let (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue))
+           (bc &bio-wmpln-kb &bio-wmpln-rb (fromNumber 8)
+               (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue)))
+        (supported-drug-hypothesis rs10000544 $gene $disease $drug $tissue))))
+
 !(let $hits
       (collapse
         (unique
@@ -68,13 +61,6 @@
                    (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue)))
             (supported-drug-hypothesis rs10000544 $gene $disease $drug $tissue))))
    (supported-drug-hyp-count (size-atom $hits)))
-
-!(collapse
-    (unique
-      (let (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue))
-           (bc &bio-wmpln-kb &bio-wmpln-rb (fromNumber 8)
-               (: $proof (supported-drug-hyp rs10000544 $gene $disease $drug $tissue)))
-        (supported-drug-hypothesis rs10000544 $gene $disease $drug $tissue))))
 
 !(supported-drug-count-contract
     proofs-are-distinct-proof-traces

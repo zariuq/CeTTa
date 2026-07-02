@@ -2,7 +2,7 @@
 ; PeTTa is a distinct MeTTa dialect, so the benchmark keeps the arithmetic
 ; local instead of depending on CeTTa/HE library import semantics.
 
-!(import! &self ../../tests/bio_kb_chr16.metta)
+!(import! &self ../data/kb_chr16_variants.metta)
 
 (= (evidence-strength $pos $neg)
    (/ (* 1.0 $pos) (+ $pos $neg)))

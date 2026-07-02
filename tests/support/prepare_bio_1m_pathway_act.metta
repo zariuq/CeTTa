@@ -1,5 +1,5 @@
 !(import! &self mork)
-!(import! &kb ../bio_multirelational_kb_scaled)
+!(import! &kb ../../benchmarks/data/kb_multirelational_scaled)
 !(space-set-match-backend! &kb pathmap-imported)
 !(bind! &compiled (mork:new-space))
 !(match &kb $atom (mork:add-atom &compiled $atom))

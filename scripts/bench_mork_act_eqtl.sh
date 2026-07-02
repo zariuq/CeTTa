@@ -55,7 +55,7 @@ ensure_act() {
     cat > "$PREP_INPUT" <<EOF
 !(import! &self mork)
 
-!(import! &kb ../tests/eqtl_for_mining)
+!(import! &kb ../benchmarks/data/kb_eqtl_gene_links)
 !(space-set-match-backend! &kb pathmap-imported)
 !(bind! &compiled (mork:new-space))
 !(match &kb \$atom (mork:add-atom &compiled \$atom))

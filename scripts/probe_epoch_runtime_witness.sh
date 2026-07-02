@@ -19,7 +19,7 @@ run_case "tilepuzzle-500" \
 
 run_case "conjunction12" \
     --emit-runtime-stats --quiet --lang he --count-only \
-    tests/bench_conjunction12_he.metta
+    benchmarks/bench_conjunction12_he.metta
 
 run_case "bio_1M" \
     --emit-runtime-stats --quiet --lang he --count-only \

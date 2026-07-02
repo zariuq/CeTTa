@@ -166,23 +166,23 @@ fi
 
 run_pair \
   "dense-join" \
-  "$ROOT/tests/bench_matchjoin_he.metta" \
+  "$ROOT/benchmarks/bench_matchjoin_he.metta" \
   "216" \
-  "$ROOT/tests/bench_matchjoin_petta.metta" \
+  "$ROOT/benchmarks/bench_matchjoin_petta.metta" \
   "216"
 
 run_pair \
   "three-hop-join" \
-  "$ROOT/tests/bench_matchjoin3_he.metta" \
+  "$ROOT/benchmarks/bench_matchjoin3_he.metta" \
   "625" \
-  "$ROOT/tests/bench_matchjoin3_petta.metta" \
+  "$ROOT/benchmarks/bench_matchjoin3_petta.metta" \
   "625"
 
 run_pair \
   "backchain-family" \
-  "$ROOT/tests/bench_backchain_he.metta" \
+  "$ROOT/benchmarks/bench_backchain_he.metta" \
   "20" \
-  "$ROOT/tests/bench_backchain_petta.metta" \
+  "$ROOT/benchmarks/bench_backchain_petta.metta" \
   "1"
 
 run_pair_value \
