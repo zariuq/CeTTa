@@ -226,6 +226,13 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "rho-quiet-macro-fallback-nonquiet",
     "rho-quiet-macro-fallback-unsafe-payload",
     "rho-quiet-macro-fallback-child-cap",
+    "term-universe-copy-call",
+    "term-universe-copy-node",
+    "term-universe-copy-memo-hit",
+    "term-universe-copy-estimated-arena-bytes",
+    "term-universe-copy-memo-heap-bytes",
+    "query-subst-flat-heap-bytes",
+    "query-subst-matchset-heap-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {

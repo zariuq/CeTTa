@@ -308,9 +308,11 @@ void atom_print(Atom *a, FILE *out);
 char *atom_to_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string(Arena *a, Atom *atom);
 
-/* Deep-copy an atom tree into a different arena */
+/* Deep-copy an atom DAG into a different arena, preserving source pointer
+   sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
-/* Deep-copy with structural sharing for immutable atoms.
+/* Deep-copy with structural sharing for immutable atoms, also preserving source
+   pointer sharing within one copy episode.
    Safe only for arenas whose contents outlive the global hash-cons table. */
 Atom *atom_deep_copy_shared(Arena *dst, Atom *src);
 

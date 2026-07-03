@@ -1,8 +1,11 @@
 #include <assert.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "cetta_stdlib.h"
 #include "parser.h"
@@ -397,7 +400,7 @@ snapshot_term_universe_witnesses(const TermUniverse *universe) {
 }
 
 static void test_file_ingress_workload_witness(void) {
-    const char *path = "tests/bench_matchjoin8_he.metta";
+    const char *path = "benchmarks/bench_matchjoin8_he.metta";
     Arena persistent;
     Arena scratch;
     TermUniverse universe;
@@ -752,6 +755,88 @@ static void init_test_symbols(SymbolTable *symbols) {
     g_var_intern = NULL;
 }
 
+static void test_query_results_capacity_failure_is_loud(void) {
+    pid_t pid = fork();
+    assert(pid >= 0);
+    if (pid == 0) {
+        Arena child_arena;
+        QueryResults results;
+        Bindings bindings;
+        arena_init(&child_arena);
+        query_results_init(&results);
+        bindings_init(&bindings);
+        query_results_diag_set_capacity_limit_override(1);
+        assert(query_results_push(&results, atom_symbol(&child_arena, "first"),
+                                  &bindings));
+        (void)query_results_push(&results, atom_symbol(&child_arena, "second"),
+                                 &bindings);
+        _exit(0);
+    }
+    int status = 0;
+    assert(waitpid(pid, &status, 0) == pid);
+    assert((WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT) ||
+           (WIFEXITED(status) && WEXITSTATUS(status) != 0));
+}
+
+static void test_atom_deep_copy_preserves_pointer_dag(void) {
+    Arena src_arena;
+    Arena dst_arena;
+    arena_init(&src_arena);
+    arena_init(&dst_arena);
+
+    SymbolId wrap_sym = symbol_intern_cstr(g_symbols, "copy-dag-wrap");
+    SymbolId leaf_sym = symbol_intern_cstr(g_symbols, "copy-dag-leaf");
+    Atom *child_items[2] = {
+        atom_symbol_id(&src_arena, leaf_sym),
+        atom_int(&src_arena, 42),
+    };
+    Atom *shared_child = atom_expr(&src_arena, child_items, 2);
+    Atom *root_items[4] = {
+        atom_symbol_id(&src_arena, wrap_sym),
+        shared_child,
+        shared_child,
+        shared_child,
+    };
+    Atom *root = atom_expr(&src_arena, root_items, 4);
+
+    Atom *copy = atom_deep_copy(&dst_arena, root);
+    assert(copy != NULL);
+    assert(copy != root);
+    assert(copy->kind == ATOM_EXPR);
+    assert(copy->expr.len == 4);
+    assert(copy->expr.elems[1] != shared_child);
+    assert(copy->expr.elems[1] == copy->expr.elems[2]);
+    assert(copy->expr.elems[2] == copy->expr.elems[3]);
+    assert(copy->expr.elems[1]->kind == ATOM_EXPR);
+    assert(copy->expr.elems[1]->expr.len == 2);
+    assert(atom_is_symbol_id(copy->expr.elems[1]->expr.elems[0], leaf_sym));
+
+    Atom *var_child_items[2] = {
+        atom_symbol_id(&src_arena, leaf_sym),
+        atom_var_with_spelling(&src_arena, leaf_sym, 7),
+    };
+    Atom *shared_var_child = atom_expr(&src_arena, var_child_items, 2);
+    Atom *var_root_items[4] = {
+        atom_symbol_id(&src_arena, wrap_sym),
+        shared_var_child,
+        shared_var_child,
+        shared_var_child,
+    };
+    Atom *var_root = atom_expr(&src_arena, var_root_items, 4);
+    Atom *fresh = atom_freshen_epoch(&dst_arena, var_root, 55);
+    assert(fresh != NULL);
+    assert(fresh->kind == ATOM_EXPR);
+    assert(fresh->expr.len == 4);
+    assert(fresh->expr.elems[1] != shared_var_child);
+    assert(fresh->expr.elems[1] == fresh->expr.elems[2]);
+    assert(fresh->expr.elems[2] == fresh->expr.elems[3]);
+    assert(fresh->expr.elems[1]->expr.elems[1]->kind == ATOM_VAR);
+    assert(var_epoch_suffix(fresh->expr.elems[1]->expr.elems[1]->var_id) == 55);
+
+    arena_free(&dst_arena);
+    arena_free(&src_arena);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -771,6 +856,8 @@ int main(void) {
     test_expr_arity_storage_limit_is_loud();
     test_atom_id_exhaustion_contract();
     test_file_ingress_workload_witness();
+    test_query_results_capacity_failure_is_loud();
+    test_atom_deep_copy_preserves_pointer_dag();
     arena_init(&persistent);
     arena_init(&scratch);
     term_universe_init(&universe);
@@ -1102,6 +1189,38 @@ int main(void) {
     assert(epoch_copy != NULL);
     assert(var_epoch_suffix(epoch_copy->expr.elems[1]->var_id) == 99);
     assert(var_base_id(epoch_copy->expr.elems[1]->var_id) == epoch_canonical_base);
+
+    AtomId shared_child_ids[2] = {sym_id, var_id};
+    AtomId shared_child_id = tu_expr_from_ids(&universe, shared_child_ids, 2);
+    assert(shared_child_id != CETTA_ATOM_ID_NONE);
+    AtomId shared_root_ids[4] = {
+        sym_id,
+        shared_child_id,
+        shared_child_id,
+        shared_child_id,
+    };
+    AtomId shared_root_id = tu_expr_from_ids(&universe, shared_root_ids, 4);
+    assert(shared_root_id != CETTA_ATOM_ID_NONE);
+    reset_test_counters();
+    Atom *shared_copy =
+        term_universe_copy_atom_epoch(&universe, &scratch, shared_root_id, 123);
+    assert(shared_copy != NULL);
+    assert(shared_copy->kind == ATOM_EXPR);
+    assert(shared_copy->expr.len == 4);
+    assert(shared_copy->expr.elems[1] == shared_copy->expr.elems[2]);
+    assert(shared_copy->expr.elems[2] == shared_copy->expr.elems[3]);
+    Atom *copied_child = shared_copy->expr.elems[1];
+    assert(copied_child->kind == ATOM_EXPR);
+    assert(copied_child->expr.len == 2);
+    assert(copied_child->expr.elems[1]->kind == ATOM_VAR);
+    assert(var_epoch_suffix(copied_child->expr.elems[1]->var_id) == 123);
+    assert(var_base_id(copied_child->expr.elems[1]->var_id) ==
+           var_base_id(var_load->var_id));
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL) == 1);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_NODE) == 4);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_MEMO_HIT) >= 3);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_ESTIMATED_ARENA_BYTES) > 0);
 
     Space space;
     space_init_with_universe(&space, &universe);
