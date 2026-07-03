@@ -52,7 +52,11 @@ static inline bool eval_gc_enabled(void) {
 }
 
 static inline bool eval_gc_can_collect_arena(const Arena *arena) {
-    return arena && arena->hashcons == NULL;
+    /* Hash-cons entries own their interned atoms on the heap.  Eligible eval
+       children are interned before they can appear inside an interned parent,
+       so resetting the eval arena does not leave hash-cons entries pointing
+       into reclaimed eval blocks. */
+    return arena != NULL;
 }
 
 static inline bool eval_gc_safe_point(const Arena *arena, size_t os_len,

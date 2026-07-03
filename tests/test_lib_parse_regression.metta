@@ -68,16 +68,18 @@
 !(assertEqual (lp-parse-class (g-bio) seq (mkL (A U G))) Unique)
 !(assertEqual (lp-parse-class (g-ambig) expr (mkL (a PLUS b PLUS c))) Ambiguous)
 !(assertEqual (lp-parse-class (g-bio) seq Nil) NoParse)
-!(println!
-  (lp-parse-cert
-    (g-logic)
-    term
-    (mkL (LP t EQ t IMP LP t PLUS ZERO RP EQ t RP))
-    (Nd wi
-      (Cons (Nd weq (Cons (Lf t) (Cons (Lf t) Nil)))
-        (Cons (Nd weq (Cons (Nd tpl (Cons (Lf t) (Cons (Nd tze Nil) Nil)))
-                        (Cons (Lf t) Nil)))
-          Nil)))))
+!(if (== (lp-parse-cert
+           (g-logic)
+           term
+           (mkL (LP t EQ t IMP LP t PLUS ZERO RP EQ t RP))
+           (Nd wi
+             (Cons (Nd weq (Cons (Lf t) (Cons (Lf t) Nil)))
+               (Cons (Nd weq (Cons (Nd tpl (Cons (Lf t) (Cons (Nd tze Nil) Nil)))
+                               (Cons (Lf t) Nil)))
+                 Nil))))
+         False)
+     Empty
+     (Error lp-parse-cert-negative-regression expected-false))
 !(assertEqual (g-lam-tpl-len) 4)
 !(assertEqual (g-lam-tpl-first) (Tm LAM))
 !(assertEqual (g-lam-tpl-dot) (Tm DOT))

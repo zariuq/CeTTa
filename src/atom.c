@@ -10,6 +10,8 @@
 #include <stdatomic.h>
 #include <string.h>
 
+#define CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP 64u
+
 struct CettaBigInt {
     const char *text;
 #if CETTA_BUILD_WITH_GMP
@@ -36,6 +38,18 @@ static CettaBigInt *cetta_bigint_clone_owned(const CettaBigInt *src);
 static void cetta_bigint_free_owned(CettaBigInt *big);
 static CettaRational *cetta_rational_clone_owned(const CettaRational *src);
 static void cetta_rational_free_owned(CettaRational *rat);
+
+typedef struct {
+    const Atom *src;
+    Atom *dst;
+} AtomDeepCopyMemoSlot;
+
+typedef struct {
+    AtomDeepCopyMemoSlot inline_slots[CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP];
+    AtomDeepCopyMemoSlot *slots;
+    size_t cap;
+    size_t used;
+} AtomDeepCopyMemo;
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
@@ -1854,56 +1868,203 @@ bool atom_eq(Atom *a, Atom *b) {
 
 /* ── Deep copy ──────────────────────────────────────────────────────────── */
 
-static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share) {
+static void atom_deep_copy_memo_clear(AtomDeepCopyMemoSlot *slots,
+                                      size_t cap) {
+    for (size_t i = 0; i < cap; i++) {
+        slots[i].src = NULL;
+        slots[i].dst = NULL;
+    }
+}
+
+static void atom_deep_copy_memo_init(AtomDeepCopyMemo *memo) {
+    if (!memo)
+        return;
+    memo->slots = memo->inline_slots;
+    memo->cap = CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP;
+    memo->used = 0;
+    atom_deep_copy_memo_clear(memo->slots, memo->cap);
+}
+
+static void atom_deep_copy_memo_free(AtomDeepCopyMemo *memo) {
+    if (!memo)
+        return;
+    if (memo->slots != memo->inline_slots)
+        free(memo->slots);
+    memo->slots = memo->inline_slots;
+    memo->cap = CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP;
+    memo->used = 0;
+    atom_deep_copy_memo_clear(memo->slots, memo->cap);
+}
+
+static size_t atom_deep_copy_memo_hash(const Atom *src) {
+    uintptr_t x = (uintptr_t)src;
+    x >>= 4;
+    x ^= x >> 33;
+    x *= (uintptr_t)0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return (size_t)x;
+}
+
+static Atom *atom_deep_copy_memo_lookup(AtomDeepCopyMemo *memo,
+                                        const Atom *src) {
+    if (!memo || !src || memo->cap == 0)
+        return NULL;
+    size_t mask = memo->cap - 1u;
+    size_t pos = atom_deep_copy_memo_hash(src) & mask;
+    for (;;) {
+        AtomDeepCopyMemoSlot *slot = &memo->slots[pos];
+        if (!slot->src)
+            return NULL;
+        if (slot->src == src)
+            return slot->dst;
+        pos = (pos + 1u) & mask;
+    }
+}
+
+static bool atom_deep_copy_memo_grow(AtomDeepCopyMemo *memo) {
+    if (!memo)
+        return false;
+    size_t old_cap = memo->cap;
+    size_t new_cap = old_cap ? old_cap * 2u : CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP;
+    AtomDeepCopyMemoSlot *old_slots = memo->slots;
+    AtomDeepCopyMemoSlot *new_slots =
+        cetta_malloc(sizeof(AtomDeepCopyMemoSlot) * new_cap);
+    atom_deep_copy_memo_clear(new_slots, new_cap);
+    memo->slots = new_slots;
+    memo->cap = new_cap;
+    memo->used = 0;
+    for (size_t i = 0; i < old_cap; i++) {
+        const Atom *src = old_slots[i].src;
+        Atom *dst = old_slots[i].dst;
+        if (!src)
+            continue;
+        size_t mask = memo->cap - 1u;
+        size_t pos = atom_deep_copy_memo_hash(src) & mask;
+        while (memo->slots[pos].src)
+            pos = (pos + 1u) & mask;
+        memo->slots[pos].src = src;
+        memo->slots[pos].dst = dst;
+        memo->used++;
+    }
+    if (old_slots != memo->inline_slots)
+        free(old_slots);
+    return true;
+}
+
+static bool atom_deep_copy_memo_store(AtomDeepCopyMemo *memo,
+                                      const Atom *src, Atom *dst) {
+    if (!memo || !src || !dst)
+        return true;
+    if ((memo->used + 1u) * 4u >= memo->cap * 3u &&
+        !atom_deep_copy_memo_grow(memo)) {
+        return false;
+    }
+    size_t mask = memo->cap - 1u;
+    size_t pos = atom_deep_copy_memo_hash(src) & mask;
+    for (;;) {
+        AtomDeepCopyMemoSlot *slot = &memo->slots[pos];
+        if (!slot->src) {
+            slot->src = src;
+            slot->dst = dst;
+            memo->used++;
+            return true;
+        }
+        if (slot->src == src) {
+            slot->dst = dst;
+            return true;
+        }
+        pos = (pos + 1u) & mask;
+    }
+}
+
+static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share,
+                                 AtomDeepCopyMemo *memo) {
+    if (!dst || !src)
+        return NULL;
+    Atom *memoized = atom_deep_copy_memo_lookup(memo, src);
+    if (memoized)
+        return memoized;
+    Atom *out = NULL;
     switch (src->kind) {
-    case ATOM_SYMBOL:   return atom_symbol_id(dst, src->sym_id);
-    case ATOM_VAR:      return atom_var_with_spelling(dst, src->sym_id, src->var_id);
+    case ATOM_SYMBOL:
+        out = atom_symbol_id(dst, src->sym_id);
+        break;
+    case ATOM_VAR:
+        out = atom_var_with_spelling(dst, src->sym_id, src->var_id);
+        break;
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
-            return share && g_hashcons ? hashcons_get(g_hashcons, atom_int(dst, src->ground.ival))
-                                       : atom_int(dst, src->ground.ival);
+            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_int(dst, src->ground.ival))
+                                      : atom_int(dst, src->ground.ival);
+            break;
         case GV_FLOAT:
-            return share && g_hashcons ? hashcons_get(g_hashcons, atom_float(dst, src->ground.fval))
-                                       : atom_float(dst, src->ground.fval);
+            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_float(dst, src->ground.fval))
+                                      : atom_float(dst, src->ground.fval);
+            break;
         case GV_BOOL:
-            return share && g_hashcons ? hashcons_get(g_hashcons, atom_bool(dst, src->ground.bval))
-                                       : atom_bool(dst, src->ground.bval);
+            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_bool(dst, src->ground.bval))
+                                      : atom_bool(dst, src->ground.bval);
+            break;
         case GV_STRING:
-            return share && g_hashcons ? hashcons_get(g_hashcons, atom_string(dst, src->ground.sval))
-                                       : atom_string(dst, src->ground.sval);
+            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_string(dst, src->ground.sval))
+                                      : atom_string(dst, src->ground.sval);
+            break;
         case GV_BIGINT:
-            return share && g_hashcons ? hashcons_get(g_hashcons, atom_bigint(dst, atom_bigint_cstr(src)))
-                                       : atom_bigint(dst, atom_bigint_cstr(src));
+            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_bigint(dst, atom_bigint_cstr(src)))
+                                      : atom_bigint(dst, atom_bigint_cstr(src));
+            break;
         case GV_RATIONAL:
-            return share && g_hashcons ? hashcons_get(g_hashcons, atom_rational(dst, atom_rational_cstr(src)))
-                                       : atom_rational(dst, atom_rational_cstr(src));
-        case GV_SPACE:  return atom_space(dst, src->ground.ptr);
-        case GV_STATE:  return atom_state(dst, (StateCell *)src->ground.ptr);
-        case GV_CAPTURE: return atom_capture(dst, (CaptureClosure *)src->ground.ptr);
-        case GV_FOREIGN: return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_rational(dst, atom_rational_cstr(src)))
+                                      : atom_rational(dst, atom_rational_cstr(src));
+            break;
+        case GV_SPACE:
+            out = atom_space(dst, src->ground.ptr);
+            break;
+        case GV_STATE:
+            out = atom_state(dst, (StateCell *)src->ground.ptr);
+            break;
+        case GV_CAPTURE:
+            out = atom_capture(dst, (CaptureClosure *)src->ground.ptr);
+            break;
+        case GV_FOREIGN:
+            out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+            break;
         }
-        return atom_symbol(dst, "?");
+        break;
     case ATOM_EXPR: {
         if (src->expr.len > 0 &&
             !cetta_expr_len_mul_fits_size(src->expr.len, sizeof(Atom *)))
             cetta_oom(SIZE_MAX);
         Atom **elems = arena_alloc(dst, (size_t)src->expr.len * sizeof(Atom *));
         for (CettaExprIndex i = 0; i < src->expr.len; i++)
-            elems[i] = atom_deep_copy_impl(dst, src->expr.elems[i], share);
-        return share ? atom_expr_shared(dst, elems, src->expr.len)
-                     : atom_expr(dst, elems, src->expr.len);
+            elems[i] = atom_deep_copy_impl(dst, src->expr.elems[i], share, memo);
+        out = share ? atom_expr_shared(dst, elems, src->expr.len)
+                    : atom_expr(dst, elems, src->expr.len);
+        break;
     }
     }
-    return atom_symbol(dst, "?");
+    if (!out)
+        out = atom_symbol(dst, "?");
+    if (!atom_deep_copy_memo_store(memo, src, out))
+        return NULL;
+    return out;
 }
 
 Atom *atom_deep_copy(Arena *dst, Atom *src) {
-    return atom_deep_copy_impl(dst, src, false);
+    AtomDeepCopyMemo memo;
+    atom_deep_copy_memo_init(&memo);
+    Atom *out = atom_deep_copy_impl(dst, src, false, &memo);
+    atom_deep_copy_memo_free(&memo);
+    return out;
 }
 
 Atom *atom_deep_copy_shared(Arena *dst, Atom *src) {
-    return atom_deep_copy_impl(dst, src, true);
+    AtomDeepCopyMemo memo;
+    atom_deep_copy_memo_init(&memo);
+    Atom *out = atom_deep_copy_impl(dst, src, true, &memo);
+    atom_deep_copy_memo_free(&memo);
+    return out;
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */

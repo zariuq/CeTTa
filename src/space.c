@@ -3,6 +3,8 @@
 #include "search_machine.h"
 #include "stats.h"
 #include <assert.h>
+#include <inttypes.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +15,7 @@ static _Thread_local uint64_t
     g_space_match_backend_packet_materialization_limit_override = 0;
 static _Thread_local uint64_t
     g_space_match_backend_contextual_query_slot_limit_override = 0;
+static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 
 static uint64_t space_match_backend_atom_id_materialization_limit(void) {
     return (uint64_t)(SIZE_MAX / sizeof(AtomId));
@@ -487,16 +490,31 @@ void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
 
 static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom);
 static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id);
+static SymbolId eq_head_symbol(Atom *lhs);
+static SymbolId eq_head_symbol_id(const Space *s, AtomId lhs_id);
 
 static void eq_bucket_init(EqBucket *b) {
     b->atom_indices = NULL; b->len = 0; b->cap = 0;
     b->trie = NULL;
     stree_bucket_init(&b->subst);
+    b->head = SYMBOL_ID_NONE;
+    b->mixed_heads = false;
     b->subst_safe = true;
+}
+
+static void eq_bucket_note_head(EqBucket *b, SymbolId head) {
+    if (!b || head == SYMBOL_ID_NONE)
+        return;
+    if (b->head == SYMBOL_ID_NONE) {
+        b->head = head;
+    } else if (b->head != head) {
+        b->mixed_heads = true;
+    }
 }
 
 static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx) {
     CettaIndex idx = b->len;
+    SymbolId head = eq_head_symbol(lhs);
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 8;
         b->atom_indices =
@@ -504,6 +522,7 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx) {
     }
     b->atom_indices[b->len] = atom_idx;
     b->len++;
+    eq_bucket_note_head(b, head);
     /* Add to discrimination trie */
     if (!b->trie) b->trie = disc_node_new();
     disc_insert(b->trie, lhs, idx);
@@ -513,6 +532,7 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx) {
 
 static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
                              CettaIndex atom_idx) {
+    SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (!b || !s || !s->native.universe || lhs_id == CETTA_ATOM_ID_NONE ||
         !tu_hdr(s->native.universe, lhs_id)) {
         Atom *lhs = (s && s->native.universe)
@@ -530,6 +550,7 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
     }
     b->atom_indices[b->len] = atom_idx;
     b->len++;
+    eq_bucket_note_head(b, head);
     if (!b->trie)
         b->trie = disc_node_new();
     if (!disc_insert_id(b->trie, s->native.universe, lhs_id, idx)) {
@@ -550,6 +571,8 @@ static void eq_bucket_free(EqBucket *b) {
     disc_node_free(b->trie); b->trie = NULL;
     stree_bucket_free(&b->subst);
     b->atom_indices = NULL; b->len = 0; b->cap = 0;
+    b->head = SYMBOL_ID_NONE;
+    b->mixed_heads = false;
     b->subst_safe = true;
 }
 
@@ -1969,7 +1992,22 @@ void query_results_init(QueryResults *qr) {
 }
 
 static CettaCount query_results_capacity_limit(void) {
+    if (g_query_results_capacity_limit_override != 0)
+        return g_query_results_capacity_limit_override;
     return (CettaCount)(SIZE_MAX / sizeof(QueryResult));
+}
+
+void query_results_diag_set_capacity_limit_override(CettaCount limit) {
+    g_query_results_capacity_limit_override = limit;
+}
+
+static void query_results_fatal_capacity(CettaCount len, CettaCount limit,
+                                         size_t bytes) {
+    fprintf(stderr,
+            "fatal: query result capacity exhausted "
+            "(len=%" PRIu64 " limit=%" PRIu64 " next-bytes=%zu)\n",
+            (uint64_t)len, (uint64_t)limit, bytes);
+    abort();
 }
 
 static bool query_results_ensure_one(QueryResults *qr) {
@@ -1980,7 +2018,7 @@ static bool query_results_ensure_one(QueryResults *qr) {
         return false;
     limit = query_results_capacity_limit();
     if (qr->len >= limit)
-        return false;
+        query_results_fatal_capacity(qr->len, limit, 0u);
     if (qr->len < qr->cap)
         return true;
     need = qr->len + 1u;
@@ -1990,7 +2028,8 @@ static bool query_results_ensure_one(QueryResults *qr) {
     if (next > limit)
         next = limit;
     if (next < need)
-        return false;
+        query_results_fatal_capacity(qr->len, limit,
+                                     sizeof(QueryResult) * (size_t)need);
     if (qr->items == qr->inline_items) {
         QueryResult *heap = cetta_malloc(sizeof(QueryResult) * (size_t)next);
         if (qr->len > 0)
@@ -3398,7 +3437,7 @@ static bool query_result_sink_emit(QueryResultSink *sink, Atom *result,
     sink->emitted++;
     if (!sink->visitor(result, bindings, sink->visitor_ctx)) {
         sink->stop = true;
-        return false;
+        return true;
     }
     return true;
 }
@@ -3531,9 +3570,8 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
             result = rewrite_query_visible_aliases(a, result, visible, &merged);
             Bindings projected;
             if (project_query_visible_bindings(a, visible, &merged, &projected)) {
-                (void)query_result_sink_emit(sink, result, &projected);
+                emitted = query_result_sink_emit(sink, result, &projected);
                 bindings_free(&projected);
-                emitted = true;
             }
         }
     }
@@ -3563,9 +3601,8 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
         result = rewrite_query_visible_aliases(a, result, visible, &merged);
         Bindings projected;
         if (project_query_visible_bindings(a, visible, &merged, &projected)) {
-            (void)query_result_sink_emit(sink, result, &projected);
+            emitted = query_result_sink_emit(sink, result, &projected);
             bindings_free(&projected);
-            emitted = true;
         }
     }
     bindings_free(&merged);
@@ -3580,10 +3617,14 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
                          QueryResultSink *sink) {
     SymbolId query_head = eq_head_symbol(query);
     CettaCount emitted_before;
+    bool head_bucket_mismatch;
     if (!bucket || bucket->len == 0 || !sink || sink->stop)
         return;
     emitted_before = sink->emitted;
-    if (bucket->subst.count <= 4 || !bucket->subst.root ||
+    head_bucket_mismatch =
+        query_head != SYMBOL_ID_NONE &&
+        (bucket->mixed_heads || bucket->head != query_head);
+    if (head_bucket_mismatch || bucket->subst.count <= 4 || !bucket->subst.root ||
         !bucket->subst_safe || !atom_is_eq_subst_safe(query)) {
         query_bucket_legacy(s, bucket, query, visible, a, sink);
         return;
