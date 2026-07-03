@@ -1,4 +1,5 @@
 #include "subst_tree.h"
+#include "stats.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -369,16 +370,18 @@ static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, uint32_t epoc
                             Bindings *b) {
     if (s->len >= s->cap) {
         CettaIndex next_cap = s->cap ? s->cap * 2 : 8;
+        size_t next_bytes = sizeof(SubstMatch) * (size_t)next_cap;
         if (s->items == s->inline_items) {
-            SubstMatch *next =
-                cetta_malloc(sizeof(SubstMatch) * (size_t)next_cap);
+            SubstMatch *next = cetta_malloc(next_bytes);
             if (s->len > 0)
                 memcpy(next, s->items, sizeof(SubstMatch) * (size_t)s->len);
             s->items = next;
         } else {
-            s->items =
-                cetta_realloc(s->items, sizeof(SubstMatch) * (size_t)next_cap);
+            s->items = cetta_realloc(s->items, next_bytes);
         }
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_QUERY_SUBST_MATCHSET_HEAP_BYTES,
+            (uint64_t)next_bytes);
         s->cap = next_cap;
     }
     s->items[s->len].atom_idx = atom_idx;
@@ -664,8 +667,10 @@ void stree_query_bucket(SubstBucket *bucket, Arena *a, Atom *query,
     CettaIndex nflat = 0;
     if (!flat_token_count(query, &nflat) || nflat == 0)
         return;
-    FlatToken *flat =
-        cetta_malloc(sizeof(FlatToken) * (size_t)(nflat ? nflat : 1));
+    size_t flat_bytes = sizeof(FlatToken) * (size_t)(nflat ? nflat : 1);
+    FlatToken *flat = cetta_malloc(flat_bytes);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_SUBST_FLAT_HEAP_BYTES,
+                            (uint64_t)flat_bytes);
     flatten_atom(query, flat, 0);
     BindingsBuilder bb;
     if (!bindings_builder_init(&bb, NULL)) {

@@ -1287,7 +1287,13 @@ static Arena *eval_query_episode_generated(EvalQueryEpisode *episode) {
 
 static Arena *eval_query_episode_result_arena(EvalQueryEpisode *episode,
                                               Arena *fallback) {
-    if (!episode || !episode->active || !episode->survivor_arena)
+    if (!episode || !episode->active)
+        return fallback;
+    if (fallback) {
+        episode->survivor_arena = fallback;
+        return fallback;
+    }
+    if (!episode->survivor_arena)
         return fallback;
     return episode->survivor_arena;
 }

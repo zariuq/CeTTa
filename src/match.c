@@ -3,6 +3,7 @@
 #include "variant_shape.h"
 #include <assert.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -17,10 +18,23 @@
 #define BINDINGS_LOOKUP_CACHE_SLOTS 4
 #define BINDINGS_MEMO_STACK_CAP 32
 #define BINDINGS_LOOKUP_CACHE_MISS UINT32_MAX
+#define FRESHEN_EPOCH_MEMO_INLINE_CAP 64u
 
 typedef struct BindingPoolBlock {
     struct BindingPoolBlock *next;
 } BindingPoolBlock;
+
+typedef struct {
+    const Atom *src;
+    Atom *dst;
+} FreshenEpochMemoSlot;
+
+typedef struct {
+    FreshenEpochMemoSlot inline_slots[FRESHEN_EPOCH_MEMO_INLINE_CAP];
+    FreshenEpochMemoSlot *slots;
+    size_t cap;
+    size_t used;
+} FreshenEpochMemo;
 
 static const uint32_t BINDINGS_POOL_CAPS[BINDINGS_POOL_CLASS_COUNT] = {8, 16, 32, 64};
 static __thread BindingPoolBlock *g_binding_entry_pools[BINDINGS_POOL_CLASS_COUNT];
@@ -1047,10 +1061,163 @@ Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
     return result;
 }
 
+static void freshen_epoch_memo_clear(FreshenEpochMemoSlot *slots, size_t cap) {
+    for (size_t i = 0; i < cap; i++) {
+        slots[i].src = NULL;
+        slots[i].dst = NULL;
+    }
+}
+
+static void freshen_epoch_memo_init(FreshenEpochMemo *memo) {
+    if (!memo)
+        return;
+    memo->slots = memo->inline_slots;
+    memo->cap = FRESHEN_EPOCH_MEMO_INLINE_CAP;
+    memo->used = 0;
+    freshen_epoch_memo_clear(memo->slots, memo->cap);
+}
+
+static void freshen_epoch_memo_free(FreshenEpochMemo *memo) {
+    if (!memo)
+        return;
+    if (memo->slots != memo->inline_slots)
+        free(memo->slots);
+    memo->slots = memo->inline_slots;
+    memo->cap = FRESHEN_EPOCH_MEMO_INLINE_CAP;
+    memo->used = 0;
+    freshen_epoch_memo_clear(memo->slots, memo->cap);
+}
+
+static size_t freshen_epoch_memo_hash(const Atom *src) {
+    uintptr_t x = (uintptr_t)src;
+    x >>= 4;
+    x ^= x >> 33;
+    x *= (uintptr_t)0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return (size_t)x;
+}
+
+static Atom *freshen_epoch_memo_lookup(FreshenEpochMemo *memo,
+                                       const Atom *src) {
+    if (!memo || !src || memo->cap == 0)
+        return NULL;
+    size_t mask = memo->cap - 1u;
+    size_t pos = freshen_epoch_memo_hash(src) & mask;
+    for (;;) {
+        FreshenEpochMemoSlot *slot = &memo->slots[pos];
+        if (!slot->src)
+            return NULL;
+        if (slot->src == src)
+            return slot->dst;
+        pos = (pos + 1u) & mask;
+    }
+}
+
+static bool freshen_epoch_memo_grow(FreshenEpochMemo *memo) {
+    if (!memo)
+        return false;
+    size_t old_cap = memo->cap;
+    size_t new_cap = old_cap ? old_cap * 2u : FRESHEN_EPOCH_MEMO_INLINE_CAP;
+    FreshenEpochMemoSlot *old_slots = memo->slots;
+    FreshenEpochMemoSlot *new_slots =
+        cetta_malloc(sizeof(FreshenEpochMemoSlot) * new_cap);
+    freshen_epoch_memo_clear(new_slots, new_cap);
+    memo->slots = new_slots;
+    memo->cap = new_cap;
+    memo->used = 0;
+    for (size_t i = 0; i < old_cap; i++) {
+        const Atom *src = old_slots[i].src;
+        Atom *dst = old_slots[i].dst;
+        if (!src)
+            continue;
+        size_t mask = memo->cap - 1u;
+        size_t pos = freshen_epoch_memo_hash(src) & mask;
+        while (memo->slots[pos].src)
+            pos = (pos + 1u) & mask;
+        memo->slots[pos].src = src;
+        memo->slots[pos].dst = dst;
+        memo->used++;
+    }
+    if (old_slots != memo->inline_slots)
+        free(old_slots);
+    return true;
+}
+
+static bool freshen_epoch_memo_store(FreshenEpochMemo *memo,
+                                     const Atom *src, Atom *dst) {
+    if (!memo || !src || !dst)
+        return true;
+    if ((memo->used + 1u) * 4u >= memo->cap * 3u &&
+        !freshen_epoch_memo_grow(memo)) {
+        return false;
+    }
+    size_t mask = memo->cap - 1u;
+    size_t pos = freshen_epoch_memo_hash(src) & mask;
+    for (;;) {
+        FreshenEpochMemoSlot *slot = &memo->slots[pos];
+        if (!slot->src) {
+            slot->src = src;
+            slot->dst = dst;
+            memo->used++;
+            return true;
+        }
+        if (slot->src == src) {
+            slot->dst = dst;
+            return true;
+        }
+        pos = (pos + 1u) & mask;
+    }
+}
+
+static Atom *atom_freshen_epoch_impl(Arena *a, Atom *atom, uint32_t epoch,
+                                     FreshenEpochMemo *memo) {
+    if (!a || !atom)
+        return NULL;
+    if (!atom_has_vars(atom))
+        return atom;
+    Atom *memoized = freshen_epoch_memo_lookup(memo, atom);
+    if (memoized)
+        return memoized;
+    Atom *out = NULL;
+    switch (atom->kind) {
+    case ATOM_VAR:
+        out = epoch_var_atom(a, atom, epoch);
+        break;
+    case ATOM_EXPR: {
+        Atom **new_elems = NULL;
+        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+            Atom *child = atom->expr.elems[i];
+            Atom *next = atom_has_vars(child)
+                ? atom_freshen_epoch_impl(a, child, epoch, memo)
+                : child;
+            if (!next)
+                return NULL;
+            if (!new_elems && next != atom->expr.elems[i]) {
+                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                for (CettaExprIndex j = 0; j < i; j++)
+                    new_elems[j] = atom->expr.elems[j];
+            }
+            if (new_elems)
+                new_elems[i] = next;
+        }
+        out = new_elems ? atom_expr(a, new_elems, atom->expr.len) : atom;
+        break;
+    }
+    default:
+        out = atom;
+        break;
+    }
+    if (!freshen_epoch_memo_store(memo, atom, out))
+        return NULL;
+    return out;
+}
+
 Atom *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch) {
-    Bindings empty;
-    bindings_init(&empty);
-    return bindings_apply_epoch(&empty, a, atom, epoch);
+    FreshenEpochMemo memo;
+    freshen_epoch_memo_init(&memo);
+    Atom *out = atom_freshen_epoch_impl(a, atom, epoch, &memo);
+    freshen_epoch_memo_free(&memo);
+    return out;
 }
 
 Atom *bindings_to_atom(Arena *a, const Bindings *b) {

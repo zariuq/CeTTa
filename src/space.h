@@ -65,6 +65,8 @@ typedef struct {
     CettaIndex len, cap;
     DiscNode *trie; /* discrimination trie over LHS patterns */
     SubstBucket subst; /* epoch-tagged substitution tree over LHS patterns */
+    SymbolId head; /* exact head if the hash bucket is homogeneous */
+    bool mixed_heads; /* true when distinct exact heads share this bucket */
     bool subst_safe; /* all LHS atoms are safe for the subst-tree fast path */
 } EqBucket;
 
@@ -220,6 +222,7 @@ typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
 void query_results_init(QueryResults *qr);
 bool query_results_push(QueryResults *qr, Atom *result, Bindings *b);
 bool query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
+void query_results_diag_set_capacity_limit_override(CettaCount limit);
 CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
                                  QueryResultVisitor visitor, void *ctx);
 CettaCount query_results_visit(const QueryResults *qr,
