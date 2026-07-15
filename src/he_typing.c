@@ -3,6 +3,7 @@
 
 #include "he_typing.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -622,11 +623,9 @@ static void type_of_application(Arena *a, Space *space, Atom *term,
             HeNormStatus ns = HE_NORM_COMPLETE;
             concrete_cod = normalize_type_checked(a, space, concrete_cod,
                                                   fuel, &ns, 0);
-            if (ns != HE_NORM_COMPLETE) {
-                all_ok = false;
-            } else if (remaining == 0) {
+            if (ns == HE_NORM_COMPLETE && remaining == 0) {
                 set_add(out, concrete_cod);
-            } else {
+            } else if (ns == HE_NORM_COMPLETE) {
                 Atom **residual = arena_alloc(a,
                     sizeof(Atom *) * (remaining + 2));
                 residual[0] = atom_symbol(a, "->");
@@ -796,8 +795,7 @@ static Atom *check_typing(Arena *a, Space *space, Atom *term, Atom *expected,
  * the typing machinery above. */
 
 #define CHAIN_INITIAL_CAP 32u
-#define CHAIN_MEMO_CAP 256u
-#define CHAIN_ACTIVE_CAP 96u
+#define CHAIN_ANSWER_DEPTH_LIMIT 512u
 
 typedef struct {
     Atom *term;
@@ -823,9 +821,20 @@ typedef struct {
     ChainRef *refs;
 } ChainIndex;
 
+/* AnswerIdentityV1 is the lossless identity of a typed-search answer.  The
+ * proof and checked type are fully substituted, variables are canonicalized
+ * jointly across every field, and substitution records only the original
+ * query variables plus residual equality constraints.  It deliberately does
+ * not quotient distinct derivations, theorem-equal proofs, or PLN evidence. */
 typedef struct {
     Atom *proof;
+    Atom *substitution;
     Atom *type;
+    Atom *key;
+} AnswerIdentityV1;
+
+typedef struct {
+    AnswerIdentityV1 identity;
     Bindings env;
 } ChainProof;
 
@@ -836,44 +845,67 @@ typedef struct {
 } ChainProofVec;
 
 typedef struct {
-    Atom *goal;
-    uint32_t depth;
-    Atom **proofs;
-    Atom **types;
-    uint32_t count;
-} ChainMemoEntry;
-
-typedef struct {
     uint64_t calls;
     uint64_t fact_candidates;
     uint64_t rule_candidates;
     uint64_t head_pruned;
     uint64_t proof_checks;
-    uint64_t memo_hits;
-    uint64_t cycle_pruned;
+    uint64_t work_items;
+    uint64_t continuations;
 } ChainStats;
+
+typedef struct {
+    VarId var_id;
+    SymbolId spelling;
+} ChainQueryVar;
 
 typedef struct {
     Arena *arena;
     Space *space;
     ChainIndex index;
     uint64_t fuel;
-    uint32_t answer_limit;
     bool incomplete;
+    bool more_possible;
     const char *incomplete_reason;
     ChainStats stats;
-    ChainMemoEntry memo[CHAIN_MEMO_CAP];
-    uint32_t memo_count;
-    Atom *active_goals[CHAIN_ACTIVE_CAP];
-    uint32_t active_depths[CHAIN_ACTIVE_CAP];
-    uint32_t active_count;
+    Atom *root_goal;
+    ChainQueryVar *query_vars;
+    uint32_t query_var_count;
+    uint32_t query_var_cap;
 } ChainContext;
+
+static void chain_mark_incomplete(ChainContext *ctx, const char *reason) {
+    if (ctx->incomplete) return;
+    ctx->incomplete = true;
+    ctx->incomplete_reason = reason;
+}
+
+static void chain_mark_normalization_incomplete(ChainContext *ctx,
+                                                HeNormStatus status,
+                                                const char *fallback) {
+    switch (status) {
+    case HE_NORM_RESOURCE:
+        chain_mark_incomplete(ctx, "fuel-exhausted");
+        return;
+    case HE_NORM_AMBIGUOUS:
+        chain_mark_incomplete(ctx, "type-computation-ambiguous");
+        return;
+    case HE_NORM_NO_RESULT:
+        chain_mark_incomplete(ctx, "type-computation-no-result");
+        return;
+    case HE_NORM_INADMISSIBLE:
+        chain_mark_incomplete(ctx, "type-computation-inadmissible");
+        return;
+    case HE_NORM_COMPLETE:
+        break;
+    }
+    chain_mark_incomplete(ctx, fallback);
+}
 
 static bool chain_take_fuel(ChainContext *ctx, uint64_t amount) {
     if (ctx->fuel < amount) {
         ctx->fuel = 0;
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "fuel-exhausted";
+        chain_mark_incomplete(ctx, "fuel-exhausted");
         return false;
     }
     ctx->fuel -= amount;
@@ -961,6 +993,164 @@ static bool chain_index_build(ChainContext *ctx) {
     return true;
 }
 
+static bool chain_query_var_add(ChainContext *ctx, Atom *var) {
+    for (uint32_t i = 0; i < ctx->query_var_count; i++)
+        if (ctx->query_vars[i].var_id == var->var_id) return true;
+    if (ctx->query_var_count == ctx->query_var_cap) {
+        uint32_t ncap = ctx->query_var_cap ? ctx->query_var_cap * 2u : 8u;
+        ChainQueryVar *next = realloc(ctx->query_vars,
+                                      sizeof(ChainQueryVar) * ncap);
+        if (!next) {
+            chain_mark_incomplete(ctx, "answer-identity-allocation");
+            return false;
+        }
+        ctx->query_vars = next;
+        ctx->query_var_cap = ncap;
+    }
+    ctx->query_vars[ctx->query_var_count++] =
+        (ChainQueryVar){var->var_id, var->sym_id};
+    return true;
+}
+
+static bool chain_collect_query_vars(ChainContext *ctx, Atom *atom,
+                                     uint32_t depth) {
+    if (!atom || depth > CHAIN_ANSWER_DEPTH_LIMIT) {
+        chain_mark_incomplete(ctx, "answer-identity-depth");
+        return false;
+    }
+    if (atom->kind == ATOM_VAR) return chain_query_var_add(ctx, atom);
+    if (atom->kind != ATOM_EXPR) return true;
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++)
+        if (!chain_collect_query_vars(ctx, atom->expr.elems[i], depth + 1u))
+            return false;
+    return true;
+}
+
+typedef struct {
+    VarId source;
+    Atom *canonical;
+} AnswerCanonicalVar;
+
+typedef struct {
+    AnswerCanonicalVar *items;
+    uint32_t count;
+    uint32_t cap;
+} AnswerCanonicalMap;
+
+static Atom *answer_canonical_var(ChainContext *ctx, AnswerCanonicalMap *map,
+                                  Atom *var) {
+    for (uint32_t i = 0; i < map->count; i++)
+        if (map->items[i].source == var->var_id)
+            return map->items[i].canonical;
+    if (map->count == map->cap) {
+        uint32_t ncap = map->cap ? map->cap * 2u : 8u;
+        AnswerCanonicalVar *next = realloc(map->items,
+                                            sizeof(AnswerCanonicalVar) * ncap);
+        if (!next) {
+            chain_mark_incomplete(ctx, "answer-identity-allocation");
+            return NULL;
+        }
+        map->items = next;
+        map->cap = ncap;
+    }
+    char name[40];
+    snprintf(name, sizeof name, "answer-v%u", map->count);
+    Atom *canonical = atom_var(ctx->arena, name);
+    map->items[map->count++] =
+        (AnswerCanonicalVar){var->var_id, canonical};
+    return canonical;
+}
+
+static Atom *answer_canonicalize_rec(ChainContext *ctx,
+                                     AnswerCanonicalMap *map, Atom *atom,
+                                     uint32_t depth) {
+    if (!atom || depth > CHAIN_ANSWER_DEPTH_LIMIT) {
+        chain_mark_incomplete(ctx, "answer-identity-depth");
+        return NULL;
+    }
+    if (atom->kind == ATOM_VAR) return answer_canonical_var(ctx, map, atom);
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom)) return atom;
+    Atom **children = arena_alloc(ctx->arena, sizeof(Atom *) * atom->expr.len);
+    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+        children[i] = answer_canonicalize_rec(ctx, map, atom->expr.elems[i],
+                                              depth + 1u);
+        if (!children[i]) return NULL;
+    }
+    return atom_expr(ctx->arena, children, atom->expr.len);
+}
+
+static Atom *answer_substitution_v1(ChainContext *ctx, const Bindings *env) {
+    Atom **parts = arena_alloc(ctx->arena,
+        sizeof(Atom *) * (ctx->query_var_count + 2u));
+    parts[0] = he_sym(ctx->arena, "answer-substitution-v1");
+    for (uint32_t i = 0; i < ctx->query_var_count; i++) {
+        Atom *var = atom_var_with_spelling(ctx->arena,
+                                           ctx->query_vars[i].spelling,
+                                           ctx->query_vars[i].var_id);
+        Atom *value = bindings_apply_if_vars(env, ctx->arena, var);
+        if (!value) {
+            chain_mark_incomplete(ctx, "answer-substitution-failed");
+            return NULL;
+        }
+        parts[i + 1u] = atom_expr3(ctx->arena,
+                                  he_sym(ctx->arena, "answer-binding-v1"),
+                                  var, value);
+    }
+    Atom **constraints = arena_alloc(ctx->arena,
+                                     sizeof(Atom *) * (env->eq_len + 1u));
+    constraints[0] = he_sym(ctx->arena, "answer-constraints-v1");
+    for (uint32_t i = 0; i < env->eq_len; i++) {
+        Atom *left = bindings_apply_if_vars(env, ctx->arena,
+                                            env->constraints[i].lhs);
+        Atom *right = bindings_apply_if_vars(env, ctx->arena,
+                                             env->constraints[i].rhs);
+        if (!left || !right) {
+            chain_mark_incomplete(ctx, "answer-substitution-failed");
+            return NULL;
+        }
+        constraints[i + 1u] = atom_expr2(ctx->arena, left, right);
+    }
+    parts[ctx->query_var_count + 1u] =
+        atom_expr(ctx->arena, constraints, env->eq_len + 1u);
+    return atom_expr(ctx->arena, parts, ctx->query_var_count + 2u);
+}
+
+static bool answer_identity_v1_make(ChainContext *ctx, Atom *proof,
+                                    Atom *type, const Bindings *env,
+                                    AnswerIdentityV1 *out) {
+    Atom *substituted_proof = bindings_apply_if_vars(env, ctx->arena, proof);
+    Atom *substituted_type = bindings_apply_if_vars(env, ctx->arena, type);
+    if (!substituted_proof || !substituted_type) {
+        chain_mark_incomplete(ctx, "answer-substitution-failed");
+        return false;
+    }
+    HeNormStatus status = HE_NORM_COMPLETE;
+    substituted_type = normalize_type_checked(ctx->arena, ctx->space,
+                                               substituted_type, &ctx->fuel,
+                                               &status, 0);
+    if (status != HE_NORM_COMPLETE) {
+        chain_mark_normalization_incomplete(
+            ctx, status, "answer-type-normalization-incomplete");
+        return false;
+    }
+    Atom *substitution = answer_substitution_v1(ctx, env);
+    if (!substitution) return false;
+    Atom *raw_fields[4] = {he_sym(ctx->arena, "answer-identity-v1"),
+                           substituted_proof, substitution, substituted_type};
+    Atom *raw = atom_expr(ctx->arena, raw_fields, 4);
+    AnswerCanonicalMap map = {0};
+    Atom *key = answer_canonicalize_rec(ctx, &map, raw, 0);
+    free(map.items);
+    if (!key || key->kind != ATOM_EXPR || key->expr.len != 4u) return false;
+    *out = (AnswerIdentityV1){
+        .proof = key->expr.elems[1],
+        .substitution = key->expr.elems[2],
+        .type = key->expr.elems[3],
+        .key = key,
+    };
+    return true;
+}
+
 static void chain_vec_init(ChainProofVec *v) {
     v->items = NULL; v->count = v->cap = 0;
 }
@@ -971,38 +1161,34 @@ static void chain_vec_free(ChainProofVec *v) {
     chain_vec_init(v);
 }
 
-static bool chain_vec_has_proof(const ChainProofVec *v, Atom *proof) {
+static bool chain_vec_has_answer(const ChainProofVec *v,
+                                 const AnswerIdentityV1 *identity) {
     for (uint32_t i = 0; i < v->count; i++)
-        if (atom_eq(v->items[i].proof, proof)) return true;
+        if (atom_alpha_eq(v->items[i].identity.key, identity->key)) return true;
     return false;
 }
 
 static bool chain_vec_push_move(ChainContext *ctx, ChainProofVec *v,
-                                Atom *proof, Atom *type, Bindings *env) {
-    if (chain_vec_has_proof(v, proof)) {
+                                const AnswerIdentityV1 *identity,
+                                Bindings *env) {
+    if (chain_vec_has_answer(v, identity)) {
         bindings_free(env);
+        bindings_init(env);
         return true;
-    }
-    if (v->count >= ctx->answer_limit) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "answer-limit";
-        bindings_free(env);
-        return false;
     }
     if (v->count == v->cap) {
         uint32_t ncap = v->cap ? v->cap * 2 : CHAIN_INITIAL_CAP;
-        if (ncap > ctx->answer_limit) ncap = ctx->answer_limit;
         ChainProof *next = realloc(v->items, sizeof(ChainProof) * ncap);
         if (!next) {
-            ctx->incomplete = true;
-            ctx->incomplete_reason = "allocation-failed";
+            chain_mark_incomplete(ctx, "allocation-failed");
             bindings_free(env);
+            bindings_init(env);
             return false;
         }
         v->items = next;
         v->cap = ncap;
     }
-    v->items[v->count++] = (ChainProof){proof, type, *env};
+    v->items[v->count++] = (ChainProof){*identity, *env};
     bindings_init(env);
     return true;
 }
@@ -1046,8 +1232,9 @@ static bool chain_unify_deferred(ChainContext *ctx, Atom *left, Atom *right,
     right = normalize_type_checked(ctx->arena, ctx->space, right, &ctx->fuel,
                                    &rs, 0);
     if (ls != HE_NORM_COMPLETE || rs != HE_NORM_COMPLETE) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "type-normalization-incomplete";
+        chain_mark_normalization_incomplete(
+            ctx, ls != HE_NORM_COMPLETE ? ls : rs,
+            "type-normalization-incomplete");
         return false;
     }
     return chain_unify_shape_rec(ctx, left, right, env, 0);
@@ -1063,8 +1250,9 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
     right = normalize_type_checked(ctx->arena, ctx->space, right, &ctx->fuel,
                                    &rs, 0);
     if (ls != HE_NORM_COMPLETE || rs != HE_NORM_COMPLETE) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "type-normalization-incomplete";
+        chain_mark_normalization_incomplete(
+            ctx, ls != HE_NORM_COMPLETE ? ls : rs,
+            "type-normalization-incomplete");
         return false;
     }
     Atom *detail = NULL;
@@ -1073,15 +1261,15 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
     HeTypeValidity rv = validate_type_properties(ctx->arena, ctx->space, right,
                                                  &ctx->fuel, &detail, 0);
     if (lv == HE_TYPE_VALIDATION_UNKNOWN || rv == HE_TYPE_VALIDATION_UNKNOWN) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "type-property-unknown";
+        chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
+                                                  : "type-property-unknown");
         return false;
     }
     if (lv == HE_TYPE_INVALID || rv == HE_TYPE_INVALID) return false;
     HeEdge e = consistency_bind(left, right, &ctx->fuel, env);
     if (e == HE_UNKNOWN) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "type-unification-exhausted";
+        chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
+                                              : "type-unification-exhausted");
         return false;
     }
     /* Gradual acceptances (dynamic/top/meta anywhere in the composition) are
@@ -1093,7 +1281,11 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
         HeNormStatus ns = HE_NORM_COMPLETE;
         r = normalize_type_checked(ctx->arena, ctx->space, r, &ctx->fuel, &ns,
                                    0);
-        if (ns != HE_NORM_COMPLETE) return false;
+        if (ns != HE_NORM_COMPLETE) {
+            chain_mark_normalization_incomplete(
+                ctx, ns, "resolved-type-normalization-incomplete");
+            return false;
+        }
         *resolved_left = r;
     }
     return true;
@@ -1105,13 +1297,20 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
     HeTypeSet ts;
     set_init(&ts);
     if (!type_of(ctx->arena, ctx->space, proof, &ctx->fuel, &ts)) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "proof-type-inference-exhausted";
+        chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
+                                         : "proof-type-inference-exhausted");
+        return false;
+    }
+    if (ts.overflow) {
+        chain_mark_incomplete(ctx, "proof-type-set-capacity");
         return false;
     }
     for (uint32_t i = 0; i < ts.count; i++) {
         Bindings trial;
-        if (!bindings_clone(&trial, env)) continue;
+        if (!bindings_clone(&trial, env)) {
+            chain_mark_incomplete(ctx, "proof-check-binding-allocation");
+            return false;
+        }
         Atom *resolved = NULL;
         if (chain_unify_must(ctx, ts.items[i], goal, &trial, &resolved)) {
             bindings_replace(env, &trial);
@@ -1122,58 +1321,6 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
     }
     return false;
 }
-
-static bool chain_goal_is_active(ChainContext *ctx, Atom *goal, uint32_t depth) {
-    if (atom_has_vars(goal)) return false;
-    for (uint32_t i = 0; i < ctx->active_count; i++)
-        if (ctx->active_depths[i] >= depth && atom_eq(ctx->active_goals[i], goal))
-            return true;
-    return false;
-}
-
-static bool chain_active_push(ChainContext *ctx, Atom *goal, uint32_t depth) {
-    if (ctx->active_count >= CHAIN_ACTIVE_CAP) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "active-goal-capacity";
-        return false;
-    }
-    ctx->active_goals[ctx->active_count] = goal;
-    ctx->active_depths[ctx->active_count++] = depth;
-    return true;
-}
-
-static void chain_active_pop(ChainContext *ctx) {
-    if (ctx->active_count) ctx->active_count--;
-}
-
-static ChainMemoEntry *chain_memo_find(ChainContext *ctx, Atom *goal,
-                                       uint32_t depth) {
-    if (atom_has_vars(goal)) return NULL;
-    for (uint32_t i = 0; i < ctx->memo_count; i++)
-        if (ctx->memo[i].depth >= depth && atom_eq(ctx->memo[i].goal, goal))
-            return &ctx->memo[i];
-    return NULL;
-}
-
-static void chain_memo_store(ChainContext *ctx, Atom *goal, uint32_t depth,
-                             const ChainProofVec *out) {
-    if (atom_has_vars(goal) || out->count == 0 ||
-        ctx->memo_count >= CHAIN_MEMO_CAP)
-        return;
-    ChainMemoEntry *m = &ctx->memo[ctx->memo_count++];
-    m->goal = goal;
-    m->depth = depth;
-    m->count = out->count;
-    m->proofs = arena_alloc(ctx->arena, sizeof(Atom *) * out->count);
-    m->types = arena_alloc(ctx->arena, sizeof(Atom *) * out->count);
-    for (uint32_t i = 0; i < out->count; i++) {
-        m->proofs[i] = out->items[i].proof;
-        m->types[i] = out->items[i].type;
-    }
-}
-
-static void chain_search(ChainContext *ctx, Atom *goal, uint32_t depth,
-                         const Bindings *base_env, ChainProofVec *out);
 
 static int chain_premise_score(ChainContext *ctx, Atom *premise,
                                const Bindings *env) {
@@ -1188,112 +1335,6 @@ static int chain_premise_score(ChainContext *ctx, Atom *premise,
         if (matches < 1000) score += 1000 - (int)matches;
     }
     return score;
-}
-
-static void chain_finish_rule(ChainContext *ctx, Atom *rule_term,
-                              Atom **args, uint32_t arity, Atom *goal,
-                              Bindings *env, ChainProofVec *out) {
-    Atom **elems = arena_alloc(ctx->arena, sizeof(Atom *) * (arity + 1));
-    elems[0] = rule_term;
-    for (uint32_t i = 0; i < arity; i++) elems[i + 1] = args[i];
-    Atom *proof = atom_expr(ctx->arena, elems, arity + 1);
-    proof = bindings_apply_if_vars(env, ctx->arena, proof);
-    Atom *checked_type = NULL;
-    if (!chain_proof_checked(ctx, proof, goal, env, &checked_type)) return;
-    proof = bindings_apply_if_vars(env, ctx->arena, proof);
-    chain_vec_push_move(ctx, out, proof, checked_type, env);
-}
-
-static void chain_solve_rule(ChainContext *ctx, Atom *rule_term,
-                             Atom **premises, Atom **premise_binders,
-                             uint32_t arity, Atom *goal,
-                             uint32_t depth, Bindings *env, Atom **args,
-                             bool *done, uint32_t solved, ChainProofVec *out) {
-    if (out->count >= ctx->answer_limit || ctx->fuel == 0) return;
-    if (solved == arity) {
-        Bindings final_env;
-        if (!bindings_clone(&final_env, env)) return;
-        chain_finish_rule(ctx, rule_term, args, arity, goal, &final_env, out);
-        bindings_free(&final_env);
-        return;
-    }
-
-    uint32_t pick = UINT32_MAX;
-    int best = -2147483647;
-    for (uint32_t i = 0; i < arity; i++) if (!done[i]) {
-        int score = chain_premise_score(ctx, premises[i], env);
-        if (score > best) { best = score; pick = i; }
-    }
-    if (pick == UINT32_MAX) return;
-
-    Atom *premise = bindings_apply_if_vars(env, ctx->arena, premises[pick]);
-    HeNormStatus ps = HE_NORM_COMPLETE;
-    premise = normalize_type_checked(ctx->arena, ctx->space, premise,
-                                     &ctx->fuel, &ps, 0);
-    if (ps != HE_NORM_COMPLETE) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "premise-normalization-incomplete";
-        return;
-    }
-
-    ChainProofVec candidates;
-    chain_vec_init(&candidates);
-    chain_search(ctx, premise, depth, env, &candidates);
-    for (uint32_t i = 0; i < candidates.count; i++) {
-        done[pick] = true;
-        args[pick] = candidates.items[i].proof;
-        if (premise_binders[pick]) {
-            Atom *bound_proof = candidates.items[i].proof;
-            if (!bindings_add_id(&candidates.items[i].env,
-                                 premise_binders[pick]->var_id,
-                                 premise_binders[pick]->sym_id,
-                                 bound_proof)) {
-                done[pick] = false;
-                args[pick] = NULL;
-                continue;
-            }
-        }
-        chain_solve_rule(ctx, rule_term, premises, premise_binders,
-                         arity, goal, depth, &candidates.items[i].env,
-                         args, done, solved + 1, out);
-        done[pick] = false;
-        args[pick] = NULL;
-        if (out->count >= ctx->answer_limit) break;
-    }
-    chain_vec_free(&candidates);
-}
-
-static void chain_expand_rule(ChainContext *ctx, const ChainDecl *d, Atom *goal,
-                              uint32_t depth, const Bindings *base_env,
-                              ChainProofVec *out) {
-    if (depth == 0 || !chain_take_fuel(ctx, 1)) return;
-    ctx->stats.rule_candidates++;
-    uint32_t epoch = fresh_var_suffix();
-    Atom *rule_term = atom_freshen_epoch(ctx->arena, d->term, epoch);
-    Atom *rule_type = atom_freshen_epoch(ctx->arena, d->type, epoch);
-    uint32_t arity = rule_type->expr.len - 2;
-    Atom *conclusion = rule_type->expr.elems[rule_type->expr.len - 1];
-    Bindings env;
-    if (!bindings_clone(&env, base_env)) return;
-    if (!chain_unify_deferred(ctx, conclusion, goal, &env)) {
-        bindings_free(&env);
-        return;
-    }
-    Atom **premises = arena_alloc(ctx->arena, sizeof(Atom *) * arity);
-    Atom **premise_binders = arena_alloc(ctx->arena, sizeof(Atom *) * arity);
-    Atom **args = arena_alloc(ctx->arena, sizeof(Atom *) * arity);
-    bool *done = arena_alloc(ctx->arena, sizeof(bool) * arity);
-    for (uint32_t i = 0; i < arity; i++) {
-        Atom *binder = NULL, *ptype = NULL;
-        split_binder(rule_type->expr.elems[i + 1], &binder, &ptype);
-        premises[i] = ptype;
-        premise_binders[i] = binder;
-        args[i] = NULL;
-        done[i] = false;
-    }
-    chain_solve_rule(ctx, rule_term, premises, premise_binders,
-                     arity, goal, depth - 1, &env, args, done, 0, out);
-    bindings_free(&env);
 }
 
 static uint32_t chain_ref_lower_bound(const ChainIndex *idx, SymbolId head) {
@@ -1336,108 +1377,420 @@ static uint32_t chain_candidate_ranges(ChainContext *ctx, SymbolId head,
     return n;
 }
 
-static void chain_search(ChainContext *ctx, Atom *goal, uint32_t depth,
-                         const Bindings *base_env, ChainProofVec *out) {
-    ctx->stats.calls++;
-    if (!chain_take_fuel(ctx, 1)) return;
-    goal = bindings_apply_if_vars(base_env, ctx->arena, goal);
-    HeNormStatus gs = HE_NORM_COMPLETE;
-    goal = normalize_type_checked(ctx->arena, ctx->space, goal, &ctx->fuel, &gs,
-                                  0);
-    if (gs != HE_NORM_COMPLETE) {
-        ctx->incomplete = true;
-        ctx->incomplete_reason = "goal-normalization-incomplete";
-        return;
-    }
+typedef struct ChainContinuation ChainContinuation;
 
-    if (chain_goal_is_active(ctx, goal, depth)) {
-        ctx->stats.cycle_pruned++;
-        return;
-    }
-    if (!chain_active_push(ctx, goal, depth)) return;
+struct ChainContinuation {
+    Atom *rule_term;
+    Atom *goal;
+    Atom **premises;
+    Atom **premise_binders;
+    Atom **args;
+    bool *done;
+    uint32_t arity;
+    uint32_t solved;
+    uint32_t depth;
+    uint32_t rank;
+    uint32_t pick;
+    ChainContinuation *parent;
+};
 
-    {
-        ChainMemoEntry *m = chain_memo_find(ctx, goal, depth);
-        if (m) {
-            ctx->stats.memo_hits++;
-            for (uint32_t i = 0; i < m->count; i++) {
-                Bindings env;
-                if (!bindings_clone(&env, base_env)) continue;
-                chain_vec_push_move(ctx, out, m->proofs[i], m->types[i], &env);
-            }
-            chain_active_pop(ctx);
-            return;
+typedef enum {
+    CHAIN_WORK_CANDIDATE = 0,
+    CHAIN_WORK_RESULT,
+} ChainWorkKind;
+
+typedef struct {
+    ChainWorkKind kind;
+    uint32_t decl_index;
+    Atom *goal;
+    uint32_t depth;
+    Atom *proof;
+    Atom *type;
+    Bindings env;
+    ChainContinuation *continuation;
+    uint32_t rank;
+    uint8_t priority;
+    uint64_t serial;
+} ChainWorkItem;
+
+typedef struct {
+    ChainWorkItem *items;
+    uint32_t len;
+    uint32_t cap;
+    uint64_t next_serial;
+} ChainWorkQueue;
+
+static void chain_queue_init(ChainWorkQueue *queue) {
+    queue->items = NULL;
+    queue->len = queue->cap = 0;
+    queue->next_serial = 0;
+}
+
+static void chain_queue_free(ChainWorkQueue *queue) {
+    for (uint32_t i = 0; i < queue->len; i++)
+        bindings_free(&queue->items[i].env);
+    free(queue->items);
+    chain_queue_init(queue);
+}
+
+static bool chain_queue_grow(ChainContext *ctx, ChainWorkQueue *queue) {
+    uint32_t ncap = queue->cap ? queue->cap * 2u : CHAIN_INITIAL_CAP;
+    ChainWorkItem *next = malloc(sizeof(ChainWorkItem) * ncap);
+    if (!next) {
+        chain_mark_incomplete(ctx, "search-queue-allocation");
+        return false;
+    }
+    for (uint32_t i = 0; i < queue->len; i++) next[i] = queue->items[i];
+    free(queue->items);
+    queue->items = next;
+    queue->cap = ncap;
+    return true;
+}
+
+static bool chain_work_before(const ChainWorkItem *left,
+                              const ChainWorkItem *right) {
+    if (left->rank != right->rank) return left->rank < right->rank;
+    if (left->priority != right->priority)
+        return left->priority < right->priority;
+    return left->serial < right->serial;
+}
+
+static bool chain_queue_push_move(ChainContext *ctx, ChainWorkQueue *queue,
+                                  ChainWorkItem *item) {
+    if (queue->len == queue->cap && !chain_queue_grow(ctx, queue)) return false;
+    item->serial = queue->next_serial++;
+    uint32_t pos = queue->len++;
+    queue->items[pos] = *item;
+    bindings_init(&item->env);
+    while (pos > 0) {
+        uint32_t parent = (pos - 1u) / 2u;
+        if (!chain_work_before(&queue->items[pos], &queue->items[parent]))
+            break;
+        ChainWorkItem swap = queue->items[parent];
+        queue->items[parent] = queue->items[pos];
+        queue->items[pos] = swap;
+        pos = parent;
+    }
+    return true;
+}
+
+static bool chain_queue_pop(ChainWorkQueue *queue, ChainWorkItem *out) {
+    if (queue->len == 0) return false;
+    *out = queue->items[0];
+    queue->len--;
+    if (queue->len > 0) {
+        queue->items[0] = queue->items[queue->len];
+        uint32_t pos = 0;
+        for (;;) {
+            uint32_t left = pos * 2u + 1u;
+            uint32_t right = left + 1u;
+            if (left >= queue->len) break;
+            uint32_t best = left;
+            if (right < queue->len &&
+                chain_work_before(&queue->items[right],
+                                  &queue->items[left]))
+                best = right;
+            if (!chain_work_before(&queue->items[best],
+                                   &queue->items[pos]))
+                break;
+            ChainWorkItem swap = queue->items[pos];
+            queue->items[pos] = queue->items[best];
+            queue->items[best] = swap;
+            pos = best;
         }
     }
+    return true;
+}
 
-    uint32_t before = out->count;
-    SymbolId goal_head = atom_head_symbol_id(goal);
-    uint32_t considered = 0;
+static ChainContinuation *chain_continuation_clone(ChainContext *ctx,
+                                                    ChainContinuation *src) {
+    ChainContinuation *dst = arena_alloc(ctx->arena, sizeof *dst);
+    *dst = *src;
+    if (src->arity == 0) return dst;
+    dst->premises = arena_alloc(ctx->arena, sizeof(Atom *) * src->arity);
+    dst->premise_binders = arena_alloc(ctx->arena,
+                                       sizeof(Atom *) * src->arity);
+    dst->args = arena_alloc(ctx->arena, sizeof(Atom *) * src->arity);
+    dst->done = arena_alloc(ctx->arena, sizeof(bool) * src->arity);
+    memcpy(dst->premises, src->premises, sizeof(Atom *) * src->arity);
+    memcpy(dst->premise_binders, src->premise_binders,
+           sizeof(Atom *) * src->arity);
+    memcpy(dst->args, src->args, sizeof(Atom *) * src->arity);
+    memcpy(dst->done, src->done, sizeof(bool) * src->arity);
+    return dst;
+}
+
+static bool chain_schedule_goal(ChainContext *ctx, ChainWorkQueue *queue,
+                                Atom *goal, uint32_t depth,
+                                const Bindings *env,
+                                ChainContinuation *continuation,
+                                uint32_t rank,
+                                bool include_facts, bool include_rules) {
+    ctx->stats.calls++;
+    if (!chain_take_fuel(ctx, 1)) return false;
+    goal = bindings_apply_if_vars(env, ctx->arena, goal);
+    HeNormStatus status = HE_NORM_COMPLETE;
+    goal = normalize_type_checked(ctx->arena, ctx->space, goal, &ctx->fuel,
+                                  &status, 0);
+    if (status != HE_NORM_COMPLETE) {
+        chain_mark_normalization_incomplete(
+            ctx, status, "goal-normalization-incomplete");
+        return false;
+    }
 
     ChainRefRange ranges[2];
-    uint32_t nranges = chain_candidate_ranges(ctx, goal_head, ranges);
-
-    /* Facts first: a typed atom is already a proof inhabitant. */
-    for (uint32_t rg = 0; rg < nranges; rg++) {
-        for (uint32_t ri = ranges[rg].lo; ri < ranges[rg].hi; ri++) {
-            ChainRef *ref = &ctx->index.refs[ri];
-            if (ref->is_rule) continue;
-            considered++;
-            const ChainDecl *d = &ctx->index.decls[ref->index];
-            ctx->stats.fact_candidates++;
-            uint32_t epoch = fresh_var_suffix();
-            Atom *term = atom_freshen_epoch(ctx->arena, d->term, epoch);
-            Atom *type = atom_freshen_epoch(ctx->arena, d->type, epoch);
-            Bindings env;
-            if (!bindings_clone(&env, base_env)) continue;
-            Atom *resolved = NULL;
-            bool fact_ok = chain_unify_must(ctx, type, goal, &env, &resolved);
-            if (fact_ok) {
-                term = bindings_apply_if_vars(&env, ctx->arena, term);
-                chain_vec_push_move(ctx, out, term, resolved, &env);
-            }
-            bindings_free(&env);
-            if (out->count >= ctx->answer_limit) break;
-        }
-        if (out->count >= ctx->answer_limit) break;
-    }
-
-    if (depth > 0 && out->count < ctx->answer_limit) {
+    uint32_t nranges = chain_candidate_ranges(ctx, atom_head_symbol_id(goal),
+                                               ranges);
+    uint32_t considered = 0;
+    for (uint32_t pass = 0; pass < 2u; pass++) {
+        bool want_rule = pass == 1u;
+        if ((want_rule && (!include_rules || depth == 0)) ||
+            (!want_rule && !include_facts))
+            continue;
         for (uint32_t rg = 0; rg < nranges; rg++) {
             for (uint32_t ri = ranges[rg].lo; ri < ranges[rg].hi; ri++) {
                 ChainRef *ref = &ctx->index.refs[ri];
-                if (!ref->is_rule) continue;
+                if (ref->is_rule != want_rule) continue;
                 considered++;
-                chain_expand_rule(ctx, &ctx->index.decls[ref->index], goal,
-                                  depth, base_env, out);
-                if (out->count >= ctx->answer_limit) break;
+                ChainWorkItem item = {0};
+                item.kind = CHAIN_WORK_CANDIDATE;
+                item.decl_index = ref->index;
+                item.goal = goal;
+                item.depth = depth;
+                item.continuation = continuation;
+                item.rank = rank;
+                item.priority = want_rule ? 2u : 1u;
+                bindings_init(&item.env);
+                if (!bindings_clone(&item.env, env) ||
+                    !chain_queue_push_move(ctx, queue, &item)) {
+                    bindings_free(&item.env);
+                    if (!ctx->incomplete) {
+                        chain_mark_incomplete(ctx, "search-binding-allocation");
+                    }
+                    return false;
+                }
+                /* Every matching candidate is a retained continuation. */
             }
-            if (out->count >= ctx->answer_limit) break;
         }
     }
     if (considered < ctx->index.count)
         ctx->stats.head_pruned += ctx->index.count - considered;
+    return true;
+}
 
-    if (out->count > before) {
-        ChainProofVec suffix = {.items = out->items + before,
-                                .count = out->count - before,
-                                .cap = out->count - before};
-        chain_memo_store(ctx, goal, depth, &suffix);
+static bool chain_schedule_result(ChainContext *ctx, ChainWorkQueue *queue,
+                                  Atom *proof, Atom *type, Bindings *env,
+                                  ChainContinuation *continuation,
+                                  uint32_t rank) {
+    ChainWorkItem item = {0};
+    item.kind = CHAIN_WORK_RESULT;
+    item.proof = proof;
+    item.type = type;
+    item.continuation = continuation;
+    item.rank = rank;
+    item.priority = 0u;
+    item.env = *env;
+    bindings_init(env);
+    if (chain_queue_push_move(ctx, queue, &item)) return true;
+    bindings_free(&item.env);
+    return false;
+}
+
+static uint32_t chain_pick_premise(ChainContext *ctx,
+                                   ChainContinuation *continuation,
+                                   const Bindings *env) {
+    uint32_t pick = UINT32_MAX;
+    int best = -2147483647;
+    for (uint32_t i = 0; i < continuation->arity; i++) {
+        if (continuation->done[i]) continue;
+        int score = chain_premise_score(ctx, continuation->premises[i], env);
+        if (score > best) {
+            best = score;
+            pick = i;
+        }
     }
-    chain_active_pop(ctx);
+    return pick;
+}
+
+static bool chain_schedule_next_premise(ChainContext *ctx,
+                                        ChainWorkQueue *queue,
+                                        ChainContinuation *continuation,
+                                        const Bindings *env) {
+    uint32_t pick = chain_pick_premise(ctx, continuation, env);
+    if (pick == UINT32_MAX) return false;
+    continuation->pick = pick;
+    return chain_schedule_goal(ctx, queue, continuation->premises[pick],
+                               continuation->depth, env, continuation,
+                               continuation->rank,
+                               true, true);
+}
+
+static bool chain_finish_continuation(ChainContext *ctx,
+                                      ChainWorkQueue *queue,
+                                      ChainContinuation *continuation,
+                                      Bindings *env) {
+    Atom **elems = arena_alloc(ctx->arena,
+                               sizeof(Atom *) * (continuation->arity + 1u));
+    elems[0] = continuation->rule_term;
+    for (uint32_t i = 0; i < continuation->arity; i++)
+        elems[i + 1u] = continuation->args[i];
+    Atom *proof = atom_expr(ctx->arena, elems, continuation->arity + 1u);
+    proof = bindings_apply_if_vars(env, ctx->arena, proof);
+    Atom *checked_type = NULL;
+    if (!chain_proof_checked(ctx, proof, continuation->goal, env,
+                             &checked_type))
+        return false;
+    proof = bindings_apply_if_vars(env, ctx->arena, proof);
+    ctx->stats.continuations++;
+    return chain_schedule_result(ctx, queue, proof, checked_type, env,
+                                 continuation->parent, continuation->rank);
+}
+
+static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
+                                    ChainWorkItem *item) {
+    const ChainDecl *decl = &ctx->index.decls[item->decl_index];
+    uint32_t epoch = fresh_var_suffix();
+    if (!decl->is_rule) {
+        ctx->stats.fact_candidates++;
+        Atom *term = atom_freshen_epoch(ctx->arena, decl->term, epoch);
+        Atom *type = atom_freshen_epoch(ctx->arena, decl->type, epoch);
+        Atom *resolved = NULL;
+        if (!chain_unify_must(ctx, type, item->goal, &item->env, &resolved))
+            return;
+        term = bindings_apply_if_vars(&item->env, ctx->arena, term);
+        (void)chain_schedule_result(ctx, queue, term, resolved, &item->env,
+                                    item->continuation, item->rank);
+        return;
+    }
+
+    if (item->depth == 0 || !chain_take_fuel(ctx, 1)) return;
+    ctx->stats.rule_candidates++;
+    Atom *rule_term = atom_freshen_epoch(ctx->arena, decl->term, epoch);
+    Atom *rule_type = atom_freshen_epoch(ctx->arena, decl->type, epoch);
+    uint32_t arity = rule_type->expr.len - 2u;
+    Atom *conclusion = rule_type->expr.elems[rule_type->expr.len - 1u];
+    if (!chain_unify_deferred(ctx, conclusion, item->goal, &item->env)) return;
+
+    ChainContinuation *continuation =
+        arena_alloc(ctx->arena, sizeof *continuation);
+    *continuation = (ChainContinuation){
+        .rule_term = rule_term,
+        .goal = item->goal,
+        .arity = arity,
+        .solved = 0,
+        .depth = item->depth - 1u,
+        .rank = item->rank == UINT32_MAX ? UINT32_MAX : item->rank + 1u,
+        .pick = UINT32_MAX,
+        .parent = item->continuation,
+    };
+    if (arity == 0) {
+        (void)chain_finish_continuation(ctx, queue, continuation, &item->env);
+        return;
+    }
+    continuation->premises = arena_alloc(ctx->arena,
+                                         sizeof(Atom *) * arity);
+    continuation->premise_binders = arena_alloc(ctx->arena,
+                                                sizeof(Atom *) * arity);
+    continuation->args = arena_alloc(ctx->arena, sizeof(Atom *) * arity);
+    continuation->done = arena_alloc(ctx->arena, sizeof(bool) * arity);
+    for (uint32_t i = 0; i < arity; i++) {
+        Atom *binder = NULL, *premise = NULL;
+        split_binder(rule_type->expr.elems[i + 1u], &binder, &premise);
+        continuation->premises[i] = premise;
+        continuation->premise_binders[i] = binder;
+        continuation->args[i] = NULL;
+        continuation->done[i] = false;
+    }
+    (void)chain_schedule_next_premise(ctx, queue, continuation, &item->env);
+}
+
+static void chain_process_result(ChainContext *ctx, ChainWorkQueue *queue,
+                                 ChainWorkItem *item, ChainProofVec *answers) {
+    if (!item->continuation) {
+        Atom *checked_type = NULL;
+        if (!chain_proof_checked(ctx, item->proof, ctx->root_goal, &item->env,
+                                 &checked_type))
+            return;
+        AnswerIdentityV1 identity;
+        if (!answer_identity_v1_make(ctx, item->proof, checked_type,
+                                     &item->env, &identity))
+            return;
+        (void)chain_vec_push_move(ctx, answers, &identity, &item->env);
+        return;
+    }
+
+    ChainContinuation *continuation =
+        chain_continuation_clone(ctx, item->continuation);
+    uint32_t pick = continuation->pick;
+    if (pick >= continuation->arity || continuation->done[pick]) return;
+    continuation->done[pick] = true;
+    continuation->args[pick] = item->proof;
+    continuation->solved++;
+    Atom *binder = continuation->premise_binders[pick];
+    if (binder && !bindings_add_id(&item->env, binder->var_id,
+                                   binder->sym_id, item->proof))
+        return;
+    if (continuation->solved == continuation->arity) {
+        (void)chain_finish_continuation(ctx, queue, continuation, &item->env);
+        return;
+    }
+    (void)chain_schedule_next_premise(ctx, queue, continuation, &item->env);
+}
+
+static void chain_run_search(ChainContext *ctx, Atom *goal, uint32_t depth,
+                             uint32_t limit, bool root_rules_only,
+                             ChainProofVec *answers) {
+    ctx->root_goal = goal;
+    if (!chain_collect_query_vars(ctx, goal, 0)) return;
+    ChainWorkQueue queue;
+    chain_queue_init(&queue);
+    Bindings initial;
+    bindings_init(&initial);
+    (void)chain_schedule_goal(ctx, &queue, goal, depth, &initial, NULL,
+                              0,
+                              !root_rules_only, true);
+    bindings_free(&initial);
+
+    while (queue.len > 0 && !ctx->incomplete && answers->count < limit) {
+        ChainWorkItem item;
+        if (!chain_queue_pop(&queue, &item)) break;
+        ctx->stats.work_items++;
+        if (item.kind == CHAIN_WORK_CANDIDATE)
+            chain_process_candidate(ctx, &queue, &item);
+        else
+            chain_process_result(ctx, &queue, &item, answers);
+        bindings_free(&item.env);
+    }
+    if (!ctx->incomplete && answers->count >= limit && queue.len > 0) {
+        ctx->more_possible = true;
+        ctx->incomplete_reason = "answer-limit";
+    }
+    chain_queue_free(&queue);
 }
 
 static Atom *chain_stats_atom(ChainContext *ctx) {
-    Atom *e[8];
-    e[0] = he_sym(ctx->arena, "typing-search-stats");
-    e[1] = atom_int(ctx->arena, (int64_t)ctx->stats.calls);
-    e[2] = atom_int(ctx->arena, (int64_t)ctx->stats.fact_candidates);
-    e[3] = atom_int(ctx->arena, (int64_t)ctx->stats.rule_candidates);
-    e[4] = atom_int(ctx->arena, (int64_t)ctx->stats.head_pruned);
-    e[5] = atom_int(ctx->arena, (int64_t)ctx->stats.proof_checks);
-    e[6] = atom_int(ctx->arena, (int64_t)ctx->stats.memo_hits);
-    e[7] = atom_int(ctx->arena, (int64_t)ctx->fuel);
-    return atom_expr(ctx->arena, e, 8);
+    Atom *e[9];
+    e[0] = he_sym(ctx->arena, "typing-search-stats-v1");
+    e[1] = atom_expr2(ctx->arena, he_sym(ctx->arena, "goals-scheduled"),
+                      atom_int(ctx->arena, (int64_t)ctx->stats.calls));
+    e[2] = atom_expr2(ctx->arena, he_sym(ctx->arena, "fact-candidates"),
+                      atom_int(ctx->arena,
+                               (int64_t)ctx->stats.fact_candidates));
+    e[3] = atom_expr2(ctx->arena, he_sym(ctx->arena, "rule-candidates"),
+                      atom_int(ctx->arena,
+                               (int64_t)ctx->stats.rule_candidates));
+    e[4] = atom_expr2(ctx->arena, he_sym(ctx->arena, "head-pruned"),
+                      atom_int(ctx->arena, (int64_t)ctx->stats.head_pruned));
+    e[5] = atom_expr2(ctx->arena, he_sym(ctx->arena, "proof-checks"),
+                      atom_int(ctx->arena, (int64_t)ctx->stats.proof_checks));
+    e[6] = atom_expr2(ctx->arena, he_sym(ctx->arena, "work-items"),
+                      atom_int(ctx->arena, (int64_t)ctx->stats.work_items));
+    e[7] = atom_expr2(ctx->arena, he_sym(ctx->arena, "continuations"),
+                      atom_int(ctx->arena,
+                               (int64_t)ctx->stats.continuations));
+    e[8] = atom_expr2(ctx->arena, he_sym(ctx->arena, "fuel-remaining"),
+                      atom_int(ctx->arena, (int64_t)ctx->fuel));
+    return atom_expr(ctx->arena, e, 9);
 }
 
 static Atom *chain_report(ChainContext *ctx, uint32_t depth,
@@ -1446,14 +1799,19 @@ static Atom *chain_report(ChainContext *ctx, uint32_t depth,
     p[0] = he_sym(ctx->arena, "proofs");
     for (uint32_t i = 0; i < proofs->count; i++) {
         Atom *decl[3] = {atom_symbol(ctx->arena, ":"),
-                         proofs->items[i].proof, proofs->items[i].type};
-        p[i + 1] = atom_expr(ctx->arena, decl, 3);
+                         proofs->items[i].identity.proof,
+                         proofs->items[i].identity.type};
+        p[i + 1] = atom_expr3(ctx->arena,
+                              he_sym(ctx->arena, "typed-answer-v1"),
+                              atom_expr(ctx->arena, decl, 3),
+                              proofs->items[i].identity.substitution);
     }
     Atom *proof_list = atom_expr(ctx->arena, p, proofs->count + 1);
     Atom *e[6];
     e[0] = he_sym(ctx->arena, "typing-search");
     e[1] = he_sym(ctx->arena, ctx->incomplete ? "resource-incomplete"
-                                              : "depth-complete");
+                              : ctx->more_possible ? "more-possible"
+                                                   : "depth-complete");
     e[2] = atom_int(ctx->arena, depth);
     e[3] = he_sym(ctx->arena, ctx->incomplete_reason
                                   ? ctx->incomplete_reason : "complete");
@@ -1480,20 +1838,20 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     ctx.arena = a;
     ctx.space = space;
     ctx.fuel = fuel;
-    ctx.answer_limit = first_only ? 1u : (limit ? limit : 1u);
-    if (!chain_index_build(&ctx))
+    if (!chain_index_build(&ctx)) {
+        chain_index_free(&ctx.index);
         return he_unknown(a, he_reason(a, "chaining-index-failed"));
-    Bindings env;
-    bindings_init(&env);
+    }
     ChainProofVec proofs;
     chain_vec_init(&proofs);
-    chain_search(&ctx, unquote(goal), depth, &env, &proofs);
-    bindings_free(&env);
+    chain_run_search(&ctx, unquote(goal), depth,
+                     first_only ? 1u : (limit ? limit : 1u), false, &proofs);
     Atom *result;
     if (first_only) {
         if (proofs.count > 0) {
-            Atom *decl[3] = {atom_symbol(a, ":"), proofs.items[0].proof,
-                             proofs.items[0].type};
+            Atom *decl[3] = {atom_symbol(a, ":"),
+                             proofs.items[0].identity.proof,
+                             proofs.items[0].identity.type};
             result = he_accept(a, atom_expr(a, decl, 3));
         } else if (ctx.incomplete) {
             result = he_unknown(a, he_reason(a, ctx.incomplete_reason
@@ -1507,6 +1865,7 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     }
     chain_vec_free(&proofs);
     chain_index_free(&ctx.index);
+    free(ctx.query_vars);
     return result;
 }
 
@@ -1519,26 +1878,19 @@ static Atom *chain_forward_step(Arena *a, Space *space, uint64_t *fuel,
                                 bool *incomplete_out) {
     ChainContext ctx = {0};
     ctx.arena = a; ctx.space = space; ctx.fuel = *fuel;
-    ctx.answer_limit = limit ? limit : 1;
     if (!chain_index_build(&ctx)) {
         if (incomplete_out) *incomplete_out = true;
+        chain_index_free(&ctx.index);
         return he_unknown(a, he_reason(a, "chaining-index-failed"));
     }
     ChainProofVec all;
     chain_vec_init(&all);
-    for (uint32_t i = 0; i < ctx.index.count; i++) {
-        ChainDecl *d = &ctx.index.decls[i];
-        if (!d->is_rule || all.count >= ctx.answer_limit) continue;
-        Bindings env;
-        bindings_init(&env);
-        Atom *goal = atom_var(a, "forward-goal");
-        chain_expand_rule(&ctx, d, goal, 1, &env, &all);
-        bindings_free(&env);
-    }
+    Atom *goal = atom_var(a, "forward-goal");
+    chain_run_search(&ctx, goal, 1, limit ? limit : 1u, true, &all);
     uint32_t added = 0;
     for (uint32_t i = 0; i < all.count; i++) {
-        Atom *decl[3] = {atom_symbol(a, ":"), all.items[i].proof,
-                         all.items[i].type};
+        Atom *decl[3] = {atom_symbol(a, ":"), all.items[i].identity.proof,
+                         all.items[i].identity.type};
         Atom *row = atom_expr(a, decl, 3);
         if (!space_contains_exact(space, row)) {
             space_add(space, row);
@@ -1546,15 +1898,18 @@ static Atom *chain_forward_step(Arena *a, Space *space, uint64_t *fuel,
         }
     }
     if (added_out) *added_out = added;
-    if (incomplete_out) *incomplete_out = ctx.incomplete;
+    if (incomplete_out) *incomplete_out = ctx.incomplete || ctx.more_possible;
     *fuel = ctx.fuel;
     Atom *e[5] = {he_sym(a, "forward-step"), atom_int(a, added),
                   atom_int(a, all.count),
-                  he_sym(a, ctx.incomplete ? "resource-incomplete" : "complete"),
+                  he_sym(a, ctx.incomplete ? "resource-incomplete"
+                              : ctx.more_possible ? "more-possible"
+                                                  : "complete"),
                   chain_stats_atom(&ctx)};
     Atom *report = he_accept(a, atom_expr(a, e, 5));
     chain_vec_free(&all);
     chain_index_free(&ctx.index);
+    free(ctx.query_vars);
     return report;
 }
 

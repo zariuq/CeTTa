@@ -28,8 +28,8 @@
 !(assertEqual (check-typing &self dynamic-witness (Wrap Nat) 10000)
               (he-accept (dynamic (Wrap Nat))))
 
-; (2) Effect exclusion: a computation with effects never runs inside a type —
-;     the verdict is an honest inadmissible reject and the space is untouched.
+; (2) Direct grounded-effect exclusion: an unmarked effectful grounded op is
+;     refused inside a type, and this rejected call leaves the space untouched.
 !(assertEqual (normalize-typing &self (Box (add-atom &self TypeSideEffect)) 10000)
               (he-reject (type-computation-inadmissible)))
 !(assertEqual (collapse (match &self TypeSideEffect mutated)) ())
