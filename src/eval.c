@@ -3,6 +3,7 @@
 #include "match.h"
 #include "search_machine.h"
 #include "grounded.h"
+#include "he_typing.h"
 #include "library.h"
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
@@ -739,6 +740,12 @@ bool eval_current_uses_rust_he_compat_semantics(void) {
     CettaEvalSession *session = active_eval_session();
     return cetta_language_uses_rust_he_compat_semantics(session->language_id,
                                                         session->profile);
+}
+
+bool eval_current_profile_enables_dependent_telescope(void) {
+    CettaEvalSession *session = active_eval_session();
+    return session && session->profile &&
+           session->profile->enable_dependent_telescope;
 }
 
 uint32_t eval_current_num_threads(void) {
@@ -1553,9 +1560,18 @@ static bool add_atoms_source_shape(Atom *items, Atom **out_source_ref,
 static bool add_atoms_public_surface_has_only_default(Space *s);
 
 static bool grounded_dispatch_accepts_data_arg(SymbolId head_id, uint32_t arg_index) {
-    return arg_index == 1 &&
-           (head_id == g_builtin_syms.add_atom ||
-            head_id == g_builtin_syms.remove_atom);
+    if (arg_index == 1 &&
+        (head_id == g_builtin_syms.add_atom ||
+         head_id == g_builtin_syms.remove_atom))
+        return true;
+    const char *name =
+        head_id == SYMBOL_ID_NONE ? NULL : symbol_bytes(g_symbols, head_id);
+    /* the typing module owns its ops' argument policy; the weak-symbol guard
+       covers binaries that link eval.c without he_typing.c */
+    if (name && he_typing_op_data_arg &&
+        eval_current_profile_enables_dependent_telescope())
+        return he_typing_op_data_arg(name, arg_index);
+    return false;
 }
 static bool symbol_id_is_builtin_surface(SymbolId id);
 static bool bindings_project_answer_ref_env(Arena *a,
@@ -8725,7 +8741,10 @@ static Atom *normalize_type_expr_profiled(Arena *a, Atom *ty) {
     SymbolId op_id = SYMBOL_ID_NONE;
     if (norm->expr.elems[0]->kind == ATOM_SYMBOL)
         op_id = norm->expr.elems[0]->sym_id;
-    if (norm->expr.len >= 3 && op_id != SYMBOL_ID_NONE && is_grounded_op(op_id)) {
+    /* type conversion dispatches only the type-pure capability (see
+       grounded_op_is_type_pure): never effects, never live-state reads */
+    if (norm->expr.len >= 3 && op_id != SYMBOL_ID_NONE &&
+        grounded_op_is_type_pure(op_id)) {
         Atom *result = grounded_dispatch(a, norm->expr.elems[0],
                                          norm->expr.elems + 1, norm->expr.len - 1);
         if (result) return result;
