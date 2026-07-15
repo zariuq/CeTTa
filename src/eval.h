@@ -73,6 +73,7 @@ int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
+bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
