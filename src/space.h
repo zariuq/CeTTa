@@ -289,6 +289,9 @@ Atom *get_grounded_type(Arena *a, Atom *atom);
 
 /* Get all types for an atom from the space.
    Returns count; fills out_types (arena-allocated array). */
+/* Reduce grounded operators inside a type expression (e.g. (+ 1 1) -> 2). */
+Atom *normalize_type_expr(Arena *a, Atom *ty);
+
 uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
 

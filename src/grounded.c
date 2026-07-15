@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "grounded.h"
 #include "eval.h"
+#include "he_typing.h"
 #include "match.h"
 #include "parser.h"
 #include "space.h"
@@ -235,6 +236,10 @@ bool is_grounded_op(SymbolId id) {
     const char *name = symbol_bytes(g_symbols, id);
     if (name && strncmp(name, "__cetta_lib_", 12) == 0)
         return true;
+    if (name && he_typing_is_op && he_typing_is_op(name) &&
+        eval_current_profile_enables_dependent_telescope &&
+        eval_current_profile_enables_dependent_telescope())
+        return true;
     if (id == g_builtin_syms.mork_add_atoms ||
         id == g_builtin_syms.mork_add_atom ||
         id == g_builtin_syms.mork_remove_atom)
@@ -294,6 +299,49 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.size ||
            id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom ||
            id == g_builtin_syms.range_atom || id == g_builtin_syms.repeat_atom;
+}
+
+/* Deliberately absent from the type-pure capability: space mutation
+   (add-atom/remove-atom, mork ops), I/O (println!/trace!/print-alternatives!),
+   foreign calls (py-*), evaluator-coupled folds, parsing, `size` (reads live
+   mutable space state), and every __cetta_lib_ op (semantics not audited).
+   Everything here is a pure function of its argument atoms. */
+bool grounded_op_is_type_pure(SymbolId id) {
+    if (id == SYMBOL_ID_NONE) return false;
+    return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
+           id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
+           id == g_builtin_syms.op_floor_div || id == g_builtin_syms.op_mod ||
+           id == g_builtin_syms.op_lt ||
+           id == g_builtin_syms.op_gt || id == g_builtin_syms.op_le ||
+           id == g_builtin_syms.op_ge || id == g_builtin_syms.op_eq ||
+           id == g_builtin_syms.numeric_eq ||
+           id == g_builtin_syms.alpha_eq ||
+           id == g_builtin_syms.if_equal ||
+           id == g_builtin_syms.op_and || id == g_builtin_syms.op_or ||
+           id == g_builtin_syms.op_not || id == g_builtin_syms.op_xor ||
+           id == g_builtin_syms.max_atom ||
+           id == g_builtin_syms.min_atom ||
+           id == g_builtin_syms.pow_math ||
+           id == g_builtin_syms.sqrt_math ||
+           id == g_builtin_syms.abs_math ||
+           id == g_builtin_syms.log_math ||
+           id == g_builtin_syms.trunc_math ||
+           id == g_builtin_syms.ceil_math ||
+           id == g_builtin_syms.floor_math ||
+           id == g_builtin_syms.round_math ||
+           id == g_builtin_syms.sin_math ||
+           id == g_builtin_syms.asin_math ||
+           id == g_builtin_syms.cos_math ||
+           id == g_builtin_syms.acos_math ||
+           id == g_builtin_syms.tan_math ||
+           id == g_builtin_syms.atan_math ||
+           id == g_builtin_syms.isnan_math ||
+           id == g_builtin_syms.isinf_math ||
+           id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom ||
+           id == g_builtin_syms.range_atom || id == g_builtin_syms.repeat_atom ||
+           id == g_builtin_syms.unique_atom ||
+           id == g_builtin_syms.intersection_atom ||
+           id == g_builtin_syms.subtraction_atom;
 }
 
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */
@@ -1010,6 +1058,11 @@ static Atom *grounded_repeat_atom(Arena *a, Atom *head, Atom **args, uint32_t na
 
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
+    {
+        Atom *he = he_typing_dispatch
+            ? he_typing_dispatch(a, head, args, nargs) : NULL;
+        if (he) return he;
+    }
     SymbolId head_id = head->sym_id;
 
     if (head_id == g_builtin_syms.println_bang) {
