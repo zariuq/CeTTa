@@ -246,7 +246,7 @@ CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
 endif
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/he_typing.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -3335,6 +3335,22 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 	else \
 		echo "FAIL: he-prime structural == policy"; \
 		diff <(cat tests/profile_he_prime_structural_eq.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_dtt_chainer_showcase.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_dtt_chainer_showcase.expected)" ]; then \
+		echo "PASS: he-prime DTT-chainer showcase"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime DTT-chainer showcase"; \
+		diff <(cat tests/profile_he_prime_dtt_chainer_showcase.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_dtt_adversarial.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_dtt_adversarial.expected)" ]; then \
+		echo "PASS: he-prime DTT discipline adversarial negatives"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime DTT discipline adversarial negatives"; \
+		diff <(cat tests/profile_he_prime_dtt_adversarial.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
 	if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \

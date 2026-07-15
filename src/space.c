@@ -2963,7 +2963,7 @@ bool space_atom_is_exact_indexable(Atom *atom) {
 
 /* Recursively evaluate grounded arithmetic in type expressions.
    E.g., (VecN String (+ (+ 0 1) 1)) → (VecN String 2) */
-static Atom *normalize_type_expr(Arena *a, Atom *ty) {
+Atom *normalize_type_expr(Arena *a, Atom *ty) {
     if (ty->kind != ATOM_EXPR || ty->expr.len < 2) return ty;
     /* First normalize children */
     Atom **new_elems = arena_alloc(a, sizeof(Atom *) * ty->expr.len);
@@ -2973,12 +2973,15 @@ static Atom *normalize_type_expr(Arena *a, Atom *ty) {
         if (new_elems[i] != ty->expr.elems[i]) changed = true;
     }
     Atom *norm = changed ? atom_expr(a, new_elems, ty->expr.len) : ty;
-    /* Try grounded dispatch on the normalized expression */
+    /* Dispatch only the type-pure capability: type conversion must never run
+       an effectful or state-reading grounded op.  Anything outside the
+       capability stays un-dispatched (an inert expression in the type). */
     SymbolId op_id = SYMBOL_ID_NONE;
     if (norm->expr.elems[0]->kind == ATOM_SYMBOL) {
         op_id = norm->expr.elems[0]->sym_id;
     }
-    if (norm->expr.len >= 3 && op_id != SYMBOL_ID_NONE && is_grounded_op(op_id)) {
+    if (norm->expr.len >= 3 && op_id != SYMBOL_ID_NONE &&
+        grounded_op_is_type_pure(op_id)) {
         Atom *result = grounded_dispatch(a, norm->expr.elems[0],
             norm->expr.elems + 1, norm->expr.len - 1);
         if (result) return result;
