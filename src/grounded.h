@@ -11,6 +11,13 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 /* Check if a symbol is a known grounded op head (by SymbolId). */
 bool is_grounded_op(SymbolId id);
 
+/* Capability: ops admitted into TYPE-LEVEL conversion (normalize_type_expr
+   and the he-prime checked normalizer).  Deterministic, effect-free, and
+   independent of live mutable state.  A positive list, not a blocklist: an op
+   absent here is left un-dispatched inside a type, so new grounded ops never
+   silently become type-runnable. */
+bool grounded_op_is_type_pure(SymbolId id);
+
 /* Shared fold/reduce binder substitution helper. It substitutes the
    accumulator/item variables and freshens the remaining variables so the step
    expression can be reused safely across evaluator and grounded folds. */
