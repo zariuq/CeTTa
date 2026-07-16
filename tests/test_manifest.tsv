@@ -291,6 +291,8 @@ tests/test_list_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_he_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_mi_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_rho_cost_causal_trace.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_rho_cost_search_budget.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_rho_cost_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_rho_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_surface.metta	he	metta	he-extended	main	native	test	golden	-

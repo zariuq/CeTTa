@@ -1,0 +1,4 @@
+{for ($m <- @{{for ($x <- base) {*$x}}seal}) {()}}alice
+| {@{{for ($w <- base) {*$w}}seal}!(())}bob
+| purse @{{for ($p <- base) {*$p}}seal} {alice : ()}
+| purse @{{for ($q <- base) {*$q}}seal} {bob : ()}

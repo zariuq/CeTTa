@@ -1,0 +1,1 @@
+purse other {bob : ()} | purse other {alice : ()} | {for ($m <- pay) {()}}alice | {pay!(())}bob

@@ -106,21 +106,21 @@
 ; Stamped provenance guardrail for the concept-geometry demo.  If two premise
 ; packets share an extensional or intensional source stamp, guarded revision
 ; refuses to double-count them.
-(= (concept-stamp-overlaps? $leftHasStamp $rightHasStamp)
+(= (concept-stamp-overlaps $leftHasStamp $rightHasStamp)
    (and $leftHasStamp $rightHasStamp))
 
-(= (concept-any-stamp-overlaps?
+(= (concept-any-stamp-overlaps
       $leftHasExtStamp $rightHasExtStamp $leftHasIntStamp $rightHasIntStamp)
-   (or (concept-stamp-overlaps? $leftHasExtStamp $rightHasExtStamp)
-       (concept-stamp-overlaps? $leftHasIntStamp $rightHasIntStamp)))
+   (or (concept-stamp-overlaps $leftHasExtStamp $rightHasExtStamp)
+       (concept-stamp-overlaps $leftHasIntStamp $rightHasIntStamp)))
 
-(= (guarded-revision-allows? $hasSharedStamp)
+(= (guarded-revision-allows $hasSharedStamp)
    (not $hasSharedStamp))
 
-(= (stamp-guarded-revision-allows? $stampA $stampB)
+(= (stamp-guarded-revision-allows $stampA $stampB)
    (== (StampIntersectionCount $stampA $stampB) 0))
 
-(= (guarded-list-revision-allows3? $xyOverlap $xzOverlap $yzOverlap)
+(= (guarded-list-revision-allows3 $xyOverlap $xzOverlap $yzOverlap)
    (not (or $xyOverlap (or $xzOverlap $yzOverlap))))
 
 ; Weighted ASSOC/PAT score-family consumer for the same mixed-channel canary.
@@ -1062,41 +1062,41 @@
 ; Extensional provenance-overlap canary: `pingu` is a positive extent stamp for
 ; both penguin->bird and bird->bird, so guarded revision refuses the premise
 ; merge.  If one side lacks the stamp, this particular guard does not fire.
-!(assertEqual (concept-stamp-overlaps? True True) True)
+!(assertEqual (concept-stamp-overlaps True True) True)
 !(assertEqual
-  (guarded-revision-allows? (concept-stamp-overlaps? True True))
+  (guarded-revision-allows (concept-stamp-overlaps True True))
   False)
-!(assertEqual (concept-stamp-overlaps? True False) False)
+!(assertEqual (concept-stamp-overlaps True False) False)
 !(assertEqual
-  (guarded-revision-allows? (concept-stamp-overlaps? True False))
+  (guarded-revision-allows (concept-stamp-overlaps True False))
   True)
 ; Dual-channel provenance guardrail: either a shared extensional source or a
 ; shared intensional source is enough to reject revision; with neither source
 ; shared, this guard does not fire.
-!(assertEqual (concept-any-stamp-overlaps? True True False False) True)
-!(assertEqual (concept-any-stamp-overlaps? False False True True) True)
-!(assertEqual (concept-any-stamp-overlaps? True False True False) False)
+!(assertEqual (concept-any-stamp-overlaps True True False False) True)
+!(assertEqual (concept-any-stamp-overlaps False False True True) True)
+!(assertEqual (concept-any-stamp-overlaps True False True False) False)
 !(assertEqual
-  (guarded-revision-allows?
-    (concept-any-stamp-overlaps? False False False False))
+  (guarded-revision-allows
+    (concept-any-stamp-overlaps False False False False))
   True)
 !(assertEqual
-  (guarded-revision-allows?
-    (concept-any-stamp-overlaps? False True True True))
+  (guarded-revision-allows
+    (concept-any-stamp-overlaps False True True True))
   False)
 ; Multi-packet Revision guard: a list aggregate is allowed exactly when no
 ; pair of packets overlaps.  This mirrors the Lean list-level iff, not a new
 ; scoring semantics.
-!(assertEqual (guarded-list-revision-allows3? False False False) True)
-!(assertEqual (guarded-list-revision-allows3? True False False) False)
-!(assertEqual (guarded-list-revision-allows3? False True False) False)
-!(assertEqual (guarded-list-revision-allows3? False False True) False)
+!(assertEqual (guarded-list-revision-allows3 False False False) True)
+!(assertEqual (guarded-list-revision-allows3 True False False) False)
+!(assertEqual (guarded-list-revision-allows3 False True False) False)
+!(assertEqual (guarded-list-revision-allows3 False False True) False)
 ; Internal finite-inheritance Revision canary: positive and negative witness
 ; packets use distinct provenance constructors in Lean, so guarded Revision
 ; allows them and overlap-corrected Revision agrees with raw evidence Revision.
 ; Hand: stv(1,1/2) is one positive unit; stv(0,1/2) is one negative unit;
 ; combined evidence has strength 1/2 and confidence 2/3.
-!(assertEqual (stamp-guarded-revision-allows? (101) (201)) True)
+!(assertEqual (stamp-guarded-revision-allows (101) (201)) True)
 !(assertEqual
   (Truth_OverlapCorrectedRevision (stv 1.0 0.5) (stv 0.0 0.5) (101) (201))
   (Truth_Revision (stv 1.0 0.5) (stv 0.0 0.5)))
@@ -1105,7 +1105,7 @@
   (stv 0.5 0.6666666666666666))
 ; Boundary: if two packets reuse the same provenance stamp, the guard rejects
 ; the merge and corrected Revision no longer equals raw additive Revision.
-!(assertEqual (stamp-guarded-revision-allows? (101) (101)) False)
+!(assertEqual (stamp-guarded-revision-allows (101) (101)) False)
 !(assertEqual
   (== (Truth_OverlapCorrectedRevision (stv 1.0 0.5) (stv 0.0 0.5) (101) (101))
       (Truth_Revision (stv 1.0 0.5) (stv 0.0 0.5)))

@@ -29,6 +29,34 @@
        (((return $result) (return $result))
         ($result (return $result))))))
 
+(= (gparse:inference-dag
+      $grammar $source $start $tokens $certificate)
+   (function
+     (case (__cetta_lib_gparse_inference_dag
+             $grammar $source $start $tokens $certificate)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+; Shared proof-DAG mode keeps derivation structure in rule identities and
+; ordered child references instead of repeating each complete child tree in
+; every parent judgment.  Its generated presentation uses the four-argument
+; GrammarDerivesNode judgment.  Correspondence to the ordinary tree relation
+; requires the independent Lean reconstruction theorem.
+(= (gparse:inference-dag-presentation $grammar $source $tokens)
+   (function
+     (case (__cetta_lib_gparse_inference_dag_presentation
+             $grammar $source $tokens)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+(= (gparse:inference-dag-proof
+      $grammar $source $start $tokens $certificate)
+   (function
+     (case (__cetta_lib_gparse_inference_dag_proof
+             $grammar $source $start $tokens $certificate)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
 (= (gparse:slr-summary $path $def $start)
    (function
      (case (__cetta_lib_gparse_slr_summary $path $def $start)
