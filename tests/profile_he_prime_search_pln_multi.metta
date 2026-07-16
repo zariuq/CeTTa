@@ -7,7 +7,7 @@
 (: q2 (⊷ Q (S (S Z)) False))
 (: p7 (⊷ P (S (S (S (S (S (S (S Z))))))) True))
 (: q7 (⊷ Q (S (S (S (S (S (S (S Z))))))) True))
-!(type-inhabit &self
+!(search-inhabitants &self
   (≞ (→ P Q)
      (ETV (ECons (S (S (S (S (S (S (S Z))))))) (ECons (S (S Z)) ENil))
           (STV 0.5 0.6666666666666666)))

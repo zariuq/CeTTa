@@ -1,4 +1,5 @@
-/* he_typing.c — HE-style typing, formally regrounded, for the he-prime profile.
+/* he_typing.c — he-prime diagnostics, refinements, checked type-level
+ * computation, and typed inhabitation search over the shared HE type engine.
  * See he_typing.h for the frame.  Comments here state constraints only. */
 
 #include "he_typing.h"
@@ -6,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 
 
 #include "eval.h"
@@ -39,19 +41,19 @@ static Atom *he_reason2(Arena *a, const char *tag, Atom *d) {
     return atom_expr2(a, he_sym(a, tag), d);
 }
 
-/* ── the consistency relation, with a named licensing reason per edge ──────
+/* ── the consistency relation, with a named reason per edge ───────────────
  * HE's match_types returns a bare bool that fuses four reasons.  Naming the
  * reason apart is the whole regrounding: the dynamic-? edge is marked so it
  * cannot be composed, the top edge is subsumption, the staging edge governs
  * evaluation order, and only the exact edge is sound must-typing. */
 
 typedef enum {
-    HE_NONE = 0,   /* no rule licenses consistency: a proven mismatch */
+    HE_NONE = 0,   /* no consistency rule applies: a proven mismatch */
     HE_EXACT,      /* structural/nominal equality (sound must-typing core) */
     HE_STRUCT,     /* arrow-congruent, all children consistent, some non-exact */
-    HE_DYNAMIC,    /* licensed by ? on one side — deliberately non-composing */
-    HE_TOP,        /* licensed by Atom-as-top — one-directional subsumption */
-    HE_META,       /* licensed by a meta-type — a staging modality edge */
+    HE_DYNAMIC,    /* ? on one side — deliberately non-composing */
+    HE_TOP,        /* Atom-as-top — one-directional subsumption */
+    HE_META,       /* a meta-type — a staging modality edge */
     HE_UNKNOWN     /* resource exhausted before a verdict */
 } HeEdge;
 
@@ -68,9 +70,49 @@ static const char *edge_name(HeEdge e) {
     return "none";
 }
 
+static CettaHeTypingEdge public_edge(HeEdge edge) {
+    switch (edge) {
+    case HE_NONE: return CETTA_HE_EDGE_NONE;
+    case HE_EXACT: return CETTA_HE_EDGE_EXACT;
+    case HE_STRUCT: return CETTA_HE_EDGE_STRUCTURAL;
+    case HE_DYNAMIC: return CETTA_HE_EDGE_DYNAMIC;
+    case HE_TOP: return CETTA_HE_EDGE_TOP;
+    case HE_META: return CETTA_HE_EDGE_META_STAGING;
+    case HE_UNKNOWN: return CETTA_HE_EDGE_UNKNOWN;
+    }
+    return CETTA_HE_EDGE_UNKNOWN;
+}
+
+const char *he_typing_edge_name(CettaHeTypingEdge edge) {
+    switch (edge) {
+    case CETTA_HE_EDGE_NONE: return "none";
+    case CETTA_HE_EDGE_EXACT: return "exact";
+    case CETTA_HE_EDGE_STRUCTURAL: return "structural";
+    case CETTA_HE_EDGE_DYNAMIC: return "dynamic";
+    case CETTA_HE_EDGE_TOP: return "top";
+    case CETTA_HE_EDGE_META_STAGING: return "meta-staging";
+    case CETTA_HE_EDGE_UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
+bool he_typing_edge_is_exact_or_structural(CettaHeTypingEdge edge) {
+    return edge == CETTA_HE_EDGE_EXACT ||
+           edge == CETTA_HE_EDGE_STRUCTURAL;
+}
+
+const char *he_typing_variable_class_name(CettaHeVariableClass var_class) {
+    switch (var_class) {
+    case CETTA_HE_VAR_RIGID: return "rigid";
+    case CETTA_HE_VAR_SCHEME: return "scheme";
+    case CETTA_HE_VAR_ELABORATION: return "elaboration";
+    }
+    return "unknown";
+}
+
 /* ── edge composition ────────────────────────────────────────────────────
- * A composite edge is licensed no more strongly than its weakest child.
- * License strength (strongest first): exact > structural > top > meta-staging
+ * A composite edge is tagged no more strongly than its weakest child.
+ * Tag strength (strongest first): exact > structural > top > meta-staging
  * > dynamic.  Dynamic dominates, so a ? child can never be laundered into a
  * structural edge by nesting — non-composition must survive congruence, not
  * just flat pairs.  Top and meta stay distinguishable through composition so
@@ -94,11 +136,11 @@ static HeEdge edge_combine(HeEdge acc, HeEdge child) {
     return edge_weakness(child) > edge_weakness(acc) ? child : acc;
 }
 
-/* Only these edges are proof grade: the licensing is structural equality all
- * the way down.  A dynamic, top, or meta-staging license anywhere in the
+/* Only these edges are exact-or-structural: their reason is structural equality all
+ * the way down.  A dynamic, top, or meta-staging tag anywhere in the
  * composition is a gradual acceptance, not a proof — the chainer must not
  * treat such a match as evidence. */
-static bool edge_is_proof_grade(HeEdge e) {
+static bool edge_is_exact_or_structural(HeEdge e) {
     return e == HE_EXACT || e == HE_STRUCT;
 }
 
@@ -128,15 +170,14 @@ static HeEdge consistency(Atom *actual, Atom *expected, uint64_t *fuel) {
     (*fuel)--;
 
     /* ? on either side: dynamic edge, non-composing.  This is the fix for the
-     * %Undefined% laundering — the edge is licensed but marked dynamic so a
+     * %Undefined% laundering — the edge is marked dynamic so a
      * chain through ? cannot be collapsed into an exact relation. */
     if (is_undefined(actual) || is_undefined(expected)) return HE_DYNAMIC;
 
     /* Atom as expected: genuine top, subsumption holds one-directionally. */
     if (is_atom_top(expected)) return HE_TOP;
-    /* Atom as actual against a non-top expected: this is the unsound direction
-     * HE also accepts; a proven mismatch under success typing unless expected
-     * is itself a meta-type. */
+    /* Atom as actual against a non-top expected is a proven mismatch under
+     * success typing unless expected is itself a meta-type. */
     if (is_atom_top(actual)) {
         if (atom_is_meta_type(expected)) return HE_META;
         return HE_NONE;
@@ -154,8 +195,8 @@ static HeEdge consistency(Atom *actual, Atom *expected, uint64_t *fuel) {
     if (type_eq(actual, expected)) return HE_EXACT;
 
     /* arrow congruence: consistent iff domains and codomains are, the edge
-     * combining the child licenses (edge_combine: a dynamic child keeps the
-     * whole edge dynamic; top/meta children keep their license visible). */
+     * combining the child tags (edge_combine: a dynamic child keeps the whole
+     * edge dynamic; top/meta children keep their reason visible). */
     if (is_arrow(actual) && is_arrow(expected) &&
         actual->expr.len == expected->expr.len) {
         HeEdge worst = HE_EXACT;
@@ -186,12 +227,27 @@ static HeEdge consistency(Atom *actual, Atom *expected, uint64_t *fuel) {
     return HE_NONE;
 }
 
-/* ── type-of: the intersection of declared types (a set), read from a space ──
- * Mirrors HE get_atom_types in shape (a type SET, %Undefined% for none) but
- * reads ? honestly and tracks reasons.  Fuel-bounded; grounded self-types are a
- * trust edge (census entry) preserved for fidelity. */
+CettaHeTypingEdge he_typing_classify_consistency(Atom *actual, Atom *expected,
+                                                 uint64_t fuel) {
+    return public_edge(consistency(actual, expected, &fuel));
+}
+
+/* ── shared type-inference support ─────────────────────────────────────── */
 
 #define HE_MAX_TYPES 64u
+#define HE_TYPE_DEPTH_LIMIT 512u
+
+void he_typing_budget_init(CettaHeTypingBudget *budget, uint64_t steps) {
+    if (!budget) return;
+    *budget = (CettaHeTypingBudget){
+        .steps_initial = steps,
+        .steps_remaining = steps,
+        .depth_limit = HE_TYPE_DEPTH_LIMIT,
+        .max_depth_observed = 0,
+        .type_capacity = HE_MAX_TYPES,
+        .type_capacity_exhausted = false,
+    };
+}
 
 typedef struct {
     Atom *items[HE_MAX_TYPES];
@@ -208,20 +264,6 @@ static void set_add(HeTypeSet *s, Atom *t) {
     s->items[s->count++] = t;
 }
 
-/* Collect (: <term> <T>) declarations for a symbol/expression head. */
-static void collect_annotations(Arena *a, Space *space, Atom *term,
-                                HeTypeSet *out) {
-    uint32_t len = 0;
-    if (!space_length_u32_checked(space, &len)) return;
-    for (uint32_t i = 0; i < len; i++) {
-        Atom *at = space_get_at(space, i);
-        if (!at || at->kind != ATOM_EXPR || at->expr.len != 3) continue;
-        if (!atom_is_symbol_id(at->expr.elems[0], g_builtin_syms.colon)) continue;
-        if (atom_eq(at->expr.elems[1], term))
-            set_add(out, at->expr.elems[2]);
-    }
-}
-
 /* A term may be handed quoted to type it as written rather than reduced. */
 static Atom *unquote(Atom *t) {
     while (t->kind == ATOM_EXPR && t->expr.len == 2 &&
@@ -229,9 +271,6 @@ static Atom *unquote(Atom *t) {
         t = t->expr.elems[1];
     return t;
 }
-
-static bool type_of(Arena *a, Space *space, Atom *term, uint64_t *fuel,
-                    HeTypeSet *out);
 
 /* Resolve a variable through the accumulated substitution. */
 static Atom *deref(Bindings *tb, Atom *t) {
@@ -268,16 +307,16 @@ static bool split_binder(Atom *domain, Atom **binder, Atom **type) {
 typedef enum {
     HE_NORM_COMPLETE = 0,
     HE_NORM_RESOURCE,
+    HE_NORM_DEPTH,
     HE_NORM_AMBIGUOUS,
     HE_NORM_NO_RESULT,
     HE_NORM_INADMISSIBLE  /* effectful computation inside a type: never run */
 } HeNormStatus;
 
-/* Bounds the mutual normalize/validate recursion: structural descent plus the
- * rewrite iteration on computed results.  Fuel bounds total work but not stack
- * depth — a type-level function that keeps growing its result would otherwise
- * deepen the C stack once per rewrite until overflow. */
-#define HE_TYPE_DEPTH_LIMIT 512u
+static void he_note_depth(uint32_t *max_depth_observed, uint32_t depth) {
+    if (max_depth_observed && depth > *max_depth_observed)
+        *max_depth_observed = depth;
+}
 
 static bool space_has_unary_marker(Space *space, const char *marker,
                                    Atom *payload) {
@@ -306,8 +345,14 @@ static bool atom_is_false_value(Atom *x) {
 
 static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
                                     uint64_t *fuel, HeNormStatus *status,
-                                    uint32_t depth) {
-    if (*fuel == 0 || depth > HE_TYPE_DEPTH_LIMIT) {
+                                    uint32_t depth,
+                                    uint32_t *max_depth_observed) {
+    he_note_depth(max_depth_observed, depth);
+    if (depth > HE_TYPE_DEPTH_LIMIT) {
+        *status = HE_NORM_DEPTH;
+        return ty;
+    }
+    if (*fuel == 0) {
         *status = HE_NORM_RESOURCE;
         return ty;
     }
@@ -321,7 +366,8 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
     for (uint32_t i = 0; i < ty->expr.len; i++) {
         HeNormStatus child_status = HE_NORM_COMPLETE;
         children[i] = normalize_type_checked(a, space, ty->expr.elems[i],
-                                             fuel, &child_status, depth + 1);
+                                             fuel, &child_status, depth + 1,
+                                             max_depth_observed);
         if (child_status != HE_NORM_COMPLETE) {
             *status = child_status;
             return ty;
@@ -337,7 +383,7 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
     if (grounded != norm) {
         HeNormStatus next = HE_NORM_COMPLETE;
         Atom *r = normalize_type_checked(a, space, grounded, fuel, &next,
-                                         depth + 1);
+                                         depth + 1, max_depth_observed);
         if (next != HE_NORM_COMPLETE) *status = next;
         return r;
     }
@@ -361,7 +407,7 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
     /* Open calls are well-formed residual type expressions. */
     if (atom_has_vars(norm)) return norm;
 
-    if (*fuel == 0) {
+    if (*fuel <= 1) {
         *status = HE_NORM_RESOURCE;
         return norm;
     }
@@ -371,22 +417,28 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
      * unique successful normal form is accepted.  What this does not contain:
      * a marked function may still perform I/O through the evaluator.  The
      * marker is user trust, and the containment boundary is the snapshot. */
-    uint64_t budget = *fuel < 512 ? *fuel : 512;
-    *fuel -= budget;
+    /* Keep one caller-visible ledger step for validating and recursively
+       normalizing the returned candidate.  This is not a hidden search cap:
+       evaluation receives the entire remaining budget except that declared
+       continuation step, and actual use is charged below. */
+    uint64_t eval_budget = *fuel - 1;
+    int budget = eval_budget > (uint64_t)INT_MAX ? INT_MAX : (int)eval_budget;
     Space *snapshot = eval_space_snapshot_clone(space, a);
     if (!snapshot) {
         *status = HE_NORM_RESOURCE;
         return norm;
     }
 
-    ResultSet rs;
-    result_set_init(&rs);
-    metta_eval(snapshot, a, NULL, norm, (int)budget, &rs);
+    EvalOutcome outcome;
+    eval_outcome_init(&outcome);
+    metta_eval_outcome(snapshot, a, NULL, norm, budget, &outcome);
+    uint64_t spent = outcome.budget_initial - outcome.budget_remaining;
+    *fuel = spent >= *fuel ? 0 : *fuel - spent;
 
     Atom *unique = NULL;
     bool ambiguous = false;
-    for (CettaCount i = 0; i < rs.len; i++) {
-        Atom *candidate = rs.items[i];
+    for (CettaCount i = 0; i < outcome.results.len; i++) {
+        Atom *candidate = outcome.results.items[i];
         if (!candidate || atom_is_error(candidate) || atom_is_empty(candidate))
             continue;
         if (!unique) unique = candidate;
@@ -395,10 +447,15 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
             break;
         }
     }
-    result_set_free(&rs);
+    CettaEvalCompletion completion = outcome.completion;
+    eval_outcome_free(&outcome);
 
     if (ambiguous) {
         *status = HE_NORM_AMBIGUOUS;
+        return norm;
+    }
+    if (completion != CETTA_EVAL_COMPLETE) {
+        *status = HE_NORM_RESOURCE;
         return norm;
     }
     if (!unique) {
@@ -408,51 +465,110 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
     if (atom_eq(unique, norm)) return norm;
 
     HeNormStatus next = HE_NORM_COMPLETE;
-    Atom *r = normalize_type_checked(a, space, unique, fuel, &next, depth + 1);
+    Atom *r = normalize_type_checked(a, space, unique, fuel, &next, depth + 1,
+                                     max_depth_observed);
     if (next != HE_NORM_COMPLETE) *status = next;
     return r;
+}
+
+Atom *he_typing_normalize_shared_type(Arena *a, Space *space, Atom *type,
+                                      uint64_t fuel, bool *complete) {
+    HeNormStatus status = HE_NORM_COMPLETE;
+    Atom *normalized = normalize_type_checked(a, space, type, &fuel, &status, 0,
+                                              NULL);
+    if (complete) *complete = status == HE_NORM_COMPLETE;
+    return normalized;
+}
+
+CettaHeNormalizeStatus he_typing_normalize_type_status(
+    Arena *a, Space *space, Atom *type, uint64_t fuel, Atom **normalized_out) {
+    HeNormStatus status = HE_NORM_COMPLETE;
+    Atom *normalized = normalize_type_checked(a, space, type, &fuel, &status, 0,
+                                              NULL);
+    if (normalized_out) *normalized_out = normalized;
+    switch (status) {
+    case HE_NORM_COMPLETE: return CETTA_HE_NORMALIZE_COMPLETE;
+    case HE_NORM_RESOURCE: return CETTA_HE_NORMALIZE_RESOURCE;
+    case HE_NORM_DEPTH: return CETTA_HE_NORMALIZE_DEPTH;
+    case HE_NORM_AMBIGUOUS: return CETTA_HE_NORMALIZE_AMBIGUOUS;
+    case HE_NORM_NO_RESULT: return CETTA_HE_NORMALIZE_NO_RESULT;
+    case HE_NORM_INADMISSIBLE: return CETTA_HE_NORMALIZE_INADMISSIBLE;
+    }
+    return CETTA_HE_NORMALIZE_RESOURCE;
+}
+
+CettaHeNormalizeStatus he_typing_normalize_type_status_budgeted(
+    Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
+    Atom **normalized_out) {
+    if (!budget) return CETTA_HE_NORMALIZE_RESOURCE;
+    HeNormStatus status = HE_NORM_COMPLETE;
+    Atom *normalized = normalize_type_checked(
+        a, space, type, &budget->steps_remaining, &status, 0,
+        &budget->max_depth_observed);
+    if (normalized_out) *normalized_out = normalized;
+    switch (status) {
+    case HE_NORM_COMPLETE: return CETTA_HE_NORMALIZE_COMPLETE;
+    case HE_NORM_RESOURCE: return CETTA_HE_NORMALIZE_RESOURCE;
+    case HE_NORM_DEPTH: return CETTA_HE_NORMALIZE_DEPTH;
+    case HE_NORM_AMBIGUOUS: return CETTA_HE_NORMALIZE_AMBIGUOUS;
+    case HE_NORM_NO_RESULT: return CETTA_HE_NORMALIZE_NO_RESULT;
+    case HE_NORM_INADMISSIBLE: return CETTA_HE_NORMALIZE_INADMISSIBLE;
+    }
+    return CETTA_HE_NORMALIZE_RESOURCE;
 }
 
 typedef enum {
     HE_TYPE_VALID = 0,
     HE_TYPE_INVALID,
-    HE_TYPE_VALIDATION_UNKNOWN
+    HE_TYPE_VALIDATION_UNKNOWN,
+    HE_TYPE_VALIDATION_INCOMPLETE
 } HeTypeValidity;
 
-static const char *norm_status_reason(HeNormStatus ns) {
+static const char *refinement_status_reason(HeNormStatus ns) {
     switch (ns) {
-    case HE_NORM_AMBIGUOUS: return "type-property-ambiguous";
-    case HE_NORM_NO_RESULT: return "type-property-no-result";
+    case HE_NORM_DEPTH: return "type-refinement-depth-exhausted";
+    case HE_NORM_AMBIGUOUS: return "type-refinement-ambiguous";
+    case HE_NORM_NO_RESULT: return "type-refinement-no-result";
     case HE_NORM_INADMISSIBLE: return "type-computation-inadmissible";
-    default: return "type-property-fuel-exhausted";
+    default: return "type-refinement-fuel-exhausted";
     }
 }
 
-static HeTypeValidity validate_type_properties(Arena *a, Space *space,
-                                               Atom *ty, uint64_t *fuel,
-                                               Atom **detail, uint32_t depth) {
-    if (*fuel == 0 || depth > HE_TYPE_DEPTH_LIMIT) {
-        if (detail) *detail = he_reason(a, "type-property-fuel-exhausted");
-        return HE_TYPE_VALIDATION_UNKNOWN;
+static HeTypeValidity check_type_refinements(Arena *a, Space *space,
+                                             Atom *ty, uint64_t *fuel,
+                                             Atom **detail, uint32_t depth,
+                                             uint32_t *max_depth_observed) {
+    he_note_depth(max_depth_observed, depth);
+    if (depth > HE_TYPE_DEPTH_LIMIT) {
+        if (detail) *detail = he_reason(a, "type-refinement-depth-exhausted");
+        return HE_TYPE_VALIDATION_INCOMPLETE;
+    }
+    if (*fuel == 0) {
+        if (detail) *detail = he_reason(a, "type-refinement-fuel-exhausted");
+        return HE_TYPE_VALIDATION_INCOMPLETE;
     }
     (*fuel)--;
 
     HeNormStatus ns = HE_NORM_COMPLETE;
-    ty = normalize_type_checked(a, space, ty, fuel, &ns, depth);
+    ty = normalize_type_checked(a, space, ty, fuel, &ns, depth,
+                                max_depth_observed);
     if (ns != HE_NORM_COMPLETE) {
-        if (detail) *detail = he_reason(a, norm_status_reason(ns));
+        if (detail) *detail = he_reason(a, refinement_status_reason(ns));
         /* an inadmissible computation in a type is a proven defect, not a
          * resource condition */
-        return ns == HE_NORM_INADMISSIBLE ? HE_TYPE_INVALID
-                                          : HE_TYPE_VALIDATION_UNKNOWN;
+        if (ns == HE_NORM_INADMISSIBLE) return HE_TYPE_INVALID;
+        if (ns == HE_NORM_RESOURCE || ns == HE_NORM_DEPTH)
+            return HE_TYPE_VALIDATION_INCOMPLETE;
+        return HE_TYPE_VALIDATION_UNKNOWN;
     }
 
     if (ty->kind != ATOM_EXPR || ty->expr.len == 0) return HE_TYPE_VALID;
     for (uint32_t i = 0; i < ty->expr.len; i++) {
-        HeTypeValidity child = validate_type_properties(a, space,
-                                                        ty->expr.elems[i],
-                                                        fuel, detail,
-                                                        depth + 1);
+        HeTypeValidity child = check_type_refinements(a, space,
+                                                      ty->expr.elems[i],
+                                                      fuel, detail,
+                                                      depth + 1,
+                                                      max_depth_observed);
         if (child != HE_TYPE_VALID) return child;
     }
 
@@ -464,50 +580,88 @@ static HeTypeValidity validate_type_properties(Arena *a, Space *space,
     for (uint32_t i = 0; i < len; i++) {
         Atom *row = space_get_at(space, i);
         if (!row || row->kind != ATOM_EXPR || row->expr.len != 4) continue;
-        if (!atom_is_symbol(row->expr.elems[0], "type-index-property")) continue;
+        if (!atom_is_symbol(row->expr.elems[0], "type-index-refinement")) continue;
         if (!atom_eq(row->expr.elems[1], ty->expr.elems[0])) continue;
         Atom *idx = row->expr.elems[2];
         if (!(idx->kind == ATOM_GROUNDED && idx->ground.gkind == GV_INT) ||
             idx->ground.ival < 0 || (uint64_t)idx->ground.ival >= ty->expr.len) {
-            if (detail) *detail = he_reason(a, "invalid-type-property-index");
+            if (detail) *detail = he_reason(a, "invalid-type-refinement-index");
             return HE_TYPE_INVALID;
         }
         Atom *predicate = row->expr.elems[3];
         if (!space_has_unary_marker(space, "type-level-function", predicate)) {
-            if (detail) *detail = he_reason(a, "untrusted-type-property");
+            if (detail) *detail = he_reason(a, "untrusted-type-refinement");
             return HE_TYPE_INVALID;
         }
         Atom *arg = ty->expr.elems[(uint32_t)idx->ground.ival];
         if (atom_has_vars(arg)) {
-            if (detail) *detail = he_reason(a, "open-type-property");
+            if (detail) *detail = he_reason(a, "open-type-refinement");
             return HE_TYPE_VALIDATION_UNKNOWN;
         }
         Atom *call = atom_expr2(a, predicate, arg);
         HeNormStatus ps = HE_NORM_COMPLETE;
         Atom *answer = normalize_type_checked(a, space, call, fuel, &ps,
-                                              depth + 1);
+                                              depth + 1,
+                                              max_depth_observed);
         if (ps != HE_NORM_COMPLETE) {
-            if (detail) *detail = he_reason(a, norm_status_reason(ps));
-            return ps == HE_NORM_INADMISSIBLE ? HE_TYPE_INVALID
-                                              : HE_TYPE_VALIDATION_UNKNOWN;
+            if (detail) *detail = he_reason(a, refinement_status_reason(ps));
+            if (ps == HE_NORM_INADMISSIBLE) return HE_TYPE_INVALID;
+            if (ps == HE_NORM_RESOURCE || ps == HE_NORM_DEPTH)
+                return HE_TYPE_VALIDATION_INCOMPLETE;
+            return HE_TYPE_VALIDATION_UNKNOWN;
         }
         if (atom_is_false_value(answer)) {
-            if (detail) *detail = he_reason2(a, "type-property-failed", arg);
+            if (detail) *detail = he_reason2(a, "type-refinement-failed", arg);
             return HE_TYPE_INVALID;
         }
         if (!atom_is_true_value(answer)) {
-            if (detail) *detail = he_reason2(a, "type-property-not-boolean", answer);
+            if (detail) *detail = he_reason2(a, "type-refinement-not-boolean", answer);
             return HE_TYPE_VALIDATION_UNKNOWN;
         }
     }
     return HE_TYPE_VALID;
 }
 
+CettaHeRefinementStatus he_typing_check_refinement_status(
+    Arena *a, Space *space, Atom *type, uint64_t fuel, Atom **detail_out) {
+    Atom *detail = NULL;
+    HeTypeValidity status = check_type_refinements(a, space, type, &fuel,
+                                                   &detail, 0, NULL);
+    if (detail_out) *detail_out = detail;
+    switch (status) {
+    case HE_TYPE_VALID: return CETTA_HE_REFINEMENT_VALID;
+    case HE_TYPE_INVALID: return CETTA_HE_REFINEMENT_INVALID;
+    case HE_TYPE_VALIDATION_UNKNOWN: return CETTA_HE_REFINEMENT_UNDETERMINED;
+    case HE_TYPE_VALIDATION_INCOMPLETE:
+        return CETTA_HE_REFINEMENT_INCOMPLETE;
+    }
+    return CETTA_HE_REFINEMENT_UNDETERMINED;
+}
+
+CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(
+    Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
+    Atom **detail_out) {
+    if (!budget) return CETTA_HE_REFINEMENT_INCOMPLETE;
+    Atom *detail = NULL;
+    HeTypeValidity status = check_type_refinements(
+        a, space, type, &budget->steps_remaining, &detail, 0,
+        &budget->max_depth_observed);
+    if (detail_out) *detail_out = detail;
+    switch (status) {
+    case HE_TYPE_VALID: return CETTA_HE_REFINEMENT_VALID;
+    case HE_TYPE_INVALID: return CETTA_HE_REFINEMENT_INVALID;
+    case HE_TYPE_VALIDATION_UNKNOWN: return CETTA_HE_REFINEMENT_UNDETERMINED;
+    case HE_TYPE_VALIDATION_INCOMPLETE:
+        return CETTA_HE_REFINEMENT_INCOMPLETE;
+    }
+    return CETTA_HE_REFINEMENT_UNDETERMINED;
+}
+
 /* consistency, plus variable unification into a substitution.  The symbol
  * reasons (%Undefined% dynamic, Atom-as-actual reject, meta staging) are checked
  * BEFORE any variable binding, so they are unchanged from `consistency` — the
  * census fixes are about those symbols, which are orthogonal to variables.  Used
- * ONLY for dependent-codomain instantiation; the reject gate (`check-typing`)
+ * ONLY for dependent-codomain instantiation; the reject gate (`check-type`)
  * and `is-consistent` keep the binding-free `consistency`. */
 static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
                                Bindings *tb) {
@@ -558,231 +712,211 @@ static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
     return HE_NONE;
 }
 
-/* Application typing with dependent-codomain instantiation.  For each function
- * type of the head with matching arity: freshen it, unify each argument's type
- * against the corresponding domain (peeling dependent binders and binding their
- * value variable), then substitute the accumulated bindings into the codomain
- * and reduce grounded operators in it.  The result set is the intersection-
- * elimination over the head's function types.  type-of stays TOTAL: when no
- * function type applies, the caller falls back to the structural product. */
-static void type_of_application(Arena *a, Space *space, Atom *term,
-                                uint64_t *fuel, HeTypeSet *out) {
-    HeTypeSet head_types;
-    set_init(&head_types);
-    if (!type_of(a, space, term->expr.elems[0], fuel, &head_types)) return;
-    uint32_t argc = term->expr.len - 1;
-    for (uint32_t h = 0; h < head_types.count; h++) {
-        Atom *ft = head_types.items[h];
-        if (!is_arrow(ft)) continue;
-        uint32_t arity = ft->expr.len - 2;
-        if (argc > arity) continue;
-
-        uint32_t suf = fresh_var_suffix();
-        Atom *fresh_ft = atom_freshen_epoch(a, ft, suf);
-        Atom *cod = fresh_ft->expr.elems[fresh_ft->expr.len - 1];
-        Bindings tb;
-        bindings_init(&tb);
-        bool all_ok = true;
-
-        for (uint32_t i = 0; i < argc && all_ok; i++) {
-            Atom *domain = fresh_ft->expr.elems[i + 1];
-            Atom *arg_term = term->expr.elems[i + 1];
-            Atom *binder = NULL, *dtype = domain;
-            split_binder(domain, &binder, &dtype);
-            if (binder) {
-                Atom *arg_val = bindings_apply_if_vars(&tb, a, arg_term);
-                bindings_add_id(&tb, binder->var_id, SYMBOL_ID_NONE, arg_val);
-            }
-            Atom *dom = bindings_apply_if_vars(&tb, a, dtype);
-            if (atom_is_meta_type(dom)) {
-                if (!atom_meta_type_accepts(a, dom, arg_term)) all_ok = false;
-                continue;
-            }
-            HeTypeSet at;
-            set_init(&at);
-            if (!type_of(a, space, arg_term, fuel, &at)) { all_ok = false; break; }
-            bool found = false;
-            for (uint32_t k = 0; k < at.count; k++) {
-                Bindings trial;
-                if (!bindings_clone(&trial, &tb)) { all_ok = false; break; }
-                uint64_t f = *fuel;
-                HeEdge e = consistency_bind(at.items[k], dom, &f, &trial);
-                if (e != HE_NONE && e != HE_UNKNOWN) {
-                    bindings_free(&tb);
-                    tb = trial; /* move: tb takes over trial's storage */
-                    found = true;
-                    break;
-                }
-                bindings_free(&trial);
-            }
-            if (!found) all_ok = false;
-        }
-        if (all_ok) {
-            uint32_t remaining = arity - argc;
-            Atom *concrete_cod = bindings_apply_if_vars(&tb, a, cod);
-            HeNormStatus ns = HE_NORM_COMPLETE;
-            concrete_cod = normalize_type_checked(a, space, concrete_cod,
-                                                  fuel, &ns, 0);
-            if (ns == HE_NORM_COMPLETE && remaining == 0) {
-                set_add(out, concrete_cod);
-            } else if (ns == HE_NORM_COMPLETE) {
-                Atom **residual = arena_alloc(a,
-                    sizeof(Atom *) * (remaining + 2));
-                residual[0] = atom_symbol(a, "->");
-                for (uint32_t j = 0; j < remaining; j++) {
-                    Atom *d = fresh_ft->expr.elems[argc + 1 + j];
-                    residual[j + 1] = bindings_apply_if_vars(&tb, a, d);
-                }
-                residual[remaining + 1] = concrete_cod;
-                set_add(out, atom_expr(a, residual, remaining + 2));
-            }
-        }
-        bindings_free(&tb);
-    }
-}
-
-static bool type_of(Arena *a, Space *space, Atom *term, uint64_t *fuel,
-                    HeTypeSet *out) {
+/* All term-type inference comes from the native profile-aware HE engine.
+ * he-prime keeps only diagnostics, refinements, checked type computation, and
+ * proof search over those shared results. */
+static bool infer_shared_types_mode(Arena *a, Space *space, Atom *term,
+                                    uint64_t *fuel, HeTypeSet *out,
+                                    bool structural) {
     if (*fuel == 0) return false;
     (*fuel)--;
-    term = unquote(term);
-
-    if (term->kind == ATOM_GROUNDED) {
-        Atom *gt = get_grounded_type(a, term);
-        if (!is_undefined(gt)) set_add(out, gt);
-        return true;
-    }
-    if (term->kind == ATOM_VAR) {
-        /* a variable carries no value type: its type is ? */
-        set_add(out, atom_undefined_type(a));
-        return true;
-    }
-    if (term->kind == ATOM_SYMBOL) {
-        collect_annotations(a, space, term, out);
-        if (out->count == 0) set_add(out, atom_undefined_type(a));
-        return true;
-    }
-    /* expression */
-    collect_annotations(a, space, term, out);
-    if (out->count == 0 && term->expr.len >= 2)
-        type_of_application(a, space, term, fuel, out);
-    if (out->count == 0 && term->expr.len > 0) {
-        /* tuple: the product of element types (census: application-vs-tuple is
-         * decided by whether the head has a function type). */
-        Atom **elems = arena_alloc(a, sizeof(Atom *) * term->expr.len);
-        bool ok = true;
-        for (uint32_t i = 0; i < term->expr.len; i++) {
-            HeTypeSet et;
-            set_init(&et);
-            if (!type_of(a, space, term->expr.elems[i], fuel, &et) ||
-                et.count == 0) {
-                ok = false;
-                break;
-            }
-            elems[i] = et.items[0];
-        }
-        if (ok) set_add(out, atom_expr(a, elems, term->expr.len));
-    }
-    if (out->count == 0) set_add(out, atom_undefined_type(a));
+    Atom **types = NULL;
+    uint32_t count = structural
+        ? eval_get_atom_types_structural_profiled(space, a, unquote(term), &types)
+        : eval_get_atom_types_profiled(space, a, unquote(term), &types);
+    for (uint32_t i = 0; i < count; i++)
+        set_add(out, types[i]);
+    if (count > HE_MAX_TYPES)
+        out->overflow = true;
+    free(types);
     return true;
 }
 
-/* Derive a subject's type from its structure, ignoring its own top-level
- * annotation — used to validate a declared type against the derivation. */
-static bool type_of_structural(Arena *a, Space *space, Atom *term,
+static bool infer_shared_types(Arena *a, Space *space, Atom *term,
                                uint64_t *fuel, HeTypeSet *out) {
-    if (*fuel == 0) return false;
-    (*fuel)--;
-    term = unquote(term);
-    if (term->kind != ATOM_EXPR || term->expr.len == 0)
-        return type_of(a, space, term, fuel, out);
-    if (term->expr.len >= 2)
-        type_of_application(a, space, term, fuel, out);
-    if (out->count == 0) {
-        Atom **elems = arena_alloc(a, sizeof(Atom *) * term->expr.len);
-        bool ok = true;
-        for (uint32_t i = 0; i < term->expr.len; i++) {
-            HeTypeSet et;
-            set_init(&et);
-            if (!type_of(a, space, term->expr.elems[i], fuel, &et) ||
-                et.count == 0) { ok = false; break; }
-            elems[i] = et.items[0];
-        }
-        if (ok) set_add(out, atom_expr(a, elems, term->expr.len));
-    }
-    if (out->count == 0) set_add(out, atom_undefined_type(a));
-    return true;
+    return infer_shared_types_mode(a, space, term, fuel, out, false);
+}
+
+static bool infer_shared_types_structural(Arena *a, Space *space, Atom *term,
+                                          uint64_t *fuel, HeTypeSet *out) {
+    return infer_shared_types_mode(a, space, term, fuel, out, true);
 }
 
 /* ── success-typing check (three-valued) ───────────────────────────────── */
 
 static Atom *edge_atom(Arena *a, HeEdge e) { return he_sym(a, edge_name(e)); }
 
-/* accept if any declared type is consistent with expected (success typing);
- * reject only if every type is a proven mismatch; unknown on exhaustion. */
-static Atom *check_typing_mode(Arena *a, Space *space, Atom *term,
-                               Atom *expected, uint64_t fuel, bool structural) {
+/* Closed checking treats variables as rigid.  Scheme variables are freshened
+ * into elaboration variables only at an explicitly marked rule-use boundary;
+ * that separate path returns its substitution in the search answer. */
+static CettaHeCheckStatus classify_type_mode(
+    Arena *a, Space *space, Atom *term, Atom *expected, uint64_t *fuel_io,
+    bool aggregate_budget, bool structural, bool require_exact_or_structural,
+    HeEdge *edge_out, Atom **detail_out, uint32_t *max_depth_observed,
+    bool *type_capacity_exhausted) {
+    uint64_t fuel = fuel_io ? *fuel_io : 0;
+#define CLASSIFY_RETURN(_status) do { \
+    if (fuel_io) *fuel_io = fuel; \
+    return (_status); \
+} while (0)
+    if (edge_out) *edge_out = HE_NONE;
+    if (detail_out) *detail_out = NULL;
+    if (type_capacity_exhausted) *type_capacity_exhausted = false;
+
     HeNormStatus ens = HE_NORM_COMPLETE;
-    expected = normalize_type_checked(a, space, expected, &fuel, &ens, 0);
-    if (ens != HE_NORM_COMPLETE)
-        return he_unknown(a, he_reason(a, "expected-type-normalization-incomplete"));
-    Atom *property_detail = NULL;
-    HeTypeValidity ev = validate_type_properties(a, space, expected, &fuel,
-                                                 &property_detail, 0);
-    if (ev == HE_TYPE_INVALID)
-        return he_reject(a, property_detail ? property_detail
-                                            : he_reason(a, "invalid-expected-type"));
-    if (ev == HE_TYPE_VALIDATION_UNKNOWN)
-        return he_unknown(a, property_detail ? property_detail
-                                             : he_reason(a, "expected-type-validation-unknown"));
+    expected = normalize_type_checked(a, space, expected, &fuel, &ens, 0,
+                                      max_depth_observed);
+    if (ens != HE_NORM_COMPLETE) {
+        if (detail_out)
+            *detail_out = he_reason(a, "expected-type-normalization-incomplete");
+        CLASSIFY_RETURN(ens == HE_NORM_RESOURCE || ens == HE_NORM_DEPTH
+                            ? CETTA_HE_CHECK_INCOMPLETE
+                            : CETTA_HE_CHECK_UNDETERMINED);
+    }
+    Atom *refinement_detail = NULL;
+    HeTypeValidity ev = check_type_refinements(a, space, expected, &fuel,
+                                               &refinement_detail, 0,
+                                               max_depth_observed);
+    if (ev == HE_TYPE_INVALID) {
+        if (detail_out)
+            *detail_out = refinement_detail
+                ? refinement_detail : he_reason(a, "invalid-expected-type");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_REFUTED);
+    }
+    if (ev == HE_TYPE_VALIDATION_UNKNOWN) {
+        if (detail_out)
+            *detail_out = refinement_detail
+                ? refinement_detail
+                : he_reason(a, "expected-type-refinement-unknown");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_UNDETERMINED);
+    }
+    if (ev == HE_TYPE_VALIDATION_INCOMPLETE) {
+        if (detail_out)
+            *detail_out = refinement_detail
+                ? refinement_detail
+                : he_reason(a, "expected-type-refinement-incomplete");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+    }
 
     HeTypeSet ts;
     set_init(&ts);
-    bool ok = structural ? type_of_structural(a, space, term, &fuel, &ts)
-                         : type_of(a, space, term, &fuel, &ts);
-    if (!ok)
-        return he_unknown(a, he_reason(a, "type-of-exhausted"));
-    if (ts.overflow)
-        return he_unknown(a, he_reason(a, "type-set-capacity"));
+    bool ok = structural
+                  ? infer_shared_types_structural(a, space, term, &fuel, &ts)
+                  : infer_shared_types(a, space, term, &fuel, &ts);
+    if (!ok) {
+        if (detail_out) *detail_out = he_reason(a, "type-inference-exhausted");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+    }
+    if (ts.overflow) {
+        if (type_capacity_exhausted) *type_capacity_exhausted = true;
+        if (detail_out) *detail_out = he_reason(a, "type-set-capacity");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+    }
     HeEdge best = HE_NONE;
     bool saw_unknown = false;
+    bool saw_incomplete = false;
     for (uint32_t i = 0; i < ts.count; i++) {
-        uint64_t f = fuel;
+        uint64_t branch_fuel = fuel;
+        uint64_t *f = aggregate_budget ? &fuel : &branch_fuel;
         HeNormStatus ans = HE_NORM_COMPLETE;
-        Atom *actual = normalize_type_checked(a, space, ts.items[i], &f, &ans,
-                                              0);
-        if (ans != HE_NORM_COMPLETE) { saw_unknown = true; continue; }
+        Atom *actual = normalize_type_checked(a, space, ts.items[i], f, &ans,
+                                              0, max_depth_observed);
+        if (ans != HE_NORM_COMPLETE) {
+            if (ans == HE_NORM_RESOURCE || ans == HE_NORM_DEPTH)
+                saw_incomplete = true;
+            else saw_unknown = true;
+            continue;
+        }
         Atom *actual_detail = NULL;
-        HeTypeValidity av = validate_type_properties(a, space, actual, &f,
-                                                     &actual_detail, 0);
+        HeTypeValidity av = check_type_refinements(
+            a, space, actual, f, &actual_detail, 0, max_depth_observed);
         if (av == HE_TYPE_INVALID) continue;
         if (av == HE_TYPE_VALIDATION_UNKNOWN) { saw_unknown = true; continue; }
-        uint32_t epoch = fresh_var_suffix();
-        Atom *fresh_actual = atom_freshen_epoch(a, actual, epoch);
-        Atom *fresh_expected = atom_freshen_epoch(a, expected, epoch + 1);
-        Bindings tb;
-        bindings_init(&tb);
-        HeEdge e = consistency_bind(fresh_actual, fresh_expected, &f, &tb);
-        bindings_free(&tb);
+        if (av == HE_TYPE_VALIDATION_INCOMPLETE) {
+            saw_incomplete = true;
+            continue;
+        }
+        HeEdge e = consistency(actual, expected, f);
         if (e == HE_UNKNOWN) { saw_unknown = true; continue; }
-        if (e == HE_EXACT) best = HE_EXACT;
-        else if (e != HE_NONE && best != HE_EXACT) best = e;
+        if (e == HE_NONE) continue;
+        if (best == HE_NONE || edge_weakness(e) < edge_weakness(best))
+            best = e;
     }
-    if (best == HE_EXACT)
-        return he_accept(a, atom_expr2(a, edge_atom(a, HE_EXACT), expected));
-    if (best != HE_NONE)
-        return he_accept(a, atom_expr2(a, edge_atom(a, best), expected));
-    if (saw_unknown)
-        return he_unknown(a, he_reason(a, "consistency-exhausted"));
-    Atom **rs = arena_alloc(a, sizeof(Atom *) * (ts.count + 1));
-    rs[0] = he_sym(a, "no-consistent-type");
-    for (uint32_t i = 0; i < ts.count; i++) rs[i + 1] = ts.items[i];
-    return he_reject(a, atom_expr(a, rs, ts.count + 1));
+    if (best != HE_NONE) {
+        if (edge_out) *edge_out = best;
+        Atom *edge_detail = atom_expr2(a, edge_atom(a, best), expected);
+        if (require_exact_or_structural &&
+            !edge_is_exact_or_structural(best)) {
+            if (detail_out)
+                *detail_out = he_reason2(
+                    a, "non-exact-or-structural-consistency", edge_detail);
+            CLASSIFY_RETURN(CETTA_HE_CHECK_UNDETERMINED);
+        }
+        if (detail_out) *detail_out = edge_detail;
+        CLASSIFY_RETURN(CETTA_HE_CHECK_ESTABLISHED);
+    }
+    if (saw_incomplete) {
+        if (detail_out) *detail_out = he_reason(a, "typing-resource-incomplete");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+    }
+    if (saw_unknown) {
+        if (detail_out) *detail_out = he_reason(a, "consistency-exhausted");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_UNDETERMINED);
+    }
+    Atom **reasons = arena_alloc(a, sizeof(Atom *) * (ts.count + 1));
+    reasons[0] = he_sym(a, "no-consistent-type");
+    for (uint32_t i = 0; i < ts.count; i++) reasons[i + 1] = ts.items[i];
+    if (detail_out) *detail_out = atom_expr(a, reasons, ts.count + 1);
+    CLASSIFY_RETURN(CETTA_HE_CHECK_REFUTED);
+}
+#undef CLASSIFY_RETURN
+
+static Atom *check_type_mode(Arena *a, Space *space, Atom *term,
+                             Atom *expected, uint64_t fuel, bool structural) {
+    HeEdge edge = HE_NONE;
+    Atom *detail = NULL;
+    uint64_t remaining = fuel;
+    CettaHeCheckStatus status = classify_type_mode(
+        a, space, term, expected, &remaining, false, structural, false, &edge,
+        &detail, NULL, NULL);
+    (void)edge;
+    if (status == CETTA_HE_CHECK_ESTABLISHED)
+        return he_accept(a, detail ? detail : he_reason(a, "established"));
+    if (status == CETTA_HE_CHECK_REFUTED)
+        return he_reject(a, detail ? detail : he_reason(a, "refuted"));
+    return he_unknown(a, detail ? detail : he_reason(a, "undetermined"));
 }
 
-static Atom *check_typing(Arena *a, Space *space, Atom *term, Atom *expected,
-                          uint64_t fuel) {
-    return check_typing_mode(a, space, term, expected, fuel, false);
+static Atom *check_type(Arena *a, Space *space, Atom *term, Atom *expected,
+                        uint64_t fuel) {
+    return check_type_mode(a, space, term, expected, fuel, false);
+}
+
+CettaHeCheckStatus he_typing_check_term_status(
+    Arena *a, Space *space, Atom *term, Atom *expected, uint64_t fuel,
+    bool require_exact_or_structural, CettaHeTypingEdge *edge_out,
+    Atom **detail_out) {
+    HeEdge edge = HE_NONE;
+    uint64_t remaining = fuel;
+    CettaHeCheckStatus status = classify_type_mode(
+        a, space, term, expected, &remaining, false, false,
+        require_exact_or_structural, &edge, detail_out, NULL, NULL);
+    if (edge_out) *edge_out = public_edge(edge);
+    return status;
+}
+
+CettaHeCheckStatus he_typing_check_term_status_budgeted(
+    Arena *a, Space *space, Atom *term, Atom *expected,
+    CettaHeTypingBudget *budget, bool require_exact_or_structural,
+    CettaHeTypingEdge *edge_out, Atom **detail_out) {
+    if (!budget) return CETTA_HE_CHECK_INCOMPLETE;
+    HeEdge edge = HE_NONE;
+    CettaHeCheckStatus status = classify_type_mode(
+        a, space, term, expected, &budget->steps_remaining, true, false,
+        require_exact_or_structural, &edge, detail_out,
+        &budget->max_depth_observed, &budget->type_capacity_exhausted);
+    if (edge_out) *edge_out = public_edge(edge);
+    return status;
 }
 
 /* ── DTT-native chaining: proof search is type inhabitation ────────────────
@@ -886,6 +1020,9 @@ static void chain_mark_normalization_incomplete(ChainContext *ctx,
     switch (status) {
     case HE_NORM_RESOURCE:
         chain_mark_incomplete(ctx, "fuel-exhausted");
+        return;
+    case HE_NORM_DEPTH:
+        chain_mark_incomplete(ctx, "type-computation-depth-exhausted");
         return;
     case HE_NORM_AMBIGUOUS:
         chain_mark_incomplete(ctx, "type-computation-ambiguous");
@@ -1127,7 +1264,7 @@ static bool answer_identity_v1_make(ChainContext *ctx, Atom *proof,
     HeNormStatus status = HE_NORM_COMPLETE;
     substituted_type = normalize_type_checked(ctx->arena, ctx->space,
                                                substituted_type, &ctx->fuel,
-                                               &status, 0);
+                                               &status, 0, NULL);
     if (status != HE_NORM_COMPLETE) {
         chain_mark_normalization_incomplete(
             ctx, status, "answer-type-normalization-incomplete");
@@ -1228,9 +1365,9 @@ static bool chain_unify_deferred(ChainContext *ctx, Atom *left, Atom *right,
     right = bindings_apply_if_vars(env, ctx->arena, right);
     HeNormStatus ls = HE_NORM_COMPLETE, rs = HE_NORM_COMPLETE;
     left = normalize_type_checked(ctx->arena, ctx->space, left, &ctx->fuel, &ls,
-                                  0);
+                                  0, NULL);
     right = normalize_type_checked(ctx->arena, ctx->space, right, &ctx->fuel,
-                                   &rs, 0);
+                                   &rs, 0, NULL);
     if (ls != HE_NORM_COMPLETE || rs != HE_NORM_COMPLETE) {
         chain_mark_normalization_incomplete(
             ctx, ls != HE_NORM_COMPLETE ? ls : rs,
@@ -1246,9 +1383,9 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
     right = bindings_apply_if_vars(env, ctx->arena, right);
     HeNormStatus ls = HE_NORM_COMPLETE, rs = HE_NORM_COMPLETE;
     left = normalize_type_checked(ctx->arena, ctx->space, left, &ctx->fuel, &ls,
-                                  0);
+                                  0, NULL);
     right = normalize_type_checked(ctx->arena, ctx->space, right, &ctx->fuel,
-                                   &rs, 0);
+                                   &rs, 0, NULL);
     if (ls != HE_NORM_COMPLETE || rs != HE_NORM_COMPLETE) {
         chain_mark_normalization_incomplete(
             ctx, ls != HE_NORM_COMPLETE ? ls : rs,
@@ -1256,13 +1393,20 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
         return false;
     }
     Atom *detail = NULL;
-    HeTypeValidity lv = validate_type_properties(ctx->arena, ctx->space, left,
-                                                 &ctx->fuel, &detail, 0);
-    HeTypeValidity rv = validate_type_properties(ctx->arena, ctx->space, right,
-                                                 &ctx->fuel, &detail, 0);
+    HeTypeValidity lv = check_type_refinements(ctx->arena, ctx->space, left,
+                                               &ctx->fuel, &detail, 0, NULL);
+    HeTypeValidity rv = check_type_refinements(ctx->arena, ctx->space, right,
+                                               &ctx->fuel, &detail, 0, NULL);
+    if (lv == HE_TYPE_VALIDATION_INCOMPLETE ||
+        rv == HE_TYPE_VALIDATION_INCOMPLETE) {
+        chain_mark_incomplete(ctx, ctx->fuel == 0
+                                  ? "fuel-exhausted"
+                                  : "type-refinement-incomplete");
+        return false;
+    }
     if (lv == HE_TYPE_VALIDATION_UNKNOWN || rv == HE_TYPE_VALIDATION_UNKNOWN) {
         chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
-                                                  : "type-property-unknown");
+                                                  : "type-refinement-unknown");
         return false;
     }
     if (lv == HE_TYPE_INVALID || rv == HE_TYPE_INVALID) return false;
@@ -1275,12 +1419,12 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
     /* Gradual acceptances (dynamic/top/meta anywhere in the composition) are
      * fine for checking but are NOT proofs; only structural equality all the
      * way down lets a candidate stand as an inhabitant. */
-    if (!edge_is_proof_grade(e)) return false;
+    if (!edge_is_exact_or_structural(e)) return false;
     if (resolved_left) {
         Atom *r = bindings_apply_if_vars(env, ctx->arena, left);
         HeNormStatus ns = HE_NORM_COMPLETE;
         r = normalize_type_checked(ctx->arena, ctx->space, r, &ctx->fuel, &ns,
-                                   0);
+                                   0, NULL);
         if (ns != HE_NORM_COMPLETE) {
             chain_mark_normalization_incomplete(
                 ctx, ns, "resolved-type-normalization-incomplete");
@@ -1296,7 +1440,7 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
     ctx->stats.proof_checks++;
     HeTypeSet ts;
     set_init(&ts);
-    if (!type_of(ctx->arena, ctx->space, proof, &ctx->fuel, &ts)) {
+    if (!infer_shared_types(ctx->arena, ctx->space, proof, &ctx->fuel, &ts)) {
         chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
                                          : "proof-type-inference-exhausted");
         return false;
@@ -1531,7 +1675,7 @@ static bool chain_schedule_goal(ChainContext *ctx, ChainWorkQueue *queue,
     goal = bindings_apply_if_vars(env, ctx->arena, goal);
     HeNormStatus status = HE_NORM_COMPLETE;
     goal = normalize_type_checked(ctx->arena, ctx->space, goal, &ctx->fuel,
-                                  &status, 0);
+                                  &status, 0, NULL);
     if (status != HE_NORM_COMPLETE) {
         chain_mark_normalization_incomplete(
             ctx, status, "goal-normalization-incomplete");
@@ -1936,10 +2080,9 @@ static Atom *arg_fuel(Arena *a, Atom *at, uint64_t *out) {
 /* ── dispatch ──────────────────────────────────────────────────────────── */
 
 static const char *const HE_OP_NAMES[] = {
-    "type-of", "normalize-typing", "validate-type-properties",
-    "is-consistent", "is-consistent-in", "type-consistency-kind",
-    "check-typing", "validate-typing",
-    "type-inhabit", "type-inhabit-first",
+    "normalize-type", "check-type-refinements",
+    "is-consistent", "check-type",
+    "search-inhabitants", "search-first-inhabitant",
     "type-forward-step", "type-forward-closure",
 };
 
@@ -1955,19 +2098,15 @@ bool he_typing_is_op(const char *name) {
  * drift apart; the evaluator consults this instead of naming ops itself. */
 bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
     if (!name) return false;
-    if (strcmp(name, "type-of") == 0 ||
-        strcmp(name, "normalize-typing") == 0 ||
-        strcmp(name, "validate-type-properties") == 0)
+    if (strcmp(name, "normalize-type") == 0 ||
+        strcmp(name, "check-type-refinements") == 0)
         return arg_index == 1;
-    if (strcmp(name, "is-consistent") == 0 ||
-        strcmp(name, "type-consistency-kind") == 0)
+    if (strcmp(name, "is-consistent") == 0)
         return arg_index == 0 || arg_index == 1;
-    if (strcmp(name, "is-consistent-in") == 0)
+    if (strcmp(name, "check-type") == 0)
         return arg_index == 1 || arg_index == 2;
-    if (strcmp(name, "check-typing") == 0)
-        return arg_index == 1 || arg_index == 2;
-    if (strcmp(name, "type-inhabit") == 0 ||
-        strcmp(name, "type-inhabit-first") == 0)
+    if (strcmp(name, "search-inhabitants") == 0 ||
+        strcmp(name, "search-first-inhabitant") == 0)
         return arg_index == 1;
     return false;
 }
@@ -1978,29 +2117,9 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (!he_typing_is_op(name)) return NULL;
     if (!eval_current_profile_enables_dependent_telescope()) return NULL;
 
-    if (strcmp(name, "type-of") == 0) {
-        if (nargs != 2)
-            return he_reject(a, he_reason(a, "type-of-needs-space-and-term"));
-        Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
-        uint64_t fuel = 100000;
-        HeTypeSet ts;
-        set_init(&ts);
-        if (!type_of(a, sp, unquote(args[1]), &fuel, &ts))
-            return he_unknown(a, he_reason(a, "type-of-exhausted"));
-        if (ts.overflow)
-            return he_unknown(a, he_reason(a, "type-set-capacity"));
-        Atom **e = arena_alloc(a, sizeof(Atom *) * (ts.count + 1));
-        e[0] = he_sym(a, "type-set");
-        for (uint32_t i = 0; i < ts.count; i++) e[i + 1] = ts.items[i];
-        return atom_expr(a, e, (CettaExprLen)(ts.count + 1));
-    }
-
-
-    if (strcmp(name, "normalize-typing") == 0) {
+    if (strcmp(name, "normalize-type") == 0) {
         if (nargs != 3)
-            return he_reject(a, he_reason(a, "normalize-typing-arity"));
+            return he_reject(a, he_reason(a, "normalize-type-arity"));
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
@@ -2009,7 +2128,7 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (bad) return bad;
         HeNormStatus ns = HE_NORM_COMPLETE;
         Atom *n = normalize_type_checked(a, sp, unquote(args[1]), &fuel, &ns,
-                                         0);
+                                         0, NULL);
         if (ns == HE_NORM_AMBIGUOUS)
             return he_unknown(a, he_reason(a, "type-computation-ambiguous"));
         if (ns == HE_NORM_NO_RESULT)
@@ -2021,12 +2140,12 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return he_accept(a, n);
     }
 
-    /* Validates the declared type-index-property refinements of a type (and
+    /* Checks the declared type-index-refinement predicates of a type (and
      * runs its admissible computations).  This is NOT a well-formedness
      * judgment: no universes, no binder-domain formation, no positivity. */
-    if (strcmp(name, "validate-type-properties") == 0) {
+    if (strcmp(name, "check-type-refinements") == 0) {
         if (nargs != 3)
-            return he_reject(a, he_reason(a, "validate-type-properties-arity"));
+            return he_reject(a, he_reason(a, "check-type-refinements-arity"));
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
@@ -2034,41 +2153,13 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         Atom *bad = arg_fuel(a, args[2], &fuel);
         if (bad) return bad;
         Atom *detail = NULL;
-        HeTypeValidity v = validate_type_properties(a, sp, unquote(args[1]),
-                                                    &fuel, &detail, 0);
+        HeTypeValidity v = check_type_refinements(a, sp, unquote(args[1]),
+                                                  &fuel, &detail, 0, NULL);
         if (v == HE_TYPE_VALID) return he_accept(a, unquote(args[1]));
         if (v == HE_TYPE_INVALID)
             return he_reject(a, detail ? detail : he_reason(a, "invalid-type"));
         return he_unknown(a, detail ? detail
-                                    : he_reason(a, "type-validation-unknown"));
-    }
-
-    if (strcmp(name, "is-consistent-in") == 0) {
-        if (nargs != 4)
-            return he_reject(a, he_reason(a, "is-consistent-in-arity"));
-        Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
-        uint64_t fuel = 0;
-        Atom *bad = arg_fuel(a, args[3], &fuel);
-        if (bad) return bad;
-        HeNormStatus as = HE_NORM_COMPLETE, bs = HE_NORM_COMPLETE;
-        Atom *left = normalize_type_checked(a, sp, unquote(args[1]), &fuel, &as,
-                                            0);
-        Atom *right = normalize_type_checked(a, sp, unquote(args[2]), &fuel,
-                                             &bs, 0);
-        if (as != HE_NORM_COMPLETE || bs != HE_NORM_COMPLETE)
-            return he_unknown(a, he_reason(a, "consistency-normalization-incomplete"));
-        Bindings tb;
-        bindings_init(&tb);
-        HeEdge e = consistency_bind(left, right, &fuel, &tb);
-        bindings_free(&tb);
-        if (e == HE_UNKNOWN)
-            return he_unknown(a, he_reason(a, "consistency-exhausted"));
-        if (e == HE_NONE)
-            return he_reject(a, he_reason2(a, "inconsistent",
-                                           atom_expr2(a, left, right)));
-        return he_accept(a, edge_atom(a, e));
+                                    : he_reason(a, "type-refinement-unknown"));
     }
 
 
@@ -2085,30 +2176,22 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return he_accept(a, edge_atom(a, e));
     }
 
-    if (strcmp(name, "type-consistency-kind") == 0) {
-        if (nargs != 2)
-            return he_reject(a, he_reason(a, "type-consistency-kind-needs-two-types"));
-        uint64_t fuel = 100000;
-        HeEdge e = consistency(args[0], args[1], &fuel);
-        return he_wrap1(a, "consistency-kind", edge_atom(a, e));
-    }
-
-    if (strcmp(name, "check-typing") == 0) {
+    if (strcmp(name, "check-type") == 0) {
         if (nargs != 4)
-            return he_reject(a, he_reason(a, "check-typing-arity"));
+            return he_reject(a, he_reason(a, "check-type-arity"));
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
         uint64_t fuel = 0;
         Atom *bad = arg_fuel(a, args[3], &fuel);
         if (bad) return bad;
-        return check_typing(a, sp, args[1], args[2], fuel);
+        return check_type(a, sp, args[1], args[2], fuel);
     }
 
 
-    if (strcmp(name, "type-inhabit") == 0) {
+    if (strcmp(name, "search-inhabitants") == 0) {
         if (nargs != 5)
-            return he_reject(a, he_reason(a, "type-inhabit-arity"));
+            return he_reject(a, he_reason(a, "search-inhabitants-arity"));
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
@@ -2126,9 +2209,9 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                                       false);
     }
 
-    if (strcmp(name, "type-inhabit-first") == 0) {
+    if (strcmp(name, "search-first-inhabitant") == 0) {
         if (nargs != 4)
-            return he_reject(a, he_reason(a, "type-inhabit-first-arity"));
+            return he_reject(a, he_reason(a, "search-first-inhabitant-arity"));
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
@@ -2193,66 +2276,12 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             if (added == 0) { fixpoint = true; break; }
         }
         if (total > (uint64_t)INT64_MAX) total = (uint64_t)INT64_MAX;
-        const char *closure_status = fixpoint ? "complete"
+        const char *closure_status = fixpoint ? "fixpoint"
                                    : starved  ? "resource-incomplete"
                                               : "rounds-exhausted";
         Atom *e[4] = {he_sym(a, "forward-closure"), atom_int(a, attempted),
                       atom_int(a, (int64_t)total), he_sym(a, closure_status)};
         return he_accept(a, atom_expr(a, e, 4));
-    }
-
-    if (strcmp(name, "validate-typing") == 0) {
-        if (nargs != 2)
-            return he_reject(a, he_reason(a, "validate-typing-needs-space-and-fuel"));
-        Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
-        uint64_t fuel = 0;
-        Atom *bad = arg_fuel(a, args[1], &fuel);
-        if (bad) return bad;
-        uint32_t len = 0;
-        if (!space_length_u32_checked(sp, &len))
-            return he_reject(a, he_reason(a, "space-too-large"));
-        uint32_t total = 0, accept = 0, reject = 0, unknown = 0;
-        for (uint32_t i = 0; i < len; i++) {
-            Atom *at = space_get_at(sp, i);
-            /* validate each (: term T) claim: is term consistent with T? */
-            if (!at || at->kind != ATOM_EXPR || at->expr.len != 3) continue;
-            if (!atom_is_symbol_id(at->expr.elems[0], g_builtin_syms.colon))
-                continue;
-            /* a declaration of a symbol's own type is definitional, not a
-             * claim to re-derive; only check compound subjects */
-            if (at->expr.elems[1]->kind != ATOM_EXPR) continue;
-            total++;
-            uint64_t row = fuel;
-            Atom *v = check_typing_mode(a, sp, at->expr.elems[1],
-                                        at->expr.elems[2], row, true);
-            if (v->kind == ATOM_EXPR && v->expr.len >= 1 &&
-                v->expr.elems[0]->kind == ATOM_SYMBOL) {
-                const char *tag = symbol_bytes(g_symbols, v->expr.elems[0]->sym_id);
-                if (strcmp(tag, "he-accept") == 0) accept++;
-                else if (strcmp(tag, "he-unknown") == 0) unknown++;
-                else {
-                    reject++;
-                    printf("HE-VALIDATE-REJECT %u ", i);
-                    atom_print(at->expr.elems[1], stdout);
-                    printf(" : ");
-                    atom_print(v->expr.elems[1], stdout);
-                    printf("\n");
-                }
-            }
-        }
-        fflush(stdout);
-        printf("HE-VALIDATE total=%u accept=%u reject=%u unknown=%u\n",
-               total, accept, reject, unknown);
-        fflush(stdout);
-        Atom *e[5];
-        e[0] = he_sym(a, "he-validate-report");
-        e[1] = atom_int(a, (int64_t)total);
-        e[2] = atom_int(a, (int64_t)accept);
-        e[3] = atom_int(a, (int64_t)reject);
-        e[4] = atom_int(a, (int64_t)unknown);
-        return atom_expr(a, e, 5);
     }
 
     return NULL;

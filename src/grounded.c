@@ -2,6 +2,7 @@
 #include "grounded.h"
 #include "eval.h"
 #include "he_typing.h"
+#include "prime_semantics.h"
 #include "match.h"
 #include "parser.h"
 #include "space.h"
@@ -235,6 +236,9 @@ bool is_grounded_op(SymbolId id) {
     /* Check __cetta_lib_ prefix via string lookup */
     const char *name = symbol_bytes(g_symbols, id);
     if (name && strncmp(name, "__cetta_lib_", 12) == 0)
+        return true;
+    if (name && prime_semantics_is_op && prime_semantics_is_op(name) &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME)
         return true;
     if (name && he_typing_is_op && he_typing_is_op(name) &&
         eval_current_profile_enables_dependent_telescope &&
@@ -1058,6 +1062,11 @@ static Atom *grounded_repeat_atom(Arena *a, Atom *head, Atom **args, uint32_t na
 
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
+    {
+        Atom *prime = prime_semantics_dispatch
+            ? prime_semantics_dispatch(a, head, args, nargs) : NULL;
+        if (prime) return prime;
+    }
     {
         Atom *he = he_typing_dispatch
             ? he_typing_dispatch(a, head, args, nargs) : NULL;

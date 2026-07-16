@@ -3236,8 +3236,9 @@ static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
     return count;
 }
 
-uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
-                        Atom ***out_types) {
+static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    bool include_direct_annotations) {
     uint32_t count = 0;
     Atom **types = NULL;
     Atom *native_handle_type = get_native_handle_type(a, atom);
@@ -3263,10 +3264,14 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
         break;
     }
     case ATOM_SYMBOL:
-        count = get_annotated_types(s, a, atom, &types);
+        count = include_direct_annotations
+                    ? get_annotated_types(s, a, atom, &types)
+                    : 0;
         break;
     case ATOM_EXPR:
-        count = get_annotated_types(s, a, atom, &types);
+        count = include_direct_annotations
+                    ? get_annotated_types(s, a, atom, &types)
+                    : 0;
         /* Also try to infer type from operator's function type */
         bool tried_func_type = false;
         if (count == 0 && atom->expr.len >= 2) {
@@ -3334,7 +3339,7 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         }
                         for (uint32_t ti = 0; ti < nat; ti++) {
                             ChoicePoint point = search_context_save(&trial_context);
-                            if (match_types_builder(arg_type_decl, atypes[ti],
+                            if (match_types_builder(atypes[ti], arg_type_decl,
                                                     search_context_builder(&trial_context))) {
                                 Bindings next_tb;
                                 bindings_init(&next_tb);
@@ -3386,6 +3391,19 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
     }
     *out_types = types;
     return count;
+}
+
+uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
+                        Atom ***out_types) {
+    return get_atom_types_mode(s, a, atom, out_types, true);
+}
+
+uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
+                                   Atom ***out_types) {
+    /* Structural checking ignores only an expression subject's own top-level
+       annotation. Head and argument inference still uses the shared engine. */
+    return get_atom_types_mode(s, a, atom, out_types,
+                               !(atom && atom->kind == ATOM_EXPR));
 }
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */

@@ -11,14 +11,14 @@
 
 ; (1) THE headline (Nil's decade-disabled request): a user function runs inside
 ;     the dependent result type — Deduction's truth value is COMPUTED in the type.
-!(assertEqual (type-of &self (quote (Deduction pP pQ pR pPQ pQR)))
-              (type-set (≞ (→ P R) (STV 0.6333333333333334 0.7))))
+!(assertEqual (get-type (Deduction pP pQ pR pPQ pQR))
+              (≞ (→ P R) (STV 0.6333333333333334 0.7)))
 ; (2) Modus Ponens, same mechanism.
-!(assertEqual (type-of &self (quote (ModusPonens aA aAB)))
-              (type-set (≞ B (STV 0.875 0.7))))
+!(assertEqual (get-type (ModusPonens aA aAB))
+              (≞ B (STV 0.875 0.7)))
 ; (3) Nat-refinement (the -1 gap native HE never validated): valid accepts, invalid rejects.
-!(assertEqual (validate-type-properties &self (VecN String 2) 10000) (he-accept (VecN String 2)))
-!(assertEqual (validate-type-properties &self (VecN String -1) 10000) (he-reject (type-property-failed -1)))
+!(assertEqual (check-type-refinements &self (VecN String 2) 10000) (he-accept (VecN String 2)))
+!(assertEqual (check-type-refinements &self (VecN String -1) 10000) (he-reject (type-refinement-failed -1)))
 ; (4) success-typing discipline: dynamic edge, laundering-block, Atom-asymmetry.
 !(assertEqual (is-consistent Nat %Undefined%) (he-accept dynamic))
 !(assertEqual (is-consistent Nat Bool) (he-reject (inconsistent (Nat Bool))))

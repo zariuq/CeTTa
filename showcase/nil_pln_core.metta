@@ -150,4 +150,4 @@
 (= (natural-index $n) (>= $n 0))
 (type-level-function natural-index)
 (: VecN (-> Atom Number Type))
-(type-index-property VecN 2 natural-index)
+(type-index-refinement VecN 2 natural-index)
