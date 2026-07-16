@@ -14,10 +14,10 @@
 (= (approx $x $y) (< (absdiff $x $y) 0.000001))
 
 (= (affine-score $a $b $x) (+ (* $a $x) $b))
-(= (ge? $threshold $x) (or (< $threshold $x) (approx $threshold $x)))
-(= (cut-event $a $b $threshold $raw) (ge? $threshold (affine-score $a $b $raw)))
+(= (is-ge $threshold $x) (or (< $threshold $x) (approx $threshold $x)))
+(= (cut-event $a $b $threshold $raw) (is-ge $threshold (affine-score $a $b $raw)))
 (= (formula-event $raw) (== $raw 1.0))
-(= (same-event? $a $b $threshold $raw)
+(= (is-same-event $a $b $threshold $raw)
    (== (formula-event $raw) (cut-event $a $b $threshold $raw)))
 
 ; Positive affine calibration #1:
@@ -28,8 +28,8 @@
 !(assertEqual (approx (affine-score 0.7 0.2 0.0) 0.2) True)
 !(assertEqual (cut-event 0.7 0.2 0.9 1.0) True)
 !(assertEqual (cut-event 0.7 0.2 0.9 0.0) False)
-!(assertEqual (same-event? 0.7 0.2 0.9 1.0) True)
-!(assertEqual (same-event? 0.7 0.2 0.9 0.0) True)
+!(assertEqual (is-same-event 0.7 0.2 0.9 1.0) True)
+!(assertEqual (is-same-event 0.7 0.2 0.9 0.0) True)
 
 ; Positive affine calibration #2, with a different non-1 threshold:
 ; raw threshold t=1, a=.5, b=.1 gives transformed threshold .6.
@@ -46,7 +46,7 @@
 !(assertEqual (approx (affine-score -0.7 1.0 0.0) 1.0) True)
 !(assertEqual (cut-event -0.7 1.0 0.3 1.0) True)
 !(assertEqual (cut-event -0.7 1.0 0.3 0.0) True)
-!(assertEqual (same-event? -0.7 1.0 0.3 0.0) False)
+!(assertEqual (is-same-event -0.7 1.0 0.3 0.0) False)
 
 ; Boolean closure of certified cut events:
 ; The Lean constructors ExtensionalDefinableCut.andCut / orCut use signed
@@ -61,19 +61,19 @@
 (= (or-cut-score $t1 $s1 $t2 $s2)
    (max2 (margin $t1 $s1) (margin $t2 $s2)))
 (= (and-cut-event $t1 $s1 $t2 $s2)
-   (ge? 0.0 (and-cut-score $t1 $s1 $t2 $s2)))
+   (is-ge 0.0 (and-cut-score $t1 $s1 $t2 $s2)))
 (= (or-cut-event $t1 $s1 $t2 $s2)
-   (ge? 0.0 (or-cut-score $t1 $s1 $t2 $s2)))
+   (is-ge 0.0 (or-cut-score $t1 $s1 $t2 $s2)))
 (= (not-cut-score $threshold $score)
-   (if (ge? $threshold $score) 0.0 1.0))
+   (if (is-ge $threshold $score) 0.0 1.0))
 (= (not-cut-event $threshold $score)
-   (ge? 1.0 (not-cut-score $threshold $score)))
+   (is-ge 1.0 (not-cut-score $threshold $score)))
 (= (imp-cut-score $t1 $s1 $t2 $s2)
-   (if (ge? $t1 $s1)
-       (if (ge? $t2 $s2) 1.0 0.0)
+   (if (is-ge $t1 $s1)
+       (if (is-ge $t2 $s2) 1.0 0.0)
        1.0))
 (= (imp-cut-event $t1 $s1 $t2 $s2)
-   (ge? 1.0 (imp-cut-score $t1 $s1 $t2 $s2)))
+   (is-ge 1.0 (imp-cut-score $t1 $s1 $t2 $s2)))
 
 ; Both cuts pass: margins are .1 and .05, so min=.05 and max=.1.
 !(assertEqual (approx (and-cut-score 0.6 0.7 0.8 0.85) 0.05) True)
@@ -103,7 +103,7 @@
 !(assertEqual (not-cut-event 0.6 0.7) False)
 !(assertEqual (approx (not-cut-score 0.6 0.5) 1.0) True)
 !(assertEqual (not-cut-event 0.6 0.5) True)
-!(assertEqual (ge? 0.6 0.6) True)
+!(assertEqual (is-ge 0.6 0.6) True)
 !(assertEqual (not-cut-event 0.6 0.6) False)
 
 ; Implication closure of certified cuts:
@@ -156,11 +156,11 @@
    (min2 (min2 (margin $t1 $s1) (margin $t2 $s2))
          (margin $t3 $s3)))
 (= (all3-cut-event $t1 $s1 $t2 $s2 $t3 $s3)
-   (ge? 0.0 (all3-cut-score $t1 $s1 $t2 $s2 $t3 $s3)))
+   (is-ge 0.0 (all3-cut-score $t1 $s1 $t2 $s2 $t3 $s3)))
 (= (all3-conjunction-event $t1 $s1 $t2 $s2 $t3 $s3)
-   (and (ge? $t1 $s1)
-        (and (ge? $t2 $s2)
-             (ge? $t3 $s3))))
+   (and (is-ge $t1 $s1)
+        (and (is-ge $t2 $s2)
+             (is-ge $t3 $s3))))
 
 ; All three pass: margins .10, .05, .10, so the folded score is .05.
 !(assertEqual (approx (all3-cut-score 0.6 0.7 0.8 0.85 0.4 0.5) 0.05) True)
@@ -189,7 +189,7 @@
 (= (all3-imp-cut-score $t1 $s1 $t2 $s2 $t3 $s3 $tc $sc)
    (imp-cut-score 0.0 (all3-cut-score $t1 $s1 $t2 $s2 $t3 $s3) $tc $sc))
 (= (all3-imp-cut-event $t1 $s1 $t2 $s2 $t3 $s3 $tc $sc)
-   (ge? 1.0 (all3-imp-cut-score $t1 $s1 $t2 $s2 $t3 $s3 $tc $sc)))
+   (is-ge 1.0 (all3-imp-cut-score $t1 $s1 $t2 $s2 $t3 $s3 $tc $sc)))
 
 ; All premises pass and the conclusion passes: implication holds.
 !(assertEqual
@@ -220,7 +220,7 @@
 (= (finite-gate-mp-conclusion-event $t1 $s1 $t2 $s2 $t3 $s3 $tc $sc)
    (if (and (all3-cut-event $t1 $s1 $t2 $s2 $t3 $s3)
             (all3-imp-cut-event $t1 $s1 $t2 $s2 $t3 $s3 $tc $sc))
-       (ge? $tc $sc)
+       (is-ge $tc $sc)
        no-mp-hypotheses))
 
 ; Positive MP case: all premises pass, implication passes, conclusion passes.
