@@ -5672,260 +5672,202 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
                                                          CettaIndex ci,
                                                          ImportedCorefState *refs,
                                                          CettaIndex *qnext,
-                                                         CettaIndex *cnext,
-                                                         int depth) {
-    if (depth <= 0) return false;
-    const ImportedFlatToken *qt = &q[qi];
-    const ImportedFlatToken *ct = &c[ci];
-
-    if (qt->kind == IMPORTED_FLAT_VAR) {
-        if (ct->kind == IMPORTED_FLAT_VAR &&
-            (imported_find_indexed_ref(refs, ct->var_id) ||
-             imported_find_indexed_value(refs, ct->var_id))) {
-            return IMPORTED_COREF_NEEDS_FALLBACK;
-        }
-        ImportedCorefRef *existing = imported_find_query_ref(refs, qt->var_id);
-        if (existing) {
-            if (!imported_flat_equal(c, existing->idx, c, ci)) {
-                if (c[existing->idx].kind == IMPORTED_FLAT_VAR) {
-                    ImportedCorefVerdict bind =
-                        imported_bind_indexed_value(refs, c, existing->idx, ci);
-                    if (bind != IMPORTED_COREF_EXACT)
-                        return bind;
-                } else if (ct->kind == IMPORTED_FLAT_VAR) {
-                    ImportedCorefVerdict bind =
-                        imported_bind_indexed_value(refs, c, ci, existing->idx);
-                    if (bind != IMPORTED_COREF_EXACT)
-                        return bind;
-                } else {
-                    return IMPORTED_COREF_NEEDS_FALLBACK;
-                }
-            }
-        } else {
-            ImportedCorefVerdict add =
-                imported_add_query_ref(refs, qt->var_id, qt->sym_id,
-                                       ci, ct->span, ct->origin);
-            if (add != IMPORTED_COREF_EXACT)
-                return add;
-        }
-        *qnext = qi + qt->span;
-        *cnext = ci + ct->span;
-        return IMPORTED_COREF_EXACT;
-    }
-
-    if (ct->kind == IMPORTED_FLAT_VAR) {
-        ImportedCorefRef *value = imported_find_indexed_value(refs, ct->var_id);
-        if (value) {
-            if (qt->kind == IMPORTED_FLAT_VAR) {
-                ImportedCorefRef *existing_q = imported_find_query_ref(refs, qt->var_id);
-                if (existing_q) {
-                    if (!imported_flat_equal(c, existing_q->idx, c, value->idx))
-                        return IMPORTED_COREF_NEEDS_FALLBACK;
-                } else {
-                    ImportedCorefVerdict add =
-                        imported_add_query_ref(refs, qt->var_id, qt->sym_id, value->idx,
-                                               c[value->idx].span,
-                                               c[value->idx].origin);
-                    if (add != IMPORTED_COREF_EXACT)
-                        return add;
-                }
-                *qnext = qi + qt->span;
-                *cnext = ci + ct->span;
-                return IMPORTED_COREF_EXACT;
-            }
-            return IMPORTED_COREF_NEEDS_FALLBACK;
-        }
-        ImportedCorefRef *existing = imported_find_indexed_ref(refs, ct->var_id);
-        if (existing) {
-            if (!imported_flat_equal(q, existing->idx, q, qi))
-                return IMPORTED_COREF_NEEDS_FALLBACK;
-        } else {
-            ImportedCorefVerdict add =
-                imported_add_indexed_ref(refs, ct->var_id, ct->sym_id,
-                                         qi, qt->span, qt->origin);
-            if (add != IMPORTED_COREF_EXACT)
-                return add;
-        }
-        *qnext = qi + qt->span;
-        *cnext = ci + ct->span;
-        return IMPORTED_COREF_EXACT;
-    }
-
-    if (qt->kind != ct->kind) return IMPORTED_COREF_FAIL;
-
-    switch (qt->kind) {
-    case IMPORTED_FLAT_SYMBOL:
-        if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_INT:
-        if (qt->ival != ct->ival) return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_FLOAT:
-        if (qt->fval != ct->fval) return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_BOOL:
-        if (qt->bval != ct->bval) return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_STRING:
-        if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_BIGINT:
-        if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_RATIONAL:
-        if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_GROUNDED_OTHER:
-        if (!ct->origin || !atom_eq(qt->origin, ct->origin))
-            return IMPORTED_COREF_FAIL;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return IMPORTED_COREF_EXACT;
-    case IMPORTED_FLAT_EXPR: {
-        if (qt->arity != ct->arity) return IMPORTED_COREF_FAIL;
-        CettaIndex qcur = qi + 1;
-        CettaIndex ccur = ci + 1;
-        for (CettaExprIndex i = 0; i < qt->arity; i++) {
-            ImportedCorefVerdict child =
-                imported_match_subtree_coref(q, qcur, c, ccur, refs,
-                                             &qcur, &ccur, depth - 1);
-            if (child != IMPORTED_COREF_EXACT)
-                return child;
-        }
-        *qnext = qcur;
-        *cnext = ccur;
-        return IMPORTED_COREF_EXACT;
-    }
-    case IMPORTED_FLAT_VAR:
+                                                         CettaIndex *cnext) {
+    const ImportedFlatToken *qroot = &q[qi];
+    const ImportedFlatToken *croot = &c[ci];
+    if (qroot->span == 0 || croot->span == 0 ||
+        qi > UINT64_MAX - qroot->span || ci > UINT64_MAX - croot->span)
         return IMPORTED_COREF_FAIL;
+    CettaIndex qend = qi + qroot->span;
+    CettaIndex cend = ci + croot->span;
+
+    while (qi < qend && ci < cend) {
+        const ImportedFlatToken *qt = &q[qi];
+        const ImportedFlatToken *ct = &c[ci];
+        if (qt->span == 0 || ct->span == 0 ||
+            qt->span > qend - qi || ct->span > cend - ci)
+            return IMPORTED_COREF_FAIL;
+
+        if (qt->kind == IMPORTED_FLAT_VAR) {
+            if (ct->kind == IMPORTED_FLAT_VAR &&
+                (imported_find_indexed_ref(refs, ct->var_id) ||
+                 imported_find_indexed_value(refs, ct->var_id)))
+                return IMPORTED_COREF_NEEDS_FALLBACK;
+            ImportedCorefRef *existing =
+                imported_find_query_ref(refs, qt->var_id);
+            if (existing) {
+                if (!imported_flat_equal(c, existing->idx, c, ci)) {
+                    ImportedCorefVerdict bind;
+                    if (c[existing->idx].kind == IMPORTED_FLAT_VAR)
+                        bind = imported_bind_indexed_value(
+                            refs, c, existing->idx, ci);
+                    else if (ct->kind == IMPORTED_FLAT_VAR)
+                        bind = imported_bind_indexed_value(
+                            refs, c, ci, existing->idx);
+                    else
+                        return IMPORTED_COREF_NEEDS_FALLBACK;
+                    if (bind != IMPORTED_COREF_EXACT) return bind;
+                }
+            } else {
+                ImportedCorefVerdict add = imported_add_query_ref(
+                    refs, qt->var_id, qt->sym_id, ci, ct->span, ct->origin);
+                if (add != IMPORTED_COREF_EXACT) return add;
+            }
+            qi += qt->span;
+            ci += ct->span;
+            continue;
+        }
+
+        if (ct->kind == IMPORTED_FLAT_VAR) {
+            ImportedCorefRef *value =
+                imported_find_indexed_value(refs, ct->var_id);
+            if (value) return IMPORTED_COREF_NEEDS_FALLBACK;
+            ImportedCorefRef *existing =
+                imported_find_indexed_ref(refs, ct->var_id);
+            if (existing) {
+                if (!imported_flat_equal(q, existing->idx, q, qi))
+                    return IMPORTED_COREF_NEEDS_FALLBACK;
+            } else {
+                ImportedCorefVerdict add = imported_add_indexed_ref(
+                    refs, ct->var_id, ct->sym_id, qi, qt->span, qt->origin);
+                if (add != IMPORTED_COREF_EXACT) return add;
+            }
+            qi += qt->span;
+            ci += ct->span;
+            continue;
+        }
+
+        if (qt->kind != ct->kind) return IMPORTED_COREF_FAIL;
+        switch (qt->kind) {
+        case IMPORTED_FLAT_SYMBOL:
+        case IMPORTED_FLAT_STRING:
+        case IMPORTED_FLAT_BIGINT:
+        case IMPORTED_FLAT_RATIONAL:
+            if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
+            break;
+        case IMPORTED_FLAT_INT:
+            if (qt->ival != ct->ival) return IMPORTED_COREF_FAIL;
+            break;
+        case IMPORTED_FLAT_FLOAT:
+            if (qt->fval != ct->fval) return IMPORTED_COREF_FAIL;
+            break;
+        case IMPORTED_FLAT_BOOL:
+            if (qt->bval != ct->bval) return IMPORTED_COREF_FAIL;
+            break;
+        case IMPORTED_FLAT_GROUNDED_OTHER:
+            if (!ct->origin || !atom_eq(qt->origin, ct->origin))
+                return IMPORTED_COREF_FAIL;
+            break;
+        case IMPORTED_FLAT_EXPR:
+            if (qt->arity != ct->arity) return IMPORTED_COREF_FAIL;
+            break;
+        case IMPORTED_FLAT_VAR:
+            return IMPORTED_COREF_FAIL;
+        }
+        qi++;
+        ci++;
     }
-    return IMPORTED_COREF_FAIL;
+    if (qi != qend || ci != cend) return IMPORTED_COREF_FAIL;
+    *qnext = qi;
+    *cnext = ci;
+    return IMPORTED_COREF_EXACT;
 }
 
 static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex qi,
                                           const ImportedFlatToken *c, CettaIndex ci,
                                           const TermUniverse *candidate_universe,
                                           Bindings *b, Arena *a, uint32_t epoch,
-                                          CettaIndex *qnext, CettaIndex *cnext, int depth) {
-    if (depth <= 0) return false;
-    const ImportedFlatToken *qt = &q[qi];
-    const ImportedFlatToken *ct = &c[ci];
+                                          CettaIndex *qnext, CettaIndex *cnext) {
+    const ImportedFlatToken *qroot = &q[qi];
+    const ImportedFlatToken *croot = &c[ci];
+    if (qroot->span == 0 || croot->span == 0 ||
+        qi > UINT64_MAX - qroot->span || ci > UINT64_MAX - croot->span)
+        return false;
+    CettaIndex qend = qi + qroot->span;
+    CettaIndex cend = ci + croot->span;
 
-    if (qt->kind == IMPORTED_FLAT_VAR) {
-        Atom *existing = bindings_lookup_id(b, qt->var_id);
-        if (existing) {
-            if (ct->origin_id != CETTA_ATOM_ID_NONE) {
-                if (!match_atoms_atom_id_epoch(existing, candidate_universe,
-                                               ct->origin_id, b, a, epoch))
+    while (qi < qend && ci < cend) {
+        const ImportedFlatToken *qt = &q[qi];
+        const ImportedFlatToken *ct = &c[ci];
+        if (qt->span == 0 || ct->span == 0 ||
+            qt->span > qend - qi || ct->span > cend - ci)
+            return false;
+
+        if (qt->kind == IMPORTED_FLAT_VAR) {
+            Atom *existing = bindings_lookup_id(b, qt->var_id);
+            if (existing) {
+                if (ct->origin_id != CETTA_ATOM_ID_NONE) {
+                    if (!match_atoms_atom_id_epoch(
+                            existing, candidate_universe, ct->origin_id,
+                            b, a, epoch))
+                        return false;
+                } else if (!match_atoms_epoch(
+                               existing,
+                               imported_token_atom(ct, candidate_universe),
+                               b, a, epoch)) {
                     return false;
-            } else if (!match_atoms_epoch(existing,
-                                          imported_token_atom(ct, candidate_universe),
-                                          b, a, epoch)) {
+                }
+            } else {
+                Atom *value = imported_token_copy_epoch(
+                    a, ct, candidate_universe, epoch);
+                if (!value || !bindings_add_id(
+                        b, qt->var_id, qt->sym_id, value))
+                    return false;
+            }
+            qi += qt->span;
+            ci += ct->span;
+            continue;
+        }
+
+        if (ct->kind == IMPORTED_FLAT_VAR) {
+            VarId tagged_id = var_epoch_id(ct->var_id, epoch);
+            Atom *existing = bindings_lookup_id(b, tagged_id);
+            if (existing) {
+                if (!match_atoms(qt->origin, existing, b)) return false;
+            } else if (!bindings_add_id(
+                           b, tagged_id, ct->sym_id, qt->origin)) {
                 return false;
             }
-        } else {
-            Atom *value =
-                imported_token_copy_epoch(a, ct, candidate_universe, epoch);
-            if (!bindings_add_id(b, qt->var_id, qt->sym_id,
-                                 value))
-                return false;
+            qi += qt->span;
+            ci += ct->span;
+            continue;
         }
-        *qnext = qi + qt->span;
-        *cnext = ci + ct->span;
-        return true;
-    }
 
-    if (ct->kind == IMPORTED_FLAT_VAR) {
-        VarId tagged_id = var_epoch_id(ct->var_id, epoch);
-        Atom *existing = bindings_lookup_id(b, tagged_id);
-        if (existing) {
-            if (!match_atoms(qt->origin, existing, b))
+        if (qt->kind != ct->kind) return false;
+        switch (qt->kind) {
+        case IMPORTED_FLAT_SYMBOL:
+        case IMPORTED_FLAT_STRING:
+        case IMPORTED_FLAT_BIGINT:
+        case IMPORTED_FLAT_RATIONAL:
+            if (qt->sym_id != ct->sym_id) return false;
+            break;
+        case IMPORTED_FLAT_INT:
+            if (qt->ival != ct->ival) return false;
+            break;
+        case IMPORTED_FLAT_FLOAT:
+            if (qt->fval != ct->fval) return false;
+            break;
+        case IMPORTED_FLAT_BOOL:
+            if (qt->bval != ct->bval) return false;
+            break;
+        case IMPORTED_FLAT_GROUNDED_OTHER:
+            if (!atom_eq(qt->origin,
+                         imported_token_atom(ct, candidate_universe)))
                 return false;
-        } else {
-            if (!bindings_add_id(b, tagged_id, ct->sym_id, qt->origin))
-                return false;
-        }
-        *qnext = qi + qt->span;
-        *cnext = ci + ct->span;
-        return true;
-    }
-
-    if (qt->kind != ct->kind) return false;
-
-    switch (qt->kind) {
-    case IMPORTED_FLAT_SYMBOL:
-        if (qt->sym_id != ct->sym_id) return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_INT:
-        if (qt->ival != ct->ival) return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_FLOAT:
-        if (qt->fval != ct->fval) return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_BOOL:
-        if (qt->bval != ct->bval) return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_STRING:
-        if (qt->sym_id != ct->sym_id) return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_BIGINT:
-        if (qt->sym_id != ct->sym_id) return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_RATIONAL:
-        if (qt->sym_id != ct->sym_id) return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_GROUNDED_OTHER:
-        if (!atom_eq(qt->origin, imported_token_atom(ct, candidate_universe)))
+            break;
+        case IMPORTED_FLAT_EXPR:
+            if (qt->arity != ct->arity) return false;
+            break;
+        case IMPORTED_FLAT_VAR:
             return false;
-        *qnext = qi + 1;
-        *cnext = ci + 1;
-        return true;
-    case IMPORTED_FLAT_EXPR: {
-        if (qt->arity != ct->arity) return false;
-        CettaIndex qcur = qi + 1;
-        CettaIndex ccur = ci + 1;
-        for (CettaExprIndex i = 0; i < qt->arity; i++) {
-            if (!imported_match_subtree_legacy(q, qcur, c, ccur,
-                                               candidate_universe, b, a, epoch,
-                                               &qcur, &ccur, depth - 1))
-                return false;
         }
-        *qnext = qcur;
-        *cnext = ccur;
-        return true;
+        qi++;
+        ci++;
     }
-    case IMPORTED_FLAT_VAR:
-        return false;
-    }
-    return false;
+    if (qi != qend || ci != cend) return false;
+    *qnext = qi;
+    *cnext = ci;
+    return true;
 }
 
 static void imported_collect_bucket(const ImportedFlatBucket *bucket,
@@ -5940,8 +5882,7 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
         ImportedCorefState refs = {0};
         ImportedCorefVerdict verdict =
             imported_match_subtree_coref(qtokens, 0, entry->tokens, 0, &refs,
-                                         &qnext, &cnext,
-                                         CETTA_MATCH_DEPTH_LIMIT);
+                                         &qnext, &cnext);
         if (verdict == IMPORTED_COREF_EXACT &&
             qnext == qlen && cnext == entry->len) {
             Bindings b;
@@ -5964,8 +5905,7 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_IMPORTED_LEGACY);
             if (imported_match_subtree_legacy(qtokens, 0, entry->tokens, 0,
                                               candidate_universe, &b, a,
-                                              match_epoch, &qnext, &cnext,
-                                              CETTA_MATCH_DEPTH_LIMIT) &&
+                                              match_epoch, &qnext, &cnext) &&
                 qnext == qlen && cnext == entry->len &&
                 !bindings_has_loop(&b)) {
                 subst_matchset_push(out, entry->atom_idx, match_epoch, &b, true);

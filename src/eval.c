@@ -16,6 +16,7 @@
 #include "variant_shape.h"
 #include "langdef_pack.h"
 #include <inttypes.h>
+#include <limits.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,8 +51,10 @@ static __thread _Atomic bool *g_hyperpose_thread_unsafe_requested = NULL;
 
 typedef struct EvalCompletionTracker {
     CettaEvalCompletion completion;
+    bool budget_limited;
     uint64_t budget_initial;
     uint64_t budget_remaining;
+    uint64_t steps_spent;
     struct EvalCompletionTracker *parent;
 } EvalCompletionTracker;
 
@@ -71,11 +74,15 @@ static bool eval_completion_step(void) {
     EvalCompletionTracker *tracker = g_eval_completion_tracker;
     if (!tracker)
         return true;
-    if (tracker->budget_remaining == 0) {
-        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL);
-        return false;
+    if (tracker->budget_limited) {
+        if (tracker->budget_remaining == 0) {
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL);
+            return false;
+        }
+        tracker->budget_remaining--;
+        if (tracker->steps_spent != UINT64_MAX)
+            tracker->steps_spent++;
     }
-    tracker->budget_remaining--;
     return true;
 }
 /* When set, the current evaluation is a Rhometta deferred payload running as
@@ -694,6 +701,10 @@ static size_t eval_c_stack_budget_bytes(void) {
     cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_BUDGET_BYTES,
                             (uint64_t)budget);
     return budget;
+}
+
+uint64_t eval_current_c_stack_budget_bytes(void) {
+    return (uint64_t)eval_c_stack_budget_bytes();
 }
 
 static bool eval_c_stack_guard_enter(int fuel, EvalCStackGuard *guard) {
@@ -2058,25 +2069,69 @@ static bool symbol_id_is_if_surface(SymbolId id) {
     return name && strcmp(name, "if") == 0;
 }
 
+typedef struct {
+    Atom **items;
+    size_t len;
+    size_t cap;
+    Atom *inline_items[16];
+} OutcomePreviewSeen;
+
+static void outcome_preview_seen_init(OutcomePreviewSeen *seen) {
+    seen->items = seen->inline_items;
+    seen->len = 0;
+    seen->cap = sizeof seen->inline_items / sizeof seen->inline_items[0];
+}
+
+static void outcome_preview_seen_free(OutcomePreviewSeen *seen) {
+    if (seen->items != seen->inline_items) free(seen->items);
+}
+
+static bool outcome_preview_seen_add(OutcomePreviewSeen *seen, Atom *atom) {
+    for (size_t i = 0; i < seen->len; i++)
+        if (seen->items[i] == atom) return false;
+    if (seen->len == seen->cap) {
+        size_t next_cap = seen->cap * 2u;
+        if (next_cap <= seen->cap ||
+            next_cap > SIZE_MAX / sizeof(*seen->items))
+            return false;
+        Atom **next = cetta_malloc(sizeof(*seen->items) * next_cap);
+        memcpy(next, seen->items, sizeof(*seen->items) * seen->len);
+        if (seen->items != seen->inline_items) free(seen->items);
+        seen->items = next;
+        seen->cap = next_cap;
+    }
+    seen->items[seen->len++] = atom;
+    return true;
+}
+
 static Atom *outcome_preview_resolve_atom(Bindings *env,
                                           const VariantInstance *variant,
-                                          Atom *atom, uint32_t depth);
+                                          Atom *atom,
+                                          OutcomePreviewSeen *seen,
+                                          bool *cycle);
 
 static bool outcome_skip_call_observation_fast_path(Space *s,
                                                     const Outcome *out) {
     Atom *preview = outcome_preview_atom(out);
     Atom *head;
+    OutcomePreviewSeen seen;
+    bool cycle = false;
     if (!s || !preview || preview->kind != ATOM_EXPR ||
         preview->expr.len == 0) {
         return false;
     }
+    outcome_preview_seen_init(&seen);
     preview = outcome_preview_resolve_atom((Bindings *)&out->env, &out->variant,
-                                           preview, 0);
-    if (!preview || preview->kind != ATOM_EXPR || preview->expr.len == 0)
+                                           preview, &seen, &cycle);
+    if (cycle || !preview || preview->kind != ATOM_EXPR ||
+        preview->expr.len == 0) {
+        outcome_preview_seen_free(&seen);
         return false;
+    }
     head = outcome_preview_resolve_atom((Bindings *)&out->env, &out->variant,
-                                        preview->expr.elems[0], 1);
-    if (!head || head->kind != ATOM_SYMBOL)
+                                        preview->expr.elems[0], &seen, &cycle);
+    outcome_preview_seen_free(&seen);
+    if (cycle || !head || head->kind != ATOM_SYMBOL)
         return false;
     if (is_grounded_op(head->sym_id))
         return false;
@@ -2120,22 +2175,25 @@ typedef enum {
 
 static Atom *outcome_preview_resolve_atom(Bindings *env,
                                           const VariantInstance *variant,
-                                          Atom *atom, uint32_t depth) {
-    if (!atom || depth > CETTA_MATCH_DEPTH_LIMIT)
-        return atom;
-    while (atom && atom->kind == ATOM_VAR && depth <= CETTA_MATCH_DEPTH_LIMIT) {
+                                          Atom *atom,
+                                          OutcomePreviewSeen *seen,
+                                          bool *cycle) {
+    if (cycle) *cycle = false;
+    while (atom && atom->kind == ATOM_VAR) {
+        if (!outcome_preview_seen_add(seen, atom)) {
+            if (cycle) *cycle = true;
+            return atom;
+        }
         Atom *resolved =
             env ? bindings_resolve_atom_preview(env, atom) : atom;
         if (resolved && resolved != atom) {
             atom = resolved;
-            depth++;
             continue;
         }
         if (variant && variant_instance_present(variant)) {
             Atom *slot_val = variant_instance_peek_private_var(variant, atom);
             if (slot_val && slot_val != atom) {
                 atom = slot_val;
-                depth++;
                 continue;
             }
         }
@@ -2145,31 +2203,51 @@ static Atom *outcome_preview_resolve_atom(Bindings *env,
 }
 
 static CettaOutcomeErrorPreview outcome_error_preview_from_atom(
-    Bindings *env, const VariantInstance *variant, Atom *atom, uint32_t depth) {
-    if (!atom)
-        return CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
-    if (depth > CETTA_MATCH_DEPTH_LIMIT)
-        return CETTA_OUTCOME_ERROR_PREVIEW_UNKNOWN;
-
-    atom = outcome_preview_resolve_atom(env, variant, atom, depth);
-
-    switch (atom->kind) {
-    case ATOM_SYMBOL:
-        return atom_is_symbol_id(atom, g_builtin_syms.error)
-                   ? CETTA_OUTCOME_ERROR_PREVIEW_TRUE
-                   : CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
-    case ATOM_EXPR:
-        if (atom->expr.len == 0)
+    Bindings *env, const VariantInstance *variant, Atom *atom) {
+    OutcomePreviewSeen seen;
+    outcome_preview_seen_init(&seen);
+    while (atom) {
+        bool cycle = false;
+        atom = outcome_preview_resolve_atom(
+            env, variant, atom, &seen, &cycle);
+        if (cycle) {
+            outcome_preview_seen_free(&seen);
+            return CETTA_OUTCOME_ERROR_PREVIEW_UNKNOWN;
+        }
+        switch (atom->kind) {
+        case ATOM_SYMBOL: {
+            CettaOutcomeErrorPreview result =
+                atom_is_symbol_id(atom, g_builtin_syms.error)
+                    ? CETTA_OUTCOME_ERROR_PREVIEW_TRUE
+                    : CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
+            outcome_preview_seen_free(&seen);
+            return result;
+        }
+        case ATOM_EXPR:
+            if (atom->expr.len == 0) {
+                outcome_preview_seen_free(&seen);
+                return CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
+            }
+            if (!outcome_preview_seen_add(&seen, atom)) {
+                outcome_preview_seen_free(&seen);
+                return CETTA_OUTCOME_ERROR_PREVIEW_UNKNOWN;
+            }
+            atom = atom->expr.elems[0];
+            continue;
+        case ATOM_VAR: {
+            CettaOutcomeErrorPreview result =
+                variant && variant_instance_present(variant)
+                    ? CETTA_OUTCOME_ERROR_PREVIEW_UNKNOWN
+                    : CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
+            outcome_preview_seen_free(&seen);
+            return result;
+        }
+        case ATOM_GROUNDED:
+            outcome_preview_seen_free(&seen);
             return CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
-        return outcome_error_preview_from_atom(env, variant, atom->expr.elems[0],
-                                               depth + 1);
-    case ATOM_VAR:
-        return variant && variant_instance_present(variant)
-                   ? CETTA_OUTCOME_ERROR_PREVIEW_UNKNOWN
-                   : CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
-    case ATOM_GROUNDED:
-        return CETTA_OUTCOME_ERROR_PREVIEW_FALSE;
+        }
     }
+    outcome_preview_seen_free(&seen);
     return CETTA_OUTCOME_ERROR_PREVIEW_UNKNOWN;
 }
 
@@ -8668,6 +8746,31 @@ static __thread ProfiledTypeFormationCacheEntry
     g_profiled_type_formation_cache[PROFILED_TYPE_FORMATION_CACHE_CAP];
 static __thread bool g_profiled_type_cache_config_ready = false;
 static __thread bool g_profiled_type_cache_config_enabled = true;
+/* Prime installs one logical budget at the profile-aware inference boundary.
+   Recursive inference observes the same instance; ordinary HE callers leave
+   it NULL and retain the historical cache and result behavior. */
+static __thread CettaTypeInferenceBudget *g_profiled_type_budget = NULL;
+
+static bool profiled_type_budget_step(uint64_t amount) {
+    CettaTypeInferenceBudget *budget = g_profiled_type_budget;
+    if (!budget) return true;
+    if (!budget->complete) return false;
+    if (!budget->steps_limited) return true;
+    if (budget->work_steps_observed > UINT64_MAX - amount)
+        budget->work_steps_observed = UINT64_MAX;
+    else
+        budget->work_steps_observed += amount;
+    return true;
+}
+
+static bool profiled_type_budget_can_add(uint32_t count) {
+    CettaTypeInferenceBudget *budget = g_profiled_type_budget;
+    if (!budget || budget->type_capacity == 0 ||
+        count < budget->type_capacity) return true;
+    budget->complete = false;
+    budget->type_capacity_exhausted = true;
+    return false;
+}
 
 void eval_profiled_type_cache_free_for_current_thread(void) {
     if (g_profiled_type_cache_arena_ready)
@@ -8981,6 +9084,7 @@ static bool type_expr_bind_domain_value(Bindings *env, Arena *scratch,
 static bool type_expr_constructor_contract_matches(Space *s, Arena *a,
                                                    Atom *type_app,
                                                    Atom *func_type) {
+    if (!profiled_type_budget_step(1)) return false;
     if (!is_function_type(func_type) || !type_app ||
         type_app->kind != ATOM_EXPR || type_app->expr.len < 2) {
         return false;
@@ -9001,6 +9105,10 @@ static bool type_expr_constructor_contract_matches(Space *s, Arena *a,
     for (CettaExprIndex ai = 0;
          ai < type_app->expr.len - 1 && all_ok;
          ai++) {
+        if (!profiled_type_budget_step(1)) {
+            all_ok = false;
+            break;
+        }
         Atom *domain = fresh_ft->expr.elems[ai + 1];
         Atom *binder = NULL;
         Atom *decl = function_domain_type(&env, &scratch, domain, &binder);
@@ -9037,6 +9145,7 @@ static bool type_expr_constructor_contract_matches(Space *s, Arena *a,
         }
 
         for (uint32_t ti = 0; ti < n_arg_types; ti++) {
+            if (!profiled_type_budget_step(1)) break;
             ChoicePoint point = search_context_save(&trial_context);
             if (match_types_builder(arg_types[ti], decl,
                                     search_context_builder(&trial_context))) {
@@ -9076,6 +9185,7 @@ static bool type_expr_constructor_contract_matches(Space *s, Arena *a,
 
 static bool function_type_expr_is_well_formed_profiled(Space *s, Arena *a,
                                                        Atom *ty) {
+    if (!profiled_type_budget_step(1)) return false;
     if (!ty || ty->kind != ATOM_EXPR || ty->expr.len == 0 ||
         !atom_is_symbol_id(ty->expr.elems[0], g_builtin_syms.arrow)) {
         return false;
@@ -9085,6 +9195,7 @@ static bool function_type_expr_is_well_formed_profiled(Space *s, Arena *a,
     if (!is_function_type(ty))
         return false;
     for (CettaExprIndex i = 1; i + 1 < ty->expr.len; i++) {
+        if (!profiled_type_budget_step(1)) return false;
         Atom *binder = NULL;
         Atom *body = NULL;
         split_dependent_domain(ty->expr.elems[i], &binder, &body);
@@ -9098,6 +9209,7 @@ static bool function_type_expr_is_well_formed_profiled(Space *s, Arena *a,
 
 static bool type_expr_is_well_formed_profiled_uncached(Space *s, Arena *a,
                                                        Atom *ty) {
+    if (!profiled_type_budget_step(1)) return false;
     if (!ty)
         return false;
     if (ty->kind == ATOM_GROUNDED)
@@ -9115,11 +9227,15 @@ static bool type_expr_is_well_formed_profiled_uncached(Space *s, Arena *a,
 
     Atom *head = ty->expr.elems[0];
     Atom **head_types = NULL;
-    uint32_t n_head_types = get_atom_types(s, a, head, &head_types);
+    uint32_t n_head_types = g_profiled_type_budget
+        ? get_atom_types_budgeted(s, a, head, &head_types,
+                                  g_profiled_type_budget)
+        : get_atom_types(s, a, head, &head_types);
     bool saw_type_constructor_contract = false;
     bool accepted = false;
 
     for (uint32_t i = 0; i < n_head_types; i++) {
+        if (!profiled_type_budget_step(1)) break;
         Atom *ft = head_types[i];
         if (!is_function_type(ft))
             continue;
@@ -9139,6 +9255,8 @@ static bool type_expr_is_well_formed_profiled_uncached(Space *s, Arena *a,
 
 static bool type_expr_is_well_formed_profiled(Space *s, Arena *a, Atom *ty) {
     bool result = false;
+    if (g_profiled_type_budget)
+        return type_expr_is_well_formed_profiled_uncached(s, a, ty);
     if (profiled_type_formation_cache_lookup(s, ty, &result))
         return result;
     result = type_expr_is_well_formed_profiled_uncached(s, a, ty);
@@ -9156,6 +9274,7 @@ static uint32_t filter_well_formed_profiled_types(Space *s, Arena *a,
     Atom **types = *types_inout;
     uint32_t kept = 0;
     for (uint32_t i = 0; i < count; i++) {
+        if (!profiled_type_budget_step(1)) break;
         if (type_expr_is_well_formed_profiled(s, a, types[i]))
             types[kept++] = types[i];
     }
@@ -9190,6 +9309,7 @@ static uint32_t filter_profile_visible_declared_types(Atom *atom,
     Atom **types = *types_inout;
     uint32_t kept = 0;
     for (uint32_t i = 0; i < count; i++) {
+        if (!profiled_type_budget_step(1)) break;
         if (profile_declared_type_visible_for_atom(atom, types[i]))
             types[kept++] = types[i];
     }
@@ -9202,6 +9322,10 @@ static uint32_t filter_profile_visible_declared_types(Atom *atom,
 
 static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom,
                                                   Atom ***out_types) {
+    if (!profiled_type_budget_step(1)) {
+        *out_types = NULL;
+        return 0;
+    }
     Atom *op = atom->expr.elems[0];
     Atom **op_types = NULL;
     uint32_t nop = eval_get_atom_types_profiled(s, a, op, &op_types);
@@ -9214,6 +9338,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
     arena_set_hashcons(&scratch, NULL);
 
     for (uint32_t oi = 0; oi < nop; oi++) {
+        if (!profiled_type_budget_step(1)) break;
         Atom *ft = op_types[oi];
         if (!is_function_type(ft)) {
             continue;
@@ -9233,6 +9358,10 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
         bool all_ok = true;
 
         for (CettaExprIndex ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
+            if (!profiled_type_budget_step(1)) {
+                all_ok = false;
+                break;
+            }
             Atom *binder = NULL;
             Atom *decl =
                 function_domain_type(&tb, &scratch, fresh_ft->expr.elems[ai + 1], &binder);
@@ -9284,6 +9413,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             }
 
             for (uint32_t ti = 0; ti < nat; ti++) {
+                if (!profiled_type_budget_step(1)) break;
                 ChoicePoint point = search_context_save(&trial_context);
                 if (match_types_builder(atypes[ti], decl,
                                         search_context_builder(&trial_context))) {
@@ -9330,6 +9460,11 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
                 result_type = atom_expr(&scratch, residual, remaining + 2);
             }
             if (type_expr_is_well_formed_profiled(s, &scratch, result_type)) {
+                if (!profiled_type_budget_can_add(count)) {
+                    bindings_free(&tb);
+                    arena_reset(&scratch, scratch_mark);
+                    break;
+                }
                 types = types ? cetta_realloc(types, sizeof(Atom *) * (count + 1))
                               : cetta_malloc(sizeof(Atom *));
                 types[count++] = atom_deep_copy(a, result_type);
@@ -9361,24 +9496,105 @@ static void normalize_profiled_type_results(Space *s, Arena *a,
     g_profiled_type_normalization_active = true;
     for (uint32_t i = 0; i < count; i++) {
         bool complete = false;
-        Atom *normalized = he_typing_normalize_shared_type(
-            a, s, types[i], 100000u, &complete);
+        Atom *normalized = NULL;
+        if (g_profiled_type_budget &&
+            he_typing_normalize_type_status_budgeted) {
+            CettaTypeInferenceBudget *inference = g_profiled_type_budget;
+            uint64_t shared_before = inference->steps_remaining;
+            CettaHeTypingBudget typing;
+            if (inference->steps_limited)
+                he_typing_budget_init(&typing, shared_before);
+            else
+                he_typing_budget_init_unbounded(&typing);
+            typing.max_depth_observed = inference->max_depth_observed;
+            typing.type_capacity = inference->type_capacity;
+            typing.type_capacity_exhausted =
+                inference->type_capacity_exhausted;
+            typing.evaluator_stack_exhausted =
+                inference->evaluator_stack_exhausted;
+            typing.evaluator_capacity_exhausted =
+                inference->evaluator_capacity_exhausted;
+            typing.allow_marked_user_type_functions =
+                inference->allow_marked_user_type_functions;
+            /* Structural normalization is measured, not fuel-gated. A marked
+               type-level producer still consumes the caller's explicit bound.
+               Keep the inference budget installed so nested scans remain
+               visible in the same observation ledger. */
+            CettaHeNormalizeStatus status =
+                he_typing_normalize_type_status_budgeted(
+                    a, s, types[i], &typing, &normalized);
+            if (inference->steps_limited)
+                inference->steps_remaining = typing.steps_remaining;
+            if (inference->steps_limited) {
+                if (inference->steps_spent > UINT64_MAX - typing.steps_spent)
+                    inference->steps_spent = UINT64_MAX;
+                else
+                    inference->steps_spent += typing.steps_spent;
+                if (inference->work_steps_observed >
+                    UINT64_MAX - typing.work_steps_observed) {
+                    inference->work_steps_observed = UINT64_MAX;
+                } else {
+                    inference->work_steps_observed +=
+                        typing.work_steps_observed;
+                }
+            }
+            if (typing.max_depth_observed > inference->max_depth_observed)
+                inference->max_depth_observed = typing.max_depth_observed;
+            inference->type_capacity_exhausted =
+                inference->type_capacity_exhausted ||
+                typing.type_capacity_exhausted;
+            inference->evaluator_stack_exhausted =
+                inference->evaluator_stack_exhausted ||
+                typing.evaluator_stack_exhausted;
+            inference->evaluator_capacity_exhausted =
+                inference->evaluator_capacity_exhausted ||
+                typing.evaluator_capacity_exhausted;
+            complete = status == CETTA_HE_NORMALIZE_COMPLETE &&
+                       inference->complete;
+            if (status == CETTA_HE_NORMALIZE_RESOURCE ||
+                status == CETTA_HE_NORMALIZE_DEPTH) {
+                inference->complete = false;
+            }
+        } else if (!g_profiled_type_budget &&
+                   he_typing_normalize_type_status_budgeted) {
+            CettaHeTypingBudget typing;
+            he_typing_budget_init_unbounded(&typing);
+            CettaHeNormalizeStatus status =
+                he_typing_normalize_type_status_budgeted(
+                    a, s, types[i], &typing, &normalized);
+            complete = status == CETTA_HE_NORMALIZE_COMPLETE;
+        } else {
+            g_profiled_type_budget->complete = false;
+        }
         /* Ambiguous, exhausted, and effectful computation remains an
            inspectable residual type; the diagnostic checker reports why. */
         if (complete && normalized)
             types[i] = normalized;
+        if (g_profiled_type_budget && !g_profiled_type_budget->complete)
+            break;
     }
     g_profiled_type_normalization_active = false;
 }
 
 static uint32_t eval_get_atom_types_profiled_uncached_mode(
     Space *s, Arena *a, Atom *atom, Atom ***out_types, bool structural) {
-    uint32_t count = structural
-                         ? get_atom_types_structural(s, a, atom, out_types)
-                         : get_atom_types(s, a, atom, out_types);
+    uint32_t count;
+    if (g_profiled_type_budget) {
+        count = structural
+            ? get_atom_types_structural_budgeted(
+                  s, a, atom, out_types, g_profiled_type_budget)
+            : get_atom_types_budgeted(
+                  s, a, atom, out_types, g_profiled_type_budget);
+    } else {
+        count = structural
+            ? get_atom_types_structural(s, a, atom, out_types)
+            : get_atom_types(s, a, atom, out_types);
+    }
     count = filter_profile_visible_declared_types(atom, out_types, count);
     count = filter_well_formed_profiled_types(s, a, out_types, count);
-    if (eval_dependent_telescope_enabled() && atom->kind == ATOM_EXPR && count == 0)
+    if (eval_dependent_telescope_enabled() && atom->kind == ATOM_EXPR &&
+        count == 0 &&
+        (!g_profiled_type_budget || g_profiled_type_budget->complete))
         count = infer_dependent_application_types(s, a, atom, out_types);
     normalize_profiled_type_results(s, a, *out_types, count);
     return count;
@@ -9393,6 +9609,8 @@ static uint32_t eval_get_atom_types_profiled_uncached(Space *s, Arena *a,
 
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                       Atom ***out_types) {
+    if (g_profiled_type_budget)
+        return eval_get_atom_types_profiled_uncached(s, a, atom, out_types);
     uint32_t cached_count = 0;
     if (profiled_type_cache_lookup(s, a, atom, out_types, &cached_count))
         return cached_count;
@@ -9403,6 +9621,21 @@ uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
     return count;
 }
 
+uint32_t eval_get_atom_types_profiled_budgeted(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types,
+    CettaTypeInferenceBudget *budget) {
+    if (!budget) {
+        *out_types = NULL;
+        return 0;
+    }
+    CettaTypeInferenceBudget *parent = g_profiled_type_budget;
+    g_profiled_type_budget = budget;
+    uint32_t count = eval_get_atom_types_profiled_uncached(
+        s, a, atom, out_types);
+    g_profiled_type_budget = parent;
+    return count;
+}
+
 uint32_t eval_get_atom_types_structural_profiled(Space *s, Arena *a,
                                                  Atom *atom,
                                                  Atom ***out_types) {
@@ -9410,6 +9643,21 @@ uint32_t eval_get_atom_types_structural_profiled(Space *s, Arena *a,
        semantic difference is omitting the subject's own declaration. */
     return eval_get_atom_types_profiled_uncached_mode(s, a, atom, out_types,
                                                        true);
+}
+
+uint32_t eval_get_atom_types_structural_profiled_budgeted(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types,
+    CettaTypeInferenceBudget *budget) {
+    if (!budget) {
+        *out_types = NULL;
+        return 0;
+    }
+    CettaTypeInferenceBudget *parent = g_profiled_type_budget;
+    g_profiled_type_budget = budget;
+    uint32_t count = eval_get_atom_types_profiled_uncached_mode(
+        s, a, atom, out_types, true);
+    g_profiled_type_budget = parent;
+    return count;
 }
 
 /* ── Type cast (TypeCheck.lean:126-148) ────────────────────────────────── */
@@ -9441,25 +9689,146 @@ static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
 
 /* ── Check if function type is applicable (TypeCheck.lean:55-116) ──────── */
 
-/* Returns true if applicable, filling success_bindings[0..n_success-1].
-   Returns false if not applicable, filling errors[0..n_errors-1]. */
+typedef struct {
+    Bindings *items;
+    uint32_t len;
+    uint32_t cap;
+    Bindings inline_items[4];
+} ApplicabilityBindings;
+
+typedef struct {
+    Atom **items;
+    uint32_t len;
+    uint32_t cap;
+    Atom *inline_items[8];
+} ApplicabilityErrors;
+
+static void applicability_bindings_init(ApplicabilityBindings *vec) {
+    vec->items = vec->inline_items;
+    vec->len = 0;
+    vec->cap = sizeof vec->inline_items / sizeof vec->inline_items[0];
+}
+
+static void applicability_bindings_free(ApplicabilityBindings *vec) {
+    if (!vec) return;
+    for (uint32_t i = 0; i < vec->len; i++)
+        bindings_free(&vec->items[i]);
+    if (vec->items != vec->inline_items) free(vec->items);
+    applicability_bindings_init(vec);
+}
+
+static Bindings *applicability_bindings_push(ApplicabilityBindings *vec) {
+    if (!vec || vec->len == UINT32_MAX) {
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return NULL;
+    }
+    if (vec->len == vec->cap) {
+        uint32_t next_cap = vec->cap * 2u;
+        if (next_cap <= vec->cap) next_cap = UINT32_MAX;
+        if ((size_t)next_cap > SIZE_MAX / sizeof(Bindings)) {
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return NULL;
+        }
+        Bindings *next = cetta_malloc(
+            sizeof(Bindings) * (size_t)next_cap);
+        memcpy(next, vec->items, sizeof(Bindings) * (size_t)vec->len);
+        if (vec->items != vec->inline_items) free(vec->items);
+        vec->items = next;
+        vec->cap = next_cap;
+    }
+    Bindings *slot = &vec->items[vec->len++];
+    bindings_init(slot);
+    return slot;
+}
+
+static bool applicability_bindings_push_move(ApplicabilityBindings *vec,
+                                              Bindings *source) {
+    Bindings *slot = applicability_bindings_push(vec);
+    if (!slot) return false;
+    bindings_move(slot, source);
+    return true;
+}
+
+static bool applicability_bindings_push_clone(ApplicabilityBindings *vec,
+                                               const Bindings *source) {
+    Bindings *slot = applicability_bindings_push(vec);
+    if (!slot) return false;
+    if (bindings_clone(slot, source)) return true;
+    bindings_free(slot);
+    vec->len--;
+    return false;
+}
+
+static void applicability_bindings_move_vec(ApplicabilityBindings *dest,
+                                            ApplicabilityBindings *source) {
+    applicability_bindings_free(dest);
+    if (source->items != source->inline_items) {
+        dest->items = source->items;
+        dest->len = source->len;
+        dest->cap = source->cap;
+        applicability_bindings_init(source);
+        return;
+    }
+    memcpy(dest->inline_items, source->inline_items,
+           sizeof(Bindings) * (size_t)source->len);
+    dest->len = source->len;
+    applicability_bindings_init(source);
+}
+
+static void applicability_errors_init(ApplicabilityErrors *vec) {
+    vec->items = vec->inline_items;
+    vec->len = 0;
+    vec->cap = sizeof vec->inline_items / sizeof vec->inline_items[0];
+}
+
+static void applicability_errors_free(ApplicabilityErrors *vec) {
+    if (!vec) return;
+    if (vec->items != vec->inline_items) free(vec->items);
+    applicability_errors_init(vec);
+}
+
+static void applicability_errors_cleanup(ApplicabilityErrors *vec) {
+    applicability_errors_free(vec);
+}
+
+static bool applicability_errors_push(ApplicabilityErrors *vec, Atom *error) {
+    if (!vec || vec->len == UINT32_MAX) {
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return false;
+    }
+    if (vec->len == vec->cap) {
+        uint32_t next_cap = vec->cap * 2u;
+        if (next_cap <= vec->cap) next_cap = UINT32_MAX;
+        if ((size_t)next_cap > SIZE_MAX / sizeof(Atom *)) {
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return false;
+        }
+        Atom **next = cetta_malloc(sizeof(Atom *) * (size_t)next_cap);
+        memcpy(next, vec->items, sizeof(Atom *) * (size_t)vec->len);
+        if (vec->items != vec->inline_items) free(vec->items);
+        vec->items = next;
+        vec->cap = next_cap;
+    }
+    vec->items[vec->len++] = error;
+    return true;
+}
+
+/* Returns true if at least one complete applicability environment survives.
+   Every alternative is retained in dynamically growing storage; callers only
+   consume the decision and diagnostic atoms, so no binding array escapes. */
 static bool check_function_applicable(
     Atom *expr, Atom *funcType, Atom *expectedType,
     Space *s, Arena *a, int fuel,
-    /* out */ Atom **errors, uint32_t *n_errors,
-    Bindings *success_bindings, uint32_t *n_success) {
-
-    *n_errors = 0;
-    *n_success = 0;
+    ApplicabilityErrors *errors) {
 
     CettaExprLen nargs = get_function_arg_count(funcType);
     CettaExprLen expr_narg = (expr->kind == ATOM_EXPR && expr->expr.len > 0)
                              ? expr->expr.len - 1 : 0;
-
     /* Step 1: arity check */
     if (expr_narg != nargs) {
-        errors[(*n_errors)++] = atom_error(a, expr,
-            atom_symbol(a, "IncorrectNumberOfArguments"));
+        applicability_errors_push(
+            errors, atom_error(a, expr,
+                               atom_symbol(a, "IncorrectNumberOfArguments")));
         return false;
     }
 
@@ -9473,46 +9842,52 @@ static bool check_function_applicable(
     if (!retType) retType = atom_undefined_type(a);
 
     /* Step 2: check each argument type, threading bindings */
-    Bindings results[64];
-    for (uint32_t i = 0; i < 64; i++) bindings_init(&results[i]);
-    uint32_t nresults = 1;
-    bindings_init(&results[0]);
+    ApplicabilityBindings results;
+    applicability_bindings_init(&results);
+    if (!applicability_bindings_push(&results)) return false;
 
-    for (CettaExprIndex i = 0; i < nargs && nresults > 0; i++) {
+    for (CettaExprIndex i = 0; i < nargs && results.len > 0; i++) {
         Atom *arg = expr->expr.elems[i + 1];
-        Bindings next[64];
-        for (uint32_t ni = 0; ni < 64; ni++) bindings_init(&next[ni]);
-        uint32_t nnext = 0;
+        ApplicabilityBindings next;
+        applicability_bindings_init(&next);
 
-        for (uint32_t r = 0; r < nresults; r++) {
+        for (uint32_t r = 0; r < results.len; r++) {
             bool found = false;
             /* Apply accumulated bindings to expected arg type
                (resolves type variables bound by previous args) */
             Atom *expected =
-                function_domain_type(&results[r], a, arg_types[i], NULL);
+                function_domain_type(&results.items[r], a, arg_types[i], NULL);
             if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
                 atom_is_symbol_id(expected, g_builtin_syms.undefined_type)) {
-                if (nnext < 64) {
-                    bindings_move(&next[nnext], &results[r]);
-                    nnext++;
+                if (!applicability_bindings_push_move(
+                        &next, &results.items[r])) {
+                    applicability_bindings_free(&next);
+                    applicability_bindings_free(&results);
+                    return false;
                 }
                 continue;
             }
             if (atom_is_meta_type(expected)) {
                 if (atom_meta_type_accepts(a, expected, arg)) {
                     BindingsBuilder candidate_builder;
-                    if (bindings_builder_init(&candidate_builder, &results[r])) {
+                    if (bindings_builder_init(&candidate_builder,
+                                              &results.items[r])) {
                         if (bind_domain_binder_builder(&candidate_builder,
-                                                       arg_types[i], arg) &&
-                            nnext < 64 &&
-                            bindings_clone(&next[nnext],
-                                           bindings_builder_bindings(&candidate_builder))) {
-                            nnext++;
+                                                       arg_types[i], arg)) {
+                            if (!applicability_bindings_push_clone(
+                                    &next,
+                                    bindings_builder_bindings(
+                                        &candidate_builder))) {
+                                bindings_builder_free(&candidate_builder);
+                                applicability_bindings_free(&next);
+                                applicability_bindings_free(&results);
+                                return false;
+                            }
                         }
                         bindings_builder_free(&candidate_builder);
                     }
                     found = true;
-                } else if (*n_errors < 64) {
+                } else {
                     Atom **actual_types = NULL;
                     uint32_t n_actual_types =
                         eval_get_atom_types_profiled(s, a, arg, &actual_types);
@@ -9526,7 +9901,12 @@ static bool check_function_applicable(
                         actual_type
                     }, 4);
                     free(actual_types);
-                    errors[(*n_errors)++] = atom_error(a, expr, reason);
+                    if (!applicability_errors_push(
+                            errors, atom_error(a, expr, reason))) {
+                        applicability_bindings_free(&next);
+                        applicability_bindings_free(&results);
+                        return false;
+                    }
                 }
                 continue;
             }
@@ -9535,15 +9915,19 @@ static bool check_function_applicable(
             uint32_t natypes =
                 eval_get_atom_types_profiled(s, a, arg, &atypes);
             if (natypes == 0) {
-                if (nnext < 64) {
-                    bindings_move(&next[nnext], &results[r]);
-                    nnext++;
+                if (!applicability_bindings_push_move(
+                        &next, &results.items[r])) {
+                    free(atypes);
+                    applicability_bindings_free(&next);
+                    applicability_bindings_free(&results);
+                    return false;
                 }
                 free(atypes);
                 continue;
             }
             SearchContext candidate_context;
-            search_context_init_owned(&candidate_context, &results[r], NULL);
+            search_context_init_owned(&candidate_context, &results.items[r],
+                                      NULL);
             for (uint32_t t = 0; t < natypes; t++) {
                 ChoicePoint point = search_context_save(&candidate_context);
                 if (match_types_builder(atypes[t], expected,
@@ -9553,10 +9937,15 @@ static bool check_function_applicable(
                         search_context_rollback(&candidate_context, point);
                         continue;
                     }
-                    if (nnext < 64 &&
-                        bindings_clone(&next[nnext],
-                                       search_context_bindings(&candidate_context))) {
-                        nnext++;
+                    if (!applicability_bindings_push_clone(
+                            &next,
+                            search_context_bindings(&candidate_context))) {
+                        search_context_rollback(&candidate_context, point);
+                        search_context_free(&candidate_context);
+                        free(atypes);
+                        applicability_bindings_free(&next);
+                        applicability_bindings_free(&results);
+                        return false;
                     }
                     search_context_rollback(&candidate_context, point);
                     found = true;
@@ -9574,52 +9963,51 @@ static bool check_function_applicable(
                     expected,
                     atypes[0]
                 }, 4);
-                if (*n_errors < 64)
-                    errors[(*n_errors)++] = atom_error(a, expr, reason);
+                if (!applicability_errors_push(
+                        errors, atom_error(a, expr, reason))) {
+                    free(atypes);
+                    applicability_bindings_free(&next);
+                    applicability_bindings_free(&results);
+                    return false;
+                }
             }
             free(atypes);
         }
-        for (uint32_t r = 0; r < nresults; r++)
-            bindings_free(&results[r]);
-        for (uint32_t ni = 0; ni < nnext; ni++)
-            bindings_move(&results[ni], &next[ni]);
-        for (uint32_t ni = nnext; ni < 64; ni++)
-            bindings_free(&next[ni]);
-        nresults = nnext;
+        applicability_bindings_move_vec(&results, &next);
     }
 
-    if (nresults == 0) {
-        for (uint32_t i = 0; i < 64; i++)
-            bindings_free(&results[i]);
+    if (results.len == 0) {
+        applicability_bindings_free(&results);
         return false;
     }
 
     /* Step 3: check return type */
-    uint32_t ret_ok = 0;
-    for (uint32_t r = 0; r < nresults; r++) {
+    bool ret_ok = false;
+    for (uint32_t r = 0; r < results.len; r++) {
         SearchContext ret_context;
-        search_context_init_owned(&ret_context, &results[r], NULL);
+        search_context_init_owned(&ret_context, &results.items[r], NULL);
         Atom *inst_ret =
             eval_dependent_telescope_enabled()
                 ? bindings_apply_if_vars(search_context_bindings(&ret_context), a, retType)
                 : retType;
         if (match_types_builder(inst_ret, expectedType,
                                 search_context_builder(&ret_context))) {
-            if (ret_ok < 64) {
-                search_context_take(&ret_context, &success_bindings[ret_ok]);
-                ret_ok++;
-            }
+            ret_ok = true;
         } else {
             Atom *reason = atom_expr3(a, atom_symbol(a, "BadType"),
                                       expectedType, inst_ret);
-            if (*n_errors < 64)
-                errors[(*n_errors)++] = atom_error(a, expr, reason);
+            if (!applicability_errors_push(
+                    errors, atom_error(a, expr, reason))) {
+                search_context_free(&ret_context);
+                applicability_bindings_free(&results);
+                return false;
+            }
         }
         search_context_free(&ret_context);
     }
 
-    *n_success = ret_ok;
-    return ret_ok > 0;
+    applicability_bindings_free(&results);
+    return ret_ok;
 }
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
@@ -10825,21 +11213,16 @@ static bool try_dynamic_capture_dispatch(Space *s, Arena *a, Atom *atom, Atom *e
         }
 
         Atom *head_type = get_grounded_type(a, head_atom);
-        Atom *errors[64];
-        uint32_t n_errors = 0;
-        Bindings succs[64];
-        for (uint32_t si = 0; si < 64; si++) bindings_init(&succs[si]);
-        uint32_t n_succs = 0;
+        ApplicabilityErrors errors;
+        applicability_errors_init(&errors);
         if (!check_function_applicable(atom, head_type, exp_type, s, a, fuel,
-                                       errors, &n_errors, succs, &n_succs)) {
-            for (uint32_t ei = 0; ei < n_errors; ei++)
-                outcome_set_add(os, errors[ei], head_env);
-            for (uint32_t si = 0; si < n_succs; si++)
-                bindings_free(&succs[si]);
+                                       &errors)) {
+            for (uint32_t ei = 0; ei < errors.len; ei++)
+                outcome_set_add(os, errors.items[ei], head_env);
+            applicability_errors_free(&errors);
             continue;
         }
-        for (uint32_t si = 0; si < n_succs; si++)
-            bindings_free(&succs[si]);
+        applicability_errors_free(&errors);
 
         CettaExprLen expr_narg = atom->expr.len - 1;
         Atom **arg_types = expr_narg
@@ -10897,8 +11280,8 @@ static bool outcome_atom_is_error_at_site(Arena *a, Outcome *out,
     candidate = outcome_preview_atom(out);
     if (!candidate)
         return false;
-    preview = outcome_error_preview_from_atom(&out->env, &out->variant,
-                                              candidate, 0);
+    preview = outcome_error_preview_from_atom(
+        &out->env, &out->variant, candidate);
     if (preview == CETTA_OUTCOME_ERROR_PREVIEW_TRUE)
         return true;
     if (preview == CETTA_OUTCOME_ERROR_PREVIEW_FALSE)
@@ -12336,23 +12719,21 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     bool has_non_func_type = false;
     OutcomeSet func_results;
     outcome_set_init_with_owner(&func_results, eval_storage_arena(a));
-    Atom *func_errors[64];
-    uint32_t n_func_errors = 0;
+    __attribute__((cleanup(applicability_errors_cleanup)))
+    ApplicabilityErrors func_errors;
+    applicability_errors_init(&func_errors);
 
     for (uint32_t ti = 0; ti < n_op_types; ti++) {
         if (is_function_type(op_types[ti])) {
             has_func_type = true;
-            Atom *errors[64];
-            uint32_t n_errors = 0;
-            Bindings succs[64];
-            for (uint32_t si = 0; si < 64; si++) bindings_init(&succs[si]);
-            uint32_t n_succs = 0;
+            ApplicabilityErrors errors;
+            applicability_errors_init(&errors);
             Atom *exp_type = etype ? etype : atom_undefined_type(a);
             Atom *fresh_ft = atom_freshen_epoch(a, op_types[ti], fresh_var_suffix());
         if (check_function_applicable(atom, fresh_ft, exp_type,
                                       s, a, fuel,
-                                      errors, &n_errors,
-                                      succs, &n_succs)) {
+                                      &errors)) {
+                applicability_errors_free(&errors);
                 CettaExprLen func_nargs = get_function_arg_count(fresh_ft);
                 Atom **arg_types = func_nargs
                     ? arena_alloc(a, sizeof(Atom *) * (size_t)func_nargs)
@@ -12412,8 +12793,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     outcome_set_free(&call_terms);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
-                                    for (uint32_t sj = 0; sj < n_succs; sj++)
-                                        bindings_free(&succs[sj]);
                                     free(op_types);
                                     return true;
                                 }
@@ -12445,8 +12824,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     outcome_set_free(&call_terms);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
-                                    for (uint32_t sj = 0; sj < n_succs; sj++)
-                                        bindings_free(&succs[sj]);
                                     free(op_types);
                                     return true;
                                 }
@@ -12465,8 +12842,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                         outcome_set_free(&call_terms);
                                         outcome_set_free(&heads);
                                         outcome_set_free(&func_results);
-                                        for (uint32_t sj = 0; sj < n_succs; sj++)
-                                            bindings_free(&succs[sj]);
                                         free(op_types);
                                         return true;
                                     }
@@ -12512,8 +12887,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     outcome_set_free(&call_terms);
                                     outcome_set_free(&heads);
                                     outcome_set_free(&func_results);
-                                    for (uint32_t sj = 0; sj < n_succs; sj++)
-                                        bindings_free(&succs[sj]);
                                     free(op_types);
                                     return true;
                                 }
@@ -12541,8 +12914,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 outcome_set_free(&call_terms);
                                 outcome_set_free(&heads);
                                 outcome_set_free(&func_results);
-                                for (uint32_t sj = 0; sj < n_succs; sj++)
-                                    bindings_free(&succs[sj]);
                                 free(op_types);
                                 return true;
                             }
@@ -12557,11 +12928,11 @@ query_done:
                 }
                 outcome_set_free(&heads);
             } else {
-                for (uint32_t ei = 0; ei < n_errors && n_func_errors < 64; ei++)
-                    func_errors[n_func_errors++] = errors[ei];
+                for (uint32_t ei = 0; ei < errors.len; ei++)
+                    applicability_errors_push(&func_errors,
+                                              errors.items[ei]);
+                applicability_errors_free(&errors);
             }
-            for (uint32_t si = 0; si < n_succs; si++)
-                bindings_free(&succs[si]);
         } else {
             has_non_func_type = true;
         }
@@ -12577,10 +12948,10 @@ query_done:
         outcome_set_free(&func_results);
     }
 
-    if (has_func_type && n_func_errors > 0 && !total_structural_eq &&
+    if (has_func_type && func_errors.len > 0 && !total_structural_eq &&
         (!has_non_func_type || eval_type_check_auto_enabled())) {
-        for (uint32_t i = 0; i < n_func_errors; i++)
-            outcome_set_add(os, func_errors[i], &_empty);
+        for (uint32_t i = 0; i < func_errors.len; i++)
+            outcome_set_add(os, func_errors.items[i], &_empty);
         if (!has_non_func_type) return true;
     }
 
@@ -14181,7 +14552,7 @@ tail_call: ;
        the semantic package rechecks it rather than accepting producer output. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
         atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.prime_judge)) {
-        if (nargs != 3) {
+        if (nargs != 2 && nargs != 3) {
             outcome_set_add(
                 os,
                 atom_error(a, atom,
@@ -14192,10 +14563,11 @@ tail_call: ;
         Atom *prime_args[3] = {
             resolve_registry_refs(a, expr_arg(atom, 0)),
             expr_arg(atom, 1),
-            resolve_registry_refs(a, expr_arg(atom, 2)),
+            nargs == 3 ? resolve_registry_refs(a, expr_arg(atom, 2)) : NULL,
         };
         Atom *result = prime_semantics_dispatch
-            ? prime_semantics_dispatch(a, atom->expr.elems[0], prime_args, 3)
+            ? prime_semantics_dispatch(a, atom->expr.elems[0], prime_args,
+                                       (uint32_t)nargs)
             : NULL;
         outcome_set_add(os, result ? result : atom, &_empty);
         return;
@@ -16347,8 +16719,10 @@ void eval_outcome_init(EvalOutcome *outcome) {
         return;
     result_set_init(&outcome->results);
     outcome->completion = CETTA_EVAL_COMPLETE;
+    outcome->budget_limited = false;
     outcome->budget_initial = 0;
     outcome->budget_remaining = 0;
+    outcome->steps_spent = 0;
 }
 
 void eval_outcome_free(EvalOutcome *outcome) {
@@ -16356,8 +16730,10 @@ void eval_outcome_free(EvalOutcome *outcome) {
         return;
     result_set_free(&outcome->results);
     outcome->completion = CETTA_EVAL_COMPLETE;
+    outcome->budget_limited = false;
     outcome->budget_initial = 0;
     outcome->budget_remaining = 0;
+    outcome->steps_spent = 0;
 }
 
 const char *eval_completion_reason(CettaEvalCompletion completion) {
@@ -16370,6 +16746,8 @@ const char *eval_completion_reason(CettaEvalCompletion completion) {
         return "cancelled";
     case CETTA_EVAL_INCOMPLETE_STACK:
         return "stack-exhausted";
+    case CETTA_EVAL_INCOMPLETE_CAPACITY:
+        return "capacity-exhausted";
     }
     return "incomplete";
 }
@@ -16379,28 +16757,44 @@ void metta_eval_outcome(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
     if (!outcome)
         return;
     EvalCompletionTracker *parent = g_eval_completion_tracker;
-    uint64_t requested = fuel > 0 ? (uint64_t)fuel : 0;
-    uint64_t granted = parent && parent->budget_remaining < requested
-                           ? parent->budget_remaining
-                           : requested;
+    bool requested_limited = fuel >= 0;
+    bool budget_limited = requested_limited ||
+                          (parent && parent->budget_limited);
+    uint64_t requested = requested_limited ? (uint64_t)fuel : 0;
+    uint64_t granted = requested;
+    if (parent && parent->budget_limited &&
+        (!requested_limited || parent->budget_remaining < granted)) {
+        granted = parent->budget_remaining;
+    }
+    int effective_fuel = budget_limited
+        ? (granted > (uint64_t)INT_MAX ? INT_MAX : (int)granted)
+        : -1;
     EvalCompletionTracker tracker = {
         .completion = CETTA_EVAL_COMPLETE,
+        .budget_limited = budget_limited,
         .budget_initial = granted,
         .budget_remaining = granted,
+        .steps_spent = 0,
         .parent = parent,
     };
     g_eval_completion_tracker = &tracker;
-    metta_eval(s, a, type, atom, fuel, &outcome->results);
+    metta_eval(s, a, type, atom, effective_fuel, &outcome->results);
     g_eval_completion_tracker = tracker.parent;
     outcome->completion = tracker.completion;
+    outcome->budget_limited = tracker.budget_limited;
     outcome->budget_initial = tracker.budget_initial;
     outcome->budget_remaining = tracker.budget_remaining;
+    outcome->steps_spent = tracker.steps_spent;
     if (tracker.parent && tracker.completion != CETTA_EVAL_COMPLETE &&
         tracker.parent->completion == CETTA_EVAL_COMPLETE) {
         tracker.parent->completion = tracker.completion;
     }
-    if (tracker.parent) {
-        uint64_t spent = tracker.budget_initial - tracker.budget_remaining;
+    if (tracker.parent && tracker.parent->budget_limited) {
+        uint64_t spent = tracker.steps_spent;
+        if (tracker.parent->steps_spent > UINT64_MAX - spent)
+            tracker.parent->steps_spent = UINT64_MAX;
+        else
+            tracker.parent->steps_spent += spent;
         if (spent >= tracker.parent->budget_remaining)
             tracker.parent->budget_remaining = 0;
         else

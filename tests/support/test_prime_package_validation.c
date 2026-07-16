@@ -1,0 +1,454 @@
+#include "atom.h"
+#include "eval.h"
+#include "he_typing.h"
+#include "library.h"
+#include "parser.h"
+#include "prime_semantics.h"
+#include "symbol.h"
+#include "term_universe.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+static Atom *copy_expr_with(Arena *arena, Atom *source, uint32_t index,
+                            Atom *replacement) {
+    if (!source || source->kind != ATOM_EXPR || index >= source->expr.len)
+        return NULL;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * source->expr.len);
+    for (uint32_t i = 0; i < source->expr.len; i++)
+        items[i] = i == index ? replacement : source->expr.elems[i];
+    return atom_expr(arena, items, source->expr.len);
+}
+
+static Atom *parse_one(Arena *arena, const char *text) {
+    Atom **forms = NULL;
+    int count = parse_metta_text(text, arena, &forms);
+    Atom *result = count == 1 && forms ? forms[0] : NULL;
+    free(forms);
+    return result;
+}
+
+int main(void) {
+    int rc = 1;
+    Arena arena;
+    Arena scratch;
+    TermUniverse universe;
+    Space space;
+    SymbolTable symbols;
+    VarInternTable var_intern;
+    CettaLibraryContext libraries;
+    bool libraries_ready = false;
+
+    arena_init(&arena);
+    arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_EVAL);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    space_init_with_universe(&space, &universe);
+    symbol_table_init(&symbols);
+    symbol_table_init_builtins(&symbols, &g_builtin_syms);
+    var_intern_init(&var_intern);
+    g_symbols = &symbols;
+    g_var_intern = &var_intern;
+    cetta_library_context_init_for_language_profile(
+        &libraries, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    libraries_ready = true;
+    eval_set_library_context(&libraries);
+
+    Atom *package = prime_semantics_package_atom(&arena);
+    if (!package || !prime_semantics_validate_package(package)) {
+        fprintf(stderr, "valid PrimeDefV1 package was rejected\n");
+        goto cleanup;
+    }
+
+    Atom *bad_root = copy_expr_with(
+        &arena, package, 0, atom_symbol(&arena, "BrokenPrimeDefV1"));
+    if (!bad_root || prime_semantics_validate_package(bad_root)) {
+        fprintf(stderr, "broken PrimeDef root was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *language = package->expr.elems[2];
+    Atom *swapped_language = copy_expr_with(
+        &arena, language, 3, language->expr.elems[4]);
+    if (!swapped_language) goto cleanup;
+    swapped_language = copy_expr_with(
+        &arena, swapped_language, 4, language->expr.elems[3]);
+    Atom *swapped_package = copy_expr_with(&arena, package, 2,
+                                           swapped_language);
+    if (!swapped_package ||
+        prime_semantics_validate_package(swapped_package)) {
+        fprintf(stderr, "equations/rewrites swap was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *effects_resources = package->expr.elems[6];
+    Atom *resources = effects_resources->expr.elems[2];
+    Atom *hidden_default_resources = copy_expr_with(
+        &arena, resources, 1,
+        atom_symbol(&arena, "ImplicitFiniteStepBound"));
+    Atom *hidden_default_effects = copy_expr_with(
+        &arena, effects_resources, 2, hidden_default_resources);
+    Atom *hidden_default_package = copy_expr_with(
+        &arena, package, 6, hidden_default_effects);
+    if (!hidden_default_package ||
+        prime_semantics_validate_package(hidden_default_package)) {
+        fprintf(stderr, "implicit finite resource policy was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *metered_default_resources = copy_expr_with(
+        &arena, resources, 5,
+        atom_symbol(&arena, "UnboundedModeMetersSteps"));
+    Atom *metered_default_effects = copy_expr_with(
+        &arena, effects_resources, 2, metered_default_resources);
+    Atom *metered_default_package = copy_expr_with(
+        &arena, package, 6, metered_default_effects);
+    if (!metered_default_package ||
+        prime_semantics_validate_package(metered_default_package)) {
+        fprintf(stderr, "unrequested resource accounting was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *fixed_traversal = parse_one(
+        &arena, "(StructuralTypeTraversal Fixed512)");
+    Atom *fixed_traversal_resources = copy_expr_with(
+        &arena, resources, 6, fixed_traversal);
+    Atom *fixed_traversal_effects = copy_expr_with(
+        &arena, effects_resources, 2, fixed_traversal_resources);
+    Atom *fixed_traversal_package = copy_expr_with(
+        &arena, package, 6, fixed_traversal_effects);
+    if (!fixed_traversal_package ||
+        prime_semantics_validate_package(fixed_traversal_package)) {
+        fprintf(stderr, "fixed structural-depth frontier was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *fixed_type_storage = parse_one(
+        &arena, "(TypeStorage Fixed64)");
+    Atom *fixed_type_resources = copy_expr_with(
+        &arena, resources, 7, fixed_type_storage);
+    Atom *fixed_type_effects = copy_expr_with(
+        &arena, effects_resources, 2, fixed_type_resources);
+    Atom *fixed_type_package = copy_expr_with(
+        &arena, package, 6, fixed_type_effects);
+    if (!fixed_type_package ||
+        prime_semantics_validate_package(fixed_type_package)) {
+        fprintf(stderr, "fixed inferred-type frontier was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *fixed_applicability_storage = parse_one(
+        &arena, "(ApplicabilityStorage Fixed64)");
+    Atom *fixed_applicability_resources = copy_expr_with(
+        &arena, resources, 8, fixed_applicability_storage);
+    Atom *fixed_applicability_effects = copy_expr_with(
+        &arena, effects_resources, 2, fixed_applicability_resources);
+    Atom *fixed_applicability_package = copy_expr_with(
+        &arena, package, 6, fixed_applicability_effects);
+    if (!fixed_applicability_package ||
+        prime_semantics_validate_package(fixed_applicability_package)) {
+        fprintf(stderr, "fixed applicability frontier was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *deep_type = atom_symbol(&arena, "DeepLeaf");
+    Atom *deep_head = atom_symbol(&arena, "DeepBox");
+    for (uint32_t i = 0; i < 2048u; i++)
+        deep_type = atom_expr2(&arena, deep_head, deep_type);
+    CettaHeTypingBudget deep_budget;
+    he_typing_budget_init_unbounded(&deep_budget);
+    Atom *deep_normal = NULL;
+    CettaHeNormalizeStatus deep_normal_status =
+        he_typing_normalize_type_status_budgeted(
+            &arena, &space, deep_type, &deep_budget, &deep_normal);
+    if (deep_normal_status != CETTA_HE_NORMALIZE_COMPLETE ||
+        deep_normal != deep_type || deep_budget.work_steps_observed != 0 ||
+        deep_budget.max_depth_observed != 0) {
+        fprintf(stderr, "dynamic type normalization failed above depth 512\n");
+        goto cleanup;
+    }
+    Atom *deep_detail = NULL;
+    CettaHeRefinementStatus deep_refinement_status =
+        he_typing_check_refinement_status_budgeted(
+            &arena, &space, deep_type, &deep_budget, &deep_detail);
+    if (deep_refinement_status != CETTA_HE_REFINEMENT_VALID || deep_detail) {
+        fprintf(stderr, "dynamic refinement traversal failed above depth 512\n");
+        goto cleanup;
+    }
+    if (deep_budget.work_steps_observed != 0 ||
+        deep_budget.max_depth_observed != 0) {
+        fprintf(stderr, "unbounded type traversal performed budget accounting\n");
+        goto cleanup;
+    }
+
+    CettaHeTypingBudget tracked_deep_budget;
+    he_typing_budget_init(&tracked_deep_budget, 1);
+    deep_normal_status = he_typing_normalize_type_status_budgeted(
+        &arena, &space, deep_type, &tracked_deep_budget, &deep_normal);
+    if (deep_normal_status != CETTA_HE_NORMALIZE_COMPLETE ||
+        tracked_deep_budget.work_steps_observed == 0 ||
+        tracked_deep_budget.max_depth_observed < 2048u) {
+        fprintf(stderr, "explicit type budget did not enable accounting\n");
+        goto cleanup;
+    }
+
+    Atom *nested_head = atom_symbol(&arena, "Nested");
+    Atom *nested_actual = atom_symbol(&arena, "NestedLeaf");
+    Atom *nested_expected = atom_symbol(&arena, "NestedLeaf");
+    for (uint32_t i = 0; i < 128u; i++) {
+        nested_actual = atom_expr2(&arena, nested_head, nested_actual);
+        nested_expected = atom_expr2(&arena, nested_head, nested_expected);
+    }
+    Atom *arg_name = atom_symbol(&arena, "deep-arg");
+    Atom *fn_name = atom_symbol(&arena, "deep-fn");
+    Atom *nat_type = atom_symbol(&arena, "Nat");
+    space_add(&space, atom_expr3(
+        &arena, atom_symbol(&arena, ":"), arg_name, nested_actual));
+    space_add(&space, atom_expr3(
+        &arena, atom_symbol(&arena, ":"), fn_name,
+        atom_expr3(&arena, atom_symbol(&arena, "->"),
+                   nested_expected, nat_type)));
+    Atom *deep_call = atom_expr2(&arena, fn_name, arg_name);
+    Atom **deep_call_types = NULL;
+    uint32_t deep_call_type_count = eval_get_atom_types_profiled(
+        &space, &arena, deep_call, &deep_call_types);
+    bool deep_call_has_nat = false;
+    for (uint32_t i = 0; i < deep_call_type_count; i++)
+        if (atom_eq(deep_call_types[i], nat_type)) deep_call_has_nat = true;
+    free(deep_call_types);
+    if (!deep_call_has_nat) {
+        fprintf(stderr, "type applicability failed above structural depth 64\n");
+        goto cleanup;
+    }
+
+    Atom *deep_match_left = atom_symbol(&arena, "DeepMatchLeaf");
+    Atom *deep_match_right = atom_symbol(&arena, "DeepMatchLeaf");
+    Atom *deep_match_head = atom_symbol(&arena, "DeepMatchBox");
+    for (uint32_t i = 0; i < 520u; i++) {
+        deep_match_left = atom_expr2(
+            &arena, deep_match_head, deep_match_left);
+        deep_match_right = atom_expr2(
+            &arena, deep_match_head, deep_match_right);
+    }
+    Bindings deep_match_bindings;
+    bindings_init(&deep_match_bindings);
+    if (!match_atoms(deep_match_left, deep_match_right,
+                     &deep_match_bindings)) {
+        fprintf(stderr, "decoded matcher failed above structural depth 64\n");
+        bindings_free(&deep_match_bindings);
+        goto cleanup;
+    }
+    bindings_free(&deep_match_bindings);
+
+    Bindings deep_match_base;
+    BindingsBuilder deep_match_builder;
+    bindings_init(&deep_match_base);
+    if (!bindings_builder_init(&deep_match_builder, &deep_match_base) ||
+        !match_atoms_builder(deep_match_left, deep_match_right,
+                             &deep_match_builder)) {
+        fprintf(stderr, "builder matcher failed above structural depth 64\n");
+        bindings_builder_free(&deep_match_builder);
+        bindings_free(&deep_match_base);
+        goto cleanup;
+    }
+    bindings_builder_free(&deep_match_builder);
+    bindings_free(&deep_match_base);
+
+    bindings_init(&deep_match_bindings);
+    if (!match_atoms_epoch(deep_match_left, deep_match_right,
+                           &deep_match_bindings, &arena, 17u)) {
+        fprintf(stderr, "epoch matcher failed above structural depth 64\n");
+        bindings_free(&deep_match_bindings);
+        goto cleanup;
+    }
+    bindings_free(&deep_match_bindings);
+
+    Bindings deep_binding_chain;
+    bindings_init(&deep_binding_chain);
+    Atom *deep_binding_vars[600];
+    for (uint32_t i = 0; i < 600u; i++) {
+        char name[32];
+        snprintf(name, sizeof name, "deep-binding-%u", i);
+        deep_binding_vars[i] = atom_var(&arena, name);
+    }
+    Atom *deep_binding_leaf = atom_symbol(&arena, "DeepBindingLeaf");
+    for (uint32_t i = 0; i < 600u; i++) {
+        Atom *value = i + 1u < 600u
+            ? deep_binding_vars[i + 1u] : deep_binding_leaf;
+        if (!bindings_add_var(
+                &deep_binding_chain, deep_binding_vars[i], value)) {
+            fprintf(stderr, "deep acyclic binding chain was rejected\n");
+            bindings_free(&deep_binding_chain);
+            goto cleanup;
+        }
+    }
+    Atom *deep_binding_resolved = bindings_resolve_atom_preview(
+        &deep_binding_chain, deep_binding_vars[0]);
+    if (deep_binding_resolved != deep_binding_leaf ||
+        bindings_has_loop(&deep_binding_chain)) {
+        fprintf(stderr, "acyclic binding traversal failed above depth 512\n");
+        bindings_free(&deep_binding_chain);
+        goto cleanup;
+    }
+    bindings_free(&deep_binding_chain);
+
+    Bindings cyclic_bindings;
+    bindings_init(&cyclic_bindings);
+    Atom *cycle_left = atom_var(&arena, "cycle-left");
+    Atom *cycle_right = atom_var(&arena, "cycle-right");
+    Atom *cycle_expr = atom_expr2(
+        &arena, atom_symbol(&arena, "Cycle"), cycle_left);
+    if (!bindings_add_var(&cyclic_bindings, cycle_left, cycle_right) ||
+        !bindings_add_var(&cyclic_bindings, cycle_right, cycle_expr) ||
+        !bindings_has_loop(&cyclic_bindings)) {
+        fprintf(stderr, "binding cycle was not detected\n");
+        bindings_free(&cyclic_bindings);
+        goto cleanup;
+    }
+    bindings_free(&cyclic_bindings);
+
+    AtomId deep_match_id = term_universe_store_atom_id(
+        &universe, &arena, deep_match_right);
+    bindings_init(&deep_match_bindings);
+    if (deep_match_id == CETTA_ATOM_ID_NONE ||
+        !match_atoms_atom_id_epoch(
+            deep_match_left, &universe, deep_match_id,
+            &deep_match_bindings, &arena, 19u)) {
+        fprintf(stderr, "store-backed matcher failed above structural depth 64\n");
+        bindings_free(&deep_match_bindings);
+        goto cleanup;
+    }
+    bindings_free(&deep_match_bindings);
+
+    Atom *deep_search_query = atom_var(&arena, "deep-search-value");
+    Atom *deep_search_fact_type = atom_symbol(&arena, "DeepSearchLeaf");
+    Atom *deep_search_head = atom_symbol(&arena, "DeepSearchBox");
+    for (uint32_t i = 0; i < 520u; i++) {
+        deep_search_query = atom_expr2(
+            &arena, deep_search_head, deep_search_query);
+        deep_search_fact_type = atom_expr2(
+            &arena, deep_search_head, deep_search_fact_type);
+    }
+    space_add(&space, atom_expr3(
+        &arena, atom_symbol(&arena, ":"),
+        atom_symbol(&arena, "deep-search-proof"), deep_search_fact_type));
+    Atom *search_args[4] = {
+        atom_space(&arena, &space), deep_search_query,
+        atom_int(&arena, 0), atom_int(&arena, 5000000),
+    };
+    Atom *deep_search_result = he_typing_dispatch(
+        &arena, atom_symbol(&arena, "search-first-inhabitant"),
+        search_args, 4);
+    if (!deep_search_result || deep_search_result->kind != ATOM_EXPR ||
+        deep_search_result->expr.len != 2 ||
+        !atom_is_symbol(deep_search_result->expr.elems[0], "he-accept")) {
+        char *result_text = deep_search_result
+            ? atom_to_string(&scratch, deep_search_result) : NULL;
+        fprintf(stderr, "typed search failed above structural depth 512: %s\n",
+                result_text ? result_text : "<null>");
+        goto cleanup;
+    }
+
+    Atom *accounting_equation = parse_one(
+        &scratch, "(= (prime-accounting-probe) PrimeAccountingDone)");
+    Atom *accounting_call = parse_one(&scratch, "(prime-accounting-probe)");
+    if (!accounting_equation || !accounting_call) {
+        fprintf(stderr, "accounting fixture did not parse\n");
+        goto cleanup;
+    }
+    space_add(&space, accounting_equation);
+    EvalOutcome unbounded_outcome;
+    eval_outcome_init(&unbounded_outcome);
+    metta_eval_outcome(&space, &scratch, NULL, accounting_call, -1,
+                       &unbounded_outcome);
+    if (unbounded_outcome.completion != CETTA_EVAL_COMPLETE ||
+        unbounded_outcome.budget_limited ||
+        unbounded_outcome.steps_spent != 0 ||
+        unbounded_outcome.results.len == 0) {
+        fprintf(stderr, "unbounded evaluation performed budget accounting\n");
+        eval_outcome_free(&unbounded_outcome);
+        goto cleanup;
+    }
+    eval_outcome_free(&unbounded_outcome);
+
+    EvalOutcome bounded_outcome;
+    eval_outcome_init(&bounded_outcome);
+    metta_eval_outcome(&space, &scratch, NULL, accounting_call, 64,
+                       &bounded_outcome);
+    if (bounded_outcome.completion != CETTA_EVAL_COMPLETE ||
+        !bounded_outcome.budget_limited || bounded_outcome.steps_spent == 0 ||
+        bounded_outcome.results.len == 0) {
+        fprintf(stderr, "explicit evaluation budget did not enable accounting\n");
+        eval_outcome_free(&bounded_outcome);
+        goto cleanup;
+    }
+    eval_outcome_free(&bounded_outcome);
+
+    Atom *certificate = parse_one(
+        &scratch,
+        "(PrimeConversionCertificateV1 "
+        "  (Original (+ 1 1) 2) "
+        "  (NormalForms 2 2) "
+        "  (Relation Equal) "
+        "  (Fragment TypePureGroundedFragment))");
+    bool equal = false;
+    if (!certificate ||
+        !prime_semantics_replay_conversion_certificate(
+            &scratch, &space, certificate, &equal) || !equal) {
+        fprintf(stderr, "valid conversion certificate did not replay\n");
+        goto cleanup;
+    }
+
+    Atom *bad_normal_forms = copy_expr_with(
+        &scratch, certificate->expr.elems[2], 1, atom_int(&scratch, 3));
+    Atom *bad_certificate = copy_expr_with(
+        &scratch, certificate, 2, bad_normal_forms);
+    if (!bad_certificate ||
+        prime_semantics_replay_conversion_certificate(
+            &scratch, &space, bad_certificate, &equal)) {
+        fprintf(stderr, "corrupted conversion certificate replayed\n");
+        goto cleanup;
+    }
+
+    Atom *user_equation = parse_one(
+        &scratch, "(= (user-normal $x) TagA)");
+    Atom *user_marker = parse_one(
+        &scratch, "(type-level-function user-normal)");
+    if (!user_equation || !user_marker) {
+        fprintf(stderr, "user-rule fixture did not parse\n");
+        goto cleanup;
+    }
+    space_add(&space, user_equation);
+    space_add(&space, user_marker);
+    Atom *user_certificate = parse_one(
+        &scratch,
+        "(PrimeConversionCertificateV1 "
+        "  (Original (user-normal q) TagA) "
+        "  (NormalForms TagA TagA) "
+        "  (Relation Equal) "
+        "  (Fragment TypePureGroundedFragment))");
+    if (!user_certificate ||
+        prime_semantics_replay_conversion_certificate(
+            &scratch, &space, user_certificate, &equal)) {
+        fprintf(stderr, "ordinary user rule entered conversion replay\n");
+        goto cleanup;
+    }
+
+    puts("PASS: PrimeDefV1 validation and conversion-certificate replay");
+    rc = 0;
+
+cleanup:
+    eval_set_library_context(NULL);
+    if (libraries_ready) cetta_library_context_free(&libraries);
+    g_var_intern = NULL;
+    g_symbols = NULL;
+    var_intern_free(&var_intern);
+    symbol_table_free(&symbols);
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&arena);
+    return rc;
+}

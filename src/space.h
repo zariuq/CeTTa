@@ -291,12 +291,39 @@ Atom *get_grounded_type(Arena *a, Atom *atom);
    Returns count; fills out_types (arena-allocated array). */
 /* Reduce grounded operators inside a type expression (e.g. (+ 1 1) -> 2). */
 Atom *normalize_type_expr(Arena *a, Atom *ty);
+Atom *normalize_type_expr_head(Arena *a, Atom *ty);
 
 uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
+/* Optional logical-step budget for callers that must distinguish a complete
+   type set from a prefix.  Ordinary HE inference keeps using the unbudgeted
+   API above; Prime threads one instance through the complete inference tree. */
+typedef struct CettaTypeInferenceBudget {
+    /* Optional bound for partial producers reached during inference. Structural
+       traversal itself is total over the finite input and only contributes to
+       `work_steps_observed`. */
+    bool steps_limited;
+    uint64_t steps_remaining;
+    uint64_t steps_spent;
+    uint64_t work_steps_observed;
+    uint32_t type_capacity;
+    uint32_t max_depth_observed;
+    bool complete;
+    bool type_capacity_exhausted;
+    bool evaluator_stack_exhausted;
+    bool evaluator_capacity_exhausted;
+    bool allow_marked_user_type_functions;
+} CettaTypeInferenceBudget;
+
+uint32_t get_atom_types_budgeted(Space *s, Arena *a, Atom *atom,
+                                 Atom ***out_types,
+                                 CettaTypeInferenceBudget *budget);
 /* Same engine, but ignores an expression subject's own top-level (: term T)
    declaration. Used to audit a declaration against its structural derivation. */
 uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
                                    Atom ***out_types);
+uint32_t get_atom_types_structural_budgeted(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types,
+    CettaTypeInferenceBudget *budget);
 
 #endif /* CETTA_SPACE_H */

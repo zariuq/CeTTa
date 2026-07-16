@@ -2961,25 +2961,25 @@ bool space_atom_is_exact_indexable(Atom *atom) {
 
 /* ── Type Expression Normalization ───────────────────────────────────────── */
 
-/* Recursively evaluate grounded arithmetic in type expressions.
+/* Evaluate grounded arithmetic in type expressions using an explicit
+   post-order worklist.  Structural depth is an input property, not an
+   implicit semantic budget.
    E.g., (VecN String (+ (+ 0 1) 1)) → (VecN String 2) */
-Atom *normalize_type_expr(Arena *a, Atom *ty) {
-    if (ty->kind != ATOM_EXPR || ty->expr.len < 2) return ty;
-    /* First normalize children */
-    Atom **new_elems = arena_alloc(a, sizeof(Atom *) * ty->expr.len);
-    bool changed = false;
-    for (CettaExprIndex i = 0; i < ty->expr.len; i++) {
-        new_elems[i] = normalize_type_expr(a, ty->expr.elems[i]);
-        if (new_elems[i] != ty->expr.elems[i]) changed = true;
-    }
-    Atom *norm = changed ? atom_expr(a, new_elems, ty->expr.len) : ty;
+typedef struct {
+    Atom *input;
+    Atom **children;
+    CettaExprIndex next_child;
+    bool changed;
+} TypeNormalizeFrame;
+
+Atom *normalize_type_expr_head(Arena *a, Atom *norm) {
+    if (!norm || norm->kind != ATOM_EXPR || norm->expr.len < 2) return norm;
     /* Dispatch only the type-pure capability: type conversion must never run
        an effectful or state-reading grounded op.  Anything outside the
        capability stays un-dispatched (an inert expression in the type). */
     SymbolId op_id = SYMBOL_ID_NONE;
-    if (norm->expr.elems[0]->kind == ATOM_SYMBOL) {
+    if (norm->expr.elems[0]->kind == ATOM_SYMBOL)
         op_id = norm->expr.elems[0]->sym_id;
-    }
     if (norm->expr.len >= 3 && op_id != SYMBOL_ID_NONE &&
         grounded_op_is_type_pure(op_id)) {
         Atom *result = grounded_dispatch(a, norm->expr.elems[0],
@@ -2987,6 +2987,60 @@ Atom *normalize_type_expr(Arena *a, Atom *ty) {
         if (result) return result;
     }
     return norm;
+}
+
+Atom *normalize_type_expr(Arena *a, Atom *ty) {
+    if (!ty || ty->kind != ATOM_EXPR || ty->expr.len < 2) return ty;
+
+    size_t cap = 16;
+    size_t len = 1;
+    TypeNormalizeFrame *stack = cetta_malloc(sizeof(*stack) * cap);
+    stack[0] = (TypeNormalizeFrame){.input = ty};
+
+    for (;;) {
+        TypeNormalizeFrame *frame = &stack[len - 1u];
+        Atom *input = frame->input;
+        if (!frame->children) {
+            frame->children = arena_alloc(
+                a, sizeof(Atom *) * (size_t)input->expr.len);
+        }
+
+        if (frame->next_child < input->expr.len) {
+            Atom *child = input->expr.elems[frame->next_child];
+            if (!child || child->kind != ATOM_EXPR || child->expr.len < 2) {
+                frame->children[frame->next_child++] = child;
+                continue;
+            }
+            if (len == cap) {
+                if (cap > SIZE_MAX / 2u ||
+                    cap * 2u > SIZE_MAX / sizeof(*stack)) {
+                    free(stack);
+                    fputs("fatal: type-normalization worklist exceeds "
+                          "addressable storage\n", stderr);
+                    abort();
+                }
+                cap *= 2u;
+                stack = cetta_realloc(stack, sizeof(*stack) * cap);
+            }
+            stack[len++] = (TypeNormalizeFrame){.input = child};
+            continue;
+        }
+
+        Atom *norm = frame->changed
+            ? atom_expr(a, frame->children, input->expr.len)
+            : input;
+        Atom *completed = normalize_type_expr_head(a, norm);
+        len--;
+        if (len == 0) {
+            free(stack);
+            return completed;
+        }
+        frame = &stack[len - 1u];
+        CettaExprIndex child_index = frame->next_child++;
+        frame->children[child_index] = completed;
+        if (completed != frame->input->expr.elems[child_index])
+            frame->changed = true;
+    }
 }
 
 /* ── Type Lookup ─────────────────────────────────────────────────────────── */
@@ -3056,14 +3110,37 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
     return atom_undefined_type(a);
 }
 
-/* Scan space for (: atom type) annotations */
+static bool type_inference_step(CettaTypeInferenceBudget *budget,
+                                uint64_t amount) {
+    if (!budget) return true;
+    if (!budget->complete) return false;
+    if (!budget->steps_limited) return true;
+    if (budget->work_steps_observed > UINT64_MAX - amount)
+        budget->work_steps_observed = UINT64_MAX;
+    else
+        budget->work_steps_observed += amount;
+    return true;
+}
+
+static bool type_inference_can_add(CettaTypeInferenceBudget *budget,
+                                   uint32_t count) {
+    if (!budget || budget->type_capacity == 0 ||
+        count < budget->type_capacity) return true;
+    budget->complete = false;
+    budget->type_capacity_exhausted = true;
+    return false;
+}
+
+/* Scan space for (: atom type) annotations. */
 static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
-                                    Atom ***out_types) {
+                                    Atom ***out_types,
+                                    CettaTypeInferenceBudget *budget) {
     if (space_has_overlay_base(s)) {
         Atom **types = NULL;
         uint32_t count = 0, cap = 0;
         CettaCount logical_len = space_length64(s);
         for (CettaIndex i = 0; i < logical_len; i++) {
+            if (!type_inference_step(budget, 1)) break;
             Atom *annotation = space_get_at64(s, i);
             if (!annotation || annotation->kind != ATOM_EXPR ||
                 annotation->expr.len != 3)
@@ -3072,6 +3149,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                 continue;
             if (!atom_eq(annotation->expr.elems[1], atom))
                 continue;
+            if (!type_inference_can_add(budget, count)) break;
             if (count >= cap) {
                 cap = cap ? cap * 2u : 4u;
                 types = cetta_realloc(types, sizeof(Atom *) * cap);
@@ -3089,6 +3167,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     Atom **types = NULL;
     uint32_t count = 0, cap = 0;
     for (CettaIndex i = 0; i < bucket->len; i++) {
+        if (!type_inference_step(budget, 1)) break;
         CettaIndex idx = bucket->atom_indices[i];
         if (idx >= s->native.len)
             continue;
@@ -3101,6 +3180,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                 Atom *type_copy = term_universe_copy_atom_epoch(
                     s->native.universe, a, type_id, fresh_var_suffix());
                 if (type_copy) {
+                    if (!type_inference_can_add(budget, count)) break;
                     if (count >= cap) {
                         cap = cap ? cap * 2 : 4;
                         types = cetta_realloc(types, sizeof(Atom *) * cap);
@@ -3117,6 +3197,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
             continue;
         if (!atom_eq(annotation->expr.elems[1], atom))
             continue;
+        if (!type_inference_can_add(budget, count)) break;
         if (count >= cap) {
             cap = cap ? cap * 2 : 4;
             types = cetta_realloc(types, sizeof(Atom *) * cap);
@@ -3139,9 +3220,23 @@ static bool tuple_type_part_keep(Atom *type, bool is_head) {
 }
 
 static uint32_t get_tuple_value_part_types(Space *s, Arena *a, Atom *atom,
-                                           bool is_head, Atom ***out_types) {
+                                           bool is_head, Atom ***out_types,
+                                           CettaTypeInferenceBudget *budget);
+static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    bool include_direct_annotations,
+                                    CettaTypeInferenceBudget *budget);
+
+static uint32_t get_tuple_value_part_types(Space *s, Arena *a, Atom *atom,
+                                           bool is_head, Atom ***out_types,
+                                           CettaTypeInferenceBudget *budget) {
     Atom **raw = NULL;
     uint32_t raw_count = 0;
+
+    if (!type_inference_step(budget, 1)) {
+        *out_types = NULL;
+        return 0;
+    }
 
     switch (atom->kind) {
     case ATOM_VAR:
@@ -3159,18 +3254,20 @@ static uint32_t get_tuple_value_part_types(Space *s, Arena *a, Atom *atom,
         return 0;
     }
     case ATOM_SYMBOL:
-        raw_count = get_annotated_types(s, a, atom, &raw);
+        raw_count = get_annotated_types(s, a, atom, &raw, budget);
         break;
     case ATOM_EXPR:
-        raw_count = get_atom_types(s, a, atom, &raw);
+        raw_count = get_atom_types_mode(s, a, atom, &raw, true, budget);
         break;
     }
 
     Atom **types = NULL;
     uint32_t count = 0;
     for (uint32_t i = 0; i < raw_count; i++) {
+        if (!type_inference_step(budget, 1)) break;
         if (!tuple_type_part_keep(raw[i], is_head))
             continue;
+        if (!type_inference_can_add(budget, count)) break;
         types = cetta_realloc(types, sizeof(Atom *) * (count + 1));
         types[count++] = raw[i];
     }
@@ -3184,8 +3281,6 @@ typedef struct {
     uint32_t len;
 } TupleTypeChoices;
 
-#define CETTA_TUPLE_VALUE_TYPE_INFERENCE_CAP 64u
-
 static void tuple_type_choices_free(TupleTypeChoices *choices, CettaExprLen len) {
     if (!choices)
         return;
@@ -3195,7 +3290,8 @@ static void tuple_type_choices_free(TupleTypeChoices *choices, CettaExprLen len)
 }
 
 static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
-                                        Atom ***out_types) {
+                                        Atom ***out_types,
+                                        CettaTypeInferenceBudget *budget) {
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0) {
         *out_types = NULL;
         return 0;
@@ -3208,9 +3304,15 @@ static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
 
     for (CettaExprIndex i = 0; i < len; i++) {
         choices[i].len = get_tuple_value_part_types(s, a, atom->expr.elems[i],
-                                                    i == 0, &choices[i].items);
+                                                    i == 0, &choices[i].items,
+                                                    budget);
         if (choices[i].len == 0 ||
-            total > CETTA_TUPLE_VALUE_TYPE_INFERENCE_CAP / choices[i].len) {
+            total > UINT32_MAX / choices[i].len ||
+            total > SIZE_MAX / sizeof(Atom *) / choices[i].len) {
+            if (budget && choices[i].len != 0) {
+                budget->complete = false;
+                budget->type_capacity_exhausted = true;
+            }
             tuple_type_choices_free(choices, len);
             *out_types = NULL;
             return 0;
@@ -3218,9 +3320,17 @@ static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
         total *= choices[i].len;
     }
 
-    Atom **types = cetta_malloc(sizeof(Atom *) * (uint32_t)total);
+    uint32_t allocation_count = (uint32_t)total;
+    if (budget && budget->type_capacity != 0 &&
+        allocation_count > budget->type_capacity)
+        allocation_count = budget->type_capacity;
+    Atom **types = cetta_malloc(sizeof(Atom *) * allocation_count);
     uint32_t count = 0;
     for (uint64_t n = 0; n < total; n++) {
+        if (!type_inference_step(budget, 1) ||
+            !type_inference_can_add(budget, count)) {
+            break;
+        }
         uint64_t rem = n;
         Atom **elems = arena_alloc(a, sizeof(Atom *) * len);
         for (CettaExprIndex pos = len; pos > 0; pos--) {
@@ -3238,9 +3348,14 @@ static uint32_t infer_tuple_value_types(Space *s, Arena *a, Atom *atom,
 
 static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types,
-                                    bool include_direct_annotations) {
+                                    bool include_direct_annotations,
+                                    CettaTypeInferenceBudget *budget) {
     uint32_t count = 0;
     Atom **types = NULL;
+    if (!type_inference_step(budget, 1)) {
+        *out_types = NULL;
+        return 0;
+    }
     Atom *native_handle_type = get_native_handle_type(a, atom);
 
     if (!atom_is_symbol_id(native_handle_type, g_builtin_syms.undefined_type)) {
@@ -3265,19 +3380,19 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
     }
     case ATOM_SYMBOL:
         count = include_direct_annotations
-                    ? get_annotated_types(s, a, atom, &types)
+                    ? get_annotated_types(s, a, atom, &types, budget)
                     : 0;
         break;
     case ATOM_EXPR:
         count = include_direct_annotations
-                    ? get_annotated_types(s, a, atom, &types)
+                    ? get_annotated_types(s, a, atom, &types, budget)
                     : 0;
         /* Also try to infer type from operator's function type */
         bool tried_func_type = false;
         if (count == 0 && atom->expr.len >= 2) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
-            uint32_t nop = get_annotated_types(s, a, op, &op_types);
+            uint32_t nop = get_annotated_types(s, a, op, &op_types, budget);
             Arena scratch;
             arena_init(&scratch);
             arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
@@ -3285,13 +3400,16 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
             /* Also try recursively inferred types for the operator */
             if (nop == 0 && op->kind == ATOM_EXPR) {
                 Atom **recur_types = NULL;
-                nop = get_atom_types(s, a, op, &recur_types);
+                nop = get_atom_types_mode(s, a, op, &recur_types, true,
+                                          budget);
                 /* Filter: only keep function types */
                 op_types = NULL;
                 uint32_t nfunc = 0;
                 for (uint32_t ri = 0; ri < nop; ri++) {
+                    if (!type_inference_step(budget, 1)) break;
                     if (recur_types[ri]->kind == ATOM_EXPR && recur_types[ri]->expr.len >= 2 &&
                         atom_is_symbol_id(recur_types[ri]->expr.elems[0], g_builtin_syms.arrow)) {
+                        if (!type_inference_can_add(budget, nfunc)) break;
                         op_types = cetta_realloc(op_types, sizeof(Atom *) * (nfunc + 1));
                         op_types[nfunc++] = recur_types[ri];
                     }
@@ -3300,6 +3418,7 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                 nop = nfunc;
             }
             for (uint32_t oi = 0; oi < nop; oi++) {
+                if (!type_inference_step(budget, 1)) break;
                 Atom *ft = op_types[oi];
                 /* Check if it's a function type (-> ...) */
                 if (ft->kind == ATOM_EXPR && ft->expr.len >= 2 &&
@@ -3316,6 +3435,10 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     bindings_init(&tb);
                     bool all_ok = true;
                     for (CettaExprIndex ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
+                        if (!type_inference_step(budget, 1)) {
+                            all_ok = false;
+                            break;
+                        }
                         /* Apply accumulated bindings to resolve type vars from earlier args */
                         Atom *arg_type_decl =
                             bindings_apply_if_vars(&tb, &scratch, fresh_ft->expr.elems[ai + 1]);
@@ -3325,7 +3448,9 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                             continue;
                         }
                         Atom **atypes = NULL;
-                        uint32_t nat = get_atom_types(s, a, atom->expr.elems[ai + 1], &atypes);
+                        uint32_t nat = get_atom_types_mode(
+                            s, a, atom->expr.elems[ai + 1], &atypes, true,
+                            budget);
                         bool found = false;
                         SearchContext trial_context;
                         if (!search_context_init(&trial_context, &tb, &scratch)) {
@@ -3338,6 +3463,7 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                             return 0;
                         }
                         for (uint32_t ti = 0; ti < nat; ti++) {
+                            if (!type_inference_step(budget, 1)) break;
                             ChoicePoint point = search_context_save(&trial_context);
                             if (match_types_builder(atypes[ti], arg_type_decl,
                                                     search_context_builder(&trial_context))) {
@@ -3359,6 +3485,11 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                            then normalize arithmetic in type expressions */
                         Atom *concrete_ret = normalize_type_expr(
                             &scratch, bindings_apply_if_vars(&tb, &scratch, fresh_ret));
+                        if (!type_inference_can_add(budget, count)) {
+                            bindings_free(&tb);
+                            arena_reset(&scratch, scratch_mark);
+                            break;
+                        }
                         if (count >= 1) {
                             types = cetta_realloc(types, sizeof(Atom *) * (count + 1));
                         } else {
@@ -3373,18 +3504,24 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
             arena_free(&scratch);
             free(op_types);
             /* If we tried function types but none matched → type error (empty) */
-            if (tried_func_type && count == 0) {
+            if (tried_func_type && count == 0 &&
+                (!budget || budget->complete)) {
                 *out_types = NULL;
                 return 0;  /* empty = ill-typed */
             }
         }
-        if (count == 0 && atom->expr.len > 0 && !tried_func_type)
-            count = infer_tuple_value_types(s, a, atom, &types);
+        if (count == 0 && atom->expr.len > 0 && !tried_func_type &&
+            (!budget || budget->complete))
+            count = infer_tuple_value_types(s, a, atom, &types, budget);
         break;
     }
 
     /* If no types found, return [%Undefined%] */
-    if (count == 0) {
+    if (count == 0 && (!budget || budget->complete)) {
+        if (!type_inference_can_add(budget, count)) {
+            *out_types = NULL;
+            return 0;
+        }
         types = cetta_malloc(sizeof(Atom *));
         types[0] = atom_undefined_type(a);
         count = 1;
@@ -3395,7 +3532,13 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
 
 uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types) {
-    return get_atom_types_mode(s, a, atom, out_types, true);
+    return get_atom_types_mode(s, a, atom, out_types, true, NULL);
+}
+
+uint32_t get_atom_types_budgeted(Space *s, Arena *a, Atom *atom,
+                                 Atom ***out_types,
+                                 CettaTypeInferenceBudget *budget) {
+    return get_atom_types_mode(s, a, atom, out_types, true, budget);
 }
 
 uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
@@ -3403,7 +3546,14 @@ uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
     /* Structural checking ignores only an expression subject's own top-level
        annotation. Head and argument inference still uses the shared engine. */
     return get_atom_types_mode(s, a, atom, out_types,
-                               !(atom && atom->kind == ATOM_EXPR));
+                               !(atom && atom->kind == ATOM_EXPR), NULL);
+}
+
+uint32_t get_atom_types_structural_budgeted(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types,
+    CettaTypeInferenceBudget *budget) {
+    return get_atom_types_mode(s, a, atom, out_types,
+                               !(atom && atom->kind == ATOM_EXPR), budget);
 }
 
 /* ── Equation Query ─────────────────────────────────────────────────────── */
