@@ -1,0 +1,190 @@
+Cost-rho causal receipt
+=======================
+
+Date: 2026-07-16
+CeTTa branch: cetta-rho-cost-20260716
+Base revision: 3697fc9b5995c055b8e0b94652e41ef19bf4232a
+Status: pure cost-rho located-purse implementation
+
+
+Canonical object
+================
+
+The primary account of one pure cost-rho run is a finite, located, measured
+pomset of firing occurrences.  It is not a list modulo permutations and it is
+not a set of distinct costs.
+
+Each event has:
+
+* an occurrence identity;
+* one consumption arc for every consumed resource occurrence that was produced
+  by an earlier firing;
+* a nonempty finite collection of funding contributions;
+* a raw spend equal to the multiset sum of those contributions.
+
+A funding contribution is a pair of an opaque funding-surface identity and a
+raw signature multiset.  Funding surfaces and signatures are different types.
+The runtime emits one contribution for every selected located purse head, so a
+split cover retains several contributions without aggregating occurrences.
+
+The causal order is the reflexive-transitive closure of the support of the
+consumption multigraph.  Arc multiplicity is retained separately.  Independence
+is causal incomparability and is never supplied as an extra relation.
+
+For a finite event region U, the operational measure is
+
+  mu(U) = sum(event in U, rawSpend(event))
+
+in the free commutative monoid of cost signatures.  Effort-object balances,
+quantale totals, and future numerical readings are folds of this measure.
+
+
+CeTTa surface and encoding
+==========================
+
+`lib/lts/rho/cost.metta` exposes:
+
+  (lts:rho:cost:causal-trace STATE)
+  (lts:rho:cost:causal-prefix REDUCTION-FUEL SEARCH-FUEL STATE)
+
+It selects one canonical pure cost-rho run and returns:
+
+  (lts:rho:cost:receipt
+    (EVENT ...)
+    FINAL-STATE)
+
+Each event has the form:
+
+  (lts:rho:cost:event
+    EVENT-ID
+    (CAUSE-ID ...)
+    ((lts:rho:cost:funding FUNDING-SURFACE RAW-CONTRIBUTION) ...)
+    RAW-SPEND)
+
+The ordered event sequence is a presentation of the pomset, not the primary
+semantic object.  Repeated cause IDs denote different consumed occurrences
+from the same producer and are not collapsed.
+
+The bounded form reports `quiescent`, `fuel-exhausted`, or `search-exhausted`.
+Quiescence is emitted only after exhaustive candidate and cover search proves
+there is no funded successor.  Reduction fuel is checked first, so zero firing
+allowance performs no cover search and reports fuel exhaustion.  Causal records
+are output-only, so there is no causal-record parser boundary.  Malformed input
+is checked at the existing cost-term boundary.
+
+
+Operational provenance
+======================
+
+The traced machine maintains an internal sidecar for each normalized top-level
+cost component:
+
+  (term, optional producing EventId)
+
+Initial components have no producer.  Candidate COMM firings are obtained from
+the existing cost reducer, augmented internally with the exact participant
+component indices, selected located-purse indices, and contractum.  The trace
+selects a candidate before the existing `(residual, spent)` frontier
+deduplication.
+
+For each selected firing:
+
+1. append the producer of every consumed top-level participant, when present;
+2. append the producer of every selected purse occurrence, when present;
+3. retain repeated producers in the cause list;
+4. assign the fresh event ID to every top-level component of the contractum;
+5. assign the fresh event ID to every exposed selected purse tail;
+6. retain the producer of every untouched component;
+7. normalize and sort terms together with their sidecars;
+8. check that erasing the sidecar gives exactly the existing reducer result.
+
+The local EventId backend is a monotone per-trace counter.  It makes every
+cause smaller than its effect and therefore makes emission order a linear
+extension by construction.  Identity is never inferred from term equality,
+signature equality, normalized residual state, or funding location.
+
+
+Purse serialization
+===================
+
+A selected stack tail is an output of the consuming event.  Consequently, a
+later firing funded by that tail has the previous spend as a cause.  Spending
+from one stack is therefore serialized even when the funded processes are
+otherwise unrelated.
+
+Withdrawals from one purse lineage are ordered, while purses at independent
+surfaces do not acquire a false causal edge from emission order.  A future
+change from stacks to token multisets would be a separate semantic decision and
+would require token-occurrence provenance.
+
+
+Event identity upgrade seam
+===========================
+
+The Lean emission type is polymorphic in its EventId, and the semantic receipt
+is polymorphic in its event carrier.  Receipt labels, arc multiplicities,
+ranks, raw measures, and downstream valuations are invariant under injective
+identity relabeling.
+
+A content digest alone is not a valid EventId: equal-content firings are
+distinct occurrences and must not collapse.  If receipts cross a trust
+boundary, the designated secure backend is a Merkle-DAG identity committing to
+an occurrence discriminator, the canonically serialized event label, and its
+parent cause identities.  Canonical serialization and collision resistance are
+external protocol obligations and are deliberately not assumed by the pure
+receipt theory.
+
+
+Lean semantics and valuations
+==============================
+
+The owned modules are:
+
+* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Receipt.lean`;
+* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Valuation.lean`;
+* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Examples.lean`.
+
+`CausalReceipt` requires a finite event carrier.  Its direct arcs carry natural
+multiplicity and a rank certificate; the generated reachability relation is
+proved to be a partial order.
+
+`ReceiptEmission.Valid` requires unique IDs and requires every cause ID to name
+an earlier record.  Every valid emission constructs a receipt on its occurrence
+positions.  Construction preserves event count, labels, arc multiplicity, and
+the exact fold of emitted raw spends.  Emission order is proved to linearize
+causal order.
+
+Additive and multiplicative valuations are constructed from the universal fold
+of the free signature multiset.  Their sequential, parallel, relabeling, and
+per-location restriction laws are theorems derived from the folds.  No
+valuation-law record is assumed.  Effort-object remaining budgets and quantale
+totals are downstream definitions over those constructed valuations.
+
+
+Executable boundary
+===================
+
+The CeTTa fixtures pin:
+
+* a two-COMM causal chain, including two retained arcs from one producer;
+* a produced split-endpoint COMM, including both endpoint arcs and its purse-tail arc;
+* two independent firings with no false edge from emission order;
+* two equal-spend firings preserved as distinct events;
+* actual opaque funding surfaces, including split covers;
+* quiescent and malformed cost-term inputs;
+* zero-fuel and search-exhaustion separation;
+* a 20-purse, 10-head combinatorial cover without eager materialization.
+
+These fixtures check the concrete encoding and reducer behavior.  They are not
+a universal theorem relating compiled C to Lean.  Such a theorem still requires
+checked extraction or a systematic cross-language semantics bridge.
+
+
+Deferred join
+=============
+
+Rhometa payload evaluation remains outside the cost grammar.  Pricing it is
+gated on spaces-as-channels: ownership, mobility, isolation, and true parallel
+space semantics must exist before their events can be priced.  The future join
+adds payload evaluation as a priced ownership/computation event without changing
+the causal-receipt carrier.

@@ -1740,7 +1740,10 @@ static bool add_atoms_public_surface_has_only_default(Space *s);
 static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (!head || head->kind != ATOM_SYMBOL)
         return false;
-    if (head->sym_id == g_builtin_syms.lib_gparse_inference_presentation)
+    if (head->sym_id == g_builtin_syms.lib_gparse_inference_presentation ||
+        head->sym_id == g_builtin_syms.lib_gparse_inference_dag ||
+        head->sym_id == g_builtin_syms.lib_gparse_inference_dag_presentation ||
+        head->sym_id == g_builtin_syms.lib_gparse_inference_dag_proof)
         return true;
     if (head->sym_id == g_builtin_syms.minimal_foldl_llist &&
         (arg_index == 0 || arg_index == 4))

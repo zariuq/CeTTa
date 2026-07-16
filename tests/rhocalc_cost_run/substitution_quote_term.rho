@@ -1,1 +1,1 @@
-{for ($m <- pay) {{$m!(())}cont}}alice | {pay!(() )}bob | alice : () | bob : ()
+{for ($m <- pay) {{$m!(())}cont}}alice | {pay!(() )}bob | purse pay {alice : ()} | purse pay {bob : ()}
