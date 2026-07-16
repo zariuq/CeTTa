@@ -462,8 +462,10 @@
 ;   (LeafC tok left right)              admitted leaf (VarD/LexD) spanning [left,right)
 ;   (EpsC)                              empty-production witness
 ;   (NodeC label lhs left right kids)   production witness with full RHS kids
-(= (lp-len Nil) 0)
-(= (lp-len (Cons $x $r)) (+ 1 (lp-len $r)))
+(= (lp-len $xs) (lp-len-acc $xs 0))
+(= (lp-len-acc Nil $n) $n)
+(= (lp-len-acc (Cons $x $r) $n)
+   (lp-len-acc $r (+ $n 1)))
 (= (lp-tok-at Nil $i) (Err oob))
 (= (lp-tok-at (Cons $x $r) $i)
    (if (== $i 0) $x (lp-tok-at $r (- $i 1))))

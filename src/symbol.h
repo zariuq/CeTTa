@@ -220,7 +220,11 @@ typedef struct {
     X(isinf_math, "isinf-math") \
     /* ── Grounded internal helpers ── */ \
     X(grounded_placeholder, "__grounded__") \
+    X(llist_nil, "LNil") \
+    X(llist_cons, "LCons") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
+    X(minimal_foldl_llist, "_minimal-foldl-llist") \
+    X(minimal_space_contains_exact, "_minimal-space-contains-exact") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
     X(cetta_surface_available, "__cetta_surface-available") \
     /* ── Python FFI ── */ \
@@ -256,6 +260,7 @@ typedef struct {
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \
     X(lib_lts_rho_cost_steps, "__cetta_lib_lts_rho_cost_steps") \
+    X(lib_gparse_inference_presentation, "__cetta_lib_gparse_inference_presentation") \
     X(lib_rhometta_run, "__cetta_lib_rhometta_run") \
     X(lib_rhometta_transitions, "__cetta_lib_rhometta_transitions") \
     X(lib_mork_space_new, "__cetta_lib_mork_space_new") \

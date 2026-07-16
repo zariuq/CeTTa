@@ -1977,14 +1977,9 @@ static bool atom_deep_copy_memo_store(AtomDeepCopyMemo *memo,
     }
 }
 
-static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share,
-                                 AtomDeepCopyMemo *memo) {
-    if (!dst || !src)
-        return NULL;
-    Atom *memoized = atom_deep_copy_memo_lookup(memo, src);
-    if (memoized)
-        return memoized;
+static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
     Atom *out = NULL;
+
     switch (src->kind) {
     case ATOM_SYMBOL:
         out = atom_symbol_id(dst, src->sym_id);
@@ -2032,23 +2027,105 @@ static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share,
             break;
         }
         break;
-    case ATOM_EXPR: {
-        if (src->expr.len > 0 &&
-            !cetta_expr_len_mul_fits_size(src->expr.len, sizeof(Atom *)))
-            cetta_oom(SIZE_MAX);
-        Atom **elems = arena_alloc(dst, (size_t)src->expr.len * sizeof(Atom *));
-        for (CettaExprIndex i = 0; i < src->expr.len; i++)
-            elems[i] = atom_deep_copy_impl(dst, src->expr.elems[i], share, memo);
-        out = share ? atom_expr_shared(dst, elems, src->expr.len)
-                    : atom_expr(dst, elems, src->expr.len);
+    case ATOM_EXPR:
         break;
-    }
     }
     if (!out)
         out = atom_symbol(dst, "?");
-    if (!atom_deep_copy_memo_store(memo, src, out))
-        return NULL;
     return out;
+}
+
+typedef struct {
+    Atom *src;
+    Atom **elems;
+    CettaExprIndex next;
+} AtomDeepCopyFrame;
+
+static Atom *atom_deep_copy_impl(Arena *dst, Atom *src, bool share,
+                                 AtomDeepCopyMemo *memo) {
+    AtomDeepCopyFrame *stack = NULL;
+    size_t stack_len = 0;
+    size_t stack_cap = 0;
+    Atom *result = NULL;
+    Atom *memoized;
+
+    if (!dst || !src)
+        return NULL;
+    memoized = atom_deep_copy_memo_lookup(memo, src);
+    if (memoized)
+        return memoized;
+    if (src->kind != ATOM_EXPR) {
+        result = atom_deep_copy_leaf(dst, src, share);
+        if (!atom_deep_copy_memo_store(memo, src, result))
+            return NULL;
+        return result;
+    }
+
+#define PUSH_COPY_FRAME(source_atom) do { \
+    Atom *copy_source = (source_atom); \
+    if (copy_source->expr.len > 0 && \
+        !cetta_expr_len_mul_fits_size(copy_source->expr.len, sizeof(Atom *))) \
+        cetta_oom(SIZE_MAX); \
+    if (stack_len == stack_cap) { \
+        size_t next_cap = stack_cap ? stack_cap * 2u : 64u; \
+        if (next_cap < stack_cap || \
+            next_cap > SIZE_MAX / sizeof(AtomDeepCopyFrame)) \
+            cetta_oom(SIZE_MAX); \
+        stack = cetta_realloc(stack, \
+                              next_cap * sizeof(AtomDeepCopyFrame)); \
+        stack_cap = next_cap; \
+    } \
+    stack[stack_len++] = (AtomDeepCopyFrame) { \
+        .src = copy_source, \
+        .elems = copy_source->expr.len \
+            ? arena_alloc(dst, (size_t)copy_source->expr.len * sizeof(Atom *)) \
+            : NULL, \
+        .next = 0, \
+    }; \
+} while (0)
+
+    PUSH_COPY_FRAME(src);
+    while (stack_len > 0) {
+        AtomDeepCopyFrame *frame = &stack[stack_len - 1u];
+
+        if (frame->next < frame->src->expr.len) {
+            Atom *child = frame->src->expr.elems[frame->next];
+            Atom *child_copy = atom_deep_copy_memo_lookup(memo, child);
+
+            if (child_copy) {
+                frame->elems[frame->next++] = child_copy;
+                continue;
+            }
+            if (child->kind == ATOM_EXPR) {
+                PUSH_COPY_FRAME(child);
+                continue;
+            }
+            child_copy = atom_deep_copy_leaf(dst, child, share);
+            if (!atom_deep_copy_memo_store(memo, child, child_copy)) {
+                free(stack);
+                return NULL;
+            }
+            frame = &stack[stack_len - 1u];
+            frame->elems[frame->next++] = child_copy;
+            continue;
+        }
+
+        result = share
+            ? atom_expr_shared(dst, frame->elems, frame->src->expr.len)
+            : atom_expr(dst, frame->elems, frame->src->expr.len);
+        if (!atom_deep_copy_memo_store(memo, frame->src, result)) {
+            free(stack);
+            return NULL;
+        }
+        stack_len--;
+        if (stack_len > 0) {
+            frame = &stack[stack_len - 1u];
+            frame->elems[frame->next++] = result;
+        }
+    }
+    free(stack);
+#undef PUSH_COPY_FRAME
+    return result;
 }
 
 Atom *atom_deep_copy(Arena *dst, Atom *src) {

@@ -7,6 +7,7 @@
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
+#include "foreign.h"
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "rhocalc_core.h"
@@ -1143,6 +1144,8 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cetta_library_context_free(cleanup->libraries);
         cleanup->libraries_initialized = false;
     }
+    cetta_foreign_global_shutdown();
+    eval_profiled_type_cache_free_for_current_thread();
 
     if (cleanup->space_initialized) {
         space_free(cleanup->space);

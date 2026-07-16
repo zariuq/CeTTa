@@ -253,6 +253,8 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.if_equal ||
            id == g_builtin_syms.sealed_text ||
            id == g_builtin_syms.minimal_foldl_atom ||
+           id == g_builtin_syms.minimal_foldl_llist ||
+           id == g_builtin_syms.minimal_space_contains_exact ||
            id == g_builtin_syms.collapse_add_next ||
            id == g_builtin_syms.foldl_atom_in_space ||
            id == g_builtin_syms.op_and || id == g_builtin_syms.op_or ||
@@ -858,6 +860,16 @@ static Atom *grounded_collapse_add_next(Arena *a, Atom *head, Atom **args, uint3
     return atom_expr(a, elems, list->expr.len + 1);
 }
 
+static Atom *grounded_space_contains_exact(Arena *a, Atom *head,
+                                           Atom **args, uint32_t nargs) {
+    if (nargs != 2)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
+        return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                     atom_symbol(a, "SpaceType"), args[0]);
+    return atom_bool(a, space_contains_exact((Space *)args[0]->ground.ptr, args[1]));
+}
+
 static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 6)
         return grounded_incorrect_arity(a, head, args, nargs);
@@ -881,15 +893,17 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     Atom *op_expr = args[4];
     Atom *space = args[5];
 
+    Atom *head_item;
+    Atom *tail;
     if (list->expr.len == 0)
         return atom_expr2(a, atom_symbol(a, "return"), init);
-
-    Atom *head_item = list->expr.elems[0];
-    Atom *tail = atom_expr(a, list->expr.elems + 1, list->expr.len - 1);
+    head_item = list->expr.elems[0];
+    tail = atom_expr(a, list->expr.elems + 1, list->expr.len - 1);
 
     Atom *step_op = cetta_fold_bind_step_atom(a, op_expr,
                                               acc_var->sym_id, init,
                                               item_var->sym_id, head_item);
+
 
     char tmp_name[256];
     snprintf(tmp_name, sizeof(tmp_name), "$__foldl_step#%u", fresh_var_suffix());
@@ -1037,6 +1051,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     if (head_id == g_builtin_syms.collapse_add_next)
         return grounded_collapse_add_next(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.minimal_space_contains_exact)
+        return grounded_space_contains_exact(a, head, args, nargs);
 
     if (head_id == g_builtin_syms.minimal_foldl_atom ||
         head_id == g_builtin_syms.foldl_atom_in_space)

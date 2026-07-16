@@ -290,6 +290,7 @@ tests/test_lib_parse_shared_cert_regression.metta	he	metta	he-extended	main	nati
 tests/test_list_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_he_surface.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_mi_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_rho_cost_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_rho_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_surface.metta	he	metta	he-extended	main	native	test	golden	-
@@ -323,6 +324,7 @@ tests/test_min_max_atom.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_min_max_rational_exact_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_minimal_foldl_atom_bad_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_minimal_foldl_atom_errors.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_minimal_foldl_llist_internal.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_mm2_kiss_add_remove.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mm2_kiss_fractal_priority.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mm2_kiss_inline_basic.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
@@ -513,6 +515,7 @@ tests/test_top_level_output_order.metta	he	metta	he-extended	main	native	test	go
 tests/test_trace_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_trace_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_tuple_head_effect_probe_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_type_atom_directionality.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_type_cast.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_type_match_builder_rollback_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_types.metta	he	metta	he-extended	main	native	test	golden	-

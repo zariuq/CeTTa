@@ -1,4 +1,4 @@
-!(import! &self lib_parse)
+!(import! &self gparse)
 !(import! &self fs)
 !(import! &self str)
 !(import! &self text_stream)
@@ -571,9 +571,20 @@
       (((Error $call $why) (Rejected (mm-lex fs-read $path $why)))
        ($text (mm-lex-string $text)))))
 
+(= (mm-grammar-source-path)
+   (gparse:repo-path "tests/support/lib_parse_metamath_grammar_v0.metta"))
+
+(= (mm-generalized-class $def $start $toks)
+   (case (gparse:parse-class
+           (mm-grammar-source-path) $def $start $toks)
+     ((Unique Unique)
+      (Ambiguous Ambiguous)
+      (NoParse NoParse)
+      ($o BadParse))))
+
 (= (mm-parse-stmt-class $text)
    (case (mm-lex-string $text)
-     (((Ok $toks) (lp-parse-class (mm-g) stmt $toks))
+     (((Ok $toks) (mm-generalized-class mm-g stmt $toks))
       ($o LexError))))
 
 (= (mm-parse-stmt $text)
@@ -588,19 +599,20 @@
 
 (= (mm-stmt-prefix-class $text $count)
    (case (mm-lex-string $text)
-     (((Ok $toks) (lp-parse-class (mm-g) stmt (mm-take $count $toks)))
+     (((Ok $toks)
+       (mm-generalized-class mm-g stmt (mm-take $count $toks)))
       ($o LexError))))
 
 ; --- db parsing + bounded summary for raw demo files ---
 
 (= (mm-db-parse-class $path)
    (case (mm-lex-file $path)
-     (((Ok $toks) (lp-parse-class (mm-db-g) db $toks))
+     (((Ok $toks) (mm-generalized-class mm-db-g db $toks))
       ($o LexError))))
 
 (= (mm-db-parse-class-text $text)
    (case (mm-lex-string $text)
-     (((Ok $toks) (lp-parse-class (mm-db-g) db $toks))
+     (((Ok $toks) (mm-generalized-class mm-db-g db $toks))
       ($o LexError))))
 
 (= (mm-db-lex-count-text $text)
@@ -625,7 +637,8 @@
 
 (= (mm-db-prefix-class $path $count)
    (case (mm-lex-file $path)
-     (((Ok $toks) (lp-parse-class (mm-db-g) db (mm-take $count $toks)))
+     (((Ok $toks)
+       (mm-generalized-class mm-db-g db (mm-take $count $toks)))
       ($o LexError))))
 
 (= (mm-leaf-raw (Lf (Lex $cls $raw))) $raw)
@@ -637,16 +650,21 @@
        (Cons (mm-leaf-raw $x) (mm-sym-raws $xs)))
       ($o Nil))))
 
-(= (mm-count Nil) 0)
-(= (mm-count (Cons $x $xs)) (+ 1 (mm-count $xs)))
+(= (mm-count $xs) (mm-count-acc $xs 0))
+(= (mm-count-acc Nil $n) $n)
+(= (mm-count-acc (Cons $x $xs) $n)
+   (mm-count-acc $xs (+ $n 1)))
 
 (= (mm-take $n $xs)
    (if (<= $n 0)
        Nil
-       (case $xs
-         ((Nil Nil)
-          ((Cons $x $rest) (Cons $x (mm-take (- $n 1) $rest)))
-          ($o Nil)))))
+       (mm-take-rev $n $xs Nil)))
+
+(= (mm-take-rev $n Nil $rev) (rev $rev))
+(= (mm-take-rev $n (Cons $x $rest) $rev)
+   (if (<= $n 0)
+       (rev $rev)
+       (mm-take-rev (- $n 1) $rest (Cons $x $rev))))
 
 (= (mm-canon-const $raw)
    (if (== $raw "(") "lp"

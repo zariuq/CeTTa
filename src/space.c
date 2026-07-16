@@ -2499,7 +2499,12 @@ bool space_remove(Space *s, Atom *atom) {
         return true;
     if (!atom)
         return false;
-    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP)
+    /* A live PathMap bridge is the primary store and must not be bypassed by
+       mutating its native projection.  When the bridge has explicitly fallen
+       back as unavailable, however, the native shadow is the authoritative
+       store; preserve native exact-then-unique-alpha removal semantics there. */
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        !s->match_backend.pathmap.bridge.bridge_unavailable)
         return false;
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
@@ -3803,5 +3808,30 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
     ensure_eq_index(s);
     if (s->native.eq_idx.wildcard.len > 0)
         return true;
-    return s->native.eq_idx.buckets[symbol_hash(head)].len > 0;
+    EqBucket *bucket = &s->native.eq_idx.buckets[symbol_hash(head)];
+    if (bucket->len == 0)
+        return false;
+    if (!bucket->mixed_heads)
+        return bucket->head == head;
+
+    for (CettaIndex i = 0; i < bucket->len; i++) {
+        CettaIndex atom_idx = bucket->atom_indices[i];
+        if (atom_idx >= s->native.len)
+            continue;
+        AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
+        AtomId lhs_id = CETTA_ATOM_ID_NONE;
+        AtomId rhs_id = CETTA_ATOM_ID_NONE;
+        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            if (eq_head_symbol_id(s, lhs_id) == head)
+                return true;
+            continue;
+        }
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (space_equation_children_at_id(s, equation_id, &lhs, &rhs) &&
+            eq_head_symbol(lhs) == head) {
+            return true;
+        }
+    }
+    return false;
 }

@@ -161,9 +161,10 @@ bool bindings_has_loop(const Bindings *b);
 
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
 
-/* Match two types. %Undefined% and Atom are wildcards (always match).
-   Otherwise delegates to match_atoms. Returns true if types match. */
-bool match_types(Atom *type1, Atom *type2, Bindings *b);
-bool match_types_builder(Atom *type1, Atom *type2, BindingsBuilder *bb);
+/* Match expected and actual types. %Undefined% is consistent in either
+   position; Atom is the expected-side value top. Otherwise delegates to
+   match_atoms. */
+bool match_types(Atom *expected, Atom *actual, Bindings *b);
+bool match_types_builder(Atom *expected, Atom *actual, BindingsBuilder *bb);
 
 #endif /* CETTA_MATCH_H */

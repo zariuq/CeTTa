@@ -11,6 +11,7 @@ typedef struct CettaForeignRuntime CettaForeignRuntime;
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void);
 void cetta_foreign_runtime_free(CettaForeignRuntime *rt);
+void cetta_foreign_global_shutdown(void);
 
 const char *cetta_module_format_name(CettaModuleFormatKind kind);
 const char *cetta_foreign_backend_name(CettaForeignBackendKind kind);
