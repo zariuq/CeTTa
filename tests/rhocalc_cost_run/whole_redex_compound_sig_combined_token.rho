@@ -1,1 +1,1 @@
-{{for ($m <- pay) {{0}cont} | pay!({0}payload)}}alice * bob | alice * bob : ()
+{{for ($m <- pay) {{0}cont} | pay!({0}payload)}}alice * bob | purse pay {alice * bob : ()}

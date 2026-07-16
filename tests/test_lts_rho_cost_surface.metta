@@ -9,11 +9,14 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
   (((lts:rho:cost:step
       (rho:cost:sig-mul alice bob)
-      (rho:cost:signed rho:nil cont)))))
+      (rho:cost:par
+        (rho:cost:purse pay rho:cost:stack-empty)
+        (rho:cost:purse pay rho:cost:stack-empty)
+        (rho:cost:signed rho:nil cont))))))
 
 !(assertEqual
   (collapse
@@ -24,8 +27,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
   (collapse
     (__cetta_lib_lts_rho_cost_steps
       (rho:cost:par
@@ -34,8 +37,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty)))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))))
 
 !(assertEqualToResult
   (lts:rho:cost:step-cost
@@ -60,8 +63,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty)))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
     (lts:rho:cost:step-cost $step))
   ((rho:cost:sig-mul alice bob)))
 
@@ -74,10 +77,13 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty)))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
     (lts:rho:cost:step-state $step))
-  ((rho:cost:signed rho:nil cont)))
+  ((rho:cost:par
+     (rho:cost:purse pay rho:cost:stack-empty)
+     (rho:cost:purse pay rho:cost:stack-empty)
+     (rho:cost:signed rho:nil cont))))
 
 !(assertEqualToResult
   (collapse
@@ -89,11 +95,21 @@
               (rho:recv pay $m (rho:cost:signed rho:nil cont))
               (rho:send pay (rho:cost:signed rho:nil payload)))
             (rho:cost:sig-mul bob alice))
-          (rho:cost:stack-cons alice rho:cost:stack-empty)
-          (rho:cost:stack-cons bob rho:cost:stack-empty)))
-      (= $state (rho:cost:signed rho:nil cont))))
-  (((= (rho:cost:signed rho:nil cont)
-       (rho:cost:signed rho:nil cont)))))
+          (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+          (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
+      (= $state
+        (rho:cost:par
+          (rho:cost:purse pay rho:cost:stack-empty)
+          (rho:cost:purse pay rho:cost:stack-empty)
+          (rho:cost:signed rho:nil cont)))))
+  (((= (rho:cost:par
+          (rho:cost:purse pay rho:cost:stack-empty)
+          (rho:cost:purse pay rho:cost:stack-empty)
+          (rho:cost:signed rho:nil cont))
+        (rho:cost:par
+          (rho:cost:purse pay rho:cost:stack-empty)
+          (rho:cost:purse pay rho:cost:stack-empty)
+          (rho:cost:signed rho:nil cont))))))
 
 !(assertEqual
   (collapse
@@ -104,8 +120,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
   (collapse
     (let $step
       (lts:rho:cost:steps
@@ -115,8 +131,8 @@
               (rho:recv pay $m (rho:cost:signed rho:nil cont))
               (rho:send pay (rho:cost:signed rho:nil payload)))
             (rho:cost:sig-mul bob alice))
-          (rho:cost:stack-cons alice rho:cost:stack-empty)
-          (rho:cost:stack-cons bob rho:cost:stack-empty)))
+          (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+          (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
       (lts:rho:cost:step-state $step))))
 
 !(assertEqualToResult
@@ -128,8 +144,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
   (()))
 
 !(assertEqualToResult
@@ -141,8 +157,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
   (()))
 
 !(assertEqual
@@ -154,8 +170,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
   (collapse
     (lts:trace-2 lts:rho:cost:transitions
       (rho:cost:par
@@ -164,8 +180,8 @@
             (rho:recv pay $m (rho:cost:signed rho:nil cont))
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty)))))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))))
 
 !(assertEqualToResult
   (lts:is-normal-form lts:rho:cost:transitions
@@ -175,8 +191,8 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)
-      (rho:cost:stack-cons bob rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+      (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
   (False))
 
 !(assertEqual
@@ -187,8 +203,8 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)
-      (rho:cost:stack-cons bob rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+      (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
   (lts:is-normal-form lts:rho:cost:transitions
     (rho:cost:par
       (rho:cost:signed
@@ -196,8 +212,8 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)
-      (rho:cost:stack-cons bob rho:cost:stack-empty))))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+      (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
 
 !(assertEqualToResult
   (lts:is-can-step lts:rho:cost:transitions
@@ -207,8 +223,8 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)
-      (rho:cost:stack-cons bob rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+      (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
   (True))
 
 !(assertEqual
@@ -219,8 +235,8 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)
-      (rho:cost:stack-cons bob rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+      (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
   (lts:is-can-step lts:rho:cost:transitions
     (rho:cost:par
       (rho:cost:signed
@@ -228,8 +244,8 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)
-      (rho:cost:stack-cons bob rho:cost:stack-empty))))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+      (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
 
 !(assertEqualToResult
   (collapse
@@ -247,20 +263,29 @@
         (rho:cost:signed
           (rho:recv out $n (rho:cost:signed rho:nil final))
           collector)
-        (rho:cost:stack-cons alice rho:cost:stack-empty)
-        (rho:cost:stack-cons bob rho:cost:stack-empty)
-        (rho:cost:stack-cons cont rho:cost:stack-empty)
-        (rho:cost:stack-cons collector rho:cost:stack-empty))))
+        (rho:cost:purse private (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse private (rho:cost:stack-cons bob rho:cost:stack-empty))
+        (rho:cost:purse out (rho:cost:stack-cons cont rho:cost:stack-empty))
+        (rho:cost:purse out (rho:cost:stack-cons collector rho:cost:stack-empty)))))
   ((((rho:cost:par
+       (rho:cost:purse out
+         (rho:cost:stack-cons cont rho:cost:stack-empty))
+       (rho:cost:purse out
+         (rho:cost:stack-cons collector rho:cost:stack-empty))
+       (rho:cost:purse private rho:cost:stack-empty)
+       (rho:cost:purse private rho:cost:stack-empty)
        (rho:cost:signed
          (rho:recv out $n (rho:cost:signed rho:nil final))
          collector)
        (rho:cost:signed
          (rho:send out (rho:cost:signed rho:nil done))
-         cont)
-       (rho:cost:stack-cons collector rho:cost:stack-empty)
-       (rho:cost:stack-cons cont rho:cost:stack-empty))
-      (rho:cost:signed rho:nil final)))))
+         cont))
+      (rho:cost:par
+       (rho:cost:purse out rho:cost:stack-empty)
+       (rho:cost:purse out rho:cost:stack-empty)
+       (rho:cost:purse private rho:cost:stack-empty)
+       (rho:cost:purse private rho:cost:stack-empty)
+       (rho:cost:signed rho:nil final))))))
 
 !(assertEqualToResult
   (lts:rho:cost:step-cost rho:poop)
@@ -360,8 +385,8 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)
-      (rho:cost:stack-cons bob rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+      (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
   (True))
 
 !(assertEqualToResult
@@ -372,7 +397,7 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))))
   (True))
 
 !(assertEqual
@@ -383,7 +408,7 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))))
   (lts:is-normal-form lts:rho:cost:transitions
     (rho:cost:par
       (rho:cost:signed
@@ -391,7 +416,7 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty))))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty)))))
 
 !(assertEqualToResult
   (lts:rho:cost:is-can-step
@@ -401,7 +426,7 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))))
   (False))
 
 !(assertEqual
@@ -412,7 +437,7 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty)))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))))
   (lts:is-can-step lts:rho:cost:transitions
     (rho:cost:par
       (rho:cost:signed
@@ -420,7 +445,7 @@
           (rho:recv pay $m (rho:cost:signed rho:nil cont))
           (rho:send pay (rho:cost:signed rho:nil payload)))
         (rho:cost:sig-mul bob alice))
-      (rho:cost:stack-cons alice rho:cost:stack-empty))))
+      (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty)))))
 
 !(assertEqualToResult
   (lts:rho:cost:steps rho:poop)
@@ -457,6 +482,87 @@
 !(assertEqual
   (lts:rho:cost:is-can-step (Error boom msg))
   (lts:is-can-step lts:rho:cost:transitions (Error boom msg)))
+
+; Raw stack data is never an ambient funding component.
+!(assertEqualToResult
+  (lts:rho:cost:steps
+    (rho:cost:stack-cons alice rho:cost:stack-empty))
+  ((Error
+    (lts:rho:cost:steps
+      (rho:cost:stack-cons alice rho:cost:stack-empty))
+    "raw cost stack must occur inside rho:cost:purse")))
+
+; Purse contents must have the stack sort.
+!(assertEqualToResult
+  (lts:rho:cost:steps (rho:cost:purse pay alice))
+  ((Error
+    (lts:rho:cost:steps (rho:cost:purse pay alice))
+    "cost token stack must be () or s : S")))
+
+; Correct authority at a non-near surface cannot fund.
+!(assertEqualToResult
+  (collapse
+    (lts:rho:cost:steps
+      (rho:cost:par
+        (rho:cost:signed
+          (rho:par
+            (rho:recv pay $m (rho:cost:signed rho:nil done))
+            (rho:send pay (rho:cost:signed rho:nil payload)))
+          alice)
+        (rho:cost:purse wrong
+          (rho:cost:stack-cons alice rho:cost:stack-empty)))))
+  (()))
+
+; A wrong authority at the correct surface cannot fund.
+!(assertEqualToResult
+  (collapse
+    (lts:rho:cost:steps
+      (rho:cost:par
+        (rho:cost:signed
+          (rho:par
+            (rho:recv pay $m (rho:cost:signed rho:nil done))
+            (rho:send pay (rho:cost:signed rho:nil payload)))
+          alice)
+        (rho:cost:purse pay
+          (rho:cost:stack-cons bob rho:cost:stack-empty)))))
+  (()))
+
+; Exact covers cannot gather heads across distinct surfaces.
+!(assertEqualToResult
+  (collapse
+    (lts:rho:cost:steps
+      (rho:cost:par
+        (rho:cost:signed
+          (rho:par
+            (rho:recv pay $m (rho:cost:signed rho:nil done))
+            (rho:send pay (rho:cost:signed rho:nil payload)))
+          (rho:cost:sig-mul alice bob))
+        (rho:cost:purse pay
+          (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse wrong
+          (rho:cost:stack-cons bob rho:cost:stack-empty)))))
+  (()))
+
+; Literal dequotation remains inert; only bound COMM substitution opens drop.
+!(assertEqualToResult
+  (collapse
+    (lts:rho:cost:steps
+      (rho:drop
+        (rho:quote (rho:cost:signed rho:nil payload)))))
+  (()))
+
+; Rhometa payload evaluation is outside the pure cost grammar.
+!(assertEqualToResult
+  (lts:rho:cost:steps
+    (rho:cost:signed
+      (rho:eval-payload (quote (+ 1 2)))
+      spend))
+  ((Error
+    (lts:rho:cost:steps
+      (rho:cost:signed
+        (rho:eval-payload (quote (+ 1 2)))
+        spend))
+    "pure cost-rho excludes rho:eval-payload")))
 
 !(assertEqualToResult
   (lts:rho:cost:steps)

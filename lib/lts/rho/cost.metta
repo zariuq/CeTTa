@@ -9,6 +9,8 @@
 ;   lts:rho:cost:transitions
 ;   lts:rho:cost:trace-2
 ;   lts:rho:cost:steps
+;   lts:rho:cost:causal-trace
+;   lts:rho:cost:causal-prefix
 ;   lts:rho:cost:step-cost
 ;   lts:rho:cost:step-state
 ;   lts:rho:cost:is-normal-form
@@ -17,6 +19,8 @@
 (: lts:rho:cost:transitions (-> Atom %Undefined%))
 (: lts:rho:cost:trace-2 (-> Atom %Undefined%))
 (: lts:rho:cost:steps (-> Atom %Undefined%))
+(: lts:rho:cost:causal-trace (-> Atom %Undefined%))
+(: lts:rho:cost:causal-prefix (-> Number Atom %Undefined%))
 (: lts:rho:cost:step-cost (-> Atom Atom))
 (: lts:rho:cost:step-state (-> Atom Atom))
 (: lts:rho:cost:is-normal-form (-> Atom Bool))
@@ -39,6 +43,19 @@
   (@params (
     (@param "Well-formed rhocalc cost-profile term")))
   (@return "Zero or more lts:rho:cost:step records"))
+
+(@doc lts:rho:cost:causal-trace
+  (@desc "Runs one canonical terminating pure cost-rho path and returns an occurrence-preserving causal receipt together with its final state. Each lts:rho:cost:event record contains a fresh local EventId, a list of producer EventIds for the exact participant and purse occurrences consumed, a nonempty list of lts:rho:cost:funding records carrying actual purse surfaces and head signatures, and the raw consumed signature. Cause lists retain repeated producer IDs. Events are selected before successor-state deduplication and emitted in causal order. Use lts:rho:cost:causal-prefix when termination is not known.")
+  (@params (
+    (@param "Well-formed pure rhocalc cost-profile term")))
+  (@return "(lts:rho:cost:receipt (<ordered event records>) <final cost-profile state>) or Error on malformed input"))
+
+(@doc lts:rho:cost:causal-prefix
+  (@desc "Runs at most the supplied number of canonical pure cost-rho firings and returns an occurrence-preserving causal receipt plus an explicit status. The result is (lts:rho:cost:prefix STATUS RECEIPT), where STATUS is lts:rho:cost:quiescent exactly when the residual has no accounted successor, and lts:rho:cost:fuel-exhausted when another successor exists but the bound has been consumed. A zero bound still checks the frontier, so exhaustion is never reported as quiescence.")
+  (@params (
+    (@param "Nonnegative machine-integer firing bound")
+    (@param "Well-formed pure rhocalc cost-profile term")))
+  (@return "(lts:rho:cost:prefix STATUS (lts:rho:cost:receipt (<ordered event records>) <residual cost-profile state>)) or Error on malformed input"))
 
 (@doc lts:rho:cost:step-cost
   (@desc "Extracts the consumed signature product from an accounted cost step. This is the cost-field projection for records emitted by lts:rho:cost:steps. Any non-step atom, including an Error atom, is rejected with an explicit \"expected lts:rho:cost:step record\" error rather than being propagated unchanged.")
@@ -73,6 +90,12 @@
 
 (= (lts:rho:cost:steps $state)
    (__cetta_lib_lts_rho_cost_steps $state))
+
+(= (lts:rho:cost:causal-trace $state)
+   (__cetta_lib_lts_rho_cost_causal_trace $state))
+
+(= (lts:rho:cost:causal-prefix $fuel $state)
+   (__cetta_lib_lts_rho_cost_causal_prefix $fuel $state))
 
 (= (lts:rho:cost:step-cost (lts:rho:cost:step $cost $state))
    $cost)
