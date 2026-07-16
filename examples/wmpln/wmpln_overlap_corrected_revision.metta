@@ -12,18 +12,18 @@
 ; overlap-corrected merge conservatively extends that guarded surface: when the
 ; guard allows, corrected revision agrees with raw revision; when the guard
 ; rejects, corrected revision remains available and avoids double-counting.
-(= (GuardedRevisionAllows? $stampA $stampB)
+(= (GuardedRevisionAllows $stampA $stampB)
    (== (StampIntersectionCount $stampA $stampB) 0))
 
-(= (PairwiseGuardedRevisionAllows3? $stampA $stampB $stampC)
-   (and (GuardedRevisionAllows? $stampA $stampB)
-        (and (GuardedRevisionAllows? $stampA $stampC)
-             (GuardedRevisionAllows? $stampB $stampC))))
+(= (PairwiseGuardedRevisionAllows3 $stampA $stampB $stampC)
+   (and (GuardedRevisionAllows $stampA $stampB)
+        (and (GuardedRevisionAllows $stampA $stampC)
+             (GuardedRevisionAllows $stampB $stampC))))
 
 ; Positive case: disjoint stamps have zero overlap, so corrected revision agrees
 ; with ordinary evidence-weight revision.
 !(assertEqual (StampIntersectionCount (1 2) (3 4)) 0)
-!(assertEqual (GuardedRevisionAllows? (1 2) (3 4)) True)
+!(assertEqual (GuardedRevisionAllows (1 2) (3 4)) True)
 !(assertEqual
    (Truth_OverlapCorrectedRevision (stv 0.6 0.9) (stv 0.4 0.8) (1 2) (3 4))
    (Truth_Revision (stv 0.6 0.9) (stv 0.4 0.8)))
@@ -36,7 +36,7 @@
 ; strength = 3.5 / 6.5 = 7/13
 ; confidence = 6.5 / 7.5 = 13/15
 !(assertEqual (StampIntersectionCount (1 2) (1 2)) 2)
-!(assertEqual (GuardedRevisionAllows? (1 2) (1 2)) False)
+!(assertEqual (GuardedRevisionAllows (1 2) (1 2)) False)
 !(assertEqual
    (Truth_OverlapCorrectedRevision (stv 0.6 0.9) (stv 0.4 0.8) (1 2) (1 2))
    (stv 0.5384615384615384 0.8666666666666667))
@@ -113,7 +113,7 @@
 ; source packets are pairwise disjoint, guarded list Revision succeeds and the
 ; overlap-corrected source-union merge agrees with raw additive Revision.
 ; Counts 2 + 1 + 2 = 5, so the all-positive aggregate is stv(1,5/6).
-!(assertEqual (PairwiseGuardedRevisionAllows3? (1 2) (3) (4 5)) True)
+!(assertEqual (PairwiseGuardedRevisionAllows3 (1 2) (3) (4 5)) True)
 !(assertEqual
    (Truth_OverlapCorrectedRevision
      (Truth_OverlapCorrectedRevision (stv 1.0 0.6666666666666666)
@@ -137,7 +137,7 @@
 ; Negative n-ary boundary: one shared source stamp means guarded list Revision
 ; would reject the aggregate, and overlap-corrected source-union merging no
 ; longer agrees with raw additive chaining.
-!(assertEqual (PairwiseGuardedRevisionAllows3? (1 2) (2 3) (4)) False)
+!(assertEqual (PairwiseGuardedRevisionAllows3 (1 2) (2 3) (4)) False)
 !(assertEqual
    (== (Truth_OverlapCorrectedRevision
          (Truth_OverlapCorrectedRevision (stv 1.0 0.6666666666666666)

@@ -263,6 +263,9 @@ typedef struct {
     X(lib_lts_rho_cost_causal_trace, "__cetta_lib_lts_rho_cost_causal_trace") \
     X(lib_lts_rho_cost_causal_prefix, "__cetta_lib_lts_rho_cost_causal_prefix") \
     X(lib_gparse_inference_presentation, "__cetta_lib_gparse_inference_presentation") \
+    X(lib_gparse_inference_dag, "__cetta_lib_gparse_inference_dag") \
+    X(lib_gparse_inference_dag_presentation, "__cetta_lib_gparse_inference_dag_presentation") \
+    X(lib_gparse_inference_dag_proof, "__cetta_lib_gparse_inference_dag_proof") \
     X(lib_rhometta_run, "__cetta_lib_rhometta_run") \
     X(lib_rhometta_transitions, "__cetta_lib_rhometta_transitions") \
     X(lib_mork_space_new, "__cetta_lib_mork_space_new") \
