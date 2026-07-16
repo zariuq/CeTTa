@@ -2059,33 +2059,32 @@ static bool is_space_value_type(Atom *atom) {
            is_named_symbol(atom->expr.elems[0], "Space");
 }
 
-bool match_types(Atom *type1, Atom *type2, Bindings *b) {
-    /* %Undefined% and Atom are wildcards — always match */
-    if (atom_is_symbol_id(type1, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(type1, g_builtin_syms.atom) ||
-        atom_is_symbol_id(type2, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(type2, g_builtin_syms.atom)) {
+bool match_types(Atom *expected, Atom *actual, Bindings *b) {
+    /* %Undefined% is dynamically consistent in either position. Atom is the
+       expected-side value top; an actual Atom still has to match normally. */
+    if (atom_is_symbol_id(expected, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(actual, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(expected, g_builtin_syms.atom)) {
         return true;
     }
-    if ((is_named_symbol(type1, "SpaceType") && is_space_value_type(type2)) ||
-        (is_named_symbol(type2, "SpaceType") && is_space_value_type(type1))) {
+    if ((is_named_symbol(expected, "SpaceType") && is_space_value_type(actual)) ||
+        (is_named_symbol(actual, "SpaceType") && is_space_value_type(expected))) {
         return true;
     }
-    return match_atoms(type1, type2, b);
+    return match_atoms(expected, actual, b);
 }
 
-bool match_types_builder(Atom *type1, Atom *type2, BindingsBuilder *bb) {
-    if (atom_is_symbol_id(type1, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(type1, g_builtin_syms.atom) ||
-        atom_is_symbol_id(type2, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(type2, g_builtin_syms.atom)) {
+bool match_types_builder(Atom *expected, Atom *actual, BindingsBuilder *bb) {
+    if (atom_is_symbol_id(expected, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(actual, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(expected, g_builtin_syms.atom)) {
         return true;
     }
-    if ((is_named_symbol(type1, "SpaceType") && is_space_value_type(type2)) ||
-        (is_named_symbol(type2, "SpaceType") && is_space_value_type(type1))) {
+    if ((is_named_symbol(expected, "SpaceType") && is_space_value_type(actual)) ||
+        (is_named_symbol(actual, "SpaceType") && is_space_value_type(expected))) {
         return true;
     }
-    return match_atoms_builder(type1, type2, bb);
+    return match_atoms_builder(expected, actual, bb);
 }
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */

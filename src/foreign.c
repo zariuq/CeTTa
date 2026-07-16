@@ -429,6 +429,21 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
     free(rt);
 }
 
+void cetta_foreign_global_shutdown(void) {
+    if (!Py_IsInitialized())
+        return;
+
+    g_python_callback_space = NULL;
+    Py_CLEAR(g_bridge_resolve);
+    Py_CLEAR(g_bridge_load_module);
+    Py_CLEAR(g_bridge_value_atom_class);
+    Py_CLEAR(g_bridge_operation_atom_class);
+    Py_CLEAR(g_bridge_cetta_atom_class);
+    Py_CLEAR(g_bridge_module);
+    g_python_bootstrap_ready = false;
+    (void)Py_FinalizeEx();
+}
+
 static PyObject *bridge_run(PyObject *self, PyObject *args) {
     (void)self;
     const char *text = NULL;

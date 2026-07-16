@@ -36,6 +36,17 @@ typedef struct {
     SymbolId nt;
 } CettaLpNativeLexDecl;
 
+typedef enum {
+    CETTA_LP_NATIVE_ENTRY_PRODUCTION = 0,
+    CETTA_LP_NATIVE_ENTRY_VAR = 1,
+    CETTA_LP_NATIVE_ENTRY_LEX = 2
+} CettaLpNativeEntryKind;
+
+typedef struct {
+    CettaLpNativeEntryKind kind;
+    uint32_t index;
+} CettaLpNativeEntry;
+
 typedef struct {
     CettaLpNativeProduction *productions;
     uint32_t production_len;
@@ -43,6 +54,8 @@ typedef struct {
     uint32_t var_len;
     CettaLpNativeLexDecl *lexes;
     uint32_t lex_len;
+    CettaLpNativeEntry *entries;
+    uint32_t entry_len;
     uint32_t binder_hole_count;
 } CettaLpNativeGrammar;
 
@@ -75,6 +88,11 @@ bool cetta_lp_native_grammar_load_forms(CettaLpNativeGrammar *out,
 bool cetta_lp_native_grammar_load_file(CettaLpNativeGrammar *out,
                                        const char *filename,
                                        const char *def_name,
+                                       char *error_buf,
+                                       size_t error_buf_size);
+
+bool cetta_lp_native_grammar_load_list(CettaLpNativeGrammar *out,
+                                       Atom *grammar_list,
                                        char *error_buf,
                                        size_t error_buf_size);
 

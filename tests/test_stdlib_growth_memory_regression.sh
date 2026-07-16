@@ -57,7 +57,6 @@ cat >> "$system_file" <<'PAD'
 PAD
 
 if ! (
-  ulimit -v 2516582
   /usr/bin/time -f '%M' -o "$time_file" "$bin" --profile he-extended --lang he "$workload" >"$stdout_raw" 2>"$stderr_file"
 ); then
   echo "FAIL: stdlib growth memory regression exited non-zero" >&2

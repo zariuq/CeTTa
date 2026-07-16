@@ -191,6 +191,17 @@ Run the explicit runtime-stats suite for the current build:
 make ENABLE_RUNTIME_STATS=1 test-runtime-stats
 ```
 
+Run the complete required correctness lane (fast tests, heavy golden tests,
+and runtime-stats tests):
+
+```bash
+make test-correctness-all
+```
+
+Heavy diagnostic probes are deliberately separate because they are exploratory
+and have no golden output. Inspect or run them explicitly with
+`make list-heavy-diagnostics` and `make probe-heavy-diagnostics`.
+
 `make test` now stays inside the current build configuration. It runs the fast
 HE/golden suite, and on bridge-enabled builds it also runs the matching current
 bridge regressions:
@@ -205,16 +216,40 @@ compile-time runtime-stats lane.
 The checked default lanes vendor their tiny Metamath parser fixtures under
 `tests/support/`, so they do not require a separate Metamath checkout either.
 
-For a full checked sweep of a bridge build, use the same `BUILD=` consistently:
+For a full main-readiness sweep, run the correctness and profile lanes across
+all supported build shapes:
 
 ```bash
-make BUILD=main test
-make BUILD=main test-profiles
-make BUILD=main ENABLE_RUNTIME_STATS=1 test-runtime-stats
+make BUILD=core test-correctness-all
+make BUILD=core test-profiles
 
-make BUILD=mork test
+make BUILD=python test-correctness-all
+make BUILD=python test-profiles
+
+make BUILD=main test-correctness-all
+make BUILD=main test-profiles
+
+make BUILD=mork test-correctness-all
 make BUILD=mork test-profiles
-make BUILD=mork ENABLE_RUNTIME_STATS=1 test-runtime-stats
+```
+
+The sanitizer and benchmark aggregates use the same build selection:
+
+```bash
+make BUILD=core test-asan
+make BUILD=python test-asan
+make test-asan-main
+make test-asan-mork
+
+make BUILD=core test-tsan
+make BUILD=python test-tsan
+make test-tsan-main
+make test-tsan-mork
+
+make BUILD=main cetta
+make bench-light
+make bench-capacity
+BENCH_ALLOW_HEAVY=1 make bench-heavy
 ```
 
 Promote the current checked binary to the local stable runtime path:

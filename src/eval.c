@@ -890,9 +890,142 @@ static bool emit_direct_mork_atoms_rows(Space *s, Arena *a, Atom *surface_atom,
                                         Atom **args, int fuel,
                                         OutcomeSet *os);
 
+static Atom *eval_llist_call_error(Arena *a, Atom *head, Atom **args,
+                                   uint32_t nargs, Atom *reason) {
+    return atom_error(a, make_call_expr(a, head, args, nargs), reason);
+}
+
+static Atom *eval_llist_bad_arg_type(Arena *a, Atom *head, Atom **args,
+                                     uint32_t nargs, int bad_idx,
+                                     Atom *expected_type, Atom *actual_atom) {
+    Atom *actual_type =
+        (actual_atom && actual_atom->kind == ATOM_GROUNDED)
+            ? get_grounded_type(a, actual_atom)
+            : get_meta_type(a, actual_atom);
+    Atom *reason = atom_expr(a, (Atom *[]){
+        atom_symbol(a, "BadArgType"),
+        atom_int(a, bad_idx),
+        expected_type,
+        actual_type
+    }, 4);
+    return eval_llist_call_error(a, head, args, nargs, reason);
+}
+
+static Atom *eval_minimal_foldl_llist(Arena *a, Atom *head, Atom **args,
+                                      uint32_t nargs) {
+    if (nargs != 6) {
+        return eval_llist_call_error(
+            a, head, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
+    }
+    if (args[2]->kind != ATOM_VAR) {
+        return eval_llist_bad_arg_type(
+            a, head, args, nargs, 3, atom_variable_type(a), args[2]);
+    }
+    if (args[3]->kind != ATOM_VAR) {
+        return eval_llist_bad_arg_type(
+            a, head, args, nargs, 4, atom_variable_type(a), args[3]);
+    }
+    if (!(args[5]->kind == ATOM_GROUNDED &&
+          args[5]->ground.gkind == GV_SPACE)) {
+        return eval_llist_bad_arg_type(
+            a, head, args, nargs, 6, atom_symbol(a, "SpaceType"), args[5]);
+    }
+
+    Atom *cursor = args[0];
+    Atom *acc = args[1];
+    Atom *acc_var = args[2];
+    Atom *item_var = args[3];
+    Atom *op_expr = args[4];
+    Space *target = (Space *)args[5]->ground.ptr;
+    Arena scratch;
+    arena_init(&scratch);
+    arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_hashcons(&scratch, NULL);
+    ArenaMark scratch_mark = arena_mark(&scratch);
+
+    for (;;) {
+        if (atom_is_symbol_id(cursor, g_builtin_syms.llist_nil)) {
+            Atom *result = atom_expr2(a, atom_symbol(a, "return"), acc);
+            arena_free(&scratch);
+            return result;
+        }
+        if (cursor->kind != ATOM_EXPR || cursor->expr.len != 3 ||
+            !atom_is_symbol_id(cursor->expr.elems[0],
+                               g_builtin_syms.llist_cons)) {
+            Atom *error = eval_llist_call_error(
+                a, head, args, nargs,
+                atom_symbol(a,
+                    "_minimal-foldl-llist expects a proper LCons/LNil list"));
+            arena_free(&scratch);
+            return error;
+        }
+
+        Atom *step_op = cetta_fold_bind_step_atom(
+            &scratch, op_expr,
+            acc_var->sym_id, acc,
+            item_var->sym_id, cursor->expr.elems[1]);
+        ResultSet results;
+        Atom *next = NULL;
+        Atom *step_error = NULL;
+        bool multiple = false;
+        result_set_init(&results);
+        metta_eval(target, &scratch, NULL, step_op,
+                   eval_get_default_fuel(), &results);
+
+        for (CettaCount i = 0; i < results.len; i++) {
+            Atom *candidate = results.items[i];
+            if (atom_is_empty(candidate))
+                continue;
+            if (atom_is_error(candidate)) {
+                step_error = candidate;
+                break;
+            }
+            if (next) {
+                multiple = true;
+                break;
+            }
+            next = candidate;
+        }
+
+        Atom *persisted = NULL;
+        if (step_error)
+            persisted = atom_deep_copy(a, step_error);
+        else if (!multiple && next)
+            persisted = atom_deep_copy(a, next);
+        result_set_free(&results);
+        arena_reset(&scratch, scratch_mark);
+
+        if (step_error) {
+            arena_free(&scratch);
+            return persisted;
+        }
+        if (multiple) {
+            Atom *error = eval_llist_call_error(
+                a, head, args, nargs,
+                atom_symbol(a,
+                    "_minimal-foldl-llist step produced multiple results"));
+            arena_free(&scratch);
+            return error;
+        }
+        if (!persisted) {
+            Atom *error = eval_llist_call_error(
+                a, head, args, nargs,
+                atom_symbol(a,
+                    "_minimal-foldl-llist step produced no result"));
+            arena_free(&scratch);
+            return error;
+        }
+
+        acc = persisted;
+        cursor = cursor->expr.elems[2];
+    }
+}
+
 static Atom *dispatch_named_native(Space *s, Arena *a, SymbolId head_id,
                                    Atom **args, uint32_t nargs) {
     Atom *head = atom_symbol_id(a, head_id);
+    if (head_id == g_builtin_syms.minimal_foldl_llist)
+        return eval_minimal_foldl_llist(a, head, args, nargs);
     Atom *result = grounded_dispatch(a, head, args, nargs);
     if (result) return result;
     if (g_library_context) {
@@ -1552,10 +1685,20 @@ static bool add_atoms_source_shape(Atom *items, Atom **out_source_ref,
                                    SpaceTransferEndpointKind *out_source_kind);
 static bool add_atoms_public_surface_has_only_default(Space *s);
 
-static bool grounded_dispatch_accepts_data_arg(SymbolId head_id, uint32_t arg_index) {
+static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    if (head->sym_id == g_builtin_syms.lib_gparse_inference_presentation)
+        return true;
+    if (head->sym_id == g_builtin_syms.minimal_foldl_llist &&
+        (arg_index == 0 || arg_index == 4))
+        return true;
+    if (head->sym_id == g_builtin_syms.minimal_space_contains_exact &&
+        arg_index == 1)
+        return true;
     return arg_index == 1 &&
-           (head_id == g_builtin_syms.add_atom ||
-            head_id == g_builtin_syms.remove_atom);
+           (head->sym_id == g_builtin_syms.add_atom ||
+            head->sym_id == g_builtin_syms.remove_atom);
 }
 static bool symbol_id_is_builtin_surface(SymbolId id);
 static bool bindings_project_answer_ref_env(Arena *a,
@@ -1760,7 +1903,7 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
         args[i] = materialize_runtime_token(s, a, resolved ? resolved : arg);
         if (atom_is_empty(args[i]) || atom_is_error(args[i]) ||
             (!atom_eval_is_immediate_value(args[i], fuel) &&
-             !grounded_dispatch_accepts_data_arg(head->sym_id, i) &&
+             !grounded_dispatch_accepts_data_arg(head, i) &&
              !((head->sym_id == g_builtin_syms.op_eq ||
                 head->sym_id == g_builtin_syms.alpha_eq) &&
                atom_is_constructor_normal_form(s, a, args[i], fuel))))
@@ -2924,6 +3067,9 @@ static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uin
     }
     Atom *space_mutation = dispatch_native_space_mutation(s, a, head, args, nargs);
     if (space_mutation) return space_mutation;
+    if (head &&
+        atom_is_symbol_id(head, g_builtin_syms.minimal_foldl_llist))
+        return eval_minimal_foldl_llist(a, head, args, nargs);
     Atom *result = grounded_dispatch(a, head, args, nargs);
     if (result) return result;
     if (g_library_context) {
@@ -6190,6 +6336,7 @@ static void hyperpose_worker_leave(CettaParallelWorker *worker, void *user) {
        into session-wide teardown bookkeeping leaves stale arena-owned structs
        behind for later cleanup. */
     eval_cleanup_owned_new_spaces_for_current_thread();
+    eval_profiled_type_cache_free_for_current_thread();
     bindings_thread_cache_free();
 }
 
@@ -8458,6 +8605,16 @@ static __thread ProfiledTypeFormationCacheEntry
 static __thread bool g_profiled_type_cache_config_ready = false;
 static __thread bool g_profiled_type_cache_config_enabled = true;
 
+void eval_profiled_type_cache_free_for_current_thread(void) {
+    if (g_profiled_type_cache_arena_ready)
+        arena_free(&g_profiled_type_cache_arena);
+    memset(g_profiled_type_cache, 0, sizeof(g_profiled_type_cache));
+    memset(g_profiled_type_formation_cache, 0,
+           sizeof(g_profiled_type_formation_cache));
+    g_profiled_type_cache_arena_ready = false;
+    g_profiled_type_cache_stores = 0;
+}
+
 static bool profiled_type_cache_disabled_value(const char *raw) {
     return raw &&
            (strcmp(raw, "0") == 0 ||
@@ -8476,17 +8633,12 @@ static bool profiled_type_cache_enabled(void) {
 }
 
 static void profiled_type_cache_clear_all(void) {
-    if (g_profiled_type_cache_arena_ready)
-        arena_free(&g_profiled_type_cache_arena);
+    eval_profiled_type_cache_free_for_current_thread();
     arena_init(&g_profiled_type_cache_arena);
     arena_set_hashcons(&g_profiled_type_cache_arena, NULL);
     arena_set_runtime_kind(&g_profiled_type_cache_arena,
                            CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
-    memset(g_profiled_type_cache, 0, sizeof(g_profiled_type_cache));
-    memset(g_profiled_type_formation_cache, 0,
-           sizeof(g_profiled_type_formation_cache));
     g_profiled_type_cache_arena_ready = true;
-    g_profiled_type_cache_stores = 0;
 }
 
 static bool profiled_type_cache_prepare_store(void) {
@@ -9158,7 +9310,7 @@ static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
     for (uint32_t i = 0; i < ntypes; i++) {
         Bindings mb;
         bindings_init(&mb);
-        if (match_types(types[i], expectedType, &mb)) {
+        if (match_types(expectedType, types[i], &mb)) {
             bindings_free(&mb);
             result_set_add(rs, atom);
             free(types);

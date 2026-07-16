@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "library.h"
+#include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 
 #define CETTA_NATIVE_IMPORT_GPARSE (1u << 24)
@@ -379,6 +380,37 @@ static Atom *gparse_dispatch(struct CettaLibraryContext *ctx,
                 "__cetta_lib_gparse_rho_canon_mrho_text expects a rho canonical AST");
         }
         return rho_native_canon_mrho_text(a, args[0]);
+    }
+
+    if (atom_is_symbol(head,
+                       "__cetta_lib_gparse_inference_presentation")) {
+        Atom *result;
+
+        if (nargs != 3) {
+            return native_module_error(
+                a, head,
+                "__cetta_lib_gparse_inference_presentation expects grammar, source, and tokens");
+        }
+        cetta_lp_native_grammar_init(&grammar);
+        error_buf[0] = '\0';
+        if (!cetta_lp_native_grammar_load_list(&grammar, args[0],
+                                               error_buf,
+                                               sizeof(error_buf))) {
+            cetta_lp_native_grammar_free(&grammar);
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf : "gparse grammar list load failed");
+        }
+        result = cetta_lp_native_inference_presentation(
+            &grammar, args[1], args[2], a, error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!result) {
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf
+                             : "gparse inference presentation failed");
+        }
+        return atom_expr2(a, atom_symbol(a, "return"), result);
     }
 
     if (atom_is_symbol(head, "__cetta_lib_gparse_grammar_summary")) {

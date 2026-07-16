@@ -22,6 +22,13 @@
      (case (__cetta_lib_gparse_grammar_data $path $def)
        (($result (return $result))))))
 
+(= (gparse:inference-presentation $grammar $source $tokens)
+   (function
+     (case (__cetta_lib_gparse_inference_presentation
+             $grammar $source $tokens)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
 (= (gparse:slr-summary $path $def $start)
    (function
      (case (__cetta_lib_gparse_slr_summary $path $def $start)
@@ -272,8 +279,10 @@
      (let $gll (gparse:gll-forest-signature-digest $path $def $start $toks)
        (GParseDualForestSignatureDigest $glr $gll (== $glr $gll)))))
 
-(= (gparse:list-len Nil) 0)
-(= (gparse:list-len (Cons $x $xs)) (+ 1 (gparse:list-len $xs)))
+(= (gparse:list-len-acc Nil $n) $n)
+(= (gparse:list-len-acc (Cons $x $xs) $n)
+   (gparse:list-len-acc $xs (+ $n 1)))
+(= (gparse:list-len $xs) (gparse:list-len-acc $xs 0))
 
 (= (gparse:packed-forest-shape
       (GParsePackedForest $status $tok-len $root-count $root $nodes))

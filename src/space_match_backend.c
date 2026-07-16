@@ -6775,6 +6775,53 @@ static bool pathmap_local_store_atom_direct(Space *s, Atom *atom) {
     return true;
 }
 
+static AtomId pathmap_local_projected_remove_match(Space *s,
+                                                   AtomId requested_id,
+                                                   Atom *requested_atom) {
+    ImportedBridgeState *st;
+    Atom *target = requested_atom;
+    AtomId alpha_match = CETTA_ATOM_ID_NONE;
+    CettaCount alpha_count = 0;
+
+    if (!s || !s->native.universe)
+        return CETTA_ATOM_ID_NONE;
+    st = &s->match_backend.pathmap.bridge;
+    if (!target && requested_id != CETTA_ATOM_ID_NONE)
+        target = term_universe_get_atom(s->native.universe, requested_id);
+    if (!target || !imported_storage_ensure_projection(s))
+        return CETTA_ATOM_ID_NONE;
+
+    /* Native remove semantics prefer any exact occurrence immediately. */
+    for (CettaIndex i = 0; i < st->projected_len; i++) {
+        AtomId candidate_id = imported_projected_atom_id_at(st, i);
+        Atom *candidate;
+        if (candidate_id == CETTA_ATOM_ID_NONE)
+            continue;
+        if (candidate_id == requested_id)
+            return candidate_id;
+        candidate = term_universe_get_atom(s->native.universe, candidate_id);
+        if (candidate && atom_eq(candidate, target))
+            return candidate_id;
+    }
+
+    /* If there is no exact occurrence, native CeTTa removes a renamed row
+       only when its alpha-equivalent occurrence is unique. */
+    for (CettaIndex i = 0; i < st->projected_len; i++) {
+        AtomId candidate_id = imported_projected_atom_id_at(st, i);
+        Atom *candidate;
+        if (candidate_id == CETTA_ATOM_ID_NONE)
+            continue;
+        candidate = term_universe_get_atom(s->native.universe, candidate_id);
+        if (candidate && atom_alpha_eq(candidate, target)) {
+            alpha_match = candidate_id;
+            alpha_count++;
+            if (alpha_count > 1)
+                return CETTA_ATOM_ID_NONE;
+        }
+    }
+    return alpha_count == 1 ? alpha_match : CETTA_ATOM_ID_NONE;
+}
+
 static bool pathmap_local_remove_atom_id_direct(Space *s, AtomId atom_id) {
     ImportedBridgeState *st;
     CettaMorkSpaceHandle *clone = NULL;
@@ -6803,6 +6850,19 @@ static bool pathmap_local_remove_atom_id_direct(Space *s, AtomId atom_id) {
              : imported_bridge_remove_atom_structural(
                    &scratch, clone,
                    s->native.universe, atom_id, NULL, &removed);
+    if (ok && removed == 0 && tu_has_vars(s->native.universe, atom_id)) {
+        AtomId projected_id = pathmap_local_projected_remove_match(
+            s, atom_id, NULL);
+        if (projected_id != CETTA_ATOM_ID_NONE) {
+            ok = tu_has_vars(s->native.universe, projected_id)
+                     ? imported_bridge_remove_atom_contextual_exact(
+                           &scratch, clone, s->native.universe, projected_id,
+                           &removed)
+                     : imported_bridge_remove_atom_structural(
+                           &scratch, clone, s->native.universe, projected_id,
+                           NULL, &removed);
+        }
+    }
     arena_free(&scratch);
     if (!ok) {
         cetta_mork_bridge_space_free(clone);
@@ -6849,6 +6909,19 @@ static bool pathmap_local_remove_atom_direct(Space *s, Atom *atom) {
              : imported_bridge_remove_atom_structural(
                    &scratch, clone,
                    s->native.universe, CETTA_ATOM_ID_NONE, atom, &removed);
+    if (ok && removed == 0 && atom_has_vars(atom)) {
+        AtomId projected_id = pathmap_local_projected_remove_match(
+            s, CETTA_ATOM_ID_NONE, atom);
+        if (projected_id != CETTA_ATOM_ID_NONE) {
+            ok = tu_has_vars(s->native.universe, projected_id)
+                     ? imported_bridge_remove_atom_contextual_exact(
+                           &scratch, clone, s->native.universe, projected_id,
+                           &removed)
+                     : imported_bridge_remove_atom_structural(
+                           &scratch, clone, s->native.universe, projected_id,
+                           NULL, &removed);
+        }
+    }
     arena_free(&scratch);
     if (!ok) {
         cetta_mork_bridge_space_free(clone);
@@ -7118,7 +7191,12 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_NATIVE_CANDIDATE);
         if (match_space_atom_epoch(s, idx, query, &b, a, epoch) &&
             !bindings_has_loop(&b)) {
-            subst_matchset_push(out, idx, epoch, &b, false);
+            /* This lane has already re-derived the complete match against the
+               selected atom.  Mark the bindings final so consumers do not
+               redundantly match the same pair again.  Besides wasting work,
+               that second traversal can reject a deep value which was bound
+               atomically to a query variable during the first match. */
+            subst_matchset_push(out, idx, epoch, &b, true);
         }
         bindings_free(&b);
     }
