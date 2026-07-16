@@ -1,0 +1,37 @@
+; Generated from the admitted Metamath source GSLT root.
+; Edit the Lean source and regenerate this artifact.
+
+(= (lib_parse:mm-source-grammar) (mkGram (
+  (LexD mm-label label_tok)
+  (LexD mm-symbol symbol_tok)
+  (LexD mm-proof-label proof_label_tok)
+  (LexD mm-compressed-word compressed_word_tok)
+  (LexD mm-include-path include_path_tok)
+  (Prod symbols_one symbol_list ((Hl symbol_tok)))
+  (Prod symbols_more symbol_list ((Hl symbol_tok)(Hl symbol_list)))
+  (Prod proof_one proof_list ((Hl proof_label_tok)))
+  (Prod proof_more proof_list ((Hl proof_label_tok)(Hl proof_list)))
+  (Prod header_empty proof_header_list ())
+  (Prod header_more proof_header_list ((Hl proof_label_tok)(Hl proof_header_list)))
+  (Prod compressed_one compressed_word_list ((Hl compressed_word_tok)))
+  (Prod compressed_more compressed_word_list ((Hl compressed_word_tok)(Hl compressed_word_list)))
+  (Prod statement_const statement ((Tm MM_C)(Hl symbol_list)(Tm MM_DOT)))
+  (Prod statement_var statement ((Tm MM_V)(Hl symbol_list)(Tm MM_DOT)))
+  (Prod statement_disjoint statement ((Tm MM_D)(Hl symbol_list)(Tm MM_DOT)))
+  (Prod statement_float statement ((Hl label_tok)(Tm MM_F)(Hl symbol_tok)(Hl symbol_tok)(Tm MM_DOT)))
+  (Prod statement_essential statement ((Hl label_tok)(Tm MM_E)(Hl symbol_list)(Tm MM_DOT)))
+  (Prod statement_axiom statement ((Hl label_tok)(Tm MM_A)(Hl symbol_list)(Tm MM_DOT)))
+  (Prod statement_theorem_normal statement ((Hl label_tok)(Tm MM_P)(Hl symbol_list)(Tm MM_EQPROOF)(Hl proof_list)(Tm MM_DOT)))
+  (Prod statement_theorem_compressed statement ((Hl label_tok)(Tm MM_P)(Hl symbol_list)(Tm MM_EQPROOF)(Tm MM_LP)(Hl proof_header_list)(Tm MM_RP)(Hl compressed_word_list)(Tm MM_DOT)))
+  (Prod statement_include statement ((Tm MM_INCLUDE_OPEN)(Hl include_path_tok)(Tm MM_INCLUDE_CLOSE)))
+  (Prod database_one database ((Hl statement)))
+  (Prod database_more database ((Hl statement)(Hl database)))
+  (Prod database_block database ((Tm MM_SCOPE_OPEN)(Hl database)(Tm MM_SCOPE_CLOSE)))
+  (Prod database_block_more database ((Tm MM_SCOPE_OPEN)(Hl database)(Tm MM_SCOPE_CLOSE)(Hl database)))
+)))
+
+(= (lib_parse:mm-statement-grammar)
+   (lib_parse:mm-source-grammar))
+
+(= (lib_parse:mm-database-grammar)
+   (lib_parse:mm-source-grammar))
