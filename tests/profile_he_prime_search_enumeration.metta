@@ -6,9 +6,9 @@
 (: b1 B)
 (: MakeC (-> A B C))
 (chaining-rule MakeC)
-!(type-inhabit &self C 1 200000 1)
-!(type-inhabit &self C 1 200000 2)
-!(type-inhabit &self C 1 200000 3)
+!(search-inhabitants &self C 1 200000 1)
+!(search-inhabitants &self C 1 200000 2)
+!(search-inhabitants &self C 1 200000 3)
 
 ; A two-by-two premise product must retain every proof combination.
 (: d1 D)
@@ -17,13 +17,13 @@
 (: e2 E)
 (: MakeF (-> D E F))
 (chaining-rule MakeF)
-!(type-inhabit &self F 1 300000 8)
+!(search-inhabitants &self F 1 300000 8)
 
 ; One proof term with two annotations remains two answers because its checked
 ; type and resulting query substitution differ.
 (: shared-choice (Choice Left))
 (: shared-choice (Choice Right))
-!(type-inhabit &self (Choice $which) 0 100000 4)
+!(search-inhabitants &self (Choice $which) 0 100000 4)
 
 ; A recursive candidate scheduled first cannot starve a direct finite proof.
 (: seed Seed)
@@ -31,7 +31,7 @@
 (chaining-rule LoopGoal)
 (: DirectGoal (-> Seed FairGoal))
 (chaining-rule DirectGoal)
-!(type-inhabit-first &self FairGoal 5 100000)
+!(search-first-inhabitant &self FairGoal 5 100000)
 
 ; A proof with more annotations than the typer's bounded type set must report
 ; incomplete rather than silently losing a valid annotation beyond the bound.
@@ -100,4 +100,4 @@
 (: capacity-witness Capacity62)
 (: capacity-witness Capacity63)
 (: capacity-witness Capacity64)
-!(type-inhabit &self Capacity64 0 100000 1)
+!(search-inhabitants &self Capacity64 0 100000 1)

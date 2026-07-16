@@ -61,6 +61,27 @@ void result_set_init(ResultSet *rs);
 void result_set_add(ResultSet *rs, Atom *atom);
 void result_set_free(ResultSet *rs);
 
+/* Evaluation completion is separate from the result frontier.  Existing
+   callers that only need HE-compatible answers continue to use metta_eval;
+   callers making universal or no-more-results claims use EvalOutcome. */
+typedef enum {
+    CETTA_EVAL_COMPLETE = 0,
+    CETTA_EVAL_INCOMPLETE_FUEL,
+    CETTA_EVAL_INCOMPLETE_CANCELLED,
+    CETTA_EVAL_INCOMPLETE_STACK,
+} CettaEvalCompletion;
+
+typedef struct EvalOutcome {
+    ResultSet results;
+    CettaEvalCompletion completion;
+    uint64_t budget_initial;
+    uint64_t budget_remaining;
+} EvalOutcome;
+
+void eval_outcome_init(EvalOutcome *outcome);
+void eval_outcome_free(EvalOutcome *outcome);
+const char *eval_completion_reason(CettaEvalCompletion completion);
+
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
@@ -74,6 +95,14 @@ int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
+CettaLanguageId eval_current_language_id(void);
+/* The shared profile-aware HE type inference engine. Returned arrays are heap
+   allocated and must be freed by the caller; atoms live in `a`. */
+uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
+                                      Atom ***out_types);
+uint32_t eval_get_atom_types_structural_profiled(Space *s, Arena *a,
+                                                 Atom *atom,
+                                                 Atom ***out_types);
 uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
@@ -114,6 +143,10 @@ Space *eval_space_snapshot_clone(Space *src, Arena *a);
 /* Internal: evaluate an atom fully (recursive).
    type is the expected type (NULL means %Undefined%). */
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs);
+/* Evaluate through the same engine as metta_eval while also reporting whether
+   the returned frontier is complete for the supplied resource bound. */
+void metta_eval_outcome(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
+                        EvalOutcome *outcome);
 
 /* ── Legacy aliases (transitional, will be removed) ────────────────────── */
 /* These exist so that the refactor can proceed incrementally.
