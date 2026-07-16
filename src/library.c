@@ -2307,8 +2307,9 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         Atom *result;
         const char *detail;
         uint64_t fuel;
+        uint64_t search_budget;
 
-        if (nargs != 2) {
+        if (nargs != 3) {
             return lts_rho_cost_causal_prefix_error(
                 a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
         }
@@ -2318,15 +2319,24 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
                 a, args, nargs,
                 atom_string(a, "expected a nonnegative integer fuel bound"));
         }
+        if (args[1]->kind != ATOM_GROUNDED ||
+            args[1]->ground.gkind != GV_INT || args[1]->ground.ival < 0) {
+            return lts_rho_cost_causal_prefix_error(
+                a, args, nargs,
+                atom_string(
+                    a, "expected a nonnegative integer search bound"));
+        }
         if (!rhocalc_process_well_formed_with_semantic_profile(
-                args[1], RHOCALC_SEMANTIC_PROFILE_COST)) {
+                args[2], RHOCALC_SEMANTIC_PROFILE_COST)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_prefix_error(
                 a, args, nargs,
                 atom_string(a, detail ? detail : "expected cost-profile rho term"));
         }
         fuel = (uint64_t)args[0]->ground.ival;
-        result = rhocalc_cost_causal_prefix_expr(a, args[1], fuel);
+        search_budget = (uint64_t)args[1]->ground.ival;
+        result = rhocalc_cost_causal_prefix_expr(
+            a, args[2], fuel, search_budget);
         if (!result) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_prefix_error(
