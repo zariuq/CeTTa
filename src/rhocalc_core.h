@@ -62,6 +62,10 @@ Atom *rhocalc_quiescent_frontier_expr_with_eval_context(
     Arena *arena, Atom *proc, const RhocalcEvalContext *eval_context);
 Atom *rhocalc_successor_frontier_expr(Arena *arena, Atom *proc);
 Atom *rhocalc_cost_step_frontier_expr(Arena *arena, Atom *proc);
+Atom *rhocalc_cost_causal_trace_expr(Arena *arena, Atom *proc);
+Atom *rhocalc_cost_causal_prefix_expr(Arena *arena, Atom *proc,
+                                      uint64_t fuel,
+                                      uint64_t search_budget);
 bool rhocalc_reduce_to_quiescence_with_semantic_profile(
     Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile,
     const RhoRuntimeProfile *profile, RhoReductionResult *out);

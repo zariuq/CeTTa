@@ -23,16 +23,16 @@
 
 (= (absdiff $x $y) (if (< $x $y) (- $y $x) (- $x $y)))
 (= (approx $x $y) (< (absdiff $x $y) 0.000001))
-(= (ge? $threshold $score) (or (< $threshold $score) (approx $threshold $score)))
+(= (is-ge $threshold $score) (or (< $threshold $score) (approx $threshold $score)))
 
 (= (bool-to-real True) 1.0)
 (= (bool-to-real False) 0.0)
 (= (bool-to-count True) 1)
 (= (bool-to-count False) 0)
 
-(= (near-one? $eps $x)
+(= (is-near-one $eps $x)
    (and (<= (- 1.0 $eps) $x) (<= $x 1.0)))
-(= (near-zero? $eps $x)
+(= (is-near-zero $eps $x)
    (and (<= 0.0 $x) (<= $x $eps)))
 
 (= (threshold4 $k) (/ $k 4.0))
@@ -47,17 +47,17 @@
    (- 4 (crisp-hit-count4 $a $b $c $d)))
 
 (= (near-one-fraction4 $eps $a $b $c $d)
-   (/ (+ (+ (bool-to-real (near-one? $eps $a))
-            (bool-to-real (near-one? $eps $b)))
-         (+ (bool-to-real (near-one? $eps $c))
-            (bool-to-real (near-one? $eps $d))))
+   (/ (+ (+ (bool-to-real (is-near-one $eps $a))
+            (bool-to-real (is-near-one $eps $b)))
+         (+ (bool-to-real (is-near-one $eps $c))
+            (bool-to-real (is-near-one $eps $d))))
       4.0))
 
 (= (near-zero-fraction4 $eps $a $b $c $d)
-   (/ (+ (+ (bool-to-real (near-zero? $eps $a))
-            (bool-to-real (near-zero? $eps $b)))
-         (+ (bool-to-real (near-zero? $eps $c))
-            (bool-to-real (near-zero? $eps $d))))
+   (/ (+ (+ (bool-to-real (is-near-zero $eps $a))
+            (bool-to-real (is-near-zero $eps $b)))
+         (+ (bool-to-real (is-near-zero $eps $c))
+            (bool-to-real (is-near-zero $eps $d))))
       4.0))
 
 (= (qfm-forall-score4 $eps $a $b $c $d)
@@ -70,13 +70,13 @@
    (/ (crisp-hit-count4 $a $b $c $d) 4.0))
 
 (= (qfm-forall-cut4 $k $a $b $c $d)
-   (ge? (threshold4 $k) (qfm-forall-score4 0.0 $a $b $c $d)))
+   (is-ge (threshold4 $k) (qfm-forall-score4 0.0 $a $b $c $d)))
 
 (= (qfm-there-exists-cut4 $k $a $b $c $d)
-   (ge? (threshold4 $k) (qfm-there-exists-score4 0.0 $a $b $c $d)))
+   (is-ge (threshold4 $k) (qfm-there-exists-score4 0.0 $a $b $c $d)))
 
 (= (sugeno-counting-cut4 $k $a $b $c $d)
-   (ge? (threshold4 $k) (sugeno-counting-crisp-score4 $a $b $c $d)))
+   (is-ge (threshold4 $k) (sugeno-counting-crisp-score4 $a $b $c $d)))
 
 (= (cardinality-threshold-event4 $k $a $b $c $d)
    (<= $k (crisp-hit-count4 $a $b $c $d)))
@@ -156,5 +156,5 @@
 !(assertEqual (approx (qfm-forall-score4 0.2 1.0 0.85 0.81 0.0) 0.75) True)
 !(assertEqual (crisp-hit-count4 1.0 0.85 0.81 0.0) 1)
 !(assertEqual (qfm-forall-cut4 3 1.0 0.85 0.81 0.0) False)
-!(assertEqual (ge? (threshold4 3) (qfm-forall-score4 0.2 1.0 0.85 0.81 0.0)) True)
+!(assertEqual (is-ge (threshold4 3) (qfm-forall-score4 0.2 1.0 0.85 0.81 0.0)) True)
 !(assertEqual (cardinality-threshold-event4 3 1.0 0.85 0.81 0.0) False)

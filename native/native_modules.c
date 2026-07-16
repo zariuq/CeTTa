@@ -383,8 +383,12 @@ static Atom *gparse_dispatch(struct CettaLibraryContext *ctx,
     }
 
     if (atom_is_symbol(head,
-                       "__cetta_lib_gparse_inference_presentation")) {
+                       "__cetta_lib_gparse_inference_presentation") ||
+        atom_is_symbol(head,
+                       "__cetta_lib_gparse_inference_dag_presentation")) {
         Atom *result;
+        bool compact = atom_is_symbol(
+            head, "__cetta_lib_gparse_inference_dag_presentation");
 
         if (nargs != 3) {
             return native_module_error(
@@ -401,14 +405,59 @@ static Atom *gparse_dispatch(struct CettaLibraryContext *ctx,
                 a, head,
                 error_buf[0] ? error_buf : "gparse grammar list load failed");
         }
-        result = cetta_lp_native_inference_presentation(
-            &grammar, args[1], args[2], a, error_buf, sizeof(error_buf));
+        result = compact
+            ? cetta_lp_native_inference_dag_presentation(
+                &grammar, args[1], args[2], a,
+                error_buf, sizeof(error_buf))
+            : cetta_lp_native_inference_presentation(
+                &grammar, args[1], args[2], a,
+                error_buf, sizeof(error_buf));
         cetta_lp_native_grammar_free(&grammar);
         if (!result) {
             return native_module_error(
                 a, head,
                 error_buf[0] ? error_buf
                              : "gparse inference presentation failed");
+        }
+        return atom_expr2(a, atom_symbol(a, "return"), result);
+    }
+
+    if (atom_is_symbol(head,
+                       "__cetta_lib_gparse_inference_dag") ||
+        atom_is_symbol(head,
+                       "__cetta_lib_gparse_inference_dag_proof")) {
+        Atom *result;
+        bool compact = atom_is_symbol(
+            head, "__cetta_lib_gparse_inference_dag_proof");
+
+        if (nargs != 5 || !native_symbol_arg(a, args[2], &start_nt)) {
+            return native_module_error(
+                a, head,
+                "__cetta_lib_gparse_inference_dag expects grammar, source, start sort, tokens, and certificate");
+        }
+        cetta_lp_native_grammar_init(&grammar);
+        error_buf[0] = '\0';
+        if (!cetta_lp_native_grammar_load_list(&grammar, args[0],
+                                               error_buf,
+                                               sizeof(error_buf))) {
+            cetta_lp_native_grammar_free(&grammar);
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf : "gparse grammar list load failed");
+        }
+        result = compact
+            ? cetta_lp_native_inference_dag_proof(
+                &grammar, args[1], start_nt, args[3], args[4], a,
+                error_buf, sizeof(error_buf))
+            : cetta_lp_native_inference_dag(
+                &grammar, args[1], start_nt, args[3], args[4], a,
+                error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!result) {
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf
+                             : "gparse inference DAG construction failed");
         }
         return atom_expr2(a, atom_symbol(a, "return"), result);
     }

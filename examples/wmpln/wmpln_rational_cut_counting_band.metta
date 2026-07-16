@@ -18,19 +18,19 @@
 
 (= (absdiff $x $y) (if (< $x $y) (- $y $x) (- $x $y)))
 (= (approx $x $y) (< (absdiff $x $y) 0.000001))
-(= (ge? $threshold $score) (or (< $threshold $score) (approx $threshold $score)))
+(= (is-ge $threshold $score) (or (< $threshold $score) (approx $threshold $score)))
 
 (= (counting-score4 $hits) (/ $hits 4.0))
 (= (counting-complement-score4 $hits) (- 1.0 (counting-score4 $hits)))
 (= (threshold4 $k) (/ $k 4.0))
 
 (= (lower-cut-event4 $k $hits)
-   (ge? (threshold4 $k) (counting-score4 $hits)))
+   (is-ge (threshold4 $k) (counting-score4 $hits)))
 (= (lower-card-event $k $hits)
    (<= $k $hits))
 
 (= (complement-cut-event4 $kMissing $hits)
-   (ge? (threshold4 $kMissing) (counting-complement-score4 $hits)))
+   (is-ge (threshold4 $kMissing) (counting-complement-score4 $hits)))
 (= (upper-card-event4 $kMissing $hits)
    (<= (+ $hits $kMissing) 4))
 
