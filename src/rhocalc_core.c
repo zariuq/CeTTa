@@ -3472,8 +3472,11 @@ Atom *rhocalc_quiescent_frontier_expr_with_eval_context(
 
 typedef enum {
     RHOCOST_TERM_BAD = 0,
+    RHOCOST_TERM_NIL,
     RHOCOST_TERM_SIGNED,
     RHOCOST_TERM_PAR,
+    RHOCOST_TERM_DROP,
+    RHOCOST_TERM_PURSE,
     RHOCOST_TERM_STACK_EMPTY,
     RHOCOST_TERM_STACK_CONS
 } RhoCostTermKind;
@@ -3486,6 +3489,8 @@ typedef struct {
 
 typedef struct {
     uint32_t component_index;
+    Atom *surface;
+    char *surface_key;
     Atom *sig;
     Atom *rest;
 } RhoCostToken;
@@ -3532,6 +3537,11 @@ typedef struct {
 typedef struct {
     Atom *result;
     Atom *consumed_sig;
+    Atom *contractum;
+    uint32_t participant_indices[2];
+    uint32_t participant_len;
+    uint32_t *token_indices;
+    uint32_t token_len;
 } RhoCostStep;
 
 typedef struct {
@@ -3539,6 +3549,7 @@ typedef struct {
     char **keys;
     uint32_t len;
     uint32_t cap;
+    bool retain_provenance;
 } RhoCostStepSetAcc;
 
 typedef struct {
@@ -3551,6 +3562,24 @@ typedef struct {
     char *key;
     uint32_t ordinal;
 } RhoCostKeyedStep;
+
+typedef struct {
+    Atom *term;
+    bool has_producer;
+    uint64_t producer;
+} RhoCostTraceComponent;
+
+typedef struct {
+    RhoCostTraceComponent *items;
+    uint32_t len;
+    uint32_t cap;
+} RhoCostTraceComponentVec;
+
+typedef struct {
+    RhoCostTraceComponent component;
+    char *key;
+    uint32_t ordinal;
+} RhoCostKeyedTraceComponent;
 
 static bool rhocost_is_ground_signature(Atom *sig) {
     return sig && sig->kind == ATOM_SYMBOL &&
@@ -3565,6 +3594,10 @@ static bool rhocost_is_sig_mul(Atom *sig) {
 
 static RhoCostTermView rhocost_term_view(Atom *atom) {
     RhoCostTermView view = {RHOCOST_TERM_BAD, NULL, 0};
+    if (rho_symbol_named(atom, "rho:cost:nil")) {
+        view.kind = RHOCOST_TERM_NIL;
+        return view;
+    }
     if (rho_symbol_named(atom, "rho:cost:stack-empty")) {
         view.kind = RHOCOST_TERM_STACK_EMPTY;
         return view;
@@ -3578,8 +3611,14 @@ static RhoCostTermView rhocost_term_view(Atom *atom) {
     view.nargs = atom->expr.len - 1;
     if (strcmp(head, "rho:cost:signed") == 0) view.kind = RHOCOST_TERM_SIGNED;
     else if (strcmp(head, "rho:cost:par") == 0) view.kind = RHOCOST_TERM_PAR;
+    else if (strcmp(head, "rho:drop") == 0) view.kind = RHOCOST_TERM_DROP;
+    else if (strcmp(head, "rho:cost:purse") == 0) view.kind = RHOCOST_TERM_PURSE;
     else if (strcmp(head, "rho:cost:stack-cons") == 0) view.kind = RHOCOST_TERM_STACK_CONS;
     return view;
+}
+
+static Atom *rhocost_nil(Arena *arena) {
+    return atom_symbol(arena, "rho:cost:nil");
 }
 
 static Atom *rhocost_stack_empty(Arena *arena) {
@@ -3588,6 +3627,10 @@ static Atom *rhocost_stack_empty(Arena *arena) {
 
 static Atom *rhocost_stack_cons(Arena *arena, Atom *sig, Atom *rest) {
     return rho_binary(arena, "rho:cost:stack-cons", sig, rest);
+}
+
+static Atom *rhocost_purse(Arena *arena, Atom *surface, Atom *stack) {
+    return rho_binary(arena, "rho:cost:purse", surface, stack);
 }
 
 static Atom *rhocost_signed(Arena *arena, Atom *body, Atom *sig) {
@@ -3611,6 +3654,17 @@ static int rhocost_sig_atom_cmp(const void *lhs, const void *rhs) {
 static int rhocost_keyed_step_cmp(const void *lhs, const void *rhs) {
     const RhoCostKeyedStep *a = lhs;
     const RhoCostKeyedStep *b = rhs;
+    int cmp = strcmp(a->key, b->key);
+    if (cmp != 0) return cmp;
+    if (a->ordinal < b->ordinal) return -1;
+    if (a->ordinal > b->ordinal) return 1;
+    return 0;
+}
+
+static int rhocost_keyed_trace_component_cmp(const void *lhs,
+                                             const void *rhs) {
+    const RhoCostKeyedTraceComponent *a = lhs;
+    const RhoCostKeyedTraceComponent *b = rhs;
     int cmp = strcmp(a->key, b->key);
     if (cmp != 0) return cmp;
     if (a->ordinal < b->ordinal) return -1;
@@ -3644,15 +3698,64 @@ static bool rhocost_index_vec_push(RhoIndexVec *vec, uint32_t value) {
     return true;
 }
 
+static void rhocost_trace_component_vec_init(RhoCostTraceComponentVec *vec) {
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+static void rhocost_trace_component_vec_free(RhoCostTraceComponentVec *vec) {
+    if (!vec) return;
+    free(vec->items);
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+static bool rhocost_trace_component_vec_push(
+    RhoCostTraceComponentVec *vec, Atom *term,
+    bool has_producer, uint64_t producer) {
+    if (vec->len == vec->cap) {
+        uint32_t next_cap = vec->cap ? vec->cap * 2u : 8u;
+        RhoCostTraceComponent *next =
+            cetta_realloc(vec->items,
+                          sizeof(RhoCostTraceComponent) * next_cap);
+        if (!next) return false;
+        vec->items = next;
+        vec->cap = next_cap;
+    }
+    vec->items[vec->len].term = term;
+    vec->items[vec->len].has_producer = has_producer;
+    vec->items[vec->len].producer = producer;
+    vec->len++;
+    return true;
+}
+
 static void rhocost_step_set_acc_init(RhoCostStepSetAcc *acc) {
     acc->items = NULL;
     acc->keys = NULL;
     acc->len = 0;
     acc->cap = 0;
+    acc->retain_provenance = false;
+}
+
+static void rhocost_step_set_acc_init_traced(RhoCostStepSetAcc *acc) {
+    rhocost_step_set_acc_init(acc);
+    acc->retain_provenance = true;
+}
+
+static void rhocost_step_release(RhoCostStep *step) {
+    if (!step) return;
+    free(step->token_indices);
+    step->token_indices = NULL;
+    step->token_len = 0;
 }
 
 static void rhocost_step_set_acc_free(RhoCostStepSetAcc *acc) {
     if (!acc) return;
+    for (uint32_t i = 0; i < acc->len; i++) {
+        rhocost_step_release(&acc->items[i]);
+    }
     if (acc->keys) {
         for (uint32_t i = 0; i < acc->len; i++) {
             free(acc->keys[i]);
@@ -3664,6 +3767,7 @@ static void rhocost_step_set_acc_free(RhoCostStepSetAcc *acc) {
     acc->keys = NULL;
     acc->len = 0;
     acc->cap = 0;
+    acc->retain_provenance = false;
 }
 
 static bool rhocost_step_set_acc_grow(RhoCostStepSetAcc *acc) {
@@ -3681,13 +3785,47 @@ static bool rhocost_step_set_acc_grow(RhoCostStepSetAcc *acc) {
 static bool rhocost_step_set_acc_push_keyed(RhoCostStepSetAcc *acc,
                                             Atom *result,
                                             Atom *consumed_sig,
+                                            Atom *contractum,
+                                            const uint32_t *participant_indices,
+                                            uint32_t participant_len,
+                                            RhoCostTokenVec *tokens,
+                                            RhoIndexVec *chosen_tokens,
                                             char *key) {
+    uint32_t *token_indices = NULL;
+    if (participant_len > 2u) {
+        free(key);
+        return false;
+    }
+    if (acc->retain_provenance && chosen_tokens->len > 0) {
+        token_indices = cetta_malloc(sizeof(uint32_t) * chosen_tokens->len);
+        if (!token_indices) {
+            free(key);
+            return false;
+        }
+        for (uint32_t i = 0; i < chosen_tokens->len; i++) {
+            token_indices[i] =
+                tokens->items[chosen_tokens->items[i]].component_index;
+        }
+    }
     if (acc->len == acc->cap && !rhocost_step_set_acc_grow(acc)) {
+        free(token_indices);
         free(key);
         return false;
     }
     acc->items[acc->len].result = result;
     acc->items[acc->len].consumed_sig = consumed_sig;
+    acc->items[acc->len].contractum =
+        acc->retain_provenance ? contractum : NULL;
+    acc->items[acc->len].participant_len =
+        acc->retain_provenance ? participant_len : 0;
+    if (acc->retain_provenance) {
+        for (uint32_t i = 0; i < participant_len; i++) {
+            acc->items[acc->len].participant_indices[i] = participant_indices[i];
+        }
+    }
+    acc->items[acc->len].token_indices = token_indices;
+    acc->items[acc->len].token_len =
+        acc->retain_provenance ? chosen_tokens->len : 0;
     acc->keys[acc->len] = key;
     acc->len++;
     return true;
@@ -3708,6 +3846,7 @@ static void rhocost_step_set_acc_finish(RhoCostStepSetAcc *acc,
         char *last_key = NULL;
         for (uint32_t i = 0; i < acc->len; i++) {
             if (last_key && strcmp(items[i].key, last_key) == 0) {
+                rhocost_step_release(&items[i].step);
                 free(items[i].key);
                 continue;
             }
@@ -3728,10 +3867,14 @@ static void rhocost_step_set_acc_finish(RhoCostStepSetAcc *acc,
     acc->keys = NULL;
     acc->len = 0;
     acc->cap = 0;
+    acc->retain_provenance = false;
 }
 
 static void rhocost_step_set_free(RhoCostStepSet *set) {
     if (!set) return;
+    for (uint32_t i = 0; i < set->len; i++) {
+        rhocost_step_release(&set->items[i]);
+    }
     free(set->items);
     set->items = NULL;
     set->len = 0;
@@ -3830,12 +3973,15 @@ static char *rhocost_key_signature(Atom *sig) {
         return rho_heap_strdup("?bad-sig");
     }
     rhocost_normalize_signature_vec(&atoms);
+    (void)rho_str_append(&out, "sig(");
     for (uint32_t i = 0; i < atoms.len; i++) {
-        if (i > 0) (void)rho_str_append(&out, "*");
-        (void)rho_str_append(&out, atom_name_cstr(atoms.items[i]));
+        const char *atom = atom_name_cstr(atoms.items[i]);
+        if (i > 0) (void)rho_str_append(&out, ",");
+        (void)rho_str_appendf(&out, "%zu:%s", strlen(atom), atom);
     }
+    (void)rho_str_append(&out, ")");
     rho_vec_free(&atoms);
-    return out.data ? out.data : rho_heap_strdup("");
+    return out.data ? out.data : rho_heap_strdup("sig()");
 }
 
 static bool rhocost_check_term_rec(Atom *term);
@@ -3913,14 +4059,13 @@ static bool rhocost_check_proc(Atom *proc) {
                rhocost_check_term_rec(view.args[2]);
     case RHO_DROP:
         rho_validation_set(
-            "rhocalc cost first slice does not yet support dequotation");
+            "cost-rho drop is a wrapped term, not a process body");
         return false;
     case RHO_VAL:
-        rho_validation_set("rhocalc cost first slice does not support rho:val");
+        rho_validation_set("pure cost-rho excludes rho:val");
         return false;
     case RHO_EVAL_PAYLOAD:
-        rho_validation_set(
-            "rhocalc cost first slice does not support rho:eval-payload");
+        rho_validation_set("pure cost-rho excludes rho:eval-payload");
         return false;
     case RHO_QUOTE:
         rho_validation_set("rho:quote is a name, not a process");
@@ -3941,14 +4086,25 @@ static bool rhocost_check_proc(Atom *proc) {
 static bool rhocost_check_term_rec(Atom *term) {
     RhoCostTermView view = rhocost_term_view(term);
     switch (view.kind) {
-    case RHOCOST_TERM_STACK_EMPTY:
+    case RHOCOST_TERM_NIL:
         return true;
+    case RHOCOST_TERM_STACK_EMPTY:
     case RHOCOST_TERM_STACK_CONS:
-        if (view.nargs != 2) {
-            rho_validation_set("rho:cost:stack-cons expects signature and rest");
+        rho_validation_set(
+            "raw cost stack must occur inside rho:cost:purse");
+        return false;
+    case RHOCOST_TERM_DROP:
+        if (view.nargs != 1) {
+            rho_validation_set("rho:drop expects one cost-rho name");
             return false;
         }
-        return rhocost_check_signature(view.args[0]) &&
+        return rhocost_check_name(view.args[0]);
+    case RHOCOST_TERM_PURSE:
+        if (view.nargs != 2) {
+            rho_validation_set("rho:cost:purse expects surface and stack");
+            return false;
+        }
+        return rhocost_check_name(view.args[0]) &&
                rhocost_check_stack(view.args[1]);
     case RHOCOST_TERM_SIGNED:
         if (view.nargs != 2) {
@@ -3981,6 +4137,9 @@ static void rhocost_token_vec_init(RhoCostTokenVec *vec) {
 }
 
 static void rhocost_token_vec_free(RhoCostTokenVec *vec) {
+    for (uint32_t i = 0; i < vec->len; i++) {
+        free(vec->items[i].surface_key);
+    }
     free(vec->items);
     vec->items = NULL;
     vec->len = 0;
@@ -3989,6 +4148,8 @@ static void rhocost_token_vec_free(RhoCostTokenVec *vec) {
 
 static bool rhocost_token_vec_push(RhoCostTokenVec *vec,
                                    uint32_t component_index,
+                                   Atom *surface,
+                                   char *surface_key,
                                    Atom *sig,
                                    Atom *rest) {
     if (vec->len == vec->cap) {
@@ -4000,6 +4161,8 @@ static bool rhocost_token_vec_push(RhoCostTokenVec *vec,
         vec->cap = next_cap;
     }
     vec->items[vec->len].component_index = component_index;
+    vec->items[vec->len].surface = surface;
+    vec->items[vec->len].surface_key = surface_key;
     vec->items[vec->len].sig = sig;
     vec->items[vec->len].rest = rest;
     vec->len++;
@@ -4086,84 +4249,170 @@ static bool rhocost_whole_redex_vec_push(RhoCostWholeRedexVec *vec,
 
 static Atom *rhocost_normalize_term(Arena *arena, Atom *term);
 
-static char *rhocost_key_term(Atom *term);
+static void rhocost_key_name_into(Atom *name, RhoAlphaEnv *env, RhoStr *out);
+static void rhocost_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out);
+static void rhocost_key_term_into(Atom *term, RhoAlphaEnv *env, RhoStr *out);
 
-static char *rhocost_key_name(Atom *name) {
-    if (!name) return rho_heap_strdup("?bad-name");
+static void rhocost_key_name_into(Atom *name, RhoAlphaEnv *env, RhoStr *out) {
+    if (!name) {
+        (void)rho_str_append(out, "?bad-name");
+        return;
+    }
     if (name->kind == ATOM_VAR) {
-        RhoStr out = {0};
-        (void)rho_str_appendf(&out, "$%s:%llu", atom_name_cstr(name),
-                              (unsigned long long)name->var_id);
-        return out.data ? out.data : rho_heap_strdup("?bad-var");
+        rho_key_var_into(name, env, out);
+        return;
     }
     {
         RhoView view = rho_view(name);
         if (view.kind == RHO_QUOTE && view.nargs == 1) {
-            char *term_key = rhocost_key_term(view.args[0]);
-            RhoStr out = {0};
-            (void)rho_str_append(&out, "@(");
-            (void)rho_str_append(&out, term_key);
-            (void)rho_str_append(&out, ")");
-            free(term_key);
-            return out.data ? out.data : rho_heap_strdup("?bad-quote");
+            RhoCostTermView inner = rhocost_term_view(view.args[0]);
+            if (inner.kind == RHOCOST_TERM_DROP && inner.nargs == 1) {
+                rhocost_key_name_into(inner.args[0], env, out);
+                return;
+            }
+            RhoAlphaEnv sealed;
+            rho_alpha_init(&sealed);
+            (void)rho_str_append(out, "@(");
+            rhocost_key_term_into(view.args[0], &sealed, out);
+            (void)rho_str_append(out, ")");
+            rho_alpha_free(&sealed);
+            return;
         }
     }
     if (rhocost_is_ground_signature(name) || rhocost_is_sig_mul(name)) {
-        return rhocost_key_signature(name);
+        char *signature_key = rhocost_key_signature(name);
+        (void)rho_str_append(out, signature_key);
+        free(signature_key);
+        return;
     }
-    return rho_heap_strdup("?bad-name");
+    (void)rho_str_append(out, "?bad-name");
 }
 
-static char *rhocost_key_proc(Atom *proc) {
+static void rhocost_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
     RhoView view = rho_view(proc);
-    RhoStr out = {0};
     switch (view.kind) {
     case RHO_NIL:
-        (void)rho_str_append(&out, "0");
-        break;
+        (void)rho_str_append(out, "0");
+        return;
     case RHO_PAR:
-        (void)rho_str_append(&out, "par(");
+        (void)rho_str_append(out, "par(");
         for (uint32_t i = 0; i < view.nargs; i++) {
-            char *sub = rhocost_key_proc(view.args[i]);
-            if (i > 0) (void)rho_str_append(&out, "|");
-            (void)rho_str_append(&out, sub);
-            free(sub);
+            if (i > 0) (void)rho_str_append(out, "|");
+            rhocost_key_proc_into(view.args[i], env, out);
         }
-        (void)rho_str_append(&out, ")");
-        break;
-    case RHO_SEND: {
-        char *name_key = rhocost_key_name(view.args[0]);
-        char *term_key = rhocost_key_term(view.args[1]);
-        (void)rho_str_appendf(&out, "send(%s,%s)", name_key, term_key);
-        free(name_key);
-        free(term_key);
-        break;
-    }
+        (void)rho_str_append(out, ")");
+        return;
+    case RHO_SEND:
+        (void)rho_str_append(out, "send(");
+        rhocost_key_name_into(view.args[0], env, out);
+        (void)rho_str_append(out, ",");
+        rhocost_key_term_into(view.args[1], env, out);
+        (void)rho_str_append(out, ")");
+        return;
     case RHO_RECV: {
-        char *name_key = rhocost_key_name(view.args[0]);
-        char *term_key = rhocost_key_term(view.args[2]);
-        (void)rho_str_appendf(&out, "recv(%s,$%s:%llu,%s)",
-                              name_key,
-                              atom_name_cstr(view.args[1]),
-                              (unsigned long long)view.args[1]->var_id,
-                              term_key);
-        free(name_key);
-        free(term_key);
-        break;
+        uint32_t mark = rho_alpha_mark(env);
+        (void)rho_str_append(out, "recv(");
+        rhocost_key_name_into(view.args[0], env, out);
+        (void)rho_str_append(out, ",");
+        if (view.nargs == 3 && view.args[1]->kind == ATOM_VAR) {
+            (void)rho_alpha_push(env, view.args[1]->var_id);
+            rhocost_key_term_into(view.args[2], env, out);
+        } else {
+            (void)rho_str_append(out, "?bad-binder");
+        }
+        rho_alpha_pop(env, mark);
+        (void)rho_str_append(out, ")");
+        return;
     }
-    case RHO_DROP: {
-        char *name_key = rhocost_key_name(view.args[0]);
-        (void)rho_str_appendf(&out, "drop(%s)", name_key);
-        free(name_key);
-        break;
-    }
+    case RHO_DROP:
+        (void)rho_str_append(out, "drop(");
+        rhocost_key_name_into(view.args[0], env, out);
+        (void)rho_str_append(out, ")");
+        return;
     case RHO_VAL:
     case RHO_EVAL_PAYLOAD:
     case RHO_QUOTE:
     case RHO_BAD:
-        (void)rho_str_append(&out, "?bad-proc");
-        break;
+        (void)rho_str_append(out, "?bad-proc");
+        return;
     }
+}
+
+static void rhocost_key_term_into(Atom *term, RhoAlphaEnv *env, RhoStr *out) {
+    RhoCostTermView view = rhocost_term_view(term);
+    switch (view.kind) {
+    case RHOCOST_TERM_NIL:
+        (void)rho_str_append(out, "tnil");
+        return;
+    case RHOCOST_TERM_STACK_EMPTY:
+        (void)rho_str_append(out, "sempty");
+        return;
+    case RHOCOST_TERM_STACK_CONS: {
+        char *signature_key = rhocost_key_signature(view.args[0]);
+        (void)rho_str_appendf(out, "stack(%s:", signature_key);
+        free(signature_key);
+        rhocost_key_term_into(view.args[1], env, out);
+        (void)rho_str_append(out, ")");
+        return;
+    }
+    case RHOCOST_TERM_DROP:
+        (void)rho_str_append(out, "drop(");
+        rhocost_key_name_into(view.args[0], env, out);
+        (void)rho_str_append(out, ")");
+        return;
+    case RHOCOST_TERM_PURSE:
+        (void)rho_str_append(out, "purse(");
+        rhocost_key_name_into(view.args[0], env, out);
+        (void)rho_str_append(out, ",");
+        rhocost_key_term_into(view.args[1], env, out);
+        (void)rho_str_append(out, ")");
+        return;
+    case RHOCOST_TERM_SIGNED: {
+        char *signature_key = rhocost_key_signature(view.args[1]);
+        (void)rho_str_append(out, "signed(");
+        rhocost_key_proc_into(view.args[0], env, out);
+        (void)rho_str_appendf(out, ",%s)", signature_key);
+        free(signature_key);
+        return;
+    }
+    case RHOCOST_TERM_PAR:
+        (void)rho_str_append(out, "tpar(");
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            if (i > 0) (void)rho_str_append(out, "|");
+            rhocost_key_term_into(view.args[i], env, out);
+        }
+        (void)rho_str_append(out, ")");
+        return;
+    case RHOCOST_TERM_BAD:
+        (void)rho_str_append(out, "?bad-term");
+        return;
+    }
+}
+
+static char *rhocost_key_name(Atom *name) {
+    RhoAlphaEnv env;
+    RhoStr out = {0};
+    rho_alpha_init(&env);
+    rhocost_key_name_into(name, &env, &out);
+    rho_alpha_free(&env);
+    return out.data ? out.data : rho_heap_strdup("");
+}
+
+static char *rhocost_key_proc(Atom *proc) {
+    RhoAlphaEnv env;
+    RhoStr out = {0};
+    rho_alpha_init(&env);
+    rhocost_key_proc_into(proc, &env, &out);
+    rho_alpha_free(&env);
+    return out.data ? out.data : rho_heap_strdup("");
+}
+
+static char *rhocost_key_term(Atom *term) {
+    RhoAlphaEnv env;
+    RhoStr out = {0};
+    rho_alpha_init(&env);
+    rhocost_key_term_into(term, &env, &out);
+    rho_alpha_free(&env);
     return out.data ? out.data : rho_heap_strdup("");
 }
 
@@ -4198,8 +4447,13 @@ static Atom *rhocost_normalize_name(Arena *arena, Atom *name) {
     {
         RhoView view = rho_view(name);
         if (view.kind == RHO_QUOTE && view.nargs == 1) {
-            return rho_unary(arena, "rho:quote",
-                             rhocost_normalize_term(arena, view.args[0]));
+            Atom *term = rhocost_normalize_term(arena, view.args[0]);
+            RhoCostTermView term_view = rhocost_term_view(term);
+            if (term_view.kind == RHOCOST_TERM_DROP &&
+                term_view.nargs == 1) {
+                return rhocost_normalize_name(arena, term_view.args[0]);
+            }
+            return rho_unary(arena, "rho:quote", term);
         }
     }
     return name;
@@ -4257,7 +4511,7 @@ static void rhocost_collect_proc_par(Arena *arena, Atom *proc, RhoAtomVec *out) 
 static void rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out);
 
 static Atom *rhocost_term_par_from_vec(Arena *arena, RhoAtomVec *vec) {
-    if (vec->len == 0) return rhocost_stack_empty(arena);
+    if (vec->len == 0) return rhocost_nil(arena);
     if (vec->len == 1) return vec->items[0];
     RhoKeyedAtom *items = cetta_malloc(sizeof(RhoKeyedAtom) * vec->len);
     for (uint32_t i = 0; i < vec->len; i++) {
@@ -4275,15 +4529,34 @@ static Atom *rhocost_term_par_from_vec(Arena *arena, RhoAtomVec *vec) {
     return rhocost_par(arena, args, vec->len);
 }
 
+static Atom *rhocost_normalize_stack(Arena *arena, Atom *stack) {
+    RhoCostTermView view = rhocost_term_view(stack);
+    if (view.kind == RHOCOST_TERM_STACK_EMPTY) {
+        return rhocost_stack_empty(arena);
+    }
+    if (view.kind == RHOCOST_TERM_STACK_CONS && view.nargs == 2) {
+        return rhocost_stack_cons(
+            arena, rhocost_normalize_signature(arena, view.args[0]),
+            rhocost_normalize_stack(arena, view.args[1]));
+    }
+    return stack;
+}
+
 static Atom *rhocost_normalize_term(Arena *arena, Atom *term) {
     RhoCostTermView view = rhocost_term_view(term);
     switch (view.kind) {
+    case RHOCOST_TERM_NIL:
+        return rhocost_nil(arena);
     case RHOCOST_TERM_STACK_EMPTY:
-        return rhocost_stack_empty(arena);
     case RHOCOST_TERM_STACK_CONS:
-        return rhocost_stack_cons(arena,
-                                  rhocost_normalize_signature(arena, view.args[0]),
-                                  rhocost_normalize_term(arena, view.args[1]));
+        return rhocost_normalize_stack(arena, term);
+    case RHOCOST_TERM_DROP:
+        return rho_unary(arena, "rho:drop",
+                         rhocost_normalize_name(arena, view.args[0]));
+    case RHOCOST_TERM_PURSE:
+        return rhocost_purse(
+            arena, rhocost_normalize_name(arena, view.args[0]),
+            rhocost_normalize_stack(arena, view.args[1]));
     case RHOCOST_TERM_SIGNED:
         return rhocost_signed(arena,
                               rhocost_normalize_proc(arena, view.args[0]),
@@ -4307,7 +4580,7 @@ static Atom *rhocost_normalize_term(Arena *arena, Atom *term) {
 static void rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out) {
     Atom *norm = rhocost_normalize_term(arena, term);
     RhoCostTermView view = rhocost_term_view(norm);
-    if (view.kind == RHOCOST_TERM_STACK_EMPTY) return;
+    if (view.kind == RHOCOST_TERM_NIL) return;
     if (view.kind == RHOCOST_TERM_PAR) {
         for (uint32_t i = 0; i < view.nargs; i++) {
             rhocost_collect_term_par(arena, view.args[i], out);
@@ -4315,46 +4588,6 @@ static void rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out) 
         return;
     }
     (void)rho_vec_push(out, norm);
-}
-
-static char *rhocost_key_term(Atom *term) {
-    RhoCostTermView view = rhocost_term_view(term);
-    RhoStr out = {0};
-    switch (view.kind) {
-    case RHOCOST_TERM_STACK_EMPTY:
-        (void)rho_str_append(&out, "()");
-        break;
-    case RHOCOST_TERM_STACK_CONS: {
-        char *sig = rhocost_key_signature(view.args[0]);
-        char *rest = rhocost_key_term(view.args[1]);
-        (void)rho_str_appendf(&out, "stack(%s:%s)", sig, rest);
-        free(sig);
-        free(rest);
-        break;
-    }
-    case RHOCOST_TERM_SIGNED: {
-        char *body = rhocost_key_proc(view.args[0]);
-        char *sig = rhocost_key_signature(view.args[1]);
-        (void)rho_str_appendf(&out, "signed(%s,%s)", body, sig);
-        free(body);
-        free(sig);
-        break;
-    }
-    case RHOCOST_TERM_PAR:
-        (void)rho_str_append(&out, "tpar(");
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            char *sub = rhocost_key_term(view.args[i]);
-            if (i > 0) (void)rho_str_append(&out, "|");
-            (void)rho_str_append(&out, sub);
-            free(sub);
-        }
-        (void)rho_str_append(&out, ")");
-        break;
-    case RHOCOST_TERM_BAD:
-        (void)rho_str_append(&out, "?bad-term");
-        break;
-    }
-    return out.data ? out.data : rho_heap_strdup("");
 }
 
 static bool rhocost_term_has_free_var(Atom *term, VarId var_id);
@@ -4394,7 +4627,6 @@ static bool rhocost_proc_has_free_var(Atom *proc, VarId var_id) {
         }
         return rhocost_term_has_free_var(view.args[2], var_id);
     case RHO_DROP:
-        return view.nargs == 1 && rhocost_name_has_free_var(view.args[0], var_id);
     case RHO_VAL:
     case RHO_EVAL_PAYLOAD:
     case RHO_QUOTE:
@@ -4407,9 +4639,16 @@ static bool rhocost_proc_has_free_var(Atom *proc, VarId var_id) {
 static bool rhocost_term_has_free_var(Atom *term, VarId var_id) {
     RhoCostTermView view = rhocost_term_view(term);
     switch (view.kind) {
+    case RHOCOST_TERM_NIL:
     case RHOCOST_TERM_STACK_EMPTY:
     case RHOCOST_TERM_STACK_CONS:
         return false;
+    case RHOCOST_TERM_DROP:
+        return view.nargs == 1 &&
+               rhocost_name_has_free_var(view.args[0], var_id);
+    case RHOCOST_TERM_PURSE:
+        return view.nargs == 2 &&
+               rhocost_name_has_free_var(view.args[0], var_id);
     case RHOCOST_TERM_SIGNED:
         return rhocost_proc_has_free_var(view.args[0], var_id);
     case RHOCOST_TERM_PAR:
@@ -4490,10 +4729,23 @@ static Atom *rhocost_rename_term(Arena *arena, Atom *term,
                                  VarId old_id, Atom *replacement_name) {
     RhoCostTermView view = rhocost_term_view(term);
     switch (view.kind) {
+    case RHOCOST_TERM_NIL:
+        return rhocost_nil(arena);
     case RHOCOST_TERM_STACK_EMPTY:
         return rhocost_stack_empty(arena);
     case RHOCOST_TERM_STACK_CONS:
-        return rhocost_stack_cons(arena, view.args[0], view.args[1]);
+        return rhocost_normalize_stack(arena, term);
+    case RHOCOST_TERM_DROP:
+        return rho_unary(
+            arena, "rho:drop",
+            rhocost_rename_name(arena, view.args[0], old_id,
+                                replacement_name));
+    case RHOCOST_TERM_PURSE:
+        return rhocost_purse(
+            arena,
+            rhocost_rename_name(arena, view.args[0], old_id,
+                                replacement_name),
+            rhocost_normalize_stack(arena, view.args[1]));
     case RHOCOST_TERM_SIGNED:
         return rhocost_signed(arena,
                               rhocost_rename_proc(arena, view.args[0], old_id,
@@ -4520,6 +4772,19 @@ static Atom *rhocost_subst_name(Arena *arena, Atom *name,
                                 VarId var_id, Atom *replacement_term) {
     Atom *norm = rhocost_normalize_name(arena, name);
     if (norm->kind == ATOM_VAR && norm->var_id == var_id) {
+        return rho_unary(arena, "rho:quote",
+                         rhocost_normalize_term(arena, replacement_term));
+    }
+    return norm;
+}
+
+static Atom *rhocost_subst_name_mark(Arena *arena, Atom *name,
+                                     VarId var_id, Atom *replacement_term,
+                                     bool *matched) {
+    Atom *norm = rhocost_normalize_name(arena, name);
+    *matched = false;
+    if (norm->kind == ATOM_VAR && norm->var_id == var_id) {
+        *matched = true;
         return rho_unary(arena, "rho:quote",
                          rhocost_normalize_term(arena, replacement_term));
     }
@@ -4591,10 +4856,29 @@ static Atom *rhocost_subst_term(Arena *arena, Atom *term,
                                 VarId var_id, Atom *replacement_term) {
     RhoCostTermView view = rhocost_term_view(term);
     switch (view.kind) {
+    case RHOCOST_TERM_NIL:
+        return rhocost_nil(arena);
     case RHOCOST_TERM_STACK_EMPTY:
         return rhocost_stack_empty(arena);
     case RHOCOST_TERM_STACK_CONS:
-        return rhocost_stack_cons(arena, view.args[0], view.args[1]);
+        return rhocost_normalize_stack(arena, term);
+    case RHOCOST_TERM_DROP: {
+        bool matched = false;
+        Atom *name = rhocost_subst_name_mark(
+            arena, view.args[0], var_id, replacement_term, &matched);
+        RhoView name_view = rho_view(name);
+        if (matched && name_view.kind == RHO_QUOTE &&
+            name_view.nargs == 1) {
+            return rhocost_normalize_term(arena, name_view.args[0]);
+        }
+        return rho_unary(arena, "rho:drop", name);
+    }
+    case RHOCOST_TERM_PURSE:
+        return rhocost_purse(
+            arena,
+            rhocost_subst_name(arena, view.args[0], var_id,
+                                replacement_term),
+            rhocost_normalize_stack(arena, view.args[1]));
     case RHOCOST_TERM_SIGNED:
         return rhocost_signed(arena,
                               rhocost_subst_proc(arena, view.args[0], var_id,
@@ -4687,6 +4971,190 @@ static void rhocost_collect_term_components(Arena *arena, Atom *term, RhoAtomVec
     rhocost_collect_term_par(arena, term, out);
 }
 
+static void rhocost_trace_components_sort(RhoCostTraceComponentVec *components) {
+    if (components->len < 2) return;
+    RhoCostKeyedTraceComponent *keyed =
+        cetta_malloc(sizeof(RhoCostKeyedTraceComponent) * components->len);
+    for (uint32_t i = 0; i < components->len; i++) {
+        keyed[i].component = components->items[i];
+        keyed[i].key = rhocost_key_term(components->items[i].term);
+        keyed[i].ordinal = i;
+    }
+    qsort(keyed, components->len, sizeof(RhoCostKeyedTraceComponent),
+          rhocost_keyed_trace_component_cmp);
+    for (uint32_t i = 0; i < components->len; i++) {
+        components->items[i] = keyed[i].component;
+        free(keyed[i].key);
+    }
+    free(keyed);
+}
+
+static bool rhocost_trace_components_add_term(
+    Arena *arena, RhoCostTraceComponentVec *components, Atom *term,
+    bool has_producer, uint64_t producer) {
+    Atom *normalized = rhocost_normalize_term(arena, term);
+    RhoCostTermView view = rhocost_term_view(normalized);
+    if (view.kind == RHOCOST_TERM_NIL) return true;
+    if (view.kind == RHOCOST_TERM_PAR) {
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            if (!rhocost_trace_components_add_term(
+                    arena, components, view.args[i],
+                    has_producer, producer)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (view.kind == RHOCOST_TERM_BAD) return false;
+    return rhocost_trace_component_vec_push(
+        components, normalized, has_producer, producer);
+}
+
+static bool rhocost_trace_components_project(
+    RhoCostTraceComponentVec *components, RhoAtomVec *terms) {
+    rho_vec_init(terms);
+    for (uint32_t i = 0; i < components->len; i++) {
+        if (!rho_vec_push(terms, components->items[i].term)) {
+            rho_vec_free(terms);
+            return false;
+        }
+    }
+    return true;
+}
+
+static Atom *rhocost_trace_components_term(
+    Arena *arena, RhoCostTraceComponentVec *components) {
+    RhoAtomVec terms;
+    Atom *result;
+    if (!rhocost_trace_components_project(components, &terms)) return NULL;
+    result = rhocost_term_par_from_vec(arena, &terms);
+    rho_vec_free(&terms);
+    return result;
+}
+
+static bool rhocost_step_consumes_component(const RhoCostStep *step,
+                                            uint32_t component_index) {
+    for (uint32_t i = 0; i < step->participant_len; i++) {
+        if (step->participant_indices[i] == component_index) return true;
+    }
+    for (uint32_t i = 0; i < step->token_len; i++) {
+        if (step->token_indices[i] == component_index) return true;
+    }
+    return false;
+}
+
+static bool rhocost_trace_apply_step(
+    Arena *arena, RhoCostTraceComponentVec *components,
+    const RhoCostStep *step, uint64_t event_id) {
+    RhoCostTraceComponentVec next;
+    rhocost_trace_component_vec_init(&next);
+
+    for (uint32_t i = 0; i < components->len; i++) {
+        if (rhocost_step_consumes_component(step, i)) continue;
+        if (!rhocost_trace_component_vec_push(
+                &next, components->items[i].term,
+                components->items[i].has_producer,
+                components->items[i].producer)) {
+            rhocost_trace_component_vec_free(&next);
+            return false;
+        }
+    }
+
+    if (!rhocost_trace_components_add_term(
+            arena, &next, step->contractum, true, event_id)) {
+        rhocost_trace_component_vec_free(&next);
+        return false;
+    }
+    for (uint32_t i = 0; i < step->token_len; i++) {
+        uint32_t token_index = step->token_indices[i];
+        if (token_index >= components->len) {
+            rhocost_trace_component_vec_free(&next);
+            return false;
+        }
+        RhoCostTermView token =
+            rhocost_term_view(components->items[token_index].term);
+        if (token.kind != RHOCOST_TERM_PURSE || token.nargs != 2) {
+            rhocost_trace_component_vec_free(&next);
+            return false;
+        }
+        RhoCostTermView stack = rhocost_term_view(token.args[1]);
+        if (stack.kind != RHOCOST_TERM_STACK_CONS || stack.nargs != 2) {
+            rhocost_trace_component_vec_free(&next);
+            return false;
+        }
+        Atom *tail = rhocost_purse(arena, token.args[0], stack.args[1]);
+        if (!rhocost_trace_components_add_term(
+                arena, &next, tail, true, event_id)) {
+            rhocost_trace_component_vec_free(&next);
+            return false;
+        }
+    }
+
+    rhocost_trace_components_sort(&next);
+    rhocost_trace_component_vec_free(components);
+    *components = next;
+    return true;
+}
+
+static Atom *rhocost_trace_event(
+    Arena *arena, RhoCostTraceComponentVec *components,
+    const RhoCostStep *step, uint64_t event_id) {
+    uint32_t max_causes = step->participant_len + step->token_len;
+    Atom **cause_atoms =
+        arena_alloc(arena, sizeof(Atom *) * (size_t)max_causes);
+    uint32_t cause_len = 0;
+
+    if (event_id > (uint64_t)INT64_MAX ||
+        (max_causes > 0 && !cause_atoms)) {
+        return NULL;
+    }
+
+    for (uint32_t group = 0; group < 2; group++) {
+        const uint32_t *indices = group == 0
+            ? step->participant_indices : step->token_indices;
+        uint32_t len = group == 0 ? step->participant_len : step->token_len;
+        for (uint32_t i = 0; i < len; i++) {
+            uint32_t component_index = indices[i];
+            if (component_index >= components->len) return NULL;
+            RhoCostTraceComponent *component =
+                &components->items[component_index];
+            if (!component->has_producer) continue;
+            if (component->producer >= event_id ||
+                component->producer > (uint64_t)INT64_MAX) {
+                return NULL;
+            }
+            cause_atoms[cause_len++] =
+                atom_int(arena, (int64_t)component->producer);
+        }
+    }
+
+    if (step->token_len == 0) return NULL;
+    Atom **fundings =
+        arena_alloc(arena, sizeof(Atom *) * (size_t)step->token_len);
+    if (!fundings) return NULL;
+    for (uint32_t i = 0; i < step->token_len; i++) {
+        uint32_t component_index = step->token_indices[i];
+        if (component_index >= components->len) return NULL;
+        RhoCostTermView purse =
+            rhocost_term_view(components->items[component_index].term);
+        if (purse.kind != RHOCOST_TERM_PURSE || purse.nargs != 2) return NULL;
+        RhoCostTermView stack = rhocost_term_view(purse.args[1]);
+        if (stack.kind != RHOCOST_TERM_STACK_CONS || stack.nargs != 2) {
+            return NULL;
+        }
+        Atom *funding_args[2] = {purse.args[0], stack.args[0]};
+        fundings[i] =
+            rho_call(arena, "lts:rho:cost:funding", funding_args, 2);
+    }
+    Atom *event_args[4] = {
+        atom_int(arena, (int64_t)event_id),
+        atom_expr(arena, cause_atoms, cause_len),
+        atom_expr(arena, fundings, step->token_len),
+        step->consumed_sig
+    };
+    return rho_call(arena, "lts:rho:cost:event", event_args, 4);
+}
+
 static bool rhocost_index_skipped(uint32_t index, const uint32_t *skip,
                                   uint32_t skip_len) {
     for (uint32_t i = 0; i < skip_len; i++) {
@@ -4753,13 +5221,16 @@ static bool rhocost_emit_step(Arena *arena,
 
     extras[0] = body;
     for (uint32_t i = 0; i < chosen_tokens->len; i++) {
-        extras[i + 1] = tokens->items[chosen_tokens->items[i]].rest;
+        RhoCostToken *token = &tokens->items[chosen_tokens->items[i]];
+        extras[i + 1] = rhocost_purse(arena, token->surface, token->rest);
     }
 
     next = rhocost_rebuild_result(arena, components, skip, skip_len,
                                   extras, extra_len);
     key = rhocost_step_transition_key(next, consumed_sig);
-    return rhocost_step_set_acc_push_keyed(out, next, consumed_sig, key);
+    return rhocost_step_set_acc_push_keyed(
+        out, next, consumed_sig, body, participant_skip,
+        participant_skip_len, tokens, chosen_tokens, key);
 }
 
 static bool rhocost_cover_tokens_rec(Arena *arena,
@@ -4768,6 +5239,7 @@ static bool rhocost_cover_tokens_rec(Arena *arena,
                                      uint32_t participant_skip_len,
                                      Atom *body,
                                      RhoCostTokenVec *tokens,
+                                     const char *surface_key,
                                      RhoAtomVec *remaining_sig_atoms,
                                      uint32_t start,
                                      RhoIndexVec *chosen_tokens,
@@ -4784,6 +5256,7 @@ static bool rhocost_cover_tokens_rec(Arena *arena,
         RhoAtomVec next_remaining;
         bool ok;
 
+        if (strcmp(tokens->items[i].surface_key, surface_key) != 0) continue;
         rho_vec_init(&token_atoms);
         if (!rhocost_collect_signature_atoms(tokens->items[i].sig, &token_atoms)) {
             rho_vec_free(&token_atoms);
@@ -4804,7 +5277,7 @@ static bool rhocost_cover_tokens_rec(Arena *arena,
         }
         ok = rhocost_cover_tokens_rec(arena, components, participant_skip,
                                       participant_skip_len, body, tokens,
-                                      &next_remaining, i + 1, chosen_tokens,
+                                      surface_key, &next_remaining, i + 1, chosen_tokens,
                                       consumed_sig, out);
         chosen_tokens->len--;
         rho_vec_free(&next_remaining);
@@ -4827,36 +5300,39 @@ static Atom *rhocost_signature_product(Arena *arena, Atom *lhs, Atom *rhs) {
     return out;
 }
 
-static bool rhocost_collect_steps(Arena *arena, Atom *term,
-                                  RhoCostStepSetAcc *out) {
-    RhoAtomVec components;
+static bool rhocost_collect_steps_from_components(Arena *arena,
+                                                  RhoAtomVec *components,
+                                                  RhoCostStepSetAcc *out) {
     RhoCostTokenVec tokens;
     RhoCostSignedEndpointVec recvs;
     RhoCostSignedEndpointVec sends;
     RhoCostWholeRedexVec wholes;
     bool ok = true;
 
-    if (!arena || !term || !out) return false;
-    if (!rhocost_term_well_formed(term)) return false;
+    if (!arena || !components || !out) return false;
 
-    rho_vec_init(&components);
     rhocost_token_vec_init(&tokens);
     rhocost_signed_endpoint_vec_init(&recvs);
     rhocost_signed_endpoint_vec_init(&sends);
     rhocost_whole_redex_vec_init(&wholes);
 
-    rhocost_collect_term_components(arena, rhocost_normalize_term(arena, term),
-                                    &components);
-
-    for (uint32_t i = 0; i < components.len && ok; i++) {
-        RhoCostTermView view = rhocost_term_view(components.items[i]);
-        if (view.kind == RHOCOST_TERM_STACK_CONS && view.nargs == 2 &&
-            rhocost_check_signature(view.args[0])) {
-            ok = rhocost_token_vec_push(&tokens, i, view.args[0], view.args[1]);
-            continue;
+    for (uint32_t i = 0; i < components->len && ok; i++) {
+        RhoCostTermView view = rhocost_term_view(components->items[i]);
+        if (view.kind == RHOCOST_TERM_PURSE && view.nargs == 2) {
+            RhoCostTermView stack = rhocost_term_view(view.args[1]);
+            if (stack.kind == RHOCOST_TERM_STACK_CONS && stack.nargs == 2 &&
+                rhocost_check_signature(stack.args[0])) {
+                char *surface_key = rhocost_key_name(view.args[0]);
+                ok = rhocost_token_vec_push(
+                    &tokens, i, view.args[0], surface_key,
+                    stack.args[0], stack.args[1]);
+                if (!ok) free(surface_key);
+                continue;
+            }
         }
-        ok = rhocost_signed_body_endpoint(i, components.items[i], &recvs, &sends) &&
-             rhocost_whole_signed_redex(i, components.items[i], &wholes);
+        ok = rhocost_signed_body_endpoint(
+                 i, components->items[i], &recvs, &sends) &&
+             rhocost_whole_signed_redex(i, components->items[i], &wholes);
     }
 
     for (uint32_t w = 0; w < wholes.len && ok; w++) {
@@ -4872,8 +5348,9 @@ static bool rhocost_collect_steps(Arena *arena, Atom *term,
         ok = rhocost_collect_signature_atoms(consumed_sig, &required_sig_atoms);
         if (ok) {
             rhocost_normalize_signature_vec(&required_sig_atoms);
-            ok = rhocost_cover_tokens_rec(arena, &components, skip, 1, body,
-                                          &tokens, &required_sig_atoms, 0,
+            ok = rhocost_cover_tokens_rec(arena, components, skip, 1, body,
+                                          &tokens, wholes.items[w].channel_key,
+                                          &required_sig_atoms, 0,
                                           &chosen_tokens, consumed_sig, out);
         }
         rhocost_index_vec_free(&chosen_tokens);
@@ -4906,8 +5383,9 @@ static bool rhocost_collect_steps(Arena *arena, Atom *term,
             ok = rhocost_collect_signature_atoms(consumed_sig, &required_sig_atoms);
             if (ok) {
                 rhocost_normalize_signature_vec(&required_sig_atoms);
-                ok = rhocost_cover_tokens_rec(arena, &components, skip, 2, body,
-                                              &tokens, &required_sig_atoms, 0,
+                ok = rhocost_cover_tokens_rec(arena, components, skip, 2, body,
+                                              &tokens, recvs.items[r].channel_key,
+                                              &required_sig_atoms, 0,
                                               &chosen_tokens, consumed_sig, out);
             }
             rhocost_index_vec_free(&chosen_tokens);
@@ -4919,8 +5397,139 @@ static bool rhocost_collect_steps(Arena *arena, Atom *term,
     rhocost_signed_endpoint_vec_free(&recvs);
     rhocost_signed_endpoint_vec_free(&sends);
     rhocost_token_vec_free(&tokens);
+    return ok;
+}
+
+static bool rhocost_collect_steps(Arena *arena, Atom *term,
+                                  RhoCostStepSetAcc *out) {
+    RhoAtomVec components;
+    bool ok;
+
+    if (!arena || !term || !out) return false;
+    if (!rhocost_term_well_formed(term)) return false;
+
+    rho_vec_init(&components);
+    rhocost_collect_term_components(arena, rhocost_normalize_term(arena, term),
+                                    &components);
+    ok = rhocost_collect_steps_from_components(arena, &components, out);
     rho_vec_free(&components);
     return ok;
+}
+
+static Atom *rhocalc_cost_causal_run_expr(Arena *arena, Atom *term,
+                                          bool bounded, uint64_t fuel) {
+    RhoCostTraceComponentVec components;
+    RhoAtomVec events;
+    Atom *result = NULL;
+    uint64_t event_id = 0;
+    bool quiescent = false;
+
+    if (!arena || !term || !rhocost_term_well_formed(term)) return NULL;
+
+    rhocost_trace_component_vec_init(&components);
+    rho_vec_init(&events);
+    if (!rhocost_trace_components_add_term(
+            arena, &components, term, false, 0)) {
+        rho_validation_set("rho cost trace could not initialize provenance");
+        goto done;
+    }
+    rhocost_trace_components_sort(&components);
+
+    for (;;) {
+        RhoAtomVec projected_components;
+        RhoCostStepSetAcc candidates;
+        RhoCostStep *selected;
+        Atom *event;
+        Atom *projected_next;
+        bool collected;
+
+        if (event_id > (uint64_t)INT64_MAX) {
+            rho_validation_set("rho cost trace exhausted local EventId range");
+            goto done;
+        }
+        if (!rhocost_trace_components_project(
+                &components, &projected_components)) {
+            rho_validation_set("rho cost trace could not project its state");
+            goto done;
+        }
+        rhocost_step_set_acc_init_traced(&candidates);
+        collected = rhocost_collect_steps_from_components(
+            arena, &projected_components, &candidates);
+        rho_vec_free(&projected_components);
+        if (!collected) {
+            rhocost_step_set_acc_free(&candidates);
+            rho_validation_set("rho cost trace step construction failed");
+            goto done;
+        }
+        if (candidates.len == 0) {
+            rhocost_step_set_acc_free(&candidates);
+            quiescent = true;
+            break;
+        }
+        if (bounded && event_id >= fuel) {
+            rhocost_step_set_acc_free(&candidates);
+            break;
+        }
+
+        /* Select a concrete firing before successor-state deduplication. */
+        selected = &candidates.items[0];
+        event = rhocost_trace_event(arena, &components, selected, event_id);
+        if (!event || !rho_vec_push(&events, event) ||
+            !rhocost_trace_apply_step(
+                arena, &components, selected, event_id)) {
+            rhocost_step_set_acc_free(&candidates);
+            rho_validation_set("rho cost trace provenance update failed");
+            goto done;
+        }
+        projected_next = rhocost_trace_components_term(arena, &components);
+        if (!projected_next || !atom_eq(projected_next, selected->result)) {
+            rhocost_step_set_acc_free(&candidates);
+            rho_validation_set(
+                "rho cost trace projection disagrees with the cost step");
+            goto done;
+        }
+        rhocost_step_set_acc_free(&candidates);
+        event_id++;
+    }
+
+    {
+        Atom *final_state =
+            rhocost_trace_components_term(arena, &components);
+        Atom *receipt_args[2];
+        Atom *receipt;
+        if (!final_state) {
+            rho_validation_set("rho cost trace could not project final state");
+            goto done;
+        }
+        receipt_args[0] = atom_expr(arena, events.items, events.len);
+        receipt_args[1] = final_state;
+        receipt = rho_call(arena, "lts:rho:cost:receipt", receipt_args, 2);
+        if (!bounded) {
+            result = receipt;
+        } else {
+            Atom *prefix_args[2] = {
+                atom_symbol(arena, quiescent
+                    ? "lts:rho:cost:quiescent"
+                    : "lts:rho:cost:fuel-exhausted"),
+                receipt
+            };
+            result = rho_call(arena, "lts:rho:cost:prefix", prefix_args, 2);
+        }
+    }
+
+done:
+    rho_vec_free(&events);
+    rhocost_trace_component_vec_free(&components);
+    return result;
+}
+
+Atom *rhocalc_cost_causal_trace_expr(Arena *arena, Atom *term) {
+    return rhocalc_cost_causal_run_expr(arena, term, false, 0);
+}
+
+Atom *rhocalc_cost_causal_prefix_expr(Arena *arena, Atom *term,
+                                      uint64_t fuel) {
+    return rhocalc_cost_causal_run_expr(arena, term, true, fuel);
 }
 
 static bool rhocost_collect_step_set(Arena *arena, Atom *term,
