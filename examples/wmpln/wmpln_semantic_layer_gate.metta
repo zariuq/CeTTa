@@ -739,3 +739,297 @@
 !(assertEqual
   (mixed-mono-requires-ext-counterexample)
   True)
+
+; Semantic-layer formed-concept closure shadow:
+; mirrors PLNTypedSemanticLayerConceptClosureBridge.lean.  Robust lower
+; concepts and permissive upper concepts live in different carriers, but the
+; encoder is compatible because both carriers expose the same intent ids.
+; Thus lower semantic-layer seeds transport to upper seeds; determined upper
+; seeds transport back to lower seeds; and threshold/admissibility consumers
+; read the same hand-derived full-inheritance scores.
+
+(= (formed-concept-intent ROBUST-WITNESS) WITNESS-INTENT)
+(= (formed-concept-intent ROBUST-FEATURE) FEATURE-INTENT)
+(= (formed-concept-intent ROBUST-OPEN) OPEN-INTENT)
+(= (formed-concept-intent PERMISSIVE-WITNESS) WITNESS-INTENT)
+(= (formed-concept-intent PERMISSIVE-FEATURE) FEATURE-INTENT)
+(= (formed-concept-intent PERMISSIVE-OPEN) OPEN-INTENT)
+
+(= (lower-pair-source LOWER-WITNESS-FEATURE) ROBUST-WITNESS)
+(= (lower-pair-target LOWER-WITNESS-FEATURE) ROBUST-FEATURE)
+(= (lower-pair-source LOWER-OPEN) ROBUST-OPEN)
+(= (lower-pair-target LOWER-OPEN) ROBUST-FEATURE)
+
+(= (upper-pair-source UPPER-WITNESS-FEATURE) PERMISSIVE-WITNESS)
+(= (upper-pair-target UPPER-WITNESS-FEATURE) PERMISSIVE-FEATURE)
+(= (upper-pair-source UPPER-OPEN) PERMISSIVE-OPEN)
+(= (upper-pair-target UPPER-OPEN) PERMISSIVE-FEATURE)
+
+(= (formed-lower-seed LOWER-WITNESS-FEATURE) True)
+(= (formed-lower-seed LOWER-OPEN) False)
+(= (formed-upper-seed UPPER-WITNESS-FEATURE) True)
+(= (formed-upper-seed UPPER-OPEN) True)
+
+(= (lower-to-upper-pair LOWER-WITNESS-FEATURE) UPPER-WITNESS-FEATURE)
+(= (lower-to-upper-pair LOWER-OPEN) UPPER-OPEN)
+(= (upper-to-lower-pair UPPER-WITNESS-FEATURE) LOWER-WITNESS-FEATURE)
+(= (upper-to-lower-pair UPPER-OPEN) LOWER-OPEN)
+
+(= (projectively-determined-upper UPPER-WITNESS-FEATURE) True)
+(= (projectively-determined-upper UPPER-OPEN) False)
+
+(= (semantic-layer-formed-query $layer $method $source $target)
+   (semantic-layer-query
+     $layer $method
+     (formed-concept-intent $source)
+     (formed-concept-intent $target)))
+
+(= (semantic-layer-lower-formed-query $layer $method $pair)
+   (semantic-layer-formed-query
+     $layer $method
+     (lower-pair-source $pair)
+     (lower-pair-target $pair)))
+
+(= (semantic-layer-upper-formed-query $layer $method $pair)
+   (semantic-layer-formed-query
+     $layer $method
+     (upper-pair-source $pair)
+     (upper-pair-target $pair)))
+
+(= (lower-upper-encoder-compatible $layer $method $pair)
+   (==
+     (semantic-layer-lower-formed-query $layer $method $pair)
+     (semantic-layer-upper-formed-query
+       $layer $method (lower-to-upper-pair $pair))))
+
+(= (upper-lower-encoder-compatible $layer $method $pair)
+   (==
+     (semantic-layer-upper-formed-query $layer $method $pair)
+     (semantic-layer-lower-formed-query
+       $layer $method (upper-to-lower-pair $pair))))
+
+(= (lower-semantic-layer-query-member $layer $method $pair)
+   (and (semantic-layer-intensional-facing $layer)
+        (formed-lower-seed $pair)))
+
+(= (upper-semantic-layer-query-member $layer $method $pair)
+   (and (semantic-layer-intensional-facing $layer)
+        (formed-upper-seed $pair)))
+
+(= (lower-seed-embeds-upper-semantic-layer $layer $method $pair)
+   (and
+     (lower-semantic-layer-query-member $layer $method $pair)
+     (and
+       (lower-upper-encoder-compatible $layer $method $pair)
+       (upper-semantic-layer-query-member
+         $layer $method (lower-to-upper-pair $pair)))))
+
+(= (determined-upper-seed-embeds-lower-semantic-layer $layer $method $pair)
+   (and
+     (upper-semantic-layer-query-member $layer $method $pair)
+     (and
+       (projectively-determined-upper $pair)
+       (and
+         (upper-lower-encoder-compatible $layer $method $pair)
+         (lower-semantic-layer-query-member
+           $layer $method (upper-to-lower-pair $pair))))))
+
+; Hand-derived full-inheritance scores used by the threshold and
+; WM-admissibility readouts below.  These are semantic envelope witnesses, not
+; numeric proof-theoretic tightness claims.
+(= (full-inheritance-score LOWER-WITNESS-FEATURE) 0.8)
+(= (full-inheritance-score LOWER-OPEN) 0.4)
+(= (full-inheritance-score UPPER-WITNESS-FEATURE) 0.7)
+(= (full-inheritance-score UPPER-OPEN) 0.5)
+
+(= (threshold-valid-lower-semantic-layer $layer $method $tau $pair)
+   (and
+     (lower-semantic-layer-query-member $layer $method $pair)
+     (leq $tau (full-inheritance-score $pair))))
+
+(= (threshold-valid-upper-semantic-layer $layer $method $tau $pair)
+   (and
+     (upper-semantic-layer-query-member $layer $method $pair)
+     (leq $tau (full-inheritance-score $pair))))
+
+(= (available-region AVAILABLE-ROBUST) True)
+(= (available-region AVAILABLE-PERMISSIVE) True)
+(= (available-covered-by-lower-closure AVAILABLE-ROBUST LOWER-WITNESS-FEATURE) True)
+(= (available-covered-by-lower-closure AVAILABLE-ROBUST LOWER-OPEN) False)
+(= (available-covered-by-upper-closure AVAILABLE-PERMISSIVE UPPER-WITNESS-FEATURE) True)
+(= (available-covered-by-upper-closure AVAILABLE-PERMISSIVE UPPER-OPEN) True)
+
+(= (wm-admissible-lower-semantic-region $layer $method $region $tau $pair)
+   (and
+     (available-region $region)
+     (and
+       (available-covered-by-lower-closure $region $pair)
+       (threshold-valid-lower-semantic-layer $layer $method $tau $pair))))
+
+(= (wm-admissible-upper-semantic-region $layer $method $region $tau $pair)
+   (and
+     (available-region $region)
+     (and
+       (available-covered-by-upper-closure $region $pair)
+       (threshold-valid-upper-semantic-layer $layer $method $tau $pair))))
+
+; Lower-to-upper transport positives and guardrails.
+!(assertEqual
+  (lower-upper-encoder-compatible
+    PREEXTENSIONAL ASSOC LOWER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (lower-seed-embeds-upper-semantic-layer
+    PREEXTENSIONAL ASSOC LOWER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (lower-seed-embeds-upper-semantic-layer
+    EXTENSIONAL ASSOC LOWER-WITNESS-FEATURE)
+  False)
+!(assertEqual
+  (lower-seed-embeds-upper-semantic-layer
+    PREEXTENSIONAL ASSOC LOWER-OPEN)
+  False)
+
+; Determined upper-to-lower collapse positives and guardrails.
+!(assertEqual
+  (upper-lower-encoder-compatible
+    INTENSIONAL PAT UPPER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (determined-upper-seed-embeds-lower-semantic-layer
+    INTENSIONAL PAT UPPER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (determined-upper-seed-embeds-lower-semantic-layer
+    INTENSIONAL PAT UPPER-OPEN)
+  False)
+
+; Exact full-inheritance threshold consumers, before/after the least-closure
+; wrapper in Lean.  The example keeps only the hand-derived threshold boundary.
+!(assertEqual
+  (threshold-valid-lower-semantic-layer
+    PREEXTENSIONAL ASSOC 0.75 LOWER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (threshold-valid-lower-semantic-layer
+    PREEXTENSIONAL ASSOC 0.85 LOWER-WITNESS-FEATURE)
+  False)
+!(assertEqual
+  (threshold-valid-upper-semantic-layer
+    INTENSIONAL PAT 0.65 UPPER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (threshold-valid-upper-semantic-layer
+    INTENSIONAL PAT 0.75 UPPER-WITNESS-FEATURE)
+  False)
+
+; WM-admissible-region consumers: coverage by the semantic-layer closure plus
+; the threshold-valid readout admits the available region; missing coverage or
+; too-high thresholds block it.
+!(assertEqual
+  (wm-admissible-lower-semantic-region
+    PREEXTENSIONAL ASSOC AVAILABLE-ROBUST 0.75 LOWER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (wm-admissible-lower-semantic-region
+    PREEXTENSIONAL ASSOC AVAILABLE-ROBUST 0.75 LOWER-OPEN)
+  False)
+!(assertEqual
+  (wm-admissible-upper-semantic-region
+    INTENSIONAL PAT AVAILABLE-PERMISSIVE 0.65 UPPER-WITNESS-FEATURE)
+  True)
+!(assertEqual
+  (wm-admissible-upper-semantic-region
+    INTENSIONAL PAT AVAILABLE-PERMISSIVE 0.75 UPPER-WITNESS-FEATURE)
+  False)
+
+; Concrete abstract-inheritance demo shadow:
+; mirrors the bird/penguin worked example in
+; AbstractInheritanceIntensionalDemo.lean.  The consequent is still BIRD, so
+; extensional evidence is unchanged; the more specific PENGUIN antecedent raises
+; ASSOC/PAT evidence, hence the mixed sum also rises.  This is a semantic-layer
+; evidence witness, not a numeric tightness claim.
+(= (pair-ext BIRD-BIRD) 2)
+(= (pair-assoc BIRD-BIRD) 11)
+(= (pair-pat BIRD-BIRD) 17)
+
+(= (pair-ext PENGUIN-BIRD) 2)
+(= (pair-assoc PENGUIN-BIRD) 13)
+(= (pair-pat PENGUIN-BIRD) 19)
+
+(= (formed-pair-subset BIRD-BIRD PENGUIN-BIRD) True)
+(= (formed-pair-subset PENGUIN-BIRD BIRD-BIRD) False)
+(= (calibrated-ho-intent BIRD-BIRD PENGUIN-BIRD) True)
+(= (calibrated-ho-intent PENGUIN-BIRD BIRD-BIRD) True)
+
+; Stamped-provenance guardrail: the same abstract-inheritance witness should
+; not be revised with itself as if it were independent evidence.
+(= (abstract-demo-shared-provenance BIRD-BIRD-EVIDENCE PENGUIN-BIRD-EVIDENCE) True)
+(= (abstract-demo-shared-provenance PENGUIN-BIRD-EVIDENCE BIRD-BIRD-EVIDENCE) True)
+(= (abstract-demo-shared-provenance PENGUIN-BIRD-EVIDENCE DISTINCT-EVIDENCE) False)
+
+(= (abstract-demo-guarded-revise BIRD-BIRD-EVIDENCE PENGUIN-BIRD-EVIDENCE) NONE)
+(= (abstract-demo-guarded-revise PENGUIN-BIRD-EVIDENCE BIRD-BIRD-EVIDENCE) NONE)
+(= (abstract-demo-guarded-revise PENGUIN-BIRD-EVIDENCE DISTINCT-EVIDENCE) SOME)
+
+(= (abstract-demo-semantic-layer-canary)
+   (and
+     (typed-semantic-layer-assoc-pat-mono INTENSIONAL BIRD-BIRD PENGUIN-BIRD)
+     (and
+       (typed-semantic-layer-mixed-mono-with-ext BIRD-BIRD PENGUIN-BIRD)
+       (and
+         (==
+           (==
+             (semantic-layer-pair-evidence INTENSIONAL ASSOC BIRD-BIRD)
+             (semantic-layer-pair-evidence INTENSIONAL PAT BIRD-BIRD))
+           False)
+         (==
+           (abstract-demo-guarded-revise
+             PENGUIN-BIRD-EVIDENCE BIRD-BIRD-EVIDENCE)
+           NONE)))))
+
+!(assertEqual
+  (leq
+    (semantic-layer-pair-evidence INTENSIONAL ASSOC BIRD-BIRD)
+    (semantic-layer-pair-evidence INTENSIONAL ASSOC PENGUIN-BIRD))
+  True)
+!(assertEqual
+  (leq
+    (semantic-layer-pair-evidence INTENSIONAL PAT BIRD-BIRD)
+    (semantic-layer-pair-evidence INTENSIONAL PAT PENGUIN-BIRD))
+  True)
+!(assertEqual
+  (semantic-layer-pair-evidence MIXED ASSOC BIRD-BIRD)
+  30)
+!(assertEqual
+  (semantic-layer-pair-evidence MIXED ASSOC PENGUIN-BIRD)
+  34)
+!(assertEqual
+  (typed-semantic-layer-assoc-pat-mono
+    INTENSIONAL BIRD-BIRD PENGUIN-BIRD)
+  True)
+!(assertEqual
+  (typed-semantic-layer-mixed-mono-with-ext
+    BIRD-BIRD PENGUIN-BIRD)
+  True)
+!(assertEqual
+  (typed-semantic-layer-mixed-mono-with-ext
+    PENGUIN-BIRD BIRD-BIRD)
+  False)
+!(assertEqual
+  (==
+    (semantic-layer-pair-evidence INTENSIONAL ASSOC BIRD-BIRD)
+    (semantic-layer-pair-evidence INTENSIONAL PAT BIRD-BIRD))
+  False)
+!(assertEqual
+  (abstract-demo-guarded-revise
+    PENGUIN-BIRD-EVIDENCE BIRD-BIRD-EVIDENCE)
+  NONE)
+!(assertEqual
+  (abstract-demo-guarded-revise
+    PENGUIN-BIRD-EVIDENCE DISTINCT-EVIDENCE)
+  SOME)
+!(assertEqual
+  (abstract-demo-semantic-layer-canary)
+  True)
