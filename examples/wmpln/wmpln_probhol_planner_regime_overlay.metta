@@ -55,8 +55,8 @@
 ; The planner shadow tracks the intended benchmark process/sample, not arbitrary
 ; expanded latent-regime internals. This is the runnable boundary condition for
 ; the Lean negative theorem that the planner day does not track expanded samples.
-(= (tracks-benchmark-process? WM-PLN-BENCHMARK) True)
-(= (tracks-expanded-latent-sample? WM-PLN-BENCHMARK) False)
+(= (tracks-benchmark-process WM-PLN-BENCHMARK) True)
+(= (tracks-expanded-latent-sample WM-PLN-BENCHMARK) False)
 
 ; Positive overlay: the semantic mixture value is carried into the planner layer.
 !(assertEqual
@@ -107,5 +107,5 @@
 
 ; Boundary checks: the planner tracks the benchmark process, but not the latent
 ; expanded sample as though it were a global belief oracle.
-!(assertEqual (tracks-benchmark-process? WM-PLN-BENCHMARK) True)
-!(assertEqual (tracks-expanded-latent-sample? WM-PLN-BENCHMARK) False)
+!(assertEqual (tracks-benchmark-process WM-PLN-BENCHMARK) True)
+!(assertEqual (tracks-expanded-latent-sample WM-PLN-BENCHMARK) False)
