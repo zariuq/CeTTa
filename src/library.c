@@ -2124,6 +2124,36 @@ static Atom *lts_rho_cost_steps_error(Arena *a, Atom **args, uint32_t nargs,
     return atom_error(a, lts_rho_cost_steps_call_expr(a, args, nargs), reason);
 }
 
+static Atom *lts_rho_cost_causal_trace_call_expr(Arena *a, Atom **args,
+                                                 uint32_t nargs) {
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
+    elems[0] = atom_symbol(a, "lts:rho:cost:causal-trace");
+    for (uint32_t i = 0; i < nargs; i++) elems[i + 1] = args[i];
+    return atom_expr(a, elems, nargs + 1);
+}
+
+static Atom *lts_rho_cost_causal_trace_error(Arena *a, Atom **args,
+                                             uint32_t nargs, Atom *reason) {
+    return atom_error(a,
+                      lts_rho_cost_causal_trace_call_expr(a, args, nargs),
+                      reason);
+}
+
+static Atom *lts_rho_cost_causal_prefix_call_expr(Arena *a, Atom **args,
+                                                  uint32_t nargs) {
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
+    elems[0] = atom_symbol(a, "lts:rho:cost:causal-prefix");
+    for (uint32_t i = 0; i < nargs; i++) elems[i + 1] = args[i];
+    return atom_expr(a, elems, nargs + 1);
+}
+
+static Atom *lts_rho_cost_causal_prefix_error(Arena *a, Atom **args,
+                                              uint32_t nargs, Atom *reason) {
+    return atom_error(a,
+                      lts_rho_cost_causal_prefix_call_expr(a, args, nargs),
+                      reason);
+}
+
 static Atom *lts_he_transitions_frontier(Arena *a, Atom *state,
                                          ResultSet *results) {
     Atom *first_error = NULL;
@@ -2245,6 +2275,64 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
             return lts_rho_cost_steps_error(
                 a, args, nargs,
                 atom_string(a, detail ? detail : "rho cost step frontier construction failed"));
+        }
+        return result;
+    }
+    if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_causal_trace) {
+        Atom *result;
+        const char *detail;
+
+        if (nargs != 1) {
+            return lts_rho_cost_causal_trace_error(
+                a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
+        }
+        if (!rhocalc_process_well_formed_with_semantic_profile(
+                args[0], RHOCALC_SEMANTIC_PROFILE_COST)) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_cost_causal_trace_error(
+                a, args, nargs,
+                atom_string(a, detail ? detail : "expected cost-profile rho term"));
+        }
+        result = rhocalc_cost_causal_trace_expr(a, args[0]);
+        if (!result) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_cost_causal_trace_error(
+                a, args, nargs,
+                atom_string(
+                    a, detail ? detail : "rho cost causal trace construction failed"));
+        }
+        return result;
+    }
+    if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_causal_prefix) {
+        Atom *result;
+        const char *detail;
+        uint64_t fuel;
+
+        if (nargs != 2) {
+            return lts_rho_cost_causal_prefix_error(
+                a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
+        }
+        if (args[0]->kind != ATOM_GROUNDED ||
+            args[0]->ground.gkind != GV_INT || args[0]->ground.ival < 0) {
+            return lts_rho_cost_causal_prefix_error(
+                a, args, nargs,
+                atom_string(a, "expected a nonnegative integer fuel bound"));
+        }
+        if (!rhocalc_process_well_formed_with_semantic_profile(
+                args[1], RHOCALC_SEMANTIC_PROFILE_COST)) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_cost_causal_prefix_error(
+                a, args, nargs,
+                atom_string(a, detail ? detail : "expected cost-profile rho term"));
+        }
+        fuel = (uint64_t)args[0]->ground.ival;
+        result = rhocalc_cost_causal_prefix_expr(a, args[1], fuel);
+        if (!result) {
+            detail = rhocalc_last_validation_error();
+            return lts_rho_cost_causal_prefix_error(
+                a, args, nargs,
+                atom_string(
+                    a, detail ? detail : "rho cost causal prefix construction failed"));
         }
         return result;
     }

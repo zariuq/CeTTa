@@ -260,6 +260,8 @@ typedef struct {
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \
     X(lib_lts_rho_cost_steps, "__cetta_lib_lts_rho_cost_steps") \
+    X(lib_lts_rho_cost_causal_trace, "__cetta_lib_lts_rho_cost_causal_trace") \
+    X(lib_lts_rho_cost_causal_prefix, "__cetta_lib_lts_rho_cost_causal_prefix") \
     X(lib_gparse_inference_presentation, "__cetta_lib_gparse_inference_presentation") \
     X(lib_rhometta_run, "__cetta_lib_rhometta_run") \
     X(lib_rhometta_transitions, "__cetta_lib_rhometta_transitions") \

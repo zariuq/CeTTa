@@ -1,1 +1,1 @@
-(rho:cost:signed rho:nil cont)
+(rho:cost:par (rho:cost:purse pay rho:cost:stack-empty) (rho:cost:purse pay rho:cost:stack-empty) (rho:cost:signed rho:nil cont))
