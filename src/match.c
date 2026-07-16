@@ -2059,32 +2059,120 @@ static bool is_space_value_type(Atom *atom) {
            is_named_symbol(atom->expr.elems[0], "Space");
 }
 
-bool match_types(Atom *expected, Atom *actual, Bindings *b) {
-    /* %Undefined% is dynamically consistent in either position. Atom is the
-       expected-side value top; an actual Atom still has to match normally. */
-    if (atom_is_symbol_id(expected, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(actual, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(expected, g_builtin_syms.atom)) {
+static bool match_reducted_types_depth(Atom *left, Atom *right,
+                                       Bindings *b, int depth) {
+    if (depth <= 0) return false;
+    /* Upstream HE replaces every nested %Undefined% occurrence with an
+       independent wildcard before calling the ordinary matcher. */
+    if (atom_is_symbol_id(left, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(right, g_builtin_syms.undefined_type)) {
         return true;
     }
-    if ((is_named_symbol(expected, "SpaceType") && is_space_value_type(actual)) ||
-        (is_named_symbol(actual, "SpaceType") && is_space_value_type(expected))) {
+    if (left->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(b, left);
+        if (existing)
+            return match_reducted_types_depth(existing, right, b, depth - 1);
+        if (right->kind == ATOM_VAR) {
+            Atom *right_existing = bindings_lookup_var(b, right);
+            if (right_existing)
+                return match_reducted_types_depth(left, right_existing, b,
+                                                  depth - 1);
+            if (left->var_id == right->var_id) return true;
+        }
+        return bindings_add_var(b, left, right);
+    }
+    if (right->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(b, right);
+        if (existing)
+            return match_reducted_types_depth(left, existing, b, depth - 1);
+        return bindings_add_var(b, right, left);
+    }
+    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL)
+        return left->sym_id == right->sym_id;
+    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED)
+        return atom_eq(left, right);
+    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
+        if (left->expr.len != right->expr.len) return false;
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
+            if (!match_reducted_types_depth(left->expr.elems[i],
+                                            right->expr.elems[i], b,
+                                            depth - 1)) {
+                return false;
+            }
+        }
         return true;
     }
-    return match_atoms(expected, actual, b);
+    return false;
 }
 
-bool match_types_builder(Atom *expected, Atom *actual, BindingsBuilder *bb) {
-    if (atom_is_symbol_id(expected, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(actual, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(expected, g_builtin_syms.atom)) {
+static bool match_reducted_types_builder_depth(Atom *left, Atom *right,
+                                               BindingsBuilder *bb,
+                                               int depth) {
+    if (depth <= 0) return false;
+    if (atom_is_symbol_id(left, g_builtin_syms.undefined_type) ||
+        atom_is_symbol_id(right, g_builtin_syms.undefined_type)) {
         return true;
     }
-    if ((is_named_symbol(expected, "SpaceType") && is_space_value_type(actual)) ||
-        (is_named_symbol(actual, "SpaceType") && is_space_value_type(expected))) {
+    Bindings *current = &bb->current;
+    if (left->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(current, left);
+        if (existing)
+            return match_reducted_types_builder_depth(existing, right, bb,
+                                                      depth - 1);
+        if (right->kind == ATOM_VAR) {
+            Atom *right_existing = bindings_lookup_var(current, right);
+            if (right_existing)
+                return match_reducted_types_builder_depth(left, right_existing,
+                                                          bb, depth - 1);
+            if (left->var_id == right->var_id) return true;
+        }
+        return bindings_builder_add_var_fresh(bb, left, right);
+    }
+    if (right->kind == ATOM_VAR) {
+        Atom *existing = bindings_lookup_var(current, right);
+        if (existing)
+            return match_reducted_types_builder_depth(left, existing, bb,
+                                                      depth - 1);
+        return bindings_builder_add_var_fresh(bb, right, left);
+    }
+    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL)
+        return left->sym_id == right->sym_id;
+    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED)
+        return atom_eq(left, right);
+    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
+        if (left->expr.len != right->expr.len) return false;
+        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
+            if (!match_reducted_types_builder_depth(left->expr.elems[i],
+                                                    right->expr.elems[i], bb,
+                                                    depth - 1)) {
+                return false;
+            }
+        }
         return true;
     }
-    return match_atoms_builder(expected, actual, bb);
+    return false;
+}
+
+bool match_types(Atom *actual, Atom *expected, Bindings *b) {
+    /* Atom is the expected-side value top. An actual Atom is not evidence for
+       an arbitrary concrete expected type. */
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
+    if ((is_named_symbol(actual, "SpaceType") && is_space_value_type(expected)) ||
+        (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
+        return true;
+    }
+    return match_reducted_types_depth(actual, expected, b,
+                                      CETTA_MATCH_DEPTH_LIMIT);
+}
+
+bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
+    if ((is_named_symbol(actual, "SpaceType") && is_space_value_type(expected)) ||
+        (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
+        return true;
+    }
+    return match_reducted_types_builder_depth(actual, expected, bb,
+                                              CETTA_MATCH_DEPTH_LIMIT);
 }
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */

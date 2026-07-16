@@ -294,5 +294,9 @@ Atom *normalize_type_expr(Arena *a, Atom *ty);
 
 uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
+/* Same engine, but ignores an expression subject's own top-level (: term T)
+   declaration. Used to audit a declaration against its structural derivation. */
+uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
+                                   Atom ***out_types);
 
 #endif /* CETTA_SPACE_H */

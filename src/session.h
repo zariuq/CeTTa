@@ -26,7 +26,8 @@ typedef enum {
     CETTA_PROFILE_HE_EXTENDED = 2,
     CETTA_PROFILE_HE_PRIME = 3,
     CETTA_PROFILE_RHOCALC_STRICT_CORE = 4,
-    CETTA_PROFILE_RHOCALC_COST = 5
+    CETTA_PROFILE_RHOCALC_COST = 5,
+    CETTA_PROFILE_PRIME_DEFAULT = 6
 } CettaProfileId;
 
 typedef enum {
@@ -210,6 +211,7 @@ const CettaProfile *cetta_profile_he_formal(void);
 const CettaProfile *cetta_profile_he_compat(void);
 const CettaProfile *cetta_profile_he_extended(void);
 const CettaProfile *cetta_profile_he_prime(void);
+const CettaProfile *cetta_profile_prime_default(void);
 bool cetta_language_has_named_profiles(CettaLanguageId language_id);
 bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
                                          const CettaProfile *profile);

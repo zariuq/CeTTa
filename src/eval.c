@@ -4,6 +4,7 @@
 #include "search_machine.h"
 #include "grounded.h"
 #include "he_typing.h"
+#include "prime_semantics.h"
 #include "library.h"
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
@@ -46,6 +47,37 @@ static __thread bool g_fallback_eval_session_ready = false;
 static __thread _Atomic bool *g_eval_cancel_requested = NULL;
 static __thread bool g_eval_cancel_observed = false;
 static __thread _Atomic bool *g_hyperpose_thread_unsafe_requested = NULL;
+
+typedef struct EvalCompletionTracker {
+    CettaEvalCompletion completion;
+    uint64_t budget_initial;
+    uint64_t budget_remaining;
+    struct EvalCompletionTracker *parent;
+} EvalCompletionTracker;
+
+/* Completion tracking is opt-in.  The ordinary evaluator ABI and answer
+ * frontier remain unchanged; nested calls contribute to the active tracker. */
+static __thread EvalCompletionTracker *g_eval_completion_tracker = NULL;
+
+static void eval_mark_incomplete(CettaEvalCompletion completion) {
+    EvalCompletionTracker *tracker = g_eval_completion_tracker;
+    if (!tracker || completion == CETTA_EVAL_COMPLETE)
+        return;
+    if (tracker->completion == CETTA_EVAL_COMPLETE)
+        tracker->completion = completion;
+}
+
+static bool eval_completion_step(void) {
+    EvalCompletionTracker *tracker = g_eval_completion_tracker;
+    if (!tracker)
+        return true;
+    if (tracker->budget_remaining == 0) {
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL);
+        return false;
+    }
+    tracker->budget_remaining--;
+    return true;
+}
 /* When set, the current evaluation is a Rhometta deferred payload running as
  * a sibling-isolated transaction over a frozen shared base. Space and state
  * redirects below provide the write-forward scratch layer. */
@@ -617,6 +649,7 @@ static bool eval_cancel_check(void) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_CANCEL_OBSERVED);
         g_eval_cancel_observed = true;
     }
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CANCELLED);
     return true;
 }
 
@@ -685,6 +718,7 @@ static bool eval_c_stack_guard_enter(int fuel, EvalCStackGuard *guard) {
             g_eval_c_stack_guard_depth--;
         if (g_eval_c_stack_guard_depth == 0)
             g_eval_c_stack_anchor = 0;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_STACK);
         return false;
     }
     if (guard) guard->active = true;
@@ -1684,8 +1718,8 @@ static Atom *space_backend_error_if_set(Arena *a, Atom *call);
 static Atom *space_backend_or_symbol_error(Arena *a, Atom *call,
                                            const char *fallback_symbol);
 static bool is_function_type(Atom *a);
-static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
-                                        Atom ***out_types);
+uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
+                                      Atom ***out_types);
 static bool type_expr_is_well_formed_profiled(Space *s, Arena *a, Atom *ty);
 static bool add_atoms_source_shape(Atom *items, Atom **out_source_ref,
                                    bool *out_collapsed,
@@ -1710,6 +1744,10 @@ static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
         return true;
     const char *name =
         head_id == SYMBOL_ID_NONE ? NULL : symbol_bytes(g_symbols, head_id);
+    if (name && prime_semantics_op_data_arg &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        prime_semantics_op_data_arg(name, arg_index))
+        return true;
     /* the typing module owns its ops' argument policy; the weak-symbol guard
        covers binaries that link eval.c without he_typing.c */
     if (name && he_typing_op_data_arg &&
@@ -1783,7 +1821,7 @@ static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
             goto done;
         }
         Atom **head_types = NULL;
-        uint32_t ntypes = get_atom_types_profiled(s, a, head, &head_types);
+        uint32_t ntypes = eval_get_atom_types_profiled(s, a, head, &head_types);
         for (uint32_t ti = 0; ti < ntypes; ti++) {
             if (is_function_type(head_types[ti])) {
                 free(head_types);
@@ -2619,6 +2657,10 @@ static bool active_profile_uses_total_structural_eq(void) {
 
 static CettaLanguageId active_language_id(void) {
     return g_library_context ? g_library_context->session.language_id : CETTA_LANGUAGE_HE;
+}
+
+CettaLanguageId eval_current_language_id(void) {
+    return active_language_id();
 }
 
 static bool active_profile_uses_rust_he_compat_semantics(void) {
@@ -5306,8 +5348,8 @@ query_equations_miss_single_tail_stream(Space *s, Atom *query,
     return QUERY_TABLE_TAIL_MULTI;
 }
 
-static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
-                                        Atom ***out_types);
+uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
+                                      Atom ***out_types);
 
 /* Forward-declared below with the rest of the evaluator entry points. */
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os);
@@ -6383,6 +6425,11 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
     if (!active_surface_allowed("hyperpose"))
         return false;
     if (preserve_bindings)
+        return false;
+    /* Worker-local TLS cannot safely summarize completion into the caller's
+       tracker.  Completion-sensitive evaluation therefore uses the existing
+       cooperative stream path, preserving semantics without a second engine. */
+    if (g_eval_completion_tracker)
         return false;
 
     int64_t configured_threads =
@@ -8912,23 +8959,14 @@ static bool atom_is_type_sort(Atom *atom) {
     return atom_is_symbol_id(atom, type_id);
 }
 
-static bool type_expr_bind_success(Bindings *env, Arena *scratch,
-                                   Atom *domain, Atom *arg,
-                                   Atom *plain_domain_var) {
+static bool type_expr_bind_domain_value(Bindings *env, Arena *scratch,
+                                        Atom *domain, Atom *arg) {
     BindingsBuilder bb;
     if (!bindings_builder_init(&bb, env))
         return false;
-    bool ok = true;
-    if (plain_domain_var) {
-        Atom *arg_term =
-            bindings_apply_if_vars(bindings_builder_bindings(&bb), scratch, arg);
-        ok = bindings_builder_add_var_fresh(&bb, plain_domain_var, arg_term);
-    }
-    if (ok) {
-        Atom *arg_term =
-            bindings_apply_if_vars(bindings_builder_bindings(&bb), scratch, arg);
-        ok = bind_domain_binder_builder(&bb, domain, arg_term);
-    }
+    Atom *arg_term =
+        bindings_apply_if_vars(bindings_builder_bindings(&bb), scratch, arg);
+    bool ok = bind_domain_binder_builder(&bb, domain, arg_term);
     if (ok) {
         Bindings next;
         bindings_init(&next);
@@ -8973,27 +9011,23 @@ static bool type_expr_constructor_contract_matches(Space *s, Arena *a,
             break;
         }
 
-        if (decl->kind == ATOM_VAR) {
-            all_ok = type_expr_bind_success(&env, &scratch, domain, arg, decl);
-            continue;
-        }
-
         if (atom_is_type_sort(decl)) {
             all_ok =
                 type_expr_is_well_formed_profiled(s, &scratch, arg) &&
-                type_expr_bind_success(&env, &scratch, domain, arg, NULL);
+                type_expr_bind_domain_value(&env, &scratch, domain, arg);
             continue;
         }
 
         if (atom_is_meta_type(decl)) {
             all_ok =
                 atom_meta_type_accepts(&scratch, decl, arg) &&
-                type_expr_bind_success(&env, &scratch, domain, arg, NULL);
+                type_expr_bind_domain_value(&env, &scratch, domain, arg);
             continue;
         }
 
         Atom **arg_types = NULL;
-        uint32_t n_arg_types = get_atom_types_profiled(s, &scratch, arg, &arg_types);
+        uint32_t n_arg_types =
+            eval_get_atom_types_profiled(s, &scratch, arg, &arg_types);
         bool found = false;
         SearchContext trial_context;
         if (!search_context_init(&trial_context, &env, &scratch)) {
@@ -9004,7 +9038,7 @@ static bool type_expr_constructor_contract_matches(Space *s, Arena *a,
 
         for (uint32_t ti = 0; ti < n_arg_types; ti++) {
             ChoicePoint point = search_context_save(&trial_context);
-            if (match_types_builder(decl, arg_types[ti],
+            if (match_types_builder(arg_types[ti], decl,
                                     search_context_builder(&trial_context))) {
                 Atom *arg_term =
                     bindings_apply_if_vars(search_context_bindings(&trial_context),
@@ -9170,7 +9204,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
                                                   Atom ***out_types) {
     Atom *op = atom->expr.elems[0];
     Atom **op_types = NULL;
-    uint32_t nop = get_atom_types_profiled(s, a, op, &op_types);
+    uint32_t nop = eval_get_atom_types_profiled(s, a, op, &op_types);
     Atom **types = NULL;
     uint32_t count = 0;
     bool tried_func_type = false;
@@ -9185,7 +9219,9 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             continue;
         }
         tried_func_type = true;
-        if (ft->expr.len - 2 != atom->expr.len - 1) {
+        CettaExprLen arity = ft->expr.len - 2;
+        CettaExprLen argc = atom->expr.len - 1;
+        if (argc > arity) {
             continue;
         }
 
@@ -9233,7 +9269,8 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
                 continue;
             }
             Atom **atypes = NULL;
-            uint32_t nat = get_atom_types_profiled(s, a, atom->expr.elems[ai + 1], &atypes);
+            uint32_t nat = eval_get_atom_types_profiled(
+                s, a, atom->expr.elems[ai + 1], &atypes);
             bool found = false;
             SearchContext trial_context;
             if (!search_context_init(&trial_context, &tb, &scratch)) {
@@ -9248,7 +9285,7 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
 
             for (uint32_t ti = 0; ti < nat; ti++) {
                 ChoicePoint point = search_context_save(&trial_context);
-                if (match_types_builder(decl, atypes[ti],
+                if (match_types_builder(atypes[ti], decl,
                                         search_context_builder(&trial_context))) {
                     Atom *arg_term =
                         bindings_apply_if_vars(search_context_bindings(&trial_context),
@@ -9278,10 +9315,24 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
             Atom *concrete_ret =
                 normalize_type_expr_profiled(&scratch,
                                              bindings_apply_if_vars(&tb, &scratch, fresh_ret));
-            if (type_expr_is_well_formed_profiled(s, &scratch, concrete_ret)) {
+            Atom *result_type = concrete_ret;
+            CettaExprLen remaining = arity - argc;
+            if (remaining > 0) {
+                Atom **residual = arena_alloc(
+                    &scratch, sizeof(Atom *) * (size_t)(remaining + 2));
+                residual[0] = atom_symbol_id(&scratch, g_builtin_syms.arrow);
+                for (CettaExprIndex j = 0; j < remaining; j++) {
+                    Atom *domain = fresh_ft->expr.elems[argc + 1 + j];
+                    residual[j + 1] =
+                        bindings_apply_if_vars(&tb, &scratch, domain);
+                }
+                residual[remaining + 1] = concrete_ret;
+                result_type = atom_expr(&scratch, residual, remaining + 2);
+            }
+            if (type_expr_is_well_formed_profiled(s, &scratch, result_type)) {
                 types = types ? cetta_realloc(types, sizeof(Atom *) * (count + 1))
                               : cetta_malloc(sizeof(Atom *));
-                types[count++] = atom_deep_copy(a, concrete_ret);
+                types[count++] = atom_deep_copy(a, result_type);
             }
         }
         bindings_free(&tb);
@@ -9298,26 +9349,67 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
     return count;
 }
 
-static uint32_t get_atom_types_profiled_uncached(Space *s, Arena *a, Atom *atom,
-                                                 Atom ***out_types) {
-    uint32_t count = get_atom_types(s, a, atom, out_types);
-    count = filter_profile_visible_declared_types(atom, out_types, count);
-    count = filter_well_formed_profiled_types(s, a, out_types, count);
-    if (!eval_dependent_telescope_enabled() || atom->kind != ATOM_EXPR || count != 0) {
-        return count;
+static __thread bool g_profiled_type_normalization_active = false;
+
+static void normalize_profiled_type_results(Space *s, Arena *a,
+                                            Atom **types, uint32_t count) {
+    if (!eval_dependent_telescope_enabled() ||
+        !he_typing_normalize_shared_type ||
+        g_profiled_type_normalization_active) {
+        return;
     }
-    return infer_dependent_application_types(s, a, atom, out_types);
+    g_profiled_type_normalization_active = true;
+    for (uint32_t i = 0; i < count; i++) {
+        bool complete = false;
+        Atom *normalized = he_typing_normalize_shared_type(
+            a, s, types[i], 100000u, &complete);
+        /* Ambiguous, exhausted, and effectful computation remains an
+           inspectable residual type; the diagnostic checker reports why. */
+        if (complete && normalized)
+            types[i] = normalized;
+    }
+    g_profiled_type_normalization_active = false;
 }
 
-static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
-                                        Atom ***out_types) {
+static uint32_t eval_get_atom_types_profiled_uncached_mode(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types, bool structural) {
+    uint32_t count = structural
+                         ? get_atom_types_structural(s, a, atom, out_types)
+                         : get_atom_types(s, a, atom, out_types);
+    count = filter_profile_visible_declared_types(atom, out_types, count);
+    count = filter_well_formed_profiled_types(s, a, out_types, count);
+    if (eval_dependent_telescope_enabled() && atom->kind == ATOM_EXPR && count == 0)
+        count = infer_dependent_application_types(s, a, atom, out_types);
+    normalize_profiled_type_results(s, a, *out_types, count);
+    return count;
+}
+
+static uint32_t eval_get_atom_types_profiled_uncached(Space *s, Arena *a,
+                                                       Atom *atom,
+                                                       Atom ***out_types) {
+    return eval_get_atom_types_profiled_uncached_mode(s, a, atom, out_types,
+                                                       false);
+}
+
+uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
+                                      Atom ***out_types) {
     uint32_t cached_count = 0;
     if (profiled_type_cache_lookup(s, a, atom, out_types, &cached_count))
         return cached_count;
 
-    uint32_t count = get_atom_types_profiled_uncached(s, a, atom, out_types);
+    uint32_t count = eval_get_atom_types_profiled_uncached(s, a, atom,
+                                                           out_types);
     profiled_type_cache_store(s, atom, *out_types, count);
     return count;
+}
+
+uint32_t eval_get_atom_types_structural_profiled(Space *s, Arena *a,
+                                                 Atom *atom,
+                                                 Atom ***out_types) {
+    /* Structural audits bypass the normal result cache because their only
+       semantic difference is omitting the subject's own declaration. */
+    return eval_get_atom_types_profiled_uncached_mode(s, a, atom, out_types,
+                                                       true);
 }
 
 /* ── Type cast (TypeCheck.lean:126-148) ────────────────────────────────── */
@@ -9325,12 +9417,12 @@ static uint32_t get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
 static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
                          int fuel, ResultSet *rs) {
     Atom **types;
-    uint32_t ntypes = get_atom_types_profiled(s, a, atom, &types);
+    uint32_t ntypes = eval_get_atom_types_profiled(s, a, atom, &types);
     /* Try each type — return on FIRST match (early return per spec) */
     for (uint32_t i = 0; i < ntypes; i++) {
         Bindings mb;
         bindings_init(&mb);
-        if (match_types(expectedType, types[i], &mb)) {
+        if (match_types(types[i], expectedType, &mb)) {
             bindings_free(&mb);
             result_set_add(rs, atom);
             free(types);
@@ -9423,7 +9515,7 @@ static bool check_function_applicable(
                 } else if (*n_errors < 64) {
                     Atom **actual_types = NULL;
                     uint32_t n_actual_types =
-                        get_atom_types_profiled(s, a, arg, &actual_types);
+                        eval_get_atom_types_profiled(s, a, arg, &actual_types);
                     Atom *actual_type = n_actual_types > 0
                         ? actual_types[0]
                         : get_meta_type(a, arg);
@@ -9440,7 +9532,8 @@ static bool check_function_applicable(
             }
 
             Atom **atypes;
-            uint32_t natypes = get_atom_types_profiled(s, a, arg, &atypes);
+            uint32_t natypes =
+                eval_get_atom_types_profiled(s, a, arg, &atypes);
             if (natypes == 0) {
                 if (nnext < 64) {
                     bindings_move(&next[nnext], &results[r]);
@@ -9453,7 +9546,7 @@ static bool check_function_applicable(
             search_context_init_owned(&candidate_context, &results[r], NULL);
             for (uint32_t t = 0; t < natypes; t++) {
                 ChoicePoint point = search_context_save(&candidate_context);
-                if (match_types_builder(expected, atypes[t],
+                if (match_types_builder(atypes[t], expected,
                                         search_context_builder(&candidate_context))) {
                     if (!bind_domain_binder_builder(search_context_builder(&candidate_context),
                                                     arg_types[i], arg)) {
@@ -9510,7 +9603,7 @@ static bool check_function_applicable(
             eval_dependent_telescope_enabled()
                 ? bindings_apply_if_vars(search_context_bindings(&ret_context), a, retType)
                 : retType;
-        if (match_types_builder(expectedType, inst_ret,
+        if (match_types_builder(inst_ret, expectedType,
                                 search_context_builder(&ret_context))) {
             if (ret_ok < 64) {
                 search_context_take(&ret_context, &success_bindings[ret_ok]);
@@ -9545,6 +9638,8 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
     EvalCStackGuard stack_guard = {0};
     if (eval_cancel_check())
         return;
+    if (!eval_completion_step())
+        return;
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_EVAL);
         result_set_add(rs, atom_error(a, atom, atom_symbol(a, "StackOverflow")));
@@ -9553,6 +9648,7 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
     if (fuel == 0) {
         /* Fuel exhausted — return empty result set (matches HE behavior:
            infinite recursion produces no output, not an error atom) */
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL);
         return;
     }
 
@@ -9626,6 +9722,8 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
     EvalCStackGuard stack_guard = {0};
     if (eval_cancel_check())
         return;
+    if (!eval_completion_step())
+        return;
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND);
         Bindings overflow_empty;
@@ -9636,6 +9734,9 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
     }
     Bindings empty;
     bindings_init(&empty);
+
+    if (fuel == 0 && atom && atom->kind == ATOM_EXPR && atom->expr.len > 0)
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL);
 
     Atom *bound = registry_lookup_atom(atom);
     if (bound) {
@@ -9664,6 +9765,8 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
     EvalCStackGuard stack_guard = {0};
     if (eval_cancel_check())
         return;
+    if (!eval_completion_step())
+        return;
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND_TYPED);
@@ -9682,6 +9785,7 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
     }
 
     if (fuel == 0) {
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL);
         return;
     }
 
@@ -12214,7 +12318,9 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
 
     Atom **op_types = NULL;
     uint32_t n_op_types =
-        profile_disabled_whole_call_surface ? 0 : get_atom_types_profiled(s, a, op, &op_types);
+        profile_disabled_whole_call_surface
+            ? 0
+            : eval_get_atom_types_profiled(s, a, op, &op_types);
     bool total_structural_eq =
         head_id == g_builtin_syms.op_eq && nargs == 2 &&
         active_profile_uses_total_structural_eq();
@@ -12718,7 +12824,10 @@ static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     if ((extra_env) != NULL && \
         !bindings_builder_merge_commit(&current_env_builder, (extra_env))) return; \
     atom = resolve_registry_refs(a, (next_atom)); \
-    if (fuel == 0) return; \
+    if (fuel == 0) { \
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL); \
+        return; \
+    } \
     if (fuel > 0) fuel--; \
     goto tail_call; \
 } while (0)
@@ -12734,6 +12843,8 @@ tail_call: ;
         eval_gc_collect(a, eval_gc_anchor, &atom,
                         &current_env_builder.current, &etype);
     if (eval_cancel_check())
+        return;
+    if (!eval_completion_step())
         return;
     atom = materialize_runtime_token(s, a, atom);
     if (atom_is_error(atom) || atom_is_empty(atom)) {
@@ -12865,7 +12976,8 @@ tail_call: ;
             }
 
             Atom **actual_types = NULL;
-            uint32_t ntypes = get_atom_types_profiled(s, a, cond, &actual_types);
+            uint32_t ntypes =
+                eval_get_atom_types_profiled(s, a, cond, &actual_types);
             Atom *bool_type = atom_symbol(a, "Bool");
             bool has_nonbool_concrete_type = false;
             bool may_be_bool = false;
@@ -14062,6 +14174,30 @@ tail_call: ;
 
         stream_emit(s, a, stream_expr, fuel, true, limit, preserve_bindings,
                     policy.order, os);
+        return;
+    }
+
+    /* Prime judgments are homoiconic data.  Preserve the judgment argument;
+       the semantic package rechecks it rather than accepting producer output. */
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.prime_judge)) {
+        if (nargs != 3) {
+            outcome_set_add(
+                os,
+                atom_error(a, atom,
+                           atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+        Atom *prime_args[3] = {
+            resolve_registry_refs(a, expr_arg(atom, 0)),
+            expr_arg(atom, 1),
+            resolve_registry_refs(a, expr_arg(atom, 2)),
+        };
+        Atom *result = prime_semantics_dispatch
+            ? prime_semantics_dispatch(a, atom->expr.elems[0], prime_args, 3)
+            : NULL;
+        outcome_set_add(os, result ? result : atom, &_empty);
         return;
     }
 
@@ -15512,7 +15648,7 @@ tail_call: ;
                 for (uint32_t ti = 0; ti < nnt; ti++) {
                     Bindings tb;
                     bindings_init(&tb);
-                    if (match_types(cell->content_type, new_types[ti], &tb)) {
+                    if (match_types(new_types[ti], cell->content_type, &tb)) {
                         type_ok = true;
                         bindings_free(&tb);
                         break;
@@ -15702,7 +15838,7 @@ tail_call: ;
         Atom *val = registry_lookup_atom(target);
         if (val) target = val;
         Atom **types;
-        uint32_t n = get_atom_types_profiled(s, a, target, &types);
+        uint32_t n = eval_get_atom_types_profiled(s, a, target, &types);
         /* If only %Undefined% and arg is an expression, try evaluating first */
         if (n == 1 && atom_is_symbol_id(types[0], g_builtin_syms.undefined_type) &&
             target->kind == ATOM_EXPR) {
@@ -15711,7 +15847,7 @@ tail_call: ;
             result_set_init(&evr);
             metta_eval(s, a, NULL, target, fuel, &evr);
             if (evr.len > 0) {
-                n = get_atom_types_profiled(s, a, evr.items[0], &types);
+                n = eval_get_atom_types_profiled(s, a, evr.items[0], &types);
             } else {
                 types = cetta_malloc(sizeof(Atom *));
                 types[0] = atom_undefined_type(a);
@@ -15766,7 +15902,8 @@ tail_call: ;
         if (val) target = val;
 
         Atom **types;
-        uint32_t n = get_atom_types((Space *)resolved_space->ground.ptr, a, target, &types);
+        uint32_t n = eval_get_atom_types_profiled(
+            (Space *)resolved_space->ground.ptr, a, target, &types);
         for (uint32_t i = 0; i < n; i++)
             outcome_set_add(os, types[i], &_empty);
         free(types);
@@ -16202,6 +16339,72 @@ generic_dispatch:
             return;
         }
         outcome_set_free(&dispatch_results);
+    }
+}
+
+void eval_outcome_init(EvalOutcome *outcome) {
+    if (!outcome)
+        return;
+    result_set_init(&outcome->results);
+    outcome->completion = CETTA_EVAL_COMPLETE;
+    outcome->budget_initial = 0;
+    outcome->budget_remaining = 0;
+}
+
+void eval_outcome_free(EvalOutcome *outcome) {
+    if (!outcome)
+        return;
+    result_set_free(&outcome->results);
+    outcome->completion = CETTA_EVAL_COMPLETE;
+    outcome->budget_initial = 0;
+    outcome->budget_remaining = 0;
+}
+
+const char *eval_completion_reason(CettaEvalCompletion completion) {
+    switch (completion) {
+    case CETTA_EVAL_COMPLETE:
+        return "complete";
+    case CETTA_EVAL_INCOMPLETE_FUEL:
+        return "fuel-exhausted";
+    case CETTA_EVAL_INCOMPLETE_CANCELLED:
+        return "cancelled";
+    case CETTA_EVAL_INCOMPLETE_STACK:
+        return "stack-exhausted";
+    }
+    return "incomplete";
+}
+
+void metta_eval_outcome(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
+                        EvalOutcome *outcome) {
+    if (!outcome)
+        return;
+    EvalCompletionTracker *parent = g_eval_completion_tracker;
+    uint64_t requested = fuel > 0 ? (uint64_t)fuel : 0;
+    uint64_t granted = parent && parent->budget_remaining < requested
+                           ? parent->budget_remaining
+                           : requested;
+    EvalCompletionTracker tracker = {
+        .completion = CETTA_EVAL_COMPLETE,
+        .budget_initial = granted,
+        .budget_remaining = granted,
+        .parent = parent,
+    };
+    g_eval_completion_tracker = &tracker;
+    metta_eval(s, a, type, atom, fuel, &outcome->results);
+    g_eval_completion_tracker = tracker.parent;
+    outcome->completion = tracker.completion;
+    outcome->budget_initial = tracker.budget_initial;
+    outcome->budget_remaining = tracker.budget_remaining;
+    if (tracker.parent && tracker.completion != CETTA_EVAL_COMPLETE &&
+        tracker.parent->completion == CETTA_EVAL_COMPLETE) {
+        tracker.parent->completion = tracker.completion;
+    }
+    if (tracker.parent) {
+        uint64_t spent = tracker.budget_initial - tracker.budget_remaining;
+        if (spent >= tracker.parent->budget_remaining)
+            tracker.parent->budget_remaining = 0;
+        else
+            tracker.parent->budget_remaining -= spent;
     }
 }
 

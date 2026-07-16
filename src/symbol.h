@@ -144,6 +144,8 @@ typedef struct {
     X(get_metatype, "get-metatype") \
     X(get_type, "get-type") \
     X(get_type_space, "get-type-space") \
+    X(prime_package, "prime-package") \
+    X(prime_judge, "prime-judge") \
     X(assertEqual, "assertEqual") \
     X(assertEqualToResult, "assertEqualToResult") \
     X(assertEqualMsg, "assertEqualMsg") \

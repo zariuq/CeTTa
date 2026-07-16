@@ -40,7 +40,18 @@ static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .id = CETTA_PROFILE_HE_PRIME,
     .language_id = CETTA_LANGUAGE_HE,
     .name = "he-prime",
-    .note = "Binder-aware dependent telescope elaboration atop he-extended.",
+    .note = "HE typing with explicit dependent binders, checked type-level computation, and typed inhabitation search.",
+    .he_compatible_surface = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+};
+
+static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
+    .id = CETTA_PROFILE_PRIME_DEFAULT,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "prime-default",
+    .note = "Built-in policy for the MeTTa-Prime semantic package.",
     .he_compatible_surface = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
@@ -176,6 +187,8 @@ static uint32_t cetta_language_base_surface_mask(CettaLanguageId language_id) {
     switch (language_id) {
     case CETTA_LANGUAGE_HE:
         return CETTA_PROFILE_MASK_HE_FORMAL;
+    case CETTA_LANGUAGE_PRIME:
+        return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_LANGUAGE_MM2:
     case CETTA_LANGUAGE_PETTA:
     case CETTA_LANGUAGE_AMBIENT:
@@ -212,6 +225,10 @@ const CettaProfile *cetta_profile_he_extended(void) {
 
 const CettaProfile *cetta_profile_he_prime(void) {
     return &CETTA_PROFILE_HE_PRIME_VALUE;
+}
+
+const CettaProfile *cetta_profile_prime_default(void) {
+    return &CETTA_PROFILE_PRIME_DEFAULT_VALUE;
 }
 
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
@@ -266,6 +283,8 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_HE_EXTENDED:
         return CETTA_PROFILE_MASK_HE_EXTENDED;
     case CETTA_PROFILE_HE_PRIME:
+        return CETTA_PROFILE_MASK_HE_PRIME;
+    case CETTA_PROFILE_PRIME_DEFAULT:
         return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:

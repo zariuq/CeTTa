@@ -668,6 +668,8 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role) {
             return false;
         }
     }
+    if (!endpoint->profile && endpoint->lang->id == CETTA_LANGUAGE_PRIME)
+        endpoint->profile = cetta_profile_prime_default();
     return true;
 }
 
@@ -875,6 +877,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|he-extended|he-prime>] <file.metta>\n", out);
+    fputs("       cetta --lang prime <file.metta>\n", out);
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
@@ -1032,16 +1035,12 @@ static bool main_try_add_builtin_type_decls_direct(Space *space,
 static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
     /* u = %Undefined% (evaluated), A = Atom (staged), N = Number */
     static const struct { const char *name; const char *sig; } ops[] = {
-        {"type-of", "uA"},
-        {"normalize-typing", "uAN"},
-        {"validate-type-properties", "uAN"},
+        {"normalize-type", "uAN"},
+        {"check-type-refinements", "uAN"},
         {"is-consistent", "AA"},
-        {"is-consistent-in", "uAAN"},
-        {"type-consistency-kind", "AA"},
-        {"check-typing", "uAAN"},
-        {"validate-typing", "uN"},
-        {"type-inhabit", "uANNN"},
-        {"type-inhabit-first", "uANN"},
+        {"check-type", "uAAN"},
+        {"search-inhabitants", "uANNN"},
+        {"search-first-inhabitant", "uANN"},
         {"type-forward-step", "uNN"},
         {"type-forward-closure", "uNNN"},
     };
@@ -1066,11 +1065,40 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
     }
 }
 
+static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
+    static const struct { const char *name; const char *sig; } ops[] = {
+        {"prime-package", "u"},
+        {"prime-judge", "uAN"},
+    };
+    for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+        const char *sig = ops[i].sig;
+        size_t n = strlen(sig);
+        Atom **elems = arena_alloc(arena, sizeof(Atom *) * (n + 2));
+        elems[0] = atom_symbol_id(arena, g_builtin_syms.arrow);
+        for (size_t k = 0; k < n; k++) {
+            elems[k + 1] = sig[k] == 'A'
+                ? atom_symbol_id(arena, g_builtin_syms.atom)
+                : sig[k] == 'N' ? atom_symbol(arena, "Number")
+                                : atom_undefined_type(arena);
+        }
+        elems[n + 1] = atom_undefined_type(arena);
+        Atom *decl = atom_expr3(
+            arena, atom_symbol_id(arena, g_builtin_syms.colon),
+            atom_symbol(arena, ops[i].name),
+            atom_expr(arena, elems, (CettaExprLen)(n + 2)));
+        if (!space_admit_atom(space, arena, decl))
+            space_add(space, decl);
+    }
+}
+
 static void main_add_builtin_type_decls(Space *space, Arena *arena,
                                         CettaLanguageId language_id,
                                         const CettaProfile *profile) {
-    if (profile && profile->enable_dependent_telescope)
+    if (language_id == CETTA_LANGUAGE_HE && profile &&
+        profile->enable_dependent_telescope)
         main_add_he_prime_typing_op_decls(space, arena);
+    if (language_id == CETTA_LANGUAGE_PRIME)
+        main_add_prime_semantic_op_decls(space, arena);
     if (main_try_add_builtin_type_decls_direct(space, language_id, profile))
         return;
 
