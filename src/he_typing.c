@@ -110,6 +110,57 @@ const char *he_typing_variable_class_name(CettaHeVariableClass var_class) {
     return "unknown";
 }
 
+/* Resource-aware entry points install one policy for the whole judgment.
+   Structural checking is finite over its input and is measured only when the
+   caller explicitly requests a bound. That optional bound is consumed solely
+   by partial producers such as evaluation and user-defined type computation. */
+static __thread CettaHeTypingBudget *g_active_typing_budget = NULL;
+
+static void he_typing_note_work(uint64_t amount) {
+    CettaHeTypingBudget *budget = g_active_typing_budget;
+    if (!budget || !budget->steps_limited) return;
+    if (budget->work_steps_observed > UINT64_MAX - amount)
+        budget->work_steps_observed = UINT64_MAX;
+    else
+        budget->work_steps_observed += amount;
+}
+
+static bool he_typing_step(uint64_t *fuel) {
+    CettaHeTypingBudget *budget = g_active_typing_budget;
+    if (budget) {
+        he_typing_note_work(1);
+        return true;
+    }
+    if (!fuel || *fuel == 0) return false;
+    (*fuel)--;
+    return true;
+}
+
+static bool he_typing_has_producer_steps(const uint64_t *fuel,
+                                         uint64_t amount) {
+    if (g_active_typing_budget)
+        return !g_active_typing_budget->steps_limited ||
+               g_active_typing_budget->steps_remaining >= amount;
+    return fuel && *fuel >= amount;
+}
+
+static void he_typing_charge_external(uint64_t *fuel, uint64_t amount) {
+    CettaHeTypingBudget *budget = g_active_typing_budget;
+    if (budget) {
+        if (budget->steps_limited) {
+            budget->steps_remaining = amount >= budget->steps_remaining
+                ? 0 : budget->steps_remaining - amount;
+            if (budget->steps_spent > UINT64_MAX - amount)
+                budget->steps_spent = UINT64_MAX;
+            else
+                budget->steps_spent += amount;
+        }
+    } else if (fuel) {
+        *fuel = amount >= *fuel ? 0 : *fuel - amount;
+    }
+    he_typing_note_work(amount);
+}
+
 /* ── edge composition ────────────────────────────────────────────────────
  * A composite edge is tagged no more strongly than its weakest child.
  * Tag strength (strongest first): exact > structural > top > meta-staging
@@ -166,8 +217,7 @@ static bool type_eq(Atom *x, Atom *y) {
  * recorded so callers can see subsumption direction; the relation itself is
  * evaluated on the ordered pair (actual, expected). */
 static HeEdge consistency(Atom *actual, Atom *expected, uint64_t *fuel) {
-    if (*fuel == 0) return HE_UNKNOWN;
-    (*fuel)--;
+    if (!he_typing_step(fuel)) return HE_UNKNOWN;
 
     /* ? on either side: dynamic edge, non-composing.  This is the fix for the
      * %Undefined% laundering — the edge is marked dynamic so a
@@ -234,33 +284,61 @@ CettaHeTypingEdge he_typing_classify_consistency(Atom *actual, Atom *expected,
 
 /* ── shared type-inference support ─────────────────────────────────────── */
 
-#define HE_MAX_TYPES 64u
-#define HE_TYPE_DEPTH_LIMIT 512u
-
 void he_typing_budget_init(CettaHeTypingBudget *budget, uint64_t steps) {
     if (!budget) return;
     *budget = (CettaHeTypingBudget){
+        .steps_limited = true,
         .steps_initial = steps,
         .steps_remaining = steps,
-        .depth_limit = HE_TYPE_DEPTH_LIMIT,
+        .steps_spent = 0,
+        .work_steps_observed = 0,
         .max_depth_observed = 0,
-        .type_capacity = HE_MAX_TYPES,
+        .type_capacity = 0,
         .type_capacity_exhausted = false,
+        .evaluator_stack_exhausted = false,
+        .evaluator_capacity_exhausted = false,
+        .allow_marked_user_type_functions = true,
     };
 }
 
+void he_typing_budget_init_unbounded(CettaHeTypingBudget *budget) {
+    he_typing_budget_init(budget, 0);
+    if (budget) budget->steps_limited = false;
+}
+
 typedef struct {
-    Atom *items[HE_MAX_TYPES];
+    Atom **items;
     uint32_t count;
+    uint32_t capacity;
     bool overflow;
+    Arena *arena;
 } HeTypeSet;
 
-static void set_init(HeTypeSet *s) { s->count = 0; s->overflow = false; }
+static void set_init(HeTypeSet *s, Arena *arena) {
+    *s = (HeTypeSet){.arena = arena};
+}
 
 static void set_add(HeTypeSet *s, Atom *t) {
     for (uint32_t i = 0; i < s->count; i++)
         if (atom_eq(s->items[i], t)) return;
-    if (s->count >= HE_MAX_TYPES) { s->overflow = true; return; }
+    if (s->count == UINT32_MAX) {
+        s->overflow = true;
+        return;
+    }
+    if (s->count == s->capacity) {
+        uint32_t next_capacity = s->capacity ? s->capacity * 2u : 8u;
+        if (next_capacity <= s->capacity) next_capacity = UINT32_MAX;
+        if ((size_t)next_capacity > SIZE_MAX / sizeof(Atom *)) {
+            s->overflow = true;
+            return;
+        }
+        Atom **next = arena_alloc(
+            s->arena, sizeof(Atom *) * (size_t)next_capacity);
+        if (s->count)
+            memcpy(next, s->items, sizeof(Atom *) * (size_t)s->count);
+        s->items = next;
+        s->capacity = next_capacity;
+    }
     s->items[s->count++] = t;
 }
 
@@ -301,8 +379,9 @@ static bool split_binder(Atom *domain, Atom **binder, Atom **type) {
 /* ── checked type-level computation ──────────────────────────────────────
  * Only explicitly marked functions may run inside a type.  Evaluation runs
  * against a snapshot of the source space, accepts one unique successful
- * normal result, and is fuel-bounded.  Open expressions remain residual: a
- * dependent codomain can be instantiated later rather than guessed now. */
+ * normal result, and respects an explicit producer bound when supplied. Open
+ * expressions remain residual: a dependent codomain can be instantiated later
+ * rather than guessed now. */
 
 typedef enum {
     HE_NORM_COMPLETE = 0,
@@ -310,7 +389,8 @@ typedef enum {
     HE_NORM_DEPTH,
     HE_NORM_AMBIGUOUS,
     HE_NORM_NO_RESULT,
-    HE_NORM_INADMISSIBLE  /* effectful computation inside a type: never run */
+    HE_NORM_INADMISSIBLE, /* effectful computation inside a type: never run */
+    HE_NORM_PROVISIONAL   /* user computation lacks Prime admission */
 } HeNormStatus;
 
 static void he_note_depth(uint32_t *max_depth_observed, uint32_t depth) {
@@ -343,132 +423,220 @@ static bool atom_is_false_value(Atom *x) {
             !x->ground.bval);
 }
 
+typedef struct {
+    Atom *input;
+    Atom **children;
+    uint32_t next_child;
+    uint32_t depth;
+    bool entered;
+    bool changed;
+} HeNormalizeFrame;
+
+static bool he_normalize_push(HeNormalizeFrame **stack, size_t *len,
+                              size_t *cap, HeNormalizeFrame *inline_stack,
+                              Atom *input, uint32_t depth) {
+    if (*len == *cap) {
+        size_t next_cap = *cap * 2u;
+        if (next_cap <= *cap || next_cap > SIZE_MAX / sizeof(**stack))
+            return false;
+        HeNormalizeFrame *next = cetta_malloc(sizeof(**stack) * next_cap);
+        memcpy(next, *stack, sizeof(**stack) * *len);
+        if (*stack != inline_stack) free(*stack);
+        *stack = next;
+        *cap = next_cap;
+    }
+    (*stack)[(*len)++] = (HeNormalizeFrame){
+        .input = input,
+        .depth = depth,
+    };
+    return true;
+}
+
 static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
                                     uint64_t *fuel, HeNormStatus *status,
                                     uint32_t depth,
                                     uint32_t *max_depth_observed) {
-    he_note_depth(max_depth_observed, depth);
-    if (depth > HE_TYPE_DEPTH_LIMIT) {
-        *status = HE_NORM_DEPTH;
-        return ty;
-    }
-    if (*fuel == 0) {
+    HeNormalizeFrame inline_stack[16];
+    HeNormalizeFrame *stack = inline_stack;
+    size_t len = 0;
+    size_t cap = sizeof inline_stack / sizeof inline_stack[0];
+    if (!he_normalize_push(&stack, &len, &cap, inline_stack, ty, depth)) {
         *status = HE_NORM_RESOURCE;
         return ty;
     }
-    (*fuel)--;
 
-    if (ty->kind != ATOM_EXPR || ty->expr.len == 0)
-        return ty;
+    for (;;) {
+        HeNormalizeFrame *frame = &stack[len - 1u];
+        Atom *completed = NULL;
 
-    Atom **children = arena_alloc(a, sizeof(Atom *) * ty->expr.len);
-    bool changed = false;
-    for (uint32_t i = 0; i < ty->expr.len; i++) {
-        HeNormStatus child_status = HE_NORM_COMPLETE;
-        children[i] = normalize_type_checked(a, space, ty->expr.elems[i],
-                                             fuel, &child_status, depth + 1,
-                                             max_depth_observed);
-        if (child_status != HE_NORM_COMPLETE) {
-            *status = child_status;
-            return ty;
+        if (!frame->entered) {
+            he_note_depth(max_depth_observed, frame->depth);
+            if (!he_typing_step(fuel)) {
+                *status = HE_NORM_RESOURCE;
+                goto fail;
+            }
+            if (!frame->input || frame->input->kind != ATOM_EXPR ||
+                frame->input->expr.len == 0) {
+                completed = frame->input;
+                goto frame_complete;
+            }
+            frame->children = arena_alloc(
+                a, sizeof(Atom *) * (size_t)frame->input->expr.len);
+            frame->entered = true;
         }
-        changed |= children[i] != ty->expr.elems[i];
-    }
-    Atom *norm = changed ? atom_expr(a, children, ty->expr.len) : ty;
 
-    /* Type-pure grounded computation (arithmetic and friends) is the
-     * capability-gated deterministic fragment; normalize_type_expr will not
-     * dispatch anything outside it. */
-    Atom *grounded = normalize_type_expr(a, norm);
-    if (grounded != norm) {
-        HeNormStatus next = HE_NORM_COMPLETE;
-        Atom *r = normalize_type_checked(a, space, grounded, fuel, &next,
-                                         depth + 1, max_depth_observed);
-        if (next != HE_NORM_COMPLETE) *status = next;
-        return r;
-    }
-
-    Atom *head = norm->expr.elems[0];
-
-    /* A grounded op that is NOT type-pure names a computation with effects or
-     * nondeterminism.  It must never run inside a type, and a user marker
-     * cannot override that: the verdict is an honest inadmissible, not a
-     * silent normal form and not an execution. */
-    if (head->kind == ATOM_SYMBOL && !atom_has_vars(norm) &&
-        is_grounded_op(head->sym_id) &&
-        !grounded_op_is_type_pure(head->sym_id)) {
-        *status = HE_NORM_INADMISSIBLE;
-        return norm;
-    }
-
-    if (!space_has_unary_marker(space, "type-level-function", head))
-        return norm;
-
-    /* Open calls are well-formed residual type expressions. */
-    if (atom_has_vars(norm)) return norm;
-
-    if (*fuel <= 1) {
-        *status = HE_NORM_RESOURCE;
-        return norm;
-    }
-    /* Marked user functions run under a scoped experimental policy, NOT a
-     * proven purity judgment: evaluation happens against a snapshot clone
-     * (space effects are contained and discarded), fuel-bounded, and only a
-     * unique successful normal form is accepted.  What this does not contain:
-     * a marked function may still perform I/O through the evaluator.  The
-     * marker is user trust, and the containment boundary is the snapshot. */
-    /* Keep one caller-visible ledger step for validating and recursively
-       normalizing the returned candidate.  This is not a hidden search cap:
-       evaluation receives the entire remaining budget except that declared
-       continuation step, and actual use is charged below. */
-    uint64_t eval_budget = *fuel - 1;
-    int budget = eval_budget > (uint64_t)INT_MAX ? INT_MAX : (int)eval_budget;
-    Space *snapshot = eval_space_snapshot_clone(space, a);
-    if (!snapshot) {
-        *status = HE_NORM_RESOURCE;
-        return norm;
-    }
-
-    EvalOutcome outcome;
-    eval_outcome_init(&outcome);
-    metta_eval_outcome(snapshot, a, NULL, norm, budget, &outcome);
-    uint64_t spent = outcome.budget_initial - outcome.budget_remaining;
-    *fuel = spent >= *fuel ? 0 : *fuel - spent;
-
-    Atom *unique = NULL;
-    bool ambiguous = false;
-    for (CettaCount i = 0; i < outcome.results.len; i++) {
-        Atom *candidate = outcome.results.items[i];
-        if (!candidate || atom_is_error(candidate) || atom_is_empty(candidate))
+        if (frame->next_child < frame->input->expr.len) {
+            uint32_t child_depth = frame->depth == UINT32_MAX
+                ? UINT32_MAX : frame->depth + 1u;
+            if (!he_normalize_push(
+                    &stack, &len, &cap, inline_stack,
+                    frame->input->expr.elems[frame->next_child],
+                    child_depth)) {
+                *status = HE_NORM_RESOURCE;
+                goto fail;
+            }
             continue;
-        if (!unique) unique = candidate;
-        else if (!atom_eq(unique, candidate)) {
-            ambiguous = true;
-            break;
         }
-    }
-    CettaEvalCompletion completion = outcome.completion;
-    eval_outcome_free(&outcome);
 
-    if (ambiguous) {
-        *status = HE_NORM_AMBIGUOUS;
-        return norm;
-    }
-    if (completion != CETTA_EVAL_COMPLETE) {
-        *status = HE_NORM_RESOURCE;
-        return norm;
-    }
-    if (!unique) {
-        *status = HE_NORM_NO_RESULT;
-        return norm;
-    }
-    if (atom_eq(unique, norm)) return norm;
+        Atom *norm = frame->changed
+            ? atom_expr(a, frame->children, frame->input->expr.len)
+            : frame->input;
 
-    HeNormStatus next = HE_NORM_COMPLETE;
-    Atom *r = normalize_type_checked(a, space, unique, fuel, &next, depth + 1,
-                                     max_depth_observed);
-    if (next != HE_NORM_COMPLETE) *status = next;
-    return r;
+        /* Type-pure grounded computation (arithmetic and friends) is the
+         * capability-gated deterministic fragment; normalize_type_expr will
+         * not dispatch anything outside it. */
+        Atom *grounded = normalize_type_expr_head(a, norm);
+        if (grounded != norm) {
+            uint32_t next_depth = frame->depth == UINT32_MAX
+                ? UINT32_MAX : frame->depth + 1u;
+            *frame = (HeNormalizeFrame){
+                .input = grounded,
+                .depth = next_depth,
+            };
+            continue;
+        }
+
+        Atom *head = norm->expr.elems[0];
+
+        /* A grounded op that is NOT type-pure names a computation with effects
+         * or nondeterminism. It must never run inside a type, and a user marker
+         * cannot override that. */
+        if (head->kind == ATOM_SYMBOL && is_grounded_op(head->sym_id) &&
+            !grounded_op_is_type_pure(head->sym_id) &&
+            !atom_has_vars(norm)) {
+            *status = HE_NORM_INADMISSIBLE;
+            goto fail;
+        }
+
+        if (!space_has_unary_marker(space, "type-level-function", head)) {
+            completed = norm;
+            goto frame_complete;
+        }
+
+        if (g_active_typing_budget &&
+            !g_active_typing_budget->allow_marked_user_type_functions) {
+            *status = HE_NORM_PROVISIONAL;
+            goto fail;
+        }
+
+        /* Open calls are well-formed residual type expressions. */
+        if (atom_has_vars(norm)) {
+            completed = norm;
+            goto frame_complete;
+        }
+
+        if (!he_typing_has_producer_steps(fuel, 1)) {
+            *status = HE_NORM_RESOURCE;
+            goto fail;
+        }
+        /* Marked user functions run against a snapshot clone, optionally
+         * caller-bounded, and only a unique successful normal form is accepted. */
+        bool evaluation_limited = !g_active_typing_budget ||
+                                  g_active_typing_budget->steps_limited;
+        uint64_t eval_budget = evaluation_limited ? *fuel : 0;
+        int budget = evaluation_limited
+            ? (eval_budget > (uint64_t)INT_MAX ? INT_MAX : (int)eval_budget)
+            : -1;
+        Space *snapshot = eval_space_snapshot_clone(space, a);
+        if (!snapshot) {
+            *status = HE_NORM_RESOURCE;
+            goto fail;
+        }
+
+        EvalOutcome outcome;
+        eval_outcome_init(&outcome);
+        metta_eval_outcome(snapshot, a, NULL, norm, budget, &outcome);
+        he_typing_charge_external(fuel, outcome.steps_spent);
+
+        Atom *unique = NULL;
+        bool ambiguous = false;
+        for (CettaCount i = 0; i < outcome.results.len; i++) {
+            Atom *candidate = outcome.results.items[i];
+            if (!candidate || atom_is_error(candidate) ||
+                atom_is_empty(candidate))
+                continue;
+            if (!unique) unique = candidate;
+            else if (!atom_eq(unique, candidate)) {
+                ambiguous = true;
+                break;
+            }
+        }
+        CettaEvalCompletion completion = outcome.completion;
+        if (completion == CETTA_EVAL_INCOMPLETE_STACK &&
+            g_active_typing_budget) {
+            g_active_typing_budget->evaluator_stack_exhausted = true;
+        }
+        if (completion == CETTA_EVAL_INCOMPLETE_CAPACITY &&
+            g_active_typing_budget) {
+            g_active_typing_budget->evaluator_capacity_exhausted = true;
+        }
+        eval_outcome_free(&outcome);
+
+        if (ambiguous) {
+            *status = HE_NORM_AMBIGUOUS;
+            goto fail;
+        }
+        if (completion != CETTA_EVAL_COMPLETE) {
+            *status = HE_NORM_RESOURCE;
+            goto fail;
+        }
+        if (!unique) {
+            *status = HE_NORM_NO_RESULT;
+            goto fail;
+        }
+        if (atom_eq(unique, norm)) {
+            completed = norm;
+            goto frame_complete;
+        }
+
+        uint32_t next_depth = frame->depth == UINT32_MAX
+            ? UINT32_MAX : frame->depth + 1u;
+        *frame = (HeNormalizeFrame){
+            .input = unique,
+            .depth = next_depth,
+        };
+        continue;
+
+frame_complete:
+        len--;
+        if (len == 0) {
+            if (stack != inline_stack) free(stack);
+            return completed;
+        }
+        frame = &stack[len - 1u];
+        uint32_t child_index = frame->next_child++;
+        frame->children[child_index] = completed;
+        if (completed != frame->input->expr.elems[child_index])
+            frame->changed = true;
+    }
+
+fail:
+    /* A failed child invalidates its enclosing normalization, exactly as the
+       recursive implementation did. The current root is retained as residual
+       syntax; the status carries why normalization did not finish. */
+    ty = stack[0].input;
+    if (stack != inline_stack) free(stack);
+    return ty;
 }
 
 Atom *he_typing_normalize_shared_type(Arena *a, Space *space, Atom *type,
@@ -493,6 +661,7 @@ CettaHeNormalizeStatus he_typing_normalize_type_status(
     case HE_NORM_AMBIGUOUS: return CETTA_HE_NORMALIZE_AMBIGUOUS;
     case HE_NORM_NO_RESULT: return CETTA_HE_NORMALIZE_NO_RESULT;
     case HE_NORM_INADMISSIBLE: return CETTA_HE_NORMALIZE_INADMISSIBLE;
+    case HE_NORM_PROVISIONAL: return CETTA_HE_NORMALIZE_PROVISIONAL;
     }
     return CETTA_HE_NORMALIZE_RESOURCE;
 }
@@ -501,10 +670,15 @@ CettaHeNormalizeStatus he_typing_normalize_type_status_budgeted(
     Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
     Atom **normalized_out) {
     if (!budget) return CETTA_HE_NORMALIZE_RESOURCE;
+    CettaHeTypingBudget *parent_budget = g_active_typing_budget;
+    g_active_typing_budget = budget;
     HeNormStatus status = HE_NORM_COMPLETE;
+    uint32_t *max_depth_observed = budget->steps_limited
+        ? &budget->max_depth_observed : NULL;
     Atom *normalized = normalize_type_checked(
         a, space, type, &budget->steps_remaining, &status, 0,
-        &budget->max_depth_observed);
+        max_depth_observed);
+    g_active_typing_budget = parent_budget;
     if (normalized_out) *normalized_out = normalized;
     switch (status) {
     case HE_NORM_COMPLETE: return CETTA_HE_NORMALIZE_COMPLETE;
@@ -513,6 +687,7 @@ CettaHeNormalizeStatus he_typing_normalize_type_status_budgeted(
     case HE_NORM_AMBIGUOUS: return CETTA_HE_NORMALIZE_AMBIGUOUS;
     case HE_NORM_NO_RESULT: return CETTA_HE_NORMALIZE_NO_RESULT;
     case HE_NORM_INADMISSIBLE: return CETTA_HE_NORMALIZE_INADMISSIBLE;
+    case HE_NORM_PROVISIONAL: return CETTA_HE_NORMALIZE_PROVISIONAL;
     }
     return CETTA_HE_NORMALIZE_RESOURCE;
 }
@@ -530,95 +705,173 @@ static const char *refinement_status_reason(HeNormStatus ns) {
     case HE_NORM_AMBIGUOUS: return "type-refinement-ambiguous";
     case HE_NORM_NO_RESULT: return "type-refinement-no-result";
     case HE_NORM_INADMISSIBLE: return "type-computation-inadmissible";
+    case HE_NORM_PROVISIONAL: return "type-computation-unadmitted";
     default: return "type-refinement-fuel-exhausted";
     }
+}
+
+typedef struct {
+    Atom *type;
+    uint32_t next_child;
+    uint32_t depth;
+    bool entered;
+} HeRefinementFrame;
+
+static bool he_refinement_push(HeRefinementFrame **stack, size_t *len,
+                               size_t *cap, HeRefinementFrame *inline_stack,
+                               Atom *type, uint32_t depth) {
+    if (*len == *cap) {
+        size_t next_cap = *cap * 2u;
+        if (next_cap <= *cap || next_cap > SIZE_MAX / sizeof(**stack))
+            return false;
+        HeRefinementFrame *next = cetta_malloc(sizeof(**stack) * next_cap);
+        memcpy(next, *stack, sizeof(**stack) * *len);
+        if (*stack != inline_stack) free(*stack);
+        *stack = next;
+        *cap = next_cap;
+    }
+    (*stack)[(*len)++] = (HeRefinementFrame){
+        .type = type,
+        .depth = depth,
+    };
+    return true;
 }
 
 static HeTypeValidity check_type_refinements(Arena *a, Space *space,
                                              Atom *ty, uint64_t *fuel,
                                              Atom **detail, uint32_t depth,
                                              uint32_t *max_depth_observed) {
-    he_note_depth(max_depth_observed, depth);
-    if (depth > HE_TYPE_DEPTH_LIMIT) {
-        if (detail) *detail = he_reason(a, "type-refinement-depth-exhausted");
+    HeRefinementFrame inline_stack[16];
+    HeRefinementFrame *stack = inline_stack;
+    size_t stack_len = 0;
+    size_t stack_cap = sizeof inline_stack / sizeof inline_stack[0];
+    if (!he_refinement_push(&stack, &stack_len, &stack_cap, inline_stack,
+                            ty, depth)) {
+        if (detail) *detail = he_reason(a, "type-refinement-worklist-exhausted");
         return HE_TYPE_VALIDATION_INCOMPLETE;
     }
-    if (*fuel == 0) {
-        if (detail) *detail = he_reason(a, "type-refinement-fuel-exhausted");
-        return HE_TYPE_VALIDATION_INCOMPLETE;
-    }
-    (*fuel)--;
 
-    HeNormStatus ns = HE_NORM_COMPLETE;
-    ty = normalize_type_checked(a, space, ty, fuel, &ns, depth,
-                                max_depth_observed);
-    if (ns != HE_NORM_COMPLETE) {
-        if (detail) *detail = he_reason(a, refinement_status_reason(ns));
-        /* an inadmissible computation in a type is a proven defect, not a
-         * resource condition */
-        if (ns == HE_NORM_INADMISSIBLE) return HE_TYPE_INVALID;
-        if (ns == HE_NORM_RESOURCE || ns == HE_NORM_DEPTH)
-            return HE_TYPE_VALIDATION_INCOMPLETE;
-        return HE_TYPE_VALIDATION_UNKNOWN;
-    }
-
-    if (ty->kind != ATOM_EXPR || ty->expr.len == 0) return HE_TYPE_VALID;
-    for (uint32_t i = 0; i < ty->expr.len; i++) {
-        HeTypeValidity child = check_type_refinements(a, space,
-                                                      ty->expr.elems[i],
-                                                      fuel, detail,
-                                                      depth + 1,
-                                                      max_depth_observed);
-        if (child != HE_TYPE_VALID) return child;
-    }
-
-    uint32_t len = 0;
-    if (!space_length_u32_checked(space, &len)) {
-        if (detail) *detail = he_reason(a, "space-too-large");
-        return HE_TYPE_VALIDATION_UNKNOWN;
-    }
-    for (uint32_t i = 0; i < len; i++) {
-        Atom *row = space_get_at(space, i);
-        if (!row || row->kind != ATOM_EXPR || row->expr.len != 4) continue;
-        if (!atom_is_symbol(row->expr.elems[0], "type-index-refinement")) continue;
-        if (!atom_eq(row->expr.elems[1], ty->expr.elems[0])) continue;
-        Atom *idx = row->expr.elems[2];
-        if (!(idx->kind == ATOM_GROUNDED && idx->ground.gkind == GV_INT) ||
-            idx->ground.ival < 0 || (uint64_t)idx->ground.ival >= ty->expr.len) {
-            if (detail) *detail = he_reason(a, "invalid-type-refinement-index");
-            return HE_TYPE_INVALID;
-        }
-        Atom *predicate = row->expr.elems[3];
-        if (!space_has_unary_marker(space, "type-level-function", predicate)) {
-            if (detail) *detail = he_reason(a, "untrusted-type-refinement");
-            return HE_TYPE_INVALID;
-        }
-        Atom *arg = ty->expr.elems[(uint32_t)idx->ground.ival];
-        if (atom_has_vars(arg)) {
-            if (detail) *detail = he_reason(a, "open-type-refinement");
-            return HE_TYPE_VALIDATION_UNKNOWN;
-        }
-        Atom *call = atom_expr2(a, predicate, arg);
-        HeNormStatus ps = HE_NORM_COMPLETE;
-        Atom *answer = normalize_type_checked(a, space, call, fuel, &ps,
-                                              depth + 1,
-                                              max_depth_observed);
-        if (ps != HE_NORM_COMPLETE) {
-            if (detail) *detail = he_reason(a, refinement_status_reason(ps));
-            if (ps == HE_NORM_INADMISSIBLE) return HE_TYPE_INVALID;
-            if (ps == HE_NORM_RESOURCE || ps == HE_NORM_DEPTH)
+    while (stack_len > 0) {
+        HeRefinementFrame *frame = &stack[stack_len - 1u];
+        if (!frame->entered) {
+            he_note_depth(max_depth_observed, frame->depth);
+            if (!he_typing_step(fuel)) {
+                if (detail)
+                    *detail = he_reason(a, "type-refinement-fuel-exhausted");
+                if (stack != inline_stack) free(stack);
                 return HE_TYPE_VALIDATION_INCOMPLETE;
-            return HE_TYPE_VALIDATION_UNKNOWN;
+            }
+
+            HeNormStatus ns = HE_NORM_COMPLETE;
+            frame->type = normalize_type_checked(
+                a, space, frame->type, fuel, &ns, frame->depth,
+                max_depth_observed);
+            if (ns != HE_NORM_COMPLETE) {
+                if (detail) *detail = he_reason(a, refinement_status_reason(ns));
+                if (stack != inline_stack) free(stack);
+                /* An inadmissible computation in a type is a proven defect,
+                   not a resource condition. */
+                if (ns == HE_NORM_INADMISSIBLE) return HE_TYPE_INVALID;
+                if (ns == HE_NORM_RESOURCE || ns == HE_NORM_DEPTH)
+                    return HE_TYPE_VALIDATION_INCOMPLETE;
+                return HE_TYPE_VALIDATION_UNKNOWN;
+            }
+            frame->entered = true;
         }
-        if (atom_is_false_value(answer)) {
-            if (detail) *detail = he_reason2(a, "type-refinement-failed", arg);
-            return HE_TYPE_INVALID;
+
+        ty = frame->type;
+        if (ty && ty->kind == ATOM_EXPR &&
+            frame->next_child < ty->expr.len) {
+            Atom *child = ty->expr.elems[frame->next_child++];
+            uint32_t child_depth = frame->depth == UINT32_MAX
+                ? UINT32_MAX : frame->depth + 1u;
+            if (!he_refinement_push(&stack, &stack_len, &stack_cap,
+                                    inline_stack, child, child_depth)) {
+                if (detail)
+                    *detail = he_reason(
+                        a, "type-refinement-worklist-exhausted");
+                if (stack != inline_stack) free(stack);
+                return HE_TYPE_VALIDATION_INCOMPLETE;
+            }
+            continue;
         }
-        if (!atom_is_true_value(answer)) {
-            if (detail) *detail = he_reason2(a, "type-refinement-not-boolean", answer);
-            return HE_TYPE_VALIDATION_UNKNOWN;
+
+        if (ty && ty->kind == ATOM_EXPR && ty->expr.len > 0) {
+            uint32_t space_len = 0;
+            if (!space_length_u32_checked(space, &space_len)) {
+                if (detail) *detail = he_reason(a, "space-too-large");
+                if (stack != inline_stack) free(stack);
+                return HE_TYPE_VALIDATION_UNKNOWN;
+            }
+            for (uint32_t i = 0; i < space_len; i++) {
+                Atom *row = space_get_at(space, i);
+                if (!row || row->kind != ATOM_EXPR || row->expr.len != 4)
+                    continue;
+                if (!atom_is_symbol(row->expr.elems[0],
+                                    "type-index-refinement"))
+                    continue;
+                if (!atom_eq(row->expr.elems[1], ty->expr.elems[0])) continue;
+                Atom *idx = row->expr.elems[2];
+                if (!(idx->kind == ATOM_GROUNDED &&
+                      idx->ground.gkind == GV_INT) ||
+                    idx->ground.ival < 0 ||
+                    (uint64_t)idx->ground.ival >= ty->expr.len) {
+                    if (detail)
+                        *detail = he_reason(
+                            a, "invalid-type-refinement-index");
+                    if (stack != inline_stack) free(stack);
+                    return HE_TYPE_INVALID;
+                }
+                Atom *predicate = row->expr.elems[3];
+                if (!space_has_unary_marker(
+                        space, "type-level-function", predicate)) {
+                    if (detail)
+                        *detail = he_reason(a, "untrusted-type-refinement");
+                    if (stack != inline_stack) free(stack);
+                    return HE_TYPE_INVALID;
+                }
+                Atom *arg = ty->expr.elems[(uint32_t)idx->ground.ival];
+                if (atom_has_vars(arg)) {
+                    if (detail)
+                        *detail = he_reason(a, "open-type-refinement");
+                    if (stack != inline_stack) free(stack);
+                    return HE_TYPE_VALIDATION_UNKNOWN;
+                }
+                Atom *call = atom_expr2(a, predicate, arg);
+                HeNormStatus ps = HE_NORM_COMPLETE;
+                uint32_t predicate_depth = frame->depth == UINT32_MAX
+                    ? UINT32_MAX : frame->depth + 1u;
+                Atom *answer = normalize_type_checked(
+                    a, space, call, fuel, &ps, predicate_depth,
+                    max_depth_observed);
+                if (ps != HE_NORM_COMPLETE) {
+                    if (detail)
+                        *detail = he_reason(a, refinement_status_reason(ps));
+                    if (stack != inline_stack) free(stack);
+                    if (ps == HE_NORM_INADMISSIBLE) return HE_TYPE_INVALID;
+                    if (ps == HE_NORM_RESOURCE || ps == HE_NORM_DEPTH)
+                        return HE_TYPE_VALIDATION_INCOMPLETE;
+                    return HE_TYPE_VALIDATION_UNKNOWN;
+                }
+                if (atom_is_false_value(answer)) {
+                    if (detail)
+                        *detail = he_reason2(
+                            a, "type-refinement-failed", arg);
+                    if (stack != inline_stack) free(stack);
+                    return HE_TYPE_INVALID;
+                }
+                if (!atom_is_true_value(answer)) {
+                    if (detail)
+                        *detail = he_reason2(
+                            a, "type-refinement-not-boolean", answer);
+                    if (stack != inline_stack) free(stack);
+                    return HE_TYPE_VALIDATION_UNKNOWN;
+                }
+            }
         }
+        stack_len--;
     }
+    if (stack != inline_stack) free(stack);
     return HE_TYPE_VALID;
 }
 
@@ -642,10 +895,15 @@ CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(
     Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
     Atom **detail_out) {
     if (!budget) return CETTA_HE_REFINEMENT_INCOMPLETE;
+    CettaHeTypingBudget *parent_budget = g_active_typing_budget;
+    g_active_typing_budget = budget;
     Atom *detail = NULL;
+    uint32_t *max_depth_observed = budget->steps_limited
+        ? &budget->max_depth_observed : NULL;
     HeTypeValidity status = check_type_refinements(
         a, space, type, &budget->steps_remaining, &detail, 0,
-        &budget->max_depth_observed);
+        max_depth_observed);
+    g_active_typing_budget = parent_budget;
     if (detail_out) *detail_out = detail;
     switch (status) {
     case HE_TYPE_VALID: return CETTA_HE_REFINEMENT_VALID;
@@ -665,8 +923,7 @@ CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(
  * and `is-consistent` keep the binding-free `consistency`. */
 static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
                                Bindings *tb) {
-    if (*fuel == 0) return HE_UNKNOWN;
-    (*fuel)--;
+    if (!he_typing_step(fuel)) return HE_UNKNOWN;
     actual = deref(tb, actual);
     expected = deref(tb, expected);
 
@@ -718,16 +975,13 @@ static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
 static bool infer_shared_types_mode(Arena *a, Space *space, Atom *term,
                                     uint64_t *fuel, HeTypeSet *out,
                                     bool structural) {
-    if (*fuel == 0) return false;
-    (*fuel)--;
+    if (!he_typing_step(fuel)) return false;
     Atom **types = NULL;
     uint32_t count = structural
         ? eval_get_atom_types_structural_profiled(space, a, unquote(term), &types)
         : eval_get_atom_types_profiled(space, a, unquote(term), &types);
     for (uint32_t i = 0; i < count; i++)
         set_add(out, types[i]);
-    if (count > HE_MAX_TYPES)
-        out->overflow = true;
     free(types);
     return true;
 }
@@ -742,6 +996,62 @@ static bool infer_shared_types_structural(Arena *a, Space *space, Atom *term,
     return infer_shared_types_mode(a, space, term, fuel, out, true);
 }
 
+static bool infer_shared_types_budgeted_mode(
+    Arena *a, Space *space, Atom *term, uint64_t *fuel, HeTypeSet *out,
+    bool structural, uint32_t *max_depth_observed,
+    bool *type_capacity_exhausted) {
+    bool steps_limited = !g_active_typing_budget ||
+                         g_active_typing_budget->steps_limited;
+    CettaTypeInferenceBudget inference = {
+        .steps_limited = steps_limited,
+        .steps_remaining = steps_limited && fuel ? *fuel : 0,
+        .steps_spent = 0,
+        .work_steps_observed = 0,
+        .type_capacity = g_active_typing_budget
+            ? g_active_typing_budget->type_capacity : 0,
+        .max_depth_observed = max_depth_observed ? *max_depth_observed : 0,
+        .complete = true,
+        .type_capacity_exhausted = false,
+        .evaluator_stack_exhausted = false,
+        .evaluator_capacity_exhausted = false,
+        .allow_marked_user_type_functions =
+            !g_active_typing_budget ||
+            g_active_typing_budget->allow_marked_user_type_functions,
+    };
+    Atom **types = NULL;
+    uint32_t count = structural
+        ? eval_get_atom_types_structural_profiled_budgeted(
+              space, a, unquote(term), &types, &inference)
+        : eval_get_atom_types_profiled_budgeted(
+              space, a, unquote(term), &types, &inference);
+    if (g_active_typing_budget && steps_limited) {
+        if (steps_limited && fuel) *fuel = inference.steps_remaining;
+        if (g_active_typing_budget->steps_spent >
+            UINT64_MAX - inference.steps_spent) {
+            g_active_typing_budget->steps_spent = UINT64_MAX;
+        } else {
+            g_active_typing_budget->steps_spent += inference.steps_spent;
+        }
+        he_typing_note_work(inference.work_steps_observed);
+    }
+    if (max_depth_observed &&
+        inference.max_depth_observed > *max_depth_observed) {
+        *max_depth_observed = inference.max_depth_observed;
+    }
+    if (type_capacity_exhausted)
+        *type_capacity_exhausted = inference.type_capacity_exhausted;
+    if (inference.evaluator_stack_exhausted && g_active_typing_budget)
+        g_active_typing_budget->evaluator_stack_exhausted = true;
+    if (inference.evaluator_capacity_exhausted && g_active_typing_budget)
+        g_active_typing_budget->evaluator_capacity_exhausted = true;
+    for (uint32_t i = 0; i < count; i++)
+        set_add(out, types[i]);
+    if (inference.type_capacity_exhausted)
+        out->overflow = true;
+    free(types);
+    return inference.complete;
+}
+
 /* ── success-typing check (three-valued) ───────────────────────────────── */
 
 static Atom *edge_atom(Arena *a, HeEdge e) { return he_sym(a, edge_name(e)); }
@@ -751,7 +1061,7 @@ static Atom *edge_atom(Arena *a, HeEdge e) { return he_sym(a, edge_name(e)); }
  * that separate path returns its substitution in the search answer. */
 static CettaHeCheckStatus classify_type_mode(
     Arena *a, Space *space, Atom *term, Atom *expected, uint64_t *fuel_io,
-    bool aggregate_budget, bool structural, bool require_exact_or_structural,
+    bool ledger_mode, bool structural, bool require_exact_or_structural,
     HeEdge *edge_out, Atom **detail_out, uint32_t *max_depth_observed,
     bool *type_capacity_exhausted) {
     uint64_t fuel = fuel_io ? *fuel_io : 0;
@@ -799,10 +1109,18 @@ static CettaHeCheckStatus classify_type_mode(
     }
 
     HeTypeSet ts;
-    set_init(&ts);
-    bool ok = structural
-                  ? infer_shared_types_structural(a, space, term, &fuel, &ts)
-                  : infer_shared_types(a, space, term, &fuel, &ts);
+    set_init(&ts, a);
+    bool inference_complete = true;
+    bool ok = true;
+    if (ledger_mode) {
+        inference_complete = infer_shared_types_budgeted_mode(
+            a, space, term, &fuel, &ts, structural, max_depth_observed,
+            type_capacity_exhausted);
+    } else {
+        ok = structural
+                 ? infer_shared_types_structural(a, space, term, &fuel, &ts)
+                 : infer_shared_types(a, space, term, &fuel, &ts);
+    }
     if (!ok) {
         if (detail_out) *detail_out = he_reason(a, "type-inference-exhausted");
         CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
@@ -817,7 +1135,7 @@ static CettaHeCheckStatus classify_type_mode(
     bool saw_incomplete = false;
     for (uint32_t i = 0; i < ts.count; i++) {
         uint64_t branch_fuel = fuel;
-        uint64_t *f = aggregate_budget ? &fuel : &branch_fuel;
+        uint64_t *f = ledger_mode ? &fuel : &branch_fuel;
         HeNormStatus ans = HE_NORM_COMPLETE;
         Atom *actual = normalize_type_checked(a, space, ts.items[i], f, &ans,
                                               0, max_depth_observed);
@@ -857,6 +1175,11 @@ static CettaHeCheckStatus classify_type_mode(
     }
     if (saw_incomplete) {
         if (detail_out) *detail_out = he_reason(a, "typing-resource-incomplete");
+        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+    }
+    if (!inference_complete) {
+        if (detail_out)
+            *detail_out = he_reason(a, "type-inference-resource-incomplete");
         CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
     }
     if (saw_unknown) {
@@ -910,11 +1233,16 @@ CettaHeCheckStatus he_typing_check_term_status_budgeted(
     CettaHeTypingBudget *budget, bool require_exact_or_structural,
     CettaHeTypingEdge *edge_out, Atom **detail_out) {
     if (!budget) return CETTA_HE_CHECK_INCOMPLETE;
+    CettaHeTypingBudget *parent_budget = g_active_typing_budget;
+    g_active_typing_budget = budget;
     HeEdge edge = HE_NONE;
+    uint32_t *max_depth_observed = budget->steps_limited
+        ? &budget->max_depth_observed : NULL;
     CettaHeCheckStatus status = classify_type_mode(
         a, space, term, expected, &budget->steps_remaining, true, false,
         require_exact_or_structural, &edge, detail_out,
-        &budget->max_depth_observed, &budget->type_capacity_exhausted);
+        max_depth_observed, &budget->type_capacity_exhausted);
+    g_active_typing_budget = parent_budget;
     if (edge_out) *edge_out = public_edge(edge);
     return status;
 }
@@ -929,7 +1257,39 @@ CettaHeCheckStatus he_typing_check_term_status_budgeted(
  * the typing machinery above. */
 
 #define CHAIN_INITIAL_CAP 32u
-#define CHAIN_ANSWER_DEPTH_LIMIT 512u
+
+typedef struct {
+    Atom **items;
+    size_t len;
+    size_t cap;
+    Atom *inline_items[32];
+} ChainAtomStack;
+
+static void chain_atom_stack_init(ChainAtomStack *stack) {
+    stack->items = stack->inline_items;
+    stack->len = 0;
+    stack->cap = sizeof stack->inline_items / sizeof stack->inline_items[0];
+}
+
+static void chain_atom_stack_free(ChainAtomStack *stack) {
+    if (stack->items != stack->inline_items) free(stack->items);
+}
+
+static bool chain_atom_stack_push(ChainAtomStack *stack, Atom *atom) {
+    if (stack->len == stack->cap) {
+        size_t next_cap = stack->cap * 2u;
+        if (next_cap <= stack->cap ||
+            next_cap > SIZE_MAX / sizeof(*stack->items))
+            return false;
+        Atom **next = cetta_malloc(sizeof(*stack->items) * next_cap);
+        memcpy(next, stack->items, sizeof(*stack->items) * stack->len);
+        if (stack->items != stack->inline_items) free(stack->items);
+        stack->items = next;
+        stack->cap = next_cap;
+    }
+    stack->items[stack->len++] = atom;
+    return true;
+}
 
 typedef struct {
     Atom *term;
@@ -939,6 +1299,7 @@ typedef struct {
     uint32_t arity;
     uint32_t specificity;
     bool is_rule;
+    bool is_scheme;
 } ChainDecl;
 
 typedef struct {
@@ -955,20 +1316,21 @@ typedef struct {
     ChainRef *refs;
 } ChainIndex;
 
-/* AnswerIdentityV1 is the lossless identity of a typed-search answer.  The
+/* AnswerIdentityV2 is the lossless identity of a typed-search answer.  The
  * proof and checked type are fully substituted, variables are canonicalized
- * jointly across every field, and substitution records only the original
- * query variables plus residual equality constraints.  It deliberately does
- * not quotient distinct derivations, theorem-equal proofs, or PLN evidence. */
+ * jointly across every field, and substitution records query variables,
+ * elaboration variables introduced by explicit schemes, and residual equality
+ * constraints.  It deliberately does not quotient distinct derivations,
+ * theorem-equal proofs, or PLN evidence. */
 typedef struct {
     Atom *proof;
     Atom *substitution;
     Atom *type;
     Atom *key;
-} AnswerIdentityV1;
+} AnswerIdentityV2;
 
 typedef struct {
-    AnswerIdentityV1 identity;
+    AnswerIdentityV2 identity;
     Bindings env;
 } ChainProof;
 
@@ -1006,6 +1368,9 @@ typedef struct {
     ChainQueryVar *query_vars;
     uint32_t query_var_count;
     uint32_t query_var_cap;
+    VarId *scheme_vars;
+    uint32_t scheme_var_count;
+    uint32_t scheme_var_cap;
 } ChainContext;
 
 static void chain_mark_incomplete(ChainContext *ctx, const char *reason) {
@@ -1032,6 +1397,9 @@ static void chain_mark_normalization_incomplete(ChainContext *ctx,
         return;
     case HE_NORM_INADMISSIBLE:
         chain_mark_incomplete(ctx, "type-computation-inadmissible");
+        return;
+    case HE_NORM_PROVISIONAL:
+        chain_mark_incomplete(ctx, "type-computation-unadmitted");
         return;
     case HE_NORM_COMPLETE:
         break;
@@ -1061,13 +1429,24 @@ static void chain_index_free(ChainIndex *idx) {
     chain_index_init(idx);
 }
 
-static uint32_t chain_specificity(Atom *a, uint32_t depth) {
-    if (!a || depth > 64) return 0;
-    if (a->kind == ATOM_VAR) return 0;
-    if (a->kind != ATOM_EXPR) return 1;
-    uint32_t score = 1;
-    for (uint32_t i = 0; i < a->expr.len; i++)
-        score += chain_specificity(a->expr.elems[i], depth + 1);
+static uint32_t chain_specificity(Atom *a) {
+    if (!a) return 0;
+    ChainAtomStack stack;
+    chain_atom_stack_init(&stack);
+    if (!chain_atom_stack_push(&stack, a)) return 0;
+    uint32_t score = 0;
+    while (stack.len > 0) {
+        Atom *current = stack.items[--stack.len];
+        if (!current || current->kind == ATOM_VAR) continue;
+        if (score != UINT32_MAX) score++;
+        if (current->kind != ATOM_EXPR) continue;
+        for (CettaExprIndex i = current->expr.len; i > 0; i--)
+            if (!chain_atom_stack_push(&stack, current->expr.elems[i - 1u])) {
+                chain_atom_stack_free(&stack);
+                return UINT32_MAX;
+            }
+    }
+    chain_atom_stack_free(&stack);
     return score;
 }
 
@@ -1106,6 +1485,12 @@ static bool chain_index_build(ChainContext *ctx) {
         bool rule = is_arrow(type) &&
                     space_has_unary_marker(ctx->space, "chaining-rule", term);
         if (is_arrow(type) && !rule) continue;
+        bool scheme = rule ||
+                      space_has_unary_marker(ctx->space, "type-scheme", term);
+        /* Open declarations are rigid space facts unless explicitly promoted
+           to a type scheme.  Keeping them out of the instantiable index avoids
+           treating a free variable as an implicit forall. */
+        if (!scheme && (atom_has_vars(term) || atom_has_vars(type))) continue;
         Atom *conclusion = rule ? type->expr.elems[type->expr.len - 1] : type;
         ChainDecl d = {
             .term = term,
@@ -1113,8 +1498,9 @@ static bool chain_index_build(ChainContext *ctx) {
             .conclusion = conclusion,
             .conclusion_head = atom_head_symbol_id(conclusion),
             .arity = rule ? type->expr.len - 2 : 0,
-            .specificity = chain_specificity(conclusion, 0),
+            .specificity = chain_specificity(conclusion),
             .is_rule = rule,
+            .is_scheme = scheme,
         };
         if (!chain_index_push(idx, d)) return false;
     }
@@ -1149,17 +1535,81 @@ static bool chain_query_var_add(ChainContext *ctx, Atom *var) {
     return true;
 }
 
-static bool chain_collect_query_vars(ChainContext *ctx, Atom *atom,
-                                     uint32_t depth) {
-    if (!atom || depth > CHAIN_ANSWER_DEPTH_LIMIT) {
-        chain_mark_incomplete(ctx, "answer-identity-depth");
+static bool chain_collect_query_vars(ChainContext *ctx, Atom *atom) {
+    if (!atom) return false;
+    ChainAtomStack stack;
+    chain_atom_stack_init(&stack);
+    if (!chain_atom_stack_push(&stack, atom)) {
+        chain_mark_incomplete(ctx, "answer-identity-allocation");
         return false;
     }
-    if (atom->kind == ATOM_VAR) return chain_query_var_add(ctx, atom);
-    if (atom->kind != ATOM_EXPR) return true;
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++)
-        if (!chain_collect_query_vars(ctx, atom->expr.elems[i], depth + 1u))
+    while (stack.len > 0) {
+        Atom *current = stack.items[--stack.len];
+        if (current->kind == ATOM_VAR) {
+            if (!chain_query_var_add(ctx, current)) {
+                chain_atom_stack_free(&stack);
+                return false;
+            }
+            continue;
+        }
+        if (current->kind != ATOM_EXPR) continue;
+        for (CettaExprIndex i = current->expr.len; i > 0; i--)
+            if (!chain_atom_stack_push(&stack, current->expr.elems[i - 1u])) {
+                chain_mark_incomplete(ctx, "answer-identity-allocation");
+                chain_atom_stack_free(&stack);
+                return false;
+            }
+    }
+    chain_atom_stack_free(&stack);
+    return true;
+}
+
+static bool chain_scheme_var_add(ChainContext *ctx, Atom *var,
+                                 uint32_t epoch) {
+    VarId fresh_id = var_epoch_id(var->var_id, epoch);
+    for (uint32_t i = 0; i < ctx->scheme_var_count; i++)
+        if (ctx->scheme_vars[i] == fresh_id) return true;
+    if (ctx->scheme_var_count == ctx->scheme_var_cap) {
+        uint32_t ncap = ctx->scheme_var_cap ? ctx->scheme_var_cap * 2u : 8u;
+        VarId *next = realloc(ctx->scheme_vars, sizeof(VarId) * ncap);
+        if (!next) {
+            chain_mark_incomplete(ctx, "answer-identity-allocation");
             return false;
+        }
+        ctx->scheme_vars = next;
+        ctx->scheme_var_cap = ncap;
+    }
+    ctx->scheme_vars[ctx->scheme_var_count++] = fresh_id;
+    return true;
+}
+
+static bool chain_collect_scheme_vars(ChainContext *ctx, Atom *atom,
+                                      uint32_t epoch) {
+    if (!atom) return false;
+    ChainAtomStack stack;
+    chain_atom_stack_init(&stack);
+    if (!chain_atom_stack_push(&stack, atom)) {
+        chain_mark_incomplete(ctx, "answer-identity-allocation");
+        return false;
+    }
+    while (stack.len > 0) {
+        Atom *current = stack.items[--stack.len];
+        if (current->kind == ATOM_VAR) {
+            if (!chain_scheme_var_add(ctx, current, epoch)) {
+                chain_atom_stack_free(&stack);
+                return false;
+            }
+            continue;
+        }
+        if (current->kind != ATOM_EXPR) continue;
+        for (CettaExprIndex i = current->expr.len; i > 0; i--)
+            if (!chain_atom_stack_push(&stack, current->expr.elems[i - 1u])) {
+                chain_mark_incomplete(ctx, "answer-identity-allocation");
+                chain_atom_stack_free(&stack);
+                return false;
+            }
+    }
+    chain_atom_stack_free(&stack);
     return true;
 }
 
@@ -1198,28 +1648,114 @@ static Atom *answer_canonical_var(ChainContext *ctx, AnswerCanonicalMap *map,
     return canonical;
 }
 
-static Atom *answer_canonicalize_rec(ChainContext *ctx,
-                                     AnswerCanonicalMap *map, Atom *atom,
-                                     uint32_t depth) {
-    if (!atom || depth > CHAIN_ANSWER_DEPTH_LIMIT) {
-        chain_mark_incomplete(ctx, "answer-identity-depth");
-        return NULL;
-    }
-    if (atom->kind == ATOM_VAR) return answer_canonical_var(ctx, map, atom);
-    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom)) return atom;
-    Atom **children = arena_alloc(ctx->arena, sizeof(Atom *) * atom->expr.len);
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-        children[i] = answer_canonicalize_rec(ctx, map, atom->expr.elems[i],
-                                              depth + 1u);
-        if (!children[i]) return NULL;
-    }
-    return atom_expr(ctx->arena, children, atom->expr.len);
+typedef struct {
+    Atom *input;
+    Atom **children;
+    uint32_t next_child;
+    bool entered;
+} AnswerCanonicalFrame;
+
+typedef struct {
+    AnswerCanonicalFrame *items;
+    size_t len;
+    size_t cap;
+    AnswerCanonicalFrame inline_items[16];
+} AnswerCanonicalStack;
+
+static void answer_canonical_stack_init(AnswerCanonicalStack *stack) {
+    stack->items = stack->inline_items;
+    stack->len = 0;
+    stack->cap = sizeof stack->inline_items / sizeof stack->inline_items[0];
 }
 
-static Atom *answer_substitution_v1(ChainContext *ctx, const Bindings *env) {
-    Atom **parts = arena_alloc(ctx->arena,
-        sizeof(Atom *) * (ctx->query_var_count + 2u));
-    parts[0] = he_sym(ctx->arena, "answer-substitution-v1");
+static void answer_canonical_stack_free(AnswerCanonicalStack *stack) {
+    if (stack->items != stack->inline_items) free(stack->items);
+}
+
+static bool answer_canonical_stack_push(AnswerCanonicalStack *stack,
+                                        Atom *input) {
+    if (stack->len == stack->cap) {
+        size_t next_cap = stack->cap * 2u;
+        if (next_cap <= stack->cap ||
+            next_cap > SIZE_MAX / sizeof(*stack->items))
+            return false;
+        AnswerCanonicalFrame *next = cetta_malloc(
+            sizeof(*stack->items) * next_cap);
+        memcpy(next, stack->items, sizeof(*stack->items) * stack->len);
+        if (stack->items != stack->inline_items) free(stack->items);
+        stack->items = next;
+        stack->cap = next_cap;
+    }
+    stack->items[stack->len++] = (AnswerCanonicalFrame){.input = input};
+    return true;
+}
+
+static Atom *answer_canonicalize(ChainContext *ctx,
+                                 AnswerCanonicalMap *map, Atom *atom) {
+    if (!atom) return NULL;
+    AnswerCanonicalStack stack;
+    answer_canonical_stack_init(&stack);
+    if (!answer_canonical_stack_push(&stack, atom)) {
+        chain_mark_incomplete(ctx, "answer-identity-allocation");
+        return NULL;
+    }
+
+    for (;;) {
+        AnswerCanonicalFrame *frame = &stack.items[stack.len - 1u];
+        Atom *completed = NULL;
+        if (!frame->entered) {
+            if (frame->input->kind == ATOM_VAR) {
+                completed = answer_canonical_var(ctx, map, frame->input);
+                if (!completed) goto fail;
+                goto complete_frame;
+            }
+            if (frame->input->kind != ATOM_EXPR ||
+                !atom_has_vars(frame->input)) {
+                completed = frame->input;
+                goto complete_frame;
+            }
+            frame->children = arena_alloc(
+                ctx->arena,
+                sizeof(Atom *) * (size_t)frame->input->expr.len);
+            frame->entered = true;
+        }
+        if (frame->next_child < frame->input->expr.len) {
+            if (!answer_canonical_stack_push(
+                    &stack,
+                    frame->input->expr.elems[frame->next_child])) {
+                chain_mark_incomplete(ctx, "answer-identity-allocation");
+                goto fail;
+            }
+            continue;
+        }
+        completed = atom_expr(ctx->arena, frame->children,
+                              frame->input->expr.len);
+
+complete_frame:
+        stack.len--;
+        if (stack.len == 0) {
+            answer_canonical_stack_free(&stack);
+            return completed;
+        }
+        frame = &stack.items[stack.len - 1u];
+        frame->children[frame->next_child++] = completed;
+    }
+
+fail:
+    answer_canonical_stack_free(&stack);
+    return NULL;
+}
+
+static bool chain_is_scheme_var(const ChainContext *ctx, VarId id) {
+    for (uint32_t i = 0; i < ctx->scheme_var_count; i++)
+        if (ctx->scheme_vars[i] == id) return true;
+    return false;
+}
+
+static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
+    Atom **query = arena_alloc(
+        ctx->arena, sizeof(Atom *) * (ctx->query_var_count + 1u));
+    query[0] = he_sym(ctx->arena, "query-substitution-v1");
     for (uint32_t i = 0; i < ctx->query_var_count; i++) {
         Atom *var = atom_var_with_spelling(ctx->arena,
                                            ctx->query_vars[i].spelling,
@@ -1229,10 +1765,33 @@ static Atom *answer_substitution_v1(ChainContext *ctx, const Bindings *env) {
             chain_mark_incomplete(ctx, "answer-substitution-failed");
             return NULL;
         }
-        parts[i + 1u] = atom_expr3(ctx->arena,
-                                  he_sym(ctx->arena, "answer-binding-v1"),
-                                  var, value);
+        query[i + 1u] = atom_expr3(
+            ctx->arena, he_sym(ctx->arena, "answer-binding-v1"), var, value);
     }
+
+    uint32_t elaboration_count = 0;
+    for (uint32_t i = 0; i < env->len; i++)
+        if (chain_is_scheme_var(ctx, env->entries[i].var_id))
+            elaboration_count++;
+    Atom **elaboration = arena_alloc(
+        ctx->arena, sizeof(Atom *) * (elaboration_count + 1u));
+    elaboration[0] = he_sym(ctx->arena, "elaboration-substitution-v1");
+    uint32_t out = 1;
+    for (uint32_t i = 0; i < env->len; i++) {
+        const Binding *entry = &env->entries[i];
+        if (!chain_is_scheme_var(ctx, entry->var_id)) continue;
+        Atom *var = atom_var_with_spelling(
+            ctx->arena, entry->spelling, entry->var_id);
+        Atom *value = bindings_apply_if_vars(env, ctx->arena, var);
+        if (!value) {
+            chain_mark_incomplete(ctx, "elaboration-substitution-failed");
+            return NULL;
+        }
+        elaboration[out++] = atom_expr3(
+            ctx->arena, he_sym(ctx->arena, "elaboration-binding-v1"), var,
+            value);
+    }
+
     Atom **constraints = arena_alloc(ctx->arena,
                                      sizeof(Atom *) * (env->eq_len + 1u));
     constraints[0] = he_sym(ctx->arena, "answer-constraints-v1");
@@ -1247,14 +1806,17 @@ static Atom *answer_substitution_v1(ChainContext *ctx, const Bindings *env) {
         }
         constraints[i + 1u] = atom_expr2(ctx->arena, left, right);
     }
-    parts[ctx->query_var_count + 1u] =
-        atom_expr(ctx->arena, constraints, env->eq_len + 1u);
-    return atom_expr(ctx->arena, parts, ctx->query_var_count + 2u);
+    Atom *parts[4] = {
+        he_sym(ctx->arena, "answer-substitution-v2"),
+        atom_expr(ctx->arena, query, ctx->query_var_count + 1u),
+        atom_expr(ctx->arena, elaboration, elaboration_count + 1u),
+        atom_expr(ctx->arena, constraints, env->eq_len + 1u)};
+    return atom_expr(ctx->arena, parts, 4);
 }
 
-static bool answer_identity_v1_make(ChainContext *ctx, Atom *proof,
+static bool answer_identity_v2_make(ChainContext *ctx, Atom *proof,
                                     Atom *type, const Bindings *env,
-                                    AnswerIdentityV1 *out) {
+                                    AnswerIdentityV2 *out) {
     Atom *substituted_proof = bindings_apply_if_vars(env, ctx->arena, proof);
     Atom *substituted_type = bindings_apply_if_vars(env, ctx->arena, type);
     if (!substituted_proof || !substituted_type) {
@@ -1270,16 +1832,16 @@ static bool answer_identity_v1_make(ChainContext *ctx, Atom *proof,
             ctx, status, "answer-type-normalization-incomplete");
         return false;
     }
-    Atom *substitution = answer_substitution_v1(ctx, env);
+    Atom *substitution = answer_substitution_v2(ctx, env);
     if (!substitution) return false;
-    Atom *raw_fields[4] = {he_sym(ctx->arena, "answer-identity-v1"),
+    Atom *raw_fields[4] = {he_sym(ctx->arena, "answer-identity-v2"),
                            substituted_proof, substitution, substituted_type};
     Atom *raw = atom_expr(ctx->arena, raw_fields, 4);
     AnswerCanonicalMap map = {0};
-    Atom *key = answer_canonicalize_rec(ctx, &map, raw, 0);
+    Atom *key = answer_canonicalize(ctx, &map, raw);
     free(map.items);
     if (!key || key->kind != ATOM_EXPR || key->expr.len != 4u) return false;
-    *out = (AnswerIdentityV1){
+    *out = (AnswerIdentityV2){
         .proof = key->expr.elems[1],
         .substitution = key->expr.elems[2],
         .type = key->expr.elems[3],
@@ -1299,14 +1861,14 @@ static void chain_vec_free(ChainProofVec *v) {
 }
 
 static bool chain_vec_has_answer(const ChainProofVec *v,
-                                 const AnswerIdentityV1 *identity) {
+                                 const AnswerIdentityV2 *identity) {
     for (uint32_t i = 0; i < v->count; i++)
         if (atom_alpha_eq(v->items[i].identity.key, identity->key)) return true;
     return false;
 }
 
 static bool chain_vec_push_move(ChainContext *ctx, ChainProofVec *v,
-                                const AnswerIdentityV1 *identity,
+                                const AnswerIdentityV2 *identity,
                                 Bindings *env) {
     if (chain_vec_has_answer(v, identity)) {
         bindings_free(env);
@@ -1336,26 +1898,96 @@ static bool chain_type_level_open_call(ChainContext *ctx, Atom *a) {
                                   a->expr.elems[0]);
 }
 
-static bool chain_unify_shape_rec(ChainContext *ctx, Atom *left, Atom *right,
-                                  Bindings *env, uint32_t depth) {
-    if (depth > CETTA_MATCH_DEPTH_LIMIT || !chain_take_fuel(ctx, 1)) return false;
-    left = deref(env, left);
-    right = deref(env, right);
-    if (atom_eq(left, right)) return true;
-    if (left->kind == ATOM_VAR)
-        return bindings_add_id(env, left->var_id, left->sym_id, right);
-    if (right->kind == ATOM_VAR)
-        return bindings_add_id(env, right->var_id, right->sym_id, left);
-    if (chain_type_level_open_call(ctx, left) ||
-        chain_type_level_open_call(ctx, right))
-        return true; /* checked after premise instantiation */
-    if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
-        left->expr.len != right->expr.len)
-        return false;
-    for (uint32_t i = 0; i < left->expr.len; i++)
-        if (!chain_unify_shape_rec(ctx, left->expr.elems[i],
-                                   right->expr.elems[i], env, depth + 1))
+typedef struct {
+    Atom *left;
+    Atom *right;
+} ChainUnifyPair;
+
+typedef struct {
+    ChainUnifyPair *items;
+    size_t len;
+    size_t cap;
+    ChainUnifyPair inline_items[16];
+} ChainUnifyStack;
+
+static void chain_unify_stack_init(ChainUnifyStack *stack) {
+    stack->items = stack->inline_items;
+    stack->len = 0;
+    stack->cap = sizeof stack->inline_items / sizeof stack->inline_items[0];
+}
+
+static void chain_unify_stack_free(ChainUnifyStack *stack) {
+    if (stack->items != stack->inline_items) free(stack->items);
+}
+
+static bool chain_unify_stack_push(ChainUnifyStack *stack,
+                                   Atom *left, Atom *right) {
+    if (stack->len == stack->cap) {
+        size_t next_cap = stack->cap * 2u;
+        if (next_cap <= stack->cap ||
+            next_cap > SIZE_MAX / sizeof(*stack->items))
             return false;
+        ChainUnifyPair *next = cetta_malloc(
+            sizeof(*stack->items) * next_cap);
+        memcpy(next, stack->items, sizeof(*stack->items) * stack->len);
+        if (stack->items != stack->inline_items) free(stack->items);
+        stack->items = next;
+        stack->cap = next_cap;
+    }
+    stack->items[stack->len++] = (ChainUnifyPair){left, right};
+    return true;
+}
+
+static bool chain_unify_shape(ChainContext *ctx, Atom *left, Atom *right,
+                              Bindings *env) {
+    ChainUnifyStack stack;
+    chain_unify_stack_init(&stack);
+    if (!chain_unify_stack_push(&stack, left, right)) {
+        chain_mark_incomplete(ctx, "unification-worklist-allocation");
+        return false;
+    }
+
+    while (stack.len > 0) {
+        ChainUnifyPair pair = stack.items[--stack.len];
+        if (!chain_take_fuel(ctx, 1)) {
+            chain_unify_stack_free(&stack);
+            return false;
+        }
+        left = deref(env, pair.left);
+        right = deref(env, pair.right);
+        if (atom_eq(left, right)) continue;
+        if (left->kind == ATOM_VAR) {
+            if (!bindings_add_id(env, left->var_id, left->sym_id, right)) {
+                chain_unify_stack_free(&stack);
+                return false;
+            }
+            continue;
+        }
+        if (right->kind == ATOM_VAR) {
+            if (!bindings_add_id(env, right->var_id, right->sym_id, left)) {
+                chain_unify_stack_free(&stack);
+                return false;
+            }
+            continue;
+        }
+        if (chain_type_level_open_call(ctx, left) ||
+            chain_type_level_open_call(ctx, right))
+            continue; /* checked after premise instantiation */
+        if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+            left->expr.len != right->expr.len) {
+            chain_unify_stack_free(&stack);
+            return false;
+        }
+        for (CettaExprIndex i = left->expr.len; i > 0; i--)
+            if (!chain_unify_stack_push(
+                    &stack, left->expr.elems[i - 1u],
+                    right->expr.elems[i - 1u])) {
+                chain_mark_incomplete(ctx, "unification-worklist-allocation");
+                chain_unify_stack_free(&stack);
+                return false;
+            }
+    }
+    chain_unify_stack_free(&stack);
     return true;
 }
 
@@ -1374,7 +2006,7 @@ static bool chain_unify_deferred(ChainContext *ctx, Atom *left, Atom *right,
             "type-normalization-incomplete");
         return false;
     }
-    return chain_unify_shape_rec(ctx, left, right, env, 0);
+    return chain_unify_shape(ctx, left, right, env);
 }
 
 static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
@@ -1439,7 +2071,7 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
                                 Bindings *env, Atom **checked_type) {
     ctx->stats.proof_checks++;
     HeTypeSet ts;
-    set_init(&ts);
+    set_init(&ts, ctx->arena);
     if (!infer_shared_types(ctx->arena, ctx->space, proof, &ctx->fuel, &ts)) {
         chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
                                          : "proof-type-inference-exhausted");
@@ -1470,7 +2102,12 @@ static int chain_premise_score(ChainContext *ctx, Atom *premise,
                                const Bindings *env) {
     premise = bindings_apply_if_vars(env, ctx->arena, premise);
     int score = atom_has_vars(premise) ? 0 : 10000;
-    score += (int)chain_specificity(premise, 0) * 8;
+    uint32_t specificity = chain_specificity(premise);
+    if (specificity > (uint32_t)(INT_MAX / 8) ||
+        score > INT_MAX - (int)specificity * 8)
+        score = INT_MAX;
+    else
+        score += (int)specificity * 8;
     SymbolId h = atom_head_symbol_id(premise);
     if (h != SYMBOL_ID_NONE) {
         uint32_t matches = 0;
@@ -1796,8 +2433,16 @@ static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
     uint32_t epoch = fresh_var_suffix();
     if (!decl->is_rule) {
         ctx->stats.fact_candidates++;
-        Atom *term = atom_freshen_epoch(ctx->arena, decl->term, epoch);
-        Atom *type = atom_freshen_epoch(ctx->arena, decl->type, epoch);
+        if (decl->is_scheme &&
+            (!chain_collect_scheme_vars(ctx, decl->term, epoch) ||
+             !chain_collect_scheme_vars(ctx, decl->type, epoch)))
+            return;
+        Atom *term = decl->is_scheme
+            ? atom_freshen_epoch(ctx->arena, decl->term, epoch)
+            : decl->term;
+        Atom *type = decl->is_scheme
+            ? atom_freshen_epoch(ctx->arena, decl->type, epoch)
+            : decl->type;
         Atom *resolved = NULL;
         if (!chain_unify_must(ctx, type, item->goal, &item->env, &resolved))
             return;
@@ -1809,6 +2454,9 @@ static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
 
     if (item->depth == 0 || !chain_take_fuel(ctx, 1)) return;
     ctx->stats.rule_candidates++;
+    if (!chain_collect_scheme_vars(ctx, decl->term, epoch) ||
+        !chain_collect_scheme_vars(ctx, decl->type, epoch))
+        return;
     Atom *rule_term = atom_freshen_epoch(ctx->arena, decl->term, epoch);
     Atom *rule_type = atom_freshen_epoch(ctx->arena, decl->type, epoch);
     uint32_t arity = rule_type->expr.len - 2u;
@@ -1855,8 +2503,8 @@ static void chain_process_result(ChainContext *ctx, ChainWorkQueue *queue,
         if (!chain_proof_checked(ctx, item->proof, ctx->root_goal, &item->env,
                                  &checked_type))
             return;
-        AnswerIdentityV1 identity;
-        if (!answer_identity_v1_make(ctx, item->proof, checked_type,
+        AnswerIdentityV2 identity;
+        if (!answer_identity_v2_make(ctx, item->proof, checked_type,
                                      &item->env, &identity))
             return;
         (void)chain_vec_push_move(ctx, answers, &identity, &item->env);
@@ -1885,7 +2533,7 @@ static void chain_run_search(ChainContext *ctx, Atom *goal, uint32_t depth,
                              uint32_t limit, bool root_rules_only,
                              ChainProofVec *answers) {
     ctx->root_goal = goal;
-    if (!chain_collect_query_vars(ctx, goal, 0)) return;
+    if (!chain_collect_query_vars(ctx, goal)) return;
     ChainWorkQueue queue;
     chain_queue_init(&queue);
     Bindings initial;
@@ -1946,7 +2594,7 @@ static Atom *chain_report(ChainContext *ctx, uint32_t depth,
                          proofs->items[i].identity.proof,
                          proofs->items[i].identity.type};
         p[i + 1] = atom_expr3(ctx->arena,
-                              he_sym(ctx->arena, "typed-answer-v1"),
+                              he_sym(ctx->arena, "typed-answer-v2"),
                               atom_expr(ctx->arena, decl, 3),
                               proofs->items[i].identity.substitution);
     }
@@ -1996,7 +2644,10 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
             Atom *decl[3] = {atom_symbol(a, ":"),
                              proofs.items[0].identity.proof,
                              proofs.items[0].identity.type};
-            result = he_accept(a, atom_expr(a, decl, 3));
+            result = he_accept(
+                a, atom_expr3(a, he_sym(a, "typed-answer-v2"),
+                              atom_expr(a, decl, 3),
+                              proofs.items[0].identity.substitution));
         } else if (ctx.incomplete) {
             result = he_unknown(a, he_reason(a, ctx.incomplete_reason
                                                 ? ctx.incomplete_reason
@@ -2010,6 +2661,7 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     chain_vec_free(&proofs);
     chain_index_free(&ctx.index);
     free(ctx.query_vars);
+    free(ctx.scheme_vars);
     return result;
 }
 
@@ -2054,6 +2706,7 @@ static Atom *chain_forward_step(Arena *a, Space *space, uint64_t *fuel,
     chain_vec_free(&all);
     chain_index_free(&ctx.index);
     free(ctx.query_vars);
+    free(ctx.scheme_vars);
     return report;
 }
 
@@ -2166,8 +2819,13 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (strcmp(name, "is-consistent") == 0) {
         if (nargs != 2)
             return he_reject(a, he_reason(a, "is-consistent-needs-two-types"));
-        uint64_t fuel = 100000;
-        HeEdge e = consistency(args[0], args[1], &fuel);
+        CettaHeTypingBudget typing;
+        he_typing_budget_init_unbounded(&typing);
+        CettaHeTypingBudget *parent_budget = g_active_typing_budget;
+        g_active_typing_budget = &typing;
+        uint64_t unused = 0;
+        HeEdge e = consistency(args[0], args[1], &unused);
+        g_active_typing_budget = parent_budget;
         if (e == HE_UNKNOWN)
             return he_unknown(a, he_reason(a, "consistency-exhausted"));
         if (e == HE_NONE)

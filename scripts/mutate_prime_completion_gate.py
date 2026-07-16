@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disable the normalizer completion gate for the Prime mutation test."""
+"""Forge evaluator closure for the Prime completion mutation test."""
 
 from pathlib import Path
 import sys
@@ -10,14 +10,11 @@ def main() -> int:
         print("usage: mutate_prime_completion_gate.py INPUT OUTPUT", file=sys.stderr)
         return 2
     source = Path(sys.argv[1]).read_text()
-    marker = "if (completion != CETTA_EVAL_COMPLETE) {"
+    marker = "out->closure_certified = outcome.completion == CETTA_EVAL_COMPLETE;"
     if source.count(marker) != 1:
         print("completion gate marker must occur exactly once", file=sys.stderr)
         return 2
-    mutant = source.replace(
-        marker,
-        "if (false && completion != CETTA_EVAL_COMPLETE) {",
-    )
+    mutant = source.replace(marker, "out->closure_certified = true;")
     Path(sys.argv[2]).write_text(mutant)
     return 0
 

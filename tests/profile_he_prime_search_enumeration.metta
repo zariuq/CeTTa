@@ -33,8 +33,8 @@
 (chaining-rule DirectGoal)
 !(search-first-inhabitant &self FairGoal 5 100000)
 
-; A proof with more annotations than the typer's bounded type set must report
-; incomplete rather than silently losing a valid annotation beyond the bound.
+; A proof with more annotations than the retired 64-entry frontier must retain
+; the valid annotation beyond that former implementation boundary.
 (: capacity-witness Capacity00)
 (: capacity-witness Capacity01)
 (: capacity-witness Capacity02)

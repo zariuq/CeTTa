@@ -10,7 +10,6 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
-#define BINDINGS_RECURSION_LIMIT 512
 #define BINDINGS_MIN_CAPACITY 8
 #define BINDINGS_SEEN_STACK_CAP 32
 #define BINDINGS_TEMP_STACK_CAP 32
@@ -332,8 +331,12 @@ static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     return -1;
 }
 
-static Atom *bindings_resolve_atom(Bindings *b, Atom *atom, uint32_t depth) {
-    if (!atom || depth > BINDINGS_RECURSION_LIMIT) return atom;
+static size_t bindings_dereference_limit(const Bindings *bindings);
+
+static Atom *bindings_resolve_atom(Bindings *b, Atom *atom) {
+    if (!atom) return atom;
+    size_t dereferences = 0;
+    size_t dereference_limit = bindings_dereference_limit(b);
     while (atom->kind == ATOM_VAR) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_RESOLVE);
         Atom *next = bindings_lookup_id(b, atom->var_id);
@@ -345,19 +348,19 @@ static Atom *bindings_resolve_atom(Bindings *b, Atom *atom, uint32_t depth) {
              next->sym_id == atom->sym_id))
             return atom;
         atom = next;
-        if (++depth > BINDINGS_RECURSION_LIMIT) return atom;
+        if (++dereferences > dereference_limit) return atom;
     }
     return atom;
 }
 
-static bool atom_contains_unbound_var(Bindings *b, Atom *atom, uint32_t depth) {
-    atom = bindings_resolve_atom(b, atom, depth);
+static bool atom_contains_unbound_var(Bindings *b, Atom *atom) {
+    atom = bindings_resolve_atom(b, atom);
     switch (atom->kind) {
     case ATOM_VAR:
         return true;
     case ATOM_EXPR:
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            if (atom_contains_unbound_var(b, atom->expr.elems[i], depth + 1))
+            if (atom_contains_unbound_var(b, atom->expr.elems[i]))
                 return true;
         }
         return false;
@@ -366,9 +369,9 @@ static bool atom_contains_unbound_var(Bindings *b, Atom *atom, uint32_t depth) {
     }
 }
 
-static bool atom_eq_under_bindings(Bindings *b, Atom *lhs, Atom *rhs, uint32_t depth) {
-    lhs = bindings_resolve_atom(b, lhs, depth);
-    rhs = bindings_resolve_atom(b, rhs, depth);
+static bool atom_eq_under_bindings(Bindings *b, Atom *lhs, Atom *rhs) {
+    lhs = bindings_resolve_atom(b, lhs);
+    rhs = bindings_resolve_atom(b, rhs);
     if (lhs == rhs) return true;
     if (lhs->kind != rhs->kind) return false;
     switch (lhs->kind) {
@@ -381,7 +384,8 @@ static bool atom_eq_under_bindings(Bindings *b, Atom *lhs, Atom *rhs, uint32_t d
     case ATOM_EXPR:
         if (lhs->expr.len != rhs->expr.len) return false;
         for (CettaExprIndex i = 0; i < lhs->expr.len; i++) {
-            if (!atom_eq_under_bindings(b, lhs->expr.elems[i], rhs->expr.elems[i], depth + 1))
+            if (!atom_eq_under_bindings(
+                    b, lhs->expr.elems[i], rhs->expr.elems[i]))
                 return false;
         }
         return true;
@@ -572,7 +576,7 @@ Atom *bindings_lookup_var(Bindings *b, Atom *var) {
 }
 
 Atom *bindings_resolve_atom_preview(Bindings *b, Atom *atom) {
-    return bindings_resolve_atom(b, atom, 0);
+    return bindings_resolve_atom(b, atom);
 }
 
 static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling) {
@@ -682,10 +686,10 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
                                                      Atom *rhs,
                                                      bool normalize_constraints) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_CONSTRAINT_ADD);
-    lhs = bindings_resolve_atom(b, lhs, 0);
-    rhs = bindings_resolve_atom(b, rhs, 0);
+    lhs = bindings_resolve_atom(b, lhs);
+    rhs = bindings_resolve_atom(b, rhs);
 
-    if (atom_eq_under_bindings(b, lhs, rhs, 0)) {
+    if (atom_eq_under_bindings(b, lhs, rhs)) {
         return true;
     }
     if (lhs->kind == ATOM_VAR) {
@@ -698,8 +702,8 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
                 b, rhs->var_id, rhs->sym_id, lhs, false, false)) {
             return false;
         }
-    } else if (!atom_contains_unbound_var(b, lhs, 0) &&
-               !atom_contains_unbound_var(b, rhs, 0)) {
+    } else if (!atom_contains_unbound_var(b, lhs) &&
+               !atom_contains_unbound_var(b, rhs)) {
         return false;
     } else if (!bindings_store_constraint(b, lhs, rhs)) {
         return false;
@@ -1571,10 +1575,10 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
                                                      Atom *lhs, Atom *rhs,
                                                      bool normalize_constraints) {
     Bindings *current = &bb->current;
-    lhs = bindings_resolve_atom(current, lhs, 0);
-    rhs = bindings_resolve_atom(current, rhs, 0);
+    lhs = bindings_resolve_atom(current, lhs);
+    rhs = bindings_resolve_atom(current, rhs);
 
-    if (atom_eq_under_bindings(current, lhs, rhs, 0))
+    if (atom_eq_under_bindings(current, lhs, rhs))
         return true;
     if (lhs->kind == ATOM_VAR) {
         if (!bindings_builder_add_id_internal(bb, lhs->var_id, lhs->sym_id,
@@ -1586,8 +1590,8 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
                                               lhs, false)) {
             return false;
         }
-    } else if (!atom_contains_unbound_var(current, lhs, 0) &&
-               !atom_contains_unbound_var(current, rhs, 0)) {
+    } else if (!atom_contains_unbound_var(current, lhs) &&
+               !atom_contains_unbound_var(current, rhs)) {
         return false;
     } else if (!bindings_builder_store_constraint(bb, lhs, rhs)) {
         return false;
@@ -1975,55 +1979,46 @@ static int32_t bindings_find_entry_index_for_loop(const Bindings *b, VarId var_i
     return -1;
 }
 
-static bool bindings_atom_has_loop(const Bindings *b, Atom *atom,
-                                   uint8_t *state, uint32_t depth);
+typedef enum {
+    BINDINGS_LOOP_ATOM = 0,
+    BINDINGS_LOOP_ENTRY_EXIT = 1,
+} BindingsLoopFrameKind;
 
-static bool bindings_entry_has_loop(const Bindings *b, uint32_t idx,
-                                    uint8_t *state, uint32_t depth) {
-    if (depth > BINDINGS_RECURSION_LIMIT)
-        return true;
-    if (state[idx] == 1)
-        return true;
-    if (state[idx] == 2)
-        return false;
+typedef struct {
+    BindingsLoopFrameKind kind;
+    Atom *atom;
+    uint32_t entry;
+} BindingsLoopFrame;
 
-    Atom *val = b->entries[idx].val;
-    if (val->kind == ATOM_VAR && val->var_id == b->entries[idx].var_id) {
-        state[idx] = 2; /* $x = $x is not treated as a loop */
-        return false;
+typedef struct {
+    BindingsLoopFrame *items;
+    size_t len;
+    size_t cap;
+    BindingsLoopFrame inline_items[32];
+} BindingsLoopStack;
+
+static bool bindings_loop_push(BindingsLoopStack *stack,
+                               BindingsLoopFrame frame) {
+    if (stack->len == stack->cap) {
+        size_t next_cap = stack->cap * 2u;
+        if (next_cap <= stack->cap ||
+            next_cap > SIZE_MAX / sizeof(*stack->items))
+            return false;
+        BindingsLoopFrame *next = cetta_malloc(
+            sizeof(*stack->items) * next_cap);
+        memcpy(next, stack->items, sizeof(*stack->items) * stack->len);
+        if (stack->items != stack->inline_items) free(stack->items);
+        stack->items = next;
+        stack->cap = next_cap;
     }
-
-    state[idx] = 1;
-    bool has_loop = bindings_atom_has_loop(b, val, state, depth + 1);
-    if (!has_loop)
-        state[idx] = 2;
-    return has_loop;
+    stack->items[stack->len++] = frame;
+    return true;
 }
 
-static bool bindings_atom_has_loop(const Bindings *b, Atom *atom,
-                                   uint8_t *state, uint32_t depth) {
-    if (depth > BINDINGS_RECURSION_LIMIT)
-        return true;
-    if (!atom_has_vars(atom))
-        return false;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_NODE_VISIT);
-    switch (atom->kind) {
-    case ATOM_VAR: {
-        int32_t idx = bindings_find_entry_index_for_loop(b, atom->var_id);
-        if (idx < 0)
-            return false;
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_LOOP_CHECK);
-        return bindings_entry_has_loop(b, (uint32_t)idx, state, depth + 1);
-    }
-    case ATOM_EXPR:
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            if (bindings_atom_has_loop(b, atom->expr.elems[i], state, depth + 1))
-                return true;
-        }
-        return false;
-    default:
-        return false;
-    }
+static bool bindings_entry_is_trivial_self(const Bindings *b, uint32_t idx) {
+    Atom *value = b->entries[idx].val;
+    return value->kind == ATOM_VAR &&
+           value->var_id == b->entries[idx].var_id;
 }
 
 bool bindings_has_loop(const Bindings *b) {
@@ -2034,16 +2029,81 @@ bool bindings_has_loop(const Bindings *b) {
         ? state_stack
         : cetta_malloc(sizeof(uint8_t) * b->len);
     memset(state, 0, sizeof(uint8_t) * b->len);
+    BindingsLoopStack stack;
+    stack.items = stack.inline_items;
+    stack.len = 0;
+    stack.cap = sizeof stack.inline_items / sizeof stack.inline_items[0];
     for (uint32_t i = 0; i < b->len; i++) {
-        if (bindings_entry_has_loop(b, i, state, 0)) {
-            if (state != state_stack)
-                free(state);
-            return true;
+        if (state[i] != 0) continue;
+        if (bindings_entry_is_trivial_self(b, i)) {
+            state[i] = 2;
+            continue;
+        }
+        state[i] = 1;
+        if (!bindings_loop_push(
+                &stack, (BindingsLoopFrame){BINDINGS_LOOP_ENTRY_EXIT,
+                                             NULL, i}) ||
+            !bindings_loop_push(
+                &stack, (BindingsLoopFrame){BINDINGS_LOOP_ATOM,
+                                             b->entries[i].val, 0}))
+            goto representation_failure;
+
+        while (stack.len > 0) {
+            BindingsLoopFrame frame = stack.items[--stack.len];
+            if (frame.kind == BINDINGS_LOOP_ENTRY_EXIT) {
+                state[frame.entry] = 2;
+                continue;
+            }
+            Atom *atom = frame.atom;
+            if (!atom_has_vars(atom)) continue;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_NODE_VISIT);
+            if (atom->kind == ATOM_VAR) {
+                int32_t found = bindings_find_entry_index_for_loop(
+                    b, atom->var_id);
+                if (found < 0) continue;
+                uint32_t entry = (uint32_t)found;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_LOOP_CHECK);
+                if (state[entry] == 1) goto loop_found;
+                if (state[entry] == 2) continue;
+                if (bindings_entry_is_trivial_self(b, entry)) {
+                    state[entry] = 2;
+                    continue;
+                }
+                state[entry] = 1;
+                if (!bindings_loop_push(
+                        &stack,
+                        (BindingsLoopFrame){BINDINGS_LOOP_ENTRY_EXIT,
+                                             NULL, entry}) ||
+                    !bindings_loop_push(
+                        &stack,
+                        (BindingsLoopFrame){BINDINGS_LOOP_ATOM,
+                                             b->entries[entry].val, 0}))
+                    goto representation_failure;
+                continue;
+            }
+            if (atom->kind == ATOM_EXPR) {
+                for (CettaExprIndex child = atom->expr.len; child > 0; child--)
+                    if (!bindings_loop_push(
+                            &stack,
+                            (BindingsLoopFrame){
+                                BINDINGS_LOOP_ATOM,
+                                atom->expr.elems[child - 1u], 0}))
+                        goto representation_failure;
+            }
         }
     }
+    if (stack.items != stack.inline_items) free(stack.items);
     if (state != state_stack)
         free(state);
     return false;
+
+loop_found:
+representation_failure:
+    if (stack.items != stack.inline_items) free(stack.items);
+    if (state != state_stack) free(state);
+    return true;
 }
 
 /* ── Type matching ─────────────────────────────────────────────────────── */
@@ -2059,98 +2119,161 @@ static bool is_space_value_type(Atom *atom) {
            is_named_symbol(atom->expr.elems[0], "Space");
 }
 
-static bool match_reducted_types_depth(Atom *left, Atom *right,
-                                       Bindings *b, int depth) {
-    if (depth <= 0) return false;
-    /* Upstream HE replaces every nested %Undefined% occurrence with an
-       independent wildcard before calling the ordinary matcher. */
-    if (atom_is_symbol_id(left, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(right, g_builtin_syms.undefined_type)) {
-        return true;
-    }
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, left);
-        if (existing)
-            return match_reducted_types_depth(existing, right, b, depth - 1);
-        if (right->kind == ATOM_VAR) {
-            Atom *right_existing = bindings_lookup_var(b, right);
-            if (right_existing)
-                return match_reducted_types_depth(left, right_existing, b,
-                                                  depth - 1);
-            if (left->var_id == right->var_id) return true;
-        }
-        return bindings_add_var(b, left, right);
-    }
-    if (right->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, right);
-        if (existing)
-            return match_reducted_types_depth(left, existing, b, depth - 1);
-        return bindings_add_var(b, right, left);
-    }
-    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL)
-        return left->sym_id == right->sym_id;
-    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED)
-        return atom_eq(left, right);
-    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len) return false;
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!match_reducted_types_depth(left->expr.elems[i],
-                                            right->expr.elems[i], b,
-                                            depth - 1)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    return false;
+typedef struct {
+    Atom *left;
+    Atom *right;
+} DecodedMatchPair;
+
+typedef struct {
+    DecodedMatchPair *items;
+    size_t len;
+    size_t cap;
+    DecodedMatchPair inline_items[16];
+} DecodedMatchWorklist;
+
+static void decoded_match_worklist_init(DecodedMatchWorklist *work) {
+    work->items = work->inline_items;
+    work->len = 0;
+    work->cap = sizeof work->inline_items / sizeof work->inline_items[0];
 }
 
-static bool match_reducted_types_builder_depth(Atom *left, Atom *right,
-                                               BindingsBuilder *bb,
-                                               int depth) {
-    if (depth <= 0) return false;
-    if (atom_is_symbol_id(left, g_builtin_syms.undefined_type) ||
-        atom_is_symbol_id(right, g_builtin_syms.undefined_type)) {
-        return true;
+static void decoded_match_worklist_free(DecodedMatchWorklist *work) {
+    if (work->items != work->inline_items) free(work->items);
+}
+
+static bool decoded_match_push(DecodedMatchWorklist *work,
+                               Atom *left, Atom *right) {
+    if (work->len == work->cap) {
+        size_t next_cap = work->cap * 2u;
+        if (next_cap <= work->cap ||
+            next_cap > SIZE_MAX / sizeof(*work->items))
+            return false;
+        DecodedMatchPair *next = cetta_malloc(
+            sizeof(*work->items) * next_cap);
+        memcpy(next, work->items, sizeof(*work->items) * work->len);
+        if (work->items != work->inline_items) free(work->items);
+        work->items = next;
+        work->cap = next_cap;
     }
-    Bindings *current = &bb->current;
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(current, left);
-        if (existing)
-            return match_reducted_types_builder_depth(existing, right, bb,
-                                                      depth - 1);
-        if (right->kind == ATOM_VAR) {
-            Atom *right_existing = bindings_lookup_var(current, right);
-            if (right_existing)
-                return match_reducted_types_builder_depth(left, right_existing,
-                                                          bb, depth - 1);
-            if (left->var_id == right->var_id) return true;
+    work->items[work->len++] = (DecodedMatchPair){left, right};
+    return true;
+}
+
+static size_t bindings_dereference_limit(const Bindings *bindings) {
+    size_t len = bindings ? (size_t)bindings->len : 0;
+    return len > (SIZE_MAX - 2u) / 2u ? SIZE_MAX : len * 2u + 2u;
+}
+
+/* Upstream HE treats each nested %Undefined% as an independent wildcard.
+   Type matching itself is a finite structural walk, so nesting depth is not a
+   semantic budget. The optional builder selects transactional binding without
+   changing the relation. */
+static bool match_decoded_atoms_worklist(Atom *left, Atom *right,
+                                         Bindings *bindings,
+                                         BindingsBuilder *builder,
+                                         bool undefined_is_wildcard) {
+    DecodedMatchWorklist work;
+    decoded_match_worklist_init(&work);
+    if (!decoded_match_push(&work, left, right)) return false;
+
+    while (work.len > 0) {
+        DecodedMatchPair pair = work.items[--work.len];
+        left = pair.left;
+        right = pair.right;
+        Bindings *current = builder ? &builder->current : bindings;
+        /* A variable-only dereference chain cannot be longer than the binding
+           table unless it contains a cycle. This is cycle detection derived
+           from the graph in hand, not an arbitrary depth cutoff. */
+        size_t dereferences = 0;
+        size_t dereference_limit = bindings_dereference_limit(current);
+
+retry_pair:
+        if (undefined_is_wildcard &&
+            (atom_is_symbol_id(left, g_builtin_syms.undefined_type) ||
+             atom_is_symbol_id(right, g_builtin_syms.undefined_type)))
+            continue;
+        if (left->kind == ATOM_VAR) {
+            Atom *existing = bindings_lookup_var(current, left);
+            if (existing) {
+                if (++dereferences > dereference_limit) {
+                    decoded_match_worklist_free(&work);
+                    return false;
+                }
+                left = existing;
+                goto retry_pair;
+            }
+            if (right->kind == ATOM_VAR) {
+                Atom *right_existing = bindings_lookup_var(current, right);
+                if (right_existing) {
+                    if (++dereferences > dereference_limit) {
+                        decoded_match_worklist_free(&work);
+                        return false;
+                    }
+                    right = right_existing;
+                    goto retry_pair;
+                }
+                if (left->var_id == right->var_id) continue;
+            }
+            bool added = builder
+                ? bindings_builder_add_var_fresh(builder, left, right)
+                : bindings_add_var(bindings, left, right);
+            if (!added) {
+                decoded_match_worklist_free(&work);
+                return false;
+            }
+            continue;
         }
-        return bindings_builder_add_var_fresh(bb, left, right);
-    }
-    if (right->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(current, right);
-        if (existing)
-            return match_reducted_types_builder_depth(left, existing, bb,
-                                                      depth - 1);
-        return bindings_builder_add_var_fresh(bb, right, left);
-    }
-    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL)
-        return left->sym_id == right->sym_id;
-    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED)
-        return atom_eq(left, right);
-    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len) return false;
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!match_reducted_types_builder_depth(left->expr.elems[i],
-                                                    right->expr.elems[i], bb,
-                                                    depth - 1)) {
+        if (right->kind == ATOM_VAR) {
+            Atom *existing = bindings_lookup_var(current, right);
+            if (existing) {
+                if (++dereferences > dereference_limit) {
+                    decoded_match_worklist_free(&work);
+                    return false;
+                }
+                right = existing;
+                goto retry_pair;
+            }
+            bool added = builder
+                ? bindings_builder_add_var_fresh(builder, right, left)
+                : bindings_add_var(bindings, right, left);
+            if (!added) {
+                decoded_match_worklist_free(&work);
+                return false;
+            }
+            continue;
+        }
+        if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
+            if (left->sym_id != right->sym_id) {
+                decoded_match_worklist_free(&work);
+                return false;
+            }
+            continue;
+        }
+        if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
+            if (!atom_eq(left, right)) {
+                decoded_match_worklist_free(&work);
+                return false;
+            }
+            continue;
+        }
+        if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+            left->expr.len != right->expr.len) {
+            decoded_match_worklist_free(&work);
+            return false;
+        }
+        /* Push in reverse so binding effects retain the recursive
+           implementation's left-to-right traversal order. */
+        for (CettaExprIndex i = left->expr.len; i > 0; i--) {
+            CettaExprIndex child = i - 1u;
+            if (!decoded_match_push(&work, left->expr.elems[child],
+                                    right->expr.elems[child])) {
+                decoded_match_worklist_free(&work);
                 return false;
             }
         }
-        return true;
     }
-    return false;
+    decoded_match_worklist_free(&work);
+    return true;
 }
 
 bool match_types(Atom *actual, Atom *expected, Bindings *b) {
@@ -2161,8 +2284,7 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b) {
         (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
         return true;
     }
-    return match_reducted_types_depth(actual, expected, b,
-                                      CETTA_MATCH_DEPTH_LIMIT);
+    return match_decoded_atoms_worklist(actual, expected, b, NULL, true);
 }
 
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
@@ -2171,43 +2293,34 @@ bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
         (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
         return true;
     }
-    return match_reducted_types_builder_depth(actual, expected, bb,
-                                              CETTA_MATCH_DEPTH_LIMIT);
+    return match_decoded_atoms_worklist(actual, expected, NULL, bb, true);
 }
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
-static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth);
-static bool match_atoms_builder_depth(Atom *left, Atom *right, BindingsBuilder *bb, int depth);
-static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena *a,
-                                    uint32_t epoch, bool right_original, int depth);
-static bool match_atoms_bound_atom_id_depth(Atom *left, Atom *right, Bindings *b,
-                                            Arena *a, int depth);
-static bool match_atoms_atom_id_epoch_depth(Atom *left,
-                                            const TermUniverse *candidate_universe,
-                                            AtomId right_id, Bindings *b,
-                                            Arena *a, uint32_t epoch,
-                                            int depth);
+static bool match_atoms_epoch_worklist(Atom *left, Atom *right, Bindings *b,
+                                       Arena *a, uint32_t epoch);
+static bool match_atoms_atom_id_epoch_worklist(
+    Atom *left, const TermUniverse *candidate_universe, AtomId right_id,
+    Bindings *b, Arena *a, uint32_t epoch);
 
 bool match_atoms(Atom *left, Atom *right, Bindings *b) {
-    return match_atoms_depth(left, right, b, CETTA_MATCH_DEPTH_LIMIT);
+    return match_decoded_atoms_worklist(left, right, b, NULL, false);
 }
 
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb) {
-    return match_atoms_builder_depth(left, right, bb, CETTA_MATCH_DEPTH_LIMIT);
+    return match_decoded_atoms_worklist(left, right, NULL, bb, false);
 }
 
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {
-    return match_atoms_epoch_depth(left, right, b, a, epoch, true,
-                                   CETTA_MATCH_DEPTH_LIMIT);
+    return match_atoms_epoch_worklist(left, right, b, a, epoch);
 }
 
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
                                uint32_t epoch) {
-    return match_atoms_atom_id_epoch_depth(left, candidate_universe, right_id, b,
-                                           a, epoch,
-                                           CETTA_MATCH_DEPTH_LIMIT);
+    return match_atoms_atom_id_epoch_worklist(
+        left, candidate_universe, right_id, b, a, epoch);
 }
 
 typedef struct {
@@ -2303,300 +2416,307 @@ bool atom_alpha_eq(Atom *left, Atom *right) {
     return ok;
 }
 
-static bool match_atoms_depth(Atom *left, Atom *right, Bindings *b, int depth) {
-    if (depth <= 0) return false; /* prevent infinite recursion */
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, left);
-        if (existing) return match_atoms_depth(existing, right, b, depth - 1);
-        if (right->kind == ATOM_VAR) {
-            Atom *right_existing = bindings_lookup_var(b, right);
-            if (right_existing) return match_atoms_depth(left, right_existing, b, depth - 1);
-            if (left->var_id == right->var_id) return true;
-        }
-        return bindings_add_var(b, left, right);
-    }
-    if (right->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, right);
-        if (existing) return match_atoms_depth(left, existing, b, depth - 1);
-        return bindings_add_var(b, right, left);
-    }
-    /* Symbol/Symbol → must be equal */
-    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-        return left->sym_id == right->sym_id;
-    }
-    /* Grounded/Grounded → structural equality */
-    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
-        return atom_eq(left, right);
-    }
-    /* Expression/Expression → recursive element-wise */
-    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len) return false;
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!match_atoms_depth(left->expr.elems[i], right->expr.elems[i], b, depth - 1))
-                return false;
-        }
-        return true;
-    }
-    /* Different kinds (non-variable) → no match */
-    return false;
-}
+typedef struct {
+    Atom *left;
+    Atom *right;
+    bool right_original;
+} EpochMatchPair;
 
-static bool match_atoms_builder_depth(Atom *left, Atom *right, BindingsBuilder *bb, int depth) {
-    if (depth <= 0) return false;
-    Bindings *current = &bb->current;
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(current, left);
-        if (existing)
-            return match_atoms_builder_depth(existing, right, bb, depth - 1);
-        if (right->kind == ATOM_VAR) {
-            Atom *right_existing = bindings_lookup_var(current, right);
-            if (right_existing)
-                return match_atoms_builder_depth(left, right_existing, bb, depth - 1);
-            if (left->var_id == right->var_id) return true;
-        }
-        return bindings_builder_add_var_fresh(bb, left, right);
-    }
-    if (right->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(current, right);
-        if (existing)
-            return match_atoms_builder_depth(left, existing, bb, depth - 1);
-        return bindings_builder_add_var_fresh(bb, right, left);
-    }
-    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-        return left->sym_id == right->sym_id;
-    }
-    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
-        return atom_eq(left, right);
-    }
-    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len) return false;
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!match_atoms_builder_depth(left->expr.elems[i], right->expr.elems[i],
-                                           bb, depth - 1))
-                return false;
-        }
-        return true;
-    }
-    return false;
-}
+typedef struct {
+    EpochMatchPair *items;
+    size_t len;
+    size_t cap;
+    EpochMatchPair inline_items[16];
+} EpochMatchWorklist;
 
-static bool match_atoms_epoch_depth(Atom *left, Atom *right, Bindings *b, Arena *a,
-                                    uint32_t epoch, bool right_original, int depth) {
-    if (depth <= 0) return false;
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, left);
-        if (existing)
-            return match_atoms_epoch_depth(existing, right, b, a, epoch,
-                                           right_original, depth - 1);
-        if (right->kind == ATOM_VAR) {
-            VarId right_id = right_original ? var_epoch_id(right->var_id, epoch) : right->var_id;
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-            Atom *right_existing = bindings_lookup_id(b, right_id);
-            if (right_existing)
-                return match_atoms_epoch_depth(left, right_existing, b, a, epoch,
-                                               false, depth - 1);
-            if (left->var_id == right_id) return true;
-            return bindings_add_var(b, left,
-                                    right_original ? epoch_var_atom(a, right, epoch) : right);
-        }
-        return bindings_add_var(
-            b, left,
-            right_original ? bindings_apply_epoch(b, a, right, epoch) : right);
-    }
-    if (right->kind == ATOM_VAR) {
-        VarId right_id = right_original ? var_epoch_id(right->var_id, epoch) : right->var_id;
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-        Atom *existing = bindings_lookup_id(b, right_id);
-        if (existing)
-            return match_atoms_epoch_depth(left, existing, b, a, epoch,
-                                           false, depth - 1);
-        return bindings_add_id(b, right_id, right->sym_id, left);
-    }
-    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-        return left->sym_id == right->sym_id;
-    }
-    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
-        return atom_eq(left, right);
-    }
-    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len) return false;
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!match_atoms_epoch_depth(left->expr.elems[i], right->expr.elems[i], b, a,
-                                         epoch, right_original, depth - 1))
-                return false;
-        }
-        return true;
-    }
-    return false;
-}
-
-static bool match_atoms_bound_atom_id_depth(Atom *left, Atom *right, Bindings *b,
-                                            Arena *a, int depth) {
-    if (depth <= 0 || !left || !right)
-        return false;
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, left);
-        if (existing)
-            return match_atoms_bound_atom_id_depth(existing, right, b, a, depth - 1);
-        if (right->kind == ATOM_VAR) {
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-            Atom *right_existing = bindings_lookup_id(b, right->var_id);
-            if (right_existing)
-                return match_atoms_bound_atom_id_depth(left, right_existing, b, a,
-                                                       depth - 1);
-            if (left->var_id == right->var_id)
-                return true;
-            return bindings_add_var(b, left, right);
-        }
-        return bindings_add_var(b, left, right);
-    }
-    if (right->kind == ATOM_VAR) {
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-        Atom *existing = bindings_lookup_id(b, right->var_id);
-        if (existing)
-            return match_atoms_bound_atom_id_depth(left, existing, b, a, depth - 1);
-        return bindings_add_id(b, right->var_id, right->sym_id, left);
-    }
-    if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL)
-        return left->sym_id == right->sym_id;
-    if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED)
-        return atom_eq(left, right);
-    if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len)
+static bool epoch_match_push(EpochMatchWorklist *work, Atom *left,
+                             Atom *right, bool right_original) {
+    if (work->len == work->cap) {
+        size_t next_cap = work->cap * 2u;
+        if (next_cap <= work->cap ||
+            next_cap > SIZE_MAX / sizeof(*work->items))
             return false;
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!match_atoms_bound_atom_id_depth(left->expr.elems[i],
-                                                 right->expr.elems[i], b, a,
-                                                 depth - 1)) {
-                return false;
-            }
-        }
-        return true;
+        EpochMatchPair *next = cetta_malloc(
+            sizeof(*work->items) * next_cap);
+        memcpy(next, work->items, sizeof(*work->items) * work->len);
+        if (work->items != work->inline_items) free(work->items);
+        work->items = next;
+        work->cap = next_cap;
     }
-    (void)a;
+    work->items[work->len++] =
+        (EpochMatchPair){left, right, right_original};
+    return true;
+}
+
+static bool match_atoms_epoch_worklist(Atom *left, Atom *right, Bindings *b,
+                                       Arena *a, uint32_t epoch) {
+    EpochMatchWorklist work;
+    work.items = work.inline_items;
+    work.len = 0;
+    work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
+    if (!epoch_match_push(&work, left, right, true)) return false;
+
+    while (work.len > 0) {
+        EpochMatchPair pair = work.items[--work.len];
+        left = pair.left;
+        right = pair.right;
+        bool right_original = pair.right_original;
+        size_t dereferences = 0;
+        size_t dereference_limit = bindings_dereference_limit(b);
+
+retry_pair:
+        if (left->kind == ATOM_VAR) {
+            Atom *existing = bindings_lookup_var(b, left);
+            if (existing) {
+                if (++dereferences > dereference_limit) goto fail;
+                left = existing;
+                goto retry_pair;
+            }
+            if (right->kind == ATOM_VAR) {
+                VarId right_id = right_original
+                    ? var_epoch_id(right->var_id, epoch) : right->var_id;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
+                Atom *right_existing = bindings_lookup_id(b, right_id);
+                if (right_existing) {
+                    if (++dereferences > dereference_limit) goto fail;
+                    right = right_existing;
+                    right_original = false;
+                    goto retry_pair;
+                }
+                if (left->var_id == right_id) continue;
+                Atom *value = right_original
+                    ? epoch_var_atom(a, right, epoch) : right;
+                if (!value || !bindings_add_var(b, left, value)) goto fail;
+                continue;
+            }
+            Atom *value = right_original
+                ? bindings_apply_epoch(b, a, right, epoch) : right;
+            if (!value || !bindings_add_var(b, left, value)) goto fail;
+            continue;
+        }
+        if (right->kind == ATOM_VAR) {
+            VarId right_id = right_original
+                ? var_epoch_id(right->var_id, epoch) : right->var_id;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
+            Atom *existing = bindings_lookup_id(b, right_id);
+            if (existing) {
+                if (++dereferences > dereference_limit) goto fail;
+                right = existing;
+                right_original = false;
+                goto retry_pair;
+            }
+            if (!bindings_add_id(b, right_id, right->sym_id, left)) goto fail;
+            continue;
+        }
+        if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
+            if (left->sym_id != right->sym_id) goto fail;
+            continue;
+        }
+        if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
+            if (!atom_eq(left, right)) goto fail;
+            continue;
+        }
+        if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+            left->expr.len != right->expr.len)
+            goto fail;
+        for (CettaExprIndex i = left->expr.len; i > 0; i--) {
+            CettaExprIndex child = i - 1u;
+            if (!epoch_match_push(&work, left->expr.elems[child],
+                                  right->expr.elems[child], right_original))
+                goto fail;
+        }
+    }
+    if (work.items != work.inline_items) free(work.items);
+    return true;
+
+fail:
+    if (work.items != work.inline_items) free(work.items);
     return false;
 }
 
-static bool match_atoms_atom_id_epoch_depth(Atom *left,
-                                            const TermUniverse *candidate_universe,
-                                            AtomId right_id, Bindings *b,
-                                            Arena *a, uint32_t epoch,
-                                            int depth) {
-    if (depth <= 0 || !left || !candidate_universe ||
-        right_id == CETTA_ATOM_ID_NONE) {
+typedef struct {
+    Atom *left;
+    AtomId right_id;
+} StoredMatchPair;
+
+typedef struct {
+    StoredMatchPair *items;
+    size_t len;
+    size_t cap;
+    StoredMatchPair inline_items[16];
+} StoredMatchWorklist;
+
+static bool stored_match_push(StoredMatchWorklist *work, Atom *left,
+                              AtomId right_id) {
+    if (work->len == work->cap) {
+        size_t next_cap = work->cap * 2u;
+        if (next_cap <= work->cap ||
+            next_cap > SIZE_MAX / sizeof(*work->items))
+            return false;
+        StoredMatchPair *next = cetta_malloc(
+            sizeof(*work->items) * next_cap);
+        memcpy(next, work->items, sizeof(*work->items) * work->len);
+        if (work->items != work->inline_items) free(work->items);
+        work->items = next;
+        work->cap = next_cap;
+    }
+    work->items[work->len++] = (StoredMatchPair){left, right_id};
+    return true;
+}
+
+static bool stored_grounded_equal(Atom *left,
+                                  const TermUniverse *candidate_universe,
+                                  AtomId right_id) {
+    if (tu_kind(candidate_universe, right_id) != ATOM_GROUNDED)
+        return false;
+    switch (left->ground.gkind) {
+    case GV_INT:
+        return tu_ground_kind(candidate_universe, right_id) == GV_INT &&
+               left->ground.ival == tu_int(candidate_universe, right_id);
+    case GV_FLOAT:
+        return tu_ground_kind(candidate_universe, right_id) == GV_FLOAT &&
+               left->ground.fval == tu_float(candidate_universe, right_id);
+    case GV_BOOL:
+        return tu_ground_kind(candidate_universe, right_id) == GV_BOOL &&
+               left->ground.bval == tu_bool(candidate_universe, right_id);
+    case GV_STRING: {
+        const char *rhs = tu_string_cstr(candidate_universe, right_id);
+        return tu_ground_kind(candidate_universe, right_id) == GV_STRING &&
+               rhs && strcmp(left->ground.sval, rhs) == 0;
+    }
+    case GV_BIGINT: {
+        const char *rhs = tu_bigint_cstr(candidate_universe, right_id);
+        return tu_ground_kind(candidate_universe, right_id) == GV_BIGINT &&
+               rhs &&
+               cetta_bigint_compare_cstr(atom_bigint_cstr(left), rhs) == 0;
+    }
+    case GV_RATIONAL: {
+        const char *rhs = tu_rational_cstr(candidate_universe, right_id);
+        return tu_ground_kind(candidate_universe, right_id) == GV_RATIONAL &&
+               rhs &&
+               cetta_rational_compare_cstr(atom_rational_cstr(left), rhs) == 0;
+    }
+    case GV_SPACE:
+    case GV_STATE:
+    case GV_CAPTURE:
+    case GV_FOREIGN:
         return false;
     }
+    return false;
+}
 
-    const CettaTermHdr *hdr = tu_hdr(candidate_universe, right_id);
-    if (!hdr) {
-        Atom *right = term_universe_get_atom((TermUniverse *)candidate_universe,
-                                             right_id);
-        return right ? match_atoms_epoch(left, right, b, a, epoch) : false;
-    }
+static bool match_atoms_atom_id_epoch_worklist(
+    Atom *left, const TermUniverse *candidate_universe, AtomId right_id,
+    Bindings *b, Arena *a, uint32_t epoch) {
+    if (!left || !candidate_universe || right_id == CETTA_ATOM_ID_NONE)
+        return false;
+    StoredMatchWorklist work;
+    work.items = work.inline_items;
+    work.len = 0;
+    work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
+    if (!stored_match_push(&work, left, right_id)) return false;
 
-    AtomKind right_kind = tu_kind(candidate_universe, right_id);
-    if (left->kind == ATOM_VAR) {
-        Atom *existing = bindings_lookup_var(b, left);
-        if (existing) {
-            return match_atoms_atom_id_epoch_depth(existing, candidate_universe,
-                                                   right_id, b, a, epoch,
-                                                   depth - 1);
+    while (work.len > 0) {
+        StoredMatchPair pair = work.items[--work.len];
+        left = pair.left;
+        right_id = pair.right_id;
+        size_t dereferences = 0;
+        size_t dereference_limit = bindings_dereference_limit(b);
+
+retry_pair:
+        if (!tu_hdr(candidate_universe, right_id)) {
+            Atom *right = term_universe_get_atom(
+                (TermUniverse *)candidate_universe, right_id);
+            if (!right || !match_atoms_epoch_worklist(
+                    left, right, b, a, epoch))
+                goto fail;
+            continue;
+        }
+        AtomKind right_kind = tu_kind(candidate_universe, right_id);
+        if (left->kind == ATOM_VAR) {
+            Atom *existing = bindings_lookup_var(b, left);
+            if (existing) {
+                if (++dereferences > dereference_limit) goto fail;
+                left = existing;
+                goto retry_pair;
+            }
+            if (right_kind == ATOM_VAR) {
+                VarId right_var_id = var_epoch_id(
+                    tu_var_id(candidate_universe, right_id), epoch);
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
+                Atom *right_existing = bindings_lookup_id(b, right_var_id);
+                if (right_existing) {
+                    if (!match_decoded_atoms_worklist(
+                            left, right_existing, b, NULL, false))
+                        goto fail;
+                    continue;
+                }
+                if (left->var_id == right_var_id) continue;
+                Atom *value = atom_var_with_spelling(
+                    a, tu_sym(candidate_universe, right_id), right_var_id);
+                if (!value || !bindings_add_var(b, left, value)) goto fail;
+                continue;
+            }
+            Atom *value = !tu_has_vars(candidate_universe, right_id)
+                ? (a ? term_universe_copy_atom(candidate_universe, a, right_id)
+                     : term_universe_get_atom(
+                           (TermUniverse *)candidate_universe, right_id))
+                : term_universe_copy_atom_epoch(
+                      candidate_universe, a, right_id, epoch);
+            if (!value || !bindings_add_var(b, left, value)) goto fail;
+            continue;
         }
         if (right_kind == ATOM_VAR) {
-            VarId right_var_id =
-                var_epoch_id(tu_var_id(candidate_universe, right_id), epoch);
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-            Atom *right_existing = bindings_lookup_id(b, right_var_id);
-            if (right_existing)
-                return match_atoms_bound_atom_id_depth(left, right_existing, b, a,
-                                                       depth - 1);
-            if (left->var_id == right_var_id)
-                return true;
-            return bindings_add_var(
-                b, left,
-                atom_var_with_spelling(a, tu_sym(candidate_universe, right_id),
-                                       right_var_id));
-        }
-        Atom *right_value = NULL;
-        if (!tu_has_vars(candidate_universe, right_id)) {
-            right_value = a ? term_universe_copy_atom(candidate_universe, a, right_id)
-                            : term_universe_get_atom((TermUniverse *)candidate_universe,
-                                                     right_id);
-        } else {
-            right_value = term_universe_copy_atom_epoch((TermUniverse *)candidate_universe, a,
-                                                        right_id, epoch);
-        }
-        return right_value && bindings_add_var(b, left, right_value);
-    }
-
-    if (right_kind == ATOM_VAR) {
-        VarId right_var_id =
-            var_epoch_id(tu_var_id(candidate_universe, right_id), epoch);
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-        Atom *existing = bindings_lookup_id(b, right_var_id);
-        if (existing)
-            return match_atoms_bound_atom_id_depth(left, existing, b, a,
-                                                   depth - 1);
-        return bindings_add_id(b, right_var_id,
-                               tu_sym(candidate_universe, right_id), left);
-    }
-
-    switch (left->kind) {
-    case ATOM_SYMBOL:
-        return right_kind == ATOM_SYMBOL &&
-               left->sym_id == tu_sym(candidate_universe, right_id);
-    case ATOM_VAR:
-        return false;
-    case ATOM_GROUNDED:
-        if (right_kind != ATOM_GROUNDED)
-            return false;
-        switch (left->ground.gkind) {
-        case GV_INT:
-            return tu_ground_kind(candidate_universe, right_id) == GV_INT &&
-                   left->ground.ival == tu_int(candidate_universe, right_id);
-        case GV_FLOAT:
-            return tu_ground_kind(candidate_universe, right_id) == GV_FLOAT &&
-                   left->ground.fval == tu_float(candidate_universe, right_id);
-        case GV_BOOL:
-            return tu_ground_kind(candidate_universe, right_id) == GV_BOOL &&
-                   left->ground.bval == tu_bool(candidate_universe, right_id);
-        case GV_STRING: {
-            const char *rhs = tu_string_cstr(candidate_universe, right_id);
-            return tu_ground_kind(candidate_universe, right_id) == GV_STRING &&
-                   rhs && strcmp(left->ground.sval, rhs) == 0;
-        }
-        case GV_BIGINT: {
-            const char *rhs = tu_bigint_cstr(candidate_universe, right_id);
-            return tu_ground_kind(candidate_universe, right_id) == GV_BIGINT &&
-                   rhs && cetta_bigint_compare_cstr(atom_bigint_cstr(left), rhs) == 0;
-        }
-        case GV_RATIONAL: {
-            const char *rhs = tu_rational_cstr(candidate_universe, right_id);
-            return tu_ground_kind(candidate_universe, right_id) == GV_RATIONAL &&
-                   rhs && cetta_rational_compare_cstr(atom_rational_cstr(left), rhs) == 0;
-        }
-        case GV_SPACE:
-        case GV_STATE:
-        case GV_CAPTURE:
-        case GV_FOREIGN:
-            return false;
-        }
-        return false;
-    case ATOM_EXPR:
-        if (right_kind != ATOM_EXPR ||
-            left->expr.len != tu_arity(candidate_universe, right_id)) {
-            return false;
-        }
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!match_atoms_atom_id_epoch_depth(
-                    left->expr.elems[i], candidate_universe,
-                    tu_child(candidate_universe, right_id, i), b, a, epoch,
-                    depth - 1)) {
-                return false;
+            VarId right_var_id = var_epoch_id(
+                tu_var_id(candidate_universe, right_id), epoch);
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
+            Atom *existing = bindings_lookup_id(b, right_var_id);
+            if (existing) {
+                if (!match_decoded_atoms_worklist(
+                        left, existing, b, NULL, false))
+                    goto fail;
+                continue;
             }
+            if (!bindings_add_id(b, right_var_id,
+                                 tu_sym(candidate_universe, right_id), left))
+                goto fail;
+            continue;
         }
-        return true;
+        switch (left->kind) {
+        case ATOM_SYMBOL:
+            if (right_kind != ATOM_SYMBOL ||
+                left->sym_id != tu_sym(candidate_universe, right_id))
+                goto fail;
+            break;
+        case ATOM_VAR:
+            goto fail;
+        case ATOM_GROUNDED:
+            if (!stored_grounded_equal(left, candidate_universe, right_id))
+                goto fail;
+            break;
+        case ATOM_EXPR:
+            if (right_kind != ATOM_EXPR ||
+                left->expr.len != tu_arity(candidate_universe, right_id))
+                goto fail;
+            for (CettaExprIndex i = left->expr.len; i > 0; i--) {
+                CettaExprIndex child = i - 1u;
+                if (!stored_match_push(
+                        &work, left->expr.elems[child],
+                        tu_child(candidate_universe, right_id, child)))
+                    goto fail;
+            }
+            break;
+        }
     }
+    if (work.items != work.inline_items) free(work.items);
+    return true;
+
+fail:
+    if (work.items != work.inline_items) free(work.items);
     return false;
 }
 
