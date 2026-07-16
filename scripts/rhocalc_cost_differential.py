@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -20,9 +19,7 @@ from mettapedia_paths import discover_mettapedia_root
 from rhocalc_tiny_semantics import SExpr, parse_sexpr, sexpr_to_text
 
 
-SCHEMA = "cetta.cost-rho.causal-prefix.v1"
-SAFE_ATOM = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
-
+SCHEMA = "cetta.cost-rho.causal-prefix.v2"
 Wire = dict[str, Any]
 
 
@@ -110,8 +107,12 @@ def wire_symbol(wire: Wire) -> str:
     value = wire.get("symbol")
     if not isinstance(value, str):
         raise ValueError(f"expected wire symbol, saw {wire!r}")
-    if not SAFE_ATOM.fullmatch(value):
-        raise ValueError(f"test atom is not a safe CeTTa symbol: {value!r}")
+    if (
+        not value
+        or value.startswith(("rho:", "$"))
+        or any(character.isspace() or character in '()"' for character in value)
+    ):
+        raise ValueError(f"test atom is outside the CeTTa symbol boundary: {value!r}")
     return value
 
 
@@ -330,6 +331,7 @@ def parse_cetta_prefix(line: str) -> Wire:
     status_map = {
         "lts:rho:cost:quiescent": "quiescent",
         "lts:rho:cost:fuel-exhausted": "fuel-exhausted",
+        "lts:rho:cost:search-exhausted": "search-exhausted",
     }
     if status_atom not in status_map:
         raise ValueError(f"unsupported prefix status: {status_atom!r}")
@@ -352,9 +354,15 @@ class Case:
     name: str
     fuel: int
     term: Wire
+    search_fuel: int = 10_000
 
     def request(self) -> dict[str, Any]:
-        return {"schema": SCHEMA, "fuel": self.fuel, "term": self.term}
+        return {
+            "schema": SCHEMA,
+            "fuel": self.fuel,
+            "searchFuel": self.search_fuel,
+            "term": self.term,
+        }
 
 
 PAY = channel("pay")
@@ -367,6 +375,11 @@ AA = signature("alice", "alice")
 SEAL = signature("seal")
 DONE = signed(proc_nil(), signature("done"))
 PAYLOAD = signed(proc_nil(), signature("payload"))
+COLLISION_LEFT = signature("ab", "c")
+COLLISION_RIGHT = signature("a", "bc")
+UTF8_SINGLE = signature("λ")
+UTF8_PAIR = signature("é", "λ")
+DELIMITER_PAIR = signature("a,b", "a:bc")
 
 
 def whole_redex(surface: Wire, demand: Wire, order: str = "recv-send",
@@ -413,6 +426,8 @@ def make_cases() -> list[Case]:
         Case("quiescent-zero-fuel", 0, term_nil()),
         Case("live-zero-fuel", 0,
              term_par([whole_redex(PAY, A), purse(PAY, [A])])),
+        Case("hard-no-cover-search-exhausted", 1,
+             term_par([whole_redex(PAY, A)]), 1),
         Case("two-independent-surfaces", 2,
              term_par([
                  whole_redex(PAY, A), purse(PAY, [A]),
@@ -422,6 +437,41 @@ def make_cases() -> list[Case]:
              term_par([
                  whole_redex(PAY, A), whole_redex(PAY, A),
                  purse(PAY, [A]), purse(PAY, [A]),
+             ])),
+        Case("key-collision-left-funded", 1,
+             term_par([
+                 whole_redex(PAY, COLLISION_LEFT),
+                 purse(PAY, [signature("ab")]),
+                 purse(PAY, [signature("c")]),
+             ])),
+        Case("key-collision-left-not-right", 1,
+             term_par([
+                 whole_redex(PAY, COLLISION_LEFT),
+                 purse(PAY, [signature("a")]),
+                 purse(PAY, [signature("bc")]),
+             ])),
+        Case("key-collision-right-funded", 1,
+             term_par([
+                 whole_redex(PAY, COLLISION_RIGHT),
+                 purse(PAY, [signature("a")]),
+                 purse(PAY, [signature("bc")]),
+             ])),
+        Case("utf8-single-atom", 1,
+             term_par([
+                 whole_redex(PAY, UTF8_SINGLE),
+                 purse(PAY, [UTF8_SINGLE]),
+             ])),
+        Case("utf8-compound-split", 1,
+             term_par([
+                 whole_redex(PAY, UTF8_PAIR),
+                 purse(PAY, [signature("é")]),
+                 purse(PAY, [signature("λ")]),
+             ])),
+        Case("delimiter-shaped-atoms", 1,
+             term_par([
+                 whole_redex(PAY, DELIMITER_PAIR),
+                 purse(PAY, [signature("a,b")]),
+                 purse(PAY, [signature("a:bc")]),
              ])),
     ]
 
@@ -457,7 +507,8 @@ def make_cases() -> list[Case]:
 def run_cetta(bin_path: str, cases: list[Case]) -> tuple[list[dict[str, Wire]], list[str]]:
     script = ["!(import! &self lts:rho:cost)"]
     script.extend(
-        f"!(lts:rho:cost:causal-prefix {case.fuel} {render_term(case.term)})"
+        f"!(lts:rho:cost:causal-prefix {case.fuel} {case.search_fuel} "
+        f"{render_term(case.term)})"
         for case in cases
     )
     proc = subprocess.run(
@@ -499,7 +550,23 @@ def run_lean(mettapedia_root: Path, runner: Path,
     lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
     if not lines:
         raise RuntimeError("Lean differential runner produced no JSON")
-    outcomes = json.loads(lines[-1])
+    batch = json.loads(lines[-1])
+    if not isinstance(batch, dict):
+        raise RuntimeError("Lean differential runner produced a non-object batch")
+    preconditions = batch.get("preconditions")
+    outcomes = batch.get("outcomes")
+    if not isinstance(preconditions, list) or len(preconditions) != len(cases):
+        raise RuntimeError(
+            f"expected {len(cases)} Lean precondition records, saw "
+            f"{len(preconditions) if isinstance(preconditions, list) else type(preconditions).__name__}"
+        )
+    required = {"wellFormed": True, "canonical": True,
+                "encodingCanonical": True}
+    for case, checks in zip(cases, preconditions, strict=True):
+        if checks != required:
+            raise RuntimeError(
+                f"theorem preconditions failed closed for {case.name}: {checks!r}"
+            )
     if not isinstance(outcomes, list) or len(outcomes) != len(cases):
         raise RuntimeError(
             f"expected {len(cases)} Lean outcomes, saw "
@@ -521,6 +588,15 @@ def main() -> int:
         return 2
     runner = Path(__file__).resolve().parents[1] / "tests" / "rhocalc_cost_differential.lean"
     cases = make_cases()
+
+    boundary_exclusions = 0
+    try:
+        render_signature(signature(""))
+    except ValueError:
+        boundary_exclusions += 1
+    else:
+        print("cost-rho differential harness accepted an empty symbol atom", file=sys.stderr)
+        return 1
 
     try:
         cetta, raw_lines = run_cetta(bin_path, cases)
@@ -555,6 +631,8 @@ def main() -> int:
 
     print(
         f"PASS: {len(cases)} bounded cost-rho CeTTa/Lean cases; "
+        f"{len(cases)}/{len(cases)} theorem precondition records accepted; "
+        f"{boundary_exclusions} out-of-fragment boundary case rejected; "
         "testing boundary only, not a universal theorem about compiled C"
     )
     return 0

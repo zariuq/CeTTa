@@ -169,9 +169,10 @@
      (lts:rho:cost:causal-trace rho:poop)
      "unsupported cost-rho term")))
 
-; A zero bound distinguishes a live frontier from a normal form without firing.
+; Zero firing fuel performs no cover search and reports only that the firing
+; allowance ended.
 !(assertEqualToResult
-  (lts:rho:cost:causal-prefix 0
+  (lts:rho:cost:causal-prefix 0 100
     (rho:cost:par
       (rho:cost:signed
         (rho:par
@@ -197,9 +198,9 @@
               (rho:cost:signed rho:nil bounded-payload)))
           bounded-spend))))))
 
-; Reaching a normal form exactly at the bound reports quiescence, not exhaustion.
+; Reaching the firing bound stops before another frontier check.
 !(assertEqualToResult
-  (lts:rho:cost:causal-prefix 1
+  (lts:rho:cost:causal-prefix 1 100
     (rho:cost:par
       (rho:cost:signed
         (rho:par
@@ -211,7 +212,7 @@
       (rho:cost:purse bounded
         (rho:cost:stack-cons bounded-spend rho:cost:stack-empty))))
   ((lts:rho:cost:prefix
-    lts:rho:cost:quiescent
+    lts:rho:cost:fuel-exhausted
     (lts:rho:cost:receipt
       ((lts:rho:cost:event
         0
@@ -222,16 +223,44 @@
         (rho:cost:purse bounded rho:cost:stack-empty)
         (rho:cost:signed rho:nil bounded-done))))))
 
-; A zero bound on a normal form remains honestly quiescent.
+; With zero firing fuel even a normal form is not inspected.
 !(assertEqualToResult
-  (lts:rho:cost:causal-prefix 0 rho:cost:nil)
+  (lts:rho:cost:causal-prefix 0 100 rho:cost:nil)
   ((lts:rho:cost:prefix
-    lts:rho:cost:quiescent
+    lts:rho:cost:fuel-exhausted
     (lts:rho:cost:receipt () rho:cost:nil))))
+
+; Search exhaustion is distinct from both quiescence and firing exhaustion.
+!(assertEqualToResult
+  (lts:rho:cost:causal-prefix 1 1
+    (rho:cost:signed
+      (rho:par
+        (rho:recv bounded $message
+          (rho:cost:signed rho:nil bounded-done))
+        (rho:send bounded
+          (rho:cost:signed rho:nil bounded-payload)))
+      bounded-spend))
+  ((lts:rho:cost:prefix
+    lts:rho:cost:search-exhausted
+    (lts:rho:cost:receipt
+      ()
+      (rho:cost:signed
+        (rho:par
+          (rho:recv bounded $message
+            (rho:cost:signed rho:nil bounded-done))
+          (rho:send bounded
+            (rho:cost:signed rho:nil bounded-payload)))
+        bounded-spend)))))
 
 ; Bounds are nonnegative machine integers.
 !(assertEqualToResult
-  (lts:rho:cost:causal-prefix -1 rho:cost:nil)
+  (lts:rho:cost:causal-prefix -1 0 rho:cost:nil)
   ((Error
-    (lts:rho:cost:causal-prefix -1 rho:cost:nil)
+    (lts:rho:cost:causal-prefix -1 0 rho:cost:nil)
     "expected a nonnegative integer fuel bound")))
+
+!(assertEqualToResult
+  (lts:rho:cost:causal-prefix 0 -1 rho:cost:nil)
+  ((Error
+    (lts:rho:cost:causal-prefix 0 -1 rho:cost:nil)
+    "expected a nonnegative integer search bound")))
