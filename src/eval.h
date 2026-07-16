@@ -98,6 +98,7 @@ bool eval_payload_track_scratch_state(StateCell *cell);
 void eval_track_new_space(Space *space);
 void eval_cleanup_owned_new_spaces_for_current_thread(void);
 void eval_drain_owned_new_spaces_for_current_thread(void);
+void eval_profiled_type_cache_free_for_current_thread(void);
 void eval_cleanup_owned_new_spaces(Registry *registry, Space *root);
 CettaCount eval_payload_space_redirect_count(void);
 bool eval_payload_space_redirect_at(CettaCount idx, Space **orig,

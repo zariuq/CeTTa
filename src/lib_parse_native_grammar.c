@@ -70,7 +70,24 @@ void cetta_lp_native_grammar_free(CettaLpNativeGrammar *grammar) {
     free(grammar->productions);
     free(grammar->vars);
     free(grammar->lexes);
+    free(grammar->entries);
     memset(grammar, 0, sizeof(*grammar));
+}
+
+static bool grammar_entry_push(CettaLpNativeGrammar *grammar,
+                               uint32_t *entry_cap,
+                               CettaLpNativeEntryKind kind,
+                               uint32_t index) {
+    CettaLpNativeEntry *entry;
+
+    if (!grow_storage((void **)&grammar->entries, &grammar->entry_len,
+                      entry_cap, sizeof(*grammar->entries))) {
+        return false;
+    }
+    entry = &grammar->entries[grammar->entry_len++];
+    entry->kind = kind;
+    entry->index = index;
+    return true;
 }
 
 static bool parse_rhs(Atom *rhs_expr,
@@ -78,21 +95,67 @@ static bool parse_rhs(Atom *rhs_expr,
                       uint32_t *binder_hole_count,
                       char *error_buf,
                       size_t error_buf_size) {
+    Atom **items = NULL;
+    bool owns_items = false;
     uint32_t i;
 
-    if (!rhs_expr || rhs_expr->kind != ATOM_EXPR) {
+    if (!rhs_expr) {
         grammar_set_error(error_buf, error_buf_size,
                           "Prod rhs must be an expression list");
         return false;
     }
-    prod->rhs_len = (uint32_t)rhs_expr->expr.len;
+    if (atom_is_symbol(rhs_expr, "Nil")) {
+        prod->rhs_len = 0;
+    } else if (atom_expr_head_is(rhs_expr, "Cons") &&
+               rhs_expr->expr.len == 3) {
+        Atom *cursor = rhs_expr;
+        uint32_t count = 0;
+
+        while (atom_expr_head_is(cursor, "Cons") &&
+               cursor->expr.len == 3) {
+            if (count == UINT32_MAX) {
+                grammar_set_error(error_buf, error_buf_size,
+                                  "Prod rhs is too long");
+                return false;
+            }
+            count++;
+            cursor = cursor->expr.elems[2];
+        }
+        if (!atom_is_symbol(cursor, "Nil")) {
+            grammar_set_error(error_buf, error_buf_size,
+                              "Prod rhs must be a proper Cons/Nil list");
+            return false;
+        }
+        prod->rhs_len = count;
+        if (count > 0) {
+            cursor = rhs_expr;
+            items = cetta_malloc(sizeof(*items) * count);
+            owns_items = true;
+            for (i = 0; i < count; i++) {
+                items[i] = cursor->expr.elems[1];
+                cursor = cursor->expr.elems[2];
+            }
+        }
+    } else if (rhs_expr->kind == ATOM_EXPR) {
+        if ((uint64_t)rhs_expr->expr.len > UINT32_MAX) {
+            grammar_set_error(error_buf, error_buf_size,
+                              "Prod rhs is too long");
+            return false;
+        }
+        prod->rhs_len = (uint32_t)rhs_expr->expr.len;
+        items = rhs_expr->expr.elems;
+    } else {
+        grammar_set_error(error_buf, error_buf_size,
+                          "Prod rhs must be an expression list");
+        return false;
+    }
     if (prod->rhs_len == 0) {
         prod->rhs = NULL;
         return true;
     }
     prod->rhs = cetta_malloc(sizeof(CettaLpNativeSymbol) * prod->rhs_len);
     for (i = 0; i < prod->rhs_len; i++) {
-        Atom *item = rhs_expr->expr.elems[i];
+        Atom *item = items[i];
         CettaLpNativeSymbol *slot = &prod->rhs[i];
         memset(slot, 0, sizeof(*slot));
         if (atom_expr_head_is(item, "Tm") && item->expr.len == 2) {
@@ -100,6 +163,7 @@ static bool parse_rhs(Atom *rhs_expr,
             if (!atom_to_symbol_id(item->expr.elems[1], &slot->name)) {
                 grammar_set_error(error_buf, error_buf_size,
                                   "Tm expects a symbol terminal");
+                free(owns_items ? items : NULL);
                 return false;
             }
             continue;
@@ -109,6 +173,7 @@ static bool parse_rhs(Atom *rhs_expr,
             if (!atom_to_symbol_id(item->expr.elems[1], &slot->name)) {
                 grammar_set_error(error_buf, error_buf_size,
                                   "Hl expects a symbol nonterminal");
+                free(owns_items ? items : NULL);
                 return false;
             }
             continue;
@@ -119,6 +184,7 @@ static bool parse_rhs(Atom *rhs_expr,
                 !atom_to_symbol_id(item->expr.elems[2], &slot->scope)) {
                 grammar_set_error(error_buf, error_buf_size,
                                   "HlB expects symbol nonterminal and scope");
+                free(owns_items ? items : NULL);
                 return false;
             }
             (*binder_hole_count)++;
@@ -126,8 +192,10 @@ static bool parse_rhs(Atom *rhs_expr,
         }
         grammar_set_error(error_buf, error_buf_size,
                           "unsupported mkGram rhs item");
+        free(owns_items ? items : NULL);
         return false;
     }
+    free(owns_items ? items : NULL);
     return true;
 }
 
@@ -136,6 +204,7 @@ static bool parse_entry(CettaLpNativeGrammar *grammar,
                         uint32_t *prod_cap,
                         uint32_t *var_cap,
                         uint32_t *lex_cap,
+                        uint32_t *entry_cap,
                         char *error_buf,
                         size_t error_buf_size) {
     if (!entry || entry->kind != ATOM_EXPR || entry->expr.len == 0) {
@@ -159,7 +228,9 @@ static bool parse_entry(CettaLpNativeGrammar *grammar,
                               "LexD expects symbol class and nonterminal");
             return false;
         }
-        return true;
+        return grammar_entry_push(grammar, entry_cap,
+                                  CETTA_LP_NATIVE_ENTRY_LEX,
+                                  grammar->lex_len - 1u);
     }
     if (atom_is_symbol(entry->expr.elems[0], "VarD")) {
         CettaLpNativeVarDecl *decl;
@@ -177,7 +248,9 @@ static bool parse_entry(CettaLpNativeGrammar *grammar,
                               "VarD expects symbol atom and nonterminal");
             return false;
         }
-        return true;
+        return grammar_entry_push(grammar, entry_cap,
+                                  CETTA_LP_NATIVE_ENTRY_VAR,
+                                  grammar->var_len - 1u);
     }
     if (atom_is_symbol(entry->expr.elems[0], "Prod")) {
         CettaLpNativeProduction *prod;
@@ -200,7 +273,9 @@ static bool parse_entry(CettaLpNativeGrammar *grammar,
                        error_buf, error_buf_size)) {
             return false;
         }
-        return true;
+        return grammar_entry_push(grammar, entry_cap,
+                                  CETTA_LP_NATIVE_ENTRY_PRODUCTION,
+                                  grammar->production_len - 1u);
     }
     grammar_set_error(error_buf, error_buf_size,
                       "unsupported mkGram entry head");
@@ -217,6 +292,7 @@ bool cetta_lp_native_grammar_load_forms(CettaLpNativeGrammar *out,
     uint32_t prod_cap = 0;
     uint32_t var_cap = 0;
     uint32_t lex_cap = 0;
+    uint32_t entry_cap = 0;
     Atom *target = NULL;
     Atom *rhs = NULL;
 
@@ -255,11 +331,50 @@ bool cetta_lp_native_grammar_load_forms(CettaLpNativeGrammar *out,
     }
     for (i = 0; i < (int)rhs->expr.elems[1]->expr.len; i++) {
         if (!parse_entry(out, rhs->expr.elems[1]->expr.elems[i],
-                         &prod_cap, &var_cap, &lex_cap,
+                         &prod_cap, &var_cap, &lex_cap, &entry_cap,
                          error_buf, error_buf_size)) {
             cetta_lp_native_grammar_free(out);
             return false;
         }
+    }
+    return true;
+}
+
+bool cetta_lp_native_grammar_load_list(CettaLpNativeGrammar *out,
+                                       Atom *grammar_list,
+                                       char *error_buf,
+                                       size_t error_buf_size) {
+    uint32_t prod_cap = 0;
+    uint32_t var_cap = 0;
+    uint32_t lex_cap = 0;
+    uint32_t entry_cap = 0;
+    Atom *cursor;
+
+    if (!out || !grammar_list) {
+        grammar_set_error(error_buf, error_buf_size,
+                          "bad grammar list loader args");
+        return false;
+    }
+
+    cetta_lp_native_grammar_free(out);
+    cetta_lp_native_grammar_init(out);
+    cursor = grammar_list;
+    while (!atom_is_symbol(cursor, "Nil")) {
+        Atom *entry;
+
+        if (!atom_expr_head_is(cursor, "Cons") || cursor->expr.len != 3) {
+            grammar_set_error(error_buf, error_buf_size,
+                              "grammar must be a proper Cons/Nil list");
+            cetta_lp_native_grammar_free(out);
+            return false;
+        }
+        entry = cursor->expr.elems[1];
+        if (!parse_entry(out, entry, &prod_cap, &var_cap, &lex_cap,
+                         &entry_cap, error_buf, error_buf_size)) {
+            cetta_lp_native_grammar_free(out);
+            return false;
+        }
+        cursor = cursor->expr.elems[2];
     }
     return true;
 }
@@ -279,11 +394,13 @@ bool cetta_lp_native_grammar_load_file(CettaLpNativeGrammar *out,
     if (form_count < 0) {
         grammar_set_error(error_buf, error_buf_size,
                           "parse_metta_file failed for %s", filename);
+        free(forms);
         arena_free(&arena);
         return false;
     }
     ok = cetta_lp_native_grammar_load_forms(out, forms, form_count, def_name,
                                             error_buf, error_buf_size);
+    free(forms);
     arena_free(&arena);
     return ok;
 }
@@ -2893,8 +3010,8 @@ static bool gll_descvec_ensure_cap(CettaLpNativeGllDescriptorVec *vec,
 static bool gll_descvec_append(CettaLpNativeGllDescriptorVec *vec,
                                const CettaLpNativeGllDescriptor *desc,
                                uint32_t *out_idx) {
-    uint64_t lo;
-    uint32_t hi;
+    uint64_t lo = 0;
+    uint32_t hi = 0;
 
     if (!vec || !desc || !out_idx ||
         !gll_descvec_ensure_cap(vec, vec->len + 1u)) {

@@ -357,6 +357,86 @@ int main(void) {
     Space right;
 
     init_test_symbols(&symbols);
+
+    {
+        Arena equation_persistent;
+        Arena equation_scratch;
+        TermUniverse equation_universe;
+        Space equation_space;
+        char name[64];
+
+        arena_init(&equation_persistent);
+        arena_init(&equation_scratch);
+        term_universe_init(&equation_universe);
+        term_universe_set_persistent_arena(&equation_universe,
+                                           &equation_persistent);
+        space_init_with_universe(&equation_space, &equation_universe);
+
+        SymbolId source_head =
+            symbol_intern_cstr(g_symbols, "equation-head-source");
+        for (uint32_t i = 0; i < 255; i++) {
+            snprintf(name, sizeof(name), "equation-head-filler-a-%u", i);
+            (void)symbol_intern_cstr(g_symbols, name);
+        }
+        SymbolId colliding_head =
+            symbol_intern_cstr(g_symbols, "equation-head-collision");
+        for (uint32_t i = 0; i < 255; i++) {
+            snprintf(name, sizeof(name), "equation-head-filler-b-%u", i);
+            (void)symbol_intern_cstr(g_symbols, name);
+        }
+        SymbolId absent_colliding_head =
+            symbol_intern_cstr(g_symbols, "equation-head-absent-collision");
+        assert(colliding_head - source_head == 256);
+        assert(absent_colliding_head - colliding_head == 256);
+
+        Atom *source_lhs_elems[1] = {
+            atom_symbol_id(&equation_scratch, source_head),
+        };
+        Atom *source_lhs = atom_expr(&equation_scratch, source_lhs_elems, 1);
+        space_add(&equation_space,
+                  atom_expr3(&equation_scratch,
+                             atom_symbol_id(&equation_scratch,
+                                            g_builtin_syms.equals),
+                             source_lhs, atom_true(&equation_scratch)));
+        assert(space_equations_may_match_known_head(&equation_space,
+                                                    source_head));
+        assert(!space_equations_may_match_known_head(&equation_space,
+                                                     colliding_head));
+        assert(!space_equations_may_match_known_head(&equation_space,
+                                                     absent_colliding_head));
+
+        Atom *colliding_lhs_elems[1] = {
+            atom_symbol_id(&equation_scratch, colliding_head),
+        };
+        Atom *colliding_lhs =
+            atom_expr(&equation_scratch, colliding_lhs_elems, 1);
+        space_add(&equation_space,
+                  atom_expr3(&equation_scratch,
+                             atom_symbol_id(&equation_scratch,
+                                            g_builtin_syms.equals),
+                             colliding_lhs, atom_true(&equation_scratch)));
+        assert(space_equations_may_match_known_head(&equation_space,
+                                                    source_head));
+        assert(space_equations_may_match_known_head(&equation_space,
+                                                    colliding_head));
+        assert(!space_equations_may_match_known_head(&equation_space,
+                                                     absent_colliding_head));
+
+        space_add(&equation_space,
+                  atom_expr3(&equation_scratch,
+                             atom_symbol_id(&equation_scratch,
+                                            g_builtin_syms.equals),
+                             atom_var_with_id(&equation_scratch, "wildcard", 1),
+                             atom_true(&equation_scratch)));
+        assert(space_equations_may_match_known_head(&equation_space,
+                                                    absent_colliding_head));
+
+        space_free(&equation_space);
+        term_universe_free(&equation_universe);
+        arena_free(&equation_scratch);
+        arena_free(&equation_persistent);
+    }
+
     arena_init(&persistent);
     arena_init(&scratch_a);
     arena_init(&scratch_b);

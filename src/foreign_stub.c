@@ -108,6 +108,9 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
     free(rt);
 }
 
+void cetta_foreign_global_shutdown(void) {
+}
+
 bool cetta_foreign_load_module(CettaForeignRuntime *rt,
                                const char *canonical_path,
                                Space *target_space,
