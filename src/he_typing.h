@@ -76,7 +76,8 @@ typedef enum {
     CETTA_HE_NORMALIZE_DEPTH,
     CETTA_HE_NORMALIZE_AMBIGUOUS,
     CETTA_HE_NORMALIZE_NO_RESULT,
-    CETTA_HE_NORMALIZE_INADMISSIBLE
+    CETTA_HE_NORMALIZE_INADMISSIBLE,
+    CETTA_HE_NORMALIZE_PROVISIONAL
 } CettaHeNormalizeStatus;
 
 typedef enum {
@@ -92,19 +93,26 @@ typedef enum {
     CETTA_HE_VAR_ELABORATION
 } CettaHeVariableClass;
 
-/* One caller-owned ledger for the bounded HE-typing operations used by Prime.
-   Existing HE presentation APIs keep their historical value-budget behavior;
-   the budgeted variants below consume this ledger monotonically. */
+/* One caller-owned ledger for the resource-aware HE-typing operations used by
+   Prime. `steps_*` describe an optional producer bound for evaluation, search,
+   and type-level computation. Finite structural checking is measured in
+   `work_steps_observed` but never failed by that producer bound. */
 typedef struct {
+    bool steps_limited;
     uint64_t steps_initial;
     uint64_t steps_remaining;
-    uint32_t depth_limit;
+    uint64_t steps_spent;
+    uint64_t work_steps_observed;
     uint32_t max_depth_observed;
     uint32_t type_capacity;
     bool type_capacity_exhausted;
+    bool evaluator_stack_exhausted;
+    bool evaluator_capacity_exhausted;
+    bool allow_marked_user_type_functions;
 } CettaHeTypingBudget;
 
 void he_typing_budget_init(CettaHeTypingBudget *budget, uint64_t steps);
+void he_typing_budget_init_unbounded(CettaHeTypingBudget *budget);
 
 const char *he_typing_edge_name(CettaHeTypingEdge edge);
 bool he_typing_edge_is_exact_or_structural(CettaHeTypingEdge edge);
@@ -116,7 +124,7 @@ CettaHeNormalizeStatus he_typing_normalize_type_status(
     Arena *a, Space *space, Atom *type, uint64_t fuel, Atom **normalized_out);
 CettaHeNormalizeStatus he_typing_normalize_type_status_budgeted(
     Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
-    Atom **normalized_out);
+    Atom **normalized_out) __attribute__((weak));
 CettaHeRefinementStatus he_typing_check_refinement_status(
     Arena *a, Space *space, Atom *type, uint64_t fuel, Atom **detail_out);
 CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(

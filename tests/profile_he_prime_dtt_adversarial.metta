@@ -17,7 +17,13 @@
 ; positive control: an exact witness IS exact-or-structural
 (: nat-witness (Wrap Nat))
 !(assertEqual (search-first-inhabitant &self (Wrap Nat) 0 10000)
-              (he-accept (: nat-witness (Wrap Nat))))
+              (he-accept
+                (typed-answer-v2
+                  (: nat-witness (Wrap Nat))
+                  (answer-substitution-v2
+                    (query-substitution-v1)
+                    (elaboration-substitution-v1)
+                    (answer-constraints-v1)))))
 ; the top tag stays visible and is not exact-or-structural either
 !(assertEqual (is-consistent (Wrap Nat) (Wrap Atom))
               (he-accept top))

@@ -139,6 +139,7 @@
 (chaining-rule EvidenceElimination)
 
 (: ZeroLTSucc (⍃ Z (S $k)))
+(type-scheme ZeroLTSucc)
 (: SuccMonotonicity
    (-> (: $order-proof (⍃ $x $y))
        (⍃ (S $x) (S $y))))

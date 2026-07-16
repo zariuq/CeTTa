@@ -1,12 +1,9 @@
-/* MeTTa-Prime v0: a bounded executable semantic package over CeTTa's shared
- * evaluator and unified dependent type engine.  The package exposes explicit
- * judgments and structured four-way verdicts.  It does not make search or a
- * computed normal form into MIK theoremhood; those correspondence obligations
- * are recorded in the public specification. */
+/* MeTTa-Prime v0: an executable semantic package over CeTTa's shared evaluator
+ * and unified dependent type engine. Ordinary judgments run until completion;
+ * callers may explicitly request a bounded, resource-reporting judgment. */
 
 #include "prime_semantics.h"
 
-#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,21 +14,16 @@
 #include "space.h"
 #include "symbol.h"
 
-#define PRIME_SCHEMA_VERSION 0
-#define PRIME_DEFAULT_FUEL 100000u
+#define PRIME_DEF_SCHEMA_VERSION 1
+#define PRIME_DIALECT_MAJOR 0
+#define PRIME_DIALECT_MINOR 2
 
-static const char *const PRIME_PACKAGE_CANONICAL =
-    "metta-prime-v0|syntax=metta-sexpr|binding=named-scoped|"
-    "typing=form,synth,check,analyze,convert,refine,may,must|"
-    "unknown=dynamic-nontransitive|top=expected-atom-only|"
-    "dependent=explicit-telescope|type-computation=marked-snapshot-bounded|"
-    "nondeterminism=explicit-answer-bag-with-completeness|"
-    "runtime-bag-correspondence=open|"
-    "results=established,refuted,undetermined,incomplete|"
-    "information=incomplete-and-undetermined-below-determinate|"
-    "resources=one-aggregate-reported-ledger|"
-    "effects=ordinary-runtime-plus-checked-type-boundary|"
-    "trust=producer-untrusted-checker-rederives";
+static const char *const PRIME_JUDGMENT_NAMES[] = {
+    "Form", "Synth", "Check", "Analyze", "Convert", "Refine", "May",
+    "Must"};
+
+static const char *const PRIME_RESULT_NAMES[] = {
+    "Established", "Refuted", "Undetermined", "Incomplete"};
 
 static Atom *prime_sym(Arena *a, const char *name) {
     return atom_symbol(a, name);
@@ -48,6 +40,14 @@ static Atom *prime_expr2(Arena *a, const char *head, Atom *x) {
 
 static Atom *prime_expr3(Arena *a, const char *head, Atom *x, Atom *y) {
     return atom_expr3(a, prime_sym(a, head), x, y);
+}
+
+static Atom *prime_named_list(Arena *a, const char *head,
+                              const char *const *names, size_t count) {
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (count + 1u));
+    items[0] = prime_sym(a, head);
+    for (size_t i = 0; i < count; i++) items[i + 1u] = prime_sym(a, names[i]);
+    return atom_expr(a, items, (CettaExprIndex)(count + 1u));
 }
 
 static Atom *prime_verdict(Arena *a, const char *status, Atom *judgment,
@@ -92,7 +92,7 @@ static bool arg_space(Atom *atom, Space **out) {
     return false;
 }
 
-static bool arg_fuel(Atom *atom, uint64_t *out) {
+static bool arg_budget(Atom *atom, uint64_t *out) {
     if (!atom || atom->kind != ATOM_GROUNDED ||
         atom->ground.gkind != GV_INT || atom->ground.ival <= 0 ||
         atom->ground.ival > INT_MAX) {
@@ -121,33 +121,40 @@ static const char *const PRIME_RESOURCE_PHASE_NAMES[] = {
     "formation", "synthesis", "normalization", "checking", "refinement",
     "evaluation"};
 
-static void prime_resource_init(PrimeResourceLedger *ledger, uint64_t steps) {
+static void prime_resource_init(PrimeResourceLedger *ledger,
+                                bool steps_limited, uint64_t steps) {
     memset(ledger, 0, sizeof(*ledger));
-    he_typing_budget_init(&ledger->typing, steps);
+    if (steps_limited)
+        he_typing_budget_init(&ledger->typing, steps);
+    else
+        he_typing_budget_init_unbounded(&ledger->typing);
+    ledger->typing.allow_marked_user_type_functions = false;
 }
 
 static bool prime_resource_spend(PrimeResourceLedger *ledger,
                                  PrimeResourcePhase phase, uint64_t amount) {
-    if (!ledger || phase >= PRIME_RESOURCE_PHASE_COUNT ||
-        ledger->typing.steps_remaining < amount) {
-        if (ledger) ledger->typing.steps_remaining = 0;
-        return false;
-    }
-    ledger->typing.steps_remaining -= amount;
+    if (!ledger || phase >= PRIME_RESOURCE_PHASE_COUNT) return false;
+    if (!ledger->typing.steps_limited) return true;
+    if (ledger->typing.work_steps_observed > UINT64_MAX - amount)
+        ledger->typing.work_steps_observed = UINT64_MAX;
+    else
+        ledger->typing.work_steps_observed += amount;
     ledger->phase_spent[phase] += amount;
     return true;
 }
 
 static uint64_t prime_resource_phase_begin(const PrimeResourceLedger *ledger) {
-    return ledger ? ledger->typing.steps_remaining : 0;
+    return ledger && ledger->typing.steps_limited
+        ? ledger->typing.work_steps_observed : 0;
 }
 
 static void prime_resource_phase_end(PrimeResourceLedger *ledger,
                                      PrimeResourcePhase phase,
                                      uint64_t before) {
     if (!ledger || phase >= PRIME_RESOURCE_PHASE_COUNT) return;
-    uint64_t after = ledger->typing.steps_remaining;
-    if (before > after) ledger->phase_spent[phase] += before - after;
+    if (!ledger->typing.steps_limited) return;
+    uint64_t after = ledger->typing.work_steps_observed;
+    if (after > before) ledger->phase_spent[phase] += after - before;
 }
 
 static Atom *prime_resource_ledger_atom(Arena *a,
@@ -156,34 +163,46 @@ static Atom *prime_resource_ledger_atom(Arena *a,
     uint64_t remaining = ledger->typing.steps_remaining;
     Atom **phases = arena_alloc(
         a, sizeof(Atom *) * (PRIME_RESOURCE_PHASE_COUNT + 1u));
-    phases[0] = prime_sym(a, "PhaseSpend");
+    phases[0] = prime_sym(a, "ObservedWork");
     for (uint32_t i = 0; i < PRIME_RESOURCE_PHASE_COUNT; i++) {
         phases[i + 1u] = prime_expr2(
             a, PRIME_RESOURCE_PHASE_NAMES[i],
             atom_int(a, (int64_t)ledger->phase_spent[i]));
     }
-    Atom *limits_items[4] = {
+    Atom *limits_items[5] = {
         prime_sym(a, "DeclaredLimits"),
-        prime_expr2(a, "depth", atom_int(a, ledger->typing.depth_limit)),
-        prime_expr2(a, "type-capacity",
-                    atom_int(a, ledger->typing.type_capacity)),
-        prime_expr2(a, "normalization-continuation-reserve", atom_int(a, 1))};
-    Atom *observed_items[3] = {
+        prime_expr2(a, "structural-type-traversal",
+                    prime_sym(a, "DynamicWorklists")),
+        prime_expr2(a, "type-storage", prime_sym(a, "Dynamic")),
+        prime_expr2(a, "applicability-storage", prime_sym(a, "Dynamic")),
+        prime_expr2(a, "evaluator-stack-budget-bytes",
+                    atom_int(a, (int64_t)
+                        eval_current_c_stack_budget_bytes()))};
+    Atom *observed_items[5] = {
         prime_sym(a, "Observed"),
         prime_expr2(a, "max-depth",
                     atom_int(a, ledger->typing.max_depth_observed)),
-        prime_expr2(a, "type-capacity-exhausted",
+        prime_expr2(a, "type-storage-exhausted",
                     ledger->typing.type_capacity_exhausted
+                        ? atom_true(a) : atom_false(a)),
+        prime_expr2(a, "evaluator-stack-exhausted",
+                    ledger->typing.evaluator_stack_exhausted
+                        ? atom_true(a) : atom_false(a)),
+        prime_expr2(a, "applicability-storage-exhausted",
+                    ledger->typing.evaluator_capacity_exhausted
                         ? atom_true(a) : atom_false(a))};
-    Atom *items[7] = {
+    Atom *items[8] = {
         prime_sym(a, "ResourceLedgerV1"),
-        prime_expr2(a, "initial", atom_int(a, (int64_t)initial)),
-        prime_expr2(a, "spent", atom_int(a, (int64_t)(initial - remaining))),
-        prime_expr2(a, "remaining", atom_int(a, (int64_t)remaining)),
+        prime_expr2(a, "mode", prime_sym(a, "ExplicitProducerBound")),
+        prime_expr2(a, "producer-initial", atom_int(a, (int64_t)initial)),
+        prime_expr2(a, "producer-spent",
+                    atom_int(a, (int64_t)ledger->typing.steps_spent)),
+        prime_expr2(a, "producer-remaining",
+                    atom_int(a, (int64_t)remaining)),
         atom_expr(a, phases, PRIME_RESOURCE_PHASE_COUNT + 1u),
-        atom_expr(a, limits_items, 4),
-        atom_expr(a, observed_items, 3)};
-    return atom_expr(a, items, 7);
+        atom_expr(a, limits_items, 5),
+        atom_expr(a, observed_items, 5)};
+    return atom_expr(a, items, 8);
 }
 
 static Atom *prime_attach_ledger(Arena *a, Atom *verdict,
@@ -206,51 +225,105 @@ static Atom *prime_attach_ledger(Arena *a, Atom *verdict,
     return atom_expr(a, items, 4);
 }
 
-static uint64_t fnv1a64(const char *text) {
-    uint64_t hash = UINT64_C(14695981039346656037);
-    while (*text) {
-        hash ^= (unsigned char)*text++;
-        hash *= UINT64_C(1099511628211);
-    }
-    return hash;
-}
-
-static Atom *prime_package_atom(Arena *a) {
-    char digest[32];
+Atom *prime_semantics_package_atom(Arena *a) {
     CettaHeTypingBudget declared_budget;
-    he_typing_budget_init(&declared_budget, 0);
-    snprintf(digest, sizeof(digest), "%016" PRIx64,
-             fnv1a64(PRIME_PACKAGE_CANONICAL));
+    he_typing_budget_init_unbounded(&declared_budget);
 
-    Atom *identity_items[6] = {
-        prime_sym(a, "Identity"), prime_sym(a, "prime"),
-        atom_int(a, PRIME_SCHEMA_VERSION), atom_string(a, "metta-prime-v0"),
-        prime_expr3(a, "Digest", prime_sym(a, "FNV1a64"),
-                    atom_string(a, digest)),
-        prime_expr2(a, "CanonicalDescriptor",
-                    atom_string(a, PRIME_PACKAGE_CANONICAL))};
-    Atom *identity = atom_expr(a, identity_items, 6);
+    Atom *identity_items[5] = {
+        prime_sym(a, "PrimeIdentityV1"),
+        prime_expr2(a, "Language", prime_sym(a, "prime")),
+        prime_expr2(a, "LongName", prime_sym(a, "metta-prime")),
+        prime_expr2(a, "SchemaVersion",
+                    atom_int(a, PRIME_DEF_SCHEMA_VERSION)),
+        atom_expr3(a, prime_sym(a, "DialectVersion"),
+                   atom_int(a, PRIME_DIALECT_MAJOR),
+                   atom_int(a, PRIME_DIALECT_MINOR))};
+    Atom *identity = atom_expr(a, identity_items, 5);
 
-    Atom *syntax_items[5] = {
-        prime_sym(a, "Syntax"), prime_sym(a, "HomoiconicSExpressions"),
-        prime_sym(a, "NamedScopedVariables"),
+    Atom *syntax_items[4] = {
+        prime_sym(a, "SyntaxV1"), prime_sym(a, "HomoiconicSExpressions"),
         prime_sym(a, "ExplicitBangEvaluation"),
         prime_sym(a, "QuotedJudgmentData")};
-    Atom *syntax = atom_expr(a, syntax_items, 5);
+    Atom *syntax = atom_expr(a, syntax_items, 4);
+    Atom *binder_items[3] = {
+        prime_sym(a, "BindersV1"), prime_sym(a, "NamedScopedVariables"),
+        prime_sym(a, "InlineTypedTelescopeBinders")};
+    Atom *binders = atom_expr(a, binder_items, 3);
+    Atom *equation_items[3] = {
+        prime_sym(a, "EquationsV1"),
+        prime_sym(a, "StructuralAtomIdentity"),
+        prime_sym(a, "OrdinaryUserRulesExcludedFromDefinitionalEquality")};
+    Atom *equations = atom_expr(a, equation_items, 3);
+    Atom *runtime_r_items[4] = {
+        prime_sym(a, "RuntimeR"), prime_sym(a, "SharedCeTTaReduction"),
+        prime_sym(a, "Directional"), prime_sym(a, "Nondeterministic")};
+    Atom *conversion_r_items[4] = {
+        prime_sym(a, "ConversionR"),
+        prime_sym(a, "TypePureGroundedFragment"),
+        prime_expr2(a, "ReplaySchema",
+                    prime_sym(a, "PrimeConversionCertificateV1")),
+        prime_sym(a, "MarkedUserFunctionsRemainProvisional")};
+    Atom *rewrite_items[3] = {
+        prime_sym(a, "RewritesV1"), atom_expr(a, runtime_r_items, 4),
+        atom_expr(a, conversion_r_items, 4)};
+    Atom *rewrites = atom_expr(a, rewrite_items, 3);
+    Atom *language_def_items[5] = {
+        prime_sym(a, "LanguageDefV1"), syntax, binders, equations, rewrites};
+    Atom *language_def = atom_expr(a, language_def_items, 5);
 
-    Atom *judgment_items[9] = {
-        prime_sym(a, "Judgments"), prime_sym(a, "Form"),
-        prime_sym(a, "Synth"), prime_sym(a, "Check"),
-        prime_sym(a, "Analyze"), prime_sym(a, "Convert"),
-        prime_sym(a, "Refine"), prime_sym(a, "May"),
-        prime_sym(a, "Must")};
-    Atom *judgments = atom_expr(a, judgment_items, 9);
+    const char *const variable_classes[] = {
+        he_typing_variable_class_name(CETTA_HE_VAR_RIGID),
+        he_typing_variable_class_name(CETTA_HE_VAR_SCHEME),
+        he_typing_variable_class_name(CETTA_HE_VAR_ELABORATION)};
+    Atom *marker_items[3] = {
+        prime_sym(a, "SchemeMarkersV1"),
+        prime_expr2(a, "ExplicitScheme", prime_sym(a, "type-scheme")),
+        prime_expr2(a, "RuleScheme", prime_sym(a, "chaining-rule"))};
+    Atom *substitution_items[5] = {
+        prime_sym(a, "SubstitutionEvidenceV1"),
+        prime_sym(a, "typed-answer-v2"),
+        prime_sym(a, "query-substitution-v1"),
+        prime_sym(a, "elaboration-substitution-v1"),
+        prime_sym(a, "answer-constraints-v1")};
+    Atom *context_items[7] = {
+        prime_sym(a, "ContextsAndSchemesV1"),
+        prime_named_list(a, "VariableClasses", variable_classes, 3),
+        atom_expr(a, marker_items, 3),
+        prime_sym(a, "UnmarkedOpenDeclarationsNotGeneralized"),
+        prime_sym(a, "FreshElaborationVariables"),
+        prime_sym(a, "RigidVariablesNeverSolved"),
+        atom_expr(a, substitution_items, 5)};
+    Atom *contexts = atom_expr(a, context_items, 7);
 
-    Atom *result_items[5] = {
-        prime_sym(a, "Results"), prime_sym(a, "Established"),
-        prime_sym(a, "Refuted"), prime_sym(a, "Undetermined"),
-        prime_sym(a, "Incomplete")};
-    Atom *results = atom_expr(a, result_items, 5);
+    Atom *judgments = prime_named_list(
+        a, "Judgments", PRIME_JUDGMENT_NAMES,
+        sizeof PRIME_JUDGMENT_NAMES / sizeof PRIME_JUDGMENT_NAMES[0]);
+    const char *const edge_names[] = {
+        he_typing_edge_name(CETTA_HE_EDGE_EXACT),
+        he_typing_edge_name(CETTA_HE_EDGE_STRUCTURAL),
+        he_typing_edge_name(CETTA_HE_EDGE_DYNAMIC),
+        he_typing_edge_name(CETTA_HE_EDGE_TOP),
+        he_typing_edge_name(CETTA_HE_EDGE_META_STAGING)};
+    Atom *refinement_items[3] = {
+        prime_sym(a, "RefinementRulesV1"),
+        prime_expr2(a, "IndexRefinementMarker",
+                    prime_sym(a, "type-index-refinement")),
+        prime_expr2(a, "PredicateRequestMarker",
+                    prime_sym(a, "type-level-function"))};
+    Atom *typing_items[8] = {
+        prime_sym(a, "TypingRulesV1"), judgments,
+        prime_named_list(a, "ConsistencyEdges", edge_names, 5),
+        prime_named_list(a, "CheckedEdges", edge_names, 2),
+        prime_sym(a, "DependentTelescopes"),
+        prime_sym(a, "BidirectionalSynthesisAndChecking"),
+        prime_expr2(a, "Convert",
+                    prime_sym(a, "ComputedConversionEvidenceNotDefEq")),
+        atom_expr(a, refinement_items, 3)};
+    Atom *typing = atom_expr(a, typing_items, 8);
+
+    Atom *results = prime_named_list(
+        a, "Results", PRIME_RESULT_NAMES,
+        sizeof PRIME_RESULT_NAMES / sizeof PRIME_RESULT_NAMES[0]);
 
     Atom *information_items[8] = {
         prime_sym(a, "InformationOrderV1"),
@@ -268,62 +341,61 @@ static Atom *prime_package_atom(Arena *a) {
                     prime_sym(a, "Refuted")),
         prime_expr2(a, "BudgetLaw", prime_sym(a, "DeterminateStable"))};
     Atom *information = atom_expr(a, information_items, 8);
-
-    Atom *resource_items[7] = {
-        prime_sym(a, "ResourcePolicyV1"),
-        prime_sym(a, "CallerDeclaredAggregateSteps"),
-        prime_expr2(a, "DepthLimit",
-                    atom_int(a, declared_budget.depth_limit)),
-        prime_expr2(a, "TypeCapacity",
-                    atom_int(a, declared_budget.type_capacity)),
-        prime_expr2(a, "NormalizationContinuationReserve", atom_int(a, 1)),
-        prime_sym(a, "AllLimitsReportedInVerdict"),
-        prime_sym(a, "TotalityRequiresCertifiedCompletion")};
-    Atom *resources = atom_expr(a, resource_items, 7);
-
-    Atom *typing_items[10] = {
-        prime_sym(a, "Typing"), prime_sym(a, "DependentTelescopes"),
-        prime_sym(a, "BidirectionalJudgments"),
-        prime_sym(a, "RigidScopedVariables"),
-        prime_sym(a, "ExplicitSchemeInstantiation"),
-        prime_sym(a, "ReturnedElaborationSubstitution"),
-        prime_expr2(a, "DynamicUnknown", atom_undefined_type(a)),
-        prime_expr2(a, "ExpectedTop", atom_atom_type(a)),
-        prime_sym(a, "CheckedExactOrStructural"),
-        prime_sym(a, "GradualEdgesRequireBoundaryEvidence")};
-    Atom *typing = atom_expr(a, typing_items, 10);
-
-    Atom *runtime_items[6] = {
-        prime_sym(a, "Runtime"),
-        prime_sym(a, "SharedCeTTaEvaluator"),
-        prime_sym(a, "MarkedTypeFunctionsOnly"),
-        prime_sym(a, "SnapshotContained"),
-        prime_sym(a, "FuelBounded"),
-        prime_sym(a, "UniqueNormalResult")};
-    Atom *runtime = atom_expr(a, runtime_items, 6);
-
     Atom *nondet_items[7] = {
-        prime_sym(a, "Nondeterminism"),
+        prime_sym(a, "NondeterminismV1"),
         prime_sym(a, "ExplicitAnswerBags"),
-        prime_sym(a, "ExplicitCompleteness"),
+        prime_sym(a, "CertifiedCompletionRequiredForTotality"),
         prime_sym(a, "PreserveFailures"),
         prime_sym(a, "PreserveDuplicates"),
         prime_sym(a, "BranchIndexedEvidence"),
         prime_sym(a, "RuntimeBagCorrespondenceOpen")};
-    Atom *nondet = atom_expr(a, nondet_items, 7);
+    Atom *result_algebra_items[4] = {
+        prime_sym(a, "ResultAlgebraV1"), results, information,
+        atom_expr(a, nondet_items, 7)};
+    Atom *result_algebra = atom_expr(a, result_algebra_items, 4);
 
-    Atom *trust_items[6] = {
-        prime_sym(a, "Trust"), prime_sym(a, "SearchIsProducer"),
-        prime_sym(a, "TypingIsRechecked"),
-        prime_sym(a, "ComputedNFIsProvisionalEvidence"),
+    Atom *resource_items[11] = {
+        prime_sym(a, "ResourcePolicyV1"),
+        prime_sym(a, "NoImplicitStepBound"),
+        prime_sym(a, "ExplicitProducerBudget"),
+        prime_sym(a, "BoundedProducersReportResourceLedger"),
+        prime_sym(a, "ResourceStatusVisibleWhenSemanticallyRelevant"),
+        prime_sym(a, "UnboundedModeDoesNotMeterSteps"),
+        prime_expr2(a, "StructuralTypeTraversal",
+                    prime_sym(a, "DynamicWorklists")),
+        prime_expr2(a, "TypeStorage", prime_sym(a, "Dynamic")),
+        prime_expr2(a, "ApplicabilityStorage", prime_sym(a, "Dynamic")),
+        prime_expr2(a, "EvaluatorStackBudget",
+                    prime_sym(a, "RuntimeSelectedAndReported")),
+        prime_sym(a, "TotalityRequiresCertifiedCompletion")};
+    Atom *resources = atom_expr(a, resource_items, 11);
+    Atom *effect_items[5] = {
+        prime_sym(a, "EffectsV1"), prime_sym(a, "OrdinaryRuntimeEffects"),
+        prime_sym(a, "SnapshotContainedMarkedTypeFunctions"),
+        prime_sym(a, "DirectEffectfulTypeOperationsInadmissible"),
+        prime_sym(a, "TransitiveEffectAdmissionOpen")};
+    Atom *effects_resources_items[3] = {
+        prime_sym(a, "EffectsAndResourcesV1"),
+        atom_expr(a, effect_items, 5), resources};
+    Atom *effects_resources = atom_expr(a, effects_resources_items, 3);
+
+    Atom *evidence_items[11] = {
+        prime_sym(a, "EvidenceSchemaV1"), prime_sym(a, "PrimeVerdict"),
+        prime_sym(a, "PrimeEvidenceV1"), prime_sym(a, "ResourceLedgerV1"),
+        prime_sym(a, "typed-answer-v2"),
+        prime_sym(a, "answer-substitution-v2"),
+        prime_sym(a, "SearchAndEvaluationAreUntrustedProducers"),
+        prime_sym(a, "TypingRecheckedBeforeAcceptance"),
+        prime_sym(a, "ConversionCertificatesReplayChecked"),
         prime_sym(a, "CertificateCorrespondenceOpen"),
-        prime_sym(a, "SourcePackageHashPinnedExternally")};
-    Atom *trust = atom_expr(a, trust_items, 6);
+        prime_sym(a, "SourcePackageHashRequiredExternally")};
+    Atom *evidence = atom_expr(a, evidence_items, 11);
 
-    Atom *package_items[11] = {
-        prime_sym(a, "PrimeSemanticPackageV0"), identity, syntax, judgments,
-        results, information, resources, typing, runtime, nondet, trust};
-    return atom_expr(a, package_items, 11);
+    Atom *package_items[8] = {
+        prime_sym(a, "PrimeDefV1"), identity, language_def, contexts, typing,
+        result_algebra, effects_resources, evidence};
+    Atom *package = atom_expr(a, package_items, 8);
+    return prime_semantics_validate_package(package) ? package : NULL;
 }
 
 typedef enum {
@@ -337,6 +409,197 @@ static bool is_symbol_named(Atom *atom, const char *name) {
     return atom && atom_is_symbol(atom, name);
 }
 
+static bool prime_schema_expr(Atom *atom, const char *head,
+                              CettaExprLen len) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == len &&
+           is_symbol_named(atom->expr.elems[0], head);
+}
+
+static bool prime_exact_symbol_list(Atom *atom, const char *head,
+                                    const char *const *names,
+                                    size_t count) {
+    if (!prime_schema_expr(atom, head, (CettaExprLen)(count + 1u)))
+        return false;
+    for (size_t i = 0; i < count; i++)
+        if (!is_symbol_named(atom->expr.elems[i + 1u], names[i]))
+            return false;
+    return true;
+}
+
+static bool prime_symbol_field(Atom *atom, const char *head,
+                               const char *value) {
+    return prime_schema_expr(atom, head, 2) &&
+           is_symbol_named(atom->expr.elems[1], value);
+}
+
+static bool prime_int_field(Atom *atom, const char *head, int64_t value) {
+    return prime_schema_expr(atom, head, 2) &&
+           atom->expr.elems[1]->kind == ATOM_GROUNDED &&
+           atom->expr.elems[1]->ground.gkind == GV_INT &&
+           atom->expr.elems[1]->ground.ival == value;
+}
+
+bool prime_semantics_validate_package(Atom *package) {
+    static const char *const syntax_names[] = {
+        "HomoiconicSExpressions", "ExplicitBangEvaluation",
+        "QuotedJudgmentData"};
+    static const char *const binder_names[] = {
+        "NamedScopedVariables", "InlineTypedTelescopeBinders"};
+    static const char *const equation_names[] = {
+        "StructuralAtomIdentity",
+        "OrdinaryUserRulesExcludedFromDefinitionalEquality"};
+    static const char *const runtime_rewrite_names[] = {
+        "SharedCeTTaReduction", "Directional", "Nondeterministic"};
+    static const char *const variable_class_names[] = {
+        "rigid", "scheme", "elaboration"};
+    static const char *const consistency_edge_names[] = {
+        "exact", "structural", "dynamic", "top", "meta-staging"};
+    static const char *const checked_edge_names[] = {"exact", "structural"};
+    static const char *const nondeterminism_names[] = {
+        "ExplicitAnswerBags", "CertifiedCompletionRequiredForTotality",
+        "PreserveFailures", "PreserveDuplicates", "BranchIndexedEvidence",
+        "RuntimeBagCorrespondenceOpen"};
+    static const char *const effect_names[] = {
+        "OrdinaryRuntimeEffects", "SnapshotContainedMarkedTypeFunctions",
+        "DirectEffectfulTypeOperationsInadmissible",
+        "TransitiveEffectAdmissionOpen"};
+    static const char *const evidence_names[] = {
+        "PrimeVerdict", "PrimeEvidenceV1", "ResourceLedgerV1",
+        "typed-answer-v2", "answer-substitution-v2",
+        "SearchAndEvaluationAreUntrustedProducers",
+        "TypingRecheckedBeforeAcceptance",
+        "ConversionCertificatesReplayChecked",
+        "CertificateCorrespondenceOpen", "SourcePackageHashRequiredExternally"};
+
+    if (!prime_schema_expr(package, "PrimeDefV1", 8)) return false;
+
+    Atom *identity = package->expr.elems[1];
+    if (!prime_schema_expr(identity, "PrimeIdentityV1", 5) ||
+        !prime_symbol_field(identity->expr.elems[1], "Language", "prime") ||
+        !prime_symbol_field(identity->expr.elems[2], "LongName",
+                            "metta-prime") ||
+        !prime_int_field(identity->expr.elems[3], "SchemaVersion",
+                         PRIME_DEF_SCHEMA_VERSION) ||
+        !prime_schema_expr(identity->expr.elems[4], "DialectVersion", 3) ||
+        identity->expr.elems[4]->expr.elems[1]->kind != ATOM_GROUNDED ||
+        identity->expr.elems[4]->expr.elems[1]->ground.gkind != GV_INT ||
+        identity->expr.elems[4]->expr.elems[1]->ground.ival !=
+            PRIME_DIALECT_MAJOR ||
+        identity->expr.elems[4]->expr.elems[2]->kind != ATOM_GROUNDED ||
+        identity->expr.elems[4]->expr.elems[2]->ground.gkind != GV_INT ||
+        identity->expr.elems[4]->expr.elems[2]->ground.ival !=
+            PRIME_DIALECT_MINOR) {
+        return false;
+    }
+
+    Atom *language = package->expr.elems[2];
+    if (!prime_schema_expr(language, "LanguageDefV1", 5) ||
+        !prime_exact_symbol_list(language->expr.elems[1], "SyntaxV1",
+                                 syntax_names, 3) ||
+        !prime_exact_symbol_list(language->expr.elems[2], "BindersV1",
+                                 binder_names, 2) ||
+        !prime_exact_symbol_list(language->expr.elems[3], "EquationsV1",
+                                 equation_names, 2) ||
+        !prime_schema_expr(language->expr.elems[4], "RewritesV1", 3)) {
+        return false;
+    }
+    Atom *rewrites = language->expr.elems[4];
+    if (!prime_exact_symbol_list(rewrites->expr.elems[1], "RuntimeR",
+                                 runtime_rewrite_names, 3) ||
+        !prime_schema_expr(rewrites->expr.elems[2], "ConversionR", 4) ||
+        !is_symbol_named(rewrites->expr.elems[2]->expr.elems[1],
+                         "TypePureGroundedFragment") ||
+        !prime_symbol_field(rewrites->expr.elems[2]->expr.elems[2],
+                            "ReplaySchema",
+                            "PrimeConversionCertificateV1") ||
+        !is_symbol_named(rewrites->expr.elems[2]->expr.elems[3],
+                         "MarkedUserFunctionsRemainProvisional")) {
+        return false;
+    }
+
+    Atom *contexts = package->expr.elems[3];
+    if (!prime_schema_expr(contexts, "ContextsAndSchemesV1", 7) ||
+        !prime_exact_symbol_list(contexts->expr.elems[1], "VariableClasses",
+                                 variable_class_names, 3) ||
+        !prime_schema_expr(contexts->expr.elems[2], "SchemeMarkersV1", 3) ||
+        !prime_symbol_field(contexts->expr.elems[2]->expr.elems[1],
+                            "ExplicitScheme", "type-scheme") ||
+        !prime_symbol_field(contexts->expr.elems[2]->expr.elems[2],
+                            "RuleScheme", "chaining-rule") ||
+        !is_symbol_named(contexts->expr.elems[3],
+                         "UnmarkedOpenDeclarationsNotGeneralized") ||
+        !is_symbol_named(contexts->expr.elems[4],
+                         "FreshElaborationVariables") ||
+        !is_symbol_named(contexts->expr.elems[5],
+                         "RigidVariablesNeverSolved") ||
+        !prime_schema_expr(contexts->expr.elems[6],
+                           "SubstitutionEvidenceV1", 5)) {
+        return false;
+    }
+
+    Atom *typing = package->expr.elems[4];
+    if (!prime_schema_expr(typing, "TypingRulesV1", 8) ||
+        !prime_exact_symbol_list(typing->expr.elems[1], "Judgments",
+                                 PRIME_JUDGMENT_NAMES, 8) ||
+        !prime_exact_symbol_list(typing->expr.elems[2], "ConsistencyEdges",
+                                 consistency_edge_names, 5) ||
+        !prime_exact_symbol_list(typing->expr.elems[3], "CheckedEdges",
+                                 checked_edge_names, 2) ||
+        !is_symbol_named(typing->expr.elems[4], "DependentTelescopes") ||
+        !is_symbol_named(typing->expr.elems[5],
+                         "BidirectionalSynthesisAndChecking") ||
+        !prime_symbol_field(typing->expr.elems[6], "Convert",
+                            "ComputedConversionEvidenceNotDefEq") ||
+        !prime_schema_expr(typing->expr.elems[7], "RefinementRulesV1", 3)) {
+        return false;
+    }
+
+    Atom *algebra = package->expr.elems[5];
+    if (!prime_schema_expr(algebra, "ResultAlgebraV1", 4) ||
+        !prime_exact_symbol_list(algebra->expr.elems[1], "Results",
+                                 PRIME_RESULT_NAMES, 4) ||
+        !prime_schema_expr(algebra->expr.elems[2], "InformationOrderV1", 8) ||
+        !prime_exact_symbol_list(algebra->expr.elems[3], "NondeterminismV1",
+                                 nondeterminism_names, 6)) {
+        return false;
+    }
+
+    Atom *effects_resources = package->expr.elems[6];
+    if (!prime_schema_expr(effects_resources, "EffectsAndResourcesV1", 3) ||
+        !prime_exact_symbol_list(effects_resources->expr.elems[1], "EffectsV1",
+                                 effect_names, 4) ||
+        !prime_schema_expr(effects_resources->expr.elems[2],
+                           "ResourcePolicyV1", 11)) {
+        return false;
+    }
+    Atom *resources = effects_resources->expr.elems[2];
+    if (!is_symbol_named(resources->expr.elems[1], "NoImplicitStepBound") ||
+        !is_symbol_named(resources->expr.elems[2], "ExplicitProducerBudget") ||
+        !is_symbol_named(resources->expr.elems[3],
+                         "BoundedProducersReportResourceLedger") ||
+        !is_symbol_named(resources->expr.elems[4],
+                         "ResourceStatusVisibleWhenSemanticallyRelevant") ||
+        !is_symbol_named(resources->expr.elems[5],
+                         "UnboundedModeDoesNotMeterSteps") ||
+        !prime_symbol_field(resources->expr.elems[6],
+                            "StructuralTypeTraversal",
+                            "DynamicWorklists") ||
+        !prime_symbol_field(resources->expr.elems[7], "TypeStorage",
+                            "Dynamic") ||
+        !prime_symbol_field(resources->expr.elems[8], "ApplicabilityStorage",
+                            "Dynamic") ||
+        !prime_symbol_field(resources->expr.elems[9],
+                            "EvaluatorStackBudget",
+                            "RuntimeSelectedAndReported") ||
+        !is_symbol_named(resources->expr.elems[10],
+                         "TotalityRequiresCertifiedCompletion")) {
+        return false;
+    }
+
+    return prime_exact_symbol_list(package->expr.elems[7],
+                                   "EvidenceSchemaV1", evidence_names, 10);
+}
+
 static bool is_primitive_type_symbol(Atom *atom) {
     static const char *const names[] = {
         "Type", "%Undefined%", "Atom", "Symbol", "Variable",
@@ -348,10 +611,67 @@ static bool is_primitive_type_symbol(Atom *atom) {
     return false;
 }
 
+static uint32_t prime_infer_types(Space *space, Arena *a, Atom *term,
+                                  PrimeResourceLedger *ledger,
+                                  PrimeResourcePhase phase,
+                                  bool structural, Atom ***types_out,
+                                  bool *complete_out) {
+    uint64_t before = prime_resource_phase_begin(ledger);
+    CettaTypeInferenceBudget inference = {
+        .steps_limited = ledger->typing.steps_limited,
+        .steps_remaining = ledger->typing.steps_limited
+            ? ledger->typing.steps_remaining : 0,
+        .steps_spent = 0,
+        .work_steps_observed = 0,
+        .type_capacity = ledger->typing.type_capacity,
+        .max_depth_observed = ledger->typing.max_depth_observed,
+        .complete = true,
+        .type_capacity_exhausted = false,
+        .evaluator_stack_exhausted = false,
+        .evaluator_capacity_exhausted = false,
+        .allow_marked_user_type_functions = false,
+    };
+    uint32_t count = structural
+        ? eval_get_atom_types_structural_profiled_budgeted(
+              space, a, term, types_out, &inference)
+        : eval_get_atom_types_profiled_budgeted(
+              space, a, term, types_out, &inference);
+    if (ledger->typing.steps_limited)
+        ledger->typing.steps_remaining = inference.steps_remaining;
+    if (ledger->typing.steps_limited) {
+        if (ledger->typing.steps_spent > UINT64_MAX - inference.steps_spent)
+            ledger->typing.steps_spent = UINT64_MAX;
+        else
+            ledger->typing.steps_spent += inference.steps_spent;
+        if (ledger->typing.work_steps_observed >
+            UINT64_MAX - inference.work_steps_observed) {
+            ledger->typing.work_steps_observed = UINT64_MAX;
+        } else {
+            ledger->typing.work_steps_observed +=
+                inference.work_steps_observed;
+        }
+    }
+    if (inference.max_depth_observed > ledger->typing.max_depth_observed)
+        ledger->typing.max_depth_observed = inference.max_depth_observed;
+    if (inference.type_capacity_exhausted)
+        ledger->typing.type_capacity_exhausted = true;
+    if (inference.evaluator_stack_exhausted)
+        ledger->typing.evaluator_stack_exhausted = true;
+    if (inference.evaluator_capacity_exhausted)
+        ledger->typing.evaluator_capacity_exhausted = true;
+    prime_resource_phase_end(ledger, phase, before);
+    if (complete_out) *complete_out = inference.complete;
+    return count;
+}
+
 static bool inferred_as_type(Space *space, Arena *a, Atom *type,
-                             bool *dynamic_only) {
+                             PrimeResourceLedger *ledger,
+                             bool *dynamic_only, bool *complete_out) {
     Atom **types = NULL;
-    uint32_t count = eval_get_atom_types_profiled(space, a, type, &types);
+    bool complete = true;
+    uint32_t count = prime_infer_types(
+        space, a, type, ledger, PRIME_RESOURCE_FORMATION, false, &types,
+        &complete);
     bool saw_type = false;
     bool saw_dynamic = false;
     for (uint32_t i = 0; i < count; i++) {
@@ -362,6 +682,7 @@ static bool inferred_as_type(Space *space, Arena *a, Atom *type,
     }
     free(types);
     if (dynamic_only) *dynamic_only = saw_dynamic && !saw_type;
+    if (complete_out) *complete_out = complete;
     return saw_type;
 }
 
@@ -479,9 +800,15 @@ static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
         *detail = prime_expr2(a, "unbound-type-variable", type);
         return PRIME_FORM_UNDETERMINED;
     }
-    if (inferred_as_type(space, a, type, &dynamic_only)) {
+    bool inference_complete = true;
+    if (inferred_as_type(space, a, type, ledger, &dynamic_only,
+                         &inference_complete)) {
         *detail = prime_expr2(a, "DeclaredTypeFormation", type);
         return PRIME_FORM_ESTABLISHED;
+    }
+    if (!inference_complete) {
+        *detail = prime_expr2(a, "formation-inference-incomplete", type);
+        return PRIME_FORM_INCOMPLETE;
     }
     if (dynamic_only || type->kind == ATOM_SYMBOL) {
         *detail = prime_expr2(a, "undeclared-type-form", type);
@@ -494,21 +821,19 @@ static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
 
 static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
                          PrimeResourceLedger *ledger) {
-    if (!prime_resource_spend(ledger, PRIME_RESOURCE_SYNTHESIS, 1))
-        return prime_incomplete(a, judgment,
-                                prime_expr1(a, "synthesis-resource-exhausted"));
     Atom **types = NULL;
-    uint32_t count = eval_get_atom_types_profiled(space, a, term, &types);
-    if (count > ledger->typing.type_capacity) {
-        ledger->typing.type_capacity_exhausted = true;
+    bool complete = true;
+    uint32_t count = prime_infer_types(
+        space, a, term, ledger, PRIME_RESOURCE_SYNTHESIS, false, &types,
+        &complete);
+    if (!complete) {
+        Atom *reason = prime_expr2(
+            a, ledger->typing.type_capacity_exhausted
+                   ? "synthesis-type-capacity"
+                   : "synthesis-prefix-incomplete",
+            atom_int(a, count));
         free(types);
-        return prime_incomplete(a, judgment,
-                                prime_expr1(a, "type-set-capacity"));
-    }
-    if (!prime_resource_spend(ledger, PRIME_RESOURCE_SYNTHESIS, count)) {
-        free(types);
-        return prime_incomplete(a, judgment,
-                                prime_expr1(a, "synthesis-resource-exhausted"));
+        return prime_incomplete(a, judgment, reason);
     }
     if (count == 0) {
         free(types);
@@ -595,8 +920,79 @@ static const char *normalize_reason(CettaHeNormalizeStatus status) {
     case CETTA_HE_NORMALIZE_AMBIGUOUS: return "normalization-ambiguous";
     case CETTA_HE_NORMALIZE_NO_RESULT: return "normalization-no-result";
     case CETTA_HE_NORMALIZE_INADMISSIBLE: return "normalization-inadmissible-effect";
+    case CETTA_HE_NORMALIZE_PROVISIONAL:
+        return "normalization-unadmitted-user-rule";
     }
     return "normalization-undetermined";
+}
+
+static Atom *prime_conversion_certificate_atom(Arena *a, Atom *left,
+                                               Atom *right, Atom *left_nf,
+                                               Atom *right_nf, bool equal) {
+    Atom *items[5] = {
+        prime_sym(a, "PrimeConversionCertificateV1"),
+        prime_expr3(a, "Original", left, right),
+        prime_expr3(a, "NormalForms", left_nf, right_nf),
+        prime_expr2(a, "Relation",
+                    prime_sym(a, equal ? "Equal" : "Distinct")),
+        prime_expr2(a, "Fragment",
+                    prime_sym(a, "TypePureGroundedFragment"))};
+    return atom_expr(a, items, 5);
+}
+
+static bool prime_replay_conversion_certificate_budgeted(
+    Arena *a, Space *space, Atom *certificate, CettaHeTypingBudget *budget,
+    bool *equal_out) {
+    if (!a || !space || !budget ||
+        !prime_schema_expr(certificate, "PrimeConversionCertificateV1", 5) ||
+        !prime_schema_expr(certificate->expr.elems[1], "Original", 3) ||
+        !prime_schema_expr(certificate->expr.elems[2], "NormalForms", 3) ||
+        !prime_schema_expr(certificate->expr.elems[3], "Relation", 2) ||
+        !prime_symbol_field(certificate->expr.elems[4], "Fragment",
+                            "TypePureGroundedFragment")) {
+        return false;
+    }
+
+    Atom *relation = certificate->expr.elems[3]->expr.elems[1];
+    bool claims_equal = is_symbol_named(relation, "Equal");
+    if (!claims_equal && !is_symbol_named(relation, "Distinct")) return false;
+
+    Atom *left = certificate->expr.elems[1]->expr.elems[1];
+    Atom *right = certificate->expr.elems[1]->expr.elems[2];
+    Atom *claimed_left_nf = certificate->expr.elems[2]->expr.elems[1];
+    Atom *claimed_right_nf = certificate->expr.elems[2]->expr.elems[2];
+    Atom *left_nf = left;
+    Atom *right_nf = right;
+
+    bool prior_user_functions = budget->allow_marked_user_type_functions;
+    budget->allow_marked_user_type_functions = false;
+    CettaHeNormalizeStatus right_status =
+        he_typing_normalize_type_status_budgeted(
+            a, space, right, budget, &right_nf);
+    CettaHeNormalizeStatus left_status =
+        he_typing_normalize_type_status_budgeted(
+            a, space, left, budget, &left_nf);
+    budget->allow_marked_user_type_functions = prior_user_functions;
+
+    if (left_status != CETTA_HE_NORMALIZE_COMPLETE ||
+        right_status != CETTA_HE_NORMALIZE_COMPLETE ||
+        !atom_eq(left_nf, claimed_left_nf) ||
+        !atom_eq(right_nf, claimed_right_nf)) {
+        return false;
+    }
+    bool equal = atom_eq(left_nf, right_nf);
+    if (equal != claims_equal) return false;
+    if (equal_out) *equal_out = equal;
+    return true;
+}
+
+bool prime_semantics_replay_conversion_certificate(
+    Arena *a, Space *space, Atom *certificate, bool *equal_out) {
+    CettaHeTypingBudget budget;
+    he_typing_budget_init_unbounded(&budget);
+    budget.allow_marked_user_type_functions = false;
+    return prime_replay_conversion_certificate_budgeted(
+        a, space, certificate, &budget, equal_out);
 }
 
 static Atom *prime_convert(Space *space, Arena *a, Atom *judgment,
@@ -642,15 +1038,22 @@ static Atom *prime_convert(Space *space, Arena *a, Atom *judgment,
             prime_sym(a, normalize_reason(right_status))};
         return prime_undetermined(a, judgment, atom_expr(a, reason_items, 3));
     }
-    Atom *evidence_items[4] = {
-        prime_sym(a, "ComputedNormalFormComparison"), left_nf, right_nf,
-        prime_sym(a, "prime-v0-bounded-nf")};
-    Atom *evidence = atom_expr(a, evidence_items, 4);
-    return atom_eq(left_nf, right_nf)
-        ? prime_established(a, judgment, evidence)
-        : prime_refuted(a, judgment,
-                        prime_expr3(a, "distinct-normal-forms", left_nf,
-                                    right_nf));
+    bool equal = atom_eq(left_nf, right_nf);
+    Atom *certificate = prime_conversion_certificate_atom(
+        a, left, right, left_nf, right_nf, equal);
+    bool replay_equal = false;
+    uint64_t replay_before = prime_resource_phase_begin(ledger);
+    bool replayed = prime_replay_conversion_certificate_budgeted(
+        a, space, certificate, &ledger->typing, &replay_equal);
+    prime_resource_phase_end(ledger, PRIME_RESOURCE_NORMALIZATION,
+                             replay_before);
+    if (!replayed || replay_equal != equal)
+        return prime_undetermined(
+            a, judgment,
+            prime_expr1(a, "conversion-certificate-replay-failed"));
+    return equal
+        ? prime_established(a, judgment, certificate)
+        : prime_refuted(a, judgment, certificate);
 }
 
 static Atom *prime_refine(Space *space, Arena *a, Atom *judgment,
@@ -735,23 +1138,37 @@ static bool prepare_answer_bag(Space *space, Arena *a, Atom *source,
         return parse_answer_bag(source, out);
     if (source->expr.len != 2) return false;
 
-    uint64_t available = ledger->typing.steps_remaining;
-    if (available == 0) {
+    bool evaluation_limited = ledger->typing.steps_limited;
+    uint64_t evaluation_budget = evaluation_limited
+        ? ledger->typing.steps_remaining : 0;
+    if (evaluation_limited && evaluation_budget == 0) {
         out->closure_certified = false;
         out->incomplete_reason = prime_sym(a, "fuel-exhausted");
         return true;
     }
     EvalOutcome outcome;
     eval_outcome_init(&outcome);
-    int budget = available > (uint64_t)INT_MAX ? INT_MAX : (int)available;
+    int budget = evaluation_limited ? (int)evaluation_budget : -1;
     metta_eval_outcome(space, a, NULL, source->expr.elems[1], budget,
                        &outcome);
-    uint64_t spent = outcome.budget_initial - outcome.budget_remaining;
-    if (spent >= ledger->typing.steps_remaining)
-        ledger->typing.steps_remaining = 0;
-    else
-        ledger->typing.steps_remaining -= spent;
-    ledger->phase_spent[PRIME_RESOURCE_EVALUATION] += spent;
+    uint64_t spent = outcome.steps_spent;
+    if (ledger->typing.steps_limited) {
+        if (spent >= ledger->typing.steps_remaining)
+            ledger->typing.steps_remaining = 0;
+        else
+            ledger->typing.steps_remaining -= spent;
+    }
+    if (ledger->typing.steps_limited) {
+        if (ledger->typing.steps_spent > UINT64_MAX - spent)
+            ledger->typing.steps_spent = UINT64_MAX;
+        else
+            ledger->typing.steps_spent += spent;
+        if (ledger->typing.work_steps_observed > UINT64_MAX - spent)
+            ledger->typing.work_steps_observed = UINT64_MAX;
+        else
+            ledger->typing.work_steps_observed += spent;
+        ledger->phase_spent[PRIME_RESOURCE_EVALUATION] += spent;
+    }
 
     out->branches = arena_alloc(
         a, sizeof(Atom *) * (outcome.results.len > 0 ? outcome.results.len : 1));
@@ -760,9 +1177,14 @@ static bool prepare_answer_bag(Space *space, Arena *a, Atom *source,
     out->branch_count = (uint32_t)outcome.results.len;
     out->branches_wrapped = false;
     out->closure_certified = outcome.completion == CETTA_EVAL_COMPLETE;
-    if (!out->closure_certified)
+    if (!out->closure_certified) {
+        if (outcome.completion == CETTA_EVAL_INCOMPLETE_STACK)
+            ledger->typing.evaluator_stack_exhausted = true;
+        if (outcome.completion == CETTA_EVAL_INCOMPLETE_CAPACITY)
+            ledger->typing.evaluator_capacity_exhausted = true;
         out->incomplete_reason =
             prime_sym(a, eval_completion_reason(outcome.completion));
+    }
     eval_outcome_free(&outcome);
     return true;
 }
@@ -1023,11 +1445,11 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
 }
 
 static Atom *prime_judge(Arena *a, Space *space, Atom *judgment,
-                         uint64_t fuel) {
+                         bool steps_limited, uint64_t steps) {
     PrimeResourceLedger ledger;
-    prime_resource_init(&ledger, fuel);
+    prime_resource_init(&ledger, steps_limited, steps);
     Atom *verdict = prime_judge_raw(a, space, judgment, &ledger);
-    return prime_attach_ledger(a, verdict, &ledger);
+    return steps_limited ? prime_attach_ledger(a, verdict, &ledger) : verdict;
 }
 
 static const char *const PRIME_OP_NAMES[] = {"prime-package", "prime-judge"};
@@ -1062,23 +1484,28 @@ Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
             return prime_refuted(a, call,
                                  prime_expr1(a, "first-argument-not-a-space"));
         (void)space;
-        return prime_package_atom(a);
+        Atom *package = prime_semantics_package_atom(a);
+        return package
+            ? package
+            : prime_refuted(a, call,
+                            prime_expr1(a, "prime-package-invalid"));
     }
 
     if (strcmp(name, "prime-judge") == 0) {
         Atom *synthetic = atom_expr(a, (Atom *[]){head}, 1);
-        if (nargs != 3)
+        if (nargs != 2 && nargs != 3)
             return prime_refuted(a, synthetic,
                                  prime_expr1(a, "prime-judge-arity"));
         Space *space = NULL;
         if (!arg_space(args[0], &space))
             return prime_refuted(a, unquote_data(args[1]),
                                  prime_expr1(a, "first-argument-not-a-space"));
-        uint64_t fuel = PRIME_DEFAULT_FUEL;
-        if (!arg_fuel(args[2], &fuel))
+        bool steps_limited = nargs == 3;
+        uint64_t steps = 0;
+        if (steps_limited && !arg_budget(args[2], &steps))
             return prime_refuted(a, unquote_data(args[1]),
-                                 prime_expr1(a, "fuel-not-positive-integer"));
-        return prime_judge(a, space, args[1], fuel);
+                                 prime_expr1(a, "budget-not-positive-integer"));
+        return prime_judge(a, space, args[1], steps_limited, steps);
     }
 
     return NULL;

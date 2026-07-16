@@ -237,7 +237,8 @@ bool is_grounded_op(SymbolId id) {
     const char *name = symbol_bytes(g_symbols, id);
     if (name && strncmp(name, "__cetta_lib_", 12) == 0)
         return true;
-    if (name && prime_semantics_is_op && prime_semantics_is_op(name) &&
+    if (name && prime_semantics_is_op && eval_current_language_id &&
+        prime_semantics_is_op(name) &&
         eval_current_language_id() == CETTA_LANGUAGE_PRIME)
         return true;
     if (name && he_typing_is_op && he_typing_is_op(name) &&

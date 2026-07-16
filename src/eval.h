@@ -69,18 +69,22 @@ typedef enum {
     CETTA_EVAL_INCOMPLETE_FUEL,
     CETTA_EVAL_INCOMPLETE_CANCELLED,
     CETTA_EVAL_INCOMPLETE_STACK,
+    CETTA_EVAL_INCOMPLETE_CAPACITY,
 } CettaEvalCompletion;
 
 typedef struct EvalOutcome {
     ResultSet results;
     CettaEvalCompletion completion;
+    bool budget_limited;
     uint64_t budget_initial;
     uint64_t budget_remaining;
+    uint64_t steps_spent;
 } EvalOutcome;
 
 void eval_outcome_init(EvalOutcome *outcome);
 void eval_outcome_free(EvalOutcome *outcome);
 const char *eval_completion_reason(CettaEvalCompletion completion);
+uint64_t eval_current_c_stack_budget_bytes(void);
 
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
@@ -95,14 +99,20 @@ int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
-CettaLanguageId eval_current_language_id(void);
+CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                       Atom ***out_types);
+uint32_t eval_get_atom_types_profiled_budgeted(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types,
+    CettaTypeInferenceBudget *budget);
 uint32_t eval_get_atom_types_structural_profiled(Space *s, Arena *a,
                                                  Atom *atom,
                                                  Atom ***out_types);
+uint32_t eval_get_atom_types_structural_profiled_budgeted(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types,
+    CettaTypeInferenceBudget *budget);
 uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);

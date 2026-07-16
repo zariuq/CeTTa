@@ -262,6 +262,14 @@ BIN_FORCE = FORCE
 endif
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
 FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o,$(OBJ))
+PRIME_DELAYED_AMBIGUITY_TEST_SRC = tests/support/test_prime_delayed_ambiguity.c
+PRIME_DELAYED_AMBIGUITY_TEST_OBJ = runtime/bootstrap/test_prime_delayed_ambiguity.$(BUILD_OBJ_TAG).o
+PRIME_DELAYED_AMBIGUITY_TEST_BIN = runtime/test_prime_delayed_ambiguity-$(BUILD_CANON)
+PRIME_DELAYED_AMBIGUITY_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_PACKAGE_VALIDATION_TEST_SRC = tests/support/test_prime_package_validation.c
+PRIME_PACKAGE_VALIDATION_TEST_OBJ = runtime/bootstrap/test_prime_package_validation.$(BUILD_OBJ_TAG).o
+PRIME_PACKAGE_VALIDATION_TEST_BIN = runtime/test_prime_package_validation-$(BUILD_CANON)
+PRIME_PACKAGE_VALIDATION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PAYLOAD_MAP_CAPACITY_TEST_SRC = tests/support/test_rhometta_payload_map_capacity.c
 PAYLOAD_MAP_CAPACITY_TEST_OBJ = runtime/bootstrap/test_rhometta_payload_map_capacity.$(BUILD_OBJ_TAG).o
 PAYLOAD_MAP_CAPACITY_TEST_BIN = runtime/test_rhometta_payload_map_capacity-$(BUILD_CANON)
@@ -965,6 +973,28 @@ $(FALLBACK_EVAL_TEST_OBJ): $(FALLBACK_EVAL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
+$(PRIME_DELAYED_AMBIGUITY_TEST_BIN): $(PRIME_DELAYED_AMBIGUITY_TEST_OBJ) $(PRIME_DELAYED_AMBIGUITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-delayed-ambiguity.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_DELAYED_AMBIGUITY_TEST_OBJ): $(PRIME_DELAYED_AMBIGUITY_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_PACKAGE_VALIDATION_TEST_BIN): $(PRIME_PACKAGE_VALIDATION_TEST_OBJ) $(PRIME_PACKAGE_VALIDATION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-package-validation.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_PACKAGE_VALIDATION_TEST_OBJ): $(PRIME_PACKAGE_VALIDATION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
 $(PAYLOAD_MAP_CAPACITY_TEST_BIN): $(PAYLOAD_MAP_CAPACITY_TEST_OBJ) $(PAYLOAD_MAP_CAPACITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhometta-payload-map-capacity.XXXXXX"); \
@@ -994,6 +1024,10 @@ clean:
 		runtime/cetta-*-runtime-stats runtime/cetta-stage0-* \
 		runtime/test_fallback_eval_session-* runtime/bootstrap/test_fallback_eval_session.*.o \
 		runtime/bootstrap/test_fallback_eval_session.*.d \
+		runtime/test_prime_delayed_ambiguity-* runtime/bootstrap/test_prime_delayed_ambiguity.*.o \
+		runtime/bootstrap/test_prime_delayed_ambiguity.*.d \
+		runtime/test_prime_package_validation-* runtime/bootstrap/test_prime_package_validation.*.o \
+		runtime/bootstrap/test_prime_package_validation.*.d \
 		runtime/test_rhometta_payload_map_capacity-* runtime/bootstrap/test_rhometta_payload_map_capacity.*.o \
 		runtime/bootstrap/test_rhometta_payload_map_capacity.*.d \
 			src/*.runtime-stats.o src/*.runtime-stats.d \
@@ -2618,26 +2652,142 @@ test-he-prime-search-mutation: $(BIN)
 	fi; \
 	echo "PASS: premise-cap-one mutation is killed by proof-enumeration gates"
 
+test-he-prime-scheme-mutation: $(BIN)
+	@mutation_dir=runtime/he-prime-scheme-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_he_prime_implicit_scheme.py src/he_typing.c "$$mutation_dir/he_typing.c"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" -o "$$mutation_dir/he_typing.o"; \
+	$(CC) $(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) "$$mutation_dir/he_typing.o" -o "$$mutation_dir/cetta-implicit-scheme" $(LDFLAGS); \
+	baseline=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_explicit_schemes.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/profile_he_prime_explicit_schemes.expected)" ]; then \
+		echo "FAIL: explicit-scheme mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-implicit-scheme" --profile he-prime --lang he tests/profile_he_prime_explicit_schemes.metta 2>&1); \
+	baseline_rigid=$$(printf '%s\n' "$$baseline" | sed -n '1p'); \
+	mutant_rigid=$$(printf '%s\n' "$$mutant" | sed -n '1p'); \
+	if [ "$$baseline_rigid" != '[(he-reject (no-inhabitant-at-depth))]' ] || \
+	   [ "$$mutant_rigid" = "$$baseline_rigid" ] || \
+	   ! printf '%s\n' "$$mutant_rigid" | grep -Fq '(he-accept '; then \
+		echo "FAIL: implicit-scheme mutation survived its rigid-variable gate"; exit 1; \
+	fi; \
+	echo "PASS: implicit-scheme mutation is killed by rigid-variable gates"
+
 test-prime-completion-mutation: $(BIN)
 	@mutation_dir=runtime/prime-completion-mutation; \
 	mkdir -p "$$mutation_dir"; \
-	python3 scripts/mutate_prime_completion_gate.py src/he_typing.c "$$mutation_dir/he_typing.c"; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" -o "$$mutation_dir/he_typing.o"; \
-	$(CC) $(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) "$$mutation_dir/he_typing.o" -o "$$mutation_dir/cetta-no-completion-gate" $(LDFLAGS); \
+	python3 scripts/mutate_prime_completion_gate.py src/prime_semantics.c "$$mutation_dir/prime_semantics.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/prime_semantics.c" -o "$$mutation_dir/prime_semantics.o" || exit 1; \
+	$(CC) $(filter-out src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) "$$mutation_dir/prime_semantics.o" -o "$$mutation_dir/cetta-forged-completion" $(LDFLAGS) || exit 1; \
 	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
 		echo "FAIL: Prime completion mutation baseline is not green"; exit 1; \
 	fi; \
-	mutant=$$("$$mutation_dir/cetta-no-completion-gate" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	mutant=$$("$$mutation_dir/cetta-forged-completion" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_delayed=$$(printf '%s\n' "$$baseline" | grep -F '(DelayedLow '); \
 	mutant_delayed=$$(printf '%s\n' "$$mutant" | grep -F '(DelayedLow '); \
 	if [ "$$baseline_delayed" != '[(DelayedLow Incomplete)]' ] || \
-	   [ "$$mutant_delayed" = "$$baseline_delayed" ]; then \
+	   [ "$$mutant_delayed" != '[(DelayedLow Established)]' ]; then \
 		echo "FAIL: completion-gate mutation survived delayed ambiguity"; exit 1; \
 	fi; \
-	echo "PASS: completion-gate mutation is killed by delayed ambiguity"
+	echo "PASS: answer-bag completion mutation is killed by delayed counterexample"
 
-test-prime: $(BIN) test-prime-completion-mutation
+test-prime-delayed-ambiguity-mutation: $(BIN) $(PRIME_DELAYED_AMBIGUITY_TEST_BIN)
+	@mutation_dir=runtime/prime-delayed-ambiguity-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_delayed_ambiguity.py \
+		src/he_typing.c "$$mutation_dir/he_typing.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" -o "$$mutation_dir/he_typing.o" || exit 1; \
+	$(CC) $(PRIME_DELAYED_AMBIGUITY_TEST_OBJ) \
+		$(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(PRIME_DELAYED_AMBIGUITY_TEST_LINK_OBJ)) \
+		"$$mutation_dir/he_typing.o" -o "$$mutation_dir/test-false-unique" $(LDFLAGS) || exit 1; \
+	baseline=$$("$(PRIME_DELAYED_AMBIGUITY_TEST_BIN)" 2>&1); baseline_rc=$$?; \
+	mutant=$$("$$mutation_dir/test-false-unique" 2>&1); mutant_rc=$$?; \
+	baseline_line=$$(printf '%s\n' "$$baseline" | grep '^low=' | head -n 1); \
+	mutant_line=$$(printf '%s\n' "$$mutant" | grep '^low=' | head -n 1); \
+	if [ "$$baseline_rc" -ne 0 ] || \
+	   [ "$$baseline_line" != 'low=resource high=ambiguous' ] || \
+	   [ "$$mutant_rc" -eq 0 ] || \
+	   [ "$$mutant_line" != 'low=complete high=ambiguous' ]; then \
+		printf '%s\n' "baseline: $$baseline" "mutant: $$mutant"; \
+		echo "FAIL: normalization-completion mutation survived delayed ambiguity"; exit 1; \
+	fi; \
+	echo "PASS: normalization-completion mutation is killed by delayed TagA/TagB ambiguity"
+
+test-prime-variable-mutation: $(BIN)
+	@mutation_dir=runtime/prime-variable-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_variable_discipline.py \
+		src/he_typing.c "$$mutation_dir/he_typing.c" \
+		src/prime_semantics.c "$$mutation_dir/prime_semantics.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" -o "$$mutation_dir/he_typing.o" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/prime_semantics.c" -o "$$mutation_dir/prime_semantics.o" || exit 1; \
+	$(CC) $(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/he_typing.o" "$$mutation_dir/prime_semantics.o" \
+		-o "$$mutation_dir/cetta-variable-unsound" $(LDFLAGS) || exit 1; \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
+		echo "FAIL: Prime variable mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-variable-unsound" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	baseline_probes=$$(printf '%s\n' "$$baseline" | sed -n '1,3p'); \
+	mutant_probes=$$(printf '%s\n' "$$mutant" | sed -n '1,3p'); \
+	if [ "$$baseline_probes" = "$$mutant_probes" ] || \
+	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(OpenExpected Established)' || \
+	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(UnconstrainedDeclaration Established)' || \
+	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(EscapedBinder Established)'; then \
+		echo "FAIL: variable-discipline mutation survived its three named probes"; exit 1; \
+	fi; \
+	echo "PASS: bind-and-discard/implicit-formation mutation is killed by three variable probes"
+
+test-prime-applicability-capacity-mutation: $(BIN)
+	@mutation_dir=runtime/prime-applicability-capacity-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_applicability_capacity.py \
+		src/eval.c "$$mutation_dir/eval.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/eval.c" -o "$$mutation_dir/eval.o" || exit 1; \
+	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/eval.o" -o "$$mutation_dir/cetta-silent-applicability-cap" $(LDFLAGS) || exit 1; \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
+		echo "FAIL: Prime applicability-capacity mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-silent-applicability-cap" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	baseline_cap=$$(printf '%s\n' "$$baseline" | grep -F '[(DynamicApplicability ' | head -1); \
+	mutant_cap=$$(printf '%s\n' "$$mutant" | grep -F '[(DynamicApplicability ' | head -1); \
+	if [ "$$baseline_cap" != '[(DynamicApplicability Established)]' ] || \
+	   [ "$$mutant_cap" != '[(DynamicApplicability Incomplete)]' ]; then \
+		echo "FAIL: fixed applicability-frontier mutation survived its gate"; exit 1; \
+	fi; \
+	echo "PASS: reintroduced 64-entry applicability frontier is killed by 81-way Must"
+
+test-prime-type-capacity-mutation: $(BIN)
+	@mutation_dir=runtime/prime-type-capacity-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_type_capacity.py \
+		src/he_typing.c "$$mutation_dir/he_typing.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" -o "$$mutation_dir/he_typing.o" || exit 1; \
+	$(CC) $(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/he_typing.o" -o "$$mutation_dir/cetta-fixed-type-frontier" $(LDFLAGS) || exit 1; \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
+		echo "FAIL: Prime type-storage mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-fixed-type-frontier" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	baseline_types=$$(printf '%s\n' "$$baseline" | grep -F '[(DynamicTypeStorage ' | head -1); \
+	mutant_types=$$(printf '%s\n' "$$mutant" | grep -F '[(DynamicTypeStorage ' | head -1); \
+	if [ "$$baseline_types" != '[(DynamicTypeStorage Established)]' ] || \
+	   [ "$$mutant_types" != '[(DynamicTypeStorage Incomplete)]' ]; then \
+		echo "FAIL: fixed inferred-type frontier mutation survived its gate"; exit 1; \
+	fi; \
+	echo "PASS: reintroduced 64-entry inferred-type frontier is killed by 81-type synthesis"
+
+test-prime-budget-monotonicity: $(BIN)
+	@python3 scripts/check_prime_budget_monotonicity.py "$(abspath $(BIN))"
+
+test-prime-package-validation: $(PRIME_PACKAGE_VALIDATION_TEST_BIN)
+	@"$(PRIME_PACKAGE_VALIDATION_TEST_BIN)"
+
+test-prime: $(BIN) test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 	@result=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	if [ "$$result" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
 		echo "FAIL: Prime 0.2 completion/resource gate"; \
@@ -2646,7 +2796,7 @@ test-prime: $(BIN) test-prime-completion-mutation
 	fi; \
 	echo "PASS: Prime 0.2 completion/resource gate"
 
-test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes test-he-prime-search-mutation
+test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
@@ -3441,6 +3591,14 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 	else \
 		echo "FAIL: he-prime finite-fixture typed-search enumeration"; \
 		diff <(cat tests/profile_he_prime_search_enumeration.expected) <(echo "$$result") | head -10; \
+		fail=$$((fail + 1)); \
+	fi; \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_explicit_schemes.metta 2>&1); \
+	if [ "$$result" = "$$(cat tests/profile_he_prime_explicit_schemes.expected)" ]; then \
+		echo "PASS: he-prime explicit schemes and elaboration receipts"; pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: he-prime explicit schemes and elaboration receipts"; \
+		diff <(cat tests/profile_he_prime_explicit_schemes.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_search_fuel_prefix.metta 2>&1); \
@@ -4798,7 +4956,7 @@ refresh-he-matrices:
 	@echo "refreshed HE runtime parity matrices"
 
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-prime test-prime-completion-mutation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
