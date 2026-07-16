@@ -3535,6 +3535,18 @@ typedef struct {
 } RhoIndexVec;
 
 typedef struct {
+    uint32_t position;
+    RhoAtomVec remaining_sig_atoms;
+    RhoIndexVec chosen_tokens;
+} RhoCostCoverFrame;
+
+typedef struct {
+    RhoCostCoverFrame *items;
+    uint32_t len;
+    uint32_t cap;
+} RhoCostCoverFrameVec;
+
+typedef struct {
     Atom *result;
     Atom *consumed_sig;
     Atom *contractum;
@@ -3556,6 +3568,14 @@ typedef struct {
     RhoCostStep *items;
     uint32_t len;
 } RhoCostStepSet;
+
+typedef struct {
+    bool bounded;
+    uint64_t remaining;
+    bool exhausted;
+    bool stop_after_first;
+    bool stopped;
+} RhoCostSearchControl;
 
 typedef struct {
     RhoCostStep step;
@@ -3580,6 +3600,20 @@ typedef struct {
     char *key;
     uint32_t ordinal;
 } RhoCostKeyedTraceComponent;
+
+static bool rhocost_search_halted(const RhoCostSearchControl *control) {
+    return control && (control->exhausted || control->stopped);
+}
+
+static bool rhocost_search_consume(RhoCostSearchControl *control) {
+    if (!control || !control->bounded) return true;
+    if (control->remaining == 0) {
+        control->exhausted = true;
+        return false;
+    }
+    control->remaining--;
+    return true;
+}
 
 static bool rhocost_is_ground_signature(Atom *sig) {
     return sig && sig->kind == ATOM_SYMBOL &&
@@ -3695,6 +3729,89 @@ static bool rhocost_index_vec_push(RhoIndexVec *vec, uint32_t value) {
         vec->cap = next_cap;
     }
     vec->items[vec->len++] = value;
+    return true;
+}
+
+static bool rhocost_atom_vec_clone(RhoAtomVec *out,
+                                   const RhoAtomVec *source) {
+    rho_vec_init(out);
+    for (uint32_t i = 0; i < source->len; i++) {
+        if (!rho_vec_push(out, source->items[i])) {
+            rho_vec_free(out);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool rhocost_index_vec_clone(RhoIndexVec *out,
+                                    const RhoIndexVec *source) {
+    rhocost_index_vec_init(out);
+    for (uint32_t i = 0; i < source->len; i++) {
+        if (!rhocost_index_vec_push(out, source->items[i])) {
+            rhocost_index_vec_free(out);
+            return false;
+        }
+    }
+    return true;
+}
+
+static void rhocost_cover_frame_init(RhoCostCoverFrame *frame) {
+    frame->position = 0;
+    rho_vec_init(&frame->remaining_sig_atoms);
+    rhocost_index_vec_init(&frame->chosen_tokens);
+}
+
+static void rhocost_cover_frame_free(RhoCostCoverFrame *frame) {
+    rho_vec_free(&frame->remaining_sig_atoms);
+    rhocost_index_vec_free(&frame->chosen_tokens);
+    frame->position = 0;
+}
+
+static bool rhocost_cover_frame_clone(
+    RhoCostCoverFrame *out, uint32_t position,
+    const RhoAtomVec *remaining_sig_atoms,
+    const RhoIndexVec *chosen_tokens) {
+    rhocost_cover_frame_init(out);
+    out->position = position;
+    if (!rhocost_atom_vec_clone(&out->remaining_sig_atoms,
+                                remaining_sig_atoms) ||
+        !rhocost_index_vec_clone(&out->chosen_tokens, chosen_tokens)) {
+        rhocost_cover_frame_free(out);
+        return false;
+    }
+    return true;
+}
+
+static void rhocost_cover_frame_vec_init(RhoCostCoverFrameVec *vec) {
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+static void rhocost_cover_frame_vec_free(RhoCostCoverFrameVec *vec) {
+    for (uint32_t i = 0; i < vec->len; i++) {
+        rhocost_cover_frame_free(&vec->items[i]);
+    }
+    free(vec->items);
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+/* Transfer ownership of one frame into the explicit depth-first stack. */
+static bool rhocost_cover_frame_vec_push_take(RhoCostCoverFrameVec *vec,
+                                              RhoCostCoverFrame *frame) {
+    if (vec->len == vec->cap) {
+        uint32_t next_cap = vec->cap ? vec->cap * 2u : 8u;
+        RhoCostCoverFrame *next = cetta_realloc(
+            vec->items, sizeof(RhoCostCoverFrame) * next_cap);
+        if (!next) return false;
+        vec->items = next;
+        vec->cap = next_cap;
+    }
+    vec->items[vec->len++] = *frame;
+    rhocost_cover_frame_init(frame);
     return true;
 }
 
@@ -5233,55 +5350,116 @@ static bool rhocost_emit_step(Arena *arena,
         participant_skip_len, tokens, chosen_tokens, key);
 }
 
-static bool rhocost_cover_tokens_rec(Arena *arena,
-                                     RhoAtomVec *components,
-                                     const uint32_t *participant_skip,
-                                     uint32_t participant_skip_len,
-                                     Atom *body,
-                                     RhoCostTokenVec *tokens,
-                                     const char *surface_key,
-                                     RhoAtomVec *remaining_sig_atoms,
-                                     uint32_t start,
-                                     RhoIndexVec *chosen_tokens,
-                                     Atom *consumed_sig,
-                                     RhoCostStepSetAcc *out) {
-    if (remaining_sig_atoms->len == 0) {
-        return rhocost_emit_step(arena, components, participant_skip,
-                                 participant_skip_len, body, tokens,
-                                 chosen_tokens, consumed_sig, out);
+static bool rhocost_cover_tokens_cursor(Arena *arena,
+                                        RhoAtomVec *components,
+                                        const uint32_t *participant_skip,
+                                        uint32_t participant_skip_len,
+                                        Atom *body,
+                                        RhoCostTokenVec *tokens,
+                                        RhoIndexVec *available_tokens,
+                                        RhoAtomVec *remaining_sig_atoms,
+                                        uint32_t position,
+                                        RhoIndexVec *chosen_tokens,
+                                        Atom *consumed_sig,
+                                        RhoCostStepSetAcc *out,
+                                        RhoCostSearchControl *control) {
+    RhoCostCoverFrameVec stack;
+    RhoCostCoverFrame initial;
+    bool ok = true;
+
+    rhocost_cover_frame_vec_init(&stack);
+    if (!rhocost_cover_frame_clone(&initial, position, remaining_sig_atoms,
+                                   chosen_tokens) ||
+        !rhocost_cover_frame_vec_push_take(&stack, &initial)) {
+        rhocost_cover_frame_free(&initial);
+        rhocost_cover_frame_vec_free(&stack);
+        return false;
     }
 
-    for (uint32_t i = start; i < tokens->len; i++) {
+    while (stack.len > 0 && !rhocost_search_halted(control)) {
+        RhoCostCoverFrame frame = stack.items[--stack.len];
         RhoAtomVec token_atoms;
-        RhoAtomVec next_remaining;
-        bool ok;
+        RhoCostCoverFrame take;
+        bool selectable;
+        uint32_t token_index;
 
-        if (strcmp(tokens->items[i].surface_key, surface_key) != 0) continue;
-        rho_vec_init(&token_atoms);
-        if (!rhocost_collect_signature_atoms(tokens->items[i].sig, &token_atoms)) {
-            rho_vec_free(&token_atoms);
-            return false;
+        if (!rhocost_search_consume(control)) {
+            rhocost_cover_frame_free(&frame);
+            break;
         }
-        rhocost_normalize_signature_vec(&token_atoms);
-        if (!rhocost_signature_vec_is_subset(&token_atoms, remaining_sig_atoms)) {
-            rho_vec_free(&token_atoms);
+        if (frame.remaining_sig_atoms.len == 0) {
+            ok = rhocost_emit_step(
+                arena, components, participant_skip, participant_skip_len,
+                body, tokens, &frame.chosen_tokens, consumed_sig, out);
+            rhocost_cover_frame_free(&frame);
+            if (!ok) break;
+            if (control && control->stop_after_first) control->stopped = true;
             continue;
         }
-        ok = rhocost_signature_vec_subtract(remaining_sig_atoms, &token_atoms,
-                                            &next_remaining);
+        if (frame.position >= available_tokens->len) {
+            rhocost_cover_frame_free(&frame);
+            continue;
+        }
+
+        token_index = available_tokens->items[frame.position];
+        rho_vec_init(&token_atoms);
+        if (!rhocost_collect_signature_atoms(tokens->items[token_index].sig,
+                                             &token_atoms)) {
+            rho_vec_free(&token_atoms);
+            rhocost_cover_frame_free(&frame);
+            ok = false;
+            break;
+        }
+        rhocost_normalize_signature_vec(&token_atoms);
+        selectable = rhocost_signature_vec_is_subset(
+            &token_atoms, &frame.remaining_sig_atoms);
+
+        rhocost_cover_frame_init(&take);
+        if (selectable) {
+            take.position = frame.position + 1;
+            if (!rhocost_signature_vec_subtract(
+                    &frame.remaining_sig_atoms, &token_atoms,
+                    &take.remaining_sig_atoms) ||
+                !rhocost_index_vec_clone(&take.chosen_tokens,
+                                         &frame.chosen_tokens) ||
+                !rhocost_index_vec_push(&take.chosen_tokens, token_index)) {
+                rho_vec_free(&token_atoms);
+                rhocost_cover_frame_free(&take);
+                rhocost_cover_frame_free(&frame);
+                ok = false;
+                break;
+            }
+        }
         rho_vec_free(&token_atoms);
-        if (!ok) return false;
-        if (!rhocost_index_vec_push(chosen_tokens, i)) {
-            rho_vec_free(&next_remaining);
+
+        /* LIFO order preserves the recursive take-before-skip enumeration. */
+        frame.position++;
+        if (!rhocost_cover_frame_vec_push_take(&stack, &frame) ||
+            (selectable &&
+             !rhocost_cover_frame_vec_push_take(&stack, &take))) {
+            rhocost_cover_frame_free(&take);
+            rhocost_cover_frame_free(&frame);
+            ok = false;
+            break;
+        }
+        rhocost_cover_frame_free(&take);
+        rhocost_cover_frame_free(&frame);
+    }
+
+    rhocost_cover_frame_vec_free(&stack);
+    return ok;
+}
+
+static bool rhocost_collect_available_tokens(RhoCostTokenVec *tokens,
+                                             const char *surface_key,
+                                             RhoIndexVec *available) {
+    rhocost_index_vec_init(available);
+    for (uint32_t i = 0; i < tokens->len; i++) {
+        if (strcmp(tokens->items[i].surface_key, surface_key) == 0 &&
+            !rhocost_index_vec_push(available, i)) {
+            rhocost_index_vec_free(available);
             return false;
         }
-        ok = rhocost_cover_tokens_rec(arena, components, participant_skip,
-                                      participant_skip_len, body, tokens,
-                                      surface_key, &next_remaining, i + 1, chosen_tokens,
-                                      consumed_sig, out);
-        chosen_tokens->len--;
-        rho_vec_free(&next_remaining);
-        if (!ok) return false;
     }
     return true;
 }
@@ -5302,7 +5480,8 @@ static Atom *rhocost_signature_product(Arena *arena, Atom *lhs, Atom *rhs) {
 
 static bool rhocost_collect_steps_from_components(Arena *arena,
                                                   RhoAtomVec *components,
-                                                  RhoCostStepSetAcc *out) {
+                                                  RhoCostStepSetAcc *out,
+                                                  RhoCostSearchControl *control) {
     RhoCostTokenVec tokens;
     RhoCostSignedEndpointVec recvs;
     RhoCostSignedEndpointVec sends;
@@ -5335,35 +5514,46 @@ static bool rhocost_collect_steps_from_components(Arena *arena,
              rhocost_whole_signed_redex(i, components->items[i], &wholes);
     }
 
-    for (uint32_t w = 0; w < wholes.len && ok; w++) {
+    for (uint32_t w = 0;
+         w < wholes.len && ok && !rhocost_search_halted(control); w++) {
         RhoAtomVec required_sig_atoms;
+        RhoIndexVec available_tokens;
         RhoIndexVec chosen_tokens;
         uint32_t skip[1] = {wholes.items[w].component_index};
         Atom *consumed_sig = rhocost_normalize_signature(arena, wholes.items[w].sig);
         Atom *body = rhocost_subst_term(arena, wholes.items[w].recv.args[2],
                                         wholes.items[w].recv.args[1]->var_id,
                                         wholes.items[w].send.args[1]);
+        if (!rhocost_search_consume(control)) break;
         rho_vec_init(&required_sig_atoms);
         rhocost_index_vec_init(&chosen_tokens);
-        ok = rhocost_collect_signature_atoms(consumed_sig, &required_sig_atoms);
+        ok = rhocost_collect_available_tokens(
+                 &tokens, wholes.items[w].channel_key, &available_tokens) &&
+             rhocost_collect_signature_atoms(consumed_sig, &required_sig_atoms);
         if (ok) {
             rhocost_normalize_signature_vec(&required_sig_atoms);
-            ok = rhocost_cover_tokens_rec(arena, components, skip, 1, body,
-                                          &tokens, wholes.items[w].channel_key,
-                                          &required_sig_atoms, 0,
-                                          &chosen_tokens, consumed_sig, out);
+            ok = rhocost_cover_tokens_cursor(arena, components, skip, 1, body,
+                                             &tokens, &available_tokens,
+                                             &required_sig_atoms, 0,
+                                             &chosen_tokens, consumed_sig, out,
+                                             control);
         }
+        rhocost_index_vec_free(&available_tokens);
         rhocost_index_vec_free(&chosen_tokens);
         rho_vec_free(&required_sig_atoms);
     }
 
-    for (uint32_t r = 0; r < recvs.len && ok; r++) {
-        for (uint32_t s = 0; s < sends.len && ok; s++) {
+    for (uint32_t r = 0;
+         r < recvs.len && ok && !rhocost_search_halted(control); r++) {
+        for (uint32_t s = 0;
+             s < sends.len && ok && !rhocost_search_halted(control); s++) {
             RhoAtomVec required_sig_atoms;
+            RhoIndexVec available_tokens;
             RhoIndexVec chosen_tokens;
             uint32_t skip[2];
             Atom *consumed_sig;
             Atom *body;
+            if (!rhocost_search_consume(control)) break;
             if (strcmp(recvs.items[r].channel_key, sends.items[s].channel_key) != 0) {
                 continue;
             }
@@ -5380,14 +5570,18 @@ static bool rhocost_collect_steps_from_components(Arena *arena,
             skip[1] = sends.items[s].component_index;
             rho_vec_init(&required_sig_atoms);
             rhocost_index_vec_init(&chosen_tokens);
-            ok = rhocost_collect_signature_atoms(consumed_sig, &required_sig_atoms);
+            ok = rhocost_collect_available_tokens(
+                     &tokens, recvs.items[r].channel_key, &available_tokens) &&
+                 rhocost_collect_signature_atoms(consumed_sig,
+                                                &required_sig_atoms);
             if (ok) {
                 rhocost_normalize_signature_vec(&required_sig_atoms);
-                ok = rhocost_cover_tokens_rec(arena, components, skip, 2, body,
-                                              &tokens, recvs.items[r].channel_key,
-                                              &required_sig_atoms, 0,
-                                              &chosen_tokens, consumed_sig, out);
+                ok = rhocost_cover_tokens_cursor(
+                    arena, components, skip, 2, body, &tokens,
+                    &available_tokens, &required_sig_atoms, 0,
+                    &chosen_tokens, consumed_sig, out, control);
             }
+            rhocost_index_vec_free(&available_tokens);
             rhocost_index_vec_free(&chosen_tokens);
             rho_vec_free(&required_sig_atoms);
         }
@@ -5411,18 +5605,26 @@ static bool rhocost_collect_steps(Arena *arena, Atom *term,
     rho_vec_init(&components);
     rhocost_collect_term_components(arena, rhocost_normalize_term(arena, term),
                                     &components);
-    ok = rhocost_collect_steps_from_components(arena, &components, out);
+    ok = rhocost_collect_steps_from_components(arena, &components, out, NULL);
     rho_vec_free(&components);
     return ok;
 }
 
 static Atom *rhocalc_cost_causal_run_expr(Arena *arena, Atom *term,
-                                          bool bounded, uint64_t fuel) {
+                                          bool bounded, uint64_t fuel,
+                                          uint64_t search_budget) {
     RhoCostTraceComponentVec components;
     RhoAtomVec events;
+    RhoCostSearchControl search = {
+        .bounded = bounded,
+        .remaining = search_budget,
+        .exhausted = false,
+        .stop_after_first = true,
+        .stopped = false,
+    };
     Atom *result = NULL;
+    const char *prefix_status = "lts:rho:cost:fuel-exhausted";
     uint64_t event_id = 0;
-    bool quiescent = false;
 
     if (!arena || !term || !rhocost_term_well_formed(term)) return NULL;
 
@@ -5447,27 +5649,33 @@ static Atom *rhocalc_cost_causal_run_expr(Arena *arena, Atom *term,
             rho_validation_set("rho cost trace exhausted local EventId range");
             goto done;
         }
+        if (bounded && event_id >= fuel) {
+            prefix_status = "lts:rho:cost:fuel-exhausted";
+            break;
+        }
         if (!rhocost_trace_components_project(
                 &components, &projected_components)) {
             rho_validation_set("rho cost trace could not project its state");
             goto done;
         }
         rhocost_step_set_acc_init_traced(&candidates);
+        search.stopped = false;
         collected = rhocost_collect_steps_from_components(
-            arena, &projected_components, &candidates);
+            arena, &projected_components, &candidates, &search);
         rho_vec_free(&projected_components);
         if (!collected) {
             rhocost_step_set_acc_free(&candidates);
             rho_validation_set("rho cost trace step construction failed");
             goto done;
         }
-        if (candidates.len == 0) {
+        if (search.exhausted) {
             rhocost_step_set_acc_free(&candidates);
-            quiescent = true;
+            prefix_status = "lts:rho:cost:search-exhausted";
             break;
         }
-        if (bounded && event_id >= fuel) {
+        if (candidates.len == 0) {
             rhocost_step_set_acc_free(&candidates);
+            prefix_status = "lts:rho:cost:quiescent";
             break;
         }
 
@@ -5508,9 +5716,7 @@ static Atom *rhocalc_cost_causal_run_expr(Arena *arena, Atom *term,
             result = receipt;
         } else {
             Atom *prefix_args[2] = {
-                atom_symbol(arena, quiescent
-                    ? "lts:rho:cost:quiescent"
-                    : "lts:rho:cost:fuel-exhausted"),
+                atom_symbol(arena, prefix_status),
                 receipt
             };
             result = rho_call(arena, "lts:rho:cost:prefix", prefix_args, 2);
@@ -5524,12 +5730,14 @@ done:
 }
 
 Atom *rhocalc_cost_causal_trace_expr(Arena *arena, Atom *term) {
-    return rhocalc_cost_causal_run_expr(arena, term, false, 0);
+    return rhocalc_cost_causal_run_expr(arena, term, false, 0, 0);
 }
 
 Atom *rhocalc_cost_causal_prefix_expr(Arena *arena, Atom *term,
-                                      uint64_t fuel) {
-    return rhocalc_cost_causal_run_expr(arena, term, true, fuel);
+                                      uint64_t fuel,
+                                      uint64_t search_budget) {
+    return rhocalc_cost_causal_run_expr(arena, term, true, fuel,
+                                        search_budget);
 }
 
 static bool rhocost_collect_step_set(Arena *arena, Atom *term,

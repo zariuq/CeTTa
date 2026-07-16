@@ -1,0 +1,220 @@
+Cost-rho pure-closure conformance matrix
+========================================
+
+Date: 2026-07-16
+Branch: cetta-rho-cost-20260716
+Base revision: 3697fc9b5995c055b8e0b94652e41ef19bf4232a
+Scope: concrete binary pure rho; no Rhometa, spaces, joins, or generic lift
+
+
+Declared sorted profile
+=======================
+
+The concrete profile is the binary rho instance of the cost endofunctor.
+Ground authority atoms are parametric; a backend may use keys or canonical
+digests without changing the calculus.
+
+  CostSig G     = finite multiset G
+  CostName G    = bound name | quote CostTerm | signature-valued name
+  CostProc G    = nil | proc-par | send CostName CostTerm
+                       | recv CostName binder CostTerm
+  CostTerm G    = term-nil | signed CostProc CostSig | term-par
+                       | drop CostName | purse CostName CostStack
+  CostStack G   = empty | cons CostSig CostStack
+
+`CostTerm` is the wrapped-term/continuation sort of the endofunctor.  A purse
+is a located stack term.  A raw stack is data inside a purse and is not an
+ambient configuration resource.  `term-nil` is therefore distinct from the
+empty stack stored inside a depleted purse.
+
+
+Paper-to-implementation matrix
+==============================
+
+Paper construct / law
+  Tranche-2A state
+  Pure-closure action
+
+Ground and compound signatures
+  Implemented as normalized ground atoms and `rho:cost:sig-mul`; Lean uses
+  `Multiset Ground`.
+  Retain this exact free commutative-monoid carrier.  A digest is an opaque
+  ground atom supplied by G, not an in-calculus hashing shortcut.
+
+Names and structural quotation
+  Variables, quotes of cost terms, and signature-valued names exist.
+  Retain the categories and use existing normalized name equivalence for
+  both endpoint matching and purse nearness.
+
+Wrapped continuations
+  Send payloads and receive bodies are cost terms.  Signed terms wrap cost
+  processes.  Runtime rejects evaluator payloads.
+  Preserve the grammar and prove raw well-wrapping preservation.  No eager
+  contractum traversal or re-signing is introduced.
+
+Reflection / dequotation
+  `CostProc.drop` exists in Lean but is runtime-unsupported; C rejects drop,
+  although its substitution machinery already traverses it.
+  Re-sort drop to `CostTerm.drop`.  The endofunctor makes continuation slots
+  wrapped terms, so a drop whose name variable is matched by COMM substitution
+  returns the communicated `CostTerm` directly.  Literal/free drop-quote is
+  inert, as in strict rho; no free unwrapping rule is added.  Remove drop from
+  `CostProc` and prove substitution remains in `CostTerm`.
+
+Spatial composition and identities
+  Cost-term parallel composition uses raw empty stack as its encoded identity.
+  This conflates an empty configuration with stack data.
+  Add a distinct cost-term identity (`rho:cost:nil` internally).  Structural
+  normalization erases only term-nil, never a located depleted purse.
+
+Located temporal stack S(I, s : S')
+  Token stacks were unlocated top-level components selected from one ambient
+  pool, and receipts supplied a synthetic site label.
+  Replace the operational token component with
+  `rho:cost:purse SURFACE STACK`.  A purse surface is a rho name, not a
+  signature.  The residual of spending the head of `purse L (s : S')` is
+  `purse L S'`, including an inert depleted purse.
+
+Nearness / nominal authority
+  Endpoint channel equality is checked, but token selection ignores it.
+  Define `near(I,J)` by normalized rho-name equality.  A COMM at L may select
+  only purse occurrences whose surface is name-equivalent to L.  Wrong-site
+  matching signatures do not fund; adjacency never grants authority.
+
+Exact funding cover
+  The reducer selected distinct unlocated heads whose signature multisets sum
+  to the redex demand.  Lean `TokenCover` models the same global pool.
+  Make cover proof-relevant and located.  Filter by L before exact multiset
+  coverage.  Preserve every unselected purse and every selected surface.
+
+R1: whole redex, one signature / one head
+  Implemented without location.
+  Preserve with one matching located purse head.
+
+R2: whole compound redex / split heads
+  Implemented by exact arbitrary head cover without location.
+  Preserve with two or more selected heads, all at L; emit one funding
+  contribution per selected head.
+
+R3: whole compound redex / combined head
+  Implemented without location.
+  Preserve with one combined head at L.
+
+R4: separately signed endpoints / split heads
+  Implemented without location.
+  Preserve with the exact split cover at L and distinct contribution records.
+
+R5: separately signed endpoints / combined head
+  Implemented without location.
+  Preserve with one combined head at L.
+
+Lazy forcing / no leak
+  COMM substitutes before selecting funding, consumes only selected heads,
+  and does not re-wrap the contractum.  The declarative Lean grammar makes
+  wrapping intrinsic but has no raw preservation theorem.
+  Keep the C path lazy.  Add an independent raw Lean frontier and prove
+  `wellWrapped_preserved` there so the claim is not vacuous.
+
+Forcing locality
+  Runtime rebuilds the residual from skipped participant/token indices;
+  tranche 2A checks provenance erasure against the ordinary result.
+  Prove and test that only the two participant occurrences and selected purse
+  heads change; unselected purses and unrelated terms are preserved.
+
+Causal receipt
+  Occurrence-preserving event log, direct causes from consumed produced
+  resources, abstract finite pomset, and signature-valued measure exist.
+  Replace the synthetic global contribution by one actual `(surface, head)`
+  record per selected purse.  The normalized sum must equal the demanded
+  signature.  Selected purse tails inherit the event producer.
+
+Finite versus infinite execution
+  `causal-trace` follows a canonical path to quiescence and can diverge.
+  The bounded causal prefix has separate firing and cover-search allowances.
+  It reports `quiescent` only after exhaustive candidate search,
+  `fuel-exhausted` when the firing allowance ends before another frontier
+  check, and `search-exhausted` when candidate search is incomplete.  Keep
+  unbounded trace only as a convenience for terminating runs.
+
+Executable correspondence
+  Lean has the declarative step and receipt theory but no raw executable model.
+  Add independent raw syntax encoding/decoding, normalization, frontier, and
+  bounded prefix execution.  Prove declarative soundness/completeness up to the
+  declared structural quotient.  Differential fixtures compare that model to
+  CeTTa but are not described as a universal compiled-C theorem.
+
+Path conservation
+  Receipt measurement and valuation composition are proved, but no multi-step
+  path connects operational firings to the receipt.
+  Define occurrence-bearing `CostPath`; prove event count = path depth = forced
+  COMM count.  Consumed purse cells equal the number of retained funding
+  contributions, so event count is at most consumed-cell count, with equality
+  exactly for single-head-funded firings.  Prove raw-spend, quantale-fold, and
+  per-location conservation.
+
+EO acceptance
+  Remaining budget is defined from the final additive total only.
+  Define prefix acceptance over the ordered emission and prove final-budget
+  conservation.  A final nonnegative total alone is not an acceptance proof.
+
+
+Explicitly deferred
+===================
+
+* Rhometa payload evaluation and pricing.
+* MeTTa spaces as channels, ownership, mobility, isolation, and registries.
+* N-ary Rholang joins.
+* Cryptographic digest implementation and authenticated event IDs.
+* Generic cost endofunctor abstraction.
+* Conflict/HHPB structure between different runs and spacetime applications.
+
+These are not silently assigned zero cost and no placeholder constructors are
+added for them.
+
+
+Executable boundary realized
+============================
+
+The versioned boundary tag is `cetta.cost-rho.causal-prefix.v2`.  Its wire
+grammar distinguishes symbols, naturals, and tagged nodes, and covers raw
+signatures, names, processes, terms, stacks, funding contributions, events,
+receipts, reduction fuel, cover-search fuel, and bounded-prefix status.  Lean
+decodes the wire term before running the independent raw-syntax machine;
+malformed wire and malformed cost terms remain distinct outcomes.
+
+Canonical signature keys use sorted atoms with UTF-8 byte-length prefixes.
+This makes the key injective across delimiter-bearing symbols and gives CeTTa
+and Lean one occurrence order for equal-location purses.  The order matters:
+funding contributions retain the exact selected purse occurrences rather than
+being sorted or quotiented after emission.
+
+The differential gate currently enumerates 145 bounded configurations.  It
+covers both whole-redex endpoint orders, all five funded-COMM cases, split and
+combined heads, duplicate equal purses, retained tails, wrong signatures,
+wrong and mixed surfaces, partial covers, nominal quote/drop nearness, quoted
+surfaces, dequotation through COMM, live and quiescent zero-fuel prefixes,
+independent surfaces, repeated equal firing occurrences, collision-shaped
+signature keys, UTF-8 atoms, and delimiter-bearing atoms.  Every counted case
+must report true executable witnesses for well-formedness, canonical runtime
+configuration, and canonical encoding.  An empty symbol atom is tracked as a
+separate out-of-fragment boundary exclusion.  The gate compares actual CeTTa
+causal-prefix output with Lean's wire-encoded executable result.  This is a
+systematic testing boundary; it is not a universal theorem about the compiled
+C implementation.
+
+
+Budgeted cover-search repair
+============================
+
+Exact purse covers are enumerated by a take-before-skip depth-first traversal
+over concrete occurrence indices.  Causal-prefix execution stops at the first
+funded candidate and never materializes the unvisited combinatorial suffix.
+Reduction fuel is checked before any frontier search.  Candidate-task and
+cover-frame work consume a separate shared search allowance.
+
+The Lean cursor retains the suspended frontier explicitly.  It proves prefix
+and resume partition, soundness, duplicate freedom, structural termination,
+exhaustive equality with the independent eager relation, and honest negative
+verdicts.  The runtime lift proves every found step belongs to the eager
+candidate relation and every `noCandidate` verdict makes that relation empty.
+Search exhaustion proves no negative fact.

@@ -1687,7 +1687,7 @@ test-rhocalc: $(BIN)
 	else \
 		echo "SKIP: rhocalc M3 rholang-cli overlap (set RHOLANG_CLI or install rholang-cli)"; \
 	fi; \
-	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_rhometta_lib_surface.metta tests/test_rhometta_isolation_oracle.metta tests/test_rhometta_demo_dedfarm.metta tests/test_rhometta_demo_revision.metta tests/test_rhometta_demo_mayset.metta tests/test_rhometta_demo_ecan.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta tests/test_lts_rho_cost_causal_trace.metta; do \
+	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_rhometta_lib_surface.metta tests/test_rhometta_isolation_oracle.metta tests/test_rhometta_demo_dedfarm.metta tests/test_rhometta_demo_revision.metta tests/test_rhometta_demo_mayset.metta tests/test_rhometta_demo_ecan.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta tests/test_lts_rho_cost_causal_trace.metta tests/test_lts_rho_cost_search_budget.metta; do \
 		exp="$${f%.metta}.expected"; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
