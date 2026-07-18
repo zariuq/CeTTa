@@ -7,6 +7,7 @@ versioned wire inputs.  It is conformance testing, not a proof about compiled C.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -20,6 +21,7 @@ from rhocalc_tiny_semantics import SExpr, parse_sexpr, sexpr_to_text
 
 
 SCHEMA = "cetta.cost-rho.causal-prefix.v2"
+RECEIPT_REPLAY_SCHEMA = "cetta.cost-rho.receipt-replay.v1"
 Wire = dict[str, Any]
 
 
@@ -349,6 +351,65 @@ def parse_cetta_prefix(line: str) -> Wire:
     )
 
 
+def split_cetta_results(line: str) -> list[str]:
+    """Split CeTTa's `[item, item]` wrapper without splitting nested atoms."""
+    if not (line.startswith("[") and line.endswith("]")):
+        raise ValueError(f"unexpected CeTTa result wrapper: {line!r}")
+    inner = line[1:-1].strip()
+    if not inner:
+        return []
+
+    items: list[str] = []
+    start = 0
+    depth = 0
+    quoted = False
+    escaped = False
+    for index, character in enumerate(inner):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+            continue
+        if character == '"':
+            quoted = True
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth < 0:
+                raise ValueError(f"unbalanced CeTTa result wrapper: {line!r}")
+        elif character == "," and depth == 0:
+            item = inner[start:index].strip()
+            if not item:
+                raise ValueError(f"empty CeTTa result item: {line!r}")
+            items.append(item)
+            start = index + 1
+    if quoted or depth != 0:
+        raise ValueError(f"unbalanced CeTTa result wrapper: {line!r}")
+    item = inner[start:].strip()
+    if not item:
+        raise ValueError(f"empty CeTTa result item: {line!r}")
+    items.append(item)
+    return items
+
+
+def parse_cetta_steps(line: str) -> list[Wire]:
+    steps: list[Wire] = []
+    for item in split_cetta_results(line):
+        expr = parse_sexpr(item)
+        fields = expect_tuple(expr, "cost step")
+        if (len(fields) != 3 or
+                expect_atom(fields[0], "step head") != "lts:rho:cost:step"):
+            raise ValueError(f"unsupported cost step: {sexpr_to_text(expr)}")
+        steps.append(
+            node("cost-step", [parse_signature(fields[1]), parse_term(fields[2])])
+        )
+    return steps
+
+
 @dataclass(frozen=True)
 class Case:
     name: str
@@ -363,6 +424,12 @@ class Case:
             "searchFuel": self.search_fuel,
             "term": self.term,
         }
+
+
+@dataclass(frozen=True)
+class BranchCase:
+    name: str
+    term: Wire
 
 
 PAY = channel("pay")
@@ -395,6 +462,10 @@ def split_redex(surface: Wire, recv_sig: Wire, send_sig: Wire) -> list[Wire]:
 
 
 def make_cases() -> list[Case]:
+    nested_receiver_body = signed(
+        recv(BASE, term_par([drop(bvar(0)), drop(bvar(1))])),
+        SEAL,
+    )
     cases: list[Case] = [
         Case("whole-single", 1, term_par([whole_redex(PAY, A), purse(PAY, [A])])),
         Case("whole-compound-split", 1,
@@ -407,6 +478,11 @@ def make_cases() -> list[Case]:
              term_par([*split_redex(PAY, A, B), purse(PAY, [AB])])),
         Case("dequotation-through-comm", 1,
              term_par([whole_redex(PAY, A, body=drop(bvar(0))), purse(PAY, [A])])),
+        Case("nested-receiver-depth-shift", 1,
+             term_par([
+                 whole_redex(PAY, A, body=nested_receiver_body),
+                 purse(PAY, [A]),
+             ])),
         Case("quote-drop-nearness", 1,
              term_par([
                  whole_redex(PAY, A),
@@ -504,8 +580,56 @@ def make_cases() -> list[Case]:
     return cases
 
 
-def run_cetta(bin_path: str, cases: list[Case]) -> tuple[list[dict[str, Wire]], list[str]]:
+def make_branch_cases() -> list[BranchCase]:
+    done_a = signed(proc_nil(), signature("done-a"))
+    done_b = signed(proc_nil(), signature("done-b"))
+    payload_a = signed(proc_nil(), signature("payload-a"))
+    payload_b = signed(proc_nil(), signature("payload-b"))
+    return [
+        BranchCase(
+            "two-whole-redexes-one-purse",
+            term_par([
+                whole_redex(PAY, A, body=done_a),
+                whole_redex(PAY, A, body=done_b),
+                purse(PAY, [A]),
+            ]),
+        ),
+        BranchCase(
+            "alternative-exact-funding-covers",
+            term_par([
+                whole_redex(PAY, AB),
+                purse(PAY, [AB]),
+                purse(PAY, [A]),
+                purse(PAY, [B]),
+            ]),
+        ),
+        BranchCase(
+            "two-receivers-one-sender",
+            term_par([
+                signed(recv(PAY, done_a), A),
+                signed(recv(PAY, done_b), A),
+                signed(send(PAY, payload_a), B),
+                purse(PAY, [AB]),
+            ]),
+        ),
+        BranchCase(
+            "one-receiver-two-senders",
+            term_par([
+                signed(recv(PAY, done_a), A),
+                signed(send(PAY, payload_a), B),
+                signed(send(PAY, payload_b), B),
+                purse(PAY, [AB]),
+            ]),
+        ),
+    ]
+
+
+def run_cetta(
+    bin_path: str, cases: list[Case], thread_count: int = 1
+) -> tuple[list[dict[str, Wire]], list[str]]:
     script = ["!(import! &self lts:rho:cost)"]
+    if thread_count > 1:
+        script.append(f"!(pragma! num-threads {thread_count})")
     script.extend(
         f"!(lts:rho:cost:causal-prefix {case.fuel} {case.search_fuel} "
         f"{render_term(case.term)})"
@@ -521,12 +645,112 @@ def run_cetta(bin_path: str, cases: list[Case]) -> tuple[list[dict[str, Wire]], 
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
     lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    if len(lines) != len(cases) + 1 or lines[0] != "[()]":
+    prelude_len = 2 if thread_count > 1 else 1
+    if (len(lines) != len(cases) + prelude_len or
+            any(line != "[()]" for line in lines[:prelude_len])):
         raise RuntimeError(
-            f"expected import result plus {len(cases)} prefixes, saw {len(lines)} lines"
+            f"expected {prelude_len} setup results plus {len(cases)} prefixes, "
+            f"saw {len(lines)} lines"
         )
-    raw_lines = lines[1:]
+    raw_lines = lines[prelude_len:]
     return ([{"result": parse_cetta_prefix(line)} for line in raw_lines], raw_lines)
+
+
+def run_branch_outcome_checks(
+    bin_path: str, cases: list[BranchCase]
+) -> tuple[int, list[tuple[str, Wire, Wire]]]:
+    reference_script = ["!(import! &self lts:rho:cost)"]
+    reference_script.extend(
+        f"!(lts:rho:cost:steps {render_term(case.term)})" for case in cases
+    )
+    reference_proc = subprocess.run(
+        [bin_path, "--profile", "he-extended", "--lang", "he", "/dev/stdin"],
+        input="\n".join(reference_script) + "\n",
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if reference_proc.returncode != 0:
+        raise RuntimeError(reference_proc.stderr.strip() or reference_proc.stdout.strip())
+    reference_lines = [
+        line.strip() for line in reference_proc.stdout.splitlines() if line.strip()
+    ]
+    if (len(reference_lines) != len(cases) + 1 or
+            reference_lines[0] != "[()]"):
+        raise RuntimeError(
+            f"expected one setup result plus {len(cases)} frontiers, "
+            f"saw {len(reference_lines)} lines"
+        )
+
+    frontiers = [parse_cetta_steps(line) for line in reference_lines[1:]]
+    repeats = [max(4, 2 * len(frontier)) for frontier in frontiers]
+    threaded_script = [
+        "!(import! &self lts:rho:cost)",
+        "!(pragma! num-threads 4)",
+    ]
+    for case, repeat in zip(cases, repeats, strict=True):
+        threaded_script.extend(
+            f"!(lts:rho:cost:causal-prefix 1 10000 {render_term(case.term)})"
+            for _ in range(repeat)
+        )
+    threaded_proc = subprocess.run(
+        [bin_path, "--profile", "he-extended", "--lang", "he", "/dev/stdin"],
+        input="\n".join(threaded_script) + "\n",
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if threaded_proc.returncode != 0:
+        raise RuntimeError(threaded_proc.stderr.strip() or threaded_proc.stdout.strip())
+    threaded_lines = [
+        line.strip() for line in threaded_proc.stdout.splitlines() if line.strip()
+    ]
+    expected_lines = 2 + sum(repeats)
+    if (len(threaded_lines) != expected_lines or
+            any(line != "[()]" for line in threaded_lines[:2])):
+        raise RuntimeError(
+            f"expected two setup results plus {sum(repeats)} branch samples, "
+            f"saw {len(threaded_lines)} lines"
+        )
+
+    cursor = 2
+    replay_samples: list[tuple[str, Wire, Wire]] = []
+    for case, frontier, repeat in zip(cases, frontiers, repeats, strict=True):
+        if len(frontier) < 2:
+            raise RuntimeError(
+                f"branch case {case.name} has only {len(frontier)} exhaustive steps"
+            )
+        expected = {
+            json.dumps(wire_node(step, "cost-step")[1][1], sort_keys=True,
+                       separators=(",", ":"))
+            for step in frontier
+        }
+        observed: set[str] = set()
+        for sample_index, line in enumerate(
+            threaded_lines[cursor:cursor + repeat]
+        ):
+            prefix = parse_cetta_prefix(line)
+            replay_samples.append(
+                (f"branch:{case.name}:{sample_index}", case.term, prefix)
+            )
+            _, fields = wire_node(prefix, "causal-prefix")
+            receipt_tag, events = wire_node(fields[1], "receipt")
+            if receipt_tag != "receipt" or len(events) != 1:
+                raise RuntimeError(
+                    f"branch sample {case.name} did not emit exactly one event: {line}"
+                )
+            observed.add(
+                json.dumps(fields[2], sort_keys=True, separators=(",", ":"))
+            )
+        cursor += repeat
+        if observed != expected:
+            missing = sorted(expected - observed)
+            extra = sorted(observed - expected)
+            raise RuntimeError(
+                f"threaded branch outcome set mismatch for {case.name}: "
+                f"missing={missing!r}, extra={extra!r}"
+            )
+    return len(cases), replay_samples
 
 
 def run_lean(mettapedia_root: Path, runner: Path,
@@ -575,6 +799,141 @@ def run_lean(mettapedia_root: Path, runner: Path,
     return outcomes
 
 
+def run_receipt_replay(
+    mettapedia_root: Path,
+    runner: Path,
+    cases: list[Case],
+    sequential: list[dict[str, Wire]],
+    threaded: list[dict[str, Wire]],
+    branch_samples: list[tuple[str, Wire, Wire]],
+) -> int:
+    labeled_results: list[tuple[str, Wire, Wire]] = []
+    for mode, outcomes in (("sequential", sequential), ("threaded", threaded)):
+        if len(outcomes) != len(cases):
+            raise RuntimeError(
+                f"receipt replay expected {len(cases)} {mode} outcomes, "
+                f"saw {len(outcomes)}"
+            )
+        for case, outcome in zip(cases, outcomes, strict=True):
+            result = outcome.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError(
+                    f"receipt replay missing result wire for {mode}:{case.name}"
+                )
+            labeled_results.append((f"{mode}:{case.name}", case.term, result))
+    labeled_results.extend(branch_samples)
+
+    requests: list[dict[str, Any]] = []
+    labels: list[str] = []
+    expected: list[str] = []
+    for label, term, result in labeled_results:
+        requests.append(
+            {
+                "schema": RECEIPT_REPLAY_SCHEMA,
+                "term": term,
+                "result": result,
+            }
+        )
+        labels.append(label)
+        expected.append("accepted")
+
+    # Fail-closed probes exercise the actual C wire result rather than a
+    # separately constructed Lean fixture.
+    first_result = sequential[0].get("result")
+    if not isinstance(first_result, dict):
+        raise RuntimeError("receipt replay tamper probe lacks a seed result")
+
+    bad_id = copy.deepcopy(first_result)
+    try:
+        _, prefix_fields = wire_node(bad_id, "causal-prefix")
+        _, events = wire_node(prefix_fields[1], "receipt")
+        _, event_fields = wire_node(events[0], "event")
+        event_fields[0] = natural(999_999)
+    except (IndexError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"could not construct receipt-ID tamper probe: {exc}") from exc
+    requests.append(
+        {
+            "schema": RECEIPT_REPLAY_SCHEMA,
+            "term": cases[0].term,
+            "result": bad_id,
+        }
+    )
+    labels.append("tamper:event-id")
+    expected.append("rejected")
+
+    bad_residual = copy.deepcopy(first_result)
+    try:
+        _, prefix_fields = wire_node(bad_residual, "causal-prefix")
+        prefix_fields[2] = term_nil()
+    except (IndexError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"could not construct receipt-residual tamper probe: {exc}"
+        ) from exc
+    requests.append(
+        {
+            "schema": RECEIPT_REPLAY_SCHEMA,
+            "term": cases[0].term,
+            "result": bad_residual,
+        }
+    )
+    labels.append("tamper:residual")
+    expected.append("rejected")
+
+    env = os.environ.copy()
+    env["LAKE_JOBS"] = "1"
+    env["LEAN_NUM_THREADS"] = "1"
+    target = (
+        "Mettapedia.Languages.ProcessCalculi.RhoCalculus.Costed."
+        "ReceiptReplayDifferential"
+    )
+    build = subprocess.run(
+        ["lake", "build", target],
+        cwd=mettapedia_root,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if build.returncode != 0:
+        raise RuntimeError(build.stdout.strip() + "\n" + build.stderr.strip())
+
+    request_json = json.dumps(requests, separators=(",", ":"), sort_keys=True)
+    proc = subprocess.run(
+        ["nice", "-n", "19", "lake", "env", "lean", "--run", str(runner),
+         "--stdin"],
+        input=request_json,
+        cwd=mettapedia_root,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stdout.strip() + "\n" + proc.stderr.strip())
+    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("Lean receipt replay produced no JSON")
+    batch = json.loads(lines[-1])
+    outcomes = batch.get("outcomes") if isinstance(batch, dict) else None
+    if not isinstance(outcomes, list) or len(outcomes) != len(expected):
+        raise RuntimeError(
+            f"receipt replay expected {len(expected)} verdicts, saw "
+            f"{len(outcomes) if isinstance(outcomes, list) else type(outcomes).__name__}"
+        )
+    mismatches = [
+        (label, want, saw)
+        for label, want, saw in zip(labels, expected, outcomes, strict=True)
+        if saw != want
+    ]
+    if mismatches:
+        rendered = ", ".join(
+            f"{label}: expected {want}, saw {saw}"
+            for label, want, saw in mismatches[:8]
+        )
+        raise RuntimeError(f"Lean receipt replay verdict mismatch: {rendered}")
+    return len(labeled_results)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: rhocalc_cost_differential.py <cetta-bin>", file=sys.stderr)
@@ -587,7 +946,13 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
     runner = Path(__file__).resolve().parents[1] / "tests" / "rhocalc_cost_differential.lean"
+    replay_runner = (
+        Path(__file__).resolve().parents[1]
+        / "tests"
+        / "rhocalc_cost_receipt_replay.lean"
+    )
     cases = make_cases()
+    branch_cases = make_branch_cases()
 
     boundary_exclusions = 0
     try:
@@ -600,7 +965,15 @@ def main() -> int:
 
     try:
         cetta, raw_lines = run_cetta(bin_path, cases)
+        threaded, threaded_raw_lines = run_cetta(bin_path, cases, 4)
+        branch_count, branch_samples = run_branch_outcome_checks(
+            bin_path, branch_cases
+        )
         lean = run_lean(mettapedia_root, runner, cases)
+        replay_count = run_receipt_replay(
+            mettapedia_root, replay_runner, cases, cetta, threaded,
+            branch_samples
+        )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print(f"cost-rho differential harness failed: {exc}", file=sys.stderr)
         return 1
@@ -629,8 +1002,44 @@ def main() -> int:
         print(f"FAIL: {mismatches} bounded cost-rho differential mismatches", file=sys.stderr)
         return 1
 
+    threaded_mismatches = 0
+    for case, sequential_outcome, threaded_outcome, raw_line in zip(
+        cases, cetta, threaded, threaded_raw_lines, strict=True
+    ):
+        if threaded_outcome == sequential_outcome:
+            continue
+        threaded_mismatches += 1
+        print(f"THREADED MISMATCH: {case.name}", file=sys.stderr)
+        print(
+            "  sequential: " + json.dumps(
+                sequential_outcome, sort_keys=True, separators=(",", ":")
+            ),
+            file=sys.stderr,
+        )
+        print(
+            "  threaded:   " + json.dumps(
+                threaded_outcome, sort_keys=True, separators=(",", ":")
+            ),
+            file=sys.stderr,
+        )
+        print(f"  raw:        {raw_line}", file=sys.stderr)
+        if threaded_mismatches == 8:
+            break
+
+    if threaded_mismatches:
+        print(
+            f"FAIL: {threaded_mismatches} threaded/sequential cost-rho "
+            "prefix mismatches",
+            file=sys.stderr,
+        )
+        return 1
+
     print(
         f"PASS: {len(cases)} bounded cost-rho CeTTa/Lean cases; "
+        f"{len(cases)} threaded/sequential prefix cases; "
+        f"{replay_count} compiled-C receipts replayed by Lean; "
+        "2 tampered receipts rejected; "
+        f"{branch_count} exhaustive/threaded branch outcome sets; "
         f"{len(cases)}/{len(cases)} theorem precondition records accepted; "
         f"{boundary_exclusions} out-of-fragment boundary case rejected; "
         "testing boundary only, not a universal theorem about compiled C"

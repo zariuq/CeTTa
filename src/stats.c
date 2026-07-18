@@ -233,6 +233,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "term-universe-copy-memo-heap-bytes",
     "query-subst-flat-heap-bytes",
     "query-subst-matchset-heap-bytes",
+    "cost-rho-parallel-wave",
+    "cost-rho-parallel-wave-width-peak",
+    "cost-rho-parallel-firing",
 };
 
 static int64_t clamp_counter(uint64_t value) {
