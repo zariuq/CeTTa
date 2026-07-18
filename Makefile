@@ -246,7 +246,7 @@ CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
 endif
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -323,6 +323,24 @@ HE_COMPAT_GENERATED_DIR = tests/generated/he_compat
 HE_COMPAT_CATALOG = $(HE_COMPAT_GENERATED_DIR)/he_compat_cases_2026-06-25.json
 HE_NATIVE_CONTRACTS = $(HE_COMPAT_GENERATED_DIR)/he_native_contracts_2026-06-25.json
 TEST_MANIFEST = tests/test_manifest.tsv
+PRIME_CONFORMANCE_TESTS = \
+	tests/prime_02_completion_resources.metta \
+	tests/prime/conformance/resource_policy.metta \
+	tests/prime/conformance/occurs_check.metta
+PRIME_EXAMPLE_TESTS = \
+	examples/prime/exact_gradual.metta \
+	examples/prime/dependent_telescope.metta \
+	examples/prime/nondeterministic_judgments.metta
+PRIME_PRACTICAL_TESTS = \
+	tests/prime/practical/typed_pln_chainer.metta \
+	tests/prime/practical/atp_guided_inhabitation.metta \
+	tests/prime/practical/atp_direct_library.metta \
+	tests/prime/practical/atp_indexed_library.metta \
+	tests/prime/practical/atp_resolution_replay.metta \
+	tests/prime/practical/atp_resolution_search.metta \
+	tests/prime/practical/atp_superposition_replay.metta \
+	tests/prime/practical/atp_agenda_library.metta
+PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRACTICAL_TESTS)
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
 	tests/test_space_type.metta \
@@ -681,6 +699,7 @@ bench-correctness:
 bench-performance-light:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) perf-bench-tu
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-lib-parse-inference-native
+	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-prime-light
 	@if [ "$(AUTO_BUILD_OPTIONAL)" = "1" ]; then \
 		$(MAKE) -s BUILD=$(BUILD_CANON) bench-optional-bridge-light; \
 	fi
@@ -703,6 +722,18 @@ bench-heavy:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-space-scale-ladder
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-d4-backends
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-d4-nodup-backends
+	@BENCH_ALLOW_HEAVY=1 $(MAKE) -s BUILD=$(BUILD_CANON) bench-prime-heavy
+
+bench-prime-light: $(BIN)
+	@$(CETTA_BIN_INVOKE) --lang prime benchmarks/prime/bench_typed_search.metta
+
+bench-prime-heavy: $(BIN)
+	@if [ "$(BENCH_ALLOW_HEAVY)" != "1" ]; then \
+		echo "Refusing heavy Prime benchmark without BENCH_ALLOW_HEAVY=1"; \
+		echo "Try: BENCH_ALLOW_HEAVY=1 make bench-prime-heavy"; \
+		exit 2; \
+	fi
+	@$(CETTA_BIN_INVOKE) --lang prime benchmarks/prime/bench_typed_search_capacity.metta
 
 test-symbolid-guard:
 	@./scripts/check_symbolid_guards.sh
@@ -793,17 +824,17 @@ else
 endif
 
 $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
-$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
+$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c $(LDFLAGS)
 
 test-space-term-universe-membership: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN))
 
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(LDFLAGS)
 
 test-term-universe-store-abi:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -815,9 +846,9 @@ else
 endif
 
 $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(LDFLAGS)
 
 test-term-universe-backend-add-abi:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -828,9 +859,9 @@ else
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-backend-primary-destructive-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -840,9 +871,9 @@ else
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary destructive ABI,$@)
 endif
 
-$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-backend-primary-replace-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -852,9 +883,9 @@ else
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary replace ABI,$@)
 endif
 
-$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-typed-query-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -2549,6 +2580,7 @@ probe-heavy-diagnostics: $(BIN)
 
 test-correctness-all:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-heavy-golden
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats
 
@@ -2642,7 +2674,9 @@ bench-index:
 	@{ printf 'kind\tname_or_path\tinfo\n'; \
 	awk -F'\t' 'NR>1{print "witness\t"$$1"\t"$$2}' benchmarks/witness_catalog.tsv; \
 	awk -F'\t' 'NR>1 && $$1 ~ /^benchmarks\// {print "heavy\t"$$1"\t"$$8}' tests/test_manifest.tsv; \
-	for f in benchmarks/bench_*.metta; do printf 'driver\t%s\t-\n' "$$f"; done; } > benchmarks/INDEX.tsv
+	for f in benchmarks/bench_*.metta benchmarks/prime/bench_*.metta; do \
+		[ -f "$$f" ] && printf 'driver\t%s\t-\n' "$$f"; \
+	done; } > benchmarks/INDEX.tsv
 	@wc -l benchmarks/INDEX.tsv
 
 test-manifest test-manifest-check:
@@ -2691,6 +2725,44 @@ test-he-prime-scheme-mutation: $(BIN)
 		echo "FAIL: implicit-scheme mutation survived its rigid-variable gate"; exit 1; \
 	fi; \
 	echo "PASS: implicit-scheme mutation is killed by rigid-variable gates"
+
+test-prime-occurs-check-mutation: $(BIN)
+	@mutation_dir=runtime/prime-occurs-check-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_occurs_check.py \
+		src/match.c "$$mutation_dir/match.c" \
+		src/he_typing.c "$$mutation_dir/he_typing.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/match.c" \
+		-o "$$mutation_dir/match.o" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" \
+		-o "$$mutation_dir/he_typing.o" || exit 1; \
+	base_objects='$(filter-out src/match.$(BUILD_OBJ_TAG).o src/match.$(BUILD_OBJ_TAG).runtime-stats.o src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))'; \
+	he_object='src/he_typing.$(BUILD_OBJ_TAG).o'; \
+	$(CC) $$base_objects "$$mutation_dir/match.o" "$$he_object" \
+		-o "$$mutation_dir/cetta-corrupt-producer" $(LDFLAGS) || exit 1; \
+	$(CC) $$base_objects "$$mutation_dir/match.o" \
+		"$$mutation_dir/he_typing.o" \
+		-o "$$mutation_dir/cetta-no-occurs-check" $(LDFLAGS) || exit 1; \
+	fixture=tests/prime/conformance/occurs_check.metta; \
+	expected=$$(cat tests/prime/conformance/occurs_check.expected); \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime "$$fixture" 2>&1); \
+	if [ "$$baseline" != "$$expected" ]; then \
+		echo "FAIL: occurs-check mutation baseline is not green"; exit 1; \
+	fi; \
+	producer=$$("$$mutation_dir/cetta-corrupt-producer" \
+		--lang prime "$$fixture" 2>&1); \
+	if [ "$$producer" != "$$expected" ]; then \
+		echo "FAIL: checker accepted a cyclic substitution from a corrupt producer"; \
+		exit 1; \
+	fi; \
+	unsound=$$("$$mutation_dir/cetta-no-occurs-check" \
+		--lang prime "$$fixture" 2>&1); \
+	if [ "$$unsound" = "$$expected" ] || \
+	   ! printf '%s\n' "$$unsound" | grep -Fq '[CyclicSearchUnsound]'; then \
+		echo "FAIL: combined occurs-check mutation survived its soundness gate"; \
+		exit 1; \
+	fi; \
+	echo "PASS: replay rejects a corrupt producer and the occurs-check mutation is killed"
 
 test-prime-completion-mutation: $(BIN)
 	@mutation_dir=runtime/prime-completion-mutation; \
@@ -2807,16 +2879,57 @@ test-prime-budget-monotonicity: $(BIN)
 test-prime-package-validation: $(PRIME_PACKAGE_VALIDATION_TEST_BIN)
 	@"$(PRIME_PACKAGE_VALIDATION_TEST_BIN)"
 
-test-prime: $(BIN) test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
-	@result=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
-	if [ "$$result" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
-		echo "FAIL: Prime 0.2 completion/resource gate"; \
-		diff <(cat tests/prime_02_completion_resources.expected) <(echo "$$result") | head -30; \
-		exit 1; \
-	fi; \
-	echo "PASS: Prime 0.2 completion/resource gate"
+test-prime-coverage:
+	@python3 scripts/check_prime_coverage.py
 
-test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation
+test-prime-crossdialect: $(BIN)
+	@python3 scripts/check_prime_crossdialect.py "$(abspath $(BIN))"
+
+test-prime-practical: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(PRIME_PRACTICAL_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		result=$$($(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -30; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Prime practical gate: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation
+	@pass=0; fail=0; \
+	for f in $(PRIME_FAST_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		if [ ! -f "$$exp" ]; then \
+			echo "FAIL: $$f (missing $$exp)"; fail=$$((fail + 1)); continue; \
+		fi; \
+		result=$$($(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -30; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Prime fast gate: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-prime-all: test-prime test-prime-crossdialect \
+	test-prime-occurs-check-mutation \
+	test-prime-completion-mutation \
+	test-prime-delayed-ambiguity-mutation \
+	test-prime-variable-mutation \
+	test-prime-applicability-capacity-mutation \
+	test-prime-type-capacity-mutation
+	@echo "PASS: full Prime correctness gate"
+
+test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
@@ -4975,8 +5088,8 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
