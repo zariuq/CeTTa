@@ -184,6 +184,30 @@ class ManifestRow:
 
 
 SPECIAL_INVENTORY_ROWS = {
+    "tests/prime/conformance/language_identity.metta": [
+        ManifestRow(
+            "tests/prime/conformance/language_identity.metta",
+            "prime",
+            "metta",
+            "",
+            "any",
+            "native",
+            "test-profiles",
+            "property",
+            "Prime language-identity side of the independently versioned lane boundary",
+        ),
+        ManifestRow(
+            "tests/prime/conformance/language_identity.metta",
+            "he",
+            "metta",
+            "he-prime",
+            "main",
+            "native",
+            "test-profiles",
+            "property",
+            "HE-prime inert-syntax side of the independently versioned lane boundary",
+        ),
+    ],
     "tests/spec_module_inventory.metta": [
         ManifestRow(
             "tests/spec_module_inventory.metta",

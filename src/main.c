@@ -1041,6 +1041,7 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
         {"check-type", "uAAN"},
         {"search-inhabitants", "uANNN"},
         {"search-inhabitants", "uANNNA"},
+        {"search-first-inhabitant", "uAN"},
         {"search-first-inhabitant", "uANN"},
         {"search-first-inhabitant", "uANNA"},
         {"type-forward-step", "uNN"},

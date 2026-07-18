@@ -1,0 +1,3 @@
+[(ValidAnnotation Established)]
+[(InvalidAnnotation Refuted)]
+[(Error 7 (BadType String Number))]

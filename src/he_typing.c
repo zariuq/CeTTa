@@ -1373,6 +1373,7 @@ typedef struct {
     ChainIndex index;
     ChainPolicy policy;
     uint64_t fuel;
+    bool fuel_limited;
     bool incomplete;
     bool more_possible;
     const char *incomplete_reason;
@@ -1386,6 +1387,10 @@ typedef struct {
     uint32_t scheme_var_cap;
 } ChainContext;
 
+static bool chain_fuel_exhausted(const ChainContext *ctx) {
+    return ctx->fuel_limited && ctx->fuel == 0;
+}
+
 static void chain_mark_incomplete(ChainContext *ctx, const char *reason) {
     if (ctx->incomplete) return;
     ctx->incomplete = true;
@@ -1397,7 +1402,10 @@ static void chain_mark_normalization_incomplete(ChainContext *ctx,
                                                 const char *fallback) {
     switch (status) {
     case HE_NORM_RESOURCE:
-        chain_mark_incomplete(ctx, "fuel-exhausted");
+        chain_mark_incomplete(
+            ctx, chain_fuel_exhausted(ctx)
+                     ? "fuel-exhausted"
+                     : "type-computation-resource-exhausted");
         return;
     case HE_NORM_DEPTH:
         chain_mark_incomplete(ctx, "type-computation-depth-exhausted");
@@ -1421,6 +1429,7 @@ static void chain_mark_normalization_incomplete(ChainContext *ctx,
 }
 
 static bool chain_take_fuel(ChainContext *ctx, uint64_t amount) {
+    if (!ctx->fuel_limited) return true;
     if (ctx->fuel < amount) {
         ctx->fuel = 0;
         chain_mark_incomplete(ctx, "fuel-exhausted");
@@ -2176,21 +2185,23 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
                                                &ctx->fuel, &detail, 0, NULL);
     if (lv == HE_TYPE_VALIDATION_INCOMPLETE ||
         rv == HE_TYPE_VALIDATION_INCOMPLETE) {
-        chain_mark_incomplete(ctx, ctx->fuel == 0
+        chain_mark_incomplete(ctx, chain_fuel_exhausted(ctx)
                                   ? "fuel-exhausted"
                                   : "type-refinement-incomplete");
         return false;
     }
     if (lv == HE_TYPE_VALIDATION_UNKNOWN || rv == HE_TYPE_VALIDATION_UNKNOWN) {
-        chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
-                                                  : "type-refinement-unknown");
+        chain_mark_incomplete(
+            ctx, chain_fuel_exhausted(ctx) ? "fuel-exhausted"
+                                           : "type-refinement-unknown");
         return false;
     }
     if (lv == HE_TYPE_INVALID || rv == HE_TYPE_INVALID) return false;
     HeEdge e = consistency_bind(left, right, &ctx->fuel, env);
     if (e == HE_UNKNOWN) {
-        chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
-                                              : "type-unification-exhausted");
+        chain_mark_incomplete(
+            ctx, chain_fuel_exhausted(ctx) ? "fuel-exhausted"
+                                           : "type-unification-exhausted");
         return false;
     }
     /* Gradual acceptances (dynamic/top/meta anywhere in the composition) are
@@ -2219,8 +2230,9 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
     HeTypeSet ts;
     set_init(&ts, ctx->arena);
     if (!infer_shared_types(ctx->arena, ctx->space, proof, &ctx->fuel, &ts)) {
-        chain_mark_incomplete(ctx, ctx->fuel == 0 ? "fuel-exhausted"
-                                         : "proof-type-inference-exhausted");
+        chain_mark_incomplete(
+            ctx, chain_fuel_exhausted(ctx) ? "fuel-exhausted"
+                                           : "proof-type-inference-exhausted");
         return false;
     }
     if (ts.overflow) {
@@ -2533,7 +2545,8 @@ static bool chain_queue_pop(ChainContext *ctx, ChainWorkQueue *queue,
 static bool chain_guidance_unify_shape(ChainContext *ctx, Atom *left,
                                        Atom *right, Bindings *env) {
     ChainContext probe = *ctx;
-    probe.fuel = UINT64_MAX;
+    probe.fuel = 0;
+    probe.fuel_limited = false;
     probe.incomplete = false;
     probe.incomplete_reason = NULL;
     return chain_unify_shape(&probe, left, right, env);
@@ -3167,15 +3180,25 @@ static bool chain_arg_nat(Arena *a, Atom *x, uint32_t *out,
 
 static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
                                     uint32_t depth, uint64_t fuel,
+                                    bool fuel_limited,
                                     uint32_t limit, bool first_only,
                                     ChainPolicy policy) {
     ChainContext ctx = {0};
     ctx.arena = a;
     ctx.space = space;
     ctx.fuel = fuel;
+    ctx.fuel_limited = fuel_limited;
     ctx.policy = policy;
+
+    CettaHeTypingBudget unbounded_typing;
+    CettaHeTypingBudget *parent_budget = g_active_typing_budget;
+    if (!fuel_limited) {
+        he_typing_budget_init_unbounded(&unbounded_typing);
+        g_active_typing_budget = &unbounded_typing;
+    }
     if (!chain_index_build(&ctx)) {
         chain_index_free(&ctx.index);
+        g_active_typing_budget = parent_budget;
         return he_unknown(a, he_reason(a, "chaining-index-failed"));
     }
     ChainProofVec proofs;
@@ -3206,6 +3229,7 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     chain_index_free(&ctx.index);
     free(ctx.query_vars);
     free(ctx.scheme_vars);
+    g_active_typing_budget = parent_budget;
     return result;
 }
 
@@ -3227,7 +3251,10 @@ static Atom *chain_forward_step(Arena *a, Space *space, uint64_t *fuel,
                                 uint32_t limit, uint32_t *added_out,
                                 bool *incomplete_out) {
     ChainContext ctx = {0};
-    ctx.arena = a; ctx.space = space; ctx.fuel = *fuel;
+    ctx.arena = a;
+    ctx.space = space;
+    ctx.fuel = *fuel;
+    ctx.fuel_limited = true;
     if (!chain_index_build(&ctx)) {
         if (incomplete_out) *incomplete_out = true;
         chain_index_free(&ctx.index);
@@ -3420,16 +3447,28 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (!chain_arg_nat(a, args[4], &limit, "limit-not-natural", &bad) ||
             limit == 0)
             return bad ? bad : he_reject(a, he_reason(a, "limit-not-positive"));
-        return chain_inhabit_dispatch(a, sp, args[1], depth, fuel, limit,
+        return chain_inhabit_dispatch(a, sp, args[1], depth, fuel, true, limit,
                                       false, policy);
     }
 
     if (strcmp(name, "search-first-inhabitant") == 0) {
-        if (nargs != 4 && nargs != 5)
+        if (nargs != 3 && nargs != 4 && nargs != 5)
             return he_reject(a, he_reason(a, "search-first-inhabitant-arity"));
         ChainPolicy policy = CHAIN_POLICY_NATIVE;
-        if (nargs == 5 && !chain_parse_search_policy(args[4], &policy))
-            return he_reject(a, he_reason(a, "unsupported-typing-search-policy"));
+        bool fuel_limited = false;
+        uint64_t fuel = 0;
+        if (nargs == 4) {
+            Atom *bad = arg_fuel(a, args[3], &fuel);
+            if (bad) return bad;
+            fuel_limited = true;
+        } else if (nargs == 5) {
+            Atom *bad = arg_fuel(a, args[3], &fuel);
+            if (bad) return bad;
+            fuel_limited = true;
+            if (!chain_parse_search_policy(args[4], &policy))
+                return he_reject(
+                    a, he_reason(a, "unsupported-typing-search-policy"));
+        }
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
@@ -3437,10 +3476,8 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         Atom *bad = NULL;
         if (!chain_arg_nat(a, args[2], &depth, "depth-not-natural", &bad))
             return bad;
-        uint64_t fuel = 0;
-        bad = arg_fuel(a, args[3], &fuel);
-        if (bad) return bad;
-        return chain_inhabit_dispatch(a, sp, args[1], depth, fuel, 1,
+        return chain_inhabit_dispatch(a, sp, args[1], depth, fuel,
+                                      fuel_limited, 1,
                                       true, policy);
     }
 
