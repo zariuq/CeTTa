@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check named HE-prime/Prime agreements and deliberate divergences."""
+"""Check independently versioned HE-prime and Prime lane contracts."""
 
 from __future__ import annotations
 
@@ -37,42 +37,45 @@ def main() -> int:
 
     failures = 0
     passed = 0
+    identity_boundary_seen = False
     with CASES.open(newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
 
     for row in rows:
         source = row["source"]
         he = run(binary, "--profile", "he-prime", "--lang", "he", source)
-        he_golden = expected(row["he_expected"])
-        prime = run(binary, "--lang", "prime", source)
-        relation = row["prime_relation"]
-
-        ok = he == he_golden
-        if relation == "same":
-            ok = ok and prime == he_golden
-        elif relation == "typed-equality-divergence":
-            ok = (
-                ok
-                and prime != he_golden
-                and "(BadArgType 2 Number String)" in prime
-            )
-        else:
-            print(f"FAIL: {row['id']}: unknown relation {relation}")
+        he_expected_path = row["he_expected"]
+        prime_expected_path = row["prime_expected"]
+        if he_expected_path == prime_expected_path:
+            print(f"FAIL: {row['id']}: lane contracts share one golden path")
             failures += 1
             continue
 
+        he_golden = expected(he_expected_path)
+        prime = run(binary, "--lang", "prime", source)
+        prime_golden = expected(prime_expected_path)
+
+        ok = he == he_golden and prime == prime_golden
+        if row["id"] == "language-identity":
+            identity_boundary_seen = True
+            ok = ok and he != prime
+
         if ok:
-            print(f"PASS: {row['id']} ({relation})")
+            print(f"PASS: {row['id']} (independent lane contracts)")
             passed += 1
         else:
-            print(f"FAIL: {row['id']} ({relation})")
+            print(f"FAIL: {row['id']} (independent lane contracts)")
             if he != he_golden:
                 print("  HE-prime output differs from its golden")
-            if relation == "same" and prime != he_golden:
-                print("  Prime output differs from the shared golden")
-            if relation == "typed-equality-divergence":
-                print("  Prime did not exhibit the typed equality boundary")
+            if prime != prime_golden:
+                print("  Prime output differs from its golden")
+            if row["id"] == "language-identity" and he == prime:
+                print("  Prime-only judgments collapsed into the HE-prime lane")
             failures += 1
+
+    if not identity_boundary_seen:
+        print("FAIL: missing executable Prime language-identity boundary")
+        failures += 1
 
     make_plan = subprocess.run(
         ["make", "-n", "test-prime"],
@@ -89,7 +92,7 @@ def main() -> int:
         print("PASS: normative test-prime target is --lang prime only")
         passed += 1
 
-    print(f"Prime cross-dialect gate: {passed} passed, {failures} failed")
+    print(f"Prime/HE-prime ownership gate: {passed} passed, {failures} failed")
     return 1 if failures else 0
 
 

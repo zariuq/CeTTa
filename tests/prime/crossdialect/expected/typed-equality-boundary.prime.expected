@@ -1,0 +1,1 @@
+[(Error (assertEqual (== 1 "S") False) "\nExpected: [False]\nGot: [(Error (== 1 \"S\") (BadArgType 2 Number String))]\nMissed results: False\nExcessive results: (Error (== 1 \"S\") (BadArgType 2 Number String))")]

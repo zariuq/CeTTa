@@ -2137,6 +2137,150 @@ static bool is_space_value_type(Atom *atom) {
 typedef struct {
     Atom *left;
     Atom *right;
+    bool tagged;
+    bool active;
+} MatchPathSlot;
+
+#define MATCH_PATH_INLINE_CAP 16u
+
+typedef struct {
+    MatchPathSlot inline_slots[MATCH_PATH_INLINE_CAP];
+    MatchPathSlot *slots;
+    size_t cap;
+    size_t active;
+    size_t tombstones;
+} MatchPathSet;
+
+static void match_path_clear(MatchPathSlot *slots, size_t cap) {
+    memset(slots, 0, sizeof(*slots) * cap);
+}
+
+static void match_path_init(MatchPathSet *path) {
+    path->slots = path->inline_slots;
+    path->cap = MATCH_PATH_INLINE_CAP;
+    path->active = 0;
+    path->tombstones = 0;
+    match_path_clear(path->slots, path->cap);
+}
+
+static void match_path_free(MatchPathSet *path) {
+    if (path->slots != path->inline_slots) free(path->slots);
+}
+
+static size_t match_path_hash(Atom *left, Atom *right, bool tagged) {
+    uintptr_t x = (uintptr_t)left >> 4;
+    uintptr_t y = (uintptr_t)right >> 4;
+    x ^= y + (uintptr_t)0x9e3779b9u + (x << 6) + (x >> 2);
+    x ^= tagged ? (uintptr_t)0x85ebca6bu : 0u;
+    x ^= x >> 17;
+    x *= (uintptr_t)0xed5ad4bbu;
+    x ^= x >> 11;
+    return (size_t)x;
+}
+
+static bool match_path_rehash(MatchPathSet *path, size_t new_cap) {
+    if (new_cap < MATCH_PATH_INLINE_CAP ||
+        new_cap > SIZE_MAX / sizeof(*path->slots))
+        return false;
+    size_t old_cap = path->cap;
+    MatchPathSlot *old_slots = path->slots;
+    MatchPathSlot *new_slots = cetta_malloc(
+        sizeof(*new_slots) * new_cap);
+    match_path_clear(new_slots, new_cap);
+    path->slots = new_slots;
+    path->cap = new_cap;
+    size_t old_active = path->active;
+    path->active = 0;
+    path->tombstones = 0;
+    for (size_t i = 0; i < old_cap; i++) {
+        MatchPathSlot *old = &old_slots[i];
+        if (!old->left || !old->active) continue;
+        size_t mask = path->cap - 1u;
+        size_t pos = match_path_hash(
+            old->left, old->right, old->tagged) & mask;
+        while (path->slots[pos].left)
+            pos = (pos + 1u) & mask;
+        MatchPathSlot *next = &path->slots[pos];
+        *next = *old;
+        path->active++;
+    }
+    assert(path->active == old_active);
+    if (old_slots != path->inline_slots) free(old_slots);
+    return true;
+}
+
+/* Return false exactly when this structural comparison recurs on its active
+   DFS path. Inactive entries remain as reusable hash slots, so shared finite
+   subterms do not count as cycles. */
+static bool match_path_enter(MatchPathSet *path, Atom *left, Atom *right,
+                             bool tagged) {
+    size_t occupied = path->active + path->tombstones;
+    if ((occupied + 1u) * 4u >= path->cap * 3u) {
+        size_t live_after = path->active + 1u;
+        size_t new_cap = path->cap;
+        if (live_after * 4u >= path->cap * 3u) {
+            if (path->cap > SIZE_MAX / 2u) return false;
+            new_cap = path->cap * 2u;
+        }
+        if (!match_path_rehash(path, new_cap)) return false;
+    }
+
+    size_t mask = path->cap - 1u;
+    size_t pos = match_path_hash(left, right, tagged) & mask;
+    MatchPathSlot *first_tombstone = NULL;
+    MatchPathSlot *slot = NULL;
+    for (;;) {
+        MatchPathSlot *candidate = &path->slots[pos];
+        if (!candidate->left) {
+            slot = first_tombstone ? first_tombstone : candidate;
+            break;
+        }
+        if (candidate->left == left && candidate->right == right &&
+            candidate->tagged == tagged) {
+            if (candidate->active) return false;
+            slot = candidate;
+            break;
+        }
+        if (!candidate->active && !first_tombstone)
+            first_tombstone = candidate;
+        pos = (pos + 1u) & mask;
+    }
+    if (slot->left) path->tombstones--;
+    slot->left = left;
+    slot->right = right;
+    slot->tagged = tagged;
+    slot->active = true;
+    path->active++;
+    return true;
+}
+
+static void match_path_leave(MatchPathSet *path, Atom *left, Atom *right,
+                             bool tagged) {
+    size_t mask = path->cap - 1u;
+    size_t pos = match_path_hash(left, right, tagged) & mask;
+    for (;;) {
+        MatchPathSlot *slot = &path->slots[pos];
+        assert(slot->left);
+        if (slot->active && slot->left == left && slot->right == right &&
+            slot->tagged == tagged) {
+            slot->active = false;
+            path->active--;
+            path->tombstones++;
+            return;
+        }
+        pos = (pos + 1u) & mask;
+    }
+}
+
+typedef enum {
+    DECODED_MATCH_PAIR = 0,
+    DECODED_MATCH_EXIT = 1,
+} DecodedMatchFrameKind;
+
+typedef struct {
+    DecodedMatchFrameKind kind;
+    Atom *left;
+    Atom *right;
 } DecodedMatchPair;
 
 typedef struct {
@@ -2170,7 +2314,15 @@ static bool decoded_match_push(DecodedMatchWorklist *work,
         work->items = next;
         work->cap = next_cap;
     }
-    work->items[work->len++] = (DecodedMatchPair){left, right};
+    work->items[work->len++] =
+        (DecodedMatchPair){DECODED_MATCH_PAIR, left, right};
+    return true;
+}
+
+static bool decoded_match_push_exit(DecodedMatchWorklist *work,
+                                    Atom *left, Atom *right) {
+    if (!decoded_match_push(work, left, right)) return false;
+    work->items[work->len - 1u].kind = DECODED_MATCH_EXIT;
     return true;
 }
 
@@ -2188,11 +2340,17 @@ static bool match_decoded_atoms_worklist(Atom *left, Atom *right,
                                          BindingsBuilder *builder,
                                          bool undefined_is_wildcard) {
     DecodedMatchWorklist work;
+    MatchPathSet path;
     decoded_match_worklist_init(&work);
-    if (!decoded_match_push(&work, left, right)) return false;
+    match_path_init(&path);
+    if (!decoded_match_push(&work, left, right)) goto fail;
 
     while (work.len > 0) {
         DecodedMatchPair pair = work.items[--work.len];
+        if (pair.kind == DECODED_MATCH_EXIT) {
+            match_path_leave(&path, pair.left, pair.right, false);
+            continue;
+        }
         left = pair.left;
         right = pair.right;
         Bindings *current = builder ? &builder->current : bindings;
@@ -2211,8 +2369,7 @@ retry_pair:
             Atom *existing = bindings_lookup_var(current, left);
             if (existing) {
                 if (++dereferences > dereference_limit) {
-                    decoded_match_worklist_free(&work);
-                    return false;
+                    goto fail;
                 }
                 left = existing;
                 goto retry_pair;
@@ -2221,8 +2378,7 @@ retry_pair:
                 Atom *right_existing = bindings_lookup_var(current, right);
                 if (right_existing) {
                     if (++dereferences > dereference_limit) {
-                        decoded_match_worklist_free(&work);
-                        return false;
+                        goto fail;
                     }
                     right = right_existing;
                     goto retry_pair;
@@ -2233,8 +2389,7 @@ retry_pair:
                 ? bindings_builder_add_var_fresh(builder, left, right)
                 : bindings_add_var(bindings, left, right);
             if (!added) {
-                decoded_match_worklist_free(&work);
-                return false;
+                goto fail;
             }
             continue;
         }
@@ -2242,8 +2397,7 @@ retry_pair:
             Atom *existing = bindings_lookup_var(current, right);
             if (existing) {
                 if (++dereferences > dereference_limit) {
-                    decoded_match_worklist_free(&work);
-                    return false;
+                    goto fail;
                 }
                 right = existing;
                 goto retry_pair;
@@ -2252,43 +2406,47 @@ retry_pair:
                 ? bindings_builder_add_var_fresh(builder, right, left)
                 : bindings_add_var(bindings, right, left);
             if (!added) {
-                decoded_match_worklist_free(&work);
-                return false;
+                goto fail;
             }
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
             if (left->sym_id != right->sym_id) {
-                decoded_match_worklist_free(&work);
-                return false;
+                goto fail;
             }
             continue;
         }
         if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
             if (!atom_eq(left, right)) {
-                decoded_match_worklist_free(&work);
-                return false;
+                goto fail;
             }
             continue;
         }
         if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
             left->expr.len != right->expr.len) {
-            decoded_match_worklist_free(&work);
-            return false;
+            goto fail;
         }
+        if (!match_path_enter(&path, left, right, false) ||
+            !decoded_match_push_exit(&work, left, right))
+            goto fail;
         /* Push in reverse so binding effects retain the recursive
            implementation's left-to-right traversal order. */
         for (CettaExprIndex i = left->expr.len; i > 0; i--) {
             CettaExprIndex child = i - 1u;
             if (!decoded_match_push(&work, left->expr.elems[child],
                                     right->expr.elems[child])) {
-                decoded_match_worklist_free(&work);
-                return false;
+                goto fail;
             }
         }
     }
     decoded_match_worklist_free(&work);
+    match_path_free(&path);
     return true;
+
+fail:
+    decoded_match_worklist_free(&work);
+    match_path_free(&path);
+    return false;
 }
 
 bool match_types(Atom *actual, Atom *expected, Bindings *b) {
@@ -2432,6 +2590,7 @@ bool atom_alpha_eq(Atom *left, Atom *right) {
 }
 
 typedef struct {
+    bool exit;
     Atom *left;
     Atom *right;
     bool right_original;
@@ -2459,20 +2618,34 @@ static bool epoch_match_push(EpochMatchWorklist *work, Atom *left,
         work->cap = next_cap;
     }
     work->items[work->len++] =
-        (EpochMatchPair){left, right, right_original};
+        (EpochMatchPair){false, left, right, right_original};
+    return true;
+}
+
+static bool epoch_match_push_exit(EpochMatchWorklist *work, Atom *left,
+                                  Atom *right, bool right_original) {
+    if (!epoch_match_push(work, left, right, right_original)) return false;
+    work->items[work->len - 1u].exit = true;
     return true;
 }
 
 static bool match_atoms_epoch_worklist(Atom *left, Atom *right, Bindings *b,
                                        Arena *a, uint32_t epoch) {
     EpochMatchWorklist work;
+    MatchPathSet path;
     work.items = work.inline_items;
     work.len = 0;
     work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
-    if (!epoch_match_push(&work, left, right, true)) return false;
+    match_path_init(&path);
+    if (!epoch_match_push(&work, left, right, true)) goto fail;
 
     while (work.len > 0) {
         EpochMatchPair pair = work.items[--work.len];
+        if (pair.exit) {
+            match_path_leave(&path, pair.left, pair.right,
+                             pair.right_original);
+            continue;
+        }
         left = pair.left;
         right = pair.right;
         bool right_original = pair.right_original;
@@ -2536,6 +2709,10 @@ retry_pair:
         if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
             left->expr.len != right->expr.len)
             goto fail;
+        if (!match_path_enter(&path, left, right, right_original) ||
+            !epoch_match_push_exit(
+                &work, left, right, right_original))
+            goto fail;
         for (CettaExprIndex i = left->expr.len; i > 0; i--) {
             CettaExprIndex child = i - 1u;
             if (!epoch_match_push(&work, left->expr.elems[child],
@@ -2544,10 +2721,12 @@ retry_pair:
         }
     }
     if (work.items != work.inline_items) free(work.items);
+    match_path_free(&path);
     return true;
 
 fail:
     if (work.items != work.inline_items) free(work.items);
+    match_path_free(&path);
     return false;
 }
 

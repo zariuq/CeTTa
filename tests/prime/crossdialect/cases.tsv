@@ -1,14 +1,16 @@
-id	source	he_expected	prime_relation	prime_expected	requirement
-dependent-binders	tests/profile_he_prime_dependent_binders.metta	tests/profile_he_prime_dependent_binders.expected	same	-	PR1
-type-formation	tests/profile_he_prime_type_formation.metta	tests/profile_he_prime_type_formation.expected	same	-	PR1
-dtt-typed-corpus	tests/profile_he_prime_dtt_typed_corpus.metta	tests/profile_he_prime_dtt_typed_corpus.expected	same	-	PR1
-dtt-tutorial-ladder	tests/profile_he_prime_dtt_tutorial_ladder.metta	tests/profile_he_prime_dtt_tutorial_ladder.expected	same	-	PR1
-recursive-search	tests/profile_he_prime_recursive_search.metta	tests/profile_he_prime_recursive_search.expected	same	-	PR1
-dtt-chainer-showcase	tests/profile_he_prime_dtt_chainer_showcase.metta	tests/profile_he_prime_dtt_chainer_showcase.expected	same	-	PR1
-dtt-adversarial	tests/profile_he_prime_dtt_adversarial.metta	tests/profile_he_prime_dtt_adversarial.expected	same	-	PR1
-search-enumeration	tests/profile_he_prime_search_enumeration.metta	tests/profile_he_prime_search_enumeration.expected	same	-	PR1
-explicit-schemes	tests/profile_he_prime_explicit_schemes.metta	tests/profile_he_prime_explicit_schemes.expected	same	-	PR1
-search-fuel-prefix	tests/profile_he_prime_search_fuel_prefix.metta	tests/profile_he_prime_search_fuel_prefix.expected	same	-	PR1
-search-pln-multi	tests/profile_he_prime_search_pln_multi.metta	tests/profile_he_prime_search_pln_multi.expected	same	-	PR1
-shared-type-level-query	tests/profile_he_shared_type_level_query.metta	tests/profile_he_shared_type_level_query_computed.expected	same	-	PR1
-typed-equality-boundary	tests/profile_he_prime_structural_eq.metta	tests/profile_he_prime_structural_eq.expected	typed-equality-divergence	-	PR5
+id	source	he_expected	prime_expected	requirement
+dependent-binders	tests/profile_he_prime_dependent_binders.metta	tests/profile_he_prime_dependent_binders.expected	tests/prime/crossdialect/expected/dependent-binders.prime.expected	PR1
+type-formation	tests/profile_he_prime_type_formation.metta	tests/profile_he_prime_type_formation.expected	tests/prime/crossdialect/expected/type-formation.prime.expected	PR1
+dtt-typed-corpus	tests/profile_he_prime_dtt_typed_corpus.metta	tests/profile_he_prime_dtt_typed_corpus.expected	tests/prime/crossdialect/expected/dtt-typed-corpus.prime.expected	PR1
+dtt-tutorial-ladder	tests/profile_he_prime_dtt_tutorial_ladder.metta	tests/profile_he_prime_dtt_tutorial_ladder.expected	tests/prime/crossdialect/expected/dtt-tutorial-ladder.prime.expected	PR1
+recursive-search	tests/profile_he_prime_recursive_search.metta	tests/profile_he_prime_recursive_search.expected	tests/prime/crossdialect/expected/recursive-search.prime.expected	PR1
+dtt-chainer-showcase	tests/profile_he_prime_dtt_chainer_showcase.metta	tests/profile_he_prime_dtt_chainer_showcase.expected	tests/prime/crossdialect/expected/dtt-chainer-showcase.prime.expected	PR1
+dtt-adversarial	tests/profile_he_prime_dtt_adversarial.metta	tests/profile_he_prime_dtt_adversarial.expected	tests/prime/crossdialect/expected/dtt-adversarial.prime.expected	PR1
+search-enumeration	tests/profile_he_prime_search_enumeration.metta	tests/profile_he_prime_search_enumeration.expected	tests/prime/crossdialect/expected/search-enumeration.prime.expected	PR1
+explicit-schemes	tests/profile_he_prime_explicit_schemes.metta	tests/profile_he_prime_explicit_schemes.expected	tests/prime/crossdialect/expected/explicit-schemes.prime.expected	PR1
+search-fuel-prefix	tests/profile_he_prime_search_fuel_prefix.metta	tests/profile_he_prime_search_fuel_prefix.expected	tests/prime/crossdialect/expected/search-fuel-prefix.prime.expected	PR1
+search-unbounded	tests/profile_he_prime_search_unbounded.metta	tests/profile_he_prime_search_unbounded.expected	tests/prime/crossdialect/expected/search-unbounded.prime.expected	PR9
+search-pln-multi	tests/profile_he_prime_search_pln_multi.metta	tests/profile_he_prime_search_pln_multi.expected	tests/prime/crossdialect/expected/search-pln-multi.prime.expected	PR1
+shared-type-level-query	tests/profile_he_shared_type_level_query.metta	tests/profile_he_shared_type_level_query_computed.expected	tests/prime/crossdialect/expected/shared-type-level-query.prime.expected	PR1
+typed-equality-boundary	tests/profile_he_prime_structural_eq.metta	tests/profile_he_prime_structural_eq.expected	tests/prime/crossdialect/expected/typed-equality-boundary.prime.expected	PR5
+language-identity	tests/prime/conformance/language_identity.metta	tests/prime/crossdialect/expected/language-identity.he-prime.expected	tests/prime/crossdialect/expected/language-identity.prime.expected	PR2
