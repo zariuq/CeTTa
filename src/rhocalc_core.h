@@ -66,6 +66,11 @@ Atom *rhocalc_cost_causal_trace_expr(Arena *arena, Atom *proc);
 Atom *rhocalc_cost_causal_prefix_expr(Arena *arena, Atom *proc,
                                       uint64_t fuel,
                                       uint64_t search_budget);
+Atom *rhocalc_cost_causal_trace_parallel_expr(Arena *arena, Atom *proc,
+                                              uint32_t thread_count);
+Atom *rhocalc_cost_causal_prefix_parallel_expr(
+    Arena *arena, Atom *proc, uint64_t fuel,
+    uint64_t search_budget, uint32_t thread_count);
 bool rhocalc_reduce_to_quiescence_with_semantic_profile(
     Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile,
     const RhoRuntimeProfile *profile, RhoReductionResult *out);

@@ -2281,6 +2281,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
     if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_causal_trace) {
         Atom *result;
         const char *detail;
+        uint32_t thread_count;
 
         if (nargs != 1) {
             return lts_rho_cost_causal_trace_error(
@@ -2293,7 +2294,11 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
                 a, args, nargs,
                 atom_string(a, detail ? detail : "expected cost-profile rho term"));
         }
-        result = rhocalc_cost_causal_trace_expr(a, args[0]);
+        thread_count = eval_current_num_threads();
+        result = thread_count > 1u
+            ? rhocalc_cost_causal_trace_parallel_expr(
+                  a, args[0], thread_count)
+            : rhocalc_cost_causal_trace_expr(a, args[0]);
         if (!result) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_trace_error(
@@ -2308,6 +2313,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         const char *detail;
         uint64_t fuel;
         uint64_t search_budget;
+        uint32_t thread_count;
 
         if (nargs != 3) {
             return lts_rho_cost_causal_prefix_error(
@@ -2335,8 +2341,12 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         }
         fuel = (uint64_t)args[0]->ground.ival;
         search_budget = (uint64_t)args[1]->ground.ival;
-        result = rhocalc_cost_causal_prefix_expr(
-            a, args[2], fuel, search_budget);
+        thread_count = eval_current_num_threads();
+        result = thread_count > 1u
+            ? rhocalc_cost_causal_prefix_parallel_expr(
+                  a, args[2], fuel, search_budget, thread_count)
+            : rhocalc_cost_causal_prefix_expr(
+                  a, args[2], fuel, search_budget);
         if (!result) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_prefix_error(
