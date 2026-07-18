@@ -943,11 +943,13 @@ static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
      * symbol wildcards above.  Binds function-fresh and argument variables so
      * the codomain can be instantiated. */
     if (expected->kind == ATOM_VAR) {
-        return bindings_add_id(tb, expected->var_id, SYMBOL_ID_NONE, actual)
+        return bindings_add_id_acyclic(
+                   tb, expected->var_id, SYMBOL_ID_NONE, actual)
                    ? HE_EXACT : HE_NONE;
     }
     if (actual->kind == ATOM_VAR) {
-        return bindings_add_id(tb, actual->var_id, SYMBOL_ID_NONE, expected)
+        return bindings_add_id_acyclic(
+                   tb, actual->var_id, SYMBOL_ID_NONE, expected)
                    ? HE_EXACT : HE_NONE;
     }
 
@@ -1314,6 +1316,8 @@ typedef struct {
     uint32_t count;
     uint32_t cap;
     ChainRef *refs;
+    uint32_t *rigid_fact_indices;
+    uint32_t rigid_fact_count;
 } ChainIndex;
 
 /* AnswerIdentityV2 is the lossless identity of a typed-search answer.  The
@@ -1345,9 +1349,12 @@ typedef struct {
     uint64_t fact_candidates;
     uint64_t rule_candidates;
     uint64_t head_pruned;
+    uint64_t ancestor_pruned;
     uint64_t proof_checks;
     uint64_t work_items;
     uint64_t continuations;
+    uint64_t agenda_weight_pops;
+    uint64_t agenda_age_pops;
 } ChainStats;
 
 typedef struct {
@@ -1355,10 +1362,16 @@ typedef struct {
     SymbolId spelling;
 } ChainQueryVar;
 
+typedef enum {
+    CHAIN_POLICY_NATIVE = 0,
+    CHAIN_POLICY_ATP_GUIDED_INHABITATION,
+} ChainPolicy;
+
 typedef struct {
     Arena *arena;
     Space *space;
     ChainIndex index;
+    ChainPolicy policy;
     uint64_t fuel;
     bool incomplete;
     bool more_possible;
@@ -1420,12 +1433,15 @@ static bool chain_take_fuel(ChainContext *ctx, uint64_t amount) {
 static void chain_index_init(ChainIndex *idx) {
     idx->decls = NULL;
     idx->refs = NULL;
+    idx->rigid_fact_indices = NULL;
     idx->count = idx->cap = 0;
+    idx->rigid_fact_count = 0;
 }
 
 static void chain_index_free(ChainIndex *idx) {
     free(idx->decls);
     free(idx->refs);
+    free(idx->rigid_fact_indices);
     chain_index_init(idx);
 }
 
@@ -1448,6 +1464,114 @@ static uint32_t chain_specificity(Atom *a) {
     }
     chain_atom_stack_free(&stack);
     return score;
+}
+
+/* Symbol-count weight and structural distance are search guidance only.  They
+ * never participate in unification, proof construction, or proof checking.
+ * The weighting is deliberately small and deterministic: it is the typed-Horn
+ * analogue of an ATP age/weight queue, not a claim to implement KBO/WPO. */
+static uint32_t chain_atom_weight(Atom *a) {
+    if (!a) return 0;
+    ChainAtomStack stack;
+    chain_atom_stack_init(&stack);
+    if (!chain_atom_stack_push(&stack, a)) return UINT32_MAX;
+    uint32_t weight = 0;
+    while (stack.len > 0) {
+        Atom *current = stack.items[--stack.len];
+        if (weight != UINT32_MAX) weight++;
+        if (!current || current->kind != ATOM_EXPR) continue;
+        for (CettaExprIndex i = current->expr.len; i > 0; i--)
+            if (!chain_atom_stack_push(&stack, current->expr.elems[i - 1u])) {
+                chain_atom_stack_free(&stack);
+                return UINT32_MAX;
+            }
+    }
+    chain_atom_stack_free(&stack);
+    return weight;
+}
+
+typedef struct {
+    Atom *pattern;
+    Atom *goal;
+} ChainShapePair;
+
+static uint64_t chain_u64_add_sat(uint64_t left, uint64_t right) {
+    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
+
+static uint64_t chain_u64_mul_sat(uint64_t left, uint64_t right) {
+    if (left == 0 || right == 0) return 0;
+    return left > UINT64_MAX / right ? UINT64_MAX : left * right;
+}
+
+static uint64_t chain_shape_distance(Atom *pattern, Atom *goal) {
+    ChainShapePair inline_items[32];
+    ChainShapePair *items = inline_items;
+    size_t len = 0, cap = sizeof inline_items / sizeof inline_items[0];
+    items[len++] = (ChainShapePair){pattern, goal};
+    uint64_t distance = 0;
+
+    while (len > 0) {
+        ChainShapePair pair = items[--len];
+        pattern = pair.pattern;
+        goal = pair.goal;
+        if (!pattern || !goal) {
+            distance = chain_u64_add_sat(distance, 16);
+            continue;
+        }
+        if (pattern->kind == ATOM_VAR) {
+            uint32_t goal_weight = chain_atom_weight(goal);
+            distance = chain_u64_add_sat(
+                distance, goal_weight == UINT32_MAX ? UINT64_MAX : goal_weight);
+            continue;
+        }
+        if (goal->kind == ATOM_VAR) {
+            distance = chain_u64_add_sat(distance, 1);
+            continue;
+        }
+        if (pattern->kind != goal->kind) {
+            distance = chain_u64_add_sat(distance, 16);
+            continue;
+        }
+        if (pattern->kind != ATOM_EXPR) {
+            if (!atom_eq(pattern, goal))
+                distance = chain_u64_add_sat(distance, 8);
+            continue;
+        }
+        CettaExprLen plen = pattern->expr.len;
+        CettaExprLen glen = goal->expr.len;
+        CettaExprLen shared = plen < glen ? plen : glen;
+        uint64_t delta = plen > glen ? (uint64_t)(plen - glen)
+                                     : (uint64_t)(glen - plen);
+        distance = chain_u64_add_sat(distance,
+                                     chain_u64_mul_sat(delta, 8));
+        if (len + shared > cap) {
+            size_t next_cap = cap;
+            while (next_cap < len + shared) {
+                if (next_cap > SIZE_MAX / 2u) {
+                    distance = UINT64_MAX;
+                    goto done;
+                }
+                next_cap *= 2u;
+            }
+            ChainShapePair *next = malloc(sizeof(*next) * next_cap);
+            if (!next) {
+                distance = UINT64_MAX;
+                goto done;
+            }
+            memcpy(next, items, sizeof(*next) * len);
+            if (items != inline_items) free(items);
+            items = next;
+            cap = next_cap;
+        }
+        for (CettaExprIndex i = 0; i < shared; i++)
+            items[len++] = (ChainShapePair){pattern->expr.elems[i],
+                                            goal->expr.elems[i]};
+    }
+
+done:
+    if (items != inline_items) free(items);
+    return distance;
 }
 
 static bool chain_index_push(ChainIndex *idx, ChainDecl d) {
@@ -1505,6 +1629,24 @@ static bool chain_index_build(ChainContext *ctx) {
         if (!chain_index_push(idx, d)) return false;
     }
     if (idx->count == 0) return true;
+    for (uint32_t i = 0; i < idx->count; i++) {
+        const ChainDecl *decl = &idx->decls[i];
+        if (!decl->is_rule && !decl->is_scheme &&
+            !atom_is_symbol(decl->type, "Type"))
+            idx->rigid_fact_count++;
+    }
+    if (idx->rigid_fact_count > 0) {
+        idx->rigid_fact_indices = malloc(
+            sizeof(*idx->rigid_fact_indices) * idx->rigid_fact_count);
+        if (!idx->rigid_fact_indices) return false;
+        uint32_t fact_position = 0;
+        for (uint32_t i = 0; i < idx->count; i++) {
+            const ChainDecl *decl = &idx->decls[i];
+            if (!decl->is_rule && !decl->is_scheme &&
+                !atom_is_symbol(decl->type, "Type"))
+                idx->rigid_fact_indices[fact_position++] = i;
+        }
+    }
     idx->refs = malloc(sizeof(ChainRef) * idx->count);
     if (!idx->refs) return false;
     for (uint32_t i = 0; i < idx->count; i++) {
@@ -1817,6 +1959,7 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
 static bool answer_identity_v2_make(ChainContext *ctx, Atom *proof,
                                     Atom *type, const Bindings *env,
                                     AnswerIdentityV2 *out) {
+    if (bindings_has_loop(env)) return false;
     Atom *substituted_proof = bindings_apply_if_vars(env, ctx->arena, proof);
     Atom *substituted_type = bindings_apply_if_vars(env, ctx->arena, type);
     if (!substituted_proof || !substituted_type) {
@@ -1957,14 +2100,16 @@ static bool chain_unify_shape(ChainContext *ctx, Atom *left, Atom *right,
         right = deref(env, pair.right);
         if (atom_eq(left, right)) continue;
         if (left->kind == ATOM_VAR) {
-            if (!bindings_add_id(env, left->var_id, left->sym_id, right)) {
+            if (!bindings_add_id_acyclic(
+                    env, left->var_id, left->sym_id, right)) {
                 chain_unify_stack_free(&stack);
                 return false;
             }
             continue;
         }
         if (right->kind == ATOM_VAR) {
-            if (!bindings_add_id(env, right->var_id, right->sym_id, left)) {
+            if (!bindings_add_id_acyclic(
+                    env, right->var_id, right->sym_id, left)) {
                 chain_unify_stack_free(&stack);
                 return false;
             }
@@ -2070,6 +2215,7 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
 static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
                                 Bindings *env, Atom **checked_type) {
     ctx->stats.proof_checks++;
+    if (bindings_has_loop(env)) return false;
     HeTypeSet ts;
     set_init(&ts, ctx->arena);
     if (!infer_shared_types(ctx->arena, ctx->space, proof, &ctx->fuel, &ts)) {
@@ -2088,7 +2234,8 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
             return false;
         }
         Atom *resolved = NULL;
-        if (chain_unify_must(ctx, ts.items[i], goal, &trial, &resolved)) {
+        if (chain_unify_must(ctx, ts.items[i], goal, &trial, &resolved) &&
+            !bindings_has_loop(&trial)) {
             bindings_replace(env, &trial);
             if (checked_type) *checked_type = resolved;
             return true;
@@ -2098,10 +2245,24 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
     return false;
 }
 
+static bool chain_guidance_premise_supported(ChainContext *ctx,
+                                             Atom *premise,
+                                             const Bindings *env);
+
 static int chain_premise_score(ChainContext *ctx, Atom *premise,
                                const Bindings *env) {
     premise = bindings_apply_if_vars(env, ctx->arena, premise);
     int score = atom_has_vars(premise) ? 0 : 10000;
+    if (ctx->policy == CHAIN_POLICY_ATP_GUIDED_INHABITATION) {
+        /* Fail first: a premise already discharged by a rigid fact is less
+         * constraining than an unsupported sibling.  Testing the latter first
+         * prevents an open easy premise from multiplying continuations before
+         * a contradictory premise is examined. */
+        if (chain_guidance_premise_supported(ctx, premise, env))
+            score -= 1000000;
+        uint32_t weight = chain_atom_weight(premise);
+        if (weight < 10000u) score += 10000 - (int)weight;
+    }
     uint32_t specificity = chain_specificity(premise);
     if (specificity > (uint32_t)(INT_MAX / 8) ||
         score > INT_MAX - (int)specificity * 8)
@@ -2171,6 +2332,7 @@ struct ChainContinuation {
     uint32_t solved;
     uint32_t depth;
     uint32_t rank;
+    uint64_t guidance;
     uint32_t pick;
     ChainContinuation *parent;
 };
@@ -2178,7 +2340,20 @@ struct ChainContinuation {
 typedef enum {
     CHAIN_WORK_CANDIDATE = 0,
     CHAIN_WORK_RESULT,
+    CHAIN_WORK_CHOICE,
 } ChainWorkKind;
+
+typedef struct {
+    uint32_t decl_index;
+    uint64_t cost;
+} ChainChoiceCandidate;
+
+typedef struct {
+    ChainChoiceCandidate *items;
+    uint32_t count;
+    uint32_t position;
+    uint64_t base_guidance;
+} ChainChoice;
 
 typedef struct {
     ChainWorkKind kind;
@@ -2189,7 +2364,10 @@ typedef struct {
     Atom *type;
     Bindings env;
     ChainContinuation *continuation;
+    ChainChoice *choice;
     uint32_t rank;
+    uint64_t guidance;
+    bool guided;
     uint8_t priority;
     uint64_t serial;
 } ChainWorkItem;
@@ -2199,12 +2377,14 @@ typedef struct {
     uint32_t len;
     uint32_t cap;
     uint64_t next_serial;
+    uint64_t guided_pops;
 } ChainWorkQueue;
 
 static void chain_queue_init(ChainWorkQueue *queue) {
     queue->items = NULL;
     queue->len = queue->cap = 0;
     queue->next_serial = 0;
+    queue->guided_pops = 0;
 }
 
 static void chain_queue_free(ChainWorkQueue *queue) {
@@ -2230,10 +2410,36 @@ static bool chain_queue_grow(ChainContext *ctx, ChainWorkQueue *queue) {
 
 static bool chain_work_before(const ChainWorkItem *left,
                               const ChainWorkItem *right) {
+    if (left->guided || right->guided) {
+        if (left->guided != right->guided) return left->guided;
+        /* A checked subgoal result is administrative continuation work, not a
+         * new search alternative.  Propagate it eagerly before comparing the
+         * heuristic costs of genuine candidates; otherwise a solved premise
+         * can sit behind thousands of cheaper sibling choices. */
+        bool left_result = left->kind == CHAIN_WORK_RESULT;
+        bool right_result = right->kind == CHAIN_WORK_RESULT;
+        if (left_result != right_result) return left_result;
+        if (left->guidance != right->guidance)
+            return left->guidance < right->guidance;
+        if (left->priority != right->priority)
+            return left->priority < right->priority;
+        if (left->rank != right->rank) return left->rank < right->rank;
+        return left->serial < right->serial;
+    }
     if (left->rank != right->rank) return left->rank < right->rank;
     if (left->priority != right->priority)
         return left->priority < right->priority;
     return left->serial < right->serial;
+}
+
+static int chain_choice_candidate_cmp(const void *left_raw,
+                                      const void *right_raw) {
+    const ChainChoiceCandidate *left = left_raw;
+    const ChainChoiceCandidate *right = right_raw;
+    if (left->cost != right->cost) return left->cost < right->cost ? -1 : 1;
+    if (left->decl_index != right->decl_index)
+        return left->decl_index > right->decl_index ? -1 : 1;
+    return 0;
 }
 
 static bool chain_queue_push_move(ChainContext *ctx, ChainWorkQueue *queue,
@@ -2255,13 +2461,46 @@ static bool chain_queue_push_move(ChainContext *ctx, ChainWorkQueue *queue,
     return true;
 }
 
-static bool chain_queue_pop(ChainWorkQueue *queue, ChainWorkItem *out) {
+static bool chain_queue_pop(ChainContext *ctx, ChainWorkQueue *queue,
+                            ChainWorkItem *out) {
     if (queue->len == 0) return false;
-    *out = queue->items[0];
+    uint32_t selected = 0;
+    if (queue->items[0].guided) {
+        /* The global agenda, rather than each rule list, implements the classic
+         * age/weight mixture.  Five best-first selections are followed by one
+         * oldest-work-item selection; actual structural costs remain intact. */
+        bool age_turn = queue->guided_pops % 6u == 5u;
+        queue->guided_pops++;
+        if (age_turn) {
+            uint64_t oldest = queue->items[0].serial;
+            for (uint32_t i = 1; i < queue->len; i++) {
+                if (queue->items[i].serial < oldest) {
+                    oldest = queue->items[i].serial;
+                    selected = i;
+                }
+            }
+            ctx->stats.agenda_age_pops++;
+        } else {
+            ctx->stats.agenda_weight_pops++;
+        }
+    }
+    *out = queue->items[selected];
     queue->len--;
-    if (queue->len > 0) {
-        queue->items[0] = queue->items[queue->len];
-        uint32_t pos = 0;
+    if (selected < queue->len) {
+        queue->items[selected] = queue->items[queue->len];
+        uint32_t pos = selected;
+        if (pos > 0) {
+            uint32_t parent = (pos - 1u) / 2u;
+            while (pos > 0 &&
+                   chain_work_before(&queue->items[pos],
+                                     &queue->items[parent])) {
+                ChainWorkItem swap = queue->items[parent];
+                queue->items[parent] = queue->items[pos];
+                queue->items[pos] = swap;
+                pos = parent;
+                parent = (pos - 1u) / 2u;
+            }
+        }
         for (;;) {
             uint32_t left = pos * 2u + 1u;
             uint32_t right = left + 1u;
@@ -2283,6 +2522,91 @@ static bool chain_queue_pop(ChainWorkQueue *queue, ChainWorkItem *out) {
     return true;
 }
 
+/* A cheap exact-support probe for the explicit ATP-guided lane.  It is
+ * guidance only: declarations used as rigid facts are still checked by the
+ * ordinary candidate path, and the completed proof still crosses check-type.
+ *
+ * Each direction greedily joins instantiated rule premises against closed,
+ * non-schematic facts under one shared substitution.  Trying both source
+ * directions avoids baking premise order into the observation while keeping
+ * the probe bounded by arity * indexed facts. */
+static bool chain_guidance_unify_shape(ChainContext *ctx, Atom *left,
+                                       Atom *right, Bindings *env) {
+    ChainContext probe = *ctx;
+    probe.fuel = UINT64_MAX;
+    probe.incomplete = false;
+    probe.incomplete_reason = NULL;
+    return chain_unify_shape(&probe, left, right, env);
+}
+
+static bool chain_guidance_match_rigid_fact(ChainContext *ctx, Atom *premise,
+                                             Bindings *env, bool reverse) {
+    for (uint32_t offset = 0; offset < ctx->index.rigid_fact_count; offset++) {
+        uint32_t position = reverse
+            ? ctx->index.rigid_fact_count - 1u - offset : offset;
+        uint32_t i = ctx->index.rigid_fact_indices[position];
+        const ChainDecl *fact = &ctx->index.decls[i];
+        Bindings trial;
+        bindings_init(&trial);
+        if (!bindings_clone(&trial, env)) return false;
+        if (chain_guidance_unify_shape(ctx, premise, fact->type, &trial)) {
+            bindings_replace(env, &trial);
+            return true;
+        }
+        bindings_free(&trial);
+    }
+    return false;
+}
+
+static bool chain_guidance_premise_supported(ChainContext *ctx,
+                                             Atom *premise,
+                                             const Bindings *env) {
+    Bindings trial;
+    bindings_init(&trial);
+    if (!bindings_clone(&trial, env)) return false;
+    bool supported = chain_guidance_match_rigid_fact(
+        ctx, premise, &trial, true);
+    bindings_free(&trial);
+    return supported;
+}
+
+static uint32_t chain_candidate_support_direction(ChainContext *ctx,
+                                                  const ChainDecl *decl,
+                                                  Atom *goal,
+                                                  bool reverse) {
+    if (!decl->is_rule || decl->arity == 0) return 0;
+    Bindings env;
+    bindings_init(&env);
+    if (!chain_guidance_unify_shape(ctx, decl->conclusion, goal, &env)) {
+        bindings_free(&env);
+        return 0;
+    }
+    uint32_t supported = 0;
+    for (uint32_t offset = 0; offset < decl->arity; offset++) {
+        uint32_t premise_index = reverse
+            ? decl->type->expr.len - 2u - offset
+            : offset + 1u;
+        Atom *binder = NULL, *premise = NULL;
+        split_binder(decl->type->expr.elems[premise_index],
+                     &binder, &premise);
+        (void)binder;
+        if (chain_guidance_match_rigid_fact(ctx, premise, &env, reverse))
+            supported++;
+    }
+    bindings_free(&env);
+    return supported;
+}
+
+static uint32_t chain_candidate_direct_support(ChainContext *ctx,
+                                               const ChainDecl *decl,
+                                               Atom *goal) {
+    uint32_t forward = chain_candidate_support_direction(
+        ctx, decl, goal, false);
+    uint32_t reverse = chain_candidate_support_direction(
+        ctx, decl, goal, true);
+    return forward > reverse ? forward : reverse;
+}
+
 static ChainContinuation *chain_continuation_clone(ChainContext *ctx,
                                                     ChainContinuation *src) {
     ChainContinuation *dst = arena_alloc(ctx->arena, sizeof *dst);
@@ -2301,11 +2625,117 @@ static ChainContinuation *chain_continuation_clone(ChainContext *ctx,
     return dst;
 }
 
+static uint64_t chain_candidate_guidance(ChainContext *ctx,
+                                         uint32_t decl_index, Atom *goal) {
+    const ChainDecl *decl = &ctx->index.decls[decl_index];
+    uint64_t distance = chain_shape_distance(decl->conclusion, goal);
+    uint32_t conclusion_weight = chain_atom_weight(decl->conclusion);
+    uint32_t goal_weight = chain_atom_weight(goal);
+    uint64_t weight_delta = conclusion_weight > goal_weight
+        ? (uint64_t)(conclusion_weight - goal_weight)
+        : (uint64_t)(goal_weight - conclusion_weight);
+    uint64_t premise_weight = 0;
+    if (decl->is_rule && decl->type->kind == ATOM_EXPR) {
+        for (uint32_t i = 1; i + 1u < decl->type->expr.len; i++) {
+            Atom *binder = NULL, *premise = NULL;
+            split_binder(decl->type->expr.elems[i], &binder, &premise);
+            (void)binder;
+            premise_weight = chain_u64_add_sat(
+                premise_weight, chain_atom_weight(premise));
+        }
+    }
+    uint64_t age = ctx->index.count - 1u - decl_index;
+    uint64_t cost = chain_u64_mul_sat(distance, 4096u);
+    cost = chain_u64_add_sat(cost,
+                             chain_u64_mul_sat(weight_delta, 128u));
+    cost = chain_u64_add_sat(cost,
+                             chain_u64_mul_sat(decl->arity, 256u));
+    cost = chain_u64_add_sat(cost,
+                             chain_u64_mul_sat(premise_weight, 8u));
+    cost = chain_u64_add_sat(cost, age);
+    if (decl->is_rule) {
+        uint32_t support = chain_candidate_direct_support(ctx, decl, goal);
+        if (support > 4u) support = 4u;
+        /* Four bounded support tiers keep theorem facts competitive while
+         * making each additional joined premise a visible 4096-point gain. */
+        cost = chain_u64_add_sat(
+            cost, chain_u64_mul_sat(4u - support, 4096u));
+        cost = chain_u64_add_sat(cost, 128u);
+    }
+    return cost;
+}
+
+static bool chain_schedule_goal_guided(ChainContext *ctx,
+                                       ChainWorkQueue *queue, Atom *goal,
+                                       uint32_t depth, const Bindings *env,
+                                       ChainContinuation *continuation,
+                                       uint32_t rank, uint64_t guidance,
+                                       bool include_facts,
+                                       bool include_rules,
+                                       ChainRefRange ranges[2],
+                                       uint32_t nranges,
+                                       uint32_t *considered_out) {
+    ChainChoiceCandidate *candidates = arena_alloc(
+        ctx->arena, sizeof(*candidates) * (ctx->index.count ?
+                                           ctx->index.count : 1u));
+    uint32_t count = 0, considered = 0;
+    for (uint32_t pass = 0; pass < 2u; pass++) {
+        bool want_rule = pass == 1u;
+        if ((want_rule && (!include_rules || depth == 0)) ||
+            (!want_rule && !include_facts))
+            continue;
+        for (uint32_t rg = 0; rg < nranges; rg++) {
+            for (uint32_t ri = ranges[rg].lo; ri < ranges[rg].hi; ri++) {
+                ChainRef *ref = &ctx->index.refs[ri];
+                if (ref->is_rule != want_rule) continue;
+                considered++;
+                candidates[count++] = (ChainChoiceCandidate){
+                    .decl_index = ref->index,
+                    .cost = chain_candidate_guidance(ctx, ref->index, goal),
+                };
+            }
+        }
+    }
+    if (considered_out) *considered_out = considered;
+    if (count == 0) return true;
+    qsort(candidates, count, sizeof(*candidates),
+          chain_choice_candidate_cmp);
+
+    ChainChoice *choice = arena_alloc(ctx->arena, sizeof(*choice));
+    *choice = (ChainChoice){
+        .items = candidates,
+        .count = count,
+        .position = 0,
+        .base_guidance = guidance,
+    };
+    const ChainDecl *first =
+        &ctx->index.decls[candidates[0].decl_index];
+    ChainWorkItem item = {0};
+    item.kind = CHAIN_WORK_CHOICE;
+    item.goal = goal;
+    item.depth = depth;
+    item.continuation = continuation;
+    item.choice = choice;
+    item.rank = rank;
+    item.guidance = chain_u64_add_sat(guidance, candidates[0].cost);
+    item.guided = true;
+    item.priority = first->is_rule ? 2u : 1u;
+    bindings_init(&item.env);
+    if (!bindings_clone(&item.env, env) ||
+        !chain_queue_push_move(ctx, queue, &item)) {
+        bindings_free(&item.env);
+        if (!ctx->incomplete)
+            chain_mark_incomplete(ctx, "search-binding-allocation");
+        return false;
+    }
+    return true;
+}
+
 static bool chain_schedule_goal(ChainContext *ctx, ChainWorkQueue *queue,
                                 Atom *goal, uint32_t depth,
                                 const Bindings *env,
                                 ChainContinuation *continuation,
-                                uint32_t rank,
+                                uint32_t rank, uint64_t guidance,
                                 bool include_facts, bool include_rules) {
     ctx->stats.calls++;
     if (!chain_take_fuel(ctx, 1)) return false;
@@ -2319,10 +2749,35 @@ static bool chain_schedule_goal(ChainContext *ctx, ChainWorkQueue *queue,
         return false;
     }
 
+    /* Variant ancestor regularity is producer-side pruning, not authority.
+     * A branch that asks for the same instantiated goal already active on
+     * that branch can only repeat the intervening derivation.  Restrict the
+     * check to alpha variants: mere unifiability or subsumption would be a
+     * stronger—and potentially incomplete—cut. */
+    if (ctx->policy == CHAIN_POLICY_ATP_GUIDED_INHABITATION) {
+        for (ChainContinuation *ancestor = continuation;
+             ancestor; ancestor = ancestor->parent) {
+            Atom *ancestor_goal = bindings_apply_if_vars(
+                env, ctx->arena, ancestor->goal);
+            if (atom_alpha_eq(goal, ancestor_goal)) {
+                ctx->stats.ancestor_pruned++;
+                return true;
+            }
+        }
+    }
+
     ChainRefRange ranges[2];
     uint32_t nranges = chain_candidate_ranges(ctx, atom_head_symbol_id(goal),
                                                ranges);
     uint32_t considered = 0;
+    if (ctx->policy == CHAIN_POLICY_ATP_GUIDED_INHABITATION) {
+        bool ok = chain_schedule_goal_guided(
+            ctx, queue, goal, depth, env, continuation, rank, guidance,
+            include_facts, include_rules, ranges, nranges, &considered);
+        if (considered < ctx->index.count)
+            ctx->stats.head_pruned += ctx->index.count - considered;
+        return ok;
+    }
     for (uint32_t pass = 0; pass < 2u; pass++) {
         bool want_rule = pass == 1u;
         if ((want_rule && (!include_rules || depth == 0)) ||
@@ -2340,6 +2795,7 @@ static bool chain_schedule_goal(ChainContext *ctx, ChainWorkQueue *queue,
                 item.depth = depth;
                 item.continuation = continuation;
                 item.rank = rank;
+                item.guidance = guidance;
                 item.priority = want_rule ? 2u : 1u;
                 bindings_init(&item.env);
                 if (!bindings_clone(&item.env, env) ||
@@ -2362,13 +2818,15 @@ static bool chain_schedule_goal(ChainContext *ctx, ChainWorkQueue *queue,
 static bool chain_schedule_result(ChainContext *ctx, ChainWorkQueue *queue,
                                   Atom *proof, Atom *type, Bindings *env,
                                   ChainContinuation *continuation,
-                                  uint32_t rank) {
+                                  uint32_t rank, uint64_t guidance) {
     ChainWorkItem item = {0};
     item.kind = CHAIN_WORK_RESULT;
     item.proof = proof;
     item.type = type;
     item.continuation = continuation;
     item.rank = rank;
+    item.guidance = guidance;
+    item.guided = ctx->policy == CHAIN_POLICY_ATP_GUIDED_INHABITATION;
     item.priority = 0u;
     item.env = *env;
     bindings_init(env);
@@ -2402,7 +2860,7 @@ static bool chain_schedule_next_premise(ChainContext *ctx,
     continuation->pick = pick;
     return chain_schedule_goal(ctx, queue, continuation->premises[pick],
                                continuation->depth, env, continuation,
-                               continuation->rank,
+                               continuation->rank, continuation->guidance,
                                true, true);
 }
 
@@ -2424,7 +2882,8 @@ static bool chain_finish_continuation(ChainContext *ctx,
     proof = bindings_apply_if_vars(env, ctx->arena, proof);
     ctx->stats.continuations++;
     return chain_schedule_result(ctx, queue, proof, checked_type, env,
-                                 continuation->parent, continuation->rank);
+                                 continuation->parent, continuation->rank,
+                                 continuation->guidance);
 }
 
 static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
@@ -2448,7 +2907,8 @@ static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
             return;
         term = bindings_apply_if_vars(&item->env, ctx->arena, term);
         (void)chain_schedule_result(ctx, queue, term, resolved, &item->env,
-                                    item->continuation, item->rank);
+                                    item->continuation, item->rank,
+                                    item->guidance);
         return;
     }
 
@@ -2472,6 +2932,7 @@ static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
         .solved = 0,
         .depth = item->depth - 1u,
         .rank = item->rank == UINT32_MAX ? UINT32_MAX : item->rank + 1u,
+        .guidance = item->guidance,
         .pick = UINT32_MAX,
         .parent = item->continuation,
     };
@@ -2494,6 +2955,48 @@ static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
         continuation->done[i] = false;
     }
     (void)chain_schedule_next_premise(ctx, queue, continuation, &item->env);
+}
+
+static void chain_process_choice(ChainContext *ctx, ChainWorkQueue *queue,
+                                 ChainWorkItem *item) {
+    ChainChoice *choice = item->choice;
+    if (!choice || choice->position >= choice->count) return;
+    ChainChoiceCandidate current = choice->items[choice->position];
+
+    Bindings candidate_env;
+    bindings_init(&candidate_env);
+    if (!bindings_clone(&candidate_env, &item->env)) {
+        chain_mark_incomplete(ctx, "search-binding-allocation");
+        return;
+    }
+
+    if (choice->position + 1u < choice->count) {
+        choice->position++;
+        ChainChoiceCandidate next = choice->items[choice->position];
+        const ChainDecl *next_decl = &ctx->index.decls[next.decl_index];
+        item->guidance = chain_u64_add_sat(choice->base_guidance, next.cost);
+        item->priority = next_decl->is_rule ? 2u : 1u;
+        if (!chain_queue_push_move(ctx, queue, item)) {
+            bindings_free(&candidate_env);
+            return;
+        }
+    }
+
+    const ChainDecl *decl = &ctx->index.decls[current.decl_index];
+    ChainWorkItem candidate = {0};
+    candidate.kind = CHAIN_WORK_CANDIDATE;
+    candidate.decl_index = current.decl_index;
+    candidate.goal = item->goal;
+    candidate.depth = item->depth;
+    candidate.continuation = item->continuation;
+    candidate.rank = item->rank;
+    candidate.guidance = chain_u64_add_sat(choice->base_guidance,
+                                           current.cost);
+    candidate.guided = true;
+    candidate.priority = decl->is_rule ? 2u : 1u;
+    candidate.env = candidate_env;
+    chain_process_candidate(ctx, queue, &candidate);
+    bindings_free(&candidate.env);
 }
 
 static void chain_process_result(ChainContext *ctx, ChainWorkQueue *queue,
@@ -2519,8 +3022,9 @@ static void chain_process_result(ChainContext *ctx, ChainWorkQueue *queue,
     continuation->args[pick] = item->proof;
     continuation->solved++;
     Atom *binder = continuation->premise_binders[pick];
-    if (binder && !bindings_add_id(&item->env, binder->var_id,
-                                   binder->sym_id, item->proof))
+    if (binder && !bindings_add_id_acyclic(
+                      &item->env, binder->var_id,
+                      binder->sym_id, item->proof))
         return;
     if (continuation->solved == continuation->arity) {
         (void)chain_finish_continuation(ctx, queue, continuation, &item->env);
@@ -2539,18 +3043,20 @@ static void chain_run_search(ChainContext *ctx, Atom *goal, uint32_t depth,
     Bindings initial;
     bindings_init(&initial);
     (void)chain_schedule_goal(ctx, &queue, goal, depth, &initial, NULL,
-                              0,
+                              0, 0,
                               !root_rules_only, true);
     bindings_free(&initial);
 
     while (queue.len > 0 && !ctx->incomplete && answers->count < limit) {
         ChainWorkItem item;
-        if (!chain_queue_pop(&queue, &item)) break;
+        if (!chain_queue_pop(ctx, &queue, &item)) break;
         ctx->stats.work_items++;
         if (item.kind == CHAIN_WORK_CANDIDATE)
             chain_process_candidate(ctx, &queue, &item);
-        else
+        else if (item.kind == CHAIN_WORK_RESULT)
             chain_process_result(ctx, &queue, &item, answers);
+        else
+            chain_process_choice(ctx, &queue, &item);
         bindings_free(&item.env);
     }
     if (!ctx->incomplete && answers->count >= limit && queue.len > 0) {
@@ -2561,6 +3067,42 @@ static void chain_run_search(ChainContext *ctx, Atom *goal, uint32_t depth,
 }
 
 static Atom *chain_stats_atom(ChainContext *ctx) {
+    if (ctx->policy == CHAIN_POLICY_ATP_GUIDED_INHABITATION) {
+        Atom *e[12];
+        e[0] = he_sym(ctx->arena, "typing-search-stats-v2");
+        e[1] = atom_expr2(ctx->arena, he_sym(ctx->arena, "goals-scheduled"),
+                          atom_int(ctx->arena, (int64_t)ctx->stats.calls));
+        e[2] = atom_expr2(ctx->arena, he_sym(ctx->arena, "fact-candidates"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.fact_candidates));
+        e[3] = atom_expr2(ctx->arena, he_sym(ctx->arena, "rule-candidates"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.rule_candidates));
+        e[4] = atom_expr2(ctx->arena, he_sym(ctx->arena, "head-pruned"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.head_pruned));
+        e[5] = atom_expr2(ctx->arena, he_sym(ctx->arena, "ancestor-pruned"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.ancestor_pruned));
+        e[6] = atom_expr2(ctx->arena, he_sym(ctx->arena, "proof-checks"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.proof_checks));
+        e[7] = atom_expr2(ctx->arena, he_sym(ctx->arena, "work-items"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.work_items));
+        e[8] = atom_expr2(ctx->arena, he_sym(ctx->arena, "continuations"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.continuations));
+        e[9] = atom_expr2(ctx->arena, he_sym(ctx->arena, "agenda-weight-pops"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.agenda_weight_pops));
+        e[10] = atom_expr2(ctx->arena, he_sym(ctx->arena, "agenda-age-pops"),
+                          atom_int(ctx->arena,
+                                   (int64_t)ctx->stats.agenda_age_pops));
+        e[11] = atom_expr2(ctx->arena, he_sym(ctx->arena, "fuel-remaining"),
+                           atom_int(ctx->arena, (int64_t)ctx->fuel));
+        return atom_expr(ctx->arena, e, 12);
+    }
     Atom *e[9];
     e[0] = he_sym(ctx->arena, "typing-search-stats-v1");
     e[1] = atom_expr2(ctx->arena, he_sym(ctx->arena, "goals-scheduled"),
@@ -2625,11 +3167,13 @@ static bool chain_arg_nat(Arena *a, Atom *x, uint32_t *out,
 
 static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
                                     uint32_t depth, uint64_t fuel,
-                                    uint32_t limit, bool first_only) {
+                                    uint32_t limit, bool first_only,
+                                    ChainPolicy policy) {
     ChainContext ctx = {0};
     ctx.arena = a;
     ctx.space = space;
     ctx.fuel = fuel;
+    ctx.policy = policy;
     if (!chain_index_build(&ctx)) {
         chain_index_free(&ctx.index);
         return he_unknown(a, he_reason(a, "chaining-index-failed"));
@@ -2663,6 +3207,16 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     free(ctx.query_vars);
     free(ctx.scheme_vars);
     return result;
+}
+
+static bool chain_parse_search_policy(Atom *atom, ChainPolicy *policy_out) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 2u ||
+        !atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.search_policy) ||
+        !atom_is_symbol_id(atom->expr.elems[1],
+                           g_builtin_syms.atp_guided_inhabitation))
+        return false;
+    *policy_out = CHAIN_POLICY_ATP_GUIDED_INHABITATION;
+    return true;
 }
 
 /* One forward round.  fuel is an aggregate in/out budget shared with the
@@ -2848,8 +3402,11 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
 
     if (strcmp(name, "search-inhabitants") == 0) {
-        if (nargs != 5)
+        if (nargs != 5 && nargs != 6)
             return he_reject(a, he_reason(a, "search-inhabitants-arity"));
+        ChainPolicy policy = CHAIN_POLICY_NATIVE;
+        if (nargs == 6 && !chain_parse_search_policy(args[5], &policy))
+            return he_reject(a, he_reason(a, "unsupported-typing-search-policy"));
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
@@ -2864,12 +3421,15 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             limit == 0)
             return bad ? bad : he_reject(a, he_reason(a, "limit-not-positive"));
         return chain_inhabit_dispatch(a, sp, args[1], depth, fuel, limit,
-                                      false);
+                                      false, policy);
     }
 
     if (strcmp(name, "search-first-inhabitant") == 0) {
-        if (nargs != 4)
+        if (nargs != 4 && nargs != 5)
             return he_reject(a, he_reason(a, "search-first-inhabitant-arity"));
+        ChainPolicy policy = CHAIN_POLICY_NATIVE;
+        if (nargs == 5 && !chain_parse_search_policy(args[4], &policy))
+            return he_reject(a, he_reason(a, "unsupported-typing-search-policy"));
         Space *sp = NULL;
         if (!arg_space(args[0], &sp))
             return he_reject(a, he_reason(a, "first-argument-not-a-space"));
@@ -2881,7 +3441,7 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         bad = arg_fuel(a, args[3], &fuel);
         if (bad) return bad;
         return chain_inhabit_dispatch(a, sp, args[1], depth, fuel, 1,
-                                      true);
+                                      true, policy);
     }
 
     if (strcmp(name, "type-forward-step") == 0) {

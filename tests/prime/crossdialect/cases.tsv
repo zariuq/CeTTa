@@ -1,0 +1,14 @@
+id	source	he_expected	prime_relation	prime_expected	requirement
+dependent-binders	tests/profile_he_prime_dependent_binders.metta	tests/profile_he_prime_dependent_binders.expected	same	-	PR1
+type-formation	tests/profile_he_prime_type_formation.metta	tests/profile_he_prime_type_formation.expected	same	-	PR1
+dtt-typed-corpus	tests/profile_he_prime_dtt_typed_corpus.metta	tests/profile_he_prime_dtt_typed_corpus.expected	same	-	PR1
+dtt-tutorial-ladder	tests/profile_he_prime_dtt_tutorial_ladder.metta	tests/profile_he_prime_dtt_tutorial_ladder.expected	same	-	PR1
+recursive-search	tests/profile_he_prime_recursive_search.metta	tests/profile_he_prime_recursive_search.expected	same	-	PR1
+dtt-chainer-showcase	tests/profile_he_prime_dtt_chainer_showcase.metta	tests/profile_he_prime_dtt_chainer_showcase.expected	same	-	PR1
+dtt-adversarial	tests/profile_he_prime_dtt_adversarial.metta	tests/profile_he_prime_dtt_adversarial.expected	same	-	PR1
+search-enumeration	tests/profile_he_prime_search_enumeration.metta	tests/profile_he_prime_search_enumeration.expected	same	-	PR1
+explicit-schemes	tests/profile_he_prime_explicit_schemes.metta	tests/profile_he_prime_explicit_schemes.expected	same	-	PR1
+search-fuel-prefix	tests/profile_he_prime_search_fuel_prefix.metta	tests/profile_he_prime_search_fuel_prefix.expected	same	-	PR1
+search-pln-multi	tests/profile_he_prime_search_pln_multi.metta	tests/profile_he_prime_search_pln_multi.expected	same	-	PR1
+shared-type-level-query	tests/profile_he_shared_type_level_query.metta	tests/profile_he_shared_type_level_query_computed.expected	same	-	PR1
+typed-equality-boundary	tests/profile_he_prime_structural_eq.metta	tests/profile_he_prime_structural_eq.expected	typed-equality-divergence	-	PR5

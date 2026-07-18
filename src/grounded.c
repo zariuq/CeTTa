@@ -4,6 +4,7 @@
 #include "he_typing.h"
 #include "prime_semantics.h"
 #include "match.h"
+#include "native_sha256.h"
 #include "parser.h"
 #include "space.h"
 #if CETTA_BUILD_WITH_GMP
@@ -265,6 +266,7 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.minimal_foldl_atom ||
            id == g_builtin_syms.minimal_foldl_llist ||
            id == g_builtin_syms.minimal_space_contains_exact ||
+           id == g_builtin_syms.minimal_space_revision ||
            id == g_builtin_syms.collapse_add_next ||
            id == g_builtin_syms.foldl_atom_in_space ||
            id == g_builtin_syms.op_and || id == g_builtin_syms.op_or ||
@@ -273,6 +275,7 @@ bool is_grounded_op(SymbolId id) {
            id == g_builtin_syms.trace_bang ||
            id == g_builtin_syms.format_args ||
            id == g_builtin_syms.repr ||
+           id == g_builtin_syms.sha256 ||
            id == g_builtin_syms.parse ||
            id == g_builtin_syms.parse_first ||
            id == g_builtin_syms.py_atom ||
@@ -324,6 +327,7 @@ bool grounded_op_is_type_pure(SymbolId id) {
            id == g_builtin_syms.if_equal ||
            id == g_builtin_syms.op_and || id == g_builtin_syms.op_or ||
            id == g_builtin_syms.op_not || id == g_builtin_syms.op_xor ||
+           id == g_builtin_syms.sha256 ||
            id == g_builtin_syms.max_atom ||
            id == g_builtin_syms.min_atom ||
            id == g_builtin_syms.pow_math ||
@@ -851,6 +855,27 @@ static Atom *grounded_repr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return atom_string(a, atom_to_parseable_string(a, args[0]));
 }
 
+static Atom *grounded_sha256(Arena *a, Atom *head, Atom **args,
+                             uint32_t nargs) {
+    char digest[65];
+
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (!(args[0]->kind == ATOM_GROUNDED &&
+          args[0]->ground.gkind == GV_STRING)) {
+        if (args[0]->kind != ATOM_GROUNDED)
+            return NULL;
+        return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                     atom_symbol(a, "String"), args[0]);
+    }
+    cetta_native_sha256_hex((const uint8_t *)args[0]->ground.sval,
+                            strlen(args[0]->ground.sval), digest);
+    /* The portable digest doubles as a cheap process-local interned handle.
+       Hash-consing is performed only when sha256 is explicitly invoked. */
+    Atom *result = atom_string(a, digest);
+    return g_hashcons ? hashcons_get(g_hashcons, result) : result;
+}
+
 /* Text parsing deliberately has two surfaces:
    - parse is strict: the string must contain exactly one atom, with only
      whitespace/comments around it. This is the safer PeTTa-style default.
@@ -921,6 +946,20 @@ static Atom *grounded_space_contains_exact(Arena *a, Atom *head,
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "SpaceType"), args[0]);
     return atom_bool(a, space_contains_exact((Space *)args[0]->ground.ptr, args[1]));
+}
+
+static Atom *grounded_space_revision(Arena *a, Atom *head,
+                                     Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
+        return grounded_bad_arg_type(a, head, args, nargs, 1,
+                                     atom_symbol(a, "SpaceType"), args[0]);
+    uint64_t revision = space_revision((Space *)args[0]->ground.ptr);
+    if (revision > (uint64_t)INT64_MAX)
+        return grounded_string_error(a, head, args, nargs,
+                                     "space revision exceeds Number range");
+    return atom_int(a, (int64_t)revision);
 }
 
 static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
@@ -1105,6 +1144,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.repr)
         return grounded_repr(a, head, args, nargs);
 
+    if (head_id == g_builtin_syms.sha256)
+        return grounded_sha256(a, head, args, nargs);
+
     if (head_id == g_builtin_syms.parse)
         return grounded_parse_text(a, head, args, nargs,
                                    !eval_current_uses_rust_he_compat_semantics());
@@ -1117,6 +1159,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     if (head_id == g_builtin_syms.minimal_space_contains_exact)
         return grounded_space_contains_exact(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.minimal_space_revision)
+        return grounded_space_revision(a, head, args, nargs);
 
     if (head_id == g_builtin_syms.minimal_foldl_atom ||
         head_id == g_builtin_syms.foldl_atom_in_space)

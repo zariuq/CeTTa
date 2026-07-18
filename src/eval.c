@@ -2818,8 +2818,9 @@ static Atom *state_bad_arg_type_error(Space *s, Arena *a, Atom *call,
 typedef enum {
     CETTA_SEARCH_POLICY_LANE_NONE = 0,
     CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF = 1,
-    CETTA_SEARCH_POLICY_LANE_ATP_SATURATION = 2,
-    CETTA_SEARCH_POLICY_LANE_SOLVER_ORACLE = 3
+    CETTA_SEARCH_POLICY_LANE_ATP_GUIDED_INHABITATION = 2,
+    CETTA_SEARCH_POLICY_LANE_ATP_SATURATION = 3,
+    CETTA_SEARCH_POLICY_LANE_SOLVER_ORACLE = 4
 } CettaSearchPolicyLane;
 
 typedef enum {
@@ -3022,6 +3023,9 @@ static CettaSearchPolicyParseStatus parse_search_policy_atom(
     CettaSearchPolicyLane lane = CETTA_SEARCH_POLICY_LANE_NONE;
     if (atom_is_symbol_id(lane_atom, g_builtin_syms.recursive_dependent_proof)) {
         lane = CETTA_SEARCH_POLICY_LANE_RECURSIVE_DEPENDENT_PROOF;
+    } else if (atom_is_symbol_id(
+                   lane_atom, g_builtin_syms.atp_guided_inhabitation)) {
+        lane = CETTA_SEARCH_POLICY_LANE_ATP_GUIDED_INHABITATION;
     } else if (atom_is_symbol_id(lane_atom, g_builtin_syms.atp_saturation)) {
         lane = CETTA_SEARCH_POLICY_LANE_ATP_SATURATION;
     } else if (atom_is_symbol_id(lane_atom, g_builtin_syms.solver_oracle)) {

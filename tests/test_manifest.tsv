@@ -35,6 +35,17 @@ tests/he_e1_kb_write.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_e2_states.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_e3_match_states.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_g1_docs.metta	he	metta	he-extended	main	native	test	golden	-
+tests/prime/conformance/occurs_check.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/resource_policy.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_agenda_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_direct_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_guided_inhabitation.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_indexed_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_resolution_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_resolution_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_superposition_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/typed_pln_chainer.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime_02_completion_resources.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/spec_include_unit.metta	he	metta	he-extended	main	native	test	golden	-
 tests/spec_mod_space_missing.metta	he	metta	he-extended	main	native	test	golden	-
 tests/spec_module_inventory.metta	he	metta	he-extended	main	native	test-profiles	golden	module inventory reports language profile and import mode
@@ -327,6 +338,7 @@ tests/test_min_max_rational_exact_regression.metta	he	metta	he-extended	main	nat
 tests/test_minimal_foldl_atom_bad_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_minimal_foldl_atom_errors.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_minimal_foldl_llist_internal.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_minimal_space_revision.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_mm2_kiss_add_remove.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mm2_kiss_fractal_priority.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_mm2_kiss_inline_basic.metta	he	metta	he-extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
@@ -459,6 +471,7 @@ tests/test_select_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_select_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_select_collect_docs.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_select_once_alias.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_sha256_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_simple_match_builder_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_singleton_visible_witness_overlap_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_singleton_visible_witness_regression.metta	he	metta	he-extended	main	native	test	golden	-

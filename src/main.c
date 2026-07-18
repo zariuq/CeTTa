@@ -1040,7 +1040,9 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
         {"is-consistent", "AA"},
         {"check-type", "uAAN"},
         {"search-inhabitants", "uANNN"},
+        {"search-inhabitants", "uANNNA"},
         {"search-first-inhabitant", "uANN"},
+        {"search-first-inhabitant", "uANNA"},
         {"type-forward-step", "uNN"},
         {"type-forward-closure", "uNNN"},
     };
@@ -1095,8 +1097,9 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
 static void main_add_builtin_type_decls(Space *space, Arena *arena,
                                         CettaLanguageId language_id,
                                         const CettaProfile *profile) {
-    if (language_id == CETTA_LANGUAGE_HE && profile &&
-        profile->enable_dependent_telescope)
+    if ((language_id == CETTA_LANGUAGE_HE ||
+         language_id == CETTA_LANGUAGE_PRIME) &&
+        profile && profile->enable_dependent_telescope)
         main_add_he_prime_typing_op_decls(space, arena);
     if (language_id == CETTA_LANGUAGE_PRIME)
         main_add_prime_semantic_op_decls(space, arena);
