@@ -1,0 +1,3 @@
+[(he-unknown (fuel-exhausted))]
+[(he-accept (typed-answer-v2 (: (unbounded-step unbounded-base) UnboundedGoal) (answer-substitution-v2 (query-substitution-v1) (elaboration-substitution-v1) (answer-constraints-v1))))]
+[(he-reject (no-inhabitant-at-depth))]

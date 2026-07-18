@@ -326,7 +326,9 @@ TEST_MANIFEST = tests/test_manifest.tsv
 PRIME_CONFORMANCE_TESTS = \
 	tests/prime_02_completion_resources.metta \
 	tests/prime/conformance/resource_policy.metta \
-	tests/prime/conformance/occurs_check.metta
+	tests/prime/conformance/occurs_check.metta \
+	tests/prime/conformance/typed_equality.metta \
+	tests/prime/conformance/unbounded_search.metta
 PRIME_EXAMPLE_TESTS = \
 	examples/prime/exact_gradual.metta \
 	examples/prime/dependent_telescope.metta \
@@ -2726,6 +2728,29 @@ test-he-prime-scheme-mutation: $(BIN)
 	fi; \
 	echo "PASS: implicit-scheme mutation is killed by rigid-variable gates"
 
+test-prime-unbounded-search-mutation: $(BIN)
+	@mutation_dir=runtime/prime-unbounded-search-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_unbounded_search.py \
+		src/he_typing.c "$$mutation_dir/he_typing.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" \
+		-o "$$mutation_dir/he_typing.o" || exit 1; \
+	$(CC) $(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/he_typing.o" -o "$$mutation_dir/cetta-bounded-only" \
+		$(LDFLAGS) || exit 1; \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/unbounded_search.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/prime/conformance/unbounded_search.expected)" ]; then \
+		echo "FAIL: unbounded-search mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-bounded-only" --lang prime \
+		tests/prime/conformance/unbounded_search.metta 2>&1); \
+	if [ "$$mutant" = "$$baseline" ] || \
+	   [ "$$(printf '%s\n' "$$mutant" | grep -Fxc '[(he-unknown (fuel-exhausted))]')" -lt 2 ]; then \
+		echo "FAIL: bounded-only mutation survived the unbounded-search gate"; exit 1; \
+	fi; \
+	echo "PASS: bounded-only mutation is killed by resource-omission gates"
+
 test-prime-occurs-check-mutation: $(BIN)
 	@mutation_dir=runtime/prime-occurs-check-mutation; \
 	mkdir -p "$$mutation_dir"; \
@@ -2885,6 +2910,9 @@ test-prime-coverage:
 test-prime-crossdialect: $(BIN)
 	@python3 scripts/check_prime_crossdialect.py "$(abspath $(BIN))"
 
+test-prime-internal-graduality: $(BIN)
+	@python3 scripts/check_prime_internal_graduality.py "$(abspath $(BIN))"
+
 test-prime-practical: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(PRIME_PRACTICAL_TESTS); do \
@@ -2901,7 +2929,7 @@ test-prime-practical: $(BIN)
 	echo "Prime practical gate: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation
+test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -2921,6 +2949,7 @@ test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime
 	[ $$fail -eq 0 ]
 
 test-prime-all: test-prime test-prime-crossdialect \
+	test-prime-unbounded-search-mutation \
 	test-prime-occurs-check-mutation \
 	test-prime-completion-mutation \
 	test-prime-delayed-ambiguity-mutation \
@@ -5089,7 +5118,7 @@ refresh-he-matrices:
 	@echo "refreshed HE runtime parity matrices"
 
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats

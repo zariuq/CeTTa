@@ -307,6 +307,34 @@ int main(void) {
         bindings_free(&cyclic_bindings);
         goto cleanup;
     }
+    if (match_atoms(cycle_expr, cycle_expr, &cyclic_bindings)) {
+        fprintf(stderr, "decoded matcher accepted a cyclic finite term\n");
+        bindings_free(&cyclic_bindings);
+        goto cleanup;
+    }
+    if (match_atoms_epoch(cycle_expr, cycle_expr, &cyclic_bindings,
+                          &arena, 0u)) {
+        fprintf(stderr, "epoch matcher accepted a cyclic finite term\n");
+        bindings_free(&cyclic_bindings);
+        goto cleanup;
+    }
+    AtomId cycle_expr_id = term_universe_store_atom_id(
+        &universe, &arena, cycle_expr);
+    if (cycle_expr_id == CETTA_ATOM_ID_NONE ||
+        match_atoms_atom_id_epoch(
+            cycle_expr, &universe, cycle_expr_id,
+            &cyclic_bindings, &arena, 0u)) {
+        fprintf(stderr, "store-backed matcher accepted a cyclic finite term\n");
+        bindings_free(&cyclic_bindings);
+        goto cleanup;
+    }
+    Atom *unrelated_cycle_probe = atom_symbol(&arena, "UnrelatedCycleProbe");
+    if (!match_atoms(unrelated_cycle_probe, unrelated_cycle_probe,
+                     &cyclic_bindings)) {
+        fprintf(stderr, "unrelated binding cycle rejected a finite match\n");
+        bindings_free(&cyclic_bindings);
+        goto cleanup;
+    }
     bindings_free(&cyclic_bindings);
 
     Bindings guarded_bindings;
