@@ -359,6 +359,7 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_hyperpose_handle_fallback_runtime_stats.metta \
 	tests/test_hyperpose_prime_runtime_stats.metta \
 	tests/test_hyperpose_threaded_stats.metta \
+	tests/test_lts_rho_cost_parallel_runtime_stats.metta \
 	tests/test_imported_conjunction_bridge_init_regression.metta \
 	tests/test_imported_match_chain_conjunction_lowering.metta \
 	tests/test_native_count_collapse_match_regression.metta \
@@ -1411,6 +1412,9 @@ test-rhocalc-cost-differential: $(BIN)
 		echo "SKIP: cost-rho differential harness (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
 	fi
 
+test-rhocalc-cost-parallel-stress: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_parallel_stress.py "$(CETTA_SCRIPT_BIN)"
+
 test-rhocalc: $(BIN)
 	@pass=0; fail=0; \
 	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
@@ -1480,16 +1484,18 @@ test-rhocalc: $(BIN)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$($(CETTA_BIN_INVOKE) --num-threads 2 --lang rhocalc --profile cost --syntax mrho tests/rhocalc_cost_run/internal_split_tokens_basic.mrho 2>&1); \
-	status=$$?; \
-	if [ "$$status" -eq 1 ] && printf '%s\n' "$$result" | grep -q "threaded execution is strict-core only"; then \
-		echo "PASS: rhocalc cost rejects threaded execution"; \
-		pass=$$((pass + 1)); \
-	else \
-		echo "FAIL: rhocalc cost rejects threaded execution"; \
-		printf '%s\n' "$$result"; \
-		fail=$$((fail + 1)); \
-	fi; \
+	for threads in 2 4; do \
+		result=$$($(CETTA_BIN_INVOKE) --num-threads $$threads --lang rhocalc --profile cost --syntax mrho tests/rhocalc_cost_run/internal_split_tokens_basic.mrho 2>&1); \
+		status=$$?; \
+		if [ "$$status" -eq 0 ] && [ "$$result" = "$$(cat tests/rhocalc_cost_run/internal_split_tokens_basic.expected)" ]; then \
+			echo "PASS: rhocalc cost threaded execution ($$threads workers)"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc cost threaded execution ($$threads workers)"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
 	result=$$($(CETTA_BIN_INVOKE) --num-threads 0 --lang rhocalc --syntax mrho tests/rhocalc_run/stuck_pending_send.mrho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc_run/stuck_pending_send.expected)" ]; then \
 		echo "PASS: rhocalc zero thread budget uses sequential path"; \
@@ -1554,6 +1560,11 @@ test-rhocalc: $(BIN)
 	fi; \
 	if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_stress.py "$(CETTA_SCRIPT_BIN)"; then \
 		pass=$$((pass + 7)); \
+	else \
+		fail=$$((fail + 1)); \
+	fi; \
+	if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_parallel_stress.py "$(CETTA_SCRIPT_BIN)"; then \
+		pass=$$((pass + 6)); \
 	else \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -1687,7 +1698,7 @@ test-rhocalc: $(BIN)
 	else \
 		echo "SKIP: rhocalc M3 rholang-cli overlap (set RHOLANG_CLI or install rholang-cli)"; \
 	fi; \
-	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_rhometta_lib_surface.metta tests/test_rhometta_isolation_oracle.metta tests/test_rhometta_demo_dedfarm.metta tests/test_rhometta_demo_revision.metta tests/test_rhometta_demo_mayset.metta tests/test_rhometta_demo_ecan.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta tests/test_lts_rho_cost_causal_trace.metta tests/test_lts_rho_cost_search_budget.metta; do \
+	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_rhometta_lib_surface.metta tests/test_rhometta_isolation_oracle.metta tests/test_rhometta_demo_dedfarm.metta tests/test_rhometta_demo_revision.metta tests/test_rhometta_demo_mayset.metta tests/test_rhometta_demo_ecan.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta tests/test_lts_rho_cost_causal_trace.metta tests/test_lts_rho_cost_parallel_branches.metta tests/test_lts_rho_cost_search_budget.metta; do \
 		exp="$${f%.metta}.expected"; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
@@ -4687,6 +4698,7 @@ refresh-he-matrices:
 
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-rhocalc-cost-differential test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules
+.PHONY: test-rhocalc-cost-parallel-stress
 .PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
