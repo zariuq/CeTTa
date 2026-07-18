@@ -678,6 +678,21 @@ bool bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val) {
     return bindings_add_internal(b, var_id, spelling, val, true, false);
 }
 
+bool bindings_add_id_acyclic(Bindings *b, VarId var_id, SymbolId spelling,
+                             Atom *val) {
+    Bindings next;
+    if (!bindings_clone(&next, b))
+        return false;
+    if (!bindings_add_inplace_internal(&next, var_id, spelling, val,
+                                       true, false) ||
+        bindings_has_loop(&next)) {
+        bindings_free(&next);
+        return false;
+    }
+    bindings_replace(b, &next);
+    return true;
+}
+
 bool bindings_add_var(Bindings *b, Atom *var, Atom *val) {
     return bindings_add_id(b, var->var_id, var->sym_id, val);
 }

@@ -309,6 +309,41 @@ int main(void) {
     }
     bindings_free(&cyclic_bindings);
 
+    Bindings guarded_bindings;
+    bindings_init(&guarded_bindings);
+    if (bindings_add_id_acyclic(
+            &guarded_bindings, cycle_left->var_id,
+            cycle_left->sym_id, cycle_expr) ||
+        guarded_bindings.len != 0u ||
+        bindings_has_loop(&guarded_bindings)) {
+        fprintf(stderr, "direct occurs check was not atomic\n");
+        bindings_free(&guarded_bindings);
+        goto cleanup;
+    }
+    if (!bindings_add_id_acyclic(
+            &guarded_bindings, cycle_left->var_id,
+            cycle_left->sym_id, cycle_right) ||
+        bindings_add_id_acyclic(
+            &guarded_bindings, cycle_right->var_id,
+            cycle_right->sym_id, cycle_expr) ||
+        bindings_lookup_id(&guarded_bindings, cycle_right->var_id) != NULL ||
+        bindings_has_loop(&guarded_bindings)) {
+        fprintf(stderr, "indirect occurs check was not atomic\n");
+        bindings_free(&guarded_bindings);
+        goto cleanup;
+    }
+    if (!bindings_add_id_acyclic(
+            &guarded_bindings, cycle_right->var_id,
+            cycle_right->sym_id, deep_binding_leaf) ||
+        bindings_resolve_atom_preview(
+            &guarded_bindings, cycle_left) != deep_binding_leaf ||
+        bindings_has_loop(&guarded_bindings)) {
+        fprintf(stderr, "acyclic guarded binding was rejected\n");
+        bindings_free(&guarded_bindings);
+        goto cleanup;
+    }
+    bindings_free(&guarded_bindings);
+
     AtomId deep_match_id = term_universe_store_atom_id(
         &universe, &arena, deep_match_right);
     bindings_init(&deep_match_bindings);

@@ -69,6 +69,7 @@ typedef struct {
     X(lex, "lex") \
     X(shortlex, "shortlex") \
     X(recursive_dependent_proof, "recursive-dependent-proof") \
+    X(atp_guided_inhabitation, "atp-guided-inhabitation") \
     X(atp_saturation, "atp-saturation") \
     X(solver_oracle, "solver-oracle") \
     X(comma, ",") \
@@ -185,6 +186,7 @@ typedef struct {
     X(trace_bang, "trace!") \
     X(format_args, "format-args") \
     X(repr, "repr") \
+    X(sha256, "sha256") \
     X(parse, "parse") \
     X(parse_first, "parse-first") \
     X(print_alternatives_bang, "print-alternatives!") \
@@ -227,6 +229,7 @@ typedef struct {
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(minimal_foldl_llist, "_minimal-foldl-llist") \
     X(minimal_space_contains_exact, "_minimal-space-contains-exact") \
+    X(minimal_space_revision, "_minimal-space-revision") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
     X(cetta_surface_available, "__cetta_surface-available") \
     /* ── Python FFI ── */ \

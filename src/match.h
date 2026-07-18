@@ -68,6 +68,8 @@ Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
 Atom     *bindings_lookup_var(Bindings *b, Atom *var);
 Atom     *bindings_resolve_atom_preview(Bindings *b, Atom *atom);
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
+bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
+                                  SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);

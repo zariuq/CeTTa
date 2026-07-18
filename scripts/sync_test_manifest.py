@@ -30,9 +30,14 @@ INVENTORY_PATTERNS = (
     "tests/spec_*.metta",
     "tests/he_*.metta",
     "tests/gc/test_*.metta",
+    "tests/prime/conformance/*.metta",
+    "tests/prime/practical/*.metta",
 )
 
 MAKEFILE_LISTS = (
+    "PRIME_CONFORMANCE_TESTS",
+    "PRIME_EXAMPLE_TESTS",
+    "PRIME_PRACTICAL_TESTS",
     "PYTHON_TESTS",
     "PATHMAP_REQUIRED_TESTS",
     "PATHMAP_PROBE_TESTS",
@@ -59,6 +64,7 @@ VALID_BUILDS = {
 
 VALID_LANES = {
     "test",
+    "test-prime",
     "test-backend-dedicated",
     "test-fallback-eval-session",
     "test-heavy",
@@ -85,6 +91,7 @@ VALID_EXPECTS = {
 
 LANE_ORDER = {
     "test": 10,
+    "test-prime": 15,
     "test-profiles": 20,
     "test-python": 30,
     "test-runtime-stats-lane": 40,
@@ -318,6 +325,20 @@ def generated_expect_and_note(repo: Path, test_path: str, note: str) -> tuple[st
 
 
 def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> ManifestRow:
+    if (
+        test_path in sets["PRIME_CONFORMANCE_TESTS"]
+        or test_path in sets["PRIME_EXAMPLE_TESTS"]
+        or test_path in sets["PRIME_PRACTICAL_TESTS"]
+    ):
+        expect, note = generated_expect_and_note(
+            repo,
+            test_path,
+            "Prime normative golden regression",
+        )
+        return ManifestRow(
+            test_path, "prime", "metta", "", "any", "native",
+            "test-prime", expect, note,
+        )
     if test_path in sets["PATHMAP_REQUIRED_TESTS"]:
         expect, note = generated_expect_and_note(
             repo,
@@ -539,6 +560,15 @@ def validate_manifest(repo: Path, rows: list[ManifestRow]) -> list[str]:
         if row.path in inventory and not has_expected(repo, row.path) and row.expect == "golden":
             errors.append(f"{row.path}: top-level no-expected file cannot use expect=golden")
 
+    check_exact_lane(
+        rows,
+        sets["PRIME_CONFORMANCE_TESTS"]
+        | sets["PRIME_EXAMPLE_TESTS"]
+        | sets["PRIME_PRACTICAL_TESTS"],
+        "test-prime",
+        "PRIME_FAST_TESTS",
+        errors,
+    )
     check_exact_lane(
         rows,
         sets["PATHMAP_REQUIRED_TESTS"],
