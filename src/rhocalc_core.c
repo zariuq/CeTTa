@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "abt.h"
 #include "eval.h"
 #include "match.h"
 #include "parallel_executor.h"
@@ -1214,6 +1215,191 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
         break;
     }
     return proc;
+}
+
+static bool rho_abt_scope_index(const RhoScope *scope, VarId var_id,
+                                uint32_t *out_index) {
+    for (uint32_t i = scope->len; i > 0u; i--) {
+        if (scope->items[i - 1u] == var_id) {
+            *out_index = scope->len - i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static Atom *rho_abt_call(Arena *arena, const char *head,
+                          Atom **args, uint32_t nargs) {
+    Atom **elems = arena_alloc(arena, sizeof(*elems) * (nargs + 1u));
+    elems[0] = atom_symbol(arena, head);
+    for (uint32_t i = 0; i < nargs; i++) elems[i + 1u] = args[i];
+    return atom_expr(arena, elems, nargs + 1u);
+}
+
+static Atom *rho_abt_encode_proc_canary(Arena *arena, Atom *proc,
+                                        RhoScope *scope);
+
+static Atom *rho_abt_encode_name_canary(Arena *arena, Atom *name,
+                                        RhoScope *scope) {
+    if (name->kind == ATOM_VAR) {
+        uint32_t index = 0;
+        if (!rho_abt_scope_index(scope, name->var_id, &index))
+            return rho_copy_var(arena, name);
+        Atom *args[] = {atom_int(arena, (int64_t)index)};
+        return rho_abt_call(arena, "Var", args, 1u);
+    }
+    RhoView view = rho_view(name);
+    if (view.kind == RHO_QUOTE && view.nargs == 1u) {
+        RhoScope sealed;
+        rho_scope_init(&sealed);
+        Atom *quoted = rho_abt_encode_proc_canary(arena, view.args[0], &sealed);
+        rho_scope_free(&sealed);
+        if (!quoted) return NULL;
+        Atom *args[] = {quoted};
+        return rho_abt_call(arena, "RhoQuote", args, 1u);
+    }
+    return NULL;
+}
+
+static Atom *rho_abt_encode_proc_canary(Arena *arena, Atom *proc,
+                                        RhoScope *scope) {
+    RhoView view = rho_view(proc);
+    switch (view.kind) {
+    case RHO_NIL:
+        return atom_symbol(arena, "RhoNil");
+    case RHO_PAR: {
+        Atom **args = arena_alloc(arena, sizeof(*args) * view.nargs);
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            args[i] = rho_abt_encode_proc_canary(arena, view.args[i], scope);
+            if (!args[i]) return NULL;
+        }
+        return rho_abt_call(arena, "RhoPar", args, view.nargs);
+    }
+    case RHO_SEND: {
+        Atom *args[] = {
+            rho_abt_encode_name_canary(arena, view.args[0], scope),
+            rho_abt_encode_proc_canary(arena, view.args[1], scope),
+        };
+        return args[0] && args[1]
+            ? rho_abt_call(arena, "RhoSend", args, 2u) : NULL;
+    }
+    case RHO_RECV: {
+        Atom *channel = rho_abt_encode_name_canary(
+            arena, view.args[0], scope);
+        if (!channel || view.args[1]->kind != ATOM_VAR) return NULL;
+        uint32_t mark = rho_scope_mark(scope);
+        if (!rho_scope_push(scope, view.args[1]->var_id)) return NULL;
+        Atom *body = rho_abt_encode_proc_canary(arena, view.args[2], scope);
+        rho_scope_pop(scope, mark);
+        if (!body) return NULL;
+        Atom *args[] = {channel, body};
+        return rho_abt_call(arena, "RhoRecv", args, 2u);
+    }
+    case RHO_DROP: {
+        Atom *name = rho_abt_encode_name_canary(arena, view.args[0], scope);
+        if (!name) return NULL;
+        Atom *args[] = {name};
+        return rho_abt_call(arena, "RhoDrop", args, 1u);
+    }
+    case RHO_VAL: {
+        Atom *args[] = {view.args[0]};
+        return rho_abt_call(arena, "RhoVal", args, 1u);
+    }
+    case RHO_EVAL_PAYLOAD: {
+        Atom *args[] = {view.args[0]};
+        return rho_abt_call(arena, "RhoEvalPayload", args, 1u);
+    }
+    case RHO_QUOTE:
+    case RHO_BAD:
+        return NULL;
+    }
+    return NULL;
+}
+
+bool rhocalc_abt_substitution_correspondence_selftest(Arena *arena) {
+    if (!arena || !g_symbols) return false;
+
+    AbtSignature signature;
+    abt_signature_init(&signature);
+    Atom *fields_args[] = {
+        atom_symbol(arena, "channel"), atom_symbol(arena, "body")};
+    Atom *fields = rho_abt_call(arena, "Fields", fields_args, 2u);
+    Atom *bind_args[] = {atom_symbol(arena, "body")};
+    Atom *bind = rho_abt_call(arena, "Bind1", bind_args, 1u);
+    Atom *decl_args[] = {
+        atom_symbol(arena, "RhoRecv"), fields, bind};
+    Atom *decl = rho_abt_call(arena, "AbtSignature", decl_args, 3u);
+    if (!abt_signature_add_decl(&signature, decl)) {
+        abt_signature_free(&signature);
+        return false;
+    }
+
+    Atom *channel = rho_unary(arena, "rho:quote", rho_nil(arena));
+    Atom *outer = atom_var_with_id(
+        arena, "y", ((VarId)1u << 32) | (VarId)11u);
+    Atom *inner = atom_var_with_id(
+        arena, "x", ((VarId)1u << 32) | (VarId)12u);
+    Atom *inner_body = rho_binary(
+        arena, "rho:send", outer, rho_nil(arena));
+    Atom *inner_recv = rho_ternary(
+        arena, "rho:recv", channel, inner, inner_body);
+    Atom *outer_recv = rho_ternary(
+        arena, "rho:recv", channel, outer, inner_recv);
+
+    /* The quoted occurrence is free even though it has the same VarId as the
+       inner receive binder; quote reseals its scope. */
+    Atom *replacement = rho_unary(
+        arena, "rho:quote", rho_unary(arena, "rho:drop", inner));
+    Atom *nameful_result = rho_subst_proc(
+        arena, inner_recv, outer->var_id, replacement);
+    RhoView nameful_view = rho_view(nameful_result);
+
+    RhoScope scope;
+    rho_scope_init(&scope);
+    Atom *canonical_outer = rho_abt_encode_proc_canary(
+        arena, outer_recv, &scope);
+    Atom *normalized_replacement = rho_normalize_name(arena, replacement);
+    Atom *canonical_replacement = rho_abt_encode_name_canary(
+        arena, normalized_replacement, &scope);
+    Atom *canonical_nameful = rho_abt_encode_proc_canary(
+        arena, nameful_result, &scope);
+    rho_scope_free(&scope);
+
+    Atom *canonical_body =
+        canonical_outer && canonical_outer->kind == ATOM_EXPR &&
+        canonical_outer->expr.len == 3u
+            ? canonical_outer->expr.elems[2] : NULL;
+    Atom *canonical_result = canonical_body && canonical_replacement
+        ? abt_subst(&signature, arena, 0u,
+                    canonical_replacement, canonical_body)
+        : NULL;
+    bool nameful_recv = nameful_view.kind == RHO_RECV;
+    bool renamed = nameful_recv &&
+                   nameful_view.args[1]->kind == ATOM_VAR &&
+                   nameful_view.args[1]->var_id != inner->var_id;
+    bool encoded = canonical_result && canonical_nameful;
+    bool equal = encoded && atom_eq(canonical_result, canonical_nameful);
+    bool scoped = encoded &&
+                  abt_scope_check(&signature, 0u, canonical_result);
+    bool ok = nameful_recv && renamed && encoded && equal && scoped;
+    if (!ok) {
+        fprintf(stderr,
+                "rho ABT canary: recv=%u renamed=%u encoded=%u equal=%u scoped=%u\n",
+                nameful_recv ? 1u : 0u, renamed ? 1u : 0u,
+                encoded ? 1u : 0u, equal ? 1u : 0u, scoped ? 1u : 0u);
+        if (canonical_result) {
+            fputs("rho ABT canary generic: ", stderr);
+            atom_print(canonical_result, stderr);
+            fputc('\n', stderr);
+        }
+        if (canonical_nameful) {
+            fputs("rho ABT canary nameful: ", stderr);
+            atom_print(canonical_nameful, stderr);
+            fputc('\n', stderr);
+        }
+    }
+    abt_signature_free(&signature);
+    return ok;
 }
 
 static bool rho_successor_set_acc_push_keyed(RhoSuccessorSetAcc *acc, Atom *norm, char *key) {

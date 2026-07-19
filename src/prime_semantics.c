@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "abt.h"
 #include "eval.h"
 #include "he_typing.h"
 #include "space.h"
@@ -245,10 +246,11 @@ Atom *prime_semantics_package_atom(Arena *a) {
         prime_sym(a, "ExplicitBangEvaluation"),
         prime_sym(a, "QuotedJudgmentData")};
     Atom *syntax = atom_expr(a, syntax_items, 4);
-    Atom *binder_items[3] = {
+    Atom *binder_items[4] = {
         prime_sym(a, "BindersV1"), prime_sym(a, "NamedScopedVariables"),
-        prime_sym(a, "InlineTypedTelescopeBinders")};
-    Atom *binders = atom_expr(a, binder_items, 3);
+        prime_sym(a, "InlineTypedTelescopeBinders"),
+        prime_sym(a, "DeBruijnCanonicalBinders")};
+    Atom *binders = atom_expr(a, binder_items, 4);
     Atom *equation_items[3] = {
         prime_sym(a, "EquationsV1"),
         prime_sym(a, "StructuralAtomIdentity"),
@@ -444,7 +446,8 @@ bool prime_semantics_validate_package(Atom *package) {
         "HomoiconicSExpressions", "ExplicitBangEvaluation",
         "QuotedJudgmentData"};
     static const char *const binder_names[] = {
-        "NamedScopedVariables", "InlineTypedTelescopeBinders"};
+        "NamedScopedVariables", "InlineTypedTelescopeBinders",
+        "DeBruijnCanonicalBinders"};
     static const char *const equation_names[] = {
         "StructuralAtomIdentity",
         "OrdinaryUserRulesExcludedFromDefinitionalEquality"};
@@ -497,7 +500,7 @@ bool prime_semantics_validate_package(Atom *package) {
         !prime_exact_symbol_list(language->expr.elems[1], "SyntaxV1",
                                  syntax_names, 3) ||
         !prime_exact_symbol_list(language->expr.elems[2], "BindersV1",
-                                 binder_names, 2) ||
+                                 binder_names, 3) ||
         !prime_exact_symbol_list(language->expr.elems[3], "EquationsV1",
                                  equation_names, 2) ||
         !prime_schema_expr(language->expr.elems[4], "RewritesV1", 3)) {
@@ -708,6 +711,256 @@ static bool prime_all_vars_bound(Atom *atom,
     return true;
 }
 
+typedef struct {
+    VarId id;
+    uint64_t level;
+    uint8_t state; /* 0 empty, 1 occupied, 2 tombstone */
+} PrimeCanonicalSlot;
+
+typedef struct {
+    VarId id;
+    uint64_t previous_level;
+    bool named;
+    bool had_previous;
+} PrimeCanonicalFrame;
+
+typedef struct {
+    PrimeCanonicalSlot *slots;
+    size_t slot_cap;
+    size_t slot_count;
+    size_t slot_used;
+    PrimeCanonicalFrame *frames;
+    size_t frame_len;
+    size_t frame_cap;
+    uint64_t depth;
+} PrimeCanonicalScope;
+
+static uint64_t prime_canonical_var_hash(VarId id) {
+    uint64_t x = (uint64_t)id;
+    x ^= x >> 30;
+    x *= UINT64_C(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    x *= UINT64_C(0x94d049bb133111eb);
+    return x ^ (x >> 31);
+}
+
+static void prime_canonical_scope_init(PrimeCanonicalScope *scope) {
+    memset(scope, 0, sizeof *scope);
+}
+
+static void prime_canonical_scope_free(PrimeCanonicalScope *scope) {
+    free(scope->slots);
+    free(scope->frames);
+    memset(scope, 0, sizeof *scope);
+}
+
+static bool prime_canonical_scope_rehash(PrimeCanonicalScope *scope,
+                                         size_t new_cap) {
+    if (new_cap < 16u || (new_cap & (new_cap - 1u)) != 0u ||
+        new_cap > SIZE_MAX / sizeof(*scope->slots))
+        return false;
+    PrimeCanonicalSlot *next = calloc(new_cap, sizeof(*next));
+    if (!next) return false;
+    for (size_t i = 0; i < scope->slot_cap; i++) {
+        PrimeCanonicalSlot old = scope->slots[i];
+        if (old.state != 1u) continue;
+        size_t pos = (size_t)prime_canonical_var_hash(old.id) &
+                     (new_cap - 1u);
+        while (next[pos].state == 1u) pos = (pos + 1u) & (new_cap - 1u);
+        next[pos] = old;
+    }
+    free(scope->slots);
+    scope->slots = next;
+    scope->slot_cap = new_cap;
+    scope->slot_used = scope->slot_count;
+    return true;
+}
+
+static PrimeCanonicalSlot *prime_canonical_scope_find(
+        PrimeCanonicalScope *scope, VarId id, bool insert) {
+    if (!scope->slot_cap) return NULL;
+    size_t pos = (size_t)prime_canonical_var_hash(id) &
+                 (scope->slot_cap - 1u);
+    size_t tombstone = SIZE_MAX;
+    for (size_t n = 0; n < scope->slot_cap; n++) {
+        PrimeCanonicalSlot *slot = &scope->slots[pos];
+        if (slot->state == 0u)
+            return insert && tombstone != SIZE_MAX
+                ? &scope->slots[tombstone] : slot;
+        if (slot->state == 1u && slot->id == id) return slot;
+        if (insert && slot->state == 2u && tombstone == SIZE_MAX)
+            tombstone = pos;
+        pos = (pos + 1u) & (scope->slot_cap - 1u);
+    }
+    return insert && tombstone != SIZE_MAX ? &scope->slots[tombstone] : NULL;
+}
+
+static bool prime_canonical_scope_reserve_frame(PrimeCanonicalScope *scope) {
+    if (scope->frame_len < scope->frame_cap) return true;
+    size_t next_cap = scope->frame_cap ? scope->frame_cap * 2u : 16u;
+    if (next_cap <= scope->frame_cap ||
+        next_cap > SIZE_MAX / sizeof(*scope->frames))
+        return false;
+    PrimeCanonicalFrame *next = realloc(
+        scope->frames, sizeof(*next) * next_cap);
+    if (!next) return false;
+    scope->frames = next;
+    scope->frame_cap = next_cap;
+    return true;
+}
+
+static bool prime_canonical_scope_push(PrimeCanonicalScope *scope,
+                                       Atom *binder) {
+    if (!scope || scope->depth == UINT64_MAX ||
+        (binder && binder->kind != ATOM_VAR) ||
+        !prime_canonical_scope_reserve_frame(scope))
+        return false;
+    if (binder &&
+        (!scope->slot_cap ||
+         scope->slot_used >= scope->slot_cap - scope->slot_cap / 4u)) {
+        size_t next_cap = scope->slot_cap ? scope->slot_cap * 2u : 16u;
+        if (next_cap <= scope->slot_cap ||
+            !prime_canonical_scope_rehash(scope, next_cap))
+            return false;
+    }
+
+    PrimeCanonicalFrame frame = {0};
+    frame.named = binder != NULL;
+    if (binder) {
+        PrimeCanonicalSlot *slot = prime_canonical_scope_find(
+            scope, binder->var_id, true);
+        if (!slot) return false;
+        frame.id = binder->var_id;
+        frame.had_previous = slot->state == 1u;
+        frame.previous_level = frame.had_previous ? slot->level : 0u;
+        if (slot->state == 0u) scope->slot_used++;
+        if (slot->state != 1u) scope->slot_count++;
+        slot->state = 1u;
+        slot->id = binder->var_id;
+        slot->level = scope->depth;
+    }
+    scope->frames[scope->frame_len++] = frame;
+    scope->depth++;
+    return true;
+}
+
+static void prime_canonical_scope_pop_to(PrimeCanonicalScope *scope,
+                                         size_t frame_len) {
+    while (scope->frame_len > frame_len) {
+        PrimeCanonicalFrame frame = scope->frames[--scope->frame_len];
+        scope->depth--;
+        if (!frame.named) continue;
+        PrimeCanonicalSlot *slot = prime_canonical_scope_find(
+            scope, frame.id, false);
+        if (!slot || slot->state != 1u) continue;
+        if (frame.had_previous) {
+            slot->level = frame.previous_level;
+        } else {
+            slot->state = 2u;
+            scope->slot_count--;
+        }
+    }
+}
+
+static bool prime_canonical_scope_index(PrimeCanonicalScope *scope,
+                                        VarId id, uint64_t *index) {
+    PrimeCanonicalSlot *slot = prime_canonical_scope_find(scope, id, false);
+    if (!slot || slot->state != 1u || slot->level >= scope->depth)
+        return false;
+    *index = scope->depth - slot->level - 1u;
+    return true;
+}
+
+static Atom *prime_canonical_var(Arena *a, uint64_t index) {
+    if (index > INT64_MAX) return NULL;
+    return atom_expr2(
+        a, atom_symbol(a, "Var"), atom_int(a, (int64_t)index));
+}
+
+/* Lower the named Prime telescope surface to the neutral canonical ABT waist.
+ * This is an elaboration mechanism, not a typing decision: callers must first
+ * establish formation, and checked packages must still replay any judgment
+ * made about the result.  A scoped level table makes name lookup constant-time;
+ * the emitted syntax remains context-independent de Bruijn indices. */
+static Atom *prime_canonicalize_type_rec(Arena *a,
+                                         PrimeCanonicalScope *scope,
+                                         Atom *type) {
+    type = unquote_data(type);
+    if (!type) return NULL;
+    if (type->kind == ATOM_VAR) {
+        uint64_t index = 0;
+        return prime_canonical_scope_index(scope, type->var_id, &index)
+            ? prime_canonical_var(a, index) : NULL;
+    }
+    if (type->kind != ATOM_EXPR) return type;
+
+    if (type->expr.len > 0 &&
+        atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)) {
+        if (type->expr.len < 2) return NULL;
+        CettaExprIndex arity = type->expr.len - 2u;
+        if (!cetta_expr_len_mul_fits_size(arity, sizeof(Atom *))) return NULL;
+        Atom **domains = arity
+            ? arena_alloc(a, sizeof(*domains) * (size_t)arity) : NULL;
+        size_t scope_mark = scope->frame_len;
+        for (CettaExprIndex i = 0; i < arity; i++) {
+            Atom *surface_domain = type->expr.elems[i + 1u];
+            Atom *binder = NULL;
+            if (surface_domain->kind == ATOM_EXPR &&
+                surface_domain->expr.len == 3u &&
+                atom_is_symbol_id(surface_domain->expr.elems[0],
+                                  g_builtin_syms.colon)) {
+                binder = surface_domain->expr.elems[1];
+                if (binder->kind != ATOM_VAR) return NULL;
+                surface_domain = surface_domain->expr.elems[2];
+            }
+            domains[i] = prime_canonicalize_type_rec(a, scope, surface_domain);
+            if (!domains[i] || !prime_canonical_scope_push(scope, binder)) {
+                prime_canonical_scope_pop_to(scope, scope_mark);
+                return NULL;
+            }
+        }
+        Atom *result = prime_canonicalize_type_rec(
+            a, scope, type->expr.elems[type->expr.len - 1u]);
+        prime_canonical_scope_pop_to(scope, scope_mark);
+        if (!result) return NULL;
+        for (CettaExprIndex i = arity; i > 0; i--)
+            result = atom_expr3(
+                a, atom_symbol(a, "Pi"), domains[i - 1u], result);
+        return result;
+    }
+
+    Atom **elems = type->expr.len
+        ? arena_alloc(a, sizeof(*elems) * (size_t)type->expr.len)
+        : NULL;
+    bool changed = false;
+    for (CettaExprIndex i = 0; i < type->expr.len; i++) {
+        elems[i] = prime_canonicalize_type_rec(a, scope, type->expr.elems[i]);
+        if (!elems[i]) return NULL;
+        if (elems[i] != type->expr.elems[i]) changed = true;
+    }
+    return changed ? atom_expr(a, elems, type->expr.len) : type;
+}
+
+Atom *prime_semantics_canonicalize_type(Arena *a, Atom *type) {
+    if (!a || !type) return NULL;
+    PrimeCanonicalScope scope;
+    prime_canonical_scope_init(&scope);
+    AbtSignature signature;
+    abt_signature_init(&signature);
+    if (!abt_signature_add_defaults(&signature, a)) {
+        abt_signature_free(&signature);
+        prime_canonical_scope_free(&scope);
+        return NULL;
+    }
+    Atom *canonical = prime_canonicalize_type_rec(a, &scope, type);
+    bool closed = canonical && scope.depth == 0u && scope.frame_len == 0u &&
+                  !atom_has_vars(canonical) &&
+                  abt_scope_check(&signature, 0u, canonical);
+    abt_signature_free(&signature);
+    prime_canonical_scope_free(&scope);
+    return closed ? canonical : NULL;
+}
+
 static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
                                        PrimeResourceLedger *ledger,
                                        Atom **detail,
@@ -791,7 +1044,19 @@ static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
                 scope = &frames[frame_count++];
             }
         }
-        *detail = prime_expr2(a, "TelescopeFormation", type);
+        if (!context) {
+            Atom *canonical = prime_semantics_canonicalize_type(a, type);
+            if (!canonical) {
+                *detail = prime_expr2(
+                    a, "canonical-telescope-elaboration-failed", type);
+                return PRIME_FORM_UNDETERMINED;
+            }
+            *detail = prime_expr3(
+                a, "TelescopeFormation", type,
+                prime_expr2(a, "CanonicalABT", canonical));
+        } else {
+            *detail = prime_expr2(a, "TelescopeFormation", type);
+        }
         return PRIME_FORM_ESTABLISHED;
     }
 

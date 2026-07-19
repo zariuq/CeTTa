@@ -150,6 +150,18 @@ NO_EXPECT_CLASSIFICATION = {
     ),
 }
 
+PRIME_TEST_NOTES = {
+    "tests/prime/conformance/abt_let_scope.metta": (
+        "Prime provisional ABT let-scope evidence regression"
+    ),
+    "tests/prime/conformance/abt_sealed_boundary.metta": (
+        "Prime derived ABT sealed-boundary evidence regression"
+    ),
+    "tests/prime/conformance/canonical_binders.metta": (
+        "Prime derived canonical-binder evidence regression"
+    ),
+}
+
 @dataclasses.dataclass(frozen=True)
 class ManifestRow:
     path: str
@@ -357,7 +369,9 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
         expect, note = generated_expect_and_note(
             repo,
             test_path,
-            "Prime normative golden regression",
+            PRIME_TEST_NOTES.get(
+                test_path, "Prime normative golden regression"
+            ),
         )
         return ManifestRow(
             test_path, "prime", "metta", "", "any", "native",

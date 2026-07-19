@@ -84,6 +84,7 @@ bool rhocalc_reduce_to_quiescence(Arena *arena, Atom *proc,
 
 #ifdef CETTA_TEST_HOOKS
 bool rhocalc_payload_map_capacity_selftest(void);
+bool rhocalc_abt_substitution_correspondence_selftest(Arena *arena);
 #endif
 
 #endif /* CETTA_RHOCALC_CORE_H */

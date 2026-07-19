@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "eval.h"
+#include "abt.h"
 #include "match.h"
 #include "search_machine.h"
 #include "grounded.h"
@@ -1740,6 +1741,8 @@ static bool add_atoms_public_surface_has_only_default(Space *s);
 static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (!head || head->kind != ATOM_SYMBOL)
         return false;
+    if (abt_op_data_arg(head->sym_id, arg_index))
+        return true;
     if (head->sym_id == g_builtin_syms.lib_gparse_inference_presentation ||
         head->sym_id == g_builtin_syms.lib_gparse_inference_dag ||
         head->sym_id == g_builtin_syms.lib_gparse_inference_dag_presentation ||
@@ -4511,6 +4514,926 @@ static Atom *bindings_apply_projected_body_visible(const Bindings *visible,
     return new_elems ? atom_expr(a, new_elems, body->expr.len) : body;
 }
 
+/* Prime lowers the named chain surface to a canonical unary ABT before
+   instantiating its body.  HE keeps its existing VarId substitution path;
+   this makes the language change explicit instead of silently changing a
+   compatibility profile. */
+static __thread AbtSignature g_prime_runtime_abt_signature;
+static __thread const SymbolTable *g_prime_runtime_abt_symbols = NULL;
+static __thread bool g_prime_runtime_abt_signature_ready = false;
+
+static void prime_runtime_abt_signature_reset(void) {
+    if (g_prime_runtime_abt_signature_ready)
+        abt_signature_free(&g_prime_runtime_abt_signature);
+    g_prime_runtime_abt_symbols = NULL;
+    g_prime_runtime_abt_signature_ready = false;
+}
+
+static const AbtSignature *prime_runtime_abt_signature(Arena *arena) {
+    if (!arena || !g_symbols) return NULL;
+    if (g_prime_runtime_abt_signature_ready &&
+        g_prime_runtime_abt_symbols == g_symbols)
+        return &g_prime_runtime_abt_signature;
+
+    prime_runtime_abt_signature_reset();
+    abt_signature_init(&g_prime_runtime_abt_signature);
+    if (!abt_signature_add_defaults(&g_prime_runtime_abt_signature, arena)) {
+        abt_signature_free(&g_prime_runtime_abt_signature);
+        return NULL;
+    }
+    const AbtSignatureEntry *chain = abt_signature_lookup(
+        &g_prime_runtime_abt_signature, g_builtin_syms.abt_chain_v1, 2u);
+    const AbtSignatureEntry *pattern_var = abt_signature_lookup(
+        &g_prime_runtime_abt_signature, g_builtin_syms.abt_pattern_var_v1, 1u);
+    const AbtSignatureEntry *let_scope = abt_signature_lookup(
+        &g_prime_runtime_abt_signature, g_builtin_syms.abt_let_scope_v1, 1u);
+    const AbtSignatureEntry *let_term = abt_signature_lookup(
+        &g_prime_runtime_abt_signature, g_builtin_syms.abt_let_v1, 3u);
+    if (!chain || chain->depths[0] != 0u || chain->depths[1] != 1u ||
+        !pattern_var || pattern_var->depths[0] != 0u ||
+        !let_scope || let_scope->depths[0] != 1u ||
+        !let_term || let_term->depths[0] != 0u ||
+        let_term->depths[1] != 0u || let_term->depths[2] != 0u) {
+        abt_signature_free(&g_prime_runtime_abt_signature);
+        return NULL;
+    }
+    g_prime_runtime_abt_symbols = g_symbols;
+    g_prime_runtime_abt_signature_ready = true;
+    return &g_prime_runtime_abt_signature;
+}
+
+typedef enum {
+    PRIME_BINDER_TERM = 0,
+    PRIME_BINDER_PATTERN,
+    PRIME_BINDER_LET_STAR_LIST,
+    PRIME_BINDER_LET_STAR_ENTRY,
+} PrimeBinderElabContext;
+
+typedef struct {
+    Atom *source;
+    Atom *result;
+    uint8_t state; /* 0 empty, 1 active, 2 complete */
+    PrimeBinderElabContext context;
+} PrimeBinderElabMemoSlot;
+
+typedef struct {
+    PrimeBinderElabMemoSlot *slots;
+    size_t cap;
+    size_t used;
+} PrimeBinderElabMemo;
+
+static size_t prime_binder_elab_hash(Atom *source,
+                                     PrimeBinderElabContext context) {
+    uintptr_t value = (uintptr_t)source >> 4;
+    value ^= (uintptr_t)context * (uintptr_t)0x9e3779b9u;
+    value ^= value >> 17;
+    value *= (uintptr_t)0xed5ad4bbu;
+    value ^= value >> 11;
+    return (size_t)value;
+}
+
+static bool prime_binder_elab_memo_init(PrimeBinderElabMemo *memo) {
+    memo->cap = 64u;
+    memo->used = 0u;
+    if (memo->cap > SIZE_MAX / sizeof(*memo->slots)) return false;
+    memo->slots = cetta_malloc(sizeof(*memo->slots) * memo->cap);
+    memset(memo->slots, 0, sizeof(*memo->slots) * memo->cap);
+    return true;
+}
+
+static void prime_binder_elab_memo_free(PrimeBinderElabMemo *memo) {
+    free(memo->slots);
+    memo->slots = NULL;
+    memo->cap = 0u;
+    memo->used = 0u;
+}
+
+static PrimeBinderElabMemoSlot *prime_binder_elab_memo_find(
+    PrimeBinderElabMemo *memo, Atom *source,
+    PrimeBinderElabContext context) {
+    size_t mask = memo->cap - 1u;
+    size_t position = prime_binder_elab_hash(source, context) & mask;
+    while (memo->slots[position].source &&
+           (memo->slots[position].source != source ||
+            memo->slots[position].context != context))
+        position = (position + 1u) & mask;
+    return &memo->slots[position];
+}
+
+static bool prime_binder_elab_memo_grow(PrimeBinderElabMemo *memo) {
+    if (memo->cap > SIZE_MAX / 2u) return false;
+    size_t next_cap = memo->cap * 2u;
+    if (next_cap > SIZE_MAX / sizeof(*memo->slots)) return false;
+    PrimeBinderElabMemoSlot *old_slots = memo->slots;
+    size_t old_cap = memo->cap;
+    memo->slots = cetta_malloc(sizeof(*memo->slots) * next_cap);
+    memset(memo->slots, 0, sizeof(*memo->slots) * next_cap);
+    memo->cap = next_cap;
+    memo->used = 0u;
+    for (size_t i = 0; i < old_cap; i++) {
+        if (!old_slots[i].source) continue;
+        PrimeBinderElabMemoSlot *slot = prime_binder_elab_memo_find(
+            memo, old_slots[i].source, old_slots[i].context);
+        *slot = old_slots[i];
+        memo->used++;
+    }
+    free(old_slots);
+    return true;
+}
+
+static PrimeBinderElabMemoSlot *prime_binder_elab_memo_begin(
+    PrimeBinderElabMemo *memo, Atom *source,
+    PrimeBinderElabContext context) {
+    PrimeBinderElabMemoSlot *slot = prime_binder_elab_memo_find(
+        memo, source, context);
+    if (slot->source) return slot;
+    if (memo->used + 1u >= memo->cap - memo->cap / 4u) {
+        if (!prime_binder_elab_memo_grow(memo)) return NULL;
+        slot = prime_binder_elab_memo_find(memo, source, context);
+    }
+    slot->source = source;
+    slot->result = NULL;
+    slot->state = 1u;
+    slot->context = context;
+    memo->used++;
+    return slot;
+}
+
+typedef struct {
+    Atom *source;
+    Atom **destination;
+    Atom **children;
+    CettaExprIndex next_child;
+    bool entered;
+    PrimeBinderElabContext context;
+} PrimeBinderElabFrame;
+
+typedef struct {
+    PrimeBinderElabFrame *items;
+    size_t len;
+    size_t cap;
+} PrimeBinderElabStack;
+
+static bool prime_binder_elab_push(PrimeBinderElabStack *stack,
+                                   PrimeBinderElabFrame frame) {
+    if (stack->len == stack->cap) {
+        size_t next_cap = stack->cap ? stack->cap * 2u : 64u;
+        if (next_cap < stack->cap ||
+            next_cap > SIZE_MAX / sizeof(*stack->items))
+            return false;
+        stack->items = stack->items
+            ? cetta_realloc(stack->items, sizeof(*stack->items) * next_cap)
+            : cetta_malloc(sizeof(*stack->items) * next_cap);
+        stack->cap = next_cap;
+    }
+    stack->items[stack->len++] = frame;
+    return true;
+}
+
+typedef struct {
+    VarId var_id;
+    uint32_t slot;
+} PrimeLetSlotEntry;
+
+typedef struct {
+    PrimeLetSlotEntry *entries;
+    size_t cap;
+    size_t used;
+    Atom **names;
+    uint32_t len;
+    uint32_t names_cap;
+} PrimeLetSlotMap;
+
+static size_t prime_let_slot_hash(VarId var_id) {
+    uint64_t value = (uint64_t)var_id;
+    value ^= value >> 33;
+    value *= UINT64_C(0xff51afd7ed558ccd);
+    value ^= value >> 33;
+    return (size_t)value;
+}
+
+static bool prime_let_slot_map_init(PrimeLetSlotMap *map) {
+    if (!map) return false;
+    memset(map, 0, sizeof(*map));
+    map->cap = 64u;
+    if (map->cap > SIZE_MAX / sizeof(*map->entries)) return false;
+    map->entries = cetta_malloc(sizeof(*map->entries) * map->cap);
+    memset(map->entries, 0, sizeof(*map->entries) * map->cap);
+    return true;
+}
+
+static void prime_let_slot_map_free(PrimeLetSlotMap *map) {
+    if (!map) return;
+    free(map->entries);
+    free(map->names);
+    memset(map, 0, sizeof(*map));
+}
+
+static PrimeLetSlotEntry *prime_let_slot_find(PrimeLetSlotMap *map,
+                                               VarId var_id) {
+    size_t mask = map->cap - 1u;
+    size_t position = prime_let_slot_hash(var_id) & mask;
+    while (map->entries[position].var_id != VAR_ID_NONE &&
+           map->entries[position].var_id != var_id)
+        position = (position + 1u) & mask;
+    return &map->entries[position];
+}
+
+static bool prime_let_slot_map_grow(PrimeLetSlotMap *map) {
+    if (!map || map->cap > SIZE_MAX / 2u) return false;
+    size_t next_cap = map->cap * 2u;
+    if (next_cap > SIZE_MAX / sizeof(*map->entries)) return false;
+    PrimeLetSlotEntry *old_entries = map->entries;
+    size_t old_cap = map->cap;
+    map->entries = cetta_malloc(sizeof(*map->entries) * next_cap);
+    memset(map->entries, 0, sizeof(*map->entries) * next_cap);
+    map->cap = next_cap;
+    map->used = 0u;
+    for (size_t i = 0u; i < old_cap; i++) {
+        if (old_entries[i].var_id == VAR_ID_NONE) continue;
+        PrimeLetSlotEntry *slot = prime_let_slot_find(
+            map, old_entries[i].var_id);
+        *slot = old_entries[i];
+        map->used++;
+    }
+    free(old_entries);
+    return true;
+}
+
+static bool prime_let_slot_for_name(PrimeLetSlotMap *map, Atom *name,
+                                    uint32_t *slot_out) {
+    if (!map || !name || name->kind != ATOM_VAR || !slot_out) return false;
+    PrimeLetSlotEntry *entry = prime_let_slot_find(map, name->var_id);
+    if (entry->var_id != VAR_ID_NONE) {
+        *slot_out = entry->slot;
+        return true;
+    }
+    if (map->used + 1u >= map->cap - map->cap / 4u) {
+        if (!prime_let_slot_map_grow(map)) return false;
+        entry = prime_let_slot_find(map, name->var_id);
+    }
+    if (map->len == UINT32_MAX) return false;
+    if (map->len == map->names_cap) {
+        uint32_t next_cap = map->names_cap ? map->names_cap * 2u : 16u;
+        if (next_cap < map->names_cap ||
+            (size_t)next_cap > SIZE_MAX / sizeof(*map->names))
+            return false;
+        map->names = map->names
+            ? cetta_realloc(map->names, sizeof(*map->names) * (size_t)next_cap)
+            : cetta_malloc(sizeof(*map->names) * (size_t)next_cap);
+        map->names_cap = next_cap;
+    }
+    entry->var_id = name->var_id;
+    entry->slot = map->len;
+    map->names[map->len] = name;
+    *slot_out = map->len++;
+    map->used++;
+    return true;
+}
+
+static Atom *prime_let_pattern_canonicalize(Arena *arena, Atom *root,
+                                             PrimeLetSlotMap *slots) {
+    PrimeBinderElabMemo memo = {0};
+    PrimeBinderElabStack stack = {0};
+    Atom *result = NULL;
+    if (!arena || !root || !slots ||
+        !prime_binder_elab_memo_init(&memo) ||
+        !prime_binder_elab_push(&stack, (PrimeBinderElabFrame){
+            root, &result, NULL, 0u, false, PRIME_BINDER_PATTERN}))
+        goto fail;
+
+    while (stack.len > 0u) {
+        PrimeBinderElabFrame *frame = &stack.items[stack.len - 1u];
+        if (!frame->entered) {
+            PrimeBinderElabMemoSlot *memo_slot = prime_binder_elab_memo_find(
+                &memo, frame->source, PRIME_BINDER_PATTERN);
+            if (memo_slot->source && memo_slot->state == 1u) goto fail;
+            if (memo_slot->source && memo_slot->state == 2u) {
+                *frame->destination = memo_slot->result;
+                stack.len--;
+                continue;
+            }
+            memo_slot = prime_binder_elab_memo_begin(
+                &memo, frame->source, PRIME_BINDER_PATTERN);
+            if (!memo_slot) goto fail;
+
+            if (frame->source->kind == ATOM_VAR) {
+                uint32_t pattern_slot = 0u;
+                if (!prime_let_slot_for_name(
+                        slots, frame->source, &pattern_slot))
+                    goto fail;
+                Atom *marker = atom_expr2(
+                    arena, atom_symbol_id(arena, g_builtin_syms.abt_pattern_var_v1),
+                    atom_int(arena, (int64_t)pattern_slot));
+                memo_slot->result = marker;
+                memo_slot->state = 2u;
+                *frame->destination = marker;
+                stack.len--;
+                continue;
+            }
+            if (frame->source->kind != ATOM_EXPR) {
+                memo_slot->result = frame->source;
+                memo_slot->state = 2u;
+                *frame->destination = frame->source;
+                stack.len--;
+                continue;
+            }
+            if (frame->source->expr.len > 0u &&
+                !cetta_expr_len_mul_fits_size(
+                    frame->source->expr.len, sizeof(Atom *)))
+                goto fail;
+            frame->children = frame->source->expr.len
+                ? arena_alloc(arena, sizeof(Atom *) *
+                    (size_t)frame->source->expr.len)
+                : NULL;
+            frame->entered = true;
+            frame->next_child = 0u;
+        }
+
+        if (frame->next_child < frame->source->expr.len) {
+            CettaExprIndex child = frame->next_child++;
+            if (!prime_binder_elab_push(&stack, (PrimeBinderElabFrame){
+                    frame->source->expr.elems[child],
+                    &frame->children[child], NULL, 0u, false,
+                    PRIME_BINDER_PATTERN}))
+                goto fail;
+            continue;
+        }
+
+        bool changed = false;
+        for (CettaExprIndex i = 0u; i < frame->source->expr.len; i++)
+            if (frame->children[i] != frame->source->expr.elems[i]) {
+                changed = true;
+                break;
+            }
+        Atom *rebuilt = changed
+            ? atom_expr(arena, frame->children, frame->source->expr.len)
+            : frame->source;
+        PrimeBinderElabMemoSlot *memo_slot = prime_binder_elab_memo_find(
+            &memo, frame->source, PRIME_BINDER_PATTERN);
+        if (!memo_slot->source || memo_slot->state != 1u) goto fail;
+        memo_slot->result = rebuilt;
+        memo_slot->state = 2u;
+        *frame->destination = rebuilt;
+        stack.len--;
+    }
+
+    free(stack.items);
+    prime_binder_elab_memo_free(&memo);
+    return result;
+
+fail:
+    free(stack.items);
+    if (memo.slots) prime_binder_elab_memo_free(&memo);
+    return NULL;
+}
+
+/* Introducing a new binder must preserve any loose canonical indices already
+   present in the body.  Shift first, then close the named occurrence.  The
+   inverse execution step is abt_subst, not the presentation-only abt_open. */
+static Atom *prime_abt_abstract(const AbtSignature *signature, Arena *arena,
+                                Atom *name, Atom *body) {
+    Atom *shifted = abt_shift(signature, arena, 1, 0u, body);
+    return shifted ? abt_close(signature, arena, name, shifted) : NULL;
+}
+
+static Atom *prime_let_make_canonical(const AbtSignature *signature,
+                                      Arena *arena, Atom *pattern,
+                                      Atom *source, Atom *body) {
+    PrimeLetSlotMap slots;
+    if (!prime_let_slot_map_init(&slots)) return NULL;
+    Atom *canonical_pattern = prime_let_pattern_canonicalize(
+        arena, pattern, &slots);
+    Atom *scope = body;
+    if (!canonical_pattern || !scope) goto fail;
+    for (uint32_t i = slots.len; i > 0u; i--) {
+        Atom *closed = prime_abt_abstract(
+            signature, arena, slots.names[i - 1u], scope);
+        if (!closed) goto fail;
+        scope = atom_expr2(
+            arena, atom_symbol_id(arena, g_builtin_syms.abt_let_scope_v1),
+            closed);
+    }
+    Atom *elems[4] = {
+        atom_symbol_id(arena, g_builtin_syms.abt_let_v1),
+        canonical_pattern,
+        source,
+        scope,
+    };
+    Atom *result = atom_expr(arena, elems, 4u);
+    prime_let_slot_map_free(&slots);
+    return result;
+
+fail:
+    prime_let_slot_map_free(&slots);
+    return NULL;
+}
+
+typedef struct {
+    Atom **items;
+    size_t len;
+    size_t cap;
+} PrimeAtomStack;
+
+static bool prime_atom_stack_push(PrimeAtomStack *stack, Atom *atom) {
+    if (stack->len == stack->cap) {
+        size_t next_cap = stack->cap ? stack->cap * 2u : 64u;
+        if (next_cap < stack->cap ||
+            next_cap > SIZE_MAX / sizeof(*stack->items))
+            return false;
+        stack->items = stack->items
+            ? cetta_realloc(stack->items, sizeof(*stack->items) * next_cap)
+            : cetta_malloc(sizeof(*stack->items) * next_cap);
+        stack->cap = next_cap;
+    }
+    stack->items[stack->len++] = atom;
+    return true;
+}
+
+/* 1 is a valid marker, 0 is not a marker, and -1 is a malformed use of the
+   reserved marker head. */
+static int prime_let_pattern_marker(Atom *atom, uint32_t *slot_out) {
+    if (!atom || !slot_out) return -1;
+    if (atom->kind == ATOM_SYMBOL &&
+        atom_is_symbol_id(atom, g_builtin_syms.abt_pattern_var_v1))
+        return -1;
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
+        !atom_is_symbol_id(
+            atom->expr.elems[0], g_builtin_syms.abt_pattern_var_v1))
+        return 0;
+    if (atom->expr.len != 2u ||
+        atom->expr.elems[1]->kind != ATOM_GROUNDED ||
+        atom->expr.elems[1]->ground.gkind != GV_INT ||
+        atom->expr.elems[1]->ground.ival < 0 ||
+        (uint64_t)atom->expr.elems[1]->ground.ival > UINT32_MAX)
+        return -1;
+    *slot_out = (uint32_t)atom->expr.elems[1]->ground.ival;
+    return 1;
+}
+
+static bool prime_let_pattern_arity(Atom *pattern, uint32_t *arity_out) {
+    PrimeAtomStack stack = {0};
+    PrimeBinderElabMemo seen = {0};
+    uint32_t *markers = NULL;
+    size_t marker_len = 0u;
+    size_t marker_cap = 0u;
+    uint32_t maximum = 0u;
+    bool have_marker = false;
+    if (!pattern || !arity_out || !prime_binder_elab_memo_init(&seen) ||
+        !prime_atom_stack_push(&stack, pattern))
+        goto fail;
+
+    while (stack.len > 0u) {
+        Atom *current = stack.items[--stack.len];
+        PrimeBinderElabMemoSlot *memo_slot = prime_binder_elab_memo_find(
+            &seen, current, PRIME_BINDER_PATTERN);
+        if (memo_slot->source) continue;
+        memo_slot = prime_binder_elab_memo_begin(
+            &seen, current, PRIME_BINDER_PATTERN);
+        if (!memo_slot) goto fail;
+        memo_slot->result = current;
+        memo_slot->state = 2u;
+
+        uint32_t marker = 0u;
+        int marker_status = prime_let_pattern_marker(current, &marker);
+        if (marker_status < 0 || current->kind == ATOM_VAR) goto fail;
+        if (marker_status > 0) {
+            if (marker_len == marker_cap) {
+                size_t next_cap = marker_cap ? marker_cap * 2u : 16u;
+                if (next_cap < marker_cap ||
+                    next_cap > SIZE_MAX / sizeof(*markers))
+                    goto fail;
+                markers = markers
+                    ? cetta_realloc(markers, sizeof(*markers) * next_cap)
+                    : cetta_malloc(sizeof(*markers) * next_cap);
+                marker_cap = next_cap;
+            }
+            markers[marker_len++] = marker;
+            if (!have_marker || marker > maximum) maximum = marker;
+            have_marker = true;
+            continue;
+        }
+        if (current->kind != ATOM_EXPR) continue;
+        for (CettaExprIndex i = current->expr.len; i > 0u; i--)
+            if (!prime_atom_stack_push(
+                    &stack, current->expr.elems[i - 1u]))
+                goto fail;
+    }
+
+    if (!have_marker) {
+        *arity_out = 0u;
+    } else {
+        if ((uint64_t)maximum >= (uint64_t)marker_len) goto fail;
+        size_t seen_len = (size_t)maximum + 1u;
+        bool *slot_seen = cetta_malloc(sizeof(*slot_seen) * seen_len);
+        memset(slot_seen, 0, sizeof(*slot_seen) * seen_len);
+        for (size_t i = 0u; i < marker_len; i++)
+            slot_seen[markers[i]] = true;
+        for (size_t i = 0u; i < seen_len; i++) {
+            if (slot_seen[i]) continue;
+            free(slot_seen);
+            goto fail;
+        }
+        free(slot_seen);
+        *arity_out = maximum + 1u;
+    }
+    free(markers);
+    free(stack.items);
+    prime_binder_elab_memo_free(&seen);
+    return true;
+
+fail:
+    free(markers);
+    free(stack.items);
+    if (seen.slots) prime_binder_elab_memo_free(&seen);
+    return false;
+}
+
+static Atom *prime_let_pattern_open(Arena *arena, Atom *root,
+                                    Atom *const *fresh, uint32_t arity) {
+    PrimeBinderElabMemo memo = {0};
+    PrimeBinderElabStack stack = {0};
+    Atom *result = NULL;
+    if (!arena || !root || (arity > 0u && !fresh) ||
+        !prime_binder_elab_memo_init(&memo) ||
+        !prime_binder_elab_push(&stack, (PrimeBinderElabFrame){
+            root, &result, NULL, 0u, false, PRIME_BINDER_PATTERN}))
+        goto fail;
+
+    while (stack.len > 0u) {
+        PrimeBinderElabFrame *frame = &stack.items[stack.len - 1u];
+        if (!frame->entered) {
+            PrimeBinderElabMemoSlot *memo_slot = prime_binder_elab_memo_find(
+                &memo, frame->source, PRIME_BINDER_PATTERN);
+            if (memo_slot->source && memo_slot->state == 1u) goto fail;
+            if (memo_slot->source && memo_slot->state == 2u) {
+                *frame->destination = memo_slot->result;
+                stack.len--;
+                continue;
+            }
+            memo_slot = prime_binder_elab_memo_begin(
+                &memo, frame->source, PRIME_BINDER_PATTERN);
+            if (!memo_slot) goto fail;
+
+            uint32_t pattern_slot = 0u;
+            int marker_status = prime_let_pattern_marker(
+                frame->source, &pattern_slot);
+            if (marker_status < 0 || frame->source->kind == ATOM_VAR)
+                goto fail;
+            if (marker_status > 0) {
+                if (pattern_slot >= arity) goto fail;
+                memo_slot->result = fresh[pattern_slot];
+                memo_slot->state = 2u;
+                *frame->destination = fresh[pattern_slot];
+                stack.len--;
+                continue;
+            }
+            if (frame->source->kind != ATOM_EXPR) {
+                memo_slot->result = frame->source;
+                memo_slot->state = 2u;
+                *frame->destination = frame->source;
+                stack.len--;
+                continue;
+            }
+            if (frame->source->expr.len > 0u &&
+                !cetta_expr_len_mul_fits_size(
+                    frame->source->expr.len, sizeof(Atom *)))
+                goto fail;
+            frame->children = frame->source->expr.len
+                ? arena_alloc(arena, sizeof(Atom *) *
+                    (size_t)frame->source->expr.len)
+                : NULL;
+            frame->entered = true;
+            frame->next_child = 0u;
+        }
+
+        if (frame->next_child < frame->source->expr.len) {
+            CettaExprIndex child = frame->next_child++;
+            if (!prime_binder_elab_push(&stack, (PrimeBinderElabFrame){
+                    frame->source->expr.elems[child],
+                    &frame->children[child], NULL, 0u, false,
+                    PRIME_BINDER_PATTERN}))
+                goto fail;
+            continue;
+        }
+
+        bool changed = false;
+        for (CettaExprIndex i = 0u; i < frame->source->expr.len; i++)
+            if (frame->children[i] != frame->source->expr.elems[i]) {
+                changed = true;
+                break;
+            }
+        Atom *rebuilt = changed
+            ? atom_expr(arena, frame->children, frame->source->expr.len)
+            : frame->source;
+        PrimeBinderElabMemoSlot *memo_slot = prime_binder_elab_memo_find(
+            &memo, frame->source, PRIME_BINDER_PATTERN);
+        if (!memo_slot->source || memo_slot->state != 1u) goto fail;
+        memo_slot->result = rebuilt;
+        memo_slot->state = 2u;
+        *frame->destination = rebuilt;
+        stack.len--;
+    }
+
+    free(stack.items);
+    prime_binder_elab_memo_free(&memo);
+    return result;
+
+fail:
+    free(stack.items);
+    if (memo.slots) prime_binder_elab_memo_free(&memo);
+    return NULL;
+}
+
+typedef struct {
+    Atom *pattern;
+    Atom *source;
+    Atom *scoped_body;
+    Atom **fresh;
+    uint32_t arity;
+} PrimeLetPrepared;
+
+static void prime_let_prepared_free(PrimeLetPrepared *prepared) {
+    if (!prepared) return;
+    free(prepared->fresh);
+    memset(prepared, 0, sizeof(*prepared));
+}
+
+static bool prime_let_prepare_canonical(const AbtSignature *signature,
+                                        Arena *arena, Atom *canonical,
+                                        PrimeLetPrepared *prepared) {
+    /* Evaluation is context-polymorphic: a canonical body may contain loose
+       indices owned by an enclosing package context.  Closedness is checked
+       at package/storage admission with that explicit context, not guessed
+       here at depth zero.  The scope wrappers and substitution arithmetic
+       still reject malformed indices and mismatched let arities. */
+    if (!signature || !arena || !canonical || !prepared ||
+        canonical->kind != ATOM_EXPR ||
+        canonical->expr.len != 4u ||
+        !atom_is_symbol_id(
+            canonical->expr.elems[0], g_builtin_syms.abt_let_v1))
+        return false;
+    memset(prepared, 0, sizeof(*prepared));
+
+    Atom *canonical_pattern = canonical->expr.elems[1];
+    uint32_t arity = 0u;
+    if (!prime_let_pattern_arity(canonical_pattern, &arity) ||
+        (arity > 0u && (size_t)arity > SIZE_MAX / sizeof(Atom *)))
+        return false;
+    Atom **fresh = arity
+        ? cetta_malloc(sizeof(*fresh) * (size_t)arity) : NULL;
+    SymbolId spelling = symbol_intern_cstr(g_symbols, "__prime_let");
+    for (uint32_t i = 0u; i < arity; i++)
+        fresh[i] = atom_var_with_spelling(
+            arena, spelling, fresh_var_id());
+
+    Atom *pattern = prime_let_pattern_open(
+        arena, canonical_pattern, fresh, arity);
+    Atom *body = canonical->expr.elems[3];
+    if (!pattern) goto fail;
+    for (uint32_t i = 0u; i < arity; i++) {
+        if (!body || body->kind != ATOM_EXPR || body->expr.len != 2u ||
+            !atom_is_symbol_id(
+                body->expr.elems[0], g_builtin_syms.abt_let_scope_v1))
+            goto fail;
+        body = body->expr.elems[1];
+    }
+    if (body->kind == ATOM_EXPR && body->expr.len > 0u &&
+        atom_is_symbol_id(
+            body->expr.elems[0], g_builtin_syms.abt_let_scope_v1))
+        goto fail;
+
+    prepared->pattern = pattern;
+    prepared->source = canonical->expr.elems[2];
+    prepared->scoped_body = canonical->expr.elems[3];
+    prepared->fresh = fresh;
+    prepared->arity = arity;
+    return true;
+
+fail:
+    free(fresh);
+    return false;
+}
+
+static Atom *prime_let_instantiate_body(const AbtSignature *signature,
+                                        Arena *arena,
+                                        const PrimeLetPrepared *prepared,
+                                        const Bindings *bindings) {
+    if (!signature || !arena || !prepared || !bindings) return NULL;
+    Atom *body = prepared->scoped_body;
+    for (uint32_t i = 0u; i < prepared->arity; i++) {
+        if (!body || body->kind != ATOM_EXPR || body->expr.len != 2u ||
+            !atom_is_symbol_id(
+                body->expr.elems[0], g_builtin_syms.abt_let_scope_v1))
+            return NULL;
+        Atom *value = bindings_lookup_var(
+            (Bindings *)bindings, prepared->fresh[i]);
+        if (!value) return NULL;
+        value = bindings_apply_if_vars(bindings, arena, value);
+        if (!value) return NULL;
+        body = abt_subst(
+            signature, arena, 0u, value, body->expr.elems[1]);
+        if (!body) return NULL;
+    }
+    if (body && body->kind == ATOM_EXPR && body->expr.len > 0u &&
+        atom_is_symbol_id(
+            body->expr.elems[0], g_builtin_syms.abt_let_scope_v1))
+        return NULL;
+    return body;
+}
+
+typedef enum {
+    PRIME_LET_MATCH_NONE,
+    PRIME_LET_MATCH_BODY,
+    PRIME_LET_MATCH_INVALID,
+} PrimeLetMatchStatus;
+
+static PrimeLetMatchStatus prime_let_match_body(
+    const AbtSignature *signature, Arena *arena,
+    const PrimeLetPrepared *prepared, Atom *value,
+    const Bindings *value_env, Atom **body_out) {
+    if (!signature || !arena || !prepared || !value || !value_env ||
+        !body_out)
+        return PRIME_LET_MATCH_INVALID;
+    *body_out = NULL;
+    BindingsBuilder builder;
+    if (!bindings_builder_init(&builder, value_env))
+        return PRIME_LET_MATCH_INVALID;
+    /* The canonical pattern is the binder side.  Put it on the left so a
+       variable-valued source binds the fresh lexical slot to that variable,
+       rather than orienting the equality in the opposite direction. */
+    bool matched = match_atoms_builder(
+        prepared->pattern, value, &builder);
+    const Bindings *matched_bindings = bindings_builder_bindings(&builder);
+    if (!matched || bindings_has_loop(matched_bindings)) {
+        bindings_builder_free(&builder);
+        return PRIME_LET_MATCH_NONE;
+    }
+    Atom *body = prime_let_instantiate_body(
+        signature, arena, prepared, matched_bindings);
+    bindings_builder_free(&builder);
+    if (!body) return PRIME_LET_MATCH_INVALID;
+    *body_out = body;
+    return PRIME_LET_MATCH_BODY;
+}
+
+static PrimeBinderElabContext prime_binder_child_context(
+    const PrimeBinderElabFrame *frame, CettaExprIndex child) {
+    if (!frame || frame->context == PRIME_BINDER_PATTERN)
+        return PRIME_BINDER_PATTERN;
+    if (frame->context == PRIME_BINDER_LET_STAR_LIST)
+        return PRIME_BINDER_LET_STAR_ENTRY;
+    if (frame->context == PRIME_BINDER_LET_STAR_ENTRY) {
+        if (frame->source->expr.len == 2u && child == 0u)
+            return PRIME_BINDER_PATTERN;
+        return PRIME_BINDER_TERM;
+    }
+
+    SymbolId head = atom_head_symbol_id(frame->source);
+    CettaExprLen nargs = expr_nargs(frame->source);
+    if ((head == g_builtin_syms.let ||
+         head == g_builtin_syms.abt_let_v1) && nargs == 3u && child == 1u)
+        return PRIME_BINDER_PATTERN;
+    if (head == g_builtin_syms.let_star && nargs == 2u && child == 1u)
+        return PRIME_BINDER_LET_STAR_LIST;
+    return PRIME_BINDER_TERM;
+}
+
+/* Convert nested, well-formed surface binders bottom-up.  Binding patterns are
+   never traversed as executable syntax.  Closing each inner scope first makes
+   same-spelling shadowing unambiguous when the enclosing scope is closed. */
+static Atom *prime_runtime_elaborate_binders(const AbtSignature *signature,
+                                             Arena *arena, Atom *root) {
+    PrimeBinderElabMemo memo = {0};
+    PrimeBinderElabStack stack = {0};
+    Atom *result = NULL;
+    if (!signature || !arena || !root ||
+        !prime_binder_elab_memo_init(&memo) ||
+        !prime_binder_elab_push(&stack, (PrimeBinderElabFrame){
+            root, &result, NULL, 0u, false, PRIME_BINDER_TERM}))
+        goto fail;
+
+    while (stack.len > 0u) {
+        PrimeBinderElabFrame *frame = &stack.items[stack.len - 1u];
+        if (!frame->entered) {
+            PrimeBinderElabMemoSlot *slot = prime_binder_elab_memo_find(
+                &memo, frame->source, frame->context);
+            if (slot->source && slot->state == 1u) goto fail;
+            if (slot->source && slot->state == 2u) {
+                *frame->destination = slot->result;
+                stack.len--;
+                continue;
+            }
+            slot = prime_binder_elab_memo_begin(
+                &memo, frame->source, frame->context);
+            if (!slot) goto fail;
+
+            if (frame->context == PRIME_BINDER_PATTERN ||
+                frame->source->kind != ATOM_EXPR) {
+                slot->result = frame->source;
+                slot->state = 2u;
+                *frame->destination = frame->source;
+                stack.len--;
+                continue;
+            }
+            if (frame->source->expr.len > 0u &&
+                !cetta_expr_len_mul_fits_size(
+                    frame->source->expr.len, sizeof(Atom *)))
+                goto fail;
+            frame->children = frame->source->expr.len
+                ? arena_alloc(arena, sizeof(Atom *) *
+                    (size_t)frame->source->expr.len)
+                : NULL;
+            frame->entered = true;
+            frame->next_child = 0u;
+        }
+
+        if (frame->next_child < frame->source->expr.len) {
+            CettaExprIndex child = frame->next_child++;
+            if (!prime_binder_elab_push(&stack, (PrimeBinderElabFrame){
+                    frame->source->expr.elems[child],
+                    &frame->children[child], NULL, 0u, false,
+                    prime_binder_child_context(frame, child)}))
+                goto fail;
+            continue;
+        }
+
+        Atom *rebuilt = frame->source;
+        bool changed = false;
+        for (CettaExprIndex i = 0; i < frame->source->expr.len; i++)
+            if (frame->children[i] != frame->source->expr.elems[i]) {
+                changed = true;
+                break;
+            }
+        if (changed)
+            rebuilt = atom_expr(arena, frame->children,
+                                frame->source->expr.len);
+
+        if (frame->context == PRIME_BINDER_TERM) {
+            if (rebuilt->expr.len == 4u &&
+                atom_is_symbol_id(
+                    rebuilt->expr.elems[0], g_builtin_syms.chain) &&
+                rebuilt->expr.elems[2]->kind == ATOM_VAR) {
+                Atom *closed = prime_abt_abstract(
+                    signature, arena, rebuilt->expr.elems[2],
+                    rebuilt->expr.elems[3]);
+                if (!closed) goto fail;
+                rebuilt = atom_expr3(
+                    arena, atom_symbol_id(arena, g_builtin_syms.abt_chain_v1),
+                    rebuilt->expr.elems[1], closed);
+            } else if (rebuilt->expr.len == 4u &&
+                       atom_is_symbol_id(
+                           rebuilt->expr.elems[0], g_builtin_syms.let)) {
+                rebuilt = prime_let_make_canonical(
+                    signature, arena, rebuilt->expr.elems[1],
+                    rebuilt->expr.elems[2], rebuilt->expr.elems[3]);
+                if (!rebuilt) goto fail;
+            } else if (rebuilt->expr.len == 3u &&
+                       atom_is_symbol_id(
+                           rebuilt->expr.elems[0], g_builtin_syms.let_star)) {
+                Atom *bindings = rebuilt->expr.elems[1];
+                Atom *nested = rebuilt->expr.elems[2];
+                bool well_formed = true;
+                if (!bindings || bindings->kind != ATOM_EXPR ||
+                    bindings->expr.len == 0u) {
+                    rebuilt = nested;
+                } else {
+                    for (CettaExprIndex i = bindings->expr.len; i > 0u; i--) {
+                        Atom *binding = bindings->expr.elems[i - 1u];
+                        if (!binding || binding->kind != ATOM_EXPR ||
+                            binding->expr.len != 2u) {
+                            well_formed = false;
+                            break;
+                        }
+                        nested = prime_let_make_canonical(
+                            signature, arena, binding->expr.elems[0],
+                            binding->expr.elems[1], nested);
+                        if (!nested) goto fail;
+                    }
+                    if (well_formed) rebuilt = nested;
+                }
+            }
+        }
+
+        PrimeBinderElabMemoSlot *slot = prime_binder_elab_memo_find(
+            &memo, frame->source, frame->context);
+        if (!slot->source || slot->state != 1u) goto fail;
+        slot->result = rebuilt;
+        slot->state = 2u;
+        *frame->destination = rebuilt;
+        stack.len--;
+    }
+
+    free(stack.items);
+    prime_binder_elab_memo_free(&memo);
+    return result;
+
+fail:
+    free(stack.items);
+    if (memo.slots) prime_binder_elab_memo_free(&memo);
+    return NULL;
+}
+
 static bool bindings_builder_merge_commit(BindingsBuilder *dst,
                                           const Bindings *src) {
     if (!bindings_builder_try_merge(dst, src))
@@ -6694,6 +7617,64 @@ typedef struct {
     ResultSet errors;
     bool has_success;
 } LetDirectVisitCtx;
+
+typedef struct {
+    Space *s;
+    Arena *a;
+    const AbtSignature *signature;
+    const PrimeLetPrepared *prepared;
+    Atom *canonical;
+    int fuel;
+    const Bindings *outer_env;
+    bool preserve_bindings;
+    OutcomeSet *os;
+    ResultSet source_errors;
+    bool has_non_error_source;
+} PrimeLetVisitCtx;
+
+static bool prime_let_branch_visit(Arena *a, Atom *atom,
+                                   const Bindings *env, void *ctx) {
+    (void)a;
+    PrimeLetVisitCtx *let_ctx = ctx;
+    if (atom_is_error(atom)) {
+        result_set_add(&let_ctx->source_errors, atom);
+        return true;
+    }
+    let_ctx->has_non_error_source = true;
+
+    Atom *body = NULL;
+    PrimeLetMatchStatus status = prime_let_match_body(
+        let_ctx->signature, let_ctx->a, let_ctx->prepared,
+        atom, env, &body);
+    if (status == PRIME_LET_MATCH_INVALID) {
+        Bindings empty;
+        bindings_init(&empty);
+        outcome_set_add(
+            let_ctx->os,
+            atom_error(let_ctx->a, let_ctx->canonical,
+                       atom_symbol(let_ctx->a,
+                                   "ABTLetInstantiationFailed")),
+            &empty);
+        bindings_free(&empty);
+        return true;
+    }
+    if (status == PRIME_LET_MATCH_BODY) {
+        Bindings branch_outer_owned;
+        const Bindings *branch_outer = let_ctx->outer_env;
+        if (branch_outer_env_begin(&branch_outer_owned, &branch_outer,
+                                   let_ctx->outer_env, env)) {
+            Bindings empty;
+            bindings_init(&empty);
+            eval_for_current_caller(
+                let_ctx->s, let_ctx->a, NULL, body, let_ctx->fuel,
+                &empty, branch_outer, let_ctx->preserve_bindings,
+                let_ctx->os);
+            bindings_free(&empty);
+            branch_outer_env_finish(&branch_outer_owned, branch_outer);
+        }
+    }
+    return true;
+}
 
 static bool let_direct_branch_visit(Arena *a, Atom *atom,
                                     const Bindings *env, void *ctx) {
@@ -13830,8 +14811,167 @@ tail_call: ;
         return;
     }
 
-    /* ── let ───────────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.let && nargs == 3) {
+    /* ── let / Prime canonical let ─────────────────────────────────────── */
+    bool prime_surface_let =
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        head_id == g_builtin_syms.let && nargs == 3u;
+    bool prime_canonical_let =
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        head_id == g_builtin_syms.abt_let_v1 && nargs == 3u;
+    if (prime_surface_let || prime_canonical_let) {
+        const AbtSignature *signature = prime_runtime_abt_signature(a);
+        Atom *canonical = prime_canonical_let
+            ? atom : (signature
+                ? prime_runtime_elaborate_binders(signature, a, atom)
+                : NULL);
+        PrimeLetPrepared prepared;
+        if (!signature || !canonical ||
+            !prime_let_prepare_canonical(
+                signature, a, canonical, &prepared)) {
+            outcome_set_add(
+                os,
+                atom_error(
+                    a, atom,
+                    atom_symbol(
+                        a, prime_surface_let
+                            ? "ABTLetElaborationFailed"
+                            : "ABTLetScopeError")),
+                &_empty);
+            return;
+        }
+
+        Atom *source = bindings_apply_if_vars(
+            CURRENT_ENV, a, prepared.source);
+        if (atom_eval_is_immediate_value(source, fuel)) {
+            Atom *body = NULL;
+            PrimeLetMatchStatus status = prime_let_match_body(
+                signature, a, &prepared, source, &_empty, &body);
+            if (status == PRIME_LET_MATCH_INVALID) {
+                outcome_set_add(
+                    os,
+                    atom_error(a, canonical,
+                               atom_symbol(a,
+                                           "ABTLetInstantiationFailed")),
+                    &_empty);
+                prime_let_prepared_free(&prepared);
+                return;
+            }
+            if (status == PRIME_LET_MATCH_NONE) {
+                prime_let_prepared_free(&prepared);
+                return;
+            }
+            prime_let_prepared_free(&prepared);
+            TAIL_REENTER(body);
+        }
+
+        if (direct_outcome_walk_supported(s, a, source, fuel)) {
+            PrimeLetVisitCtx visit = {
+                .s = s,
+                .a = a,
+                .signature = signature,
+                .prepared = &prepared,
+                .canonical = canonical,
+                .fuel = fuel,
+                .outer_env = CURRENT_ENV,
+                .preserve_bindings = preserve_bindings,
+                .os = os,
+                .source_errors = {0},
+                .has_non_error_source = false,
+            };
+            result_set_init(&visit.source_errors);
+            (void)metta_eval_bind_visit(
+                s, a, source, fuel, CETTA_SEARCH_POLICY_ORDER_NATIVE,
+                prime_let_branch_visit, &visit);
+            if (!visit.has_non_error_source)
+                for (CettaCount i = 0u; i < visit.source_errors.len; i++)
+                    outcome_set_add(
+                        os, visit.source_errors.items[i], &_empty);
+            result_set_free(&visit.source_errors);
+            prime_let_prepared_free(&prepared);
+            return;
+        }
+
+        OutcomeSet values;
+        outcome_set_init(&values);
+        metta_eval_bind(s, a, source, fuel, &values);
+        if (values.len == 1u) {
+            Atom *value = outcome_atom_materialize_traced(
+                a, &values.items[0],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
+            if (atom_is_error(value)) {
+                outcome_set_add(os, value, &_empty);
+                outcome_set_free(&values);
+                prime_let_prepared_free(&prepared);
+                return;
+            }
+            if (atom_is_empty(value)) {
+                outcome_set_free(&values);
+                prime_let_prepared_free(&prepared);
+                return;
+            }
+            Atom *body = NULL;
+            PrimeLetMatchStatus status = prime_let_match_body(
+                signature, a, &prepared, value, &values.items[0].env,
+                &body);
+            if (status == PRIME_LET_MATCH_INVALID) {
+                outcome_set_add(
+                    os,
+                    atom_error(a, canonical,
+                               atom_symbol(a,
+                                           "ABTLetInstantiationFailed")),
+                    &_empty);
+                outcome_set_free(&values);
+                prime_let_prepared_free(&prepared);
+                return;
+            }
+            if (status == PRIME_LET_MATCH_NONE) {
+                outcome_set_free(&values);
+                prime_let_prepared_free(&prepared);
+                return;
+            }
+            if (!bindings_builder_merge_commit(
+                    &current_env_builder, &values.items[0].env)) {
+                outcome_set_free(&values);
+                prime_let_prepared_free(&prepared);
+                return;
+            }
+            outcome_set_free(&values);
+            prime_let_prepared_free(&prepared);
+            TAIL_REENTER(body);
+        }
+
+        PrimeLetVisitCtx visit = {
+            .s = s,
+            .a = a,
+            .signature = signature,
+            .prepared = &prepared,
+            .canonical = canonical,
+            .fuel = fuel,
+            .outer_env = CURRENT_ENV,
+            .preserve_bindings = preserve_bindings,
+            .os = os,
+            .source_errors = {0},
+            .has_non_error_source = false,
+        };
+        result_set_init(&visit.source_errors);
+        for (CettaCount i = 0u; i < values.len; i++) {
+            Atom *value = outcome_atom_materialize_traced(
+                a, &values.items[i],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
+            if (atom_is_empty(value)) continue;
+            (void)prime_let_branch_visit(
+                a, value, &values.items[i].env, &visit);
+        }
+        if (!visit.has_non_error_source)
+            for (CettaCount i = 0u; i < visit.source_errors.len; i++)
+                outcome_set_add(os, visit.source_errors.items[i], &_empty);
+        result_set_free(&visit.source_errors);
+        outcome_set_free(&values);
+        prime_let_prepared_free(&prepared);
+        return;
+    }
+
+    if (head_id == g_builtin_syms.let && nargs == 3u) {
         Atom *pat = expr_arg(atom, 0);
         Atom *val_expr = expr_arg(atom, 1);
         Atom *body_let = expr_arg(atom, 2);
@@ -14063,7 +15203,170 @@ tail_call: ;
         return;
     }
 
-    /* ── chain ─────────────────────────────────────────────────────────── */
+    /* ── Prime canonical chain ─────────────────────────────────────────── */
+    bool prime_surface_chain =
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        head_id == g_builtin_syms.chain;
+    bool prime_canonical_chain =
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        head_id == g_builtin_syms.abt_chain_v1;
+    if (prime_surface_chain || prime_canonical_chain) {
+        CettaExprLen expected_nargs = prime_surface_chain ? 3u : 2u;
+        if (nargs != expected_nargs) {
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+                &_empty);
+            return;
+        }
+
+        Atom *to_eval = expr_arg(atom, 0);
+        Atom *surface_var = prime_surface_chain ? expr_arg(atom, 1) : NULL;
+        Atom *body = expr_arg(atom, prime_surface_chain ? 2u : 1u);
+        if (prime_surface_chain && surface_var->kind != ATOM_VAR) {
+            outcome_set_add(os, call_signature_error(a, atom,
+                "(chain <nested> (: <var> Variable) <templ>)"), &_empty);
+            return;
+        }
+
+        OutcomeSet inner;
+        outcome_set_init(&inner);
+        metta_eval_bind(s, a, to_eval, fuel, &inner);
+        if (inner.len == 0) {
+            outcome_set_add(os, atom_empty(a), &_empty);
+            outcome_set_free(&inner);
+            return;
+        }
+
+        const AbtSignature *signature = prime_runtime_abt_signature(a);
+        Atom *canonical_body = body;
+        if (signature && prime_surface_chain) {
+            Atom *nested = prime_runtime_elaborate_binders(signature, a, body);
+            canonical_body = nested
+                ? prime_abt_abstract(signature, a, surface_var, nested) : NULL;
+        }
+        if (!signature || !canonical_body) {
+            outcome_set_add(
+                os,
+                atom_error(a, atom, atom_symbol(
+                    a, prime_surface_chain
+                        ? "ABTChainElaborationFailed"
+                        : "ABTChainScopeError")),
+                &_empty);
+            outcome_set_free(&inner);
+            return;
+        }
+
+        if (inner.len == 1 &&
+            !atom_is_empty(
+                outcome_atom_materialize_traced(
+                    a, &inner.items[0],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN))) {
+            Atom *inner_atom = outcome_atom_materialize_traced(
+                a, &inner.items[0],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
+            const Bindings *inner_env = &inner.items[0].env;
+            BindingsBuilder b;
+            if (!bindings_builder_init(&b, inner_env)) {
+                outcome_set_free(&inner);
+                return;
+            }
+            if (surface_var &&
+                !bindings_builder_add_var_fresh(&b, surface_var, inner_atom)) {
+                bindings_builder_free(&b);
+                outcome_set_free(&inner);
+                return;
+            }
+            const Bindings *bb = bindings_builder_bindings(&b);
+            Bindings visible;
+            if (!bindings_project_body_visible_env(
+                    a, canonical_body, bb, &visible)) {
+                bindings_builder_free(&b);
+                outcome_set_free(&inner);
+                return;
+            }
+            Atom *applied = bindings_apply_projected_body_visible(
+                &visible, a, canonical_body);
+            Atom *next_atom = applied
+                ? abt_subst(signature, a, 0u, inner_atom, applied) : NULL;
+            if (!next_atom) {
+                outcome_set_add(
+                    os,
+                    atom_error(a, atom,
+                               atom_symbol(a, "ABTChainOpenFailed")),
+                    bb);
+                bindings_free(&visible);
+                bindings_builder_free(&b);
+                outcome_set_free(&inner);
+                return;
+            }
+            if (preserve_bindings &&
+                !bindings_builder_merge_commit(&current_env_builder, bb)) {
+                bindings_free(&visible);
+                bindings_builder_free(&b);
+                outcome_set_free(&inner);
+                return;
+            }
+            outcome_set_free(&inner);
+            bindings_free(&visible);
+            bindings_builder_free(&b);
+            TAIL_REENTER(next_atom);
+        }
+
+        for (CettaCount i = 0; i < inner.len; i++) {
+            Atom *inner_atom = outcome_atom_materialize_traced(
+                a, &inner.items[i],
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
+            if (atom_is_empty(inner_atom)) continue;
+
+            const Bindings *inner_env = &inner.items[i].env;
+            BindingsBuilder b;
+            if (!bindings_builder_init(&b, inner_env)) continue;
+            if (surface_var &&
+                !bindings_builder_add_var_fresh(&b, surface_var, inner_atom)) {
+                bindings_builder_free(&b);
+                continue;
+            }
+            const Bindings *bb = bindings_builder_bindings(&b);
+            Bindings visible;
+            if (!bindings_project_body_visible_env(
+                    a, canonical_body, bb, &visible)) {
+                bindings_builder_free(&b);
+                continue;
+            }
+            Atom *applied = bindings_apply_projected_body_visible(
+                &visible, a, canonical_body);
+            Atom *next_atom = applied
+                ? abt_subst(signature, a, 0u, inner_atom, applied) : NULL;
+            if (!next_atom) {
+                outcome_set_add(
+                    os,
+                    atom_error(a, atom,
+                               atom_symbol(a, "ABTChainOpenFailed")),
+                    bb);
+                bindings_free(&visible);
+                bindings_builder_free(&b);
+                continue;
+            }
+            Bindings branch_outer_owned;
+            const Bindings *branch_outer = CURRENT_ENV;
+            if (preserve_bindings &&
+                !branch_outer_env_begin(&branch_outer_owned, &branch_outer,
+                                        CURRENT_ENV, bb)) {
+                bindings_free(&visible);
+                bindings_builder_free(&b);
+                continue;
+            }
+            eval_for_current_caller(s, a, NULL, next_atom, fuel, &_empty,
+                                    branch_outer, preserve_bindings, os);
+            branch_outer_env_finish(&branch_outer_owned, branch_outer);
+            bindings_free(&visible);
+            bindings_builder_free(&b);
+        }
+        outcome_set_free(&inner);
+        return;
+    }
+
+    /* ── HE chain ──────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.chain) {
         if (nargs != 3) {
             outcome_set_add(os,
@@ -17337,6 +18640,8 @@ int eval_get_default_fuel(void) {
 }
 
 void eval_set_library_context(CettaLibraryContext *ctx) {
+    if (ctx != g_library_context)
+        prime_runtime_abt_signature_reset();
     g_library_context = ctx;
     if (!ctx) return;
     ctx->session.options.fuel_limit = fallback_eval_session()->options.fuel_limit;

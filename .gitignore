@@ -8,6 +8,7 @@
 /native/metamath/*.d
 /native/metamath/*.stage0.d
 /src/stdlib_blob.h
+/src/abt_default_signatures_blob.h
 
 # Local runtime snapshots and test scratch space
 /runtime/*
