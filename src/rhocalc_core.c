@@ -2462,6 +2462,318 @@ static bool rho_machine_load_process(RhoMachine *machine, Atom *proc) {
     return true;
 }
 
+typedef struct {
+    const char *bound;
+    size_t bound_len;
+    size_t checked;
+    int order;
+} RhoKeyBound;
+
+static void rho_key_bound_note(RhoKeyBound *cmp, const RhoStr *candidate) {
+    if (!cmp || !candidate || !cmp->bound || cmp->order != 0) return;
+    while (cmp->checked < candidate->len && cmp->checked < cmp->bound_len) {
+        unsigned char lhs = (unsigned char)candidate->data[cmp->checked];
+        unsigned char rhs = (unsigned char)cmp->bound[cmp->checked];
+        if (lhs < rhs) {
+            cmp->order = -1;
+            return;
+        }
+        if (lhs > rhs) {
+            cmp->order = 1;
+            return;
+        }
+        cmp->checked++;
+    }
+    if (cmp->checked == cmp->bound_len &&
+        cmp->checked < candidate->len) {
+        cmp->order = 1;
+    }
+}
+
+/* Build the exact key rho_rebuild_reaction followed by rho_key_proc would
+ * produce, but without first materializing and sorting an entire residual.
+ * The base components are already in rho_par_from_vec order.  Body components
+ * are sorted with the same key/ordinal comparator and merged into that base.
+ * Once a candidate is known to exceed bound, construction stops early. */
+static bool rho_pure_reaction_key(
+    RhoAtomVec *components, char **component_keys,
+    uint32_t send_index, uint32_t recv_index, Atom *body,
+    const char *bound, char **out_key, int *out_order) {
+    RhoKeyedAtom *body_items = NULL;
+    uint32_t body_len = 0u;
+    uint32_t base_pos = 0u;
+    uint32_t body_pos = 0u;
+    uint32_t emitted = 0u;
+    uint32_t total;
+    RhoAlphaEnv env;
+    RhoStr key = {0};
+    RhoKeyBound cmp = {
+        .bound = bound,
+        .bound_len = bound ? strlen(bound) : 0u,
+        .checked = 0u,
+        .order = bound ? 0 : -1,
+    };
+    RhoView body_view;
+    bool ok = true;
+
+    if (!components || !component_keys || !body || !out_key || !out_order ||
+        send_index >= components->len || recv_index >= components->len ||
+        send_index == recv_index) {
+        return false;
+    }
+    *out_key = NULL;
+    *out_order = 0;
+
+    body_view = rho_view(body);
+    if (body_view.kind == RHO_PAR) {
+        body_len = body_view.nargs;
+    } else if (body_view.kind != RHO_NIL) {
+        body_len = 1u;
+    }
+    if (body_len > 0u) {
+        body_items = cetta_malloc(sizeof(RhoKeyedAtom) * body_len);
+        if (!body_items) return false;
+        for (uint32_t i = 0u; i < body_len; i++) {
+            Atom *item = body_view.kind == RHO_PAR ? body_view.args[i] : body;
+            body_items[i].atom = item;
+            body_items[i].key = rho_key_proc(item);
+            body_items[i].ordinal = i;
+            if (!body_items[i].key) {
+                body_len = i;
+                ok = false;
+                goto done;
+            }
+        }
+        if (body_len > 1u) {
+            qsort(body_items, body_len, sizeof(RhoKeyedAtom),
+                  rho_keyed_atom_cmp);
+        }
+    }
+
+    total = components->len - 2u + body_len;
+    rho_alpha_init(&env);
+    if (total == 0u) {
+        ok = rho_str_append(&key, "0");
+        rho_key_bound_note(&cmp, &key);
+    } else {
+        if (total > 1u) {
+            ok = rho_str_append(&key, "par(");
+            rho_key_bound_note(&cmp, &key);
+        }
+        while (emitted < total && ok && cmp.order <= 0) {
+            while (base_pos < components->len &&
+                   (base_pos == send_index || base_pos == recv_index)) {
+                base_pos++;
+            }
+            Atom *next;
+            if (base_pos >= components->len) {
+                next = body_items[body_pos++].atom;
+            } else if (body_pos >= body_len ||
+                       strcmp(component_keys[base_pos],
+                              body_items[body_pos].key) <= 0) {
+                next = components->items[base_pos++];
+            } else {
+                next = body_items[body_pos++].atom;
+            }
+            if (total > 1u && emitted > 0u) {
+                ok = rho_str_append(&key, "|");
+            }
+            if (ok) {
+                rho_key_proc_into(next, &env, &key);
+                ok = key.data != NULL;
+            }
+            if (ok) rho_key_bound_note(&cmp, &key);
+            emitted++;
+        }
+        if (ok && cmp.order <= 0 && total > 1u) {
+            ok = rho_str_append(&key, ")");
+            rho_key_bound_note(&cmp, &key);
+        }
+        if (ok && cmp.order == 0 && key.len < cmp.bound_len) {
+            cmp.order = -1;
+        }
+        rho_alpha_free(&env);
+    }
+
+done:
+    for (uint32_t i = 0u; i < body_len; i++) free(body_items[i].key);
+    free(body_items);
+    if (!ok) {
+        free(key.data);
+        return false;
+    }
+    *out_key = key.data;
+    *out_order = cmp.order;
+    return true;
+}
+
+/* Canonical execution needs the least successor, whereas the public frontier
+ * API must retain every successor.  On pure rho terms, compare candidates in
+ * a resettable arena and materialize only the selected successor persistently.
+ * Equal keys retain the original recv/send/body enumeration order, matching
+ * rho_successor_set_acc_finish exactly. */
+static bool rho_machine_select_pure_canonical_successor(
+    RhoMachine *machine, Atom **out_next, bool *out_quiescent) {
+    RhoAtomVec components;
+    RhoEndpointVec sends;
+    RhoEndpointVec recvs;
+    uint32_t recv_pos = 0u;
+    uint32_t send_pos = 0u;
+    uint32_t best_recv = 0u;
+    uint32_t best_send = 0u;
+    uint32_t best_body = 0u;
+    uint64_t ordinal_base = 0u;
+    uint64_t best_ordinal = UINT64_MAX;
+    char **component_keys = NULL;
+    char *best_key = NULL;
+    bool found = false;
+    bool ok = true;
+
+    if (!machine || !machine->arena || !machine->current ||
+        !out_next || !out_quiescent || machine->eval_context) {
+        return false;
+    }
+
+    *out_next = NULL;
+    *out_quiescent = true;
+    rho_vec_init(&components);
+    rho_endpoint_vec_init(&sends);
+    rho_endpoint_vec_init(&recvs);
+    rho_collect_par(machine->arena, machine->current, &components);
+    component_keys = cetta_malloc(sizeof(char *) * components.len);
+    if (!component_keys && components.len > 0u) {
+        ok = false;
+        goto done;
+    }
+    if (component_keys) {
+        memset(component_keys, 0, sizeof(char *) * components.len);
+    }
+    for (uint32_t i = 0u; i < components.len; i++) {
+        component_keys[i] = rho_key_proc(components.items[i]);
+        if (!component_keys[i] ||
+            (i > 0u && strcmp(component_keys[i - 1u],
+                              component_keys[i]) > 0)) {
+            ok = false;
+            goto done;
+        }
+    }
+    if (!rho_collect_endpoints(&components, &sends, &recvs)) {
+        ok = false;
+        goto done;
+    }
+
+    while (recv_pos < recvs.len && send_pos < sends.len && ok) {
+        int cmp = strcmp(recvs.items[recv_pos].key,
+                         sends.items[send_pos].key);
+        if (cmp < 0) {
+            recv_pos++;
+            continue;
+        }
+        if (cmp > 0) {
+            send_pos++;
+            continue;
+        }
+
+        uint32_t recv_start = recv_pos;
+        uint32_t send_start = send_pos;
+        while (recv_pos < recvs.len &&
+               strcmp(recvs.items[recv_pos].key,
+                      recvs.items[recv_start].key) == 0) {
+            recv_pos++;
+        }
+        while (send_pos < sends.len &&
+               strcmp(sends.items[send_pos].key,
+                      sends.items[send_start].key) == 0) {
+            send_pos++;
+        }
+
+        uint32_t send_count = send_pos - send_start;
+        for (uint32_t r = recv_pos; r-- > recv_start && ok;) {
+            for (uint32_t s = send_pos; s-- > send_start && ok;) {
+                ArenaMark mark = arena_mark(machine->arena);
+                RhoAtomVec bodies;
+                uint64_t ordinal =
+                    ordinal_base +
+                    (uint64_t)(r - recv_start) * send_count +
+                    (uint64_t)(s - send_start);
+                rho_vec_init(&bodies);
+                if (!rho_compute_comm_continuations(
+                        machine->arena, &sends.items[s], &recvs.items[r],
+                        NULL, &bodies)) {
+                    ok = false;
+                }
+                if (bodies.len > 1u) {
+                    ok = false;
+                }
+                for (uint32_t b = 0u; b < bodies.len && ok; b++) {
+                    char *key = NULL;
+                    int order = 0;
+                    if (!rho_pure_reaction_key(
+                            &components, component_keys,
+                            sends.items[s].component_index,
+                            recvs.items[r].component_index, bodies.items[b],
+                            best_key, &key, &order)) {
+                        ok = false;
+                        break;
+                    }
+                    if (!found || order < 0 ||
+                        (order == 0 && ordinal < best_ordinal)) {
+                        free(best_key);
+                        best_key = key;
+                        best_recv = r;
+                        best_send = s;
+                        best_body = b;
+                        best_ordinal = ordinal;
+                        found = true;
+                    } else {
+                        free(key);
+                    }
+                }
+                rho_vec_free(&bodies);
+                arena_reset(machine->arena, mark);
+            }
+        }
+        ordinal_base +=
+            (uint64_t)(recv_pos - recv_start) *
+            (uint64_t)(send_pos - send_start);
+    }
+
+    if (ok && found) {
+        RhoAtomVec bodies;
+        rho_vec_init(&bodies);
+        if (!rho_compute_comm_continuations(
+                machine->arena, &sends.items[best_send],
+                &recvs.items[best_recv], NULL, &bodies) ||
+            best_body >= bodies.len) {
+            ok = false;
+        } else {
+            *out_next = rho_rebuild_reaction(
+                machine->arena, &components,
+                sends.items[best_send].component_index,
+                recvs.items[best_recv].component_index,
+                bodies.items[best_body]);
+            ok = *out_next != NULL;
+            *out_quiescent = false;
+        }
+        rho_vec_free(&bodies);
+    } else if (ok) {
+        *out_next = machine->current;
+    }
+
+done:
+    if (component_keys) {
+        for (uint32_t i = 0u; i < components.len; i++) {
+            free(component_keys[i]);
+        }
+    }
+    free(component_keys);
+    free(best_key);
+    rho_endpoint_vec_free(&sends);
+    rho_endpoint_vec_free(&recvs);
+    rho_vec_free(&components);
+    return ok;
+}
+
 static bool rho_machine_select_canonical_successor(RhoMachine *machine,
                                                    Atom **out_next,
                                                    bool *out_quiescent) {
@@ -2473,6 +2785,11 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
     }
     *out_next = NULL;
     *out_quiescent = true;
+
+    if (!machine->eval_context) {
+        return rho_machine_select_pure_canonical_successor(
+            machine, out_next, out_quiescent);
+    }
 
     if (!rhocalc_collect_successor_set(machine->arena, machine->current,
                                        machine->eval_context, &successors)) {
