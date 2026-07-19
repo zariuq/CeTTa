@@ -30,17 +30,22 @@ ENABLE_RUNTIME_STATS ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
 ENABLE_SANITIZERS ?= 0
 CETTA_PROVENANCE_ASSERT ?= 0
+RHOCOST_COMMIT_AUDIT ?= 0
 SANITIZERS ?= address,undefined
 RHO_BENCH_RUNS ?= 3
 RHO_BENCH_THREADS ?= 1,2,4,8
 RHO_BENCH_SEED ?= 0xC377A
 RHO_BENCH_GENERATED_SIZE_MODE ?= smallest
+RHO_BENCH_ENFORCE_BASELINE ?= 0
 RHO_BENCH_CSV ?=
 RHO_BENCH_CSV_ARG = $(if $(strip $(RHO_BENCH_CSV)),--csv "$(RHO_BENCH_CSV)",)
 RHO_COST_BENCH_CSV ?=
 RHO_COST_BENCH_CSV_ARG = $(if $(strip $(RHO_COST_BENCH_CSV)),--csv "$(RHO_COST_BENCH_CSV)",)
 ifneq ($(filter $(RHO_BENCH_GENERATED_SIZE_MODE),smallest largest),$(RHO_BENCH_GENERATED_SIZE_MODE))
 $(error RHO_BENCH_GENERATED_SIZE_MODE must be smallest or largest)
+endif
+ifneq ($(filter $(RHO_BENCH_ENFORCE_BASELINE),0 1),$(RHO_BENCH_ENFORCE_BASELINE))
+$(error RHO_BENCH_ENFORCE_BASELINE must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_GMP),0 1),$(ENABLE_GMP))
 $(error ENABLE_GMP must be 0 or 1)
@@ -50,6 +55,9 @@ $(error ENABLE_SANITIZERS must be 0 or 1)
 endif
 ifneq ($(filter $(CETTA_PROVENANCE_ASSERT),0 1),$(CETTA_PROVENANCE_ASSERT))
 $(error CETTA_PROVENANCE_ASSERT must be 0 or 1)
+endif
+ifneq ($(filter $(RHOCOST_COMMIT_AUDIT),0 1),$(RHOCOST_COMMIT_AUDIT))
+$(error RHOCOST_COMMIT_AUDIT must be 0 or 1)
 endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
@@ -216,6 +224,9 @@ BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).sanitize.$(SANITIZER_TAG)
 endif
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).provenance
+endif
+ifeq ($(RHOCOST_COMMIT_AUDIT),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).rhocost-audit
 endif
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
 TSAN_ENABLED := 0
@@ -700,14 +711,18 @@ bench-heavy:
 		echo "Try: BENCH_ALLOW_HEAVY=1 make bench-heavy"; \
 		exit 2; \
 	fi
+	@if [ "$(RHO_BENCH_ENFORCE_BASELINE)" = "1" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) perf-bench-rhocalc; \
+	else \
+		$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-threaded-heavy; \
+		$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-cost-threaded-heavy; \
+	fi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-ffi-friction-stress
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-space-backend-matrix
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-space-transfer-matrix
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-space-scale-ladder
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-d4-backends
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-d4-nodup-backends
-	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-threaded-heavy
-	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-cost-threaded-heavy
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-threaded-corpus
 	@$(MAKE) -s BUILD=$(BUILD_CANON) RHO_BENCH_GENERATED_SIZE_MODE=largest bench-rho-threaded-generated
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHO_BENCH_GENERATED_SIZE_MODE=largest bench-rho-threaded-generated-runtime-stats
@@ -895,6 +910,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
 	if [ -f "$(BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(BUILD_CONFIG_HEADER)"; then \
 		rm -f "$$tmp_cfg"; \
 	else \
@@ -916,6 +932,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING 0\n' >> "$$tmp_cfg"; \
+	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
 	if [ -f "$(STAGE0_BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(STAGE0_BUILD_CONFIG_HEADER)"; then \
 		rm -f "$$tmp_cfg"; \
 	else \
@@ -1427,8 +1444,41 @@ test-rhocalc-cost-differential: $(BIN)
 		echo "SKIP: cost-rho differential harness (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
 	fi
 
+test-rhocalc-cost-differential-required: $(BIN)
+	@if [ -z "$${METTAPEDIA_ROOT:-}" ]; then \
+		echo "FAIL: METTAPEDIA_ROOT is required for the release Cost-Rho differential"; \
+		exit 2; \
+	elif [ ! -d "$$METTAPEDIA_ROOT" ]; then \
+		echo "FAIL: METTAPEDIA_ROOT is not a directory: $$METTAPEDIA_ROOT"; \
+		exit 2; \
+	else \
+		METTAPEDIA_ROOT="$$METTAPEDIA_ROOT" $(CETTA_SCRIPT_RUN_ENV) \
+			python3 scripts/rhocalc_cost_differential.py "$(CETTA_SCRIPT_BIN)"; \
+	fi
+
 test-rhocalc-cost-parallel-stress: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_parallel_stress.py "$(CETTA_SCRIPT_BIN)"
+
+test-rhocalc-cost-observer-transparency: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_observer_transparency.py "$(CETTA_SCRIPT_BIN)"
+else
+	@echo "INFO: Cost-Rho observer transparency requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=$(RHOCOST_COMMIT_AUDIT) $@
+endif
+
+test-rhocalc-cost-commit-audit:
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 test-rhocalc-cost-commit-audit-body
+
+test-rhocalc-cost-commit-audit-asan:
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-rhocalc-cost-commit-audit-body
+
+test-rhocalc-cost-commit-audit-tsan:
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc-cost-commit-audit-body
+
+test-rhocalc-cost-commit-audit-body: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_parallel_stress.py "$(CETTA_SCRIPT_BIN)"
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_observer_transparency.py "$(CETTA_SCRIPT_BIN)"
 
 test-rhocalc-canonical-selector-differential: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_canonical_selector_differential.py "$(CETTA_SCRIPT_BIN)"
@@ -2619,11 +2669,17 @@ perf-show-baselines:
 
 perf-bench-rhocalc:
 	@for name in rhocalc_threaded_standard rhocalc_cost_threaded_heavy; do \
-		out=$$(./scripts/compare_witness.sh "$$name"); \
+		if ! out=$$(./scripts/compare_witness.sh --enforce-material "$$name"); then \
+			printf '%s\n' "$$out"; exit 1; \
+		fi; \
 		printf '%s\n' "$$out"; \
 		status=$$(printf '%s\n' "$$out" | awk -F= '/^STATUS=/{ print $$2; exit }'); \
 		test "$$status" = "pass" || exit 1; \
 	done
+	@python3 scripts/rhocalc_benchmark_regression.py
+
+main-readiness-cost-rho:
+	@python3 scripts/cetta_main_readiness.py
 
 perf-capacity-tu:
 	@./scripts/run_witness.sh tu_tail_special_forms
@@ -4728,5 +4784,5 @@ refresh-he-matrices:
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules
 .PHONY: test-rhocalc-cost-parallel-stress test-rhocalc-canonical-selector-differential
 .PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
-.PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-cost-threaded bench-rho-cost-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats perf-bench-rhocalc
+.PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork test-rhocalc-cost-differential-required test-rhocalc-cost-observer-transparency test-rhocalc-cost-commit-audit test-rhocalc-cost-commit-audit-asan test-rhocalc-cost-commit-audit-tsan test-rhocalc-cost-commit-audit-body bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-cost-threaded bench-rho-cost-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats perf-bench-rhocalc main-readiness-cost-rho
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

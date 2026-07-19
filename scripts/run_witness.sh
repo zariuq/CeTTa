@@ -100,6 +100,14 @@ run_command="$command"
 if [[ "$witness_bin" != "./cetta" ]]; then
     run_command="${run_command//.\/cetta/$witness_bin}"
 fi
+if [[ -n "${RHO_BENCH_BASELINE_BIN:-}" ]]; then
+    case "$witness_name" in
+        rhocalc_threaded_standard|rhocalc_cost_threaded_heavy)
+            printf -v baseline_arg '%q' "$RHO_BENCH_BASELINE_BIN"
+            run_command+=" --baseline-bin $baseline_arg"
+            ;;
+    esac
+fi
 export CETTA_BIN="$repo_root/${witness_bin#./}"
 export CETTA_BUILD_CONFIG="$repo_root/${witness_build_config#./}"
 
@@ -119,7 +127,9 @@ else
     tree_state="nogit"
 fi
 
-logfile="$repo_root/.witness_${witness_name}_$$.log"
+logdir="$repo_root/runtime/witness-logs"
+mkdir -p "$logdir"
+logfile="$logdir/${witness_name}_$$.log"
 trap 'rm -f "$logfile"' EXIT
 
 set +e

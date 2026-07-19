@@ -14,6 +14,14 @@
 #include "parallel_executor.h"
 #include "stats.h"
 
+#ifndef CETTA_RHOCOST_COMMIT_AUDIT
+#define CETTA_RHOCOST_COMMIT_AUDIT 0
+#endif
+
+#if CETTA_RHOCOST_COMMIT_AUDIT != 0 && CETTA_RHOCOST_COMMIT_AUDIT != 1
+#error "CETTA_RHOCOST_COMMIT_AUDIT must be 0 or 1"
+#endif
+
 typedef enum {
     RHO_BAD = 0,
     RHO_NIL,
@@ -3957,13 +3965,60 @@ typedef struct {
     uint32_t ordinal;
 } RhoCostKeyedTraceComponent;
 
+/*
+ * Operational components are always just terms. Causal provenance is an
+ * optional, parallel observation vector rather than part of the state that
+ * every Cost-Rho execution must maintain.
+ */
+#define RHOCOST_NO_PRODUCER UINT64_MAX
+
 typedef struct {
-    RhoCostStep step;
+    uint64_t *items;
+    uint32_t len;
+    uint32_t cap;
+} RhoCostProducerVec;
+
+/*
+ * Optional causal observation for the threaded executor.  A NULL observer is
+ * the state-only fast path.  Keeping the producer table and event sink in one
+ * object makes it impossible for callers to request only half of the causal
+ * bookkeeping state.
+ */
+typedef struct {
+    RhoCostProducerVec producers;
+    RhoAtomVec *events;
+} RhoCostCausalObserver;
+
+typedef struct {
+    Atom *term;
+    uint64_t producer;
+    char *key;
+    uint32_t ordinal;
+} RhoCostKeyedRuntimeComponent;
+
+/*
+ * Immutable, occurrence-indexed description of one legal funded firing.
+ * Instances are created only by the canonical candidate enumerator.  Worker
+ * threads receive this plan read-only and publish only the outcome fields in
+ * RhoCostParallelTask below.
+ */
+typedef struct {
+    Atom *consumed_sig;
+    uint32_t participant_indices[2];
+    uint32_t participant_len;
+    uint32_t *token_indices;
+    uint32_t token_len;
+    Atom *channel;
     Atom *recv_body;
     VarId recv_binder;
     Atom *send_payload;
     uint32_t *resource_indices;
     uint32_t resource_len;
+} RhoCostParallelPlan;
+
+typedef struct {
+    RhoCostParallelPlan plan;
+    Atom *contractum;
     bool preclaimed;
     bool selected;
 } RhoCostParallelTask;
@@ -4078,6 +4133,17 @@ static int rhocost_keyed_trace_component_cmp(const void *lhs,
                                              const void *rhs) {
     const RhoCostKeyedTraceComponent *a = lhs;
     const RhoCostKeyedTraceComponent *b = rhs;
+    int cmp = strcmp(a->key, b->key);
+    if (cmp != 0) return cmp;
+    if (a->ordinal < b->ordinal) return -1;
+    if (a->ordinal > b->ordinal) return 1;
+    return 0;
+}
+
+static int rhocost_keyed_runtime_component_cmp(const void *lhs,
+                                               const void *rhs) {
+    const RhoCostKeyedRuntimeComponent *a = lhs;
+    const RhoCostKeyedRuntimeComponent *b = rhs;
     int cmp = strcmp(a->key, b->key);
     if (cmp != 0) return cmp;
     if (a->ordinal < b->ordinal) return -1;
@@ -4233,6 +4299,49 @@ static bool rhocost_trace_component_vec_push(
     return true;
 }
 
+static void rhocost_producer_vec_init(RhoCostProducerVec *vec) {
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+static void rhocost_producer_vec_free(RhoCostProducerVec *vec) {
+    if (!vec) return;
+    free(vec->items);
+    vec->items = NULL;
+    vec->len = 0;
+    vec->cap = 0;
+}
+
+static bool rhocost_producer_vec_push(RhoCostProducerVec *vec,
+                                      uint64_t producer) {
+    if (vec->len == vec->cap) {
+        uint32_t next_cap = vec->cap ? vec->cap * 2u : 8u;
+        uint64_t *next = cetta_realloc(
+            vec->items, sizeof(uint64_t) * (size_t)next_cap);
+        if (!next) return false;
+        vec->items = next;
+        vec->cap = next_cap;
+    }
+    vec->items[vec->len++] = producer;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_COST_RHO_RECEIPT_PRODUCER_PROPAGATED);
+    return true;
+}
+
+static void rhocost_causal_observer_init(
+    RhoCostCausalObserver *observer, RhoAtomVec *events) {
+    rhocost_producer_vec_init(&observer->producers);
+    observer->events = events;
+}
+
+static void rhocost_causal_observer_free(
+    RhoCostCausalObserver *observer) {
+    if (!observer) return;
+    rhocost_producer_vec_free(&observer->producers);
+    observer->events = NULL;
+}
+
 static void rhocost_step_set_acc_init(RhoCostStepSetAcc *acc) {
     acc->items = NULL;
     acc->keys = NULL;
@@ -4262,8 +4371,8 @@ static void rhocost_parallel_task_vec_init(RhoCostParallelTaskVec *vec) {
 static void rhocost_parallel_task_vec_free(RhoCostParallelTaskVec *vec) {
     if (!vec) return;
     for (uint32_t i = 0; i < vec->len; i++) {
-        rhocost_step_release(&vec->items[i].step);
-        free(vec->items[i].resource_indices);
+        free(vec->items[i].plan.token_indices);
+        free(vec->items[i].plan.resource_indices);
     }
     free(vec->items);
     vec->items = NULL;
@@ -4322,18 +4431,20 @@ static bool rhocost_parallel_task_vec_push(
     }
     task = &vec->items[vec->len++];
     memset(task, 0, sizeof(*task));
-    task->step.consumed_sig = consumed_sig;
-    task->step.participant_len = participant_len;
+    task->plan.consumed_sig = consumed_sig;
+    task->plan.participant_len = participant_len;
     for (uint32_t i = 0; i < participant_len; i++) {
-        task->step.participant_indices[i] = participant_indices[i];
+        task->plan.participant_indices[i] = participant_indices[i];
     }
-    task->step.token_indices = token_indices;
-    task->step.token_len = chosen_tokens->len;
-    task->recv_body = recv.args[2];
-    task->recv_binder = recv.args[1]->var_id;
-    task->send_payload = send.args[1];
-    task->resource_indices = resource_indices;
-    task->resource_len = resource_len;
+    task->plan.token_indices = token_indices;
+    task->plan.token_len = chosen_tokens->len;
+    task->plan.channel = recv.args[0];
+    task->plan.recv_body = recv.args[2];
+    task->plan.recv_binder = recv.args[1]->var_id;
+    task->plan.send_payload = send.args[1];
+    task->plan.resource_indices = resource_indices;
+    task->plan.resource_len = resource_len;
+    task->contractum = NULL;
     task->preclaimed = false;
     task->selected = false;
     return true;
@@ -4353,7 +4464,7 @@ static void rhocost_parallel_release_claims(
     uint32_t claimed_len) {
     if (!wave || !task) return;
     for (uint32_t i = 0; i < claimed_len; i++) {
-        atomic_store_explicit(&wave->claimed[task->resource_indices[i]], 0u,
+        atomic_store_explicit(&wave->claimed[task->plan.resource_indices[i]], 0u,
                               memory_order_release);
     }
 }
@@ -4363,13 +4474,13 @@ static bool rhocost_parallel_try_claim(
     bool *out_claimed) {
     uint32_t acquired = 0;
 
-    if (!wave || !task || !out_claimed || task->resource_len == 0u) {
+    if (!wave || !task || !out_claimed || task->plan.resource_len == 0u) {
         return false;
     }
     *out_claimed = false;
-    for (uint32_t i = 0; i < task->resource_len; i++) {
+    for (uint32_t i = 0; i < task->plan.resource_len; i++) {
         unsigned char expected = 0u;
-        uint32_t index = task->resource_indices[i];
+        uint32_t index = task->plan.resource_indices[i];
         if (index >= wave->component_count) {
             rhocost_parallel_release_claims(wave, task, acquired);
             return false;
@@ -4415,17 +4526,18 @@ static bool rhocost_parallel_process_task(CettaParallelWorker *worker,
         !rhocost_parallel_try_claim(wave, task, &claimed)) return false;
     if (!claimed) return true;
     if (!task->preclaimed && !rhocost_parallel_try_take_budget(wave)) {
-        rhocost_parallel_release_claims(wave, task, task->resource_len);
+        rhocost_parallel_release_claims(
+            wave, task, task->plan.resource_len);
         return true;
     }
 
-    task->step.contractum =
-        rhocost_subst_term(worker_arena, task->recv_body,
-                           task->recv_binder, task->send_payload);
-    if (!task->step.contractum) {
+    task->contractum =
+        rhocost_subst_term(worker_arena, task->plan.recv_body,
+                           task->plan.recv_binder, task->plan.send_payload);
+    if (!task->contractum) {
         atomic_fetch_add_explicit(&wave->remaining_budget, 1u,
                                   memory_order_relaxed);
-        rhocost_parallel_release_claims(wave, task, task->resource_len);
+        rhocost_parallel_release_claims(wave, task, task->plan.resource_len);
         return false;
     }
     task->selected = true;
@@ -5652,6 +5764,92 @@ static void rhocost_collect_term_components(Arena *arena, Atom *term, RhoAtomVec
     rhocost_collect_term_par(arena, term, out);
 }
 
+static bool rhocost_runtime_components_sort(
+    RhoAtomVec *components, RhoCostProducerVec *producers) {
+    RhoCostKeyedRuntimeComponent *keyed;
+
+    if (!components || (producers && producers->len != components->len)) {
+        return false;
+    }
+    if (components->len < 2u) return true;
+    keyed = cetta_malloc(
+        sizeof(RhoCostKeyedRuntimeComponent) * (size_t)components->len);
+    if (!keyed) return false;
+    for (uint32_t i = 0; i < components->len; i++) {
+        keyed[i].term = components->items[i];
+        keyed[i].producer = producers
+            ? producers->items[i] : RHOCOST_NO_PRODUCER;
+        keyed[i].key = rhocost_key_term(components->items[i]);
+        keyed[i].ordinal = i;
+        if (!keyed[i].key) {
+            for (uint32_t j = 0; j < i; j++) free(keyed[j].key);
+            free(keyed);
+            return false;
+        }
+    }
+    qsort(keyed, components->len,
+          sizeof(RhoCostKeyedRuntimeComponent),
+          rhocost_keyed_runtime_component_cmp);
+    for (uint32_t i = 0; i < components->len; i++) {
+        components->items[i] = keyed[i].term;
+        if (producers) producers->items[i] = keyed[i].producer;
+        free(keyed[i].key);
+    }
+    free(keyed);
+    return true;
+}
+
+static bool rhocost_runtime_components_add_term(
+    Arena *arena, RhoAtomVec *components, RhoCostProducerVec *producers,
+    Atom *term, uint64_t producer) {
+    uint32_t component_start;
+    uint32_t producer_start = 0u;
+    Atom *normalized;
+    RhoCostTermView view;
+
+    if (!arena || !components || !term ||
+        (producers && producers->len != components->len)) {
+        return false;
+    }
+    component_start = components->len;
+    if (producers) producer_start = producers->len;
+    normalized = rhocost_normalize_term(arena, term);
+    view = rhocost_term_view(normalized);
+    if (view.kind == RHOCOST_TERM_NIL) return true;
+    if (view.kind == RHOCOST_TERM_PAR) {
+        for (uint32_t i = 0; i < view.nargs; i++) {
+            if (!rhocost_runtime_components_add_term(
+                    arena, components, producers, view.args[i], producer)) {
+                components->len = component_start;
+                if (producers) producers->len = producer_start;
+                return false;
+            }
+        }
+        return true;
+    }
+    if (view.kind == RHOCOST_TERM_BAD ||
+        !rho_vec_push(components, normalized)) {
+        components->len = component_start;
+        if (producers) producers->len = producer_start;
+        return false;
+    }
+    if (producers && !rhocost_producer_vec_push(producers, producer)) {
+        components->len = component_start;
+        producers->len = producer_start;
+        return false;
+    }
+    return true;
+}
+
+/* Components are kept in canonical key order after every committed wave. */
+static Atom *rhocost_runtime_components_term(
+    Arena *arena, const RhoAtomVec *components) {
+    if (!arena || !components) return NULL;
+    if (components->len == 0u) return rhocost_nil(arena);
+    if (components->len == 1u) return components->items[0];
+    return rhocost_par(arena, components->items, components->len);
+}
+
 static void rhocost_trace_components_sort(RhoCostTraceComponentVec *components) {
     if (components->len < 2) return;
     RhoCostKeyedTraceComponent *keyed =
@@ -6220,8 +6418,8 @@ static bool rhocost_parallel_wave_selected_resources_valid(
     for (uint32_t i = 0; i < tasks->len; i++) {
         const RhoCostParallelTask *task = &tasks->items[i];
         if (!task->selected) continue;
-        for (uint32_t j = 0; j < task->resource_len; j++) {
-            uint32_t index = task->resource_indices[j];
+        for (uint32_t j = 0; j < task->plan.resource_len; j++) {
+            uint32_t index = task->plan.resource_indices[j];
             if (index >= wave->component_count ||
                 atomic_load_explicit(&wave->claimed[index],
                                      memory_order_acquire) == 0u) {
@@ -6238,8 +6436,8 @@ static bool rhocost_parallel_wave_selected_resources_valid(
         for (uint32_t i = 0; i < tasks->len && !accounted; i++) {
             const RhoCostParallelTask *task = &tasks->items[i];
             if (!task->selected) continue;
-            for (uint32_t j = 0; j < task->resource_len; j++) {
-                if (task->resource_indices[j] == index) {
+            for (uint32_t j = 0; j < task->plan.resource_len; j++) {
+                if (task->plan.resource_indices[j] == index) {
                     accounted = true;
                     break;
                 }
@@ -6338,89 +6536,450 @@ static void rhocost_parallel_wave_finish(RhoCostParallelWave *wave,
     wave->component_count = 0u;
 }
 
-static bool rhocost_trace_apply_parallel_wave(
-    Arena *arena, RhoCostTraceComponentVec *components,
-    RhoCostParallelTaskVec *tasks, RhoCostParallelWave *wave,
-    uint64_t first_event_id, RhoAtomVec *events,
-    uint32_t *out_applied) {
-    RhoCostTraceComponentVec next;
-    uint32_t applied = 0;
+static bool rhocost_parallel_plan_consumes_component(
+    const RhoCostParallelPlan *plan, uint32_t component_index) {
+    if (!plan) return false;
+    for (uint32_t i = 0; i < plan->participant_len; i++) {
+        if (plan->participant_indices[i] == component_index) return true;
+    }
+    for (uint32_t i = 0; i < plan->token_len; i++) {
+        if (plan->token_indices[i] == component_index) return true;
+    }
+    return false;
+}
 
-    if (!arena || !components || !tasks || !wave || !events ||
-        !out_applied || components->len != wave->component_count) {
+static bool rhocost_parallel_task_resource_shape_valid(
+    const RhoAtomVec *components, const RhoCostParallelTask *task) {
+    if (!components || !task || !task->selected ||
+        (task->plan.participant_len != 1u &&
+         task->plan.participant_len != 2u) ||
+        task->plan.token_len == 0u ||
+        task->plan.resource_len !=
+            task->plan.participant_len + task->plan.token_len ||
+        !task->plan.resource_indices || !task->plan.token_indices) {
         return false;
     }
-    for (uint32_t i = 0; i < tasks->len; i++) {
-        RhoCostParallelTask *task = &tasks->items[i];
-        Atom *event;
-        if (!task->selected) continue;
-        if (first_event_id + applied > (uint64_t)INT64_MAX) return false;
-        event = rhocost_trace_event(arena, components, &task->step,
-                                    first_event_id + applied);
-        if (!event || !rho_vec_push(events, event)) return false;
-        applied++;
+    for (uint32_t group = 0; group < 2u; group++) {
+        const uint32_t *indices = group == 0u
+            ? task->plan.participant_indices : task->plan.token_indices;
+        uint32_t len = group == 0u
+            ? task->plan.participant_len : task->plan.token_len;
+        for (uint32_t i = 0; i < len; i++) {
+            uint32_t occurrences = 0u;
+            if (indices[i] >= components->len) return false;
+            for (uint32_t j = 0; j < task->plan.resource_len; j++) {
+                if (task->plan.resource_indices[j] == indices[i]) {
+                    occurrences++;
+                }
+            }
+            if (occurrences != 1u) return false;
+        }
     }
-    if (applied == 0u) return false;
+    for (uint32_t i = 0; i < task->plan.resource_len; i++) {
+        uint32_t index = task->plan.resource_indices[i];
+        if (index >= components->len ||
+            !rhocost_parallel_plan_consumes_component(&task->plan, index) ||
+            (i > 0u && task->plan.resource_indices[i - 1u] >= index)) {
+            return false;
+        }
+    }
+    return true;
+}
 
-    rhocost_trace_component_vec_init(&next);
+#if CETTA_RHOCOST_COMMIT_AUDIT
+static bool rhocost_parallel_task_redex_valid(
+    Arena *arena, const RhoAtomVec *components,
+    const RhoCostParallelTask *task, Atom **out_demand) {
+    RhoView recv = {0};
+    RhoView send = {0};
+    Atom *demand = NULL;
+    Atom *expected_contractum = NULL;
+    char *expected_channel_key = NULL;
+    char *recv_channel_key = NULL;
+    char *send_channel_key = NULL;
+    bool valid = false;
+
+    if (!arena || !components || !task || !out_demand ||
+        !task->plan.channel || !task->plan.recv_body ||
+        !task->plan.send_payload || !task->plan.consumed_sig ||
+        !task->contractum) {
+        return false;
+    }
+    *out_demand = NULL;
+    if (task->plan.participant_len == 1u) {
+        uint32_t index = task->plan.participant_indices[0];
+        RhoCostTermView signed_term;
+        RhoView body;
+        if (index >= components->len) return false;
+        signed_term = rhocost_term_view(components->items[index]);
+        if (signed_term.kind != RHOCOST_TERM_SIGNED ||
+            signed_term.nargs != 2u ||
+            !rhocost_check_signature(signed_term.args[1])) {
+            return false;
+        }
+        body = rho_view(signed_term.args[0]);
+        if (body.kind != RHO_PAR || body.nargs != 2u) return false;
+        if (rho_view(body.args[0]).kind == RHO_RECV &&
+            rho_view(body.args[1]).kind == RHO_SEND) {
+            recv = rho_view(body.args[0]);
+            send = rho_view(body.args[1]);
+        } else if (rho_view(body.args[1]).kind == RHO_RECV &&
+                   rho_view(body.args[0]).kind == RHO_SEND) {
+            recv = rho_view(body.args[1]);
+            send = rho_view(body.args[0]);
+        } else {
+            return false;
+        }
+        demand = rhocost_normalize_signature(arena, signed_term.args[1]);
+    } else if (task->plan.participant_len == 2u) {
+        Atom *recv_sig = NULL;
+        Atom *send_sig = NULL;
+        for (uint32_t i = 0; i < 2u; i++) {
+            uint32_t index = task->plan.participant_indices[i];
+            RhoCostTermView signed_term;
+            RhoView body;
+            if (index >= components->len) return false;
+            signed_term = rhocost_term_view(components->items[index]);
+            if (signed_term.kind != RHOCOST_TERM_SIGNED ||
+                signed_term.nargs != 2u ||
+                !rhocost_check_signature(signed_term.args[1])) {
+                return false;
+            }
+            body = rho_view(signed_term.args[0]);
+            if (body.kind == RHO_RECV && recv.kind == RHO_BAD) {
+                recv = body;
+                recv_sig = signed_term.args[1];
+            } else if (body.kind == RHO_SEND && send.kind == RHO_BAD) {
+                send = body;
+                send_sig = signed_term.args[1];
+            } else {
+                return false;
+            }
+        }
+        if (!recv_sig || !send_sig) return false;
+        demand = rhocost_signature_product(arena, recv_sig, send_sig);
+    } else {
+        return false;
+    }
+
+    if (!demand || recv.kind != RHO_RECV || recv.nargs != 3u ||
+        !recv.args[1] || recv.args[1]->kind != ATOM_VAR ||
+        send.kind != RHO_SEND || send.nargs != 2u ||
+        recv.args[1]->var_id != task->plan.recv_binder ||
+        !atom_eq(recv.args[2], task->plan.recv_body) ||
+        !atom_eq(send.args[1], task->plan.send_payload) ||
+        !atom_eq(rhocost_normalize_signature(arena, task->plan.consumed_sig),
+                 demand) ||
+        !rhocost_check_term_rec(task->contractum)) {
+        return false;
+    }
+
+    expected_contractum = rhocost_subst_term(
+        arena, recv.args[2], recv.args[1]->var_id, send.args[1]);
+    if (!expected_contractum ||
+        !atom_eq(rhocost_normalize_term(arena, expected_contractum),
+                 rhocost_normalize_term(arena, task->contractum))) {
+        return false;
+    }
+
+    expected_channel_key = rhocost_key_name(task->plan.channel);
+    recv_channel_key = rhocost_key_name(recv.args[0]);
+    send_channel_key = rhocost_key_name(send.args[0]);
+    valid = expected_channel_key && recv_channel_key && send_channel_key &&
+        strcmp(expected_channel_key, recv_channel_key) == 0 &&
+        strcmp(expected_channel_key, send_channel_key) == 0;
+    free(expected_channel_key);
+    free(recv_channel_key);
+    free(send_channel_key);
+    if (!valid) return false;
+    *out_demand = demand;
+    return true;
+}
+
+static bool rhocost_parallel_task_funding_valid(
+    Arena *arena, const RhoAtomVec *components,
+    const RhoCostParallelTask *task) {
+    RhoAtomVec funding_atoms;
+    Atom *demand = NULL;
+    Atom *funding = NULL;
+    char *channel_key = NULL;
+    bool valid = false;
+
+    if (!rhocost_parallel_task_resource_shape_valid(components, task) ||
+        !rhocost_parallel_task_redex_valid(
+            arena, components, task, &demand)) {
+        return false;
+    }
+    channel_key = rhocost_key_name(task->plan.channel);
+    if (!channel_key) return false;
+    rho_vec_init(&funding_atoms);
+    for (uint32_t i = 0; i < task->plan.token_len; i++) {
+        uint32_t index = task->plan.token_indices[i];
+        RhoCostTermView purse = rhocost_term_view(components->items[index]);
+        RhoCostTermView stack;
+        char *surface_key;
+        if (purse.kind != RHOCOST_TERM_PURSE || purse.nargs != 2u) {
+            goto done;
+        }
+        stack = rhocost_term_view(purse.args[1]);
+        if (stack.kind != RHOCOST_TERM_STACK_CONS || stack.nargs != 2u) {
+            goto done;
+        }
+        surface_key = rhocost_key_name(purse.args[0]);
+        if (!surface_key || strcmp(channel_key, surface_key) != 0) {
+            free(surface_key);
+            goto done;
+        }
+        free(surface_key);
+        if (!rhocost_collect_signature_atoms(stack.args[0], &funding_atoms)) {
+            goto done;
+        }
+    }
+    funding = rhocost_signature_from_vec(arena, &funding_atoms);
+    valid = funding && demand && atom_eq(funding, demand);
+
+done:
+    free(channel_key);
+    rho_vec_free(&funding_atoms);
+    return valid;
+}
+#endif
+
+static bool rhocost_parallel_wave_commit_valid(
+    Arena *arena, const RhoAtomVec *components,
+    const RhoCostParallelTaskVec *tasks, uint32_t selected) {
+    uint32_t checked = 0u;
+    if (!arena || !components || !tasks || selected == 0u) return false;
+    for (uint32_t i = 0; i < tasks->len; i++) {
+        const RhoCostParallelTask *task = &tasks->items[i];
+        if (!task->selected) continue;
+        if (!rhocost_parallel_task_resource_shape_valid(components, task) ||
+            !task->contractum || !rhocost_check_term_rec(task->contractum)) {
+            return false;
+        }
+#if CETTA_RHOCOST_COMMIT_AUDIT
+        if (!rhocost_parallel_task_funding_valid(arena, components, task)) {
+            return false;
+        }
+#endif
+        checked++;
+    }
+    return checked == selected;
+}
+
+static Atom *rhocost_parallel_trace_event(
+    Arena *arena, const RhoAtomVec *components,
+    const RhoCostCausalObserver *observer,
+    const RhoCostParallelPlan *plan, uint64_t event_id) {
+    uint32_t max_causes;
+    Atom **cause_atoms;
+    uint32_t cause_len = 0u;
+
+    if (!arena || !components || !observer || !observer->events || !plan ||
+        observer->producers.len != components->len ||
+        event_id > (uint64_t)INT64_MAX) {
+        return NULL;
+    }
+    max_causes = plan->participant_len + plan->token_len;
+    cause_atoms = arena_alloc(
+        arena, sizeof(Atom *) * (size_t)max_causes);
+    if (max_causes > 0u && !cause_atoms) return NULL;
+    for (uint32_t group = 0; group < 2u; group++) {
+        const uint32_t *indices = group == 0u
+            ? plan->participant_indices : plan->token_indices;
+        uint32_t len = group == 0u
+            ? plan->participant_len : plan->token_len;
+        for (uint32_t i = 0; i < len; i++) {
+            uint32_t index = indices[i];
+            uint64_t producer;
+            if (index >= components->len) return NULL;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_COST_RHO_RECEIPT_CAUSE_SOURCE_SCANNED);
+            producer = observer->producers.items[index];
+            if (producer == RHOCOST_NO_PRODUCER) continue;
+            if (producer >= event_id || producer > (uint64_t)INT64_MAX) {
+                return NULL;
+            }
+            cause_atoms[cause_len++] = atom_int(arena, (int64_t)producer);
+        }
+    }
+    if (plan->token_len == 0u) return NULL;
+    {
+        Atom **fundings = arena_alloc(
+            arena, sizeof(Atom *) * (size_t)plan->token_len);
+        Atom *event_args[4];
+        if (!fundings) return NULL;
+        for (uint32_t i = 0; i < plan->token_len; i++) {
+            uint32_t index = plan->token_indices[i];
+            RhoCostTermView purse;
+            RhoCostTermView stack;
+            Atom *funding_args[2];
+            if (index >= components->len) return NULL;
+            purse = rhocost_term_view(components->items[index]);
+            if (purse.kind != RHOCOST_TERM_PURSE || purse.nargs != 2u) {
+                return NULL;
+            }
+            stack = rhocost_term_view(purse.args[1]);
+            if (stack.kind != RHOCOST_TERM_STACK_CONS || stack.nargs != 2u) {
+                return NULL;
+            }
+            funding_args[0] = purse.args[0];
+            funding_args[1] = stack.args[0];
+            fundings[i] = rho_call(
+                arena, "lts:rho:cost:funding", funding_args, 2u);
+        }
+        event_args[0] = atom_int(arena, (int64_t)event_id);
+        event_args[1] = atom_expr(arena, cause_atoms, cause_len);
+        event_args[2] = atom_expr(arena, fundings, plan->token_len);
+        event_args[3] = plan->consumed_sig;
+        return rho_call(arena, "lts:rho:cost:event", event_args, 4u);
+    }
+}
+
+/*
+ * Commit one checked occurrence-disjoint wave.  The operational transition is
+ * shared by state-only and causal-observation runs; the latter supplies the
+ * optional producer/event vectors.  Receipt construction therefore cannot
+ * affect which resources are consumed or which residual is produced.
+ */
+static bool rhocost_parallel_apply_wave(
+    Arena *arena, RhoAtomVec *components,
+    RhoCostCausalObserver *observer,
+    RhoCostParallelTaskVec *tasks, RhoCostParallelWave *wave,
+    uint32_t selected, uint64_t first_event_id, uint32_t *out_applied) {
+    bool observe_causality = observer != NULL;
+    RhoAtomVec next;
+    RhoCostProducerVec next_producers;
+    uint32_t applied = 0u;
+
+    if (!arena || !components || !tasks || !wave || !out_applied ||
+        components->len != wave->component_count ||
+        (observe_causality &&
+         (!observer->events ||
+          observer->producers.len != components->len ||
+          first_event_id != (uint64_t)observer->events->len)) ||
+        !rhocost_parallel_wave_commit_valid(
+            arena, components, tasks, selected)) {
+        return false;
+    }
+
+    if (observe_causality) {
+        for (uint32_t i = 0; i < tasks->len; i++) {
+            RhoCostParallelTask *task = &tasks->items[i];
+            Atom *event;
+            if (!task->selected) continue;
+            if (first_event_id + applied > (uint64_t)INT64_MAX) return false;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_COST_RHO_RECEIPT_EVENT_ALLOCATION);
+            event = rhocost_parallel_trace_event(
+                arena, components, observer, &task->plan,
+                first_event_id + applied);
+            if (!event) return false;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_COST_RHO_RECEIPT_EVENT_MATERIALIZED);
+            if (!rho_vec_push(observer->events, event)) return false;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_COST_RHO_RECEIPT_EVENT_RETAINED);
+            applied++;
+        }
+        if (applied != selected) return false;
+    }
+
+    rho_vec_init(&next);
+    rhocost_producer_vec_init(&next_producers);
     for (uint32_t i = 0; i < components->len; i++) {
-        if (atomic_load_explicit(&wave->claimed[i],
-                                 memory_order_acquire) != 0u) {
+        if (atomic_load_explicit(
+                &wave->claimed[i], memory_order_acquire) != 0u) {
             continue;
         }
-        if (!rhocost_trace_component_vec_push(
-                &next, components->items[i].term,
-                components->items[i].has_producer,
-                components->items[i].producer)) {
-            rhocost_trace_component_vec_free(&next);
+        if (!rho_vec_push(&next, components->items[i]) ||
+            (observe_causality && !rhocost_producer_vec_push(
+                &next_producers, observer->producers.items[i]))) {
+            rho_vec_free(&next);
+            rhocost_producer_vec_free(&next_producers);
             return false;
         }
     }
 
-    applied = 0;
+    applied = 0u;
     for (uint32_t i = 0; i < tasks->len; i++) {
         RhoCostParallelTask *task = &tasks->items[i];
         uint64_t event_id;
         Atom *contractum;
         if (!task->selected) continue;
         event_id = first_event_id + applied;
-        contractum = atom_deep_copy(arena, task->step.contractum);
-        if (!contractum || !rhocost_trace_components_add_term(
-                arena, &next, contractum, true, event_id)) {
-            rhocost_trace_component_vec_free(&next);
+        contractum = atom_deep_copy(arena, task->contractum);
+        if (!contractum || !rhocost_runtime_components_add_term(
+                arena, &next,
+                observe_causality ? &next_producers : NULL,
+                contractum,
+                observe_causality ? event_id : RHOCOST_NO_PRODUCER)) {
+            rho_vec_free(&next);
+            rhocost_producer_vec_free(&next_producers);
             return false;
         }
-        for (uint32_t j = 0; j < task->step.token_len; j++) {
-            uint32_t token_index = task->step.token_indices[j];
+        for (uint32_t j = 0; j < task->plan.token_len; j++) {
+            uint32_t token_index = task->plan.token_indices[j];
             RhoCostTermView purse;
             RhoCostTermView stack;
             Atom *tail;
             if (token_index >= components->len) {
-                rhocost_trace_component_vec_free(&next);
+                rho_vec_free(&next);
+                rhocost_producer_vec_free(&next_producers);
                 return false;
             }
-            purse = rhocost_term_view(components->items[token_index].term);
+            purse = rhocost_term_view(components->items[token_index]);
             if (purse.kind != RHOCOST_TERM_PURSE || purse.nargs != 2u) {
-                rhocost_trace_component_vec_free(&next);
+                rho_vec_free(&next);
+                rhocost_producer_vec_free(&next_producers);
                 return false;
             }
             stack = rhocost_term_view(purse.args[1]);
             if (stack.kind != RHOCOST_TERM_STACK_CONS || stack.nargs != 2u) {
-                rhocost_trace_component_vec_free(&next);
+                rho_vec_free(&next);
+                rhocost_producer_vec_free(&next_producers);
                 return false;
             }
             tail = rhocost_purse(arena, purse.args[0], stack.args[1]);
-            if (!tail || !rhocost_trace_components_add_term(
-                    arena, &next, tail, true, event_id)) {
-                rhocost_trace_component_vec_free(&next);
+            if (!tail || !rhocost_runtime_components_add_term(
+                    arena, &next,
+                    observe_causality ? &next_producers : NULL,
+                    tail,
+                    observe_causality ? event_id : RHOCOST_NO_PRODUCER)) {
+                rho_vec_free(&next);
+                rhocost_producer_vec_free(&next_producers);
                 return false;
             }
         }
         applied++;
     }
-    rhocost_trace_components_sort(&next);
-    rhocost_trace_component_vec_free(components);
+    if (applied != selected ||
+        !rhocost_runtime_components_sort(
+            &next, observe_causality ? &next_producers : NULL)) {
+        rho_vec_free(&next);
+        rhocost_producer_vec_free(&next_producers);
+        return false;
+    }
+
+    for (uint32_t i = 0; i < tasks->len; i++) {
+        const RhoCostParallelTask *task = &tasks->items[i];
+        if (!task->selected) continue;
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_COMMITTED_CLAIM,
+            task->plan.resource_len);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_COST_RHO_FUNDING_HEAD_CONSUMED,
+            task->plan.token_len);
+    }
+
+    rho_vec_free(components);
     *components = next;
+    if (observe_causality) {
+        rhocost_producer_vec_free(&observer->producers);
+        observer->producers = next_producers;
+    } else {
+        rhocost_producer_vec_free(&next_producers);
+    }
     *out_applied = applied;
     return true;
 }
@@ -6498,13 +7057,16 @@ typedef enum {
     RHOCOST_PARALLEL_RUN_SEARCH_EXHAUSTED
 } RhoCostParallelRunStatus;
 
-static bool rhocost_parallel_causal_run(
+static bool rhocost_parallel_run(
     Arena *arena, Atom *term, uint32_t thread_count,
     bool bounded_fuel, uint64_t fuel, bool fuel_precedes_frontier,
     bool bounded_search, uint64_t search_budget,
     RhoAtomVec *out_events, Atom **out_residual,
     uint64_t *out_reductions, RhoCostParallelRunStatus *out_status) {
-    RhoCostTraceComponentVec components;
+    bool observe_causality = out_events != NULL;
+    RhoAtomVec components;
+    RhoCostCausalObserver causal_observer;
+    RhoCostCausalObserver *observer = NULL;
     RhoCostSearchControl search = {
         .bounded = bounded_search,
         .remaining = search_budget,
@@ -6512,13 +7074,11 @@ static bool rhocost_parallel_causal_run(
         .stop_after_first = false,
         .stopped = false,
     };
-    uint64_t event_id = 0u;
+    uint64_t reductions = 0u;
     bool ok = true;
 
-    if (!out_events || !out_residual || !out_reductions || !out_status) {
-        return false;
-    }
-    rho_vec_init(out_events);
+    if (!out_residual || !out_reductions || !out_status) return false;
+    if (out_events) rho_vec_init(out_events);
     *out_residual = NULL;
     *out_reductions = 0u;
     *out_status = RHOCOST_PARALLEL_RUN_QUIESCENT;
@@ -6526,18 +7086,30 @@ static bool rhocost_parallel_causal_run(
         !rhocost_term_well_formed(term)) {
         return false;
     }
-    rhocost_trace_component_vec_init(&components);
+
+    cetta_runtime_stats_inc(
+        observe_causality
+            ? CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_RECEIPT_RUN
+            : CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_STATE_ONLY_RUN);
+
+    rho_vec_init(&components);
+    if (observe_causality) {
+        rhocost_causal_observer_init(&causal_observer, out_events);
+        observer = &causal_observer;
+    }
     rho_symbols_ensure();
-    if (!rhocost_trace_components_add_term(
-            arena, &components, term, false, 0u)) {
-        rho_validation_set("cost-rho parallel run could not initialize provenance");
+    if (!rhocost_runtime_components_add_term(
+            arena, &components,
+            observer ? &observer->producers : NULL,
+            term, RHOCOST_NO_PRODUCER) ||
+        !rhocost_runtime_components_sort(
+            &components, observer ? &observer->producers : NULL)) {
+        rho_validation_set("cost-rho parallel run could not initialize its state");
         ok = false;
         goto done;
     }
-    rhocost_trace_components_sort(&components);
 
     for (;;) {
-        RhoAtomVec projected;
         RhoCostParallelTaskVec tasks;
         RhoCostParallelWave wave;
         CettaParallelExecutor executor;
@@ -6553,27 +7125,20 @@ static bool rhocost_parallel_causal_run(
         uint32_t selected = 0u;
         uint32_t applied = 0u;
 
-        if (bounded_fuel && fuel_precedes_frontier && event_id >= fuel) {
+        if (bounded_fuel && fuel_precedes_frontier && reductions >= fuel) {
             *out_status = RHOCOST_PARALLEL_RUN_FUEL_EXHAUSTED;
-            break;
-        }
-        if (!rhocost_trace_components_project(&components, &projected)) {
-            rho_validation_set("cost-rho parallel run could not project its state");
-            ok = false;
             break;
         }
         rhocost_parallel_task_vec_init(&tasks);
         search.stopped = false;
         if (!rhocost_collect_parallel_tasks_from_components(
-                arena, &projected, &tasks,
+                arena, &components, &tasks,
                 bounded_search ? &search : NULL)) {
-            rho_vec_free(&projected);
             rhocost_parallel_task_vec_free(&tasks);
             rho_validation_set("cost-rho parallel run could not enumerate firings");
             ok = false;
             break;
         }
-        rho_vec_free(&projected);
         if (tasks.len == 0u) {
             rhocost_parallel_task_vec_free(&tasks);
             *out_status = search.exhausted
@@ -6581,33 +7146,34 @@ static bool rhocost_parallel_causal_run(
                 : RHOCOST_PARALLEL_RUN_QUIESCENT;
             break;
         }
-        if (bounded_fuel && event_id >= fuel) {
+        if (bounded_fuel && reductions >= fuel) {
             rhocost_parallel_task_vec_free(&tasks);
             *out_status = RHOCOST_PARALLEL_RUN_FUEL_EXHAUSTED;
             break;
         }
-        remaining64 = bounded_fuel ? fuel - event_id : UINT32_MAX;
+        remaining64 = bounded_fuel ? fuel - reductions : UINT32_MAX;
         remaining = remaining64 > UINT32_MAX
             ? UINT32_MAX : (uint32_t)remaining64;
         if (!rhocost_parallel_wave_start(
                 &wave_profile, components.len, remaining, &tasks,
                 &wave, &executor, &executor_initialized, &selected)) {
-            rhocost_parallel_wave_finish(&wave, &executor,
-                                         executor_initialized);
+            rhocost_parallel_wave_finish(
+                &wave, &executor, executor_initialized);
             rhocost_parallel_task_vec_free(&tasks);
             ok = false;
             break;
         }
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_WAVE);
-        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_FIRING,
-                                selected);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_FIRING, selected);
         cetta_runtime_stats_update_max(
             CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_WAVE_WIDTH_PEAK,
             selected);
-        if (!rhocost_trace_apply_parallel_wave(
-                arena, &components, &tasks, &wave, event_id,
-                out_events, &applied) || applied != selected) {
-            rho_validation_set("cost-rho parallel wave could not reconstruct its state");
+        if (!rhocost_parallel_apply_wave(
+                arena, &components, observer, &tasks, &wave,
+                selected, reductions, &applied) || applied != selected) {
+            rho_validation_set(
+                "cost-rho parallel wave failed checked commit");
             rhocost_parallel_wave_finish(&wave, &executor, true);
             rhocost_parallel_task_vec_free(&tasks);
             ok = false;
@@ -6615,26 +7181,33 @@ static bool rhocost_parallel_causal_run(
         }
         rhocost_parallel_wave_finish(&wave, &executor, true);
         rhocost_parallel_task_vec_free(&tasks);
-        event_id += applied;
+        reductions += applied;
     }
 
-    if (ok && !rhocost_validate_causal_events(arena, out_events)) {
-        rho_validation_set("cost-rho parallel receipt failed causal validation");
-        ok = false;
-    }
-    if (ok) {
-        *out_residual = rhocost_trace_components_term(arena, &components);
-        if (!*out_residual) {
-            rho_validation_set("cost-rho parallel run could not materialize its residual");
+    if (ok && observe_causality) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_COST_RHO_RECEIPT_VALIDATION);
+        if (!rhocost_validate_causal_events(arena, out_events)) {
+            rho_validation_set(
+                "cost-rho parallel receipt failed causal validation");
             ok = false;
         }
     }
-    if (ok) *out_reductions = event_id;
+    if (ok) {
+        *out_residual = rhocost_runtime_components_term(arena, &components);
+        if (!*out_residual) {
+            rho_validation_set(
+                "cost-rho parallel run could not materialize its residual");
+            ok = false;
+        }
+    }
+    if (ok) *out_reductions = reductions;
 
 done:
-    rhocost_trace_component_vec_free(&components);
+    rho_vec_free(&components);
+    if (observer) rhocost_causal_observer_free(observer);
     if (!ok) {
-        rho_vec_free(out_events);
+        if (out_events) rho_vec_free(out_events);
         *out_residual = NULL;
         *out_reductions = 0u;
     }
@@ -6815,7 +7388,7 @@ Atom *rhocalc_cost_causal_trace_parallel_expr(Arena *arena, Atom *term,
     Atom *residual = NULL;
     Atom *result;
     uint64_t reductions;
-    if (!rhocost_parallel_causal_run(
+    if (!rhocost_parallel_run(
             arena, term, thread_count,
             false, 0u, false, false, 0u,
             &events, &residual, &reductions, &status)) {
@@ -6836,7 +7409,7 @@ Atom *rhocalc_cost_causal_prefix_parallel_expr(
     Atom *residual = NULL;
     Atom *result;
     uint64_t reductions;
-    if (!rhocost_parallel_causal_run(
+    if (!rhocost_parallel_run(
             arena, term, thread_count,
             true, fuel, true, true, search_budget,
             &events, &residual, &reductions, &status)) {
@@ -7101,7 +7674,6 @@ bool rhocalc_reduce_to_quiescence_with_eval_context(
 static bool rhocost_reduce_to_quiescence_threaded(
     Arena *arena, Atom *term, const RhoRuntimeProfile *profile,
     RhoReductionResult *out) {
-    RhoAtomVec events;
     RhoCostParallelRunStatus status;
     Atom *residual = NULL;
     uint64_t reductions = 0u;
@@ -7111,10 +7683,10 @@ static bool rhocost_reduce_to_quiescence_threaded(
         profile->thread_count < 2u) {
         return false;
     }
-    ok = rhocost_parallel_causal_run(
+    ok = rhocost_parallel_run(
         arena, term, profile->thread_count,
         true, profile->reduction_limit, false,
-        false, 0u, &events, &residual, &reductions, &status);
+        false, 0u, NULL, &residual, &reductions, &status);
     if (ok && reductions > UINT32_MAX) {
         rho_validation_set("cost-rho threaded run exceeded reduction counter range");
         ok = false;
@@ -7126,7 +7698,6 @@ static bool rhocost_reduce_to_quiescence_threaded(
             ? RHOCALC_REDUCTION_QUIESCENT
             : RHOCALC_REDUCTION_LIMIT_EXHAUSTED;
     }
-    rho_vec_free(&events);
     return ok;
 }
 

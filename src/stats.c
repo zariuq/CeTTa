@@ -236,6 +236,16 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "cost-rho-parallel-wave",
     "cost-rho-parallel-wave-width-peak",
     "cost-rho-parallel-firing",
+    "cost-rho-parallel-state-only-run",
+    "cost-rho-parallel-receipt-run",
+    "cost-rho-parallel-committed-claim",
+    "cost-rho-funding-head-consumed",
+    "cost-rho-receipt-producer-propagated",
+    "cost-rho-receipt-cause-source-scanned",
+    "cost-rho-receipt-event-allocation",
+    "cost-rho-receipt-event-materialized",
+    "cost-rho-receipt-event-retained",
+    "cost-rho-receipt-validation",
 };
 
 static int64_t clamp_counter(uint64_t value) {
