@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import random
 
+from rhocalc_bench_provenance import PROVENANCE_FIELDS, benchmark_provenance
 from rhocalc_m3_rholang_cli_compare import (
     contract_name_key,
     contract_proc_key,
@@ -302,6 +303,7 @@ def main(argv: list[str]) -> int:
     ok = True
     chain_speedup = 1.0
     rows: list[dict[str, object]] = []
+    provenance = benchmark_provenance(args.bin_path)
     spill_dir = Path(args.spill_dir)
     spill_dir.mkdir(parents=True, exist_ok=True)
     replay = (
@@ -323,6 +325,7 @@ def main(argv: list[str]) -> int:
         first_threaded_median: float | None = None
         for threads in thread_counts:
             times: list[float] = []
+            failed = False
             for _ in range(args.runs):
                 result = run_rho(args.bin_path, workload.expr, threads=threads,
                                  input_path=input_path)
@@ -330,8 +333,11 @@ def main(argv: list[str]) -> int:
                 if not valid:
                     print(f"FAIL {workload.name} threads={threads}: {detail}")
                     ok = False
+                    failed = True
                     break
                 times.append(result.elapsed)
+            if failed:
+                break
             if not times:
                 continue
             median, best = summarize_times(times)
@@ -340,7 +346,10 @@ def main(argv: list[str]) -> int:
                 sequential_baseline_median = median
             elif first_threaded_median is None:
                 first_threaded_median = median
-            assert sequential_baseline_median is not None
+            if sequential_baseline_median is None:
+                print(f"FAIL {workload.name}: no valid sequential baseline")
+                ok = False
+                break
             speedup_vs_seq = (
                 sequential_baseline_median / median if median > 0 else 0.0
             )
@@ -352,6 +361,7 @@ def main(argv: list[str]) -> int:
             if workload.name.startswith("chain-farm") and threads == max(thread_counts):
                 chain_speedup = speedup_vs_seq
             rows.append({
+                **provenance,
                 "mode": args.mode,
                 "seed": args.seed,
                 "workload": workload.name,
@@ -395,6 +405,7 @@ def main(argv: list[str]) -> int:
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         with csv_path.open("w", newline="") as handle:
             fieldnames = [
+                *PROVENANCE_FIELDS,
                 "mode",
                 "seed",
                 "workload",

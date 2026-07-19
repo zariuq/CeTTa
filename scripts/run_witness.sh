@@ -105,6 +105,8 @@ export CETTA_BUILD_CONFIG="$repo_root/${witness_build_config#./}"
 
 if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     commit="$(git -C "$repo_root" rev-parse --short HEAD)"
+    branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null || printf 'detached')"
+    repo_label="CeTTa-${branch}"
     if git -C "$repo_root" diff --quiet --ignore-submodules HEAD -- &&
        git -C "$repo_root" diff --quiet --ignore-submodules --cached HEAD --; then
         tree_state="clean"
@@ -113,6 +115,7 @@ if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     fi
 else
     commit="unknown"
+    repo_label="CeTTa-nogit"
     tree_state="nogit"
 fi
 
@@ -168,6 +171,7 @@ printf 'NAME=%s\n' "$witness_name"
 printf 'CATEGORY=%s\n' "$category"
 printf 'BUILD_HINT=%s\n' "$build_hint"
 printf 'COMMIT=%s\n' "$commit"
+printf 'REPO_LABEL=%s\n' "$repo_label"
 printf 'TREE_STATE=%s\n' "$tree_state"
 printf 'STATUS=%s\n' "$status"
 printf 'STATUS_REASON=%s\n' "$status_reason"
@@ -179,17 +183,18 @@ printf 'COMMAND=%s\n' "$run_command"
 printf 'NOTES=%s\n' "$notes"
 printf 'LAST_PAYLOAD=%s\n' "${last_payload:-}"
 printf 'FIRST_SURFACE_ERROR=%s\n' "${first_surface_error:-}"
-printf 'TSV_RECORD=%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+printf 'TSV_RECORD=%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$witness_name" \
+    "$repo_label" \
     "$commit" \
-    "$tree_state" \
     "$status" \
     "${elapsed:-unknown}" \
     "${rss_kib:-unknown}" \
     "$build_hint" \
     "$timeout_s" \
     "$resource_hint_kib" \
-    "${last_payload:-}"
+    "$notes" \
+    "context"
 
 if [[ "$shell_status" -ne 0 && "$shell_status" -ne 124 ]]; then
     cat "$logfile" >&2

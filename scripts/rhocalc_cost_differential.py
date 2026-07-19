@@ -761,6 +761,20 @@ def run_lean(mettapedia_root: Path, runner: Path,
     env = os.environ.copy()
     env["LAKE_JOBS"] = "1"
     env["LEAN_NUM_THREADS"] = "1"
+    target = (
+        "Mettapedia.Languages.ProcessCalculi.RhoCalculus.Cost."
+        "BudgetedDifferential"
+    )
+    build = subprocess.run(
+        ["lake", "build", target],
+        cwd=mettapedia_root,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if build.returncode != 0:
+        raise RuntimeError(build.stdout.strip() + "\n" + build.stderr.strip())
     proc = subprocess.run(
         ["nice", "-n", "19", "lake", "env", "lean", "--run", str(runner), request_json],
         cwd=mettapedia_root,
@@ -883,7 +897,7 @@ def run_receipt_replay(
     env["LAKE_JOBS"] = "1"
     env["LEAN_NUM_THREADS"] = "1"
     target = (
-        "Mettapedia.Languages.ProcessCalculi.RhoCalculus.Costed."
+        "Mettapedia.Languages.ProcessCalculi.RhoCalculus.Cost."
         "ReceiptReplayDifferential"
     )
     build = subprocess.run(
