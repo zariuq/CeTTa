@@ -23,7 +23,6 @@ fi
 name="$1"
 run_output="$("$repo_root/scripts/run_witness.sh" "$name")"
 
-current_commit="$(printf '%s\n' "$run_output" | awk -F= '/^COMMIT=/{print $2; exit}')"
 current_status="$(printf '%s\n' "$run_output" | awk -F= '/^STATUS=/{print $2; exit}')"
 current_elapsed="$(printf '%s\n' "$run_output" | awk -F= '/^ELAPSED=/{print $2; exit}')"
 current_rss="$(printf '%s\n' "$run_output" | awk -F= '/^RSS_KB=/{print $2; exit}')"
@@ -68,7 +67,8 @@ baseline_distance=""
 context_line=""
 context_distance=""
 
-while IFS=$'\t' read -r row_name repo_label commit status elapsed rss_kib build_hint timeout_s resource_hint_kib note role; do
+while IFS=$'\t' read -r row_name repo_label commit status elapsed rss_kib \
+    _build_hint _timeout_s _resource_hint_kib note role; do
     [[ "$row_name" == "name" ]] && continue
     [[ "$row_name" != "$name" ]] && continue
     if ! git -C "$repo_root" merge-base --is-ancestor "$commit" HEAD 2>/dev/null; then

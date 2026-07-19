@@ -1,7 +1,7 @@
-import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Costed.ReceiptReplayDifferential
+import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Cost.ReceiptReplayDifferential
 
 open Lean
-open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Costed
+open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Cost
 
 structure ReceiptReplayBatch where
   outcomes : List CostWire.ReceiptReplayOutcome

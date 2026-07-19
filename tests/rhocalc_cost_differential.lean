@@ -1,7 +1,7 @@
-import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Costed.BudgetedDifferential
+import Mettapedia.Languages.ProcessCalculi.RhoCalculus.Cost.BudgetedDifferential
 
 open Lean
-open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Costed
+open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Cost
 
 structure DifferentialBatch where
   preconditions : List (Option RuntimePreconditionChecks)
