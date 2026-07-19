@@ -89,6 +89,10 @@ typedef struct {
     X(let_star, "let*") \
     X(let, "let") \
     X(chain, "chain") \
+    X(abt_chain_v1, "ABTChainV1") \
+    X(abt_pattern_var_v1, "ABTPatternVarV1") \
+    X(abt_let_scope_v1, "ABTLetScopeV1") \
+    X(abt_let_v1, "ABTLetV1") \
     X(collect, "collect") \
     X(fold, "fold") \
     X(fold_by_key, "fold-by-key") \

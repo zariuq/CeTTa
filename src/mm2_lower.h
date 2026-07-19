@@ -25,7 +25,11 @@ char *cetta_mm2_atom_to_surface_string(Arena *a, Atom *atom);
 
 /* Encode one raw or lowered MM2 atom as stable MORK bridge expr bytes.
    This keeps the CeTTa<->MORK mutation boundary below UTF-8 surface text while
-   preserving the same raised/MM2-visible term shape as the text path. */
+   preserving the same raised/MM2-visible term shape as the text path.
+
+   Object-binder ABTs cross this boundary only after scope admission in closed
+   canonical form.  Bridge variable slots represent CeTTa metavariables, not
+   de Bruijn indices; the bridge therefore remains binder-neutral. */
 bool cetta_mm2_atom_to_bridge_expr_bytes(Arena *a, Atom *atom,
                                          uint8_t **out_bytes,
                                          size_t *out_len,

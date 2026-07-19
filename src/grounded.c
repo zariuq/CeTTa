@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "grounded.h"
+#include "abt.h"
 #include "eval.h"
 #include "he_typing.h"
 #include "prime_semantics.h"
@@ -234,6 +235,7 @@ static bool find_unused_alpha_equal_atom(Atom **elems, bool *used,
 
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE) return false;
+    if (abt_is_op(id)) return true;
     /* Check __cetta_lib_ prefix via string lookup */
     const char *name = symbol_bytes(g_symbols, id);
     if (name && strncmp(name, "__cetta_lib_", 12) == 0)
@@ -316,6 +318,7 @@ bool is_grounded_op(SymbolId id) {
    Everything here is a pure function of its argument atoms. */
 bool grounded_op_is_type_pure(SymbolId id) {
     if (id == SYMBOL_ID_NONE) return false;
+    if (abt_is_op(id)) return true;
     return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
            id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
            id == g_builtin_syms.op_floor_div || id == g_builtin_syms.op_mod ||
@@ -1103,6 +1106,10 @@ static Atom *grounded_repeat_atom(Arena *a, Atom *head, Atom **args, uint32_t na
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     {
+        Atom *abt = abt_grounded_dispatch(a, head, args, nargs);
+        if (abt) return abt;
+    }
+    {
         Atom *prime = prime_semantics_dispatch
             ? prime_semantics_dispatch(a, head, args, nargs) : NULL;
         if (prime) return prime;
@@ -1188,7 +1195,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.sealed_text) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
-        return rename_vars_except(a, args[1], args[0]);
+        /* `sealed` standardizes free metavariables apart.  Object-binder ABT
+           indices are ordinary canonical expressions and remain untouched. */
+        Atom *renamed = rename_vars_except(a, args[1], args[0]);
+        return renamed ? renamed
+                       : atom_error(a, grounded_call_expr(a, head, args, nargs),
+                                    atom_symbol(a, "SealedInvalidTerm"));
     }
 
     if (head_id == g_builtin_syms.print_alternatives_bang) {

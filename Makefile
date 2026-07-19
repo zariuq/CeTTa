@@ -246,7 +246,7 @@ CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
 endif
 
-SRC = src/symbol.c src/atom.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/atom_blob.c src/abt.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -274,9 +274,20 @@ PAYLOAD_MAP_CAPACITY_TEST_SRC = tests/support/test_rhometta_payload_map_capacity
 PAYLOAD_MAP_CAPACITY_TEST_OBJ = runtime/bootstrap/test_rhometta_payload_map_capacity.$(BUILD_OBJ_TAG).o
 PAYLOAD_MAP_CAPACITY_TEST_BIN = runtime/test_rhometta_payload_map_capacity-$(BUILD_CANON)
 PAYLOAD_MAP_CAPACITY_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.c
+RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
+RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_CANON)
+RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
 VARIANT_SHAPE_TEST_BIN = runtime/test_variant_shape_roundtrip-$(BUILD_OBJ_TAG)
 ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
+ABT_TEST_BIN = runtime/test_abt-$(BUILD_OBJ_TAG)
+ABT_MM2_BOUNDARY_TEST_BIN = runtime/test_abt_mm2_boundary-$(BUILD_OBJ_TAG)
+ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
+ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22
+ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
+GROUNDED_STANDALONE_SRC = src/grounded.c src/abt.c src/atom_blob.c
+GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) $(ABT_DEFAULT_SIGNATURES_BLOB)
 MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN = runtime/test_mork_bridge_contextual_exact_rows-$(BUILD_OBJ_TAG)
 MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN = runtime/test_mork_cursor_byte_buffer_count_abi-$(BUILD_OBJ_TAG)
 MORK_CURSOR_EXPR_ROW_STREAM_ABI_TEST_BIN = runtime/test_mork_cursor_expr_row_stream_abi-$(BUILD_OBJ_TAG)
@@ -325,6 +336,10 @@ HE_NATIVE_CONTRACTS = $(HE_COMPAT_GENERATED_DIR)/he_native_contracts_2026-06-25.
 TEST_MANIFEST = tests/test_manifest.tsv
 PRIME_CONFORMANCE_TESTS = \
 	tests/prime_02_completion_resources.metta \
+	tests/prime/conformance/abt_chain_scope.metta \
+	tests/prime/conformance/abt_let_scope.metta \
+	tests/prime/conformance/abt_sealed_boundary.metta \
+	tests/prime/conformance/canonical_binders.metta \
 	tests/prime/conformance/resource_policy.metta \
 	tests/prime/conformance/occurs_check.metta \
 	tests/prime/conformance/typed_equality.metta \
@@ -521,6 +536,9 @@ endif
 STDLIB_SRC = lib/stdlib.metta
 STDLIB_BLOB = src/stdlib_blob.h
 STDLIB_BLOB_STAMP = $(BOOTSTRAP_TMPDIR)/stdlib_blob.$(BUILD_CANON).stamp
+ABT_DEFAULT_SIGNATURES_SRC = lib/abt_default_signatures.metta
+ABT_DEFAULT_SIGNATURES_BLOB = src/abt_default_signatures_blob.h
+ABT_DEFAULT_SIGNATURES_BLOB_STAMP = $(BOOTSTRAP_TMPDIR)/abt_default_signatures_blob.$(BUILD_CANON).stamp
 
 all: $(BIN)
 	@echo "Built ./$(BIN) [BUILD=$(BUILD_CANON), runtime-stats=$(ENABLE_RUNTIME_STATS)]"
@@ -754,6 +772,75 @@ $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c s
 test-atom-deep-copy-iterative: $(ATOM_DEEP_COPY_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_DEEP_COPY_TEST_BIN))
 
+$(ABT_MM2_BOUNDARY_TEST_BIN): tests/test_abt_mm2_boundary.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c $(ABT_DEFAULT_SIGNATURES_BLOB) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_abt_mm2_boundary.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c $(LDFLAGS)
+
+test-abt-mm2-boundary: $(ABT_MM2_BOUNDARY_TEST_BIN)
+	@result=$$(./$(ABT_MM2_BOUNDARY_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTMM2BoundarySummary 10 10 0)')" -ne 1 ] || \
+	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: closed ABT/MM2/MORK boundary')" -ne 1 ]; then \
+		echo "FAIL: ABT/MM2/MORK boundary exact summary absent or duplicated"; \
+		exit 1; \
+	fi
+
+$(ABT_TEST_BIN): tests/test_abt.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c $(ABT_DEFAULT_SIGNATURES_BLOB) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_abt.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c $(LDFLAGS)
+
+runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-%: tests/test_abt.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c $(ABT_DEFAULT_SIGNATURES_BLOB) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_ABT_MUTATION=$* -o $@ tests/test_abt.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c $(LDFLAGS)
+
+test-abt-mutations: $(ABT_MUTATION_TEST_BINS)
+	@set -e; caught=0; \
+	for binary in $(ABT_MUTATION_TEST_BINS); do \
+		if "$$binary" >/dev/null 2>&1; then \
+			echo "FAIL: ABT mutation survived: $$binary"; exit 1; \
+		fi; \
+		echo "PASS: ABT mutation rejected: $$binary"; \
+		caught=$$((caught + 1)); \
+	done; \
+	echo "PASS: ABT mutation gate ($$caught/$(words $(ABT_MUTATION_TEST_BINS)))"
+
+test-abt-differential: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/check_abt_differential.py "$(CETTA_SCRIPT_BIN)"
+
+test-abt-default-signatures: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/check_abt_default_signatures.py "$(CETTA_SCRIPT_BIN)"
+
+test-abt-integration-ledger:
+	@result=$$(python3 scripts/check_abt_integration_status.py --mutation-suite 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTIntegrationLedgerSummary 3 3 0)')" -ne 1 ] || \
+	   [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTIntegrationLedgerMutationSummary 5 5 0)')" -ne 1 ]; then \
+		echo "FAIL: ABT integration-ledger exact summary absent or duplicated"; \
+		exit 1; \
+	fi
+
+test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-lib-parse-abt-bridge test-abt-integration-ledger
+	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 87 87 0)')" -ne 1 ] || \
+	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
+		echo "FAIL: ABT core exact summary absent or duplicated"; \
+		exit 1; \
+	fi
+
+$(ABT_BENCH_BIN): tests/bench_abt.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(ABT_DEFAULT_SIGNATURES_BLOB) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_abt.c src/symbol.c src/atom.c src/atom_blob.c src/abt.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+bench-abt: $(ABT_BENCH_BIN)
+	@result=$$(./$(ABT_BENCH_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fc '(ABTBenchSummary ')" -ne 1 ] || \
+	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: ABT balanced-tree performance smoke')" -ne 1 ]; then \
+		echo "FAIL: ABT benchmark exact summary absent or duplicated"; \
+		exit 1; \
+	fi
+
 runtime/bench_mork_bridge_add: tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_mork_bridge_add.c src/symbol.c src/atom.c src/match.c src/term_canon.c src/variant_shape.c src/mm2_lower.c src/term_universe.c src/mork_space_bridge_runtime.c $(LDFLAGS)
@@ -826,17 +913,17 @@ else
 endif
 
 $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
-$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
+$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/parser.c $(LDFLAGS)
 
 test-space-term-universe-membership: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN))
 
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/parser.c src/cetta_stdlib.c $(LDFLAGS)
 
 test-term-universe-store-abi:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -848,9 +935,9 @@ else
 endif
 
 $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
-$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c $(LDFLAGS)
 
 test-term-universe-backend-add-abi:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -861,9 +948,9 @@ else
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-backend-primary-destructive-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -873,9 +960,9 @@ else
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary destructive ABI,$@)
 endif
 
-$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-backend-primary-replace-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -885,9 +972,9 @@ else
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary replace ABI,$@)
 endif
 
-$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/grounded.c src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/match.c src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c src/parser.c src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 test-pathmap-typed-query-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -900,7 +987,7 @@ endif
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
-DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) $(FALLBACK_EVAL_TEST_OBJ:.o=.d) $(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d)
+DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) $(FALLBACK_EVAL_TEST_OBJ:.o=.d) $(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d)
 
 -include $(DEPS)
 
@@ -987,6 +1074,37 @@ $(STDLIB_BLOB_STAMP): $(STAGE0_BIN) $(STDLIB_SRC)
 	touch "$@"
 endif
 
+# The same importable MeTTa equation is compiled into a small native atom blob.
+$(ABT_DEFAULT_SIGNATURES_BLOB): $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP)
+
+ifeq ($(TSAN_ENABLED),1)
+$(ABT_DEFAULT_SIGNATURES_BLOB_STAMP): $(ABT_DEFAULT_SIGNATURES_SRC)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@if [ ! -s "$(ABT_DEFAULT_SIGNATURES_BLOB)" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 $(ABT_DEFAULT_SIGNATURES_BLOB); \
+	fi
+	@touch "$@"
+else
+$(ABT_DEFAULT_SIGNATURES_BLOB_STAMP): $(STAGE0_BIN) $(ABT_DEFAULT_SIGNATURES_SRC)
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@tmp_stage0=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.abt-signatures.XXXXXX"); \
+	tmp_raw=$$(mktemp "$(BOOTSTRAP_TMPDIR)/abt-default-signatures.raw.XXXXXX"); \
+	tmp_blob=$$(mktemp "$(BOOTSTRAP_TMPDIR)/abt-default-signatures.XXXXXX"); \
+	trap 'rm -f "$$tmp_stage0" "$$tmp_raw" "$$tmp_blob"' EXIT INT TERM; \
+	cp "$(STAGE0_BIN)" "$$tmp_stage0"; \
+	chmod +x "$$tmp_stage0"; \
+	if ! $(call cetta_exec,"$$tmp_stage0") --compile-stdlib $(ABT_DEFAULT_SIGNATURES_SRC) > "$$tmp_raw"; then \
+		exit 1; \
+	fi; \
+	sed 's/STDLIB_BLOB/ABT_DEFAULT_SIGNATURES_BLOB/g' "$$tmp_raw" > "$$tmp_blob"; \
+	if [ -f "$(ABT_DEFAULT_SIGNATURES_BLOB)" ] && cmp -s "$$tmp_blob" "$(ABT_DEFAULT_SIGNATURES_BLOB)"; then \
+		rm -f "$$tmp_blob"; \
+	else \
+		mv "$$tmp_blob" "$(ABT_DEFAULT_SIGNATURES_BLOB)"; \
+	fi; \
+	touch "$@"
+endif
+
 # Stage 2: full binary with precompiled stdlib
 $(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -1039,11 +1157,29 @@ $(PAYLOAD_MAP_CAPACITY_TEST_OBJ): $(PAYLOAD_MAP_CAPACITY_TEST_SRC) $(BUILD_CONFI
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
+$(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhocalc-abt-substitution.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
 # stdlib objects depend on the generated blob header
 src/cetta_stdlib.$(BUILD_OBJ_TAG).o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(STDLIB_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 src/cetta_stdlib.$(BUILD_OBJ_TAG).runtime-stats.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(STDLIB_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+# Native ABT objects depend on the blob generated from the importable equation.
+src/abt.$(BUILD_OBJ_TAG).o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SIGNATURES_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+src/abt.$(BUILD_OBJ_TAG).runtime-stats.o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SIGNATURES_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 %.$(BUILD_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
@@ -1067,10 +1203,10 @@ clean:
 			src/*.nogmp.o src/*.nogmp.d src/*.nogmp.stage0.o src/*.nogmp.stage0.d src/*.nogmp.runtime-stats.o src/*.nogmp.runtime-stats.d \
 			native/*.runtime-stats.o native/*.runtime-stats.d \
 			native/*.nogmp.o native/*.nogmp.d native/*.nogmp.stage0.o native/*.nogmp.stage0.d native/*.nogmp.runtime-stats.o native/*.nogmp.runtime-stats.d \
-		$(STDLIB_BLOB) runtime/bootstrap/mork-bridge.*.stamp \
+		$(STDLIB_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB) runtime/bootstrap/mork-bridge.*.stamp \
 		runtime/bootstrap/libcetta_space_bridge.*.a \
 		$(BUILD_CONFIG_HEADER) $(STAGE0_BUILD_CONFIG_HEADER) runtime/bootstrap/build_config.h runtime/bootstrap/build_config.*.h runtime/bootstrap/build_config.stage0.h runtime/bootstrap/build_config.stage0.*.h \
-		$(BUILD_CONFIG_STAMP) $(STAGE0_BUILD_CONFIG_STAMP) $(STDLIB_BLOB_STAMP) \
+		$(BUILD_CONFIG_STAMP) $(STAGE0_BUILD_CONFIG_STAMP) $(STDLIB_BLOB_STAMP) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) \
 		src/foreign.o src/foreign.d src/foreign.stage0.o src/foreign.stage0.d \
 		src/foreign_stub.o src/foreign_stub.d src/foreign_stub.stage0.o src/foreign_stub.stage0.d
 	rm -rf $(BOOTSTRAP_TMPDIR)/bridge-workspace.*
@@ -1287,7 +1423,7 @@ define reexec_pathmap_bridge_or_skip
 	fi
 endef
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-atom-deep-copy-iterative test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -1478,7 +1614,7 @@ test-rhocalc-cost-differential: $(BIN)
 		echo "SKIP: cost-rho differential harness (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
 	fi
 
-test-rhocalc: $(BIN)
+test-rhocalc: $(BIN) test-rhocalc-abt-substitution
 	@pass=0; fail=0; \
 	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
 		[ -f "$$f" ] || continue; \
@@ -2390,6 +2526,11 @@ test-lib-parse-bounded: $(BIN)
 		diff <(cat tests/test_lib_parse_binding_regression.expected) <(echo "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
+	if $(MAKE) -s test-lib-parse-abt-bridge; then \
+		pass=$$((pass + 1)); \
+	else \
+		fail=$$((fail + 1)); \
+	fi; \
 	if $(MAKE) -s test-lib-parse-shared-cert; then \
 		pass=$$((pass + 1)); \
 	else \
@@ -2413,6 +2554,18 @@ test-lib-parse-bounded: $(BIN)
 	echo "---"; \
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+
+test-lib-parse-abt-bridge: $(BIN)
+	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_abt_bridge.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	summary='(LibParseABTBridgeSummary 25 25 0 admitted 18 rejected 5 preserved 2)'; \
+	if [ "$$result" = "$$(cat tests/test_lib_parse_abt_bridge.expected)" ] && \
+	   [ "$$(printf '%s\n' "$$result" | grep -Fxc "$$summary")" -eq 1 ]; then \
+		echo "PASS: lib_parse ABT bridge (18 admitted, 5 rejected, 2 preserved)"; \
+	else \
+		echo "FAIL: lib_parse ABT bridge"; \
+		diff <(cat tests/test_lib_parse_abt_bridge.expected) <(echo "$$result") | head -20; \
+		exit 1; \
+	fi
 
 probe-lib-parse-metamath-frontier: $(BIN)
 	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_frontier.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
@@ -2851,10 +3004,106 @@ test-prime-variable-mutation: $(BIN)
 	if [ "$$baseline_probes" = "$$mutant_probes" ] || \
 	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(OpenExpected Established)' || \
 	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(UnconstrainedDeclaration Established)' || \
-	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(EscapedBinder Established)'; then \
-		echo "FAIL: variable-discipline mutation survived its three named probes"; exit 1; \
+	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(EscapedBinder Undetermined)'; then \
+		echo "FAIL: variable-discipline mutation survived or bypassed canonical scope"; exit 1; \
 	fi; \
-	echo "PASS: bind-and-discard/implicit-formation mutation is killed by three variable probes"
+	echo "PASS: bind-and-discard/implicit-formation mutation is killed; canonical scope independently blocks escape"
+
+test-prime-canonical-binder-mutation: $(BIN) $(PRIME_PACKAGE_VALIDATION_TEST_BIN)
+	@mutation_dir=runtime/prime-canonical-binder-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_canonical_binders.py \
+		src/prime_semantics.c "$$mutation_dir/prime_semantics.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/prime_semantics.c" \
+		-o "$$mutation_dir/prime_semantics.o" || exit 1; \
+	$(CC) $(PRIME_PACKAGE_VALIDATION_TEST_OBJ) \
+		$(filter-out src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(PRIME_PACKAGE_VALIDATION_TEST_LINK_OBJ)) \
+		"$$mutation_dir/prime_semantics.o" \
+		-o "$$mutation_dir/test-captured-free-name" $(LDFLAGS) || exit 1; \
+	baseline=$$("$(PRIME_PACKAGE_VALIDATION_TEST_BIN)" 2>&1); baseline_rc=$$?; \
+	mutant=$$("$$mutation_dir/test-captured-free-name" 2>&1); mutant_rc=$$?; \
+	if [ "$$baseline_rc" -ne 0 ] || \
+	   [ "$$mutant_rc" -eq 0 ] || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'free same-spelling variable was captured'; then \
+		printf '%s\n' "baseline: $$baseline" "mutant: $$mutant"; \
+		echo "FAIL: canonical-binder capture mutation survived"; exit 1; \
+	fi; \
+	echo "PASS: canonical-binder mutation is killed by the free same-spelling capture falsifier"
+
+test-prime-abt-chain-mutation: $(BIN)
+	@mutation_dir=runtime/prime-abt-chain-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_abt_chain.py \
+		src/eval.c "$$mutation_dir/eval.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/eval.c" \
+		-o "$$mutation_dir/eval.o" || exit 1; \
+	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/eval.o" -o "$$mutation_dir/cetta-chain-capture" \
+		$(LDFLAGS) || exit 1; \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/abt_chain_scope.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/prime/conformance/abt_chain_scope.expected)" ]; then \
+		echo "FAIL: Prime ABT chain mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-chain-capture" --lang prime \
+		tests/prime/conformance/abt_chain_scope.metta 2>&1); \
+	if [ "$$mutant" = "$$baseline" ] || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'Expected: [(pair b)]' || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq '(chain b a (pair a))'; then \
+		printf '%s\n' "$$mutant" | tail -20; \
+		echo "FAIL: Prime ABT chain shadowing mutation survived"; exit 1; \
+	fi; \
+	echo "PASS: Prime ABT chain mutation is killed by lexical shadowing"
+
+test-prime-abt-let-mutation: $(BIN)
+	@mutation_dir=runtime/prime-abt-let-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_abt_let.py \
+		src/eval.c "$$mutation_dir/eval.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/eval.c" \
+		-o "$$mutation_dir/eval.o" || exit 1; \
+	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/eval.o" -o "$$mutation_dir/cetta-let-order" \
+		$(LDFLAGS) || exit 1; \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/abt_let_scope.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/prime/conformance/abt_let_scope.expected)" ]; then \
+		echo "FAIL: Prime ABT let mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-let-order" --lang prime \
+		tests/prime/conformance/abt_let_scope.metta 2>&1); \
+	if [ "$$mutant" = "$$baseline" ] || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'Expected: [(got a b), (got a b)]' || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'Got: [(got b a), (got b a)]'; then \
+		printf '%s\n' "$$mutant" | tail -24; \
+		echo "FAIL: Prime ABT let slot-order mutation survived"; exit 1; \
+	fi; \
+	echo "PASS: Prime ABT let mutation is killed by positional slot ordering"
+
+test-prime-abt-sealed-mutation: $(BIN)
+	@mutation_dir=runtime/prime-abt-sealed-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_abt_sealed.py \
+		src/match.c "$$mutation_dir/match.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/match.c" \
+		-o "$$mutation_dir/match.o" || exit 1; \
+	$(CC) $(filter-out src/match.$(BUILD_OBJ_TAG).o src/match.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/match.o" -o "$$mutation_dir/cetta-sealed-ignore" \
+		$(LDFLAGS) || exit 1; \
+	baseline=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/abt_sealed_boundary.metta 2>&1); \
+	if [ "$$baseline" != "$$(cat tests/prime/conformance/abt_sealed_boundary.expected)" ]; then \
+		echo "FAIL: Prime ABT sealed mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$("$$mutation_dir/cetta-sealed-ignore" --lang prime \
+		tests/prime/conformance/abt_sealed_boundary.metta 2>&1); \
+	if [ "$$mutant" = "$$baseline" ] || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'Expected: [(pair True False)]' || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'Got: [(pair False False)]'; then \
+		printf '%s\n' "$$mutant" | tail -24; \
+		echo "FAIL: Prime ABT sealed ignore-list mutation survived"; exit 1; \
+	fi; \
+	echo "PASS: Prime ABT sealed mutation is killed by exclusion identity"
 
 test-prime-applicability-capacity-mutation: $(BIN)
 	@mutation_dir=runtime/prime-applicability-capacity-mutation; \
@@ -2954,6 +3203,10 @@ test-prime-all: test-prime test-prime-crossdialect \
 	test-prime-completion-mutation \
 	test-prime-delayed-ambiguity-mutation \
 	test-prime-variable-mutation \
+	test-prime-canonical-binder-mutation \
+	test-prime-abt-chain-mutation \
+	test-prime-abt-let-mutation \
+	test-prime-abt-sealed-mutation \
 	test-prime-applicability-capacity-mutation \
 	test-prime-type-capacity-mutation
 	@echo "PASS: full Prime correctness gate"
@@ -3818,6 +4071,15 @@ test-fallback-eval-session: $(FALLBACK_EVAL_TEST_BIN)
 
 test-rhometta-payload-map-capacity-c: $(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 	@./$(PAYLOAD_MAP_CAPACITY_TEST_BIN)
+
+test-rhocalc-abt-substitution: $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN)
+	@result=$$(./$(RHOCALC_ABT_SUBSTITUTION_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(RhoABTSubstitutionSummary 1 1 0)')" -ne 1 ] || \
+	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: nameful rho substitution agrees with canonical ABT substitution')" -ne 1 ]; then \
+		echo "FAIL: rho/ABT substitution correspondence exact summary absent or duplicated"; \
+		exit 1; \
+	fi
 
 test-import-modes: $(BIN)
 	@default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
@@ -5118,8 +5380,9 @@ refresh-he-matrices:
 	@echo "refreshed HE runtime parity matrices"
 
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
-.PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
+.PHONY: test-atom-deep-copy-iterative test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger bench-abt bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
+.PHONY: test-lib-parse-abt-bridge

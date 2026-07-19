@@ -10,6 +10,20 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
+/* Cycle-safety ownership is intentionally split by representation:
+ *
+ * - bindings_has_loop rejects cycles in the metavariable substitution graph;
+ * - bindings_dereference_limit bounds variable-only graph walks by the size of
+ *   that graph, catching recurrence without imposing a semantic depth budget;
+ * - MatchPathSet rejects recurrence on the active structural-match path while
+ *   permitting shared finite DAG subterms;
+ * - the object-binder ABT traversals in abt.c reject cyclic term graphs and
+ *   enforce de Bruijn scope, but do not own metavariable substitutions.
+ *
+ * These guards cover different graphs and are not interchangeable.  Removing
+ * one requires a falsifier showing that another guard covers the same graph.
+ */
+
 #define BINDINGS_MIN_CAPACITY 8
 #define BINDINGS_SEEN_STACK_CAP 32
 #define BINDINGS_TEMP_STACK_CAP 32
@@ -1746,28 +1760,139 @@ static bool var_id_set_contains(const VarIdSet *set, VarId id) {
     return false;
 }
 
-static void var_id_set_add(VarIdSet *set, VarId id) {
+static bool var_id_set_add(VarIdSet *set, VarId id) {
     if (var_id_set_contains(set, id))
-        return;
+        return true;
     if (set->len >= set->cap) {
-        set->cap = set->cap ? set->cap * 2 : 8;
-        set->items = cetta_realloc(set->items, sizeof(VarId) * set->cap);
+        uint32_t next_cap = set->cap ? set->cap * 2u : 8u;
+        if (next_cap < set->cap ||
+            (size_t)next_cap > SIZE_MAX / sizeof(*set->items))
+            return false;
+        set->items = cetta_realloc(
+            set->items, sizeof(*set->items) * (size_t)next_cap);
+        set->cap = next_cap;
     }
     set->items[set->len++] = id;
+    return true;
 }
 
-static void collect_var_ids(Atom *atom, VarIdSet *set) {
-    switch (atom->kind) {
-    case ATOM_VAR:
-        var_id_set_add(set, atom->var_id);
-        return;
-    case ATOM_EXPR:
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++)
-            collect_var_ids(atom->expr.elems[i], set);
-        return;
-    default:
-        return;
+typedef enum {
+    RENAME_WALK_ENTER,
+    RENAME_WALK_LEAVE,
+} RenameWalkKind;
+
+typedef struct {
+    RenameWalkKind kind;
+    Atom *atom;
+} RenameWalkTask;
+
+typedef struct {
+    RenameWalkTask inline_tasks[64];
+    RenameWalkTask *tasks;
+    size_t len;
+    size_t cap;
+} RenameWalkStack;
+
+static void rename_walk_stack_init(RenameWalkStack *stack) {
+    stack->tasks = stack->inline_tasks;
+    stack->len = 0u;
+    stack->cap = sizeof(stack->inline_tasks) / sizeof(stack->inline_tasks[0]);
+}
+
+static void rename_walk_stack_free(RenameWalkStack *stack) {
+    if (stack->tasks != stack->inline_tasks)
+        free(stack->tasks);
+}
+
+static bool rename_walk_stack_push(RenameWalkStack *stack,
+                                   RenameWalkTask task) {
+    if (stack->len == stack->cap) {
+        if (stack->cap > SIZE_MAX / 2u ||
+            stack->cap * 2u > SIZE_MAX / sizeof(*stack->tasks))
+            return false;
+        size_t next_cap = stack->cap * 2u;
+        if (stack->tasks == stack->inline_tasks) {
+            RenameWalkTask *next = cetta_malloc(
+                sizeof(*next) * next_cap);
+            memcpy(next, stack->inline_tasks,
+                   sizeof(*next) * stack->len);
+            stack->tasks = next;
+        } else {
+            stack->tasks = cetta_realloc(
+                stack->tasks, sizeof(*stack->tasks) * next_cap);
+        }
+        stack->cap = next_cap;
     }
+    stack->tasks[stack->len++] = task;
+    return true;
+}
+
+/* These addresses are private traversal states, never runtime atoms. */
+static Atom g_rename_walk_active;
+static Atom g_rename_walk_complete;
+
+static bool collect_var_ids(Atom *root, VarIdSet *set) {
+    if (!root || !set)
+        return false;
+    RenameWalkStack stack;
+    FreshenEpochMemo states;
+    rename_walk_stack_init(&stack);
+    freshen_epoch_memo_init(&states);
+    if (!rename_walk_stack_push(
+            &stack, (RenameWalkTask){RENAME_WALK_ENTER, root}))
+        goto fail;
+    while (stack.len > 0u) {
+        RenameWalkTask task = stack.tasks[--stack.len];
+        Atom *atom = task.atom;
+        if (!atom)
+            goto fail;
+        if (!atom_has_vars(atom))
+            continue;
+        if (task.kind == RENAME_WALK_LEAVE) {
+            if (!freshen_epoch_memo_store(
+                    &states, atom, &g_rename_walk_complete))
+                goto fail;
+            continue;
+        }
+        Atom *state = freshen_epoch_memo_lookup(&states, atom);
+        if (state == &g_rename_walk_active)
+            goto fail;
+        if (state == &g_rename_walk_complete)
+            continue;
+        if (!freshen_epoch_memo_store(
+                &states, atom, &g_rename_walk_active))
+            goto fail;
+        if (atom->kind == ATOM_VAR) {
+            if (!var_id_set_add(set, atom->var_id) ||
+                !freshen_epoch_memo_store(
+                    &states, atom, &g_rename_walk_complete))
+                goto fail;
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR) {
+            if (!freshen_epoch_memo_store(
+                    &states, atom, &g_rename_walk_complete))
+                goto fail;
+            continue;
+        }
+        if (!rename_walk_stack_push(
+                &stack, (RenameWalkTask){RENAME_WALK_LEAVE, atom}))
+            goto fail;
+        for (CettaExprIndex i = atom->expr.len; i > 0u; i--)
+            if (!rename_walk_stack_push(
+                    &stack,
+                    (RenameWalkTask){RENAME_WALK_ENTER,
+                                     atom->expr.elems[i - 1u]}))
+                goto fail;
+    }
+    freshen_epoch_memo_free(&states);
+    rename_walk_stack_free(&stack);
+    return true;
+
+fail:
+    freshen_epoch_memo_free(&states);
+    rename_walk_stack_free(&stack);
+    return false;
 }
 
 static void rename_var_map_init(RenameVarMap *map) {
@@ -1795,8 +1920,13 @@ static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, Atom *var) {
     uint32_t suffix = fresh_var_suffix();
     Atom *fresh = atom_var_with_spelling(a, var->sym_id, var_epoch_id(var->var_id, suffix));
     if (map->len >= map->cap) {
-        map->cap = map->cap ? map->cap * 2 : 8;
-        map->items = cetta_realloc(map->items, sizeof(RenameVarEntry) * map->cap);
+        uint32_t next_cap = map->cap ? map->cap * 2u : 8u;
+        if (next_cap < map->cap ||
+            (size_t)next_cap > SIZE_MAX / sizeof(*map->items))
+            return NULL;
+        map->items = cetta_realloc(
+            map->items, sizeof(*map->items) * (size_t)next_cap);
+        map->cap = next_cap;
     }
     map->items[map->len].id = var->var_id;
     map->items[map->len].mapped = fresh;
@@ -1804,37 +1934,153 @@ static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, Atom *var) {
     return fresh;
 }
 
-static Atom *rename_vars_except_rec(Arena *a, Atom *atom,
-                                    const VarIdSet *ignore,
-                                    RenameVarMap *map) {
-    switch (atom->kind) {
-    case ATOM_VAR: {
-        if (var_id_set_contains(ignore, atom->var_id))
-            return atom;
-        Atom *mapped = rename_var_map_lookup(map, atom->var_id);
-        if (mapped)
-            return mapped;
-        return rename_var_map_add_fresh(map, a, atom);
-    }
-    case ATOM_EXPR: {
-        Atom **new_elems = NULL;
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            Atom *next = rename_vars_except_rec(a, atom->expr.elems[i], ignore, map);
-            if (!new_elems && next != atom->expr.elems[i]) {
-                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                for (CettaExprIndex j = 0; j < i; j++)
-                    new_elems[j] = atom->expr.elems[j];
-            }
-            if (new_elems)
-                new_elems[i] = next;
+typedef enum {
+    RENAME_VARS_VISIT,
+    RENAME_VARS_BUILD,
+} RenameVarsTaskKind;
+
+typedef struct {
+    RenameVarsTaskKind kind;
+    Atom *source;
+    Atom **destination;
+    Atom **children;
+} RenameVarsTask;
+
+typedef struct {
+    RenameVarsTask inline_tasks[64];
+    RenameVarsTask *tasks;
+    size_t len;
+    size_t cap;
+} RenameVarsTaskStack;
+
+static void rename_vars_task_stack_init(RenameVarsTaskStack *stack) {
+    stack->tasks = stack->inline_tasks;
+    stack->len = 0u;
+    stack->cap = sizeof(stack->inline_tasks) / sizeof(stack->inline_tasks[0]);
+}
+
+static void rename_vars_task_stack_free(RenameVarsTaskStack *stack) {
+    if (stack->tasks != stack->inline_tasks)
+        free(stack->tasks);
+}
+
+static bool rename_vars_task_stack_push(RenameVarsTaskStack *stack,
+                                        RenameVarsTask task) {
+    if (stack->len == stack->cap) {
+        if (stack->cap > SIZE_MAX / 2u ||
+            stack->cap * 2u > SIZE_MAX / sizeof(*stack->tasks))
+            return false;
+        size_t next_cap = stack->cap * 2u;
+        if (stack->tasks == stack->inline_tasks) {
+            RenameVarsTask *next = cetta_malloc(
+                sizeof(*next) * next_cap);
+            memcpy(next, stack->inline_tasks,
+                   sizeof(*next) * stack->len);
+            stack->tasks = next;
+        } else {
+            stack->tasks = cetta_realloc(
+                stack->tasks, sizeof(*stack->tasks) * next_cap);
         }
-        if (!new_elems)
-            return atom;
-        return atom_expr(a, new_elems, atom->expr.len);
+        stack->cap = next_cap;
     }
-    default:
-        return atom;
+    stack->tasks[stack->len++] = task;
+    return true;
+}
+
+static Atom *rename_vars_except_iterative(Arena *a, Atom *root,
+                                          const VarIdSet *ignore,
+                                          RenameVarMap *map) {
+    Atom *result = NULL;
+    RenameVarsTaskStack stack;
+    FreshenEpochMemo memo;
+    rename_vars_task_stack_init(&stack);
+    freshen_epoch_memo_init(&memo);
+    if (!rename_vars_task_stack_push(
+            &stack,
+            (RenameVarsTask){RENAME_VARS_VISIT, root, &result, NULL}))
+        goto fail;
+    while (stack.len > 0u) {
+        RenameVarsTask task = stack.tasks[--stack.len];
+        Atom *atom = task.source;
+        if (!atom || !task.destination)
+            goto fail;
+        if (task.kind == RENAME_VARS_BUILD) {
+            bool unchanged = true;
+            for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+                if (!task.children[i])
+                    goto fail;
+                if (task.children[i] != atom->expr.elems[i])
+                    unchanged = false;
+            }
+            Atom *built = unchanged
+                ? atom
+                : atom_expr(a, task.children, atom->expr.len);
+            *task.destination = built;
+            if (!freshen_epoch_memo_store(&memo, atom, built))
+                goto fail;
+            continue;
+        }
+        if (!atom_has_vars(atom)) {
+            *task.destination = atom;
+            continue;
+        }
+        Atom *memoized = freshen_epoch_memo_lookup(&memo, atom);
+        if (memoized == &g_rename_walk_active)
+            goto fail;
+        if (memoized) {
+            *task.destination = memoized;
+            continue;
+        }
+        if (atom->kind == ATOM_VAR) {
+            Atom *renamed = NULL;
+            if (var_id_set_contains(ignore, atom->var_id)) {
+                renamed = atom;
+            } else {
+                renamed = rename_var_map_lookup(map, atom->var_id);
+                if (!renamed)
+                    renamed = rename_var_map_add_fresh(map, a, atom);
+            }
+            if (!renamed ||
+                !freshen_epoch_memo_store(&memo, atom, renamed))
+                goto fail;
+            *task.destination = renamed;
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR) {
+            *task.destination = atom;
+            if (!freshen_epoch_memo_store(&memo, atom, atom))
+                goto fail;
+            continue;
+        }
+        if (!cetta_expr_len_mul_fits_size(
+                atom->expr.len, sizeof(Atom *)) ||
+            !freshen_epoch_memo_store(
+                &memo, atom, &g_rename_walk_active))
+            goto fail;
+        Atom **children = atom->expr.len
+            ? arena_alloc(a, sizeof(*children) * (size_t)atom->expr.len)
+            : NULL;
+        if (!rename_vars_task_stack_push(
+                &stack,
+                (RenameVarsTask){RENAME_VARS_BUILD, atom,
+                                 task.destination, children}))
+            goto fail;
+        for (CettaExprIndex i = atom->expr.len; i > 0u; i--)
+            if (!rename_vars_task_stack_push(
+                    &stack,
+                    (RenameVarsTask){RENAME_VARS_VISIT,
+                                     atom->expr.elems[i - 1u],
+                                     &children[i - 1u], NULL}))
+                goto fail;
     }
+    freshen_epoch_memo_free(&memo);
+    rename_vars_task_stack_free(&stack);
+    return result;
+
+fail:
+    freshen_epoch_memo_free(&memo);
+    rename_vars_task_stack_free(&stack);
+    return NULL;
 }
 
 Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
@@ -1864,12 +2110,15 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
 }
 
 Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec) {
+    if (!a || !atom || !ignore_spec)
+        return NULL;
     VarIdSet ignore;
     RenameVarMap map;
     var_id_set_init(&ignore);
     rename_var_map_init(&map);
-    collect_var_ids(ignore_spec, &ignore);
-    Atom *result = rename_vars_except_rec(a, atom, &ignore, &map);
+    Atom *result = collect_var_ids(ignore_spec, &ignore)
+        ? rename_vars_except_iterative(a, atom, &ignore, &map)
+        : NULL;
     rename_var_map_free(&map);
     var_id_set_free(&ignore);
     return result;

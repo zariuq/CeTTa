@@ -35,6 +35,10 @@ tests/he_e1_kb_write.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_e2_states.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_e3_match_states.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_g1_docs.metta	he	metta	he-extended	main	native	test	golden	-
+tests/prime/conformance/abt_chain_scope.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/abt_let_scope.metta	prime	metta		any	native	test-prime	golden	Prime provisional ABT let-scope evidence regression
+tests/prime/conformance/abt_sealed_boundary.metta	prime	metta		any	native	test-prime	golden	Prime derived ABT sealed-boundary evidence regression
+tests/prime/conformance/canonical_binders.metta	prime	metta		any	native	test-prime	golden	Prime derived canonical-binder evidence regression
 tests/prime/conformance/language_identity.metta	prime	metta		any	native	test-profiles	property	Prime language-identity side of the independently versioned lane boundary
 tests/prime/conformance/language_identity.metta	he	metta	he-prime	main	native	test-profiles	property	HE-prime inert-syntax side of the independently versioned lane boundary
 tests/prime/conformance/occurs_check.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -271,6 +275,7 @@ tests/test_isinf_math_bad_type.metta	he	metta	he-extended	main	native	test	golde
 tests/test_isnan_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let_star_error_short_circuit.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lib_parse_abt_bridge.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lib_parse_binding_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lib_parse_metamath_a1_block_pair_db_v0.metta	he	metta	he-extended	main	native	test-heavy	property	assertion-only property without golden oracle
 tests/test_lib_parse_metamath_a1_db_v0.metta	he	metta	he-extended	main	native	test-heavy	golden	heavy backend golden regression
