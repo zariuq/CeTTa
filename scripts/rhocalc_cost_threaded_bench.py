@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure the public Cost-Rho CLI across sequential and threaded execution."""
+"""Measure Cost-Rho while validating designated funded residuals."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rhocalc_bench_provenance import PROVENANCE_FIELDS, benchmark_provenance
+from rhocalc_paired_samples import collect_interleaved
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,10 @@ def independent_reactions(width: int) -> Workload:
         expression="(rho:cost:par " + " ".join(parts) + ")",
         reactions=width,
         expected_purses=2 * width,
-        note="independent funded reactions; exposes useful cost-wave parallelism",
+        note=(
+            "independent funded reactions; validates the funded residual; "
+            "causal-event agreement is tested separately"
+        ),
     )
 
 
@@ -86,7 +90,10 @@ def shared_purse_reactions(width: int) -> Workload:
         expression="(rho:cost:par " + " ".join(parts) + ")",
         reactions=width,
         expected_purses=2,
-        note="one funding pair is shared by every reaction; claims must serialize",
+        note=(
+            "one funding pair is shared by every reaction; validates the funded "
+            "residual under serialized claims; causal-event agreement is tested separately"
+        ),
     )
 
 
@@ -145,7 +152,7 @@ def validate(workload: Workload, result: RunResult,
     if any(fragment in result.residual for fragment in forbidden):
         return False, "a redex or funded token survived the completed run"
     if baseline is not None and result.residual != baseline:
-        return False, "threaded and sequential canonical residuals differ"
+        return False, "funded residual differs from this workload's sequential reference"
     return True, ""
 
 
@@ -153,10 +160,15 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Measure the public --lang rhocalc --profile cost executor while "
-            "checking sequential/threaded residual agreement."
+            "validating the designated workloads' funded residuals. Causal-event "
+            "agreement is a separate differential gate."
         )
     )
     parser.add_argument("bin_path")
+    parser.add_argument(
+        "--baseline-bin",
+        help="measure a pinned baseline binary in alternating sample order",
+    )
     parser.add_argument(
         "--mode", choices=["quick", "standard", "heavy"], default="quick"
     )
@@ -190,6 +202,9 @@ def main(argv: list[str]) -> int:
     spill_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
     provenance = benchmark_provenance(args.bin_path)
+    baseline_provenance = (
+        benchmark_provenance(args.baseline_bin) if args.baseline_bin else None
+    )
     ok = True
     independent_speedup = 1.0
 
@@ -197,6 +212,7 @@ def main(argv: list[str]) -> int:
     print(f"MODE {args.mode}")
     print(f"RUNS {args.runs}")
     print("THREADS " + ",".join(str(count) for count in thread_counts))
+    print("VALIDATION funded-residual (causal-event agreement is a separate gate)")
     print()
 
     for workload in workloads_for_mode(args.mode):
@@ -208,37 +224,67 @@ def main(argv: list[str]) -> int:
         print(f"INPUT {input_path}")
 
         baseline: str | None = None
+        baseline_reference: str | None = None
         sequential_median: float | None = None
         first_threaded_median: float | None = None
         for threads in thread_counts:
-            times: list[float] = []
-            failed = False
-            for _ in range(args.runs):
-                try:
-                    result = run_cost(
-                        args.bin_path, input_path, threads, args.timeout
-                    )
-                except (OSError, subprocess.TimeoutExpired) as exc:
-                    print(f"FAIL {workload.name} threads={threads}: {exc}")
-                    ok = False
-                    failed = True
-                    break
-                valid, detail = validate(workload, result, baseline)
+            def validate_result(role: str, result: RunResult) -> str | None:
+                nonlocal baseline, baseline_reference
+                reference = baseline if role == "candidate" else baseline_reference
+                valid, detail = validate(workload, result, reference)
                 if not valid:
-                    print(f"FAIL {workload.name} threads={threads}: {detail}")
-                    ok = False
-                    failed = True
-                    break
-                if baseline is None:
+                    return f"{role}: {detail}"
+                if role == "candidate" and baseline is None:
                     baseline = result.residual
-                times.append(result.elapsed)
-            if failed:
+                if role == "baseline" and baseline_reference is None:
+                    baseline_reference = result.residual
+                return None
+
+            samples = collect_interleaved(
+                args.runs,
+                lambda: run_cost(
+                    args.bin_path, input_path, threads, args.timeout
+                ),
+                (
+                    (
+                        lambda: run_cost(
+                            args.baseline_bin, input_path, threads, args.timeout
+                        )
+                    )
+                    if args.baseline_bin
+                    else None
+                ),
+                validate_result,
+            )
+            if samples.error is not None:
+                print(
+                    f"FAIL {workload.name} threads={threads}: "
+                    f"{samples.error}"
+                )
+                ok = False
                 break
+            if (
+                baseline_reference is not None
+                and baseline is not None
+                and baseline_reference != baseline
+            ):
+                print(
+                    f"FAIL {workload.name} threads={threads}: candidate and "
+                    "baseline funded residuals differ"
+                )
+                ok = False
+                break
+            times = [result.elapsed for result in samples.candidate]
+            baseline_times = [result.elapsed for result in samples.baseline]
             if not times:
                 continue
 
             median = statistics.median(times)
             best = min(times)
+            baseline_median = (
+                statistics.median(baseline_times) if baseline_times else None
+            )
+            baseline_best = min(baseline_times) if baseline_times else None
             if threads == 1:
                 sequential_median = median
             elif first_threaded_median is None:
@@ -275,6 +321,32 @@ def main(argv: list[str]) -> int:
                     else ""
                 ),
                 "samples_s": ";".join(f"{sample:.9f}" for sample in times),
+                "baseline_commit": (
+                    baseline_provenance["commit"] if baseline_provenance else ""
+                ),
+                "baseline_binary_sha256": (
+                    baseline_provenance["binary_sha256"]
+                    if baseline_provenance
+                    else ""
+                ),
+                "baseline_median_s": (
+                    f"{baseline_median:.9f}"
+                    if baseline_median is not None
+                    else ""
+                ),
+                "baseline_best_s": (
+                    f"{baseline_best:.9f}"
+                    if baseline_best is not None
+                    else ""
+                ),
+                "baseline_samples_s": ";".join(
+                    f"{sample:.9f}" for sample in baseline_times
+                ),
+                "candidate_vs_baseline_ratio": (
+                    f"{median / baseline_median:.6f}"
+                    if baseline_median is not None and baseline_median > 0
+                    else ""
+                ),
                 "note": workload.note,
             })
             summary = (
@@ -286,6 +358,11 @@ def main(argv: list[str]) -> int:
                 summary += (
                     " speedup_vs_first_parallel="
                     f"{speedup_vs_first_threaded:.3f}"
+                )
+            if baseline_median is not None:
+                summary += (
+                    f" baseline_median_s={baseline_median:.6f} "
+                    f"candidate_vs_baseline={median / baseline_median:.3f}"
                 )
             print(summary)
         print()
@@ -312,6 +389,12 @@ def main(argv: list[str]) -> int:
                 "speedup_vs_seq",
                 "speedup_vs_first_parallel",
                 "samples_s",
+                "baseline_commit",
+                "baseline_binary_sha256",
+                "baseline_median_s",
+                "baseline_best_s",
+                "baseline_samples_s",
+                "candidate_vs_baseline_ratio",
                 "note",
             ]
             writer = csv.DictWriter(handle, fieldnames=fieldnames)

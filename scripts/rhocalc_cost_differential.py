@@ -893,6 +893,28 @@ def run_receipt_replay(
     labels.append("tamper:residual")
     expected.append("rejected")
 
+    # A top-level bound index is raw syntax but not a scoped Cost-Rho term.
+    # Pair it with a self-consistent empty receipt/residual so rejection cannot
+    # be attributed merely to an unrelated event or residual mismatch.
+    malformed_scope_term = drop(bvar(0))
+    malformed_scope_result = node(
+        "causal-prefix",
+        [
+            symbol("quiescent"),
+            node("receipt", []),
+            malformed_scope_term,
+        ],
+    )
+    requests.append(
+        {
+            "schema": RECEIPT_REPLAY_SCHEMA,
+            "term": malformed_scope_term,
+            "result": malformed_scope_result,
+        }
+    )
+    labels.append("malformed-scope:source")
+    expected.append("rejected")
+
     env = os.environ.copy()
     env["LAKE_JOBS"] = "1"
     env["LEAN_NUM_THREADS"] = "1"
@@ -1052,7 +1074,7 @@ def main() -> int:
         f"PASS: {len(cases)} bounded cost-rho CeTTa/Lean cases; "
         f"{len(cases)} threaded/sequential prefix cases; "
         f"{replay_count} compiled-C receipts replayed by Lean; "
-        "2 tampered receipts rejected; "
+        "2 tampered receipts and 1 malformed-scope receipt rejected; "
         f"{branch_count} exhaustive/threaded branch outcome sets; "
         f"{len(cases)}/{len(cases)} theorem precondition records accepted; "
         f"{boundary_exclusions} out-of-fragment boundary case rejected; "
