@@ -128,7 +128,9 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
 
 /* Rename all variables in atom except the variables mentioned anywhere inside
    `ignore_spec`. Non-ignored variables are freshened consistently per original
-   name. Returns new arena-allocated atom, or the original atom if unchanged. */
+   identity. Canonical ABT `(Var k)` expressions contain no metavariables and
+   remain inert. Returns a new arena-allocated atom, the original atom if
+   unchanged, or NULL for a malformed cyclic variable-bearing graph. */
 Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);
 
 /* ── Bidirectional matching (match_atoms from HE spec) ─────────────────── */

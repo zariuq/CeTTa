@@ -19,6 +19,9 @@ bool prime_semantics_op_data_arg(const char *name, uint32_t arg_index)
  * NULL if the resulting schema does not validate. */
 Atom *prime_semantics_package_atom(Arena *a);
 bool prime_semantics_validate_package(Atom *package);
+/* Neutral named-telescope elaboration.  A non-NULL result is a closed
+ * canonical Pi/Var ABT, not evidence that the source type is well formed. */
+Atom *prime_semantics_canonicalize_type(Arena *a, Atom *type);
 bool prime_semantics_replay_conversion_certificate(
     Arena *a, Space *space, Atom *certificate, bool *equal_out);
 
