@@ -46,6 +46,11 @@ tests/prime/conformance/resource_policy.metta	prime	metta		any	native	test-prime
 tests/prime/conformance/syntax_algebra.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_explicit_control.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_explicit_control_negative.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_gc_lifetime.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_storage_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_agenda_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_direct_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_guided_inhabitation.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

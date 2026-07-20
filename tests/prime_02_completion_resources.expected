@@ -21,7 +21,7 @@
 [(DynamicTypeStorage Established)]
 [(DynamicApplicability Established)]
 [(DynamicApplicabilityDefault Established)]
-[(ResourceLedgerV1 (mode ExplicitProducerBound) (producer-initial 20000) (producer-spent 6) (producer-remaining 19994) (ObservedWork (formation 8) (synthesis 0) (normalization 0) (checking 14) (refinement 0) (evaluation 6)) (DeclaredLimits (structural-type-traversal DynamicWorklists) (type-storage Dynamic) (applicability-storage Dynamic) (evaluator-stack-budget-bytes RuntimeDeclared)) (Observed (max-depth 0) (type-storage-exhausted False) (evaluator-stack-exhausted False) (applicability-storage-exhausted False)))]
+[(ResourceLedgerV1 (mode ExplicitProducerBound) (producer-initial 20000) (producer-spent 3) (producer-remaining 19997) (ObservedWork (formation 8) (synthesis 0) (normalization 0) (checking 14) (refinement 0) (evaluation 3)) (DeclaredLimits (structural-type-traversal DynamicWorklists) (type-storage Dynamic) (applicability-storage Dynamic) (evaluator-stack-budget-bytes RuntimeDeclared)) (Observed (max-depth 0) (type-storage-exhausted False) (evaluator-stack-exhausted False) (applicability-storage-exhausted False)))]
 [(FormLow Established)]
 [(FormHigh Established)]
 [(SynthLow Established)]

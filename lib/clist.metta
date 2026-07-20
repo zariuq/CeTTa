@@ -6,7 +6,9 @@
 ;   from-list(to-list(cs)) = cs;
 ; and the bridge preserves append, reverse, length, map, filter, and foldl.
 ; first/rest are intentionally defined only for ClistCons. Bulk traversal may
-; use the expression-backed list lane without changing the denotation.
+; use the expression-backed list lane without changing the denotation. Length
+; and reverse force their next accumulators before tail-position continuation,
+; so the eager and call-by-need lanes realize the same strict folds.
 
 !(import! &self list)
 
@@ -45,11 +47,15 @@
    (let $rest (eval (clist:to-list $tail))
      (cons-atom $head $rest)))
 
-(= (clist:len ClistNil)
-   0)
+(= (clist:len $list)
+   (clist:len-acc $list 0))
 
-(= (clist:len (ClistCons $head $tail))
-   (+ 1 (clist:len $tail)))
+(= (clist:len-acc ClistNil $acc)
+   $acc)
+
+(= (clist:len-acc (ClistCons $head $tail) $acc)
+   (let $next (eval (+ $acc 1))
+     (eval (clist:len-acc $tail $next))))
 
 (= (clist:append ClistNil $rhs)
    $rhs)
@@ -65,7 +71,8 @@
    $acc)
 
 (= (clist:reverse-acc (ClistCons $head $tail) $acc)
-   (eval (clist:reverse-acc $tail (clist:cons $head $acc))))
+   (let $next (eval (clist:cons $head $acc))
+     (eval (clist:reverse-acc $tail $next))))
 
 (= (clist:map $list $var $body)
    (clist:from-list

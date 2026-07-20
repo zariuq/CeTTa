@@ -2,6 +2,7 @@
 #define CETTA_MATCH_H
 
 #include "atom.h"
+#include "prime_need.h"
 #include "term_universe.h"
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
@@ -30,6 +31,8 @@ typedef struct {
     uint32_t lookup_cache_indices[4];
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
+    /* This internal store is orthogonal to logical substitutions. */
+    PrimeNeedSnapshot prime_need;
 } Bindings;
 
 typedef struct {
@@ -44,6 +47,7 @@ typedef struct {
     uint32_t eq_len;
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
+    PrimeNeedSnapshot prime_need;
 } BindingsBuilderTrailEntry;
 
 typedef struct {
@@ -60,6 +64,8 @@ void      bindings_free(Bindings *b);
 bool      bindings_clone(Bindings *dst, const Bindings *src);
 bool      bindings_copy(Bindings *dst, const Bindings *src);
 bool      bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst);
+bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
+                                                   Arena *dst);
 size_t    bindings_entry_active_bytes(void);
 size_t    bindings_constraint_active_bytes(void);
 void      bindings_thread_cache_free(void);

@@ -1,10 +1,22 @@
 !(import! &self prime_metadata)
 
 !(bind! &@doc (new-space))
-!(assertEqual (install-doc-schema! &@doc) (SchemaInstalled @doc))
+; Effectful setup is executed as an action.  Prime Need does not use a test's
+; discarded return value as an implicit sequencing device; the resulting
+; policy data is asserted independently below.
+!(install-doc-schema! &@doc)
+!(recognize-doc-source! &@doc @(source package-alpha))
 !(assertEqual
-    (recognize-doc-source! &@doc @(source package-alpha))
-    (Recognized @(source package-alpha)))
+    (collapse (match &@doc (MetaKeyV1 @doc $fields) $fields))
+    ((FieldsV1
+       (FieldV1 subject Name)
+       (FieldV1 text String)
+       (FieldV1 source Name)
+       (FieldV1 span Span))))
+!(assertEqual
+    (collapse
+      (match &@doc (RecognizedSourceV1 $source) $source))
+    (@(source package-alpha)))
 
 (= (ordinary-result $x) (Ordinary $x))
 !(assertEqual (ordinary-result payload) (Ordinary payload))

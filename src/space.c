@@ -4098,6 +4098,28 @@ CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
     return query_equations_core(s, query, a, &sink);
 }
 
+CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
+                                QueryResultVisitor visitor, void *ctx) {
+    QueryResultSink sink;
+    QueryVisibleVarSet visible;
+    Atom *lhs = NULL;
+    Atom *rhs = NULL;
+    if (!equation || !query || !a || !visitor ||
+        !is_equation_atom(equation, &lhs, &rhs)) {
+        return 0;
+    }
+    query_visible_var_set_init(&visible);
+    if (!collect_query_visible_vars_rec(query, &visible)) {
+        query_visible_var_set_free(&visible);
+        return 0;
+    }
+    query_result_sink_init_visit(&sink, visitor, ctx);
+    (void)query_equation_emit_decoded_epoch(
+        lhs, rhs, query, &visible, a, fresh_var_suffix(), NULL, &sink);
+    query_visible_var_set_free(&visible);
+    return sink.emitted;
+}
+
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
     QueryResultSink sink;
     query_result_sink_init_collect(&sink, out);
