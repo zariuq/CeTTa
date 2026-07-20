@@ -145,13 +145,13 @@
   (@return "Sorted list of strings"))
 
 (@doc repr
-  (@desc "HE-compatible reader-style representation of one atom. Ordinary atoms are rendered as parser text; native handles are debug text and are not guaranteed to parse back.")
+  (@desc "Reader-style representation of one atom in the active language. Prime emits its compact syntax; HE retains its established syntax. Native handles are debug text and are not guaranteed to parse back.")
   (@params (
     (@param "Atom to render")))
   (@return "Textual representation of the atom"))
 
 (@doc parse
-  (@desc "Strict parser for one atom from a string. The string must contain exactly one atom, apart from surrounding whitespace or comments.")
+  (@desc "Strict parser for one atom in the active language. The string must contain exactly one atom, apart from surrounding whitespace or comments.")
   (@params (
     (@param "String containing the atom text")))
   (@return "Parsed atom"))

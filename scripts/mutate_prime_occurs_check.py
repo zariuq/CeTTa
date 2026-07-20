@@ -25,11 +25,21 @@ def main() -> int:
         match_source = Path(sys.argv[1]).read_text()
         match_source = replace_exact(
             match_source,
-            "    if (!bindings_add_inplace_internal(&next, var_id, spelling, val,\n"
+            "    if (!bindings_add_inplace_internal(&next, var_id, spelling, NULL, val,\n"
             "                                       true, false) ||\n"
             "        bindings_has_loop(&next)) {",
-            "    if (!bindings_add_inplace_internal(&next, var_id, spelling, val,\n"
+            "    if (!bindings_add_inplace_internal(&next, var_id, spelling, NULL, val,\n"
             "                                       true, false)) {",
+        )
+        match_source = replace_exact(
+            match_source,
+            "    if (!bindings_add_inplace_internal(\n"
+            "            &next, var->var_id, var->sym_id, var->name_key,\n"
+            "            val, true, false) ||\n"
+            "        bindings_has_loop(&next)) {",
+            "    if (!bindings_add_inplace_internal(\n"
+            "            &next, var->var_id, var->sym_id, var->name_key,\n"
+            "            val, true, false)) {",
         )
 
         he_source = Path(sys.argv[3]).read_text()

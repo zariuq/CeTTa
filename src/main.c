@@ -170,6 +170,7 @@ static bool display_var_collect_atom(CettaDisplayVarMap *map, Atom *atom) {
     case ATOM_SYMBOL:
         return true;
     case ATOM_VAR:
+        if (atom->name_key) return true;
         return display_var_map_push(map, atom->var_id, atom_name_cstr(atom));
     case ATOM_GROUNDED:
         if (atom->ground.gkind == GV_STATE) {
@@ -292,6 +293,9 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
         return atom_symbol(dst, name);
     }
     case ATOM_VAR: {
+        if (src->name_key)
+            return atom_var_with_presentation(
+                dst, SYMBOL_ID_NONE, src->name_key, src->var_id);
         const char *name = display_var_lookup(map, src->var_id);
         if (!name) name = atom_name_cstr(src);
         name = display_namespace_name(dst, name, pretty_namespaces);
@@ -1171,6 +1175,8 @@ typedef struct {
     bool registry_initialized;
     bool parser_rational_literals_set;
     bool parser_rational_literals_old;
+    bool parser_universal_names_set;
+    bool parser_universal_names_old;
 } CettaMainCleanup;
 
 static void cetta_main_cleanup_registry_spaces(Registry *registry, Space *root_space) {
@@ -1193,6 +1199,11 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     if (cleanup->parser_rational_literals_set) {
         parser_set_rational_literals_enabled(cleanup->parser_rational_literals_old);
         cleanup->parser_rational_literals_set = false;
+    }
+    if (cleanup->parser_universal_names_set) {
+        parser_set_universal_name_syntax_enabled(
+            cleanup->parser_universal_names_old);
+        cleanup->parser_universal_names_set = false;
     }
 
     if (cleanup->output_spool) {
@@ -1817,6 +1828,10 @@ int main(int argc, char **argv) {
         parser_set_rational_literals_enabled(
             !cetta_language_uses_rust_he_compat_semantics(lang->id, profile));
     cleanup.parser_rational_literals_set = true;
+    cleanup.parser_universal_names_old =
+        parser_set_universal_name_syntax_enabled(
+            lang->id == CETTA_LANGUAGE_PRIME);
+    cleanup.parser_universal_names_set = true;
 
     space_init_with_universe(&space, &libraries.term_universe);
     cleanup.space_initialized = true;
@@ -1880,6 +1895,12 @@ int main(int argc, char **argv) {
                     pi++;
                     continue;
                 }
+                AtomId exec_payload = CETTA_ATOM_ID_NONE;
+                if (parser_universal_name_syntax_enabled() &&
+                    parser_syn_exec_payload_id(&libraries.term_universe,
+                                               atom_ids[pi], &exec_payload)) {
+                    continue;
+                }
                 space_add_atom_id(&space, atom_ids[pi]);
             }
         }
@@ -1938,12 +1959,18 @@ int main(int argc, char **argv) {
 
         AtomId at_id = atom_ids[i];
 
-        /* ! prefix → evaluate and print */
-        if (atom_id_is_symbol_id(&libraries.term_universe, at_id,
-                                 g_builtin_syms.bang) &&
-            i + 1 < n) {
+        /* ! prefix and (syn:exec form) are the same source directive. */
+        bool compact_exec = atom_id_is_symbol_id(
+            &libraries.term_universe, at_id, g_builtin_syms.bang);
+        AtomId expanded_payload = CETTA_ATOM_ID_NONE;
+        bool expanded_exec = parser_universal_name_syntax_enabled() &&
+            parser_syn_exec_payload_id(&libraries.term_universe, at_id,
+                                       &expanded_payload);
+        if ((compact_exec && i + 1 < n) || expanded_exec) {
+            AtomId payload_id = expanded_exec
+                ? expanded_payload : atom_ids[i + 1];
             Atom *expr = term_universe_copy_atom(&libraries.term_universe, &arena,
-                                                 atom_ids[i + 1]);
+                                                 payload_id);
             ResultSet rs;
             if (!expr) {
                 fprintf(stderr, "error: could not decode top-level eval form\n");
@@ -1968,7 +1995,7 @@ int main(int argc, char **argv) {
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
             if (stop_after_error) break;
-            i += 2;
+            i += expanded_exec ? 1 : 2;
             continue;
         }
 

@@ -530,7 +530,7 @@ static Atom *payload_rebind_resources(Arena *a, Atom *atom) {
     if (atom->kind == ATOM_SYMBOL)
         return atom_symbol_id(a, atom->sym_id);
     if (atom->kind == ATOM_VAR)
-        return atom_var_with_spelling(a, atom->sym_id, atom->var_id);
+        return atom_var_like(a, atom, atom->var_id);
     if (atom->kind != ATOM_EXPR)
         return atom_deep_copy(a, atom);
     elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
@@ -1015,8 +1015,8 @@ static Atom *eval_minimal_foldl_llist(Arena *a, Atom *head, Atom **args,
 
         Atom *step_op = cetta_fold_bind_step_atom(
             &scratch, op_expr,
-            acc_var->sym_id, acc,
-            item_var->sym_id, cursor->expr.elems[1]);
+            acc_var, acc,
+            item_var, cursor->expr.elems[1]);
         ResultSet results;
         Atom *next = NULL;
         Atom *step_error = NULL;
@@ -1379,13 +1379,16 @@ static bool is_false_atom(Atom *a) {
 }
 
 static bool atom_is_registry_token(Atom *atom) {
-    return atom && atom->kind == ATOM_SYMBOL &&
-           symbol_bytes(g_symbols, atom->sym_id)[0] == '&';
+    if (!atom) return false;
+    if (atom->kind == ATOM_SYMBOL)
+        return symbol_bytes(g_symbols, atom->sym_id)[0] == '&';
+    Atom *name_key = NULL;
+    return registry_ref_name_key(atom, &name_key) && name_key;
 }
 
 static Atom *registry_lookup_atom(Atom *atom) {
     if (!g_registry || !atom_is_registry_token(atom)) return NULL;
-    return registry_lookup_id(g_registry, atom->sym_id);
+    return registry_lookup_ref(g_registry, atom);
 }
 
 static TermUniverse *eval_current_term_universe(void) {
@@ -1529,7 +1532,7 @@ static Atom *space_remove_compare_rewrite_var(Arena *dst, Atom *src_var,
     VarId base_id = (VarId)var_base_id(src_var->var_id);
     if (base_id == VAR_ID_NONE)
         return atom_deep_copy(dst, src_var);
-    return atom_var_with_spelling(dst, src_var->sym_id, base_id);
+    return atom_var_like(dst, src_var, base_id);
 }
 
 static Atom *space_remove_compare_atom(const Space *space, Arena *dst,
@@ -3258,6 +3261,7 @@ static Atom *result_eval_type_hint(Atom *declared_type, Atom *result_atom) {
 typedef struct {
     VarId var_id;
     SymbolId spelling;
+    Atom *name_key;
 } VisibleVarRef;
 
 typedef struct {
@@ -3445,15 +3449,18 @@ static bool free_var_set_reserve(FreeVarSet *set, CettaExprLen needed) {
     return true;
 }
 
-static bool free_var_set_add(FreeVarSet *set, VarId var_id, SymbolId spelling) {
+static bool free_var_set_add(FreeVarSet *set, Atom *var) {
+    if (!set || !var || var->kind != ATOM_VAR)
+        return false;
     for (CettaExprIndex i = 0; i < set->len; i++) {
-        if (set->items[i].var_id == var_id)
+        if (set->items[i].var_id == var->var_id)
             return true;
     }
     if (!free_var_set_reserve(set, set->len + 1))
         return false;
-    set->items[set->len].var_id = var_id;
-    set->items[set->len].spelling = spelling;
+    set->items[set->len].var_id = var->var_id;
+    set->items[set->len].spelling = var->sym_id;
+    set->items[set->len].name_key = var->name_key;
     set->len++;
     return true;
 }
@@ -3497,7 +3504,7 @@ static bool free_var_shape_set_reserve_paths(FreeVarShapeSet *set, CettaExprLen 
 static bool free_var_shape_set_add(FreeVarShapeSet *set, uint32_t base_id,
                                    SymbolId spelling) {
     for (CettaExprIndex i = 0; i < set->len; i++) {
-        if (set->items[i].base_id == base_id && set->items[i].spelling == spelling)
+        if (set->items[i].base_id == base_id)
             return true;
     }
     if (!free_var_shape_set_reserve(set, set->len + 1))
@@ -3551,8 +3558,7 @@ static bool free_var_shape_set_capture_paths_rec(Atom *atom,
         for (CettaExprIndex i = 0; i < shape->len; i++) {
             if (shape->items[i].path_offset != BODY_VISIBLE_PATH_UNSET)
                 continue;
-            if (shape->items[i].base_id == base_id &&
-                shape->items[i].spelling == atom->sym_id) {
+            if (shape->items[i].base_id == base_id) {
                 if (!free_var_shape_set_store_path(shape, i, path))
                     return false;
                 (*found_count)++;
@@ -3716,9 +3722,8 @@ static bool collect_body_visible_refs_for_shape_rec(Atom *atom,
     if (atom->kind == ATOM_VAR) {
         uint32_t base_id = var_base_id(atom->var_id);
         for (CettaExprIndex i = 0; i < shape->len; i++) {
-            if (shape->items[i].base_id == base_id &&
-                shape->items[i].spelling == atom->sym_id) {
-                return free_var_set_add(out, atom->var_id, atom->sym_id);
+            if (shape->items[i].base_id == base_id) {
+                return free_var_set_add(out, atom);
             }
         }
         return true;
@@ -3769,8 +3774,7 @@ collect_body_visible_refs_for_shape(Atom *body,
                 break;
             if (!cursor || cursor->kind != ATOM_VAR ||
                 var_base_id(cursor->var_id) != ref->base_id ||
-                cursor->sym_id != ref->spelling ||
-                !free_var_set_add(out, cursor->var_id, cursor->sym_id)) {
+                !free_var_set_add(out, cursor)) {
                 free_var_set_free(out);
                 have_paths = false;
                 break;
@@ -3857,7 +3861,7 @@ static bool collect_bound_pattern_ref_vars(Atom *atom,
     if (atom->kind == ATOM_VAR) {
         if (!bound_var_stack_contains(bound, atom->var_id))
             return true;
-        return free_var_set_add(free_vars, atom->var_id, atom->sym_id);
+        return free_var_set_add(free_vars, atom);
     }
     if (atom->kind != ATOM_EXPR)
         return true;
@@ -3872,7 +3876,7 @@ static bool collect_structural_vars_rec(Atom *atom, FreeVarSet *free_vars) {
     if (!atom)
         return true;
     if (atom->kind == ATOM_VAR)
-        return free_var_set_add(free_vars, atom->var_id, atom->sym_id);
+        return free_var_set_add(free_vars, atom);
     if (atom->kind != ATOM_EXPR)
         return true;
     for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
@@ -3893,7 +3897,7 @@ collect_external_pattern_visible_vars(Atom *atom,
     if (atom->kind == ATOM_VAR) {
         if (!bound_var_stack_contains(visible, atom->var_id))
             return true;
-        return free_var_set_add(free_vars, atom->var_id, atom->sym_id);
+        return free_var_set_add(free_vars, atom);
     }
     if (atom->kind != ATOM_EXPR)
         return true;
@@ -4218,7 +4222,7 @@ static bool collect_free_vars_rec(Atom *atom, BoundVarStack *bound, FreeVarSet *
     if (atom->kind == ATOM_VAR) {
         if (bound_var_stack_contains(bound, atom->var_id))
             return true;
-        return free_var_set_add(free_vars, atom->var_id, atom->sym_id);
+        return free_var_set_add(free_vars, atom);
     }
     if (atom->kind != ATOM_EXPR)
         return true;
@@ -4367,8 +4371,10 @@ bindings_resolve_body_visible_var(Arena *a, const Bindings *full,
         return bindings_apply_without_self((Bindings *)full, a, wanted->var_id, exact);
     }
 
-    Atom *slot_var =
-        atom_var_with_spelling(a, wanted->spelling, wanted->var_id);
+    Atom *slot_var = atom_var_with_presentation(
+        a, wanted->spelling, wanted->name_key, wanted->var_id);
+    if (!slot_var)
+        return NULL;
     Atom *resolved = bindings_apply_if_vars(full, a, slot_var);
     if (resolved != slot_var)
         return resolved;
@@ -4401,7 +4407,9 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
         bool used = false;
         for (uint32_t j = 0; j < body_vars.len; j++) {
             if (body_vars.items[j].var_id == full->entries[i].var_id ||
-                body_vars.items[j].spelling == full->entries[i].spelling) {
+                (!body_vars.items[j].name_key &&
+                 !full->entries[i].name_key &&
+                 body_vars.items[j].spelling == full->entries[i].spelling)) {
                 used = true;
                 break;
             }
@@ -4413,8 +4421,12 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
             ? bindings_apply_without_self((Bindings *)full, a,
                                           full->entries[i].var_id, val)
             : val;
-        if (!bindings_add_id(out, full->entries[i].var_id,
-                             full->entries[i].spelling, projected)) {
+        Atom *binding_var = binding_variable_atom(a, &full->entries[i]);
+        bool added = binding_var
+            ? bindings_add_var(out, binding_var, projected)
+            : bindings_add_id(out, full->entries[i].var_id,
+                              full->entries[i].spelling, projected);
+        if (!added) {
             free_var_set_free(&body_vars);
             bindings_free(out);
             return false;
@@ -7103,7 +7115,7 @@ static Atom *hyperpose_clone_atom_materialized(Arena *owner, Atom *src) {
     case ATOM_SYMBOL:
         return atom_symbol_id(owner, src->sym_id);
     case ATOM_VAR:
-        return atom_var_with_spelling(owner, src->sym_id, src->var_id);
+        return atom_var_like(owner, src, src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
@@ -7194,8 +7206,9 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
     if (src) {
         for (CettaCount i = 0; i < src->len; i++) {
             SymbolId key = src->entries[i].key;
+            const Atom *name_key = registry_entry_name_key(src, (uint32_t)i);
             Atom *value = src->entries[i].value;
-            if (key == SYMBOL_ID_NONE || !value)
+            if ((key == SYMBOL_ID_NONE && !name_key) || !value)
                 continue;
             if (key == g_builtin_syms.self)
                 saw_self = true;
@@ -7217,7 +7230,13 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
                 Atom *registry_space_atom = atom_space(owner, space_clone);
                 cetta_provenance_assert_not_transient(
                     registry_space_atom, "hyperpose.registry.space");
-                registry_bind_id(dst, key, registry_space_atom);
+                if (name_key) {
+                    if (!registry_bind_name(
+                            dst, (Atom *)name_key, registry_space_atom))
+                        return false;
+                } else {
+                    registry_bind_id(dst, key, registry_space_atom);
+                }
             } else {
                 Atom *cloned_value =
                     hyperpose_clone_atom_materialized(owner, value);
@@ -7225,7 +7244,13 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
                     return false;
                 cetta_provenance_assert_not_transient(
                     cloned_value, "hyperpose.registry.value");
-                registry_bind_id(dst, key, cloned_value);
+                if (name_key) {
+                    if (!registry_bind_name(
+                            dst, (Atom *)name_key, cloned_value))
+                        return false;
+                } else {
+                    registry_bind_id(dst, key, cloned_value);
+                }
             }
         }
     }
@@ -7833,15 +7858,15 @@ static bool collapse_direct_stream(Space *s, Arena *a, Atom *stream_expr, int fu
 
 static bool eval_bound_single_with_scratch(Space *s, Arena *a, Arena *scratch,
                                            Atom *call, Atom *expr,
-                                           SymbolId acc_spelling, Atom *acc_value,
-                                           SymbolId item_spelling, Atom *item_value,
+                                           Atom *acc_var, Atom *acc_value,
+                                           Atom *item_var, Atom *item_value,
                                            int fuel, const char *no_result_error,
                                            const char *multi_result_error,
                                            Atom **result_out, Atom **error_out) {
     ArenaMark scratch_mark = arena_mark(scratch);
     Atom *bound_atom = cetta_fold_bind_step_atom(scratch, expr,
-                                                 acc_spelling, acc_value,
-                                                 item_spelling, item_value);
+                                                 acc_var, acc_value,
+                                                 item_var, item_value);
     ResultBindSet results;
     rb_set_init(&results);
     metta_eval_bind(s, scratch, bound_atom, fuel, &results);
@@ -7879,8 +7904,8 @@ typedef struct {
     Arena stream_scratch;
     Atom *call;
     Atom *acc;
-    SymbolId acc_spelling;
-    SymbolId item_spelling;
+    Atom *acc_var;
+    Atom *item_var;
     Atom *step_expr;
     int fuel;
     OutcomeSet *os;
@@ -7897,8 +7922,8 @@ static bool reduce_stream_visit(Arena *work_a, Atom *item, const Bindings *env, 
     Atom *error = NULL;
     if (!eval_bound_single_with_scratch(reduce->s, reduce->a, &reduce->stream_scratch,
                                         reduce->call, reduce->step_expr,
-                                        reduce->acc_spelling, reduce->acc,
-                                        reduce->item_spelling, item,
+                                        reduce->acc_var, reduce->acc,
+                                        reduce->item_var, item,
                                         reduce->fuel,
                                         "ReduceStepNoResult",
                                         "ReduceStepMultipleResults",
@@ -7913,8 +7938,8 @@ static bool reduce_stream_visit(Arena *work_a, Atom *item, const Bindings *env, 
 
 static bool reduce_stream_results(Space *s, Arena *a, Arena *work_a, Atom *call,
                                   Atom *stream_expr, CettaSearchPolicyOrder order,
-                                  Atom *init, SymbolId acc_spelling,
-                                  SymbolId item_spelling, Atom *step_expr,
+                                  Atom *init, Atom *acc_var,
+                                  Atom *item_var, Atom *step_expr,
                                   int fuel, OutcomeSet *os) {
     Bindings _empty;
     bindings_init(&_empty);
@@ -7924,8 +7949,8 @@ static bool reduce_stream_results(Space *s, Arena *a, Arena *work_a, Atom *call,
         .a = a,
         .call = call,
         .acc = init,
-        .acc_spelling = acc_spelling,
-        .item_spelling = item_spelling,
+        .acc_var = acc_var,
+        .item_var = item_var,
         .step_expr = step_expr,
         .fuel = fuel,
         .os = os,
@@ -7953,8 +7978,8 @@ typedef struct {
     Arena stream_scratch;
     Atom *call;
     Atom *init;
-    SymbolId acc_spelling;
-    SymbolId item_spelling;
+    Atom *acc_var;
+    Atom *item_var;
     Atom *key_expr;
     Atom *step_expr;
     int fuel;
@@ -7974,8 +7999,8 @@ static bool fold_by_key_stream_visit(Arena *visit_a, Atom *item, const Bindings 
     Atom *error = NULL;
     if (!eval_bound_single_with_scratch(ctx->s, ctx->a, &ctx->stream_scratch,
                                         ctx->call, ctx->key_expr,
-                                        SYMBOL_ID_NONE, NULL,
-                                        ctx->item_spelling, item,
+                                        NULL, NULL,
+                                        ctx->item_var, item,
                                         ctx->fuel,
                                         "FoldByKeyKeyNoResult",
                                         "FoldByKeyKeyMultipleResults",
@@ -7993,8 +8018,8 @@ static bool fold_by_key_stream_visit(Arena *visit_a, Atom *item, const Bindings 
     error = NULL;
     if (!eval_bound_single_with_scratch(ctx->s, ctx->a, &ctx->stream_scratch,
                                         ctx->call, ctx->step_expr,
-                                        ctx->acc_spelling, current_acc,
-                                        ctx->item_spelling, item,
+                                        ctx->acc_var, current_acc,
+                                        ctx->item_var, item,
                                         ctx->fuel,
                                         "ReduceStepNoResult",
                                         "ReduceStepMultipleResults",
@@ -8011,8 +8036,8 @@ static __attribute__((unused)) bool
 fold_by_key_stream_results(Space *s, Arena *a, Arena *work_a,
                            Atom *call, Atom *stream_expr,
                            CettaSearchPolicyOrder order,
-                           Atom *init, SymbolId acc_spelling,
-                           SymbolId item_spelling, Atom *key_expr,
+                           Atom *init, Atom *acc_var,
+                           Atom *item_var, Atom *key_expr,
                            Atom *step_expr, int fuel,
                            OutcomeSet *os) {
     Bindings _empty;
@@ -8026,8 +8051,8 @@ fold_by_key_stream_results(Space *s, Arena *a, Arena *work_a,
         .a = a,
         .call = call,
         .init = init,
-        .acc_spelling = acc_spelling,
-        .item_spelling = item_spelling,
+        .acc_var = acc_var,
+        .item_var = item_var,
         .key_expr = key_expr,
         .step_expr = step_expr,
         .fuel = fuel,
@@ -11238,6 +11263,7 @@ static void eval_with_prefix_bindings(Space *s, Arena *a, Atom *type, Atom *atom
 typedef struct {
     VarId var_id;
     SymbolId spelling;
+    Atom *name_key;
 } MatchVisibleVarRef;
 
 typedef struct {
@@ -11250,6 +11276,7 @@ typedef struct {
     VarId hidden_var_id;
     VarId visible_var_id;
     SymbolId spelling;
+    Atom *name_key;
 } MatchVisibleAliasRef;
 
 typedef struct {
@@ -11287,16 +11314,18 @@ static bool match_visible_var_set_reserve(MatchVisibleVarSet *set,
     return true;
 }
 
-static bool match_visible_var_set_add(MatchVisibleVarSet *set, VarId var_id,
-                                      SymbolId spelling) {
+static bool match_visible_var_set_add(MatchVisibleVarSet *set, Atom *var) {
+    if (!set || !var || var->kind != ATOM_VAR)
+        return false;
     for (CettaExprIndex i = 0; i < set->len; i++) {
-        if (set->items[i].var_id == var_id)
+        if (set->items[i].var_id == var->var_id)
             return true;
     }
     if (!match_visible_var_set_reserve(set, set->len + 1))
         return false;
-    set->items[set->len].var_id = var_id;
-    set->items[set->len].spelling = spelling;
+    set->items[set->len].var_id = var->var_id;
+    set->items[set->len].spelling = var->sym_id;
+    set->items[set->len].name_key = var->name_key;
     set->len++;
     return true;
 }
@@ -11342,11 +11371,13 @@ static bool match_visible_alias_set_reserve(MatchVisibleAliasSet *set,
 static bool match_visible_alias_set_add(MatchVisibleAliasSet *set,
                                         VarId hidden_var_id,
                                         VarId visible_var_id,
-                                        SymbolId spelling) {
+                                        SymbolId spelling,
+                                        Atom *name_key) {
     for (CettaExprIndex i = 0; i < set->len; i++) {
         if (set->items[i].hidden_var_id == hidden_var_id) {
             set->items[i].visible_var_id = visible_var_id;
             set->items[i].spelling = spelling;
+            set->items[i].name_key = name_key;
             return true;
         }
     }
@@ -11355,6 +11386,7 @@ static bool match_visible_alias_set_add(MatchVisibleAliasSet *set,
     set->items[set->len].hidden_var_id = hidden_var_id;
     set->items[set->len].visible_var_id = visible_var_id;
     set->items[set->len].spelling = spelling;
+    set->items[set->len].name_key = name_key;
     set->len++;
     return true;
 }
@@ -11373,7 +11405,7 @@ static bool collect_match_visible_vars_rec(Atom *atom,
     if (!atom || !atom_has_vars(atom))
         return true;
     if (atom->kind == ATOM_VAR)
-        return match_visible_var_set_add(set, atom->var_id, atom->sym_id);
+        return match_visible_var_set_add(set, atom);
     if (atom->kind != ATOM_EXPR)
         return true;
     for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
@@ -11415,9 +11447,10 @@ static Atom *rewrite_match_visible_aliases(Arena *a, Atom *atom,
     if (atom->kind == ATOM_VAR) {
         const MatchVisibleAliasRef *alias =
             match_visible_alias_set_lookup(aliases, atom->var_id);
-        if (!alias || alias->spelling != atom->sym_id)
+        if (!alias)
             return atom;
-        return atom_var_with_spelling(a, alias->spelling, alias->visible_var_id);
+        return atom_var_with_presentation(
+            a, alias->spelling, alias->name_key, alias->visible_var_id);
     }
     if (atom->kind != ATOM_EXPR)
         return atom;
@@ -11453,15 +11486,21 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
         VisibleVarRef wanted = {
             .var_id = visible->items[i].var_id,
             .spelling = visible->items[i].spelling,
+            .name_key = visible->items[i].name_key,
         };
         Atom *resolved = bindings_resolve_body_visible_var(a, full, &wanted);
+        if (!resolved) {
+            match_visible_alias_set_free(&aliases);
+            bindings_free(projected);
+            return false;
+        }
         resolved_values[i] = resolved;
         if (resolved->kind == ATOM_VAR &&
-            resolved->sym_id == visible->items[i].spelling &&
             resolved->var_id != visible->items[i].var_id &&
             !match_visible_alias_set_add(&aliases, resolved->var_id,
                                          visible->items[i].var_id,
-                                         visible->items[i].spelling)) {
+                                         visible->items[i].spelling,
+                                         visible->items[i].name_key)) {
             match_visible_alias_set_free(&aliases);
             bindings_free(projected);
             return false;
@@ -11471,12 +11510,14 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     for (CettaExprIndex i = 0; i < visible->len; i++) {
         Atom *resolved = rewrite_match_visible_aliases(a, resolved_values[i], &aliases);
         if (resolved->kind == ATOM_VAR &&
-            resolved->var_id == visible->items[i].var_id &&
-            resolved->sym_id == visible->items[i].spelling) {
+            resolved->var_id == visible->items[i].var_id) {
             continue;
         }
-        if (!bindings_add_id(projected, visible->items[i].var_id,
-                             visible->items[i].spelling, resolved)) {
+        Atom *visible_var = atom_var_with_presentation(
+            a, visible->items[i].spelling, visible->items[i].name_key,
+            visible->items[i].var_id);
+        if (!visible_var ||
+            !bindings_add_var(projected, visible_var, resolved)) {
             bindings_free(projected);
             return false;
         }
@@ -15642,7 +15683,7 @@ tail_call: ;
                                    CETTA_ARENA_RUNTIME_KIND_SCRATCH);
             arena_set_hashcons(&stream_scratch, NULL);
             reduce_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
-                                  init, acc_var->sym_id, item_var->sym_id,
+                                  init, acc_var, item_var,
                                   step_expr, fuel, os);
             arena_free(&stream_scratch);
             return;
@@ -15721,7 +15762,7 @@ tail_call: ;
                                    CETTA_ARENA_RUNTIME_KIND_SCRATCH);
             arena_set_hashcons(&stream_scratch, NULL);
             fold_by_key_stream_results(s, a, &stream_scratch, atom, stream_expr, policy.order,
-                                       init, acc_var->sym_id, item_var->sym_id,
+                                       init, acc_var, item_var,
                                        key_expr, step_expr, fuel, os);
             arena_free(&stream_scratch);
             return;
@@ -16782,7 +16823,10 @@ tail_call: ;
             result_set_free(&val_rs);
             return;
         }
-        if (name->kind == ATOM_SYMBOL) {
+        Atom *structural_name_key = NULL;
+        bool structural_name =
+            registry_ref_name_key(name, &structural_name_key);
+        if (name->kind == ATOM_SYMBOL || structural_name) {
             /* Deep-copy to persistent arena so value survives eval_arena reset */
             Arena *dst = eval_storage_arena(a);
             Atom *stored = NULL;
@@ -16804,7 +16848,20 @@ tail_call: ;
                 stored = eval_store_atom(dst, val);
             }
             cetta_provenance_assert_not_transient(stored, "bind.registry.value");
-            registry_bind_id(g_registry, name->sym_id, stored);
+            if (structural_name) {
+                if (!registry_bind_name(
+                        g_registry, structural_name_key, stored)) {
+                    result_set_free(&val_rs);
+                    outcome_set_add(
+                        os,
+                        atom_error(a, atom,
+                                   atom_symbol(a, "MalformedName")),
+                        &_empty);
+                    return;
+                }
+            } else {
+                registry_bind_id(g_registry, name->sym_id, stored);
+            }
         }
         result_set_free(&val_rs);
         outcome_set_add(os, atom_unit(a), &_empty);

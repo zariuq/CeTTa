@@ -858,7 +858,7 @@ static Atom *term_universe_create_canonical_var(Arena *dst, Atom *src_var,
     VarId canonical_id = (VarId)ordinal;
     if (canonical_id == VAR_ID_NONE)
         canonical_id = 1u;
-    return atom_var_with_spelling(dst, src_var->sym_id, canonical_id);
+    return atom_var_like(dst, src_var, canonical_id);
 }
 
 static Atom *term_universe_rewrite_epochless_var(Arena *dst, Atom *src_var,
@@ -1136,7 +1136,9 @@ static bool term_universe_record_payload_len(const TermUniverse *universe,
         *out_len = 0;
         return true;
     case ATOM_VAR:
-        *out_len = sizeof(uint64_t);
+        *out_len = hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY
+                       ? 2u * sizeof(uint64_t)
+                       : sizeof(uint64_t);
         return true;
     case ATOM_GROUNDED:
         switch ((GroundedKind)hdr->subtag) {
@@ -1275,9 +1277,14 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
     case ATOM_SYMBOL:
         return have_hdr->sym_or_head == want_hdr->sym_or_head;
     case ATOM_VAR:
-        return have_payload && want_payload &&
-               term_universe_load_u64(have_payload) ==
-                   term_universe_load_u64(want_payload);
+        if (!have_payload || !want_payload ||
+            term_universe_load_u64(have_payload) !=
+                term_universe_load_u64(want_payload)) {
+            return false;
+        }
+        return want_hdr->subtag != CETTA_VAR_SPELLING_NAME_KEY ||
+               term_universe_load_u64(have_payload + sizeof(uint64_t)) ==
+                   term_universe_load_u64(want_payload + sizeof(uint64_t));
     case ATOM_GROUNDED:
         switch ((GroundedKind)want_hdr->subtag) {
         case GV_INT:
@@ -1486,7 +1493,9 @@ uint32_t tu_hash32(const TermUniverse *universe, AtomId id) {
 SymbolId tu_sym(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr) {
-        if (hdr->tag == ATOM_SYMBOL || hdr->tag == ATOM_VAR)
+        if (hdr->tag == ATOM_SYMBOL ||
+            (hdr->tag == ATOM_VAR &&
+             hdr->subtag == CETTA_VAR_SPELLING_SYMBOL))
             return hdr->sym_or_head;
         return SYMBOL_ID_NONE;
     }
@@ -1511,6 +1520,25 @@ VarId tu_var_id(const TermUniverse *universe, AtomId id) {
             entry->decoded_cache->kind == ATOM_VAR)
                ? entry->decoded_cache->var_id
                : VAR_ID_NONE;
+}
+
+AtomId tu_var_name_key_id(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (hdr && hdr->tag == ATOM_VAR &&
+        hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
+        const uint8_t *payload = term_universe_payload(universe, id);
+        return payload
+                   ? (AtomId)term_universe_load_u64(payload + sizeof(uint64_t))
+                   : CETTA_ATOM_ID_NONE;
+    }
+    const TermEntry *entry = term_universe_entry(universe, id);
+    if (entry && entry->decoded_cache &&
+        entry->decoded_cache->kind == ATOM_VAR &&
+        entry->decoded_cache->name_key) {
+        return term_universe_lookup_stable_id(
+            universe, entry->decoded_cache->name_key);
+    }
+    return CETTA_ATOM_ID_NONE;
 }
 
 SymbolId tu_head_sym(const TermUniverse *universe, AtomId id) {
@@ -1677,6 +1705,27 @@ AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id) {
     hdr.aux32 = term_universe_aux_make(0u, true);
     hdr.hash32 = term_universe_hash_var_id(var_id);
     term_universe_store_u64(payload, var_id);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    return term_universe_intern_record(universe, &hdr, payload,
+                                       sizeof(payload));
+}
+
+AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
+                           VarId var_id) {
+    if (!universe || name_key_id == CETTA_ATOM_ID_NONE ||
+        !term_universe_entry(universe, name_key_id) ||
+        tu_has_vars(universe, name_key_id)) {
+        return CETTA_ATOM_ID_NONE;
+    }
+    CettaTermHdr hdr = {0};
+    uint8_t payload[2u * sizeof(uint64_t)] = {0};
+    hdr.tag = (uint8_t)ATOM_VAR;
+    hdr.subtag = (uint8_t)CETTA_VAR_SPELLING_NAME_KEY;
+    hdr.sym_or_head = SYMBOL_ID_NONE;
+    hdr.aux32 = term_universe_aux_make(0u, true);
+    hdr.hash32 = term_universe_hash_var_id(var_id);
+    term_universe_store_u64(payload, var_id);
+    term_universe_store_u64(payload + sizeof(uint64_t), name_key_id);
     TU_DIAG_INC(universe, direct_constructor_leaf_hits);
     return term_universe_intern_record(universe, &hdr, payload,
                                        sizeof(payload));
@@ -1899,6 +1948,13 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
     case ATOM_SYMBOL:
         return tu_intern_symbol(universe, src->sym_id);
     case ATOM_VAR:
+        if (src->name_key) {
+            AtomId key_id = term_universe_store_atom_id(
+                universe, universe->persistent_arena, src->name_key);
+            return key_id == CETTA_ATOM_ID_NONE
+                       ? CETTA_ATOM_ID_NONE
+                       : tu_intern_named_var(universe, key_id, src->var_id);
+        }
         return tu_intern_var(universe, src->sym_id, src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
@@ -2159,8 +2215,15 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
         char suffix_buf[16];
         VarId var_id = tu_var_id(universe, id);
         uint32_t epoch = var_epoch_suffix(var_id);
-        term_universe_sb_append_char(sb, '$');
-        term_universe_sb_append_cstr(sb, symbol_bytes(g_symbols, hdr->sym_or_head));
+        if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
+            term_universe_sb_append_cstr(sb, "$@");
+            term_universe_sb_append_atom_text(
+                sb, universe, tu_var_name_key_id(universe, id));
+        } else {
+            term_universe_sb_append_char(sb, '$');
+            term_universe_sb_append_cstr(
+                sb, symbol_bytes(g_symbols, hdr->sym_or_head));
+        }
         if (epoch != 0) {
             int printed = snprintf(suffix_buf, sizeof(suffix_buf), "#%u", epoch);
             if (printed > 0)
@@ -2410,7 +2473,14 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         VarId var_id = tu_var_id(universe, id);
         if (rename_epoch_vars)
             var_id = var_epoch_id(var_id, epoch);
-        out = atom_var_with_spelling(dst, hdr->sym_or_head, var_id);
+        if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
+            Atom *key = term_universe_copy_atom_impl(
+                universe, dst, tu_var_name_key_id(universe, id), epoch, false,
+                memo);
+            out = key ? atom_var_with_name_key(dst, key, var_id) : NULL;
+        } else {
+            out = atom_var_with_spelling(dst, hdr->sym_or_head, var_id);
+        }
         break;
     }
     case ATOM_GROUNDED:
@@ -2924,6 +2994,13 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
     case ATOM_SYMBOL:
         return tu_intern_symbol(universe, src->sym_id);
     case ATOM_VAR:
+        if (src->name_key) {
+            AtomId key_id = term_universe_store_atom_id(
+                universe, universe->persistent_arena, src->name_key);
+            return key_id == CETTA_ATOM_ID_NONE
+                       ? CETTA_ATOM_ID_NONE
+                       : tu_intern_named_var(universe, key_id, src->var_id);
+        }
         return tu_intern_var(universe, src->sym_id, src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
@@ -3036,8 +3113,16 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
     case ATOM_SYMBOL:
         return atom_symbol_id(dst, hdr->sym_or_head);
     case ATOM_VAR:
-        return atom_var_with_spelling(dst, hdr->sym_or_head,
-                                      (VarId)term_universe_load_u64(payload));
+        if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
+            Atom *key = term_universe_get_atom(
+                universe, tu_var_name_key_id(universe, id));
+            return key ? atom_var_with_name_key(
+                             dst, key,
+                             (VarId)term_universe_load_u64(payload))
+                       : NULL;
+        }
+        return atom_var_with_spelling(
+            dst, hdr->sym_or_head, (VarId)term_universe_load_u64(payload));
     case ATOM_GROUNDED:
         switch (tu_ground_kind(universe, id)) {
         case GV_INT:
