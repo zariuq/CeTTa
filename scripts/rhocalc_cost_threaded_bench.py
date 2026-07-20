@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rhocalc_bench_provenance import PROVENANCE_FIELDS, benchmark_provenance
-from rhocalc_paired_samples import collect_interleaved
+from rhocalc_paired_samples import AdaptivePairedPolicy, collect_interleaved
 
 
 @dataclass(frozen=True)
@@ -173,6 +173,14 @@ def main(argv: list[str]) -> int:
         "--mode", choices=["quick", "standard", "heavy"], default="quick"
     )
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument(
+        "--adaptive",
+        action="store_true",
+        help=(
+            "treat --runs as a maximum and stop after a clearly passing "
+            "paired baseline/candidate result"
+        ),
+    )
     parser.add_argument("--threads", default="1,2,4,8")
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument(
@@ -190,6 +198,8 @@ def main(argv: list[str]) -> int:
 
     if args.runs < 1:
         parser.error("--runs must be positive")
+    if args.adaptive and not args.baseline_bin:
+        parser.error("--adaptive requires --baseline-bin")
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     thread_counts = [int(part) for part in args.threads.split(",") if part]
@@ -211,6 +221,11 @@ def main(argv: list[str]) -> int:
     print("PROFILE cost")
     print(f"MODE {args.mode}")
     print(f"RUNS {args.runs}")
+    print(
+        "SAMPLING "
+        + ("adaptive-clear-pass" if args.adaptive else "fixed-pairs")
+        + f" maximum_pairs={args.runs}"
+    )
     print("THREADS " + ",".join(str(count) for count in thread_counts))
     print("VALIDATION funded-residual (causal-event agreement is a separate gate)")
     print()
@@ -255,6 +270,7 @@ def main(argv: list[str]) -> int:
                     else None
                 ),
                 validate_result,
+                adaptive_policy=(AdaptivePairedPolicy() if args.adaptive else None),
             )
             if samples.error is not None:
                 print(
@@ -311,7 +327,10 @@ def main(argv: list[str]) -> int:
                 "reactions": workload.reactions,
                 "threads": threads,
                 "executor_mode": executor_mode(threads),
-                "runs": args.runs,
+                "runs": len(samples.candidate),
+                "planned_runs": args.runs,
+                "sampling": "adaptive" if args.adaptive else "fixed",
+                "sampling_stop_reason": samples.stop_reason,
                 "median_s": f"{median:.9f}",
                 "best_s": f"{best:.9f}",
                 "speedup_vs_seq": f"{speedup_vs_sequential:.6f}",
@@ -352,7 +371,9 @@ def main(argv: list[str]) -> int:
             summary = (
                 f"RESULT threads={threads} mode={executor_mode(threads)} "
                 f"median_s={median:.6f} best_s={best:.6f} "
-                f"speedup_vs_seq={speedup_vs_sequential:.3f}"
+                f"speedup_vs_seq={speedup_vs_sequential:.3f} "
+                f"pairs={len(samples.candidate)}/{args.runs} "
+                f"sampling_stop={samples.stop_reason}"
             )
             if speedup_vs_first_threaded is not None:
                 summary += (
@@ -384,6 +405,9 @@ def main(argv: list[str]) -> int:
                 "threads",
                 "executor_mode",
                 "runs",
+                "planned_runs",
+                "sampling",
+                "sampling_stop_reason",
                 "median_s",
                 "best_s",
                 "speedup_vs_seq",

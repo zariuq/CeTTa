@@ -246,6 +246,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "cost-rho-receipt-event-materialized",
     "cost-rho-receipt-event-retained",
     "cost-rho-receipt-validation",
+    "cost-rho-parallel-acquired-claim",
+    "cost-rho-parallel-released-claim",
 };
 
 static int64_t clamp_counter(uint64_t value) {

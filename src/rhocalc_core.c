@@ -4467,6 +4467,8 @@ static void rhocost_parallel_release_claims(
         atomic_store_explicit(&wave->claimed[task->plan.resource_indices[i]], 0u,
                               memory_order_release);
     }
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_RELEASED_CLAIM, claimed_len);
 }
 
 static bool rhocost_parallel_try_claim(
@@ -4482,17 +4484,25 @@ static bool rhocost_parallel_try_claim(
         unsigned char expected = 0u;
         uint32_t index = task->plan.resource_indices[i];
         if (index >= wave->component_count) {
+            cetta_runtime_stats_add(
+                CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_ACQUIRED_CLAIM,
+                acquired);
             rhocost_parallel_release_claims(wave, task, acquired);
             return false;
         }
         if (!atomic_compare_exchange_strong_explicit(
                 &wave->claimed[index], &expected, 1u,
                 memory_order_acq_rel, memory_order_acquire)) {
+            cetta_runtime_stats_add(
+                CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_ACQUIRED_CLAIM,
+                acquired);
             rhocost_parallel_release_claims(wave, task, acquired);
             return true;
         }
         acquired++;
     }
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_COST_RHO_PARALLEL_ACQUIRED_CLAIM, acquired);
     *out_claimed = true;
     return true;
 }

@@ -173,6 +173,18 @@ make BUILD=main
 
 ## Verified Test Commands
 
+Choose the smallest lane that matches the decision being made:
+
+| Lane | Recommended use | Commands |
+| --- | --- | --- |
+| Regular development | Fast feedback for the current build after ordinary changes | `make test-correctness test-profiles bench-light` |
+| Full correctness | Before review or merge for the current build | `make test-correctness-all test-profiles` |
+| Routine readiness | Property-driven correctness, sanitizer, capacity, and performance regression gate | `make main-readiness-routine` |
+| Main readiness | Before merging to main or releasing | `make main-readiness-exhaustive` |
+
+`bench-light` is a development performance smoke test. `bench-heavy` is an
+opt-in scale diagnostic, not a substitute for any correctness lane.
+
 Run the ordinary checked suite for the current build:
 
 ```bash
@@ -201,6 +213,44 @@ make test-correctness-all
 Heavy diagnostic probes are deliberately separate because they are exploratory
 and have no golden output. Inspect or run them explicitly with
 `make list-heavy-diagnostics` and `make probe-heavy-diagnostics`.
+
+The automated readiness driver records content-addressed evidence under
+`runtime/main-readiness/`. Set `METTAPEDIA_ROOT` to the Lean project root before
+running it when the required CeTTa-to-Lean differential gate is enabled:
+
+```bash
+export METTAPEDIA_ROOT=/path/to/Mettapedia/lean/mettapedia
+
+# Faster property-driven gate for ordinary candidate iteration.
+make main-readiness-routine
+
+# Reuse a passing result only when source, binaries, inputs, dependencies,
+# toolchain configuration, and suite schema are byte-for-byte identical.
+python3 scripts/cetta_main_readiness.py --tier routine --reuse
+
+# Inspect whether this exact candidate has completed qualification.
+make main-readiness-calibration-status
+
+# Require both a passing routine run and existing qualification.
+make main-readiness-routine-authoritative
+```
+
+Qualification compares five routine runs with five exhaustive runs for the
+same content identity and fails closed after any relevant byte changes. Running
+new exhaustive calibration pairs therefore requires an explicit opt-in:
+
+```bash
+MAIN_READINESS_ALLOW_EXHAUSTIVE=1 make main-readiness-calibrate
+```
+
+The routine gate uses deterministic counters, geometric scale ladders,
+source-threshold probes, adversarial mutants, and adaptive paired timings to
+detect regressions cheaply. It does not replace the exhaustive main-integration
+boundary. Before merging to main or releasing, run:
+
+```bash
+make main-readiness-exhaustive
+```
 
 `make test` now stays inside the current build configuration. It runs the fast
 HE/golden suite, and on bridge-enabled builds it also runs the matching current
