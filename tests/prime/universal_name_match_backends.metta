@@ -18,6 +18,19 @@
              matched))
     ())
 
+; A query variable and a differently named variable stored in the space are
+; genuinely related by a binding; projection must not relabel the stored
+; variable as the query variable before exact removal.
+!(bind! &universal-native-contextual (new-space))
+!(space-set-match-backend! &universal-native-contextual native)
+!(add-atom &universal-native-contextual
+    (schema $@(native-stored) (wrap $@(native-stored))))
+!(match &universal-native-contextual
+    (schema $@(native-query) $@(native-body))
+    (remove-atom &universal-native-contextual
+                 (schema $@(native-query) $@(native-body))))
+!(assertEqual (count-atoms &universal-native-contextual) 0)
+
 !(bind! &universal-candidate (new-space))
 !(space-set-match-backend! &universal-candidate native-candidate-exact)
 !(add-atom &universal-candidate (edge A B))
@@ -34,4 +47,14 @@
              matched))
     ())
 
-!(println! (PrimeUniversalNameMatchBackendSummary 4 4 0))
+!(bind! &universal-candidate-contextual (new-space))
+!(space-set-match-backend! &universal-candidate-contextual native-candidate-exact)
+!(add-atom &universal-candidate-contextual
+    (schema $@(candidate-stored) (wrap $@(candidate-stored))))
+!(match &universal-candidate-contextual
+    (schema $@(candidate-query) $@(candidate-body))
+    (remove-atom &universal-candidate-contextual
+                 (schema $@(candidate-query) $@(candidate-body))))
+!(assertEqual (count-atoms &universal-candidate-contextual) 0)
+
+!(println! (PrimeUniversalNameMatchBackendSummary 6 6 0))

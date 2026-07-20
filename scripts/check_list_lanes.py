@@ -12,6 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime" / "list-lane-gate"
+RUN_TIMEOUT_SECONDS = 60.0
 
 
 def run(cetta: Path, lane: str, *arguments: str) -> str:
@@ -29,7 +30,7 @@ def run(cetta: Path, lane: str, *arguments: str) -> str:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        timeout=60,
+        timeout=RUN_TIMEOUT_SECONDS,
         check=False,
     )
     if completed.returncode != 0:
@@ -275,6 +276,27 @@ def check_mutations(cetta: Path) -> int:
             "!(assertEqual (clist:to-list (clist:from-list (a b c))) (a b c))\n",
         ),
         (
+            "clist-length",
+            clist_source,
+            "(= (clist:len-acc (ClistCons $head $tail) $acc)\n"
+            "   (let $next (eval (+ $acc 1))\n"
+            "     (eval (clist:len-acc $tail $next))))",
+            "(= (clist:len-acc (ClistCons $head $tail) $acc)\n"
+            "   (eval (clist:len-acc $tail $acc)))",
+            "!(assertEqual (clist:len (clist:from-list (a b c))) 3)\n",
+        ),
+        (
+            "clist-reverse-accumulator",
+            clist_source,
+            "(= (clist:reverse-acc (ClistCons $head $tail) $acc)\n"
+            "   (let $next (eval (clist:cons $head $acc))\n"
+            "     (eval (clist:reverse-acc $tail $next))))",
+            "(= (clist:reverse-acc (ClistCons $head $tail) $acc)\n"
+            "   (eval (clist:reverse-acc $tail $acc)))",
+            "!(assertEqual (clist:reverse (clist:from-list (a b c))) "
+            "(clist:from-list (c b a)))\n",
+        ),
+        (
             "append",
             list_source,
             "(= (list:append () $rhs)\n   $rhs)",
@@ -324,9 +346,12 @@ def check_mutations(cetta: Path) -> int:
 
 
 def main() -> int:
+    global RUN_TIMEOUT_SECONDS
     parser = argparse.ArgumentParser()
     parser.add_argument("--cetta", type=Path, default=ROOT / "cetta")
+    parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args()
+    RUN_TIMEOUT_SECONDS = args.timeout
     cetta = args.cetta.resolve()
     if not cetta.is_file():
         print(f"missing CeTTa executable: {cetta}", file=sys.stderr)

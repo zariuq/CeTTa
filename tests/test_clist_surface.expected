@@ -32,5 +32,5 @@
 [()]
 [(clist:first ClistNil)]
 [(clist:rest ClistNil)]
-[(+ 1 (clist:len malformed))]
+[(clist:len-acc malformed 1)]
 [(a clist:to-list malformed)]
