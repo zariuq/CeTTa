@@ -941,7 +941,7 @@ static Atom *rho_par_from_vec(Arena *arena, RhoAtomVec *vec) {
 
 static Atom *rho_copy_var(Arena *arena, Atom *var) {
     if (!var || var->kind != ATOM_VAR) return var;
-    return atom_var_with_spelling(arena, var->sym_id, var->var_id);
+    return atom_var_like(arena, var, var->var_id);
 }
 
 static Atom *rho_normalize_name(Arena *arena, Atom *name) {
@@ -1044,7 +1044,7 @@ static bool rho_proc_has_free_var(Atom *proc, VarId var_id) {
 
 static Atom *rho_fresh_var_like(Arena *arena, Atom *var) {
     VarId id = fresh_var_id();
-    return atom_var_with_spelling(arena, var->sym_id, id);
+    return atom_var_like(arena, var, id);
 }
 
 static Atom *rho_rename_proc(Arena *arena, Atom *proc,
@@ -1870,14 +1870,21 @@ static bool rho_eval_registry_init(Registry *dst, Registry *src,
     if (src) {
         for (uint32_t i = 0; i < src->len; i++) {
             Atom *value;
-            if (src->entries[i].key == SYMBOL_ID_NONE || !src->entries[i].value) {
+            const Atom *name_key = registry_entry_name_key(src, i);
+            if ((src->entries[i].key == SYMBOL_ID_NONE && !name_key) ||
+                !src->entries[i].value) {
                 continue;
             }
             value = rho_atom_rebind_resources(
                 arena, src->entries[i].value, space_map, state_map);
             if (!value)
                 return false;
-            registry_bind_id(dst, src->entries[i].key, value);
+            if (name_key) {
+                if (!registry_bind_name(dst, (Atom *)name_key, value))
+                    return false;
+            } else {
+                registry_bind_id(dst, src->entries[i].key, value);
+            }
         }
     }
     if (g_builtin_syms.self != SYMBOL_ID_NONE && self_overlay) {
@@ -1908,7 +1915,7 @@ static Atom *rho_atom_rebind_resources(Arena *arena, Atom *atom,
     if (atom->kind == ATOM_SYMBOL)
         return atom_symbol_id(arena, atom->sym_id);
     if (atom->kind == ATOM_VAR)
-        return atom_var_with_spelling(arena, atom->sym_id, atom->var_id);
+        return atom_var_like(arena, atom, atom->var_id);
     if (atom->kind != ATOM_EXPR)
         return atom_deep_copy(arena, atom);
     elems = arena_alloc(arena, sizeof(Atom *) * atom->expr.len);
@@ -2263,7 +2270,7 @@ static Atom *rho_promote_payload_atom(Arena *arena,
     if (atom->kind == ATOM_SYMBOL)
         return atom_symbol_id(arena, atom->sym_id);
     if (atom->kind == ATOM_VAR)
-        return atom_var_with_spelling(arena, atom->sym_id, atom->var_id);
+        return atom_var_like(arena, atom, atom->var_id);
     if (atom->kind != ATOM_EXPR)
         return atom_deep_copy(arena, atom);
     elems = arena_alloc(arena, sizeof(Atom *) * atom->expr.len);

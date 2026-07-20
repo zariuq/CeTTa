@@ -20,6 +20,7 @@ Atom *cetta_expr_elem(Atom *a, CettaExprIndex i);
 
 /* Atom constructors (use a global arena) */
 Atom *cetta_atom_symbol(Arena *a, const char *name);
+Atom *cetta_atom_named_var(Arena *a, const char *key_text, VarId id);
 Atom *cetta_atom_int(Arena *a, int64_t val);
 Atom *cetta_atom_bigint(Arena *a, const char *val);
 Atom *cetta_atom_rational(Arena *a, const char *val);

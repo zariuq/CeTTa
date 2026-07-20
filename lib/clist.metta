@@ -1,9 +1,12 @@
-; Explicit cons-list helpers.
+; Inductive presentation of finite Atom sequences.
 ;
-; Design intent:
-; - This is the semantic/inductive list lane.
-; - Use it when constructors and head/tail structure matter logically.
-; - Bulk traversal can route through the fast list lane when appropriate.
+; ClistNil and ClistCons present the same free monoid as list's expression
+; representation. On well-formed clists:
+;   to-list(from-list(xs)) = xs;
+;   from-list(to-list(cs)) = cs;
+; and the bridge preserves append, reverse, length, map, filter, and foldl.
+; first/rest are intentionally defined only for ClistCons. Bulk traversal may
+; use the expression-backed list lane without changing the denotation.
 
 !(import! &self list)
 

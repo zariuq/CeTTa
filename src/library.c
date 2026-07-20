@@ -1559,16 +1559,26 @@ static int imported_file_lookup(CettaLibraryContext *ctx, Space *space,
 
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz) {
+    const char *language_name;
+
     if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                     CETTA_MODULE_PROVIDER_STDLIB)) {
         return false;
     }
+    /* Explicit imports select a language overlay when present, then fall back
+       to the shared library. Merely selecting a language never loads either. */
+    language_name = cetta_language_canonical_name(ctx->session.language_id);
     if (ctx->root_dir[0] != '\0') {
-        int n = snprintf(out, out_sz, "%s/lib/%s.metta", ctx->root_dir, name);
+        int n = snprintf(out, out_sz, "%s/lib/%s/%s.metta",
+                         ctx->root_dir, language_name, name);
+        if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        n = snprintf(out, out_sz, "%s/lib/%s.metta", ctx->root_dir, name);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
     }
     {
-        int n = snprintf(out, out_sz, "lib/%s.metta", name);
+        int n = snprintf(out, out_sz, "lib/%s/%s.metta", language_name, name);
+        if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        n = snprintf(out, out_sz, "lib/%s.metta", name);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
     }
     return false;

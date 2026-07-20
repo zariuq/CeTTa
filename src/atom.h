@@ -25,12 +25,14 @@ typedef struct CettaForeignValue CettaForeignValue;
 typedef struct CettaBigInt CettaBigInt;
 typedef struct CettaRational CettaRational;
 typedef uint64_t VarId;
+typedef uint32_t NameId;
 typedef uint64_t CettaExprLen;
 typedef uint64_t CettaExprIndex;
 typedef struct HashConsTable HashConsTable;
 typedef struct ArenaFinalizer ArenaFinalizer;
 
 #define VAR_ID_NONE ((VarId)0)
+#define NAME_ID_NONE ((NameId)0)
 /* ── Atom kinds ─────────────────────────────────────────────────────────── */
 
 typedef enum {
@@ -67,6 +69,7 @@ struct Atom {
     uint32_t flags;
     VarId var_id;            /* ATOM_VAR only */
     SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
+    Atom *name_key;          /* ATOM_VAR structural spelling, otherwise NULL */
     uint32_t hash_cache;     /* lazily memoized structural hash */
     union {
         struct {            /* ATOM_GROUNDED */
@@ -197,6 +200,10 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
+Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id);
+Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
+                                 Atom *name_key, VarId id);
+Atom *atom_var_like(Arena *a, Atom *source, VarId id);
 Atom *atom_int(Arena *a, int64_t val);
 Atom *atom_bigint(Arena *a, const char *val);
 const char *atom_bigint_cstr(const Atom *atom);

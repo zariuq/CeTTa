@@ -63,9 +63,10 @@ static Atom *variant_instance_rewrite_rebased_slot_var(Arena *dst, Atom *src_var
     VariantInstanceRebaseCtx *rebase = ctx;
     if (!variant_private_var_id(src_var->var_id))
         return src_var;
-    return atom_var_with_spelling(dst, src_var->sym_id,
-                                  variant_shape_slot_id(rebase->ordinal_base +
-                                                        variant_shape_slot_ordinal(src_var->var_id)));
+    return atom_var_like(dst, src_var,
+                         variant_shape_slot_id(
+                             rebase->ordinal_base +
+                             variant_shape_slot_ordinal(src_var->var_id)));
 }
 
 void variant_instance_init(VariantInstance *instance) {

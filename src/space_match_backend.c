@@ -3520,7 +3520,9 @@ bool space_match_backend_mork_visit_bindings_direct(
     if (!imported_bridge_collect_vars(query, &query_vars)) {
         imported_bridge_varmap_free(&query_vars);
         arena_free(&scratch);
-        return false;
+        space_match_backend_clear_error();
+        return imported_bridge_visit_bindings_materialized(
+            bridge, a, query, visitor, ctx);
     }
     if (!imported_bridge_query_var_slots_contextual_ok(&query_vars, false)) {
         imported_bridge_varmap_free(&query_vars);
@@ -4402,6 +4404,11 @@ static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map) 
         return true;
     switch (atom->kind) {
     case ATOM_VAR:
+        /* The contextual bridge packet identifies variables by text slots.
+           A structural name must keep its Name key, so use the
+           materialized C matcher instead of reducing it to SymbolId 0. */
+        if (atom->name_key)
+            return false;
         if (imported_bridge_internal_var(atom))
             return true;
         return imported_bridge_varmap_add(map, atom->var_id, atom->sym_id);
@@ -5045,7 +5052,7 @@ static ImportedCorefVerdict imported_bind_indexed_value(ImportedCorefState *refs
     if (imported_subtree_contains_var(tokens, value_idx, vt->var_id))
         return IMPORTED_COREF_NEEDS_FALLBACK;
     return imported_add_indexed_value(refs, vt->var_id, vt->sym_id,
-                                      value_idx, val->span, val->origin);
+                                      value_idx, val->span, vt->origin);
 }
 
 static bool imported_materialize_bindings(const ImportedCorefState *refs,
@@ -5058,16 +5065,28 @@ static bool imported_materialize_bindings(const ImportedCorefState *refs,
     for (uint32_t i = 0; i < refs->nquery; i++) {
         Atom *val = imported_token_copy_epoch(
             a, &ctokens[refs->query[i].idx], candidate_universe, epoch);
-        if (!bindings_add_id(out, refs->query[i].var_id, refs->query[i].spelling, val)) {
+        Atom *var = refs->query[i].origin;
+        bool added = var && var->kind == ATOM_VAR
+            ? bindings_add_var(out, var, val)
+            : bindings_add_id(out, refs->query[i].var_id,
+                              refs->query[i].spelling, val);
+        if (!added) {
             bindings_free(out);
             return false;
         }
     }
     for (uint32_t i = 0; i < refs->nindexed; i++) {
-        if (!bindings_add_id(out,
-                             var_epoch_id(refs->indexed[i].var_id, epoch),
-                             refs->indexed[i].spelling,
-                             qtokens[refs->indexed[i].idx].origin)) {
+        Atom *var = atom_var_like(
+            a, refs->indexed[i].origin,
+            var_epoch_id(refs->indexed[i].var_id, epoch));
+        bool added = var
+            ? bindings_add_var(
+                  out, var, qtokens[refs->indexed[i].idx].origin)
+            : bindings_add_id(
+                  out, var_epoch_id(refs->indexed[i].var_id, epoch),
+                  refs->indexed[i].spelling,
+                  qtokens[refs->indexed[i].idx].origin);
+        if (!added) {
             bindings_free(out);
             return false;
         }
@@ -5075,9 +5094,16 @@ static bool imported_materialize_bindings(const ImportedCorefState *refs,
     for (uint32_t i = 0; i < refs->nindexed_value; i++) {
         Atom *val = imported_token_copy_epoch(
             a, &ctokens[refs->indexed_value[i].idx], candidate_universe, epoch);
-        if (!bindings_add_id(out,
-                             var_epoch_id(refs->indexed_value[i].var_id, epoch),
-                             refs->indexed_value[i].spelling, val)) {
+        Atom *var = atom_var_like(
+            a, refs->indexed_value[i].origin,
+            var_epoch_id(refs->indexed_value[i].var_id, epoch));
+        bool added = var
+            ? bindings_add_var(out, var, val)
+            : bindings_add_id(
+                  out,
+                  var_epoch_id(refs->indexed_value[i].var_id, epoch),
+                  refs->indexed_value[i].spelling, val);
+        if (!added) {
             bindings_free(out);
             return false;
         }
@@ -5710,7 +5736,7 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
                 }
             } else {
                 ImportedCorefVerdict add = imported_add_query_ref(
-                    refs, qt->var_id, qt->sym_id, ci, ct->span, ct->origin);
+                    refs, qt->var_id, qt->sym_id, ci, ct->span, qt->origin);
                 if (add != IMPORTED_COREF_EXACT) return add;
             }
             qi += qt->span;
@@ -5729,7 +5755,7 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
                     return IMPORTED_COREF_NEEDS_FALLBACK;
             } else {
                 ImportedCorefVerdict add = imported_add_indexed_ref(
-                    refs, ct->var_id, ct->sym_id, qi, qt->span, qt->origin);
+                    refs, ct->var_id, ct->sym_id, qi, qt->span, ct->origin);
                 if (add != IMPORTED_COREF_EXACT) return add;
             }
             qi += qt->span;

@@ -59,12 +59,20 @@ Atom *abt_subst(const AbtSignature *signature, Arena *arena,
 
 /* Locally-nameless seams.  close replaces structurally equal occurrences of
    name with (Var depth); open performs the inverse replacement without the
-   index decrement performed by substitution.  Names may be structured atoms
-   such as (Free x), which keeps free-name syntax disjoint from package data. */
+   index decrement performed by substitution.  A key may be a bare symbol, a
+   generated (Var symbol-or-string), or quoted closed structural syntax. */
 Atom *abt_close(const AbtSignature *signature, Arena *arena,
                 Atom *name, Atom *term);
 Atom *abt_open(const AbtSignature *signature, Arena *arena,
                Atom *fresh_name, Atom *term);
+
+/* Introduce one surrounding binder in a mixed named/canonical surface.
+   Existing loose indices are shifted outward while occurrences structurally
+   equal to name become the new index zero.  This single traversal is required
+   when the surface name itself has Var-shaped syntax, since an independent
+   canonical shift must not reinterpret that name before it is closed. */
+Atom *abt_bind(const AbtSignature *signature, Arena *arena,
+               Atom *name, Atom *term);
 
 /* Invertible, capture-free structural presentation for errors, tools, and
    REPLs.  This is deliberately not a language's mixfix printer.  A binding

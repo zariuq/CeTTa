@@ -50,6 +50,11 @@ typedef enum {
 
 typedef struct TermUniverse TermUniverse;
 
+typedef enum {
+    CETTA_VAR_SPELLING_SYMBOL = 0,
+    CETTA_VAR_SPELLING_NAME_KEY = 1,
+} CettaVarSpellingKind;
+
 typedef bool (*TermUniverseStoreFormatObserver)(
     TermUniverse *universe,
     TermUniverseStoreFormat old_format,
@@ -237,6 +242,7 @@ CettaExprLen tu_arity(const TermUniverse *universe, AtomId id);
 uint32_t tu_hash32(const TermUniverse *universe, AtomId id);
 SymbolId tu_sym(const TermUniverse *universe, AtomId id);
 VarId tu_var_id(const TermUniverse *universe, AtomId id);
+AtomId tu_var_name_key_id(const TermUniverse *universe, AtomId id);
 SymbolId tu_head_sym(const TermUniverse *universe, AtomId id);
 GroundedKind tu_ground_kind(const TermUniverse *universe, AtomId id);
 int64_t tu_int(const TermUniverse *universe, AtomId id);
@@ -250,6 +256,8 @@ bool tu_has_vars(const TermUniverse *universe, AtomId id);
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id);
 AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id);
+AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
+                           VarId var_id);
 AtomId tu_intern_int(TermUniverse *universe, int64_t value);
 AtomId tu_intern_float(TermUniverse *universe, double value);
 AtomId tu_intern_bool(TermUniverse *universe, bool value);

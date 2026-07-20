@@ -38,7 +38,7 @@ typedef struct {
 } StringBuf;
 
 typedef struct {
-    SymbolId spelling;
+    VarId var_id;
     Atom *mapped;
 } FoldVarMapEntry;
 
@@ -101,21 +101,23 @@ static void fold_var_map_free(FoldVarMap *map) {
     map->cap = 0;
 }
 
-static Atom *fold_var_map_lookup(FoldVarMap *map, SymbolId spelling) {
+static Atom *fold_var_map_lookup(FoldVarMap *map, VarId var_id) {
     for (uint32_t i = 0; i < map->len; i++) {
-        if (map->items[i].spelling == spelling)
+        if (map->items[i].var_id == var_id)
             return map->items[i].mapped;
     }
     return NULL;
 }
 
-static Atom *fold_var_map_add_fresh(FoldVarMap *map, Arena *a, SymbolId spelling) {
-    Atom *fresh = atom_var_with_spelling(a, spelling, fresh_var_id());
+static Atom *fold_var_map_add_fresh(FoldVarMap *map, Arena *a,
+                                    Atom *source_var) {
+    Atom *fresh = atom_var_like(a, source_var, fresh_var_id());
+    if (!fresh) return NULL;
     if (map->len >= map->cap) {
         map->cap = map->cap ? map->cap * 2 : 8;
         map->items = cetta_realloc(map->items, sizeof(FoldVarMapEntry) * map->cap);
     }
-    map->items[map->len].spelling = spelling;
+    map->items[map->len].var_id = source_var->var_id;
     map->items[map->len].mapped = fresh;
     map->len++;
     return fresh;
@@ -130,28 +132,28 @@ static Atom *grounded_call_expr(Arena *a, Atom *head, Atom **args, uint32_t narg
 }
 
 static Atom *foldl_bind_step_atom_impl(Arena *a, Atom *atom,
-                                       SymbolId acc_spelling, Atom *acc_val,
-                                       SymbolId item_spelling, Atom *item_val,
+                                       Atom *acc_var, Atom *acc_val,
+                                       Atom *item_var, Atom *item_val,
                                        FoldVarMap *fresh_vars) {
     switch (atom->kind) {
     case ATOM_VAR:
-        if (atom->sym_id == acc_spelling)
+        if (acc_var && atom->var_id == acc_var->var_id)
             return acc_val;
-        if (atom->sym_id == item_spelling)
+        if (item_var && atom->var_id == item_var->var_id)
             return item_val;
         {
-            Atom *mapped = fold_var_map_lookup(fresh_vars, atom->sym_id);
+            Atom *mapped = fold_var_map_lookup(fresh_vars, atom->var_id);
             if (mapped)
                 return mapped;
-            return fold_var_map_add_fresh(fresh_vars, a, atom->sym_id);
+            return fold_var_map_add_fresh(fresh_vars, a, atom);
         }
     case ATOM_EXPR: {
         Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
         bool changed = false;
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             elems[i] = foldl_bind_step_atom_impl(a, atom->expr.elems[i],
-                                                 acc_spelling, acc_val,
-                                                 item_spelling, item_val,
+                                                 acc_var, acc_val,
+                                                 item_var, item_val,
                                                  fresh_vars);
             if (elems[i] != atom->expr.elems[i])
                 changed = true;
@@ -166,13 +168,13 @@ static Atom *foldl_bind_step_atom_impl(Arena *a, Atom *atom,
 }
 
 Atom *cetta_fold_bind_step_atom(Arena *a, Atom *atom,
-                                SymbolId acc_spelling, Atom *acc_val,
-                                SymbolId item_spelling, Atom *item_val) {
+                                Atom *acc_var, Atom *acc_val,
+                                Atom *item_var, Atom *item_val) {
     FoldVarMap fresh_vars;
     fold_var_map_init(&fresh_vars);
     Atom *bound = foldl_bind_step_atom_impl(a, atom,
-                                            acc_spelling, acc_val,
-                                            item_spelling, item_val,
+                                            acc_var, acc_val,
+                                            item_var, item_val,
                                             &fresh_vars);
     fold_var_map_free(&fresh_vars);
     return bound;
@@ -855,6 +857,14 @@ static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t n
 static Atom *grounded_repr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 1)
         return grounded_incorrect_arity(a, head, args, nargs);
+
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
+        char *text = parser_render_syntax(
+            a, args[0], PARSER_SYNTAX_PRINT_COMPACT);
+        if (text)
+            return atom_string(a, text);
+    }
     return atom_string(a, atom_to_parseable_string(a, args[0]));
 }
 
@@ -895,12 +905,25 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
                                      atom_symbol(a, "String"), args[0]);
     }
 
-    if (require_all_input && !parser_text_well_formed(args[0]->ground.sval))
-        return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "ParseFailed"));
-
     bool old_rational_literals = parser_set_rational_literals_enabled(
         !eval_current_uses_rust_he_compat_semantics());
+
+    if (require_all_input && eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
+        Atom *parsed = parser_read_source_form(a, args[0]->ground.sval);
+        parser_set_rational_literals_enabled(old_rational_literals);
+        return parsed
+            ? parsed
+            : atom_error(a, grounded_call_expr(a, head, args, nargs),
+                         atom_symbol(a, "ParseFailed"));
+    }
+
+    if (require_all_input && !parser_text_well_formed(args[0]->ground.sval)) {
+        parser_set_rational_literals_enabled(old_rational_literals);
+        return atom_error(a, grounded_call_expr(a, head, args, nargs),
+                          atom_symbol(a, "ParseFailed"));
+    }
+
     size_t pos = 0;
     Atom *parsed = parse_sexpr(a, args[0]->ground.sval, &pos);
     parser_set_rational_literals_enabled(old_rational_literals);
@@ -996,8 +1019,8 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     tail = atom_expr(a, list->expr.elems + 1, list->expr.len - 1);
 
     Atom *step_op = cetta_fold_bind_step_atom(a, op_expr,
-                                              acc_var->sym_id, init,
-                                              item_var->sym_id, head_item);
+                                              acc_var, init,
+                                              item_var, head_item);
 
 
     char tmp_name[256];
