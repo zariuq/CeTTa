@@ -1,3 +1,6 @@
+[()]
 [(ValidAnnotation Established)]
 [(InvalidAnnotation Refuted)]
+[7]
+[1]
 [(Error 7 (BadType String Number))]

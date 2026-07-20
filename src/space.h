@@ -226,6 +226,12 @@ bool query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
 void query_results_diag_set_capacity_limit_override(CettaCount limit);
 CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
                                  QueryResultVisitor visitor, void *ctx);
+/* Match exactly one admitted (= lhs rhs) atom against query.  This is the
+   single-candidate form of query_equations_visit: it applies the same
+   freshening, bidirectional matching, visible-variable projection, and RHS
+   substitution, but performs no candidate selection. */
+CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
+                                QueryResultVisitor visitor, void *ctx);
 CettaCount query_results_visit(const QueryResults *qr,
                                QueryResultVisitor visitor, void *ctx);
 void query_results_free(QueryResults *qr);

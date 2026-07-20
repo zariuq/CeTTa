@@ -96,7 +96,10 @@ static void eval_gc_collect(Arena *eval_arena, ArenaMark anchor,
         cetta_runtime_stats_update_max(
             CETTA_RUNTIME_COUNTER_EVAL_TAIL_PROMOTED_BINDING_CONSTRAINTS_PEAK,
             (uint64_t)env->eq_len);
-        (void)bindings_promote_atoms_to_arena(env, survivor);
+        /* The logical environment is owned by the resettable eval arena.
+           Prime's hidden Need heap has its own evaluation-episode arena and
+           must retain its frame identity across a tail collection. */
+        (void)bindings_promote_logical_atoms_to_arena(env, survivor);
     }
     if (etype_io && *etype_io)
         *etype_io = atom_deep_copy(survivor, *etype_io);

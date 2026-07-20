@@ -1,6 +1,16 @@
 ; Prime metadata records are ordinary data admitted against declarations stored
 ; in the destination metadata space.  Producers may construct records, but only
 ; the admission relation writes them.
+;
+; Effect algebra used below:
+;   prime-meta:after-unit () value = value
+;   prime-meta:after-unit error value = error
+; Its first argument is demanded exactly once by Prime's call-time Need heap.
+
+(= (prime-meta:after-unit $effect $value)
+   (case $effect
+     ((() $value)
+      ($effect-error $effect-error))))
 
 (= (prime-meta:closed-items $items)
    (if (== $items ())
@@ -67,8 +77,16 @@
        False))
 
 (= (prime-meta:schema-candidates $space $key)
-   (collapse
-     (match $space (MetaKeyV1 $key $fields) $fields)))
+   ; A metadata key is used as syntax inside the match pattern.  `case`
+   ; explicitly demands the quoted name before constructing that pattern;
+   ; otherwise call-by-need would correctly leave a once-used key suspended.
+   (case $key
+     (((quote $payload)
+       (collapse
+         (match $space
+           (MetaKeyV1 (quote $payload) $fields)
+           $fields)))
+      ($other ()))))
 
 (= (prime-meta:check-record $space $record)
    (case $record
@@ -85,26 +103,35 @@
 (= (prime-meta:add-record $space $record)
    (case (prime-meta:check-record $space $record)
      (((Admissible $key)
-       (let $_ (add-atom-nodup $space $record)
+       ; Prime `let` is call-by-need: an unused receipt cannot sequence an
+       ; effect.  The unit eliminator demands the effect before the admitted
+       ; value crosses this authority boundary.
+       (prime-meta:after-unit
+         (add-atom-nodup $space $record)
          (Admitted $record)))
       ((Rejected $reason $detail) (Rejected $reason $detail)))))
 
 (= (prime-meta:source-recognized $space $source)
-   (if (== (collapse
-             (match $space (RecognizedSourceV1 $source) recognized))
-           ())
-       False
-       True))
+   (case $source
+     (((quote $payload)
+       (if (== (collapse
+                 (match $space
+                   (RecognizedSourceV1 (quote $payload)) recognized))
+               ())
+           False
+           True))
+      ($other False))))
 
 ; A source is recognized by explicit policy data in the destination space.
 (= (recognize-doc-source! $space $source)
    (if (prime-meta:name-valid $source)
-       (let $_ (add-atom-nodup $space (RecognizedSourceV1 $source))
+       (prime-meta:after-unit
+         (add-atom-nodup $space (RecognizedSourceV1 $source))
          (Recognized $source))
        (Rejected MalformedName $source)))
 
 (= (install-doc-schema! $space)
-   (let $_
+   (prime-meta:after-unit
      (add-atom-nodup
        $space
        (MetaKeyV1 (quote doc)

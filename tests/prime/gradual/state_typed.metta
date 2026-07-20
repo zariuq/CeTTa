@@ -1,5 +1,6 @@
 ; Runtime half of a typed mutable-state example.  Annotation erasure must not
-; change the state transitions or the values observed around them.
+; change the state transitions or the values observed around them.  nop is an
+; explicit effect sink, so it demands its argument under Prime Need.
 
 (: prime-grad:read (-> (StateMonad Number) Number))
 (: prime-grad:increment! (-> (StateMonad Number) (StateMonad Number)))

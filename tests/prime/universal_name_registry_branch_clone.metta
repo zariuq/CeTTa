@@ -1,7 +1,9 @@
 ; An effectful branch that mentions a structural registry reference must not be
 ; dispatched to a private cloned registry: doing so would discard its visible
 ; effects and make the result depend on the thread budget. Until an explicit
-; merge contract exists, the evaluator selects the cooperative path.
+; merge contract exists, the evaluator selects the cooperative path. Prime
+; Need may select that path at the earlier binding-preservation boundary, so
+; the runtime witness is that no threaded run or worker task occurs.
 
 !(bind! &@(branch-registry clone-witness) (new-space))
 !(add-atom &@(branch-registry clone-witness) seed)
@@ -33,8 +35,8 @@
   (True))
 !(assertEqualToResult
   (match &registry-clone-stats
-    (runtime-counter hyperpose-cooperative-fallback $n)
-    (> $n 0))
+    (runtime-counter parallel-worker-task $n)
+    (== $n 0))
   (True))
 
 !(println! (PrimeUniversalNameRegistryBranchCloneGuardSummary 5 5 0))
