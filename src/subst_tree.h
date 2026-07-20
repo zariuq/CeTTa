@@ -51,7 +51,12 @@ typedef struct SubstNode {
 
     /* Variable branches — each indexed variable id gets its own
        branch so retrieval can produce bindings during the walk. */
-    struct { VarId var_id; SymbolId spelling; struct SubstNode *child; } *vars;
+    struct {
+        VarId var_id;
+        SymbolId spelling;
+        Atom *name_key;
+        struct SubstNode *child;
+    } *vars;
     uint32_t nvars, cvars;
 
     /* Expression branches (arity → child) */

@@ -132,7 +132,8 @@ static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
     return child;
 }
 
-static SubstNode *snode_get_var(SubstNode *n, VarId var_id, SymbolId spelling) {
+static SubstNode *snode_get_var(SubstNode *n, VarId var_id,
+                                SymbolId spelling, Atom *name_key) {
     for (uint32_t i = 0; i < n->nvars; i++)
         if (n->vars[i].var_id == var_id) return n->vars[i].child;
     if (n->nvars >= n->cvars) {
@@ -142,6 +143,7 @@ static SubstNode *snode_get_var(SubstNode *n, VarId var_id, SymbolId spelling) {
     SubstNode *child = snode_new();
     n->vars[n->nvars].var_id = var_id;
     n->vars[n->nvars].spelling = spelling;
+    n->vars[n->nvars].name_key = name_key;
     n->vars[n->nvars].child = child;
     n->nvars++;
     return child;
@@ -190,7 +192,8 @@ static void snode_add_leaf(SubstNode *n, CettaIndex idx, uint32_t epoch) {
 static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
     switch (a->kind) {
     case ATOM_SYMBOL: return snode_get_sym(node, a->sym_id);
-    case ATOM_VAR:    return snode_get_var(node, a->var_id, a->sym_id);
+    case ATOM_VAR:
+        return snode_get_var(node, a->var_id, a->sym_id, a->name_key);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT) return snode_get_int(node, a->ground.ival);
         if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
@@ -207,7 +210,7 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
                              g_var_intern ? var_intern(g_var_intern,
                                                        g_builtin_syms.grounded_placeholder)
                                           : fresh_var_id(),
-                             g_builtin_syms.grounded_placeholder);
+                             g_builtin_syms.grounded_placeholder, NULL);
     case ATOM_EXPR: {
         SubstNode *cur = snode_get_expr(node, a->expr.len);
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
@@ -229,9 +232,19 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
     switch (tu_kind(universe, atom_id)) {
     case ATOM_SYMBOL:
         return snode_get_sym(node, tu_sym(universe, atom_id));
-    case ATOM_VAR:
-        return snode_get_var(node, tu_var_id(universe, atom_id),
-                             tu_sym(universe, atom_id));
+    case ATOM_VAR: {
+        AtomId name_key_id = tu_var_name_key_id(universe, atom_id);
+        if (name_key_id == CETTA_ATOM_ID_NONE) {
+            return snode_get_var(node, tu_var_id(universe, atom_id),
+                                 tu_sym(universe, atom_id), NULL);
+        }
+        Atom *name_key = term_universe_get_atom(
+            (TermUniverse *)universe, name_key_id);
+        return name_key
+            ? snode_get_var(node, tu_var_id(universe, atom_id),
+                            SYMBOL_ID_NONE, name_key)
+            : NULL;
+    }
     case ATOM_GROUNDED:
         if (tu_ground_kind(universe, atom_id) == GV_INT)
             return snode_get_int(node, tu_int(universe, atom_id));
@@ -251,7 +264,7 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
                              g_var_intern ? var_intern(g_var_intern,
                                                        g_builtin_syms.grounded_placeholder)
                                           : fresh_var_id(),
-                             g_builtin_syms.grounded_placeholder);
+                             g_builtin_syms.grounded_placeholder, NULL);
     case ATOM_EXPR: {
         SubstNode *cur = snode_get_expr(node, tu_arity(universe, atom_id));
         for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
@@ -501,6 +514,14 @@ static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
     return pos;
 }
 
+static bool st_bind_indexed_var(BindingsBuilder *bb, Arena *a,
+                                VarId var_id, SymbolId spelling,
+                                Atom *name_key, Atom *value) {
+    Atom *var = atom_var_with_presentation(
+        a, spelling, name_key, var_id);
+    return var && bindings_builder_add_var_fresh(bb, var, value);
+}
+
 /* Walk flat token sequence through the tree. idx = current position in flat[].
    When idx == nflat, we've matched the full query — collect leaves. */
 static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
@@ -529,9 +550,9 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
         /* Indexed variable matches query symbol */
         for (uint32_t i = 0; i < node->nvars; i++) {
             uint32_t mark = bindings_builder_save(bb);
-            if (bindings_builder_add_id_fresh(
-                    bb, node->vars[i].var_id, node->vars[i].spelling,
-                    tok->original)) {
+            if (st_bind_indexed_var(
+                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
+                    node->vars[i].name_key, tok->original)) {
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              bb, a, atoms, out);
             }
@@ -574,9 +595,9 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
                              bb, a, atoms, out);
         for (uint32_t i = 0; i < node->nvars; i++) {
             uint32_t mark = bindings_builder_save(bb);
-            if (bindings_builder_add_id_fresh(
-                    bb, node->vars[i].var_id, node->vars[i].spelling,
-                    tok->original)) {
+            if (st_bind_indexed_var(
+                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
+                    node->vars[i].name_key, tok->original)) {
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              bb, a, atoms, out);
             }
@@ -593,9 +614,9 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
         /* Indexed variable matches query expression: bind it, skip the expression tokens */
         for (uint32_t i = 0; i < node->nvars; i++) {
             uint32_t mark = bindings_builder_save(bb);
-            if (bindings_builder_add_id_fresh(
-                    bb, node->vars[i].var_id, node->vars[i].spelling,
-                    tok->original)) {
+            if (st_bind_indexed_var(
+                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
+                    node->vars[i].name_key, tok->original)) {
                 /* Skip past all tokens of this expression */
                 CettaIndex skip_end = idx + 1;
                 CettaIndex depth = tok->arity;
@@ -615,9 +636,9 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
         /* Treat as wildcard — match any indexed variable */
         for (uint32_t i = 0; i < node->nvars; i++) {
             uint32_t mark = bindings_builder_save(bb);
-            if (bindings_builder_add_id_fresh(
-                    bb, node->vars[i].var_id, node->vars[i].spelling,
-                    tok->original)) {
+            if (st_bind_indexed_var(
+                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
+                    node->vars[i].name_key, tok->original)) {
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              bb, a, atoms, out);
             }

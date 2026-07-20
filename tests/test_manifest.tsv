@@ -43,6 +43,7 @@ tests/prime/conformance/language_identity.metta	prime	metta		any	native	test-pro
 tests/prime/conformance/language_identity.metta	he	metta	he-prime	main	native	test-profiles	property	HE-prime inert-syntax side of the independently versioned lane boundary
 tests/prime/conformance/occurs_check.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/resource_policy.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/syntax_algebra.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_agenda_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

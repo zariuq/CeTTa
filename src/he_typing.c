@@ -943,13 +943,11 @@ static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
      * symbol wildcards above.  Binds function-fresh and argument variables so
      * the codomain can be instantiated. */
     if (expected->kind == ATOM_VAR) {
-        return bindings_add_id_acyclic(
-                   tb, expected->var_id, SYMBOL_ID_NONE, actual)
+        return bindings_add_var_acyclic(tb, expected, actual)
                    ? HE_EXACT : HE_NONE;
     }
     if (actual->kind == ATOM_VAR) {
-        return bindings_add_id_acyclic(
-                   tb, actual->var_id, SYMBOL_ID_NONE, expected)
+        return bindings_add_var_acyclic(tb, actual, expected)
                    ? HE_EXACT : HE_NONE;
     }
 
@@ -1360,6 +1358,7 @@ typedef struct {
 typedef struct {
     VarId var_id;
     SymbolId spelling;
+    Atom *name_key;
 } ChainQueryVar;
 
 typedef enum {
@@ -1682,7 +1681,7 @@ static bool chain_query_var_add(ChainContext *ctx, Atom *var) {
         ctx->query_var_cap = ncap;
     }
     ctx->query_vars[ctx->query_var_count++] =
-        (ChainQueryVar){var->var_id, var->sym_id};
+        (ChainQueryVar){var->var_id, var->sym_id, var->name_key};
     return true;
 }
 
@@ -1908,9 +1907,9 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
         ctx->arena, sizeof(Atom *) * (ctx->query_var_count + 1u));
     query[0] = he_sym(ctx->arena, "query-substitution-v1");
     for (uint32_t i = 0; i < ctx->query_var_count; i++) {
-        Atom *var = atom_var_with_spelling(ctx->arena,
-                                           ctx->query_vars[i].spelling,
-                                           ctx->query_vars[i].var_id);
+        Atom *var = atom_var_with_presentation(
+            ctx->arena, ctx->query_vars[i].spelling,
+            ctx->query_vars[i].name_key, ctx->query_vars[i].var_id);
         Atom *value = bindings_apply_if_vars(env, ctx->arena, var);
         if (!value) {
             chain_mark_incomplete(ctx, "answer-substitution-failed");
@@ -1931,8 +1930,7 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
     for (uint32_t i = 0; i < env->len; i++) {
         const Binding *entry = &env->entries[i];
         if (!chain_is_scheme_var(ctx, entry->var_id)) continue;
-        Atom *var = atom_var_with_spelling(
-            ctx->arena, entry->spelling, entry->var_id);
+        Atom *var = binding_variable_atom(ctx->arena, entry);
         Atom *value = bindings_apply_if_vars(env, ctx->arena, var);
         if (!value) {
             chain_mark_incomplete(ctx, "elaboration-substitution-failed");
@@ -2109,16 +2107,14 @@ static bool chain_unify_shape(ChainContext *ctx, Atom *left, Atom *right,
         right = deref(env, pair.right);
         if (atom_eq(left, right)) continue;
         if (left->kind == ATOM_VAR) {
-            if (!bindings_add_id_acyclic(
-                    env, left->var_id, left->sym_id, right)) {
+            if (!bindings_add_var_acyclic(env, left, right)) {
                 chain_unify_stack_free(&stack);
                 return false;
             }
             continue;
         }
         if (right->kind == ATOM_VAR) {
-            if (!bindings_add_id_acyclic(
-                    env, right->var_id, right->sym_id, left)) {
+            if (!bindings_add_var_acyclic(env, right, left)) {
                 chain_unify_stack_free(&stack);
                 return false;
             }
@@ -3035,9 +3031,8 @@ static void chain_process_result(ChainContext *ctx, ChainWorkQueue *queue,
     continuation->args[pick] = item->proof;
     continuation->solved++;
     Atom *binder = continuation->premise_binders[pick];
-    if (binder && !bindings_add_id_acyclic(
-                      &item->env, binder->var_id,
-                      binder->sym_id, item->proof))
+    if (binder && !bindings_add_var_acyclic(
+                      &item->env, binder, item->proof))
         return;
     if (continuation->solved == continuation->arity) {
         (void)chain_finish_continuation(ctx, queue, continuation, &item->env);

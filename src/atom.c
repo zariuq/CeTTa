@@ -12,6 +12,10 @@
 
 #define CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP 64u
 
+#ifndef CETTA_STRUCTURAL_NAME_TRANSPORT_MUTATION
+#define CETTA_STRUCTURAL_NAME_TRANSPORT_MUTATION 0
+#endif
+
 struct CettaBigInt {
     const char *text;
 #if CETTA_BUILD_WITH_GMP
@@ -354,7 +358,11 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
     provenance_check_ptr(root, site, allowed_owner, "Atom", atom);
     switch (atom->kind) {
     case ATOM_SYMBOL:
+        return;
     case ATOM_VAR:
+        if (atom->name_key)
+            provenance_check_atom(root, atom->name_key, site, allowed_owner,
+                                  depth + 1u);
         return;
     case ATOM_GROUNDED:
         switch (atom->ground.gkind) {
@@ -1318,6 +1326,8 @@ static uint32_t atom_flags_from_children(Atom **elems, CettaExprLen len) {
         if (!atom_can_hashcons(child))
             flags &= ~ATOM_FLAG_HASHCONS_ELIGIBLE;
     }
+    if (len > 0 && elems && atom_is_symbol(elems[0], "resolve-name"))
+        flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
     if (len > 0) {
         Atom temp = {0};
         temp.kind = ATOM_EXPR;
@@ -1354,12 +1364,45 @@ Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     temp.flags = ATOM_FLAG_HAS_VARS | atom_hash_flags_for_eligible_leaf();
     temp.var_id = id ? id : fresh_var_id();
     temp.sym_id = spelling;
+    temp.name_key = NULL;
     temp.hash_cache = 0;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = temp;
     return at;
+}
+
+Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id) {
+    if (!a || !name_key) return NULL;
+    Atom temp = {0};
+    temp.kind = ATOM_VAR;
+    temp.flags = ATOM_FLAG_HAS_VARS | atom_hash_flags_for_eligible_leaf();
+    temp.var_id = id ? id : fresh_var_id();
+    temp.sym_id = SYMBOL_ID_NONE;
+    temp.name_key = name_key;
+    temp.hash_cache = 0;
+    Atom *shared = atom_maybe_hashcons(a, &temp);
+    if (shared) return shared;
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    *at = temp;
+    return at;
+}
+
+Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
+                                 Atom *name_key, VarId id) {
+    if (!name_key)
+        return atom_var_with_spelling(a, spelling, id);
+    if (CETTA_STRUCTURAL_NAME_TRANSPORT_MUTATION == 1)
+        return atom_var_with_spelling(a, SYMBOL_ID_NONE, id);
+    Atom *key = atom_deep_copy(a, name_key);
+    return key ? atom_var_with_name_key(a, key, id) : NULL;
+}
+
+Atom *atom_var_like(Arena *a, Atom *source, VarId id) {
+    if (!source || source->kind != ATOM_VAR) return NULL;
+    return atom_var_with_presentation(
+        a, source->sym_id, source->name_key, id);
 }
 
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id) {
@@ -1808,7 +1851,8 @@ bool atom_is_symbol_id(Atom *a, SymbolId id) {
 
 const char *atom_name_cstr(Atom *a) {
     if (!a) return "";
-    if (a->kind == ATOM_SYMBOL || a->kind == ATOM_VAR)
+    if (a->kind == ATOM_SYMBOL ||
+        (a->kind == ATOM_VAR && !a->name_key))
         return symbol_bytes(g_symbols, a->sym_id);
     return "";
 }
@@ -1985,7 +2029,7 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
         out = atom_symbol_id(dst, src->sym_id);
         break;
     case ATOM_VAR:
-        out = atom_var_with_spelling(dst, src->sym_id, src->var_id);
+        out = atom_var_like(dst, src, src->var_id);
         break;
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
@@ -2173,7 +2217,12 @@ void atom_print(Atom *a, FILE *out) {
         fputs(atom_name_cstr(a), out);
         break;
     case ATOM_VAR:
-        fprintf(out, "$%s", atom_name_cstr(a));
+        if (a->name_key) {
+            fputs("$@", out);
+            atom_print(a->name_key, out);
+        } else {
+            fprintf(out, "$%s", atom_name_cstr(a));
+        }
         {
             uint32_t epoch = var_epoch_suffix(a->var_id);
             if (epoch != 0)
