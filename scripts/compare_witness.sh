@@ -36,6 +36,7 @@ current_status="$(printf '%s\n' "$run_output" | awk -F= '/^STATUS=/{print $2; ex
 current_elapsed="$(printf '%s\n' "$run_output" | awk -F= '/^ELAPSED=/{print $2; exit}')"
 current_rss="$(printf '%s\n' "$run_output" | awk -F= '/^RSS_KB=/{print $2; exit}')"
 current_tree="$(printf '%s\n' "$run_output" | awk -F= '/^TREE_STATE=/{print $2; exit}')"
+current_evidence_status="$(printf '%s\n' "$run_output" | awk -F= '/^WITNESS_EVIDENCE_STATUS=/{print $2; exit}')"
 sample_factor=1
 if [[ -n "${RHO_BENCH_BASELINE_BIN:-}" ]]; then
     case "$name" in
@@ -163,10 +164,15 @@ print_compare_block "COMPARE_BASELINE" "$baseline_line" "$baseline_distance"
 print_compare_block "COMPARE_CONTEXT" "$context_line" "$context_distance"
 printf 'COMPARE_TREE_STATE=%s\n' "$current_tree"
 printf 'COMPARE_SAMPLE_FACTOR=%s\n' "$sample_factor"
+printf 'COMPARE_STRUCTURED_EVIDENCE=%s\n' "${current_evidence_status:-none}"
 
 if [[ "$enforce_material" -eq 1 ]]; then
     if [[ "$current_status" != "pass" ]]; then
         echo "FAIL: current witness did not pass" >&2
+        exit 1
+    fi
+    if [[ -n "$current_evidence_status" && "$current_evidence_status" != "passed" ]]; then
+        echo "FAIL: structured witness evidence did not pass" >&2
         exit 1
     fi
     if [[ -z "$baseline_line" ]]; then

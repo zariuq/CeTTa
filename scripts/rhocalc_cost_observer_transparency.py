@@ -23,6 +23,11 @@ RECEIPT_ONLY_COUNTERS = (
     "cost-rho-receipt-event-retained",
     "cost-rho-receipt-validation",
 )
+CLAIM_COUNTERS = (
+    "cost-rho-parallel-acquired-claim",
+    "cost-rho-parallel-committed-claim",
+    "cost-rho-parallel-released-claim",
+)
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -72,6 +77,33 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def state_only_counter_failures(stats: dict[str, int]) -> list[str]:
+    failures: list[str] = []
+    if stats.get("cost-rho-parallel-state-only-run") != 1:
+        failures.append("state-only mode counter must equal one")
+    if stats.get("cost-rho-parallel-receipt-run") != 0:
+        failures.append("state-only run attached the receipt observer")
+    for name in RECEIPT_ONLY_COUNTERS:
+        if stats.get(name) != 0:
+            failures.append(f"state-only run performed receipt work ({name})")
+    return failures
+
+
+def claim_conservation_failures(stats: dict[str, int]) -> list[str]:
+    acquired = stats.get("cost-rho-parallel-acquired-claim", 0)
+    committed = stats.get("cost-rho-parallel-committed-claim", 0)
+    released = stats.get("cost-rho-parallel-released-claim", 0)
+    failures: list[str] = []
+    if acquired <= 0:
+        failures.append("claim acquisition counter did not advance")
+    if acquired != committed + released:
+        failures.append(
+            "acquired claims must equal committed plus released claims "
+            f"({acquired} != {committed} + {released})"
+        )
+    return failures
+
+
 def state_only_command(binary: str, fixture: Path, threads: int) -> list[str]:
     return [
         binary,
@@ -115,16 +147,16 @@ def main(argv: list[str]) -> int:
     require(normalized(state.stdout) == expected_residual,
             "threaded state-only funded residual changed")
     state_stats = counters(state.stderr)
-    require(state_stats.get("cost-rho-parallel-state-only-run") == 1,
-            f"state-only mode counter mismatch: {state_stats}")
-    require(state_stats.get("cost-rho-parallel-receipt-run") == 0,
-            f"state-only run attached the receipt observer: {state_stats}")
-    for name in RECEIPT_ONLY_COUNTERS:
-        require(state_stats.get(name) == 0,
-                f"state-only run performed receipt work ({name}): {state_stats}")
+    state_counter_failures = state_only_counter_failures(state_stats)
+    require(not state_counter_failures,
+            f"state-only counter contract failed: {state_counter_failures}")
+    state_claim_failures = claim_conservation_failures(state_stats)
+    require(not state_claim_failures,
+            f"state-only claim conservation failed: {state_claim_failures}")
     print("PASS threaded state-only residual")
     print("PASS threaded state-only observer absent")
     print("PASS threaded state-only receipt work zero")
+    print("PASS threaded state-only claim conservation")
 
     observed = run(observed_command(binary, observed_fixture, 4))
     require(observed.returncode == 0,
@@ -152,11 +184,16 @@ def main(argv: list[str]) -> int:
             f"observed run did not inspect causal sources: {observed_stats}")
     require(observed_stats.get("cost-rho-receipt-validation") == 1,
             f"observed receipt was not validated once: {observed_stats}")
+    observed_claim_failures = claim_conservation_failures(observed_stats)
+    require(not observed_claim_failures,
+            f"observed claim conservation failed: {observed_claim_failures}")
     print("PASS fixed-wave observer residual transparency")
     print("PASS receipt observer work materialized on demand")
+    print("PASS observed claim conservation")
 
     for name in (
         "cost-rho-parallel-firing",
+        "cost-rho-parallel-acquired-claim",
         "cost-rho-parallel-committed-claim",
         "cost-rho-funding-head-consumed",
     ):
@@ -165,6 +202,11 @@ def main(argv: list[str]) -> int:
         require(state_stats.get(name) == observed_stats.get(name),
                 f"observer changed fixed-wave operation ({name}): "
                 f"state={state_stats} observed={observed_stats}")
+    require(
+        state_stats.get("cost-rho-parallel-released-claim", 0)
+        == observed_stats.get("cost-rho-parallel-released-claim", 0),
+        "observer changed fixed-wave released-claim count",
+    )
     print("PASS fixed-wave reductions equal")
     print("PASS fixed-wave committed claims equal")
     print("PASS fixed-wave funding consumption equal")
@@ -182,7 +224,7 @@ def main(argv: list[str]) -> int:
     require(normalized(sequential_state.stdout) == last_metta_result(sequential_observed.stdout),
             "single-worker observer-on/off residuals differ")
     print("PASS deterministic single-worker observer equality")
-    print("SUMMARY cost-rho-observer-transparency 9/9 PASS")
+    print("SUMMARY cost-rho-observer-transparency 11/11 PASS")
     return 0
 
 

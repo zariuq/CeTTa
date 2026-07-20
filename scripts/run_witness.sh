@@ -102,7 +102,7 @@ if [[ "$witness_bin" != "./cetta" ]]; then
 fi
 if [[ -n "${RHO_BENCH_BASELINE_BIN:-}" ]]; then
     case "$witness_name" in
-        rhocalc_threaded_standard|rhocalc_cost_threaded_heavy)
+        rhocalc_threaded_standard|rhocalc_cost_threaded_heavy|rhocalc_threaded_adaptive|rhocalc_cost_threaded_adaptive)
             printf -v baseline_arg '%q' "$RHO_BENCH_BASELINE_BIN"
             run_command+=" --baseline-bin $baseline_arg"
             ;;
@@ -169,6 +169,10 @@ first_surface_error="$(awk '
 ' "$logfile")"
 first_surface_error="${first_surface_error//$'\t'/ }"
 
+structured_evidence="$(awk -F= '
+    /^WITNESS_EVIDENCE_[A-Z0-9_]+=/ { print }
+' "$logfile")"
+
 status_reason="exit-status"
 if [[ "$status" == "timeout" ]]; then
     status_reason="timeout"
@@ -193,6 +197,9 @@ printf 'COMMAND=%s\n' "$run_command"
 printf 'NOTES=%s\n' "$notes"
 printf 'LAST_PAYLOAD=%s\n' "${last_payload:-}"
 printf 'FIRST_SURFACE_ERROR=%s\n' "${first_surface_error:-}"
+if [[ -n "$structured_evidence" ]]; then
+    printf '%s\n' "$structured_evidence"
+fi
 printf 'TSV_RECORD=%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$witness_name" \
     "$repo_label" \
