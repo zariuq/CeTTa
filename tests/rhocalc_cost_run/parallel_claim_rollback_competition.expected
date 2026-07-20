@@ -1,0 +1,1 @@
+(rho:cost:par (rho:cost:purse c rho:cost:stack-empty) (rho:cost:purse c (rho:cost:stack-cons spend rho:cost:stack-empty)) (rho:cost:signed rho:nil done))

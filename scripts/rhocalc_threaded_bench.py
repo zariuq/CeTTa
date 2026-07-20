@@ -13,7 +13,7 @@ from pathlib import Path
 import random
 
 from rhocalc_bench_provenance import PROVENANCE_FIELDS, benchmark_provenance
-from rhocalc_paired_samples import collect_interleaved
+from rhocalc_paired_samples import AdaptivePairedPolicy, collect_interleaved
 from rhocalc_m3_rholang_cli_compare import (
     contract_name_key,
     contract_proc_key,
@@ -287,6 +287,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--mode", choices=["quick", "standard", "heavy"],
                         default="quick")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument(
+        "--adaptive",
+        action="store_true",
+        help=(
+            "treat --runs as a maximum and stop after a clearly passing "
+            "paired baseline/candidate result"
+        ),
+    )
     parser.add_argument("--threads", default="1,2,4,8")
     parser.add_argument("--seed", type=lambda text: int(text, 0),
                         default=0xC377A)
@@ -299,6 +307,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
     if args.runs < 1:
         parser.error("--runs must be positive")
+    if args.adaptive and not args.baseline_bin:
+        parser.error("--adaptive requires --baseline-bin")
     thread_counts = [int(part) for part in args.threads.split(",") if part]
     if not thread_counts or any(count < 1 for count in thread_counts):
         parser.error("--threads must be a comma-separated list of positive integers")
@@ -319,8 +329,17 @@ def main(argv: list[str]) -> int:
         f"--threads {','.join(str(count) for count in thread_counts)} "
         f"--seed {args.seed} --spill-dir {spill_dir}"
     )
+    if args.baseline_bin:
+        replay += f" --baseline-bin {args.baseline_bin}"
+    if args.adaptive:
+        replay += " --adaptive"
     print(f"SEED {args.seed}")
     print(f"REPLAY scripts/rhocalc_threaded_bench.py {replay}")
+    print(
+        "SAMPLING "
+        + ("adaptive-clear-pass" if args.adaptive else "fixed-pairs")
+        + f" maximum_pairs={args.runs}"
+    )
     print()
     for workload in workloads_for_mode(args.mode, args.seed):
         input_path = workload_input_path(spill_dir, workload, args.mode, args.seed)
@@ -359,6 +378,7 @@ def main(argv: list[str]) -> int:
                     else None
                 ),
                 validate_result,
+                adaptive_policy=(AdaptivePairedPolicy() if args.adaptive else None),
             )
             if samples.error is not None:
                 print(
@@ -403,7 +423,10 @@ def main(argv: list[str]) -> int:
                 "reductions": workload.reductions,
                 "threads": threads,
                 "executor_mode": mode,
-                "runs": args.runs,
+                "runs": len(samples.candidate),
+                "planned_runs": args.runs,
+                "sampling": "adaptive" if args.adaptive else "fixed",
+                "sampling_stop_reason": samples.stop_reason,
                 "median_s": f"{median:.9f}",
                 "best_s": f"{best:.9f}",
                 "speedup_vs_seq": f"{speedup_vs_seq:.6f}",
@@ -447,7 +470,9 @@ def main(argv: list[str]) -> int:
                 f"mode={mode} "
                 f"median_s={median:.6f} "
                 f"best_s={best:.6f} "
-                f"speedup_vs_seq={speedup_vs_seq:.3f}"
+                f"speedup_vs_seq={speedup_vs_seq:.3f} "
+                f"pairs={len(samples.candidate)}/{args.runs} "
+                f"sampling_stop={samples.stop_reason}"
             )
             if speedup_vs_first_parallel != "":
                 summary += (
@@ -479,6 +504,9 @@ def main(argv: list[str]) -> int:
                 "threads",
                 "executor_mode",
                 "runs",
+                "planned_runs",
+                "sampling",
+                "sampling_stop_reason",
                 "median_s",
                 "best_s",
                 "speedup_vs_seq",
