@@ -100,11 +100,21 @@ run_command="$command"
 if [[ "$witness_bin" != "./cetta" ]]; then
     run_command="${run_command//.\/cetta/$witness_bin}"
 fi
+if [[ -n "${RHO_BENCH_BASELINE_BIN:-}" ]]; then
+    case "$witness_name" in
+        rhocalc_threaded_standard|rhocalc_cost_threaded_heavy|rhocalc_threaded_adaptive|rhocalc_cost_threaded_adaptive)
+            printf -v baseline_arg '%q' "$RHO_BENCH_BASELINE_BIN"
+            run_command+=" --baseline-bin $baseline_arg"
+            ;;
+    esac
+fi
 export CETTA_BIN="$repo_root/${witness_bin#./}"
 export CETTA_BUILD_CONFIG="$repo_root/${witness_build_config#./}"
 
 if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     commit="$(git -C "$repo_root" rev-parse --short HEAD)"
+    branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null || printf 'detached')"
+    repo_label="CeTTa-${branch}"
     if git -C "$repo_root" diff --quiet --ignore-submodules HEAD -- &&
        git -C "$repo_root" diff --quiet --ignore-submodules --cached HEAD --; then
         tree_state="clean"
@@ -113,10 +123,13 @@ if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     fi
 else
     commit="unknown"
+    repo_label="CeTTa-nogit"
     tree_state="nogit"
 fi
 
-logfile="$repo_root/.witness_${witness_name}_$$.log"
+logdir="$repo_root/runtime/witness-logs"
+mkdir -p "$logdir"
+logfile="$logdir/${witness_name}_$$.log"
 trap 'rm -f "$logfile"' EXIT
 
 set +e
@@ -156,6 +169,10 @@ first_surface_error="$(awk '
 ' "$logfile")"
 first_surface_error="${first_surface_error//$'\t'/ }"
 
+structured_evidence="$(awk -F= '
+    /^WITNESS_EVIDENCE_[A-Z0-9_]+=/ { print }
+' "$logfile")"
+
 status_reason="exit-status"
 if [[ "$status" == "timeout" ]]; then
     status_reason="timeout"
@@ -168,6 +185,7 @@ printf 'NAME=%s\n' "$witness_name"
 printf 'CATEGORY=%s\n' "$category"
 printf 'BUILD_HINT=%s\n' "$build_hint"
 printf 'COMMIT=%s\n' "$commit"
+printf 'REPO_LABEL=%s\n' "$repo_label"
 printf 'TREE_STATE=%s\n' "$tree_state"
 printf 'STATUS=%s\n' "$status"
 printf 'STATUS_REASON=%s\n' "$status_reason"
@@ -179,17 +197,21 @@ printf 'COMMAND=%s\n' "$run_command"
 printf 'NOTES=%s\n' "$notes"
 printf 'LAST_PAYLOAD=%s\n' "${last_payload:-}"
 printf 'FIRST_SURFACE_ERROR=%s\n' "${first_surface_error:-}"
-printf 'TSV_RECORD=%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+if [[ -n "$structured_evidence" ]]; then
+    printf '%s\n' "$structured_evidence"
+fi
+printf 'TSV_RECORD=%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$witness_name" \
+    "$repo_label" \
     "$commit" \
-    "$tree_state" \
     "$status" \
     "${elapsed:-unknown}" \
     "${rss_kib:-unknown}" \
     "$build_hint" \
     "$timeout_s" \
     "$resource_hint_kib" \
-    "${last_payload:-}"
+    "$notes" \
+    "context"
 
 if [[ "$shell_status" -ne 0 && "$shell_status" -ne 124 ]]; then
     cat "$logfile" >&2

@@ -10,6 +10,8 @@ TIMEOUT_S="${TIMEOUT_S:-240}"
 RUNTIME_DIR="$ROOT/runtime/bench_space_scale_ladder"
 BACKEND_MODES_STR="${BACKEND_MODES_STR:-native pathmap mork-live mork-open-act mork-load-act}"
 TRANSFER_CASES_STR="${TRANSFER_CASES_STR:-native-to-pathmap native-to-mork-live pathmap-to-native pathmap-to-mork-live mork-live-to-native mork-live-to-pathmap mork-live-to-open-act mork-live-to-load-act}"
+failure_count=0
+timeout_count=0
 
 [ -x "$BACKEND_SCRIPT" ] || { echo "error: missing $BACKEND_SCRIPT" >&2; exit 1; }
 [ -x "$TRANSFER_SCRIPT" ] || { echo "error: missing $TRANSFER_SCRIPT" >&2; exit 1; }
@@ -49,8 +51,10 @@ run_backend_case() {
     if [ "$shell_status" -eq 0 ]; then
         capture_result backend "$mode" "$fact_count" "$log" pass
     elif [ "$shell_status" -eq 124 ]; then
+        timeout_count=$((timeout_count + 1))
         capture_result backend "$mode" "$fact_count" "$log" timeout
     else
+        failure_count=$((failure_count + 1))
         capture_result backend "$mode" "$fact_count" "$log" fail
     fi
 }
@@ -70,8 +74,10 @@ run_transfer_case() {
     if [ "$shell_status" -eq 0 ]; then
         capture_result transfer "$case_id" "$fact_count" "$log" pass
     elif [ "$shell_status" -eq 124 ]; then
+        timeout_count=$((timeout_count + 1))
         capture_result transfer "$case_id" "$fact_count" "$log" timeout
     else
+        failure_count=$((failure_count + 1))
         capture_result transfer "$case_id" "$fact_count" "$log" fail
     fi
 }
@@ -90,3 +96,13 @@ for fact_count in "${sizes[@]}"; do
         run_transfer_case "$case_id" "$fact_count"
     done
 done
+
+if [ "$failure_count" -eq 0 ]; then
+    printf 'SCALE_CENSUS_STATUS=observed\n'
+else
+    printf 'SCALE_CENSUS_STATUS=failed\n'
+fi
+printf 'SCALE_CENSUS_FAILURES=%s\n' "$failure_count"
+printf 'SCALE_CENSUS_TIMEOUTS=%s\n' "$timeout_count"
+printf 'SCALE_CENSUS_AUTHORITATIVE_READINESS=0\n'
+test "$failure_count" -eq 0
