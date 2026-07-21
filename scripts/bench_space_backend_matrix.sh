@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/cetta"
+BIN="${CETTA_BIN:-$ROOT/cetta}"
 MODE="${1:-all}"
 FACT_COUNT="${2:-10000}"
 MATCH_ROUNDS="${3:-3}"
@@ -75,9 +75,15 @@ run_cetta_file() {
     local file=$1
     local output=$2
     local status=0
-    /usr/bin/time -f 'time_sec=%e rss_kb=%M' \
-        bash -lc "cd '$ROOT'; '$BIN' --quiet --profile he-extended --lang he '$file'" \
-        >"$output" 2>&1 || status=$?
+    local -a command=("$BIN")
+    if [ "${CETTA_BENCH_EMIT_RUNTIME_STATS:-0}" = "1" ]; then
+        command+=(--emit-runtime-stats)
+    fi
+    command+=(--quiet --profile he-extended --lang he "$file")
+    (
+        cd "$ROOT"
+        /usr/bin/time -f 'time_sec=%e rss_kb=%M' "${command[@]}"
+    ) >"$output" 2>&1 || status=$?
     return "$status"
 }
 
@@ -340,6 +346,15 @@ extract_rss() {
     grep 'rss_kb=' "$log" | tail -1 | sed -E 's/.*rss_kb=([0-9]+).*/\1/'
 }
 
+extract_counter() {
+    local name=$1
+    local log=$2
+    awk -v want="$name" '
+        $1 == "runtime-counter" && $2 == want { value = $3 }
+        END { print value == "" ? "na" : value }
+    ' "$log"
+}
+
 expect_value() {
     local label=$1
     local expected=$2
@@ -378,6 +393,12 @@ run_mode_scenario() {
     local time_sec
     local rss_kb
     local scenario_ns
+    local term_universe_inserts
+    local term_universe_blob_bytes
+    local atom_id_capacity_bytes
+    local pathmap_direct_store
+    local mork_add_call
+    local mork_add_batch_items
 
     file=$(scenario_program_path "$mode" "$scenario")
     log=$(scenario_log_path "$mode" "$scenario")
@@ -395,6 +416,12 @@ run_mode_scenario() {
     time_sec=$(extract_time "$log")
     rss_kb=$(extract_rss "$log")
     scenario_ns=$(extract_metric scenario_ns "$log")
+    term_universe_inserts=$(extract_counter term-universe-insert "$log")
+    term_universe_blob_bytes=$(extract_counter term-universe-blob-bytes "$log")
+    atom_id_capacity_bytes=$(extract_counter space-atom-id-capacity-bytes-peak "$log")
+    pathmap_direct_store=$(extract_counter pathmap-direct-store "$log")
+    mork_add_call=$(extract_counter mork-add-call "$log")
+    mork_add_batch_items=$(extract_counter mork-add-batch-items "$log")
 
     case "$scenario" in
         insert_only) expected="$FACT_COUNT" ;;
@@ -410,8 +437,11 @@ run_mode_scenario() {
     [ -n "$rss_kb" ] || die "missing RSS for $mode/$scenario"
     [ -n "$scenario_ns" ] || die "missing scenario_ns for $mode/$scenario"
 
-    printf 'backend\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$mode" "$scenario" "$FACT_COUNT" "$MATCH_ROUNDS" "$scenario_rows" "$time_sec" "$rss_kb" "$scenario_ns"
+    printf 'backend\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$mode" "$scenario" "$FACT_COUNT" "$MATCH_ROUNDS" "$scenario_rows" \
+        "$time_sec" "$rss_kb" "$scenario_ns" "$term_universe_inserts" \
+        "$term_universe_blob_bytes" "$atom_id_capacity_bytes" \
+        "$pathmap_direct_store" "$mork_add_call" "$mork_add_batch_items"
 }
 
 IFS=' ' read -r -a scenarios <<< "$SCENARIOS_STR"
@@ -437,7 +467,7 @@ for mode in "${selected_modes[@]}"; do
     fi
 done
 
-printf 'kind\tmode\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\tscenario_ns\n'
+printf 'kind\tmode\tscenario\tfact_count\tmatch_rounds\tcount\ttime_s\trss_kb\tscenario_ns\tterm_universe_inserts\tterm_universe_blob_bytes\tspace_atom_id_capacity_bytes_peak\tpathmap_direct_store\tmork_add_call\tmork_add_batch_items\n'
 for mode in "${selected_modes[@]}"; do
     for scenario in "${scenarios[@]}"; do
         run_mode_scenario "$mode" "$scenario"

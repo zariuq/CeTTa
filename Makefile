@@ -30,15 +30,22 @@ ENABLE_RUNTIME_STATS ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
 ENABLE_SANITIZERS ?= 0
 CETTA_PROVENANCE_ASSERT ?= 0
+RHOCOST_COMMIT_AUDIT ?= 0
 SANITIZERS ?= address,undefined
 RHO_BENCH_RUNS ?= 3
 RHO_BENCH_THREADS ?= 1,2,4,8
 RHO_BENCH_SEED ?= 0xC377A
 RHO_BENCH_GENERATED_SIZE_MODE ?= smallest
+RHO_BENCH_ENFORCE_BASELINE ?= 0
 RHO_BENCH_CSV ?=
 RHO_BENCH_CSV_ARG = $(if $(strip $(RHO_BENCH_CSV)),--csv "$(RHO_BENCH_CSV)",)
+RHO_COST_BENCH_CSV ?=
+RHO_COST_BENCH_CSV_ARG = $(if $(strip $(RHO_COST_BENCH_CSV)),--csv "$(RHO_COST_BENCH_CSV)",)
 ifneq ($(filter $(RHO_BENCH_GENERATED_SIZE_MODE),smallest largest),$(RHO_BENCH_GENERATED_SIZE_MODE))
 $(error RHO_BENCH_GENERATED_SIZE_MODE must be smallest or largest)
+endif
+ifneq ($(filter $(RHO_BENCH_ENFORCE_BASELINE),0 1),$(RHO_BENCH_ENFORCE_BASELINE))
+$(error RHO_BENCH_ENFORCE_BASELINE must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_GMP),0 1),$(ENABLE_GMP))
 $(error ENABLE_GMP must be 0 or 1)
@@ -48,6 +55,9 @@ $(error ENABLE_SANITIZERS must be 0 or 1)
 endif
 ifneq ($(filter $(CETTA_PROVENANCE_ASSERT),0 1),$(CETTA_PROVENANCE_ASSERT))
 $(error CETTA_PROVENANCE_ASSERT must be 0 or 1)
+endif
+ifneq ($(filter $(RHOCOST_COMMIT_AUDIT),0 1),$(RHOCOST_COMMIT_AUDIT))
+$(error RHOCOST_COMMIT_AUDIT must be 0 or 1)
 endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
@@ -214,6 +224,9 @@ BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).sanitize.$(SANITIZER_TAG)
 endif
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).provenance
+endif
+ifeq ($(RHOCOST_COMMIT_AUDIT),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).rhocost-audit
 endif
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
 TSAN_ENABLED := 0
@@ -435,6 +448,7 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_hyperpose_handle_fallback_runtime_stats.metta \
 	tests/test_hyperpose_prime_runtime_stats.metta \
 	tests/test_hyperpose_threaded_stats.metta \
+	tests/test_lts_rho_cost_parallel_runtime_stats.metta \
 	tests/test_imported_conjunction_bridge_init_regression.metta \
 	tests/test_imported_match_chain_conjunction_lowering.metta \
 	tests/test_native_count_collapse_match_regression.metta \
@@ -641,7 +655,13 @@ bench-rho-threaded: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_bench.py "$(CETTA_SCRIPT_BIN)" --mode quick --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" --seed "$(RHO_BENCH_SEED)" $(RHO_BENCH_CSV_ARG)
 
 bench-rho-threaded-heavy: $(BIN)
-	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_bench.py "$(CETTA_SCRIPT_BIN)" --mode standard --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" --seed "$(RHO_BENCH_SEED)" $(RHO_BENCH_CSV_ARG)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_bench.py "$(CETTA_SCRIPT_BIN)" --mode standard --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" --seed "$(RHO_BENCH_SEED)" --require-speedup $(RHO_BENCH_CSV_ARG)
+
+bench-rho-cost-threaded: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_threaded_bench.py "$(CETTA_SCRIPT_BIN)" --mode quick --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" $(RHO_COST_BENCH_CSV_ARG)
+
+bench-rho-cost-threaded-heavy: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_threaded_bench.py "$(CETTA_SCRIPT_BIN)" --mode heavy --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" --require-speedup $(RHO_COST_BENCH_CSV_ARG)
 
 bench-rho-threaded-corpus: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_corpus_bench.py "$(CETTA_SCRIPT_BIN)" --suite core --runs "$(RHO_BENCH_RUNS)" --threads "$(RHO_BENCH_THREADS)" $(RHO_BENCH_CSV_ARG)
@@ -753,6 +773,8 @@ bench-performance-light:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) perf-bench-tu
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-lib-parse-inference-native
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-prime-light
+	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-threaded
+	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-cost-threaded
 	@if [ "$(AUTO_BUILD_OPTIONAL)" = "1" ]; then \
 		$(MAKE) -s BUILD=$(BUILD_CANON) bench-optional-bridge-light; \
 	fi
@@ -769,12 +791,23 @@ bench-heavy:
 		echo "Try: BENCH_ALLOW_HEAVY=1 make bench-heavy"; \
 		exit 2; \
 	fi
+	@if [ "$(RHO_BENCH_ENFORCE_BASELINE)" = "1" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) perf-bench-rhocalc; \
+	else \
+		$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-threaded-heavy; \
+		$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-cost-threaded-heavy; \
+	fi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-ffi-friction-stress
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-space-backend-matrix
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-space-transfer-matrix
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-space-scale-ladder
+	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-d3-nodup-backends
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-d4-backends
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-d4-nodup-backends
+	@$(MAKE) -s BUILD=$(BUILD_CANON) probe-d4-nodup-capability-backends
+	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-rho-threaded-corpus
+	@$(MAKE) -s BUILD=$(BUILD_CANON) RHO_BENCH_GENERATED_SIZE_MODE=largest bench-rho-threaded-generated
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHO_BENCH_GENERATED_SIZE_MODE=largest bench-rho-threaded-generated-runtime-stats
 	@BENCH_ALLOW_HEAVY=1 $(MAKE) -s BUILD=$(BUILD_CANON) bench-prime-heavy
 
 bench-prime-light: $(BIN)
@@ -1495,6 +1528,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
 	if [ -f "$(BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(BUILD_CONFIG_HEADER)"; then \
 		rm -f "$$tmp_cfg"; \
 	else \
@@ -1516,6 +1550,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING 0\n' >> "$$tmp_cfg"; \
+	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
 	if [ -f "$(STAGE0_BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(STAGE0_BUILD_CONFIG_HEADER)"; then \
 		rm -f "$$tmp_cfg"; \
 	else \
@@ -2143,7 +2178,46 @@ test-rhocalc-cost-differential: $(BIN)
 		echo "SKIP: cost-rho differential harness (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
 	fi
 
-test-rhocalc: $(BIN) test-rhocalc-abt-substitution
+test-rhocalc-cost-differential-required: $(BIN)
+	@if [ -z "$${METTAPEDIA_ROOT:-}" ]; then \
+		echo "FAIL: METTAPEDIA_ROOT is required for the release Cost-Rho differential"; \
+		exit 2; \
+	elif [ ! -d "$$METTAPEDIA_ROOT" ]; then \
+		echo "FAIL: METTAPEDIA_ROOT is not a directory: $$METTAPEDIA_ROOT"; \
+		exit 2; \
+	else \
+		METTAPEDIA_ROOT="$$METTAPEDIA_ROOT" $(CETTA_SCRIPT_RUN_ENV) \
+			python3 scripts/rhocalc_cost_differential.py "$(CETTA_SCRIPT_BIN)"; \
+	fi
+
+test-rhocalc-cost-parallel-stress: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_parallel_stress.py "$(CETTA_SCRIPT_BIN)"
+
+test-rhocalc-cost-observer-transparency: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_observer_transparency.py "$(CETTA_SCRIPT_BIN)"
+else
+	@echo "INFO: Cost-Rho observer transparency requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=$(RHOCOST_COMMIT_AUDIT) $@
+endif
+
+test-rhocalc-cost-commit-audit:
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 test-rhocalc-cost-commit-audit-body
+
+test-rhocalc-cost-commit-audit-asan:
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-rhocalc-cost-commit-audit-body
+
+test-rhocalc-cost-commit-audit-tsan:
+	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc-cost-commit-audit-body
+
+test-rhocalc-cost-commit-audit-body: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_parallel_stress.py "$(CETTA_SCRIPT_BIN)"
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_observer_transparency.py "$(CETTA_SCRIPT_BIN)"
+
+test-rhocalc-canonical-selector-differential: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_canonical_selector_differential.py "$(CETTA_SCRIPT_BIN)"
+
+test-rhocalc: $(BIN) test-rhocalc-canonical-selector-differential test-rhocalc-abt-substitution
 	@pass=0; fail=0; \
 	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
 		[ -f "$$f" ] || continue; \
@@ -2212,16 +2286,18 @@ test-rhocalc: $(BIN) test-rhocalc-abt-substitution
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$($(CETTA_BIN_INVOKE) --num-threads 2 --lang rhocalc --profile cost --syntax mrho tests/rhocalc_cost_run/internal_split_tokens_basic.mrho 2>&1); \
-	status=$$?; \
-	if [ "$$status" -eq 1 ] && printf '%s\n' "$$result" | grep -q "threaded execution is strict-core only"; then \
-		echo "PASS: rhocalc cost rejects threaded execution"; \
-		pass=$$((pass + 1)); \
-	else \
-		echo "FAIL: rhocalc cost rejects threaded execution"; \
-		printf '%s\n' "$$result"; \
-		fail=$$((fail + 1)); \
-	fi; \
+	for threads in 2 4; do \
+		result=$$($(CETTA_BIN_INVOKE) --num-threads $$threads --lang rhocalc --profile cost --syntax mrho tests/rhocalc_cost_run/internal_split_tokens_basic.mrho 2>&1); \
+		status=$$?; \
+		if [ "$$status" -eq 0 ] && [ "$$result" = "$$(cat tests/rhocalc_cost_run/internal_split_tokens_basic.expected)" ]; then \
+			echo "PASS: rhocalc cost threaded execution ($$threads workers)"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: rhocalc cost threaded execution ($$threads workers)"; \
+			printf '%s\n' "$$result"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
 	result=$$($(CETTA_BIN_INVOKE) --num-threads 0 --lang rhocalc --syntax mrho tests/rhocalc_run/stuck_pending_send.mrho 2>&1); \
 	if [ "$$result" = "$$(cat tests/rhocalc_run/stuck_pending_send.expected)" ]; then \
 		echo "PASS: rhocalc zero thread budget uses sequential path"; \
@@ -2286,6 +2362,11 @@ test-rhocalc: $(BIN) test-rhocalc-abt-substitution
 	fi; \
 	if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_threaded_stress.py "$(CETTA_SCRIPT_BIN)"; then \
 		pass=$$((pass + 7)); \
+	else \
+		fail=$$((fail + 1)); \
+	fi; \
+	if $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_parallel_stress.py "$(CETTA_SCRIPT_BIN)"; then \
+		pass=$$((pass + 6)); \
 	else \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -2419,7 +2500,7 @@ test-rhocalc: $(BIN) test-rhocalc-abt-substitution
 	else \
 		echo "SKIP: rhocalc M3 rholang-cli overlap (set RHOLANG_CLI or install rholang-cli)"; \
 	fi; \
-	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_rhometta_lib_surface.metta tests/test_rhometta_isolation_oracle.metta tests/test_rhometta_demo_dedfarm.metta tests/test_rhometta_demo_revision.metta tests/test_rhometta_demo_mayset.metta tests/test_rhometta_demo_ecan.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta tests/test_lts_rho_cost_causal_trace.metta tests/test_lts_rho_cost_search_budget.metta; do \
+	for f in tests/test_lts_surface.metta tests/test_rho_lib_surface.metta tests/test_rho_lib_hygiene_surface.metta tests/test_rhometta_lib_surface.metta tests/test_rhometta_isolation_oracle.metta tests/test_rhometta_demo_dedfarm.metta tests/test_rhometta_demo_revision.metta tests/test_rhometta_demo_mayset.metta tests/test_rhometta_demo_ecan.metta tests/test_lts_rho_surface.metta tests/test_lts_rho_cost_surface.metta tests/test_lts_rho_cost_causal_trace.metta tests/test_lts_rho_cost_parallel_branches.metta tests/test_lts_rho_cost_search_budget.metta; do \
 		exp="$${f%.metta}.expected"; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
@@ -3332,9 +3413,84 @@ perf-list:
 	@echo "rhocalc_threaded_corpus: make bench-rho-threaded-corpus"
 	@echo "rhocalc_threaded_generated: make bench-rho-threaded-generated"
 	@echo "rhocalc_threaded_generated_runtime_stats: make ENABLE_RUNTIME_STATS=1 bench-rho-threaded-generated-runtime-stats"
+	@echo "rhocalc_cost_threaded: make bench-rho-cost-threaded"
+	@echo "rhocalc_cost_threaded_heavy: make bench-rho-cost-threaded-heavy"
 
 perf-show-baselines:
 	@./scripts/run_witness.sh --show-baselines
+
+perf-bench-rhocalc:
+	@for name in rhocalc_threaded_standard rhocalc_cost_threaded_heavy; do \
+		if ! out=$$(./scripts/compare_witness.sh --enforce-material "$$name"); then \
+			printf '%s\n' "$$out"; exit 1; \
+		fi; \
+		printf '%s\n' "$$out"; \
+		status=$$(printf '%s\n' "$$out" | awk -F= '/^STATUS=/{ print $$2; exit }'); \
+		test "$$status" = "pass" || exit 1; \
+	done
+	@python3 scripts/rhocalc_benchmark_regression.py
+
+test-main-readiness-model:
+	@python3 scripts/test_cetta_readiness_model.py
+	@python3 scripts/test_rhocalc_paired_samples.py
+
+main-readiness-space-ladders:
+	@out=$$(./scripts/run_witness.sh main_readiness_space_ladders); \
+	printf '%s\n' "$$out"; \
+	status=$$(printf '%s\n' "$$out" | awk -F= '/^STATUS=/{ print $$2; exit }'); \
+	test "$$status" = "pass"
+
+main-readiness-thresholds:
+	@out=$$(./scripts/run_witness.sh main_readiness_thresholds); \
+	printf '%s\n' "$$out"; \
+	status=$$(printf '%s\n' "$$out" | awk -F= '/^STATUS=/{ print $$2; exit }'); \
+	test "$$status" = "pass"
+
+main-readiness-mutation-qualification:
+	@out=$$(./scripts/run_witness.sh main_readiness_mutation_qualification); \
+	printf '%s\n' "$$out"; \
+	status=$$(printf '%s\n' "$$out" | awk -F= '/^STATUS=/{ print $$2; exit }'); \
+	evidence=$$(printf '%s\n' "$$out" | awk -F= '/^WITNESS_EVIDENCE_STATUS=/{ print $$2; exit }'); \
+	test "$$status" = "pass" && test "$$evidence" = "passed"
+
+main-readiness-rho-adaptive:
+	@if [ -z "$(RHO_BENCH_BASELINE_BIN)" ]; then \
+		echo "RHO_BENCH_BASELINE_BIN is required for adaptive paired timing" >&2; \
+		exit 2; \
+	fi
+	@for name in rhocalc_threaded_adaptive rhocalc_cost_threaded_adaptive; do \
+		out=$$(./scripts/run_witness.sh "$$name"); \
+		printf '%s\n' "$$out"; \
+		status=$$(printf '%s\n' "$$out" | awk -F= '/^STATUS=/{ print $$2; exit }'); \
+		test "$$status" = "pass" || exit 1; \
+	done
+	@python3 scripts/rhocalc_benchmark_regression.py
+
+main-readiness-routine:
+	@python3 scripts/cetta_main_readiness.py --tier routine
+
+main-readiness-routine-authoritative:
+	@python3 scripts/cetta_main_readiness.py --tier routine
+	@python3 scripts/cetta_readiness_calibrate.py --require-qualified
+
+main-readiness-exhaustive:
+	@BENCH_ALLOW_HEAVY=1 python3 scripts/cetta_main_readiness.py --tier exhaustive
+
+main-readiness-calibration-status:
+	@python3 scripts/cetta_readiness_calibrate.py --status
+
+main-readiness-calibrate:
+	@if [ "$(MAIN_READINESS_ALLOW_EXHAUSTIVE)" != "1" ]; then \
+		echo "MAIN_READINESS_ALLOW_EXHAUSTIVE=1 is required" >&2; \
+		exit 2; \
+	fi
+	@args=""; \
+	if [ -n "$(MAIN_READINESS_MAX_NEW_PAIRS)" ]; then \
+		args="--max-new-pairs $(MAIN_READINESS_MAX_NEW_PAIRS)"; \
+	fi; \
+	python3 scripts/cetta_readiness_calibrate.py --allow-exhaustive $$args
+
+main-readiness-cost-rho: main-readiness-exhaustive
 
 perf-capacity-tu:
 	@./scripts/run_witness.sh tu_tail_special_forms
@@ -5591,23 +5747,22 @@ bench-d3-backends: $(BIN)
 	done
 
 probe-d3-nodup: $(BIN)
-	@count=$$($(CETTA_BIN_INVOKE) --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+	@count=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
 	echo "depth-3 nodup probe: $$count theorems"; \
-	if printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
-		echo "PASS: nodup probe produced a numeric count"; \
-		echo "NOTE: historical 3268 expectation is retired; use bench-weird-audit for recorded counts."; \
+	if [ "$$count" = "2759" ]; then \
+		echo "PASS: nodup theorem count matches"; \
 	else \
-		echo "FAIL: nodup probe did not produce a valid count"; exit 1; \
+		echo "FAIL: expected 2759, got $$count"; exit 1; \
 	fi
 
 probe-d3-nodup-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$($(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --space-engine "$$backend" --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
 		echo "$$backend depth-3 nodup probe: $$count theorems"; \
-		if printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
-			echo "PASS: $$backend nodup probe produced a numeric count"; \
+		if [ "$$count" = "2759" ]; then \
+			echo "PASS: $$backend nodup theorem count matches"; \
 		else \
-			echo "FAIL: $$backend nodup probe did not produce a valid count"; exit 1; \
+			echo "FAIL: expected 2759, got $$count for $$backend"; exit 1; \
 		fi; \
 	done
 
@@ -5742,40 +5897,20 @@ bench-d4-nodup: $(BIN)
 	fi
 
 bench-d4-backends: $(BIN)
-	@for backend in $(SPACE_ENGINES); do \
-		out=$$(timeout $(D4_PROBE_TIMEOUT) $(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4.metta 2>&1); \
-		status=$$?; \
-		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
-		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
-		if [ $$status -eq 0 ] && printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
-			echo "$$backend depth-4 complete: $$count theorems"; \
-		elif [ $$status -eq 124 ] && [ -n "$$checkpoint" ]; then \
-			echo "$$backend depth-4 probe ($(D4_PROBE_TIMEOUT)s): $$checkpoint"; \
-		elif [ $$status -eq 124 ]; then \
-			echo "$$backend depth-4 probe ($(D4_PROBE_TIMEOUT)s): no checkpoint yet"; \
-		else \
-			printf '%s\n' "$$out" | tail -10; \
-			echo "FAIL: $$backend depth-4 probe did not produce a valid count or checkpoint"; exit 1; \
-		fi; \
-	done
+	@python3 scripts/bench_d4_progress.py "$(CETTA_SCRIPT_BIN)" \
+		tests/nil_pc_fc_d4.metta --backends "$(subst $(space),$(comma),$(strip $(SPACE_ENGINES)))" \
+		--duration "$(D4_PROBE_TIMEOUT)" --output runtime/d4_progress_current.json
 
 bench-d4-nodup-backends: $(BIN)
-	@for backend in $(SPACE_ENGINES); do \
-		out=$$(timeout $(D4_PROBE_TIMEOUT) $(CETTA_BIN_INVOKE) --space-engine "$$backend" --count-only tests/nil_pc_fc_d4_nodup.metta 2>&1); \
-		status=$$?; \
-		count=$$(printf '%s\n' "$$out" | grep -E '^[0-9]+$$' | tail -1); \
-		checkpoint=$$(printf '%s\n' "$$out" | grep '\[chain\]' | tail -1); \
-		if [ $$status -eq 0 ] && printf '%s' "$$count" | grep -Eq '^[0-9]+$$'; then \
-			echo "$$backend depth-4 nodup complete: $$count theorems"; \
-		elif [ $$status -eq 124 ] && [ -n "$$checkpoint" ]; then \
-			echo "$$backend depth-4 nodup probe ($(D4_PROBE_TIMEOUT)s): $$checkpoint"; \
-		elif [ $$status -eq 124 ]; then \
-			echo "$$backend depth-4 nodup probe ($(D4_PROBE_TIMEOUT)s): no checkpoint yet"; \
-		else \
-			printf '%s\n' "$$out" | tail -10; \
-			echo "FAIL: $$backend depth-4 nodup probe did not produce a valid count or checkpoint"; exit 1; \
-		fi; \
-	done
+	@python3 scripts/bench_d4_progress.py "$(CETTA_SCRIPT_BIN)" \
+		tests/nil_pc_fc_d4_nodup.metta --backends "$(subst $(space),$(comma),$(strip $(SPACE_ENGINES)))" \
+		--duration "$(D4_PROBE_TIMEOUT)" --output runtime/d4_nodup_progress_current.json
+
+probe-d4-nodup-capability-backends: $(BIN)
+	@python3 scripts/bench_d4_progress.py "$(CETTA_SCRIPT_BIN)" \
+		tests/nil_pc_fc_d4_nodup.metta --backends "$(subst $(space),$(comma),$(strip $(SPACE_ENGINES)))" \
+		--duration "$(D4_PROBE_TIMEOUT)" --mode census \
+		--output runtime/d4_nodup_capability_current.json
 
 bench-compare-petta: $(BIN)
 	@./scripts/bench_compare_cetta_petta.sh
@@ -5927,3 +6062,10 @@ refresh-he-matrices:
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body test-list-lanes test-syn-lanes bench-list
 .PHONY: test-lib-parse-abt-bridge
+.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-rhocalc-cost-differential test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules
+.PHONY: test-rhocalc-cost-parallel-stress test-rhocalc-canonical-selector-differential
+.PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
+.PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork test-rhocalc-cost-differential-required test-rhocalc-cost-observer-transparency test-rhocalc-cost-commit-audit test-rhocalc-cost-commit-audit-asan test-rhocalc-cost-commit-audit-tsan test-rhocalc-cost-commit-audit-body bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-cost-threaded bench-rho-cost-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats perf-bench-rhocalc test-main-readiness-model main-readiness-space-ladders main-readiness-thresholds main-readiness-mutation-qualification main-readiness-rho-adaptive main-readiness-routine main-readiness-routine-authoritative main-readiness-exhaustive main-readiness-calibration-status main-readiness-calibrate main-readiness-cost-rho
+.PHONY: probe-d4-nodup-capability-backends
+.PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body

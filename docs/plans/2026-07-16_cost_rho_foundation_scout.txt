@@ -200,12 +200,12 @@ Lean definitions introduced by the scout
 The following new modules are independent of the older `rhoPatternMass` and
 `RhoDirect*` shadows in InteractiveGSLT.lean:
 
-* Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Basic.lean
+* Mettapedia/Languages/ProcessCalculi/RhoCalculus/Cost/Basic.lean
   - `CostSig`
   - mutually defined `CostName`, `CostProc`, `CostTerm`, and `CostStack`
   - the exact runtime-supported fragment
   - locally nameless lifting and capture-avoiding COMM substitution
-* Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Step.lean
+* Mettapedia/Languages/ProcessCalculi/RhoCalculus/Cost/Step.lean
   - `CostConfig`
   - structural component flattening
   - proof-relevant `TokenCover`
