@@ -871,10 +871,10 @@ static bool prime_canonical_scope_index(PrimeCanonicalScope *scope,
     return true;
 }
 
-static Atom *prime_canonical_var(Arena *a, uint64_t index) {
+static Atom *prime_canonical_idx(Arena *a, uint64_t index) {
     if (index > INT64_MAX) return NULL;
     return atom_expr2(
-        a, atom_symbol(a, "Var"), atom_int(a, (int64_t)index));
+        a, atom_symbol(a, "idx"), atom_int(a, (int64_t)index));
 }
 
 /* Lower the named Prime telescope surface to the neutral canonical ABT waist.
@@ -890,7 +890,7 @@ static Atom *prime_canonicalize_type_rec(Arena *a,
     if (type->kind == ATOM_VAR) {
         uint64_t index = 0;
         return prime_canonical_scope_index(scope, type->var_id, &index)
-            ? prime_canonical_var(a, index) : NULL;
+            ? prime_canonical_idx(a, index) : NULL;
     }
     if (type->kind != ATOM_EXPR) return type;
 

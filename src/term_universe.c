@@ -509,6 +509,8 @@ static bool term_universe_atom_is_stable(Atom *atom) {
             case GV_STATE:
             case GV_CAPTURE:
             case GV_FOREIGN:
+            case GV_PRIME_NEED_CAPABILITY:
+            case GV_PRIME_CONTEXT:
                 goto done;
             }
             break;
@@ -1158,6 +1160,8 @@ static bool term_universe_record_payload_len(const TermUniverse *universe,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         return false;
@@ -1317,6 +1321,8 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         return false;
@@ -1974,6 +1980,8 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return CETTA_ATOM_ID_NONE;
         }
         return CETTA_ATOM_ID_NONE;
@@ -2264,6 +2272,8 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return;
         }
         return;
@@ -2507,6 +2517,8 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return NULL;
         }
         break;
@@ -2827,6 +2839,8 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         return false;
@@ -3020,6 +3034,8 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             /* Filtered by the stable-grounded check above; keep the switch
                exhaustive for -Wswitch cleanliness. */
             return CETTA_ATOM_ID_NONE;
@@ -3141,6 +3157,8 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return NULL;
         }
         return NULL;

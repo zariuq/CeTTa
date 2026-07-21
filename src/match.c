@@ -494,6 +494,7 @@ void bindings_init(Bindings *b) {
     b->eq_len = 0;
     b->eq_cap = 0;
     prime_need_snapshot_init(&b->prime_need);
+    prime_need_receipt_init(&b->prime_receipt);
     bindings_lookup_cache_reset(b);
 }
 
@@ -539,6 +540,7 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
         }
     }
     dst->prime_need = src->prime_need;
+    dst->prime_receipt = src->prime_receipt;
     return true;
 }
 
@@ -583,7 +585,8 @@ bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
 bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
     if (!bindings_promote_logical_atoms_to_arena(bindings, dst))
         return false;
-    return prime_need_snapshot_promote(dst, &bindings->prime_need);
+    return prime_need_snapshot_promote(dst, &bindings->prime_need) &&
+           prime_need_receipt_promote(dst, &bindings->prime_receipt);
 }
 
 void bindings_move(Bindings *dst, Bindings *src) {
@@ -820,6 +823,9 @@ static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
     bindings_assert_no_private_variant_slots(src);
     if (!prime_need_snapshot_merge(&dst->prime_need, &src->prime_need))
         return false;
+    if (!prime_need_receipt_merge(&dst->prime_receipt,
+                                  &src->prime_receipt))
+        return false;
     uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
     BindingConstraint *pending = bindings_temp_constraints_alloc(
@@ -872,12 +878,14 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
 
 bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
     if (!src || (src->len == 0 && src->eq_len == 0 &&
-                 !prime_need_snapshot_present(&src->prime_need)))
+                 !prime_need_snapshot_present(&src->prime_need) &&
+                 !prime_need_receipt_present(&src->prime_receipt)))
         return true;
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
     if (dst && dst->len == 0 && dst->eq_len == 0 &&
-        !prime_need_snapshot_present(&dst->prime_need)) {
+        !prime_need_snapshot_present(&dst->prime_need) &&
+        !prime_need_receipt_present(&dst->prime_receipt)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
         Bindings cloned;
         if (!bindings_clone(&cloned, src))
@@ -1505,6 +1513,7 @@ static bool bindings_builder_snapshot(BindingsBuilder *bb) {
         .lookup_cache_count = bb->current.lookup_cache_count,
         .lookup_cache_next = bb->current.lookup_cache_next,
         .prime_need = bb->current.prime_need,
+        .prime_receipt = bb->current.prime_receipt,
     };
     return true;
 }
@@ -1555,6 +1564,7 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.lookup_cache_count = entry->lookup_cache_count;
         bb->current.lookup_cache_next = entry->lookup_cache_next;
         bb->current.prime_need = entry->prime_need;
+        bb->current.prime_receipt = entry->prime_receipt;
     }
 }
 
@@ -1710,7 +1720,8 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     if (!bb || !src)
         return true;
     if (src->len == 0 && src->eq_len == 0 &&
-        !prime_need_snapshot_present(&src->prime_need))
+        !prime_need_snapshot_present(&src->prime_need) &&
+        !prime_need_receipt_present(&src->prime_receipt))
         return true;
     bindings_assert_no_private_variant_slots(&bb->current);
     bindings_assert_no_private_variant_slots(src);
@@ -1720,6 +1731,11 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
         return false;
     if (!prime_need_snapshot_merge(&bb->current.prime_need,
                                    &src->prime_need)) {
+        bindings_builder_rollback(bb, mark);
+        return false;
+    }
+    if (!prime_need_receipt_merge(&bb->current.prime_receipt,
+                                  &src->prime_receipt)) {
         bindings_builder_rollback(bb, mark);
         return false;
     }
@@ -2240,6 +2256,9 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
+            return atom_eq(pattern, target);
         }
         return false;
 
@@ -2289,6 +2308,9 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
+            return atom_eq(pattern, target);
         }
         return false;
 
@@ -3131,6 +3153,8 @@ static bool stored_grounded_equal(Atom *left,
     case GV_STATE:
     case GV_CAPTURE:
     case GV_FOREIGN:
+    case GV_PRIME_NEED_CAPABILITY:
+    case GV_PRIME_CONTEXT:
         return false;
     }
     return false;
@@ -3254,6 +3278,8 @@ fail:
 bool bindings_eq(Bindings *a, Bindings *b) {
     if (!(prime_need_snapshot_is_ancestor(&a->prime_need, &b->prime_need) &&
           prime_need_snapshot_is_ancestor(&b->prime_need, &a->prime_need)))
+        return false;
+    if (!prime_need_receipt_equal(&a->prime_receipt, &b->prime_receipt))
         return false;
     if (a->len != b->len) return false;
     if (a->eq_len != b->eq_len) return false;

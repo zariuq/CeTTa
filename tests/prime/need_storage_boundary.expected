@@ -2,4 +2,7 @@
 [()]
 [stored]
 [0]
-[found-source]
+[(prime-need:store-bump)]
+[()]
+[(delay (prime-need:store-bump))]
+[0]

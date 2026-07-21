@@ -1,1 +1,2 @@
-[(Error (Force ordinary-data) PrimeNotForceable)]
+[(force ordinary-data)]
+[(Error (App 1 ignored) PrimeNotAFunction)]

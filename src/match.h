@@ -33,6 +33,9 @@ typedef struct {
     uint8_t lookup_cache_next;
     /* This internal store is orthogonal to logical substitutions. */
     PrimeNeedSnapshot prime_need;
+    /* Causal support and branch-local effects are a second orthogonal
+     * component.  It is immutable/persistent like the Need snapshot. */
+    PrimeNeedReceipt prime_receipt;
 } Bindings;
 
 typedef struct {
@@ -48,6 +51,7 @@ typedef struct {
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
     PrimeNeedSnapshot prime_need;
+    PrimeNeedReceipt prime_receipt;
 } BindingsBuilderTrailEntry;
 
 typedef struct {
@@ -137,7 +141,7 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
 
 /* Rename all variables in atom except the variables mentioned anywhere inside
    `ignore_spec`. Non-ignored variables are freshened consistently per original
-   identity. Canonical ABT `(Var k)` expressions contain no metavariables and
+   identity. Canonical ABT `(idx k)` expressions contain no metavariables and
    remain inert. Returns a new arena-allocated atom, the original atom if
    unchanged, or NULL for a malformed cyclic variable-bearing graph. */
 Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);

@@ -51,7 +51,7 @@ static Atom *node4(Arena *arena, const char *head,
 }
 
 static Atom *var(Arena *arena, int64_t index) {
-    return node1(arena, "Var", atom_int(arena, index));
+    return node1(arena, "idx", atom_int(arena, index));
 }
 
 static void test_default_signature_blob(Arena *arena) {
@@ -416,13 +416,13 @@ static void test_locally_nameless_seams(Arena *arena,
                   abt_open(signature, arena, free_x, structured_closed),
                   free_body);
 
-    Atom *named_x = node1(arena, "Var", atom_string(arena, "x"));
-    Atom *named_y = node1(arena, "Var", atom_string(arena, "y"));
+    Atom *named_x = node1(arena, "quote", atom_string(arena, "x"));
+    Atom *named_y = node1(arena, "quote", atom_string(arena, "y"));
     Atom *named_body = node2(
         arena, "App", named_x, node2(arena, "Lam", type, named_x));
-    check_atom_eq("bind admits the generated Var-string name stage",
+    check_atom_eq("bind admits an explicit quoted-string name",
                   abt_bind(signature, arena, named_x, named_body), closed);
-    check_atom_eq("open restores a generated Var-string name",
+    check_atom_eq("open restores an explicit quoted-string name",
                   abt_open(signature, arena, named_x, closed), named_body);
     check_atom_eq("generated name spellings erase alpha-invariantly",
                   abt_bind(signature, arena, named_y,
@@ -466,7 +466,7 @@ static void test_locally_nameless_seams(Arena *arena,
     CHECK(abt_bind(signature, arena, quoted_matcher_var, x_body) == NULL,
           "an open quote remains inadmissible as a persistent binder key");
     CHECK(!abt_scope_check(signature, 0u, named_x),
-          "generated Var-string syntax is not canonical ABT");
+          "quoted-string name syntax is not canonical ABT");
     CHECK(abt_bind(signature, arena, var(arena, 0), x_body) == NULL,
           "bind rejects a loose canonical index as a name");
 
@@ -482,12 +482,12 @@ static void test_locally_nameless_seams(Arena *arena,
               signature, 0u, node2(arena, "Lam", type, var(arena, 1))),
           "scope check rejects a loose variable");
     CHECK(!abt_scope_check(signature, 0u,
-                           node1(arena, "Var", atom_symbol(arena, "bad"))),
-          "scope check rejects malformed Var syntax");
+                           node1(arena, "idx", atom_symbol(arena, "bad"))),
+          "scope check rejects malformed idx syntax");
     CHECK(!abt_alpha_eq(
-              node1(arena, "Var", atom_symbol(arena, "bad")),
-              node1(arena, "Var", atom_symbol(arena, "bad"))),
-          "alpha equality rejects malformed Var syntax");
+              node1(arena, "idx", atom_symbol(arena, "bad")),
+              node1(arena, "idx", atom_symbol(arena, "bad"))),
+          "alpha equality rejects malformed idx syntax");
 
     /* Canonical counterpart of rho capture avoidance: substituting an outer
        receive variable beneath an inner receive must not capture a free name
@@ -573,11 +573,11 @@ static void test_named_readback(Arena *arena,
     check_atom_eq("named parsing resolves lexical scope innermost-first",
                   abt_parse(signature, arena, shadow_surface), nested);
 
-    Atom *named_x = node1(arena, "Var", atom_string(arena, "arg-1"));
+    Atom *named_x = node1(arena, "quote", atom_string(arena, "arg-1"));
     Atom *named_surface = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", named_x), type, named_x);
-    check_atom_eq("named parsing accepts generated Var-string identities",
+    check_atom_eq("named parsing accepts quoted-string identities",
                   abt_parse(signature, arena, named_surface), simple);
 
     Atom *mm_ph = node1(arena, "quote",
@@ -604,7 +604,7 @@ static void test_named_readback(Arena *arena,
                     raw_compound)) == NULL,
           "unquoted compound binder names fail closed");
     CHECK(abt_parse(signature, arena, named_x) == NULL,
-          "unbound generated Var-string syntax cannot cross canonicalization");
+          "unbound quoted-string syntax cannot cross canonicalization");
 
     AbtSignature scoped_signature;
     abt_signature_init(&scoped_signature);
@@ -693,7 +693,7 @@ static bool deep_lam_has_depth(Atom *term) {
         term = term->expr.elems[2];
     }
     return depth == ABT_DEEP_TERM_DEPTH && term && term->kind == ATOM_EXPR &&
-           term->expr.len == 2u && atom_is_symbol(term->expr.elems[0], "Var") &&
+           term->expr.len == 2u && atom_is_symbol(term->expr.elems[0], "idx") &&
            term->expr.elems[1]->kind == ATOM_GROUNDED &&
            term->expr.elems[1]->ground.gkind == GV_INT &&
            term->expr.elems[1]->ground.ival == 0;
