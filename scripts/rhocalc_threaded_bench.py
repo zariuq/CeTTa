@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import random
 
+from rhocalc_bench_provenance import PROVENANCE_FIELDS, benchmark_provenance
+from rhocalc_paired_samples import AdaptivePairedPolicy, collect_interleaved
 from rhocalc_m3_rholang_cli_compare import (
     contract_name_key,
     contract_proc_key,
@@ -278,9 +280,21 @@ def main(argv: list[str]) -> int:
         description="Measure --num-threads speed/crossover on validated rho workloads."
     )
     parser.add_argument("bin_path")
+    parser.add_argument(
+        "--baseline-bin",
+        help="measure a pinned baseline binary in alternating sample order",
+    )
     parser.add_argument("--mode", choices=["quick", "standard", "heavy"],
                         default="quick")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument(
+        "--adaptive",
+        action="store_true",
+        help=(
+            "treat --runs as a maximum and stop after a clearly passing "
+            "paired baseline/candidate result"
+        ),
+    )
     parser.add_argument("--threads", default="1,2,4,8")
     parser.add_argument("--seed", type=lambda text: int(text, 0),
                         default=0xC377A)
@@ -293,6 +307,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
     if args.runs < 1:
         parser.error("--runs must be positive")
+    if args.adaptive and not args.baseline_bin:
+        parser.error("--adaptive requires --baseline-bin")
     thread_counts = [int(part) for part in args.threads.split(",") if part]
     if not thread_counts or any(count < 1 for count in thread_counts):
         parser.error("--threads must be a comma-separated list of positive integers")
@@ -302,6 +318,10 @@ def main(argv: list[str]) -> int:
     ok = True
     chain_speedup = 1.0
     rows: list[dict[str, object]] = []
+    provenance = benchmark_provenance(args.bin_path)
+    baseline_provenance = (
+        benchmark_provenance(args.baseline_bin) if args.baseline_bin else None
+    )
     spill_dir = Path(args.spill_dir)
     spill_dir.mkdir(parents=True, exist_ok=True)
     replay = (
@@ -309,8 +329,17 @@ def main(argv: list[str]) -> int:
         f"--threads {','.join(str(count) for count in thread_counts)} "
         f"--seed {args.seed} --spill-dir {spill_dir}"
     )
+    if args.baseline_bin:
+        replay += f" --baseline-bin {args.baseline_bin}"
+    if args.adaptive:
+        replay += " --adaptive"
     print(f"SEED {args.seed}")
     print(f"REPLAY scripts/rhocalc_threaded_bench.py {replay}")
+    print(
+        "SAMPLING "
+        + ("adaptive-clear-pass" if args.adaptive else "fixed-pairs")
+        + f" maximum_pairs={args.runs}"
+    )
     print()
     for workload in workloads_for_mode(args.mode, args.seed):
         input_path = workload_input_path(spill_dir, workload, args.mode, args.seed)
@@ -322,25 +351,60 @@ def main(argv: list[str]) -> int:
         sequential_baseline_median: float | None = None
         first_threaded_median: float | None = None
         for threads in thread_counts:
-            times: list[float] = []
-            for _ in range(args.runs):
-                result = run_rho(args.bin_path, workload.expr, threads=threads,
-                                 input_path=input_path)
+            def validate_result(role: str, result: RunResult) -> str | None:
                 valid, detail = workload.validate(result)  # type: ignore[attr-defined]
                 if not valid:
-                    print(f"FAIL {workload.name} threads={threads}: {detail}")
-                    ok = False
-                    break
-                times.append(result.elapsed)
+                    return f"{role}: {detail}"
+                return None
+
+            samples = collect_interleaved(
+                args.runs,
+                lambda: run_rho(
+                    args.bin_path,
+                    workload.expr,
+                    threads=threads,
+                    input_path=input_path,
+                ),
+                (
+                    (
+                        lambda: run_rho(
+                            args.baseline_bin,
+                            workload.expr,
+                            threads=threads,
+                            input_path=input_path,
+                        )
+                    )
+                    if args.baseline_bin
+                    else None
+                ),
+                validate_result,
+                adaptive_policy=(AdaptivePairedPolicy() if args.adaptive else None),
+            )
+            if samples.error is not None:
+                print(
+                    f"FAIL {workload.name} threads={threads}: "
+                    f"{samples.error}"
+                )
+                ok = False
+                break
+            times = [result.elapsed for result in samples.candidate]
+            baseline_times = [result.elapsed for result in samples.baseline]
             if not times:
                 continue
             median, best = summarize_times(times)
+            baseline_median = (
+                statistics.median(baseline_times) if baseline_times else None
+            )
+            baseline_best = min(baseline_times) if baseline_times else None
             mode = executor_mode_for_threads(threads)
             if threads == 1:
                 sequential_baseline_median = median
             elif first_threaded_median is None:
                 first_threaded_median = median
-            assert sequential_baseline_median is not None
+            if sequential_baseline_median is None:
+                print(f"FAIL {workload.name}: no valid sequential baseline")
+                ok = False
+                break
             speedup_vs_seq = (
                 sequential_baseline_median / median if median > 0 else 0.0
             )
@@ -352,13 +416,17 @@ def main(argv: list[str]) -> int:
             if workload.name.startswith("chain-farm") and threads == max(thread_counts):
                 chain_speedup = speedup_vs_seq
             rows.append({
+                **provenance,
                 "mode": args.mode,
                 "seed": args.seed,
                 "workload": workload.name,
                 "reductions": workload.reductions,
                 "threads": threads,
                 "executor_mode": mode,
-                "runs": args.runs,
+                "runs": len(samples.candidate),
+                "planned_runs": args.runs,
+                "sampling": "adaptive" if args.adaptive else "fixed",
+                "sampling_stop_reason": samples.stop_reason,
                 "median_s": f"{median:.9f}",
                 "best_s": f"{best:.9f}",
                 "speedup_vs_seq": f"{speedup_vs_seq:.6f}",
@@ -368,6 +436,32 @@ def main(argv: list[str]) -> int:
                     else ""
                 ),
                 "samples_s": ";".join(f"{sample:.9f}" for sample in times),
+                "baseline_commit": (
+                    baseline_provenance["commit"] if baseline_provenance else ""
+                ),
+                "baseline_binary_sha256": (
+                    baseline_provenance["binary_sha256"]
+                    if baseline_provenance
+                    else ""
+                ),
+                "baseline_median_s": (
+                    f"{baseline_median:.9f}"
+                    if baseline_median is not None
+                    else ""
+                ),
+                "baseline_best_s": (
+                    f"{baseline_best:.9f}"
+                    if baseline_best is not None
+                    else ""
+                ),
+                "baseline_samples_s": ";".join(
+                    f"{sample:.9f}" for sample in baseline_times
+                ),
+                "candidate_vs_baseline_ratio": (
+                    f"{median / baseline_median:.6f}"
+                    if baseline_median is not None and baseline_median > 0
+                    else ""
+                ),
                 "note": workload.note,
             })
             summary = (
@@ -376,11 +470,18 @@ def main(argv: list[str]) -> int:
                 f"mode={mode} "
                 f"median_s={median:.6f} "
                 f"best_s={best:.6f} "
-                f"speedup_vs_seq={speedup_vs_seq:.3f}"
+                f"speedup_vs_seq={speedup_vs_seq:.3f} "
+                f"pairs={len(samples.candidate)}/{args.runs} "
+                f"sampling_stop={samples.stop_reason}"
             )
             if speedup_vs_first_parallel != "":
                 summary += (
                     f" speedup_vs_first_parallel={speedup_vs_first_parallel:.3f}"
+                )
+            if baseline_median is not None:
+                summary += (
+                    f" baseline_median_s={baseline_median:.6f} "
+                    f"candidate_vs_baseline={median / baseline_median:.3f}"
                 )
             print(
                 summary
@@ -395,6 +496,7 @@ def main(argv: list[str]) -> int:
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         with csv_path.open("w", newline="") as handle:
             fieldnames = [
+                *PROVENANCE_FIELDS,
                 "mode",
                 "seed",
                 "workload",
@@ -402,11 +504,20 @@ def main(argv: list[str]) -> int:
                 "threads",
                 "executor_mode",
                 "runs",
+                "planned_runs",
+                "sampling",
+                "sampling_stop_reason",
                 "median_s",
                 "best_s",
                 "speedup_vs_seq",
                 "speedup_vs_first_parallel",
                 "samples_s",
+                "baseline_commit",
+                "baseline_binary_sha256",
+                "baseline_median_s",
+                "baseline_best_s",
+                "baseline_samples_s",
+                "candidate_vs_baseline_ratio",
                 "note",
             ]
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
