@@ -25,7 +25,8 @@
 (= (corr:use $x) $x)
 !(corr:use (superpose (A B)))
 
-; A demanded effect is shared once.
+; A demanded effect is shared once in its branch receipt and is not implicitly
+; committed to the ambient state cell.
 !(bind! &corr:counter (new-state 0))
 (= (corr:bump)
    (let $old (get-state &corr:counter)

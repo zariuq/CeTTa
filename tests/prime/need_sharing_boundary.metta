@@ -1,0 +1,6 @@
+!(bind! &s (new-space))
+!(let $p (delay (superpose (A B)))
+   (add-atom &s (Stored (Pair $p $p))))
+!(get-atoms &s)
+!(match &s (Stored (Pair $x $y))
+   (Pair (force $x) (force $y)))

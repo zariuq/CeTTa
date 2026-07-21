@@ -5,8 +5,8 @@
 (= (prime-need:omega) (prime-need:omega))
 
 ; Canonical ABT application.
-!(App (Lam T (Var 0)) (superpose (A B)))
-!(App (Lam T (Pair (Var 0) (Var 0))) (superpose (A B)))
+!(App (Lam T (idx 0)) (superpose (A B)))
+!(App (Lam T (Pair (idx 0) (idx 0))) (superpose (A B)))
 !(App (Lam T kept-empty) (empty))
 !(App (Lam T kept-fault) (== 1 "bad"))
 !(App (Lam T kept-divergence) (prime-need:omega))
@@ -53,15 +53,16 @@
    (case $value
      (((Box $inner) $inner))))
 !(prime-need:case-unbox
-   (App (Lam T (Box (Var 0))) (superpose (A B))))
+   (App (Lam T (Box (idx 0))) (superpose (A B))))
 
 ; A closure can carry a branch-local thunk through another canonical App.
 !(App
-   (App (Lam T (Lam U (Var 1))) (superpose (A B)))
+   (App (Lam T (Lam U (idx 1))) (superpose (A B)))
    ignored)
 
 ; One demanded thunk occurrence may be observed twice, but its effect runs
-; once in that branch.
+; once in that branch.  The branch receipt is not implicitly committed to the
+; ambient state cell.
 !(bind! &prime-need:canonical-counter (new-state 0))
 (= (prime-need:canonical-bump)
    (let $old (get-state &prime-need:canonical-counter)
@@ -69,7 +70,7 @@
        (change-state! &prime-need:canonical-counter (+ $old 1))
        $old)))
 !(App
-   (Lam T (Pair (Var 0) (Var 0)))
+   (Lam T (Pair (idx 0) (idx 0)))
    (prime-need:canonical-bump))
 !(get-state &prime-need:canonical-counter)
 
@@ -95,7 +96,8 @@
 !(prime-need:overlap (superpose (A B)))
 
 ; Candidate rules share one call thunk.  Trying two strict patterns may split
-; the thunk's result, but it must execute the producer effect only once.
+; the thunk's result, but it must execute the producer effect only once.  The
+; dedicated receipt-occurrence gate observes that event directly.
 !(bind! &prime-need:decision-counter (new-state 0))
 (= (prime-need:decision-bump)
    (let $old (get-state &prime-need:decision-counter)
@@ -126,4 +128,19 @@
 ; raw argument that violates an admitted function contract even when unused.
 (: prime-need:typed-ignore (-> Number Number))
 (= (prime-need:typed-ignore $x) 7)
+
+; Canonical application follows Prime's unknown-preservation boundary.  An
+; untyped head stays residual, while a known Number in function position is a
+; checked contradiction.
+!(App Vec (idx 0))
+
+; Recursive forwarding keeps the suspension's source type available to the
+; checker without forcing it.  The numeric test demands the delayed counter
+; only when the next equation body needs it.
+(= (prime-need:countdown-size $value $count)
+   (if (== $count 0)
+       (size-atom $value)
+       (prime-need:countdown-size $value (- $count 1))))
+!(prime-need:countdown-size (a b) 2)
+
 !(prime-need:typed-ignore "bad")

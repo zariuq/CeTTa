@@ -99,7 +99,7 @@ int main(void) {
 
     Atom *alpha_x = parse_one(&arena, "(-> (: $x Type) $x)");
     Atom *alpha_y = parse_one(&arena, "(-> (: $renamed Type) $renamed)");
-    Atom *alpha_expected = parse_one(&arena, "(Pi Type (Var 0))");
+    Atom *alpha_expected = parse_one(&arena, "(Pi Type (idx 0))");
     Atom *alpha_x_canonical = prime_semantics_canonicalize_type(
         &arena, alpha_x);
     Atom *alpha_y_canonical = prime_semantics_canonicalize_type(
@@ -114,7 +114,7 @@ int main(void) {
     Atom *nested = parse_one(
         &arena, "(-> (: $x Type) (: $y $x) $x)");
     Atom *nested_abt_expected = parse_one(
-        &arena, "(Pi Type (Pi (Var 0) (Var 1)))");
+        &arena, "(Pi Type (Pi (idx 0) (idx 1)))");
     Atom *nested_canonical = prime_semantics_canonicalize_type(
         &arena, nested);
     if (!nested_canonical || !nested_abt_expected ||
@@ -138,7 +138,7 @@ int main(void) {
         (Atom *[]){atom_symbol(&arena, "->"), typed_outer, typed_inner, inner},
         4u);
     Atom *shadowed_expected = parse_one(
-        &arena, "(Pi Type (Pi (Var 0) (Var 0)))");
+        &arena, "(Pi Type (Pi (idx 0) (idx 0)))");
     Atom *shadowed_canonical = prime_semantics_canonicalize_type(
         &arena, shadowed);
     if (!shadowed_canonical || !shadowed_expected ||
@@ -155,8 +155,8 @@ int main(void) {
         fprintf(stderr, "free same-spelling variable was captured\n");
         goto cleanup;
     }
-    Atom *already_canonical = parse_one(&arena, "(Pi Nat (Var 0))");
-    Atom *loose_canonical = parse_one(&arena, "(Var 0)");
+    Atom *already_canonical = parse_one(&arena, "(Pi Nat (idx 0))");
+    Atom *loose_canonical = parse_one(&arena, "(idx 0)");
     if (prime_semantics_canonicalize_type(&arena, already_canonical) !=
             already_canonical ||
         prime_semantics_canonicalize_type(&arena, loose_canonical)) {
@@ -169,7 +169,7 @@ int main(void) {
        DAG sharing, reject variable-bearing cycles, and remain stack-safe. */
     Atom *sealed_ignore_none = atom_symbol(&arena, "NoIgnoredVariables");
     Atom *sealed_canonical_mix = parse_one(
-        &arena, "(ABTLetScopeV1 (pair (Var 0) $sealed-free))");
+        &arena, "(ABTLetScopeV1 (pair (idx 0) $sealed-free))");
     Atom *sealed_canonical_result = rename_vars_except(
         &scratch, sealed_canonical_mix, sealed_ignore_none);
     if (!sealed_canonical_result ||
@@ -278,7 +278,7 @@ int main(void) {
         }
         deep_cursor = deep_cursor->expr.elems[2];
     }
-    Atom *deep_expected_index = parse_one(&arena, "(Var 2047)");
+    Atom *deep_expected_index = parse_one(&arena, "(idx 2047)");
     if (!deep_cursor || !deep_expected_index ||
         !atom_eq(deep_cursor, deep_expected_index)) {
         fprintf(stderr, "deep canonical telescope lost its outer index\n");

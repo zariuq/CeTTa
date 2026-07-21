@@ -61,7 +61,7 @@
      (pair (ABTPatternVarV1 0) (ABTPatternVarV1 1))
      (pair a b)
      (ABTLetScopeV1
-       (ABTLetScopeV1 (pair (Var 1) (Var 0)))))
+       (ABTLetScopeV1 (pair (idx 1) (idx 0)))))
    (pair a b))
 
 ; Sparse slots and a scope count that disagrees with the pattern fail closed.
@@ -69,23 +69,23 @@
    (ABTLetV1
      (ABTPatternVarV1 1)
      a
-     (ABTLetScopeV1 (Var 0)))
+     (ABTLetScopeV1 (idx 0)))
    ((Error
       (ABTLetV1
         (ABTPatternVarV1 1)
         a
-        (ABTLetScopeV1 (Var 0)))
+        (ABTLetScopeV1 (idx 0)))
       ABTLetScopeError)))
 !(assertEqualToResult
    (ABTLetV1
      (ABTPatternVarV1 0)
      a
-     (ABTLetScopeV1 (ABTLetScopeV1 (Var 0))))
+     (ABTLetScopeV1 (ABTLetScopeV1 (idx 0))))
    ((Error
       (ABTLetV1
         (ABTPatternVarV1 0)
         a
-        (ABTLetScopeV1 (ABTLetScopeV1 (Var 0))))
+        (ABTLetScopeV1 (ABTLetScopeV1 (idx 0))))
       ABTLetScopeError)))
 
 !(println! (PrimeABTLetSummary 14 14 0))

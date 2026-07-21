@@ -17,7 +17,7 @@
 
 !(assertEqual
    (canonical-binders:canonical (canonical-binders:id $x))
-   (Pi Type (Var 0)))
+   (Pi Type (idx 0)))
 !(assertEqual
    (canonical-binders:canonical (canonical-binders:id $x))
    (canonical-binders:canonical (canonical-binders:id $renamed)))
@@ -25,12 +25,12 @@
    (canonical-binders:canonical
      (prime-judge &self
        (Form (-> (: $x Type) (: $y $x) $x))))
-   (Pi Type (Pi (Var 0) (Var 1))))
+   (Pi Type (Pi (idx 0) (idx 1))))
 !(assertEqual
    (canonical-binders:canonical
      (prime-judge &self
        (Form (-> (: $x Type) (: $x $x) $x))))
-   (Pi Type (Pi (Var 0) (Var 0))))
+   (Pi Type (Pi (idx 0) (idx 0))))
 !(assertEqual
    (canonical-binders:canonical
      (prime-judge &self (Form (-> Nat Nat))))
@@ -41,7 +41,7 @@
      (canonical-binders:canonical (canonical-binders:id $x)))
    True)
 !(assertEqual
-   (__cetta_abt_scope_check (AbtSignatures) 0 (Var 0))
+   (__cetta_abt_scope_check (AbtSignatures) 0 (idx 0))
    False)
 !(assertEqual
    (canonical-binders:status
@@ -55,6 +55,6 @@
    (canonical-binders:canonical
      (prime-judge &self
        (Form (-> (: $outer Type) (-> (: $inner $outer) $outer)))))
-   (Pi Type (Pi (Var 0) (Var 1))))
+   (Pi Type (Pi (idx 0) (idx 1))))
 
 !(println! (PrimeCanonicalBindersSummary 10 10 0))

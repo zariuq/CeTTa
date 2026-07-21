@@ -321,6 +321,18 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
             return atom_capture(dst, (CaptureClosure *)src->ground.ptr);
         case GV_FOREIGN:
             return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+        case GV_PRIME_NEED_CAPABILITY: {
+            const CettaPrimeNeedCapability *capability =
+                atom_prime_need_capability_value(src);
+            return capability
+                       ? atom_prime_need_capability_with_rights(
+                             dst, capability->session_id,
+                             capability->thunk_id, capability->authority_id,
+                             capability->rights)
+                       : NULL;
+        }
+        case GV_PRIME_CONTEXT:
+            return atom_deep_copy(dst, src);
         case GV_STATE: {
             StateCell *src_cell = (StateCell *)src->ground.ptr;
             StateCell *dst_cell = arena_alloc(dst, sizeof(StateCell));
@@ -1096,6 +1108,79 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
             atom_expr(arena, elems, (CettaExprLen)(n + 2)));
         if (!space_admit_atom(space, arena, decl))
             space_add(space, decl);
+    }
+
+    Atom *a_var = atom_var(arena, "a");
+    Atom *suspension_a = atom_expr2(
+        arena, atom_symbol(arena, "suspension"), a_var);
+    Atom *delay_type = atom_expr3(
+        arena, atom_symbol_id(arena, g_builtin_syms.arrow),
+        a_var, suspension_a);
+    Atom *force_type = atom_expr3(
+        arena, atom_symbol_id(arena, g_builtin_syms.arrow),
+        suspension_a, a_var);
+    Atom *typed_ops[2] = {
+        atom_expr3(arena,
+                   atom_symbol_id(arena, g_builtin_syms.colon),
+                   atom_symbol(arena, "delay"), delay_type),
+        atom_expr3(arena,
+                   atom_symbol_id(arena, g_builtin_syms.colon),
+                   atom_symbol(arena, "force"), force_type),
+    };
+    const char *scheme_names[2] = {"delay", "force"};
+    for (size_t i = 0u; i < 2u; i++) {
+        if (!space_admit_atom(space, arena, typed_ops[i]))
+            space_add(space, typed_ops[i]);
+        Atom *scheme = atom_expr2(
+            arena, atom_symbol(arena, "type-scheme"),
+            atom_symbol(arena, scheme_names[i]));
+        if (!space_admit_atom(space, arena, scheme))
+            space_add(space, scheme);
+    }
+
+    Atom *context_type = atom_symbol(arena, "context");
+    Atom *name_type = atom_symbol(arena, "Name");
+    Atom *atom_type = atom_symbol_id(arena, g_builtin_syms.atom);
+    Atom *number_type = atom_symbol(arena, "Number");
+    Atom *ctx_bind_type = atom_expr(
+        arena,
+        (Atom *[]){
+            atom_symbol_id(arena, g_builtin_syms.arrow),
+            context_type, name_type, atom_type, context_type,
+        },
+        5u);
+    Atom *ctx_get_type = atom_expr(
+        arena,
+        (Atom *[]){
+            atom_symbol_id(arena, g_builtin_syms.arrow),
+            context_type, name_type, atom_type,
+        },
+        4u);
+    Atom *ctx_view_type = atom_expr(
+        arena,
+        (Atom *[]){
+            atom_symbol_id(arena, g_builtin_syms.arrow),
+            context_type, number_type, atom_type,
+        },
+        4u);
+    Atom *context_decls[] = {
+        atom_expr3(
+            arena, atom_symbol_id(arena, g_builtin_syms.colon),
+            atom_symbol(arena, "ctx:empty"), context_type),
+        atom_expr3(
+            arena, atom_symbol_id(arena, g_builtin_syms.colon),
+            atom_symbol(arena, "ctx:bind"), ctx_bind_type),
+        atom_expr3(
+            arena, atom_symbol_id(arena, g_builtin_syms.colon),
+            atom_symbol(arena, "ctx:get"), ctx_get_type),
+        atom_expr3(
+            arena, atom_symbol_id(arena, g_builtin_syms.colon),
+            atom_symbol(arena, "ctx:view"), ctx_view_type),
+    };
+    for (size_t i = 0u;
+         i < sizeof context_decls / sizeof context_decls[0]; i++) {
+        if (!space_admit_atom(space, arena, context_decls[i]))
+            space_add(space, context_decls[i]);
     }
 }
 

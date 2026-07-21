@@ -804,6 +804,8 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         return false;
@@ -845,6 +847,8 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         return false;
@@ -3258,6 +3262,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
             return atom_expr2(a, atom_symbol(a, "StateMonad"), cell->content_type);
         return atom_symbol(a, "State");
     }
+    case GV_PRIME_NEED_CAPABILITY:
+        return atom_symbol(a, "PrimeNeedCapability");
+    case GV_PRIME_CONTEXT:
+        return atom_symbol(a, "context");
     }
     return atom_undefined_type(a);
 }

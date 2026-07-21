@@ -16,6 +16,10 @@
 #define CETTA_STRUCTURAL_NAME_TRANSPORT_MUTATION 0
 #endif
 
+#ifndef CETTA_PRIME_CONTEXT_MUTATION
+#define CETTA_PRIME_CONTEXT_MUTATION 0
+#endif
+
 struct CettaBigInt {
     const char *text;
 #if CETTA_BUILD_WITH_GMP
@@ -42,6 +46,8 @@ static CettaBigInt *cetta_bigint_clone_owned(const CettaBigInt *src);
 static void cetta_bigint_free_owned(CettaBigInt *big);
 static CettaRational *cetta_rational_clone_owned(const CettaRational *src);
 static void cetta_rational_free_owned(CettaRational *rat);
+static Atom *atom_prime_context_deep_copy(
+    Arena *dst, const CettaPrimeContext *context);
 
 typedef struct {
     const Atom *src;
@@ -393,6 +399,28 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
             provenance_check_ptr(root, site, allowed_owner, "grounded handle",
                                  atom->ground.ptr);
             break;
+        case GV_PRIME_NEED_CAPABILITY:
+            provenance_check_ptr(root, site, allowed_owner,
+                                 "Prime Need capability",
+                                 atom->ground.prime_need_capability);
+            break;
+        case GV_PRIME_CONTEXT: {
+            const CettaPrimeContext *frame = atom->ground.prime_context;
+            uint32_t frames = 0u;
+            while (frame) {
+                if (frames++ > 8192u)
+                    provenance_fail(root, site,
+                                    "Prime context depth-limit", frame, NULL);
+                provenance_check_ptr(root, site, allowed_owner,
+                                     "Prime context frame", frame);
+                provenance_check_atom(root, frame->key, site, allowed_owner,
+                                      depth + frames);
+                provenance_check_atom(root, frame->value, site, allowed_owner,
+                                      depth + frames);
+                frame = frame->parent;
+            }
+            break;
+        }
         case GV_INT:
         case GV_FLOAT:
         case GV_BOOL:
@@ -593,6 +621,8 @@ static uint32_t atom_hash_compute(Atom *a) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             break; /* mutable/contextual — don't hash-cons */
         }
         break;
@@ -1296,6 +1326,8 @@ static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind) {
     case GV_STATE:
     case GV_CAPTURE:
     case GV_FOREIGN:
+    case GV_PRIME_NEED_CAPABILITY:
+    case GV_PRIME_CONTEXT:
         return 0;
     }
     return 0;
@@ -1686,6 +1718,182 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     return at;
 }
 
+Atom *atom_prime_need_capability_with_rights(
+    Arena *a, uint64_t session_id, uint64_t thunk_id,
+    uint64_t authority_id, uint32_t rights) {
+    if (!a || session_id == 0u || thunk_id == 0u || authority_id == 0u ||
+        rights == 0u || (rights & ~CETTA_PRIME_NEED_RIGHT_ALL) != 0u)
+        return NULL;
+    CettaPrimeNeedCapability *capability =
+        arena_alloc(a, sizeof(*capability));
+    Atom *at = arena_alloc(a, sizeof(*at));
+    if (!capability || !at)
+        return NULL;
+    capability->session_id = session_id;
+    capability->thunk_id = thunk_id;
+    capability->authority_id = authority_id;
+    capability->rights = rights;
+    at->kind = ATOM_GROUNDED;
+    at->flags = atom_flags_for_grounded_kind(GV_PRIME_NEED_CAPABILITY) |
+                ATOM_FLAG_HAS_REGISTRY_REFS;
+    at->var_id = VAR_ID_NONE;
+    at->sym_id = SYMBOL_ID_NONE;
+    at->name_key = NULL;
+    at->hash_cache = 0u;
+    at->ground.gkind = GV_PRIME_NEED_CAPABILITY;
+    at->ground.prime_need_capability = capability;
+    return at;
+}
+
+Atom *atom_prime_need_capability(Arena *a, uint64_t session_id,
+                                 uint64_t thunk_id, uint64_t authority_id) {
+    return atom_prime_need_capability_with_rights(
+        a, session_id, thunk_id, authority_id, CETTA_PRIME_NEED_RIGHT_ALL);
+}
+
+const CettaPrimeNeedCapability *atom_prime_need_capability_value(
+    const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+                   atom->ground.gkind == GV_PRIME_NEED_CAPABILITY
+               ? atom->ground.prime_need_capability
+               : NULL;
+}
+
+static Atom *atom_prime_context_wrap(Arena *a,
+                                     CettaPrimeContext *context) {
+    if (!a || !context)
+        return NULL;
+    Atom *at = arena_alloc(a, sizeof(*at));
+    if (!at)
+        return NULL;
+    at->kind = ATOM_GROUNDED;
+    at->flags = atom_flags_for_grounded_kind(GV_PRIME_CONTEXT) |
+                (context->flags &
+                 (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS));
+    at->var_id = VAR_ID_NONE;
+    at->sym_id = SYMBOL_ID_NONE;
+    at->name_key = NULL;
+    at->hash_cache = 0u;
+    at->ground.gkind = GV_PRIME_CONTEXT;
+    at->ground.prime_context = context;
+    return at;
+}
+
+Atom *atom_prime_context_bind(Arena *a, const CettaPrimeContext *parent,
+                              Atom *key, Atom *value) {
+    if (!a || !key || !value ||
+        (parent && parent->depth == UINT32_MAX))
+        return NULL;
+    CettaPrimeContext *frame = arena_alloc(a, sizeof(*frame));
+    if (!frame)
+        return NULL;
+    frame->parent = parent;
+    frame->key = key;
+    frame->value = value;
+    frame->depth = parent ? parent->depth + 1u : 1u;
+    frame->flags = (parent ? parent->flags : 0u) |
+                   (key->flags &
+                    (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS)) |
+                   (value->flags &
+                    (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS));
+    return atom_prime_context_wrap(a, frame);
+}
+
+const CettaPrimeContext *atom_prime_context_value(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+                   atom->ground.gkind == GV_PRIME_CONTEXT
+               ? atom->ground.prime_context
+               : NULL;
+}
+
+Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key) {
+    if (!key)
+        return NULL;
+    Atom *oldest = NULL;
+    for (const CettaPrimeContext *frame = context; frame;
+         frame = frame->parent) {
+        if (frame->key && atom_eq(frame->key, key)) {
+            if (CETTA_PRIME_CONTEXT_MUTATION == 1) {
+                oldest = frame->value;
+                continue;
+            }
+            return frame->value;
+        }
+    }
+    return oldest;
+}
+
+uint32_t atom_prime_context_depth(const CettaPrimeContext *context) {
+    return context ? context->depth : 0u;
+}
+
+static bool atom_prime_context_equal(const CettaPrimeContext *left,
+                                     const CettaPrimeContext *right) {
+    if (left == right)
+        return true;
+    if (!left || !right || left->depth != right->depth)
+        return false;
+    while (left && right) {
+        if (!atom_eq(left->key, right->key) ||
+            !atom_eq(left->value, right->value))
+            return false;
+        left = left->parent;
+        right = right->parent;
+    }
+    return left == right;
+}
+
+static Atom *atom_prime_context_deep_copy(
+    Arena *dst, const CettaPrimeContext *context) {
+    if (!dst || !context || context->depth == 0u)
+        return NULL;
+    size_t count = context->depth;
+    if (count > SIZE_MAX / sizeof(const CettaPrimeContext *))
+        return NULL;
+    const CettaPrimeContext **frames = cetta_malloc(
+        sizeof(*frames) * count);
+    size_t len = 0u;
+    for (const CettaPrimeContext *frame = context; frame;
+         frame = frame->parent) {
+        if (len == count) {
+            free(frames);
+            return NULL;
+        }
+        frames[len++] = frame;
+    }
+    if (len != count) {
+        free(frames);
+        return NULL;
+    }
+
+    CettaPrimeContext *parent = NULL;
+    for (size_t i = len; i > 0u; i--) {
+        Atom *key = atom_deep_copy(dst, frames[i - 1u]->key);
+        Atom *value = atom_deep_copy(dst, frames[i - 1u]->value);
+        if (!key || !value) {
+            free(frames);
+            return NULL;
+        }
+        CettaPrimeContext *next = arena_alloc(dst, sizeof(*next));
+        if (!next) {
+            free(frames);
+            return NULL;
+        }
+        next->parent = parent;
+        next->key = key;
+        next->value = value;
+        next->depth = parent ? parent->depth + 1u : 1u;
+        next->flags = (parent ? parent->flags : 0u) |
+                      (key->flags &
+                       (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS)) |
+                      (value->flags &
+                       (ATOM_FLAG_HAS_VARS | ATOM_FLAG_HAS_REGISTRY_REFS));
+        parent = next;
+    }
+    free(frames);
+    return atom_prime_context_wrap(dst, parent);
+}
+
 Atom *atom_float(Arena *a, double val) {
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
@@ -1892,6 +2100,19 @@ bool atom_eq(Atom *a, Atom *b) {
         case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
         case GV_CAPTURE: return a->ground.ptr == b->ground.ptr;
         case GV_FOREIGN: return a->ground.ptr == b->ground.ptr;
+        case GV_PRIME_NEED_CAPABILITY: {
+            const CettaPrimeNeedCapability *ca =
+                a->ground.prime_need_capability;
+            const CettaPrimeNeedCapability *cb =
+                b->ground.prime_need_capability;
+            return ca && cb && ca->session_id == cb->session_id &&
+                   ca->thunk_id == cb->thunk_id &&
+                   ca->authority_id == cb->authority_id &&
+                   ca->rights == cb->rights;
+        }
+        case GV_PRIME_CONTEXT:
+            return atom_prime_context_equal(a->ground.prime_context,
+                                            b->ground.prime_context);
         case GV_STATE: {
             StateCell *ca = (StateCell *)a->ground.ptr;
             StateCell *cb = (StateCell *)b->ground.ptr;
@@ -2068,6 +2289,21 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+            break;
+        case GV_PRIME_NEED_CAPABILITY: {
+            const CettaPrimeNeedCapability *capability =
+                src->ground.prime_need_capability;
+            out = capability
+                      ? atom_prime_need_capability_with_rights(
+                            dst, capability->session_id,
+                            capability->thunk_id, capability->authority_id,
+                            capability->rights)
+                      : NULL;
+            break;
+        }
+        case GV_PRIME_CONTEXT:
+            out = atom_prime_context_deep_copy(
+                dst, src->ground.prime_context);
             break;
         }
         break;
@@ -2262,6 +2498,13 @@ void atom_print(Atom *a, FILE *out) {
             break;
         case GV_FOREIGN:
             fprintf(out, "<foreign %p>", a->ground.ptr);
+            break;
+        case GV_PRIME_NEED_CAPABILITY:
+            fputs("<prime-need-capability>", out);
+            break;
+        case GV_PRIME_CONTEXT:
+            fprintf(out, "<context %u>",
+                    atom_prime_context_depth(a->ground.prime_context));
             break;
         }
         break;
