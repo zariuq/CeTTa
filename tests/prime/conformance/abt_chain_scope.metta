@@ -28,24 +28,24 @@
 ; Existing canonical binders in a body keep their indices while the named
 ; chain binder is closed and opened around them.
 !(assertEqual
-   (chain a $x (Lam Type (pair $x (Var 0))))
-   (Lam Type (pair a (Var 0))))
+   (chain a $x (Lam Type (pair $x (idx 0))))
+   (Lam Type (pair a (idx 0))))
 !(assertEqual
-   (chain a $x (pair $x (Var 0)))
-   (pair a (Var 0)))
+   (chain a $x (pair $x (idx 0)))
+   (pair a (idx 0)))
 
 ; The internal canonical constructor is ordinary homoiconic package data and
 ; may be open in an explicitly supplied enclosing context.  Closedness is an
 ; admission judgment, not an evaluator guess at depth zero.
 !(assertEqual
-   (ABTChainV1 a (pair (Var 0)))
+   (ABTChainV1 a (pair (idx 0)))
    (pair a))
 !(assertEqual
-   (ABTChainV1 a (pair (Var 1)))
-   (pair (Var 0)))
+   (ABTChainV1 a (pair (idx 1)))
+   (pair (idx 0)))
 !(assertEqualToResult
-   (ABTChainV1 a (pair (Var -1)))
-   ((Error (ABTChainV1 a (pair (Var -1))) ABTChainOpenFailed)))
+   (ABTChainV1 a (pair (idx -1)))
+   ((Error (ABTChainV1 a (pair (idx -1))) ABTChainOpenFailed)))
 
 ; A surface chain still binds exactly one variable.  Refactoring the scope
 ; representation does not silently generalize it into pattern binding.

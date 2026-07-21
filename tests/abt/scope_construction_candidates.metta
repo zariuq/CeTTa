@@ -48,18 +48,10 @@
 
 ; The selected surface domain keeps the two stages explicit:
 ;   * a bare symbol is a human binder name;
-;   * (Var symbol-or-string) is a generated named-variable form;
 ;   * (quote closed-expression) is an explicit structural name.
-; Canonical (Var Nat), unquoted compound terms, and open quoted syntax are not
-; binder names.  The recursive closedness check is presentation-level data;
-; it does not ask the matcher or reader to reinterpret a name as a string.
-(= (abtc:identifier-payload $payload)
-   (let $meta (get-metatype $payload)
-     (if (== $meta Symbol)
-         True
-         (if (== $meta Grounded)
-             (== (get-type $payload) String)
-             False))))
+; Canonical (idx Nat), malformed nonnumeric idx forms, unquoted compound terms,
+; and open quoted syntax are not binder names.  The recursive closedness check
+; is presentation-level data; it does not reinterpret a name as a string.
 
 (= (abtc:closed-items $items)
    (if (== $items ())
@@ -81,8 +73,7 @@
    (if (== (get-metatype $name) Symbol)
        True
    (case $name
-     (((Var $payload) (abtc:identifier-payload $payload))
-      ((quote $payload) (abtc:closed $payload))
+     (((quote $payload) (abtc:closed $payload))
       ($_ False)))))
 
 (= (abtc:all-names $names)
@@ -308,7 +299,7 @@
 (= (abtc:oracle-atom $atom $environment)
    (if (== (get-metatype $atom) Symbol)
        (case (abtc:oracle-lookup $atom $environment 0)
-         (((ABTCOracleBound $index) (Var $index))
+         (((ABTCOracleBound $index) (idx $index))
           ((ABTCOracleFree $free) $free)))
        $atom))
 
@@ -355,7 +346,7 @@
 
 !(assertEqual
    (abtc:lam (quote "x") Nat (quote "x"))
-   (ABTConstructionOK (Lam Nat (Var 0))))
+   (ABTConstructionOK (Lam Nat (idx 0))))
 !(assertEqual
    (abtc:abc-agree
      (ABTBind Lam (Binders x) Nat x)
@@ -396,23 +387,23 @@
    (abtc:lam (quote "x") Nat
      (case (abtc:lam (quote "y") Nat (quote "x"))
        (((ABTConstructionOK $inner) $inner))))
-   (ABTConstructionOK (Lam Nat (Lam Nat (Var 1)))))
+   (ABTConstructionOK (Lam Nat (Lam Nat (idx 1)))))
 !(assertEqual
    (abtc:lam (quote "x") Nat
      (case (abtc:lam (quote "x") Nat (quote "x"))
        (((ABTConstructionOK $inner) $inner))))
-   (ABTConstructionOK (Lam Nat (Lam Nat (Var 0)))))
+   (ABTConstructionOK (Lam Nat (Lam Nat (idx 0)))))
 !(assertEqual
    (abtc:lam (quote "x") Nat (Pair x (quote "x")))
-   (ABTConstructionOK (Lam Nat (Pair x (Var 0)))))
+   (ABTConstructionOK (Lam Nat (Pair x (idx 0)))))
 !(assertEqual
-   (abtc:lam (quote "x") Nat (App (Var 0) (quote "x")))
-   (ABTConstructionOK (Lam Nat (App (Var 1) (Var 0)))))
+   (abtc:lam (quote "x") Nat (App (idx 0) (quote "x")))
+   (ABTConstructionOK (Lam Nat (App (idx 1) (idx 0)))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) Pi (Binders (quote "x"))
      (Nat (Vec (quote "x"))))
-   (ABTConstructionOK (Pi Nat (Vec (Var 0)))))
+   (ABTConstructionOK (Pi Nat (Vec (idx 0)))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) MultiScope
@@ -423,9 +414,9 @@
    (ABTConstructionOK
      (MultiScope
        free-x
-       (Var 0)
-       (App (Var 1) (Var 0))
-       (Triple (Var 2) (Var 1) (Var 0)))))
+       (idx 0)
+       (App (idx 1) (idx 0))
+       (Triple (idx 2) (idx 1) (idx 0)))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) Lam
@@ -440,25 +431,25 @@
      (Binders (compound x))))
 !(assertEqual
    (abtc:construct
-     (abtc:test-signatures) Lam (Binders (Var 1)) (Nat (Var 1)))
+     (abtc:test-signatures) Lam (Binders (idx 1)) (Nat (idx 1)))
    (ABTConstructionRejected InvalidBinderIdentifier
-     (Binders (Var 1))))
+     (Binders (idx 1))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) Lam (Binders x) (Nat x))
-   (ABTConstructionOK (Lam Nat (Var 0))))
+   (ABTConstructionOK (Lam Nat (idx 0))))
 !(assertEqual
    (abtc:lam
      (quote (mm-var "ph")) Nat (quote (mm-var "ph")))
-   (ABTConstructionOK (Lam Nat (Var 0))))
+   (ABTConstructionOK (Lam Nat (idx 0))))
 !(assertEqual
    (abtc:lam (quote "arg-1") Nat (quote "arg-1"))
-   (ABTConstructionOK (Lam Nat (Var 0))))
+   (ABTConstructionOK (Lam Nat (idx 0))))
 !(assertEqual
    (__cetta_abt_parse
      (abtc:test-signatures)
-     (ABTBind Lam (Binders (Var "arg-1")) Nat (Var "arg-1")))
-   (Lam Nat (Var 0)))
+     (ABTBind Lam (Binders (quote "arg-1")) Nat (quote "arg-1")))
+   (Lam Nat (idx 0)))
 !(assertEqual
    (abtc:name (quote (mm-var $open)))
    False)
@@ -471,15 +462,15 @@
    (ABTConstructionRejected BinderCountMismatch (Expected 1 Actual 0)))
 !(assertEqual
    (__cetta_abt_subst
-     (abtc:test-signatures) 0 (Var 0) (Lam Nat (Var 1)))
-   (Lam Nat (Var 1)))
+     (abtc:test-signatures) 0 (idx 0) (Lam Nat (idx 1)))
+   (Lam Nat (idx 1)))
 !(assertEqual
    (__cetta_abt_shift
      (abtc:test-signatures) -1 0
      (__cetta_abt_close
        (abtc:test-signatures) (quote (mm-var "x"))
-       (Lam Nat (App (quote (mm-var "x")) (Var 0)))))
-   (Lam Nat (App (Var 0) (Var 0))))
+       (Lam Nat (App (quote (mm-var "x")) (idx 0)))))
+   (Lam Nat (App (idx 0) (idx 0))))
 !(assertEqual
    (__cetta_abt_scope_check
      (abtc:test-signatures) 0
@@ -487,7 +478,7 @@
        (abtc:test-signatures) -1 0
        (__cetta_abt_close
          (abtc:test-signatures) (quote (mm-var "x"))
-         (Lam Nat (App (quote (mm-var "x")) (Var 0))))))
+         (Lam Nat (App (quote (mm-var "x")) (idx 0))))))
    True)
 !(assertEqual
    (__cetta_abt_signature_admitted

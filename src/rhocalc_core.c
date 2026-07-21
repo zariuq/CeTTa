@@ -1283,7 +1283,7 @@ static Atom *rho_abt_encode_name_canary(Arena *arena, Atom *name,
         if (!rho_abt_scope_index(scope, name->var_id, &index))
             return rho_copy_var(arena, name);
         Atom *args[] = {atom_int(arena, (int64_t)index)};
-        return rho_abt_call(arena, "Var", args, 1u);
+        return rho_abt_call(arena, "idx", args, 1u);
     }
     RhoView view = rho_view(name);
     if (view.kind == RHO_QUOTE && view.nargs == 1u) {

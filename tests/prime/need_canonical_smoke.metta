@@ -2,8 +2,8 @@
 ; argument within a branch.  Ordinary equation application is covered by the
 ; companion conformance gate.
 
-!(App (Lam T (Var 0)) (superpose (A B)))
-!(App (Lam T (Pair (Var 0) (Var 0))) (superpose (A B)))
+!(App (Lam T (idx 0)) (superpose (A B)))
+!(App (Lam T (Pair (idx 0) (idx 0))) (superpose (A B)))
 !(App (Lam T kept) (== 1 "bad"))
 
 (= (need-ignore $x) kept-ordinary)

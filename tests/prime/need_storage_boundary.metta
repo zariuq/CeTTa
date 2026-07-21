@@ -12,5 +12,14 @@
 
 !(prime-need:store-unused (prime-need:store-bump))
 !(get-state &prime-need:store-counter)
-!(match &prime-need:stored (Stored (prime-need:store-bump)) found-source)
+; A variable retrieves the persistent graph node with its identity intact;
+; an evaluator-created hidden thunk returns its source form, not explicit
+; delay syntax.
+!(match &prime-need:stored (Stored $saved) $saved)
 !(match &prime-need:stored (Stored (__prime_need_ref_v1 $s $t)) leaked-ref)
+
+; An explicit suspension remains explicit across the same data boundary.
+!(add-atom &prime-need:stored
+   (StoredExplicit (delay (prime-need:store-bump))))
+!(match &prime-need:stored (StoredExplicit $saved) $saved)
+!(get-state &prime-need:store-counter)

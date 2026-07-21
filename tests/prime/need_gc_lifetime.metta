@@ -24,7 +24,7 @@
 
 (= (prime-need:gc-force-after-tail $n $promise)
    (if (== $n 0)
-       (Force $promise)
+       (force $promise)
        (let $dead (prime-need:gc-payload $n)
          ; Equality is strict in its operands.  It forces construction of the
          ; wide payload, while the result carries none of that payload into
@@ -34,6 +34,6 @@
              impossible))))
 
 !(assertEqualToResult
-  (let $promise (Delay (superpose (A B)))
+  (let $promise (delay (superpose (A B)))
     (prime-need:gc-force-after-tail 1024 $promise))
   (A B))

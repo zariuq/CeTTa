@@ -312,6 +312,7 @@ ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
 NAME_KEY_TEST_BIN = runtime/test_name_key-$(BUILD_OBJ_TAG)
 NAME_KEY_MUTATION_TEST_BIN = runtime/test_name_key_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_TEST_BIN = runtime/test_prime_need-$(BUILD_OBJ_TAG)
+PRIME_CONTEXT_MUTATION_TEST_BIN = runtime/test_prime_context_mutation-$(BUILD_OBJ_TAG)
 REGISTRY_RESOLVER_TEST_SRC = tests/test_registry_resolver.c
 REGISTRY_RESOLVER_TEST_OBJ = runtime/bootstrap/test_registry_resolver.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 REGISTRY_RESOLVER_TEST_BIN = runtime/test_registry_resolver-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -379,6 +380,8 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_application.metta \
 	tests/prime/need_explicit_control.metta \
 	tests/prime/need_explicit_control_negative.metta \
+	tests/prime/need_demand_modes.metta \
+	tests/prime/first_class_contexts.metta \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/conformance/abt_chain_scope.metta \
@@ -863,10 +866,15 @@ $(PRIME_NEED_TEST_BIN): tests/test_prime_need.c src/prime_need.c src/prime_need.
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need.c src/prime_need.c src/symbol.c src/atom.c $(LDFLAGS)
 
+$(PRIME_CONTEXT_MUTATION_TEST_BIN): tests/test_prime_need.c src/prime_need.c src/prime_need.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_CONTEXT_MUTATION=1 \
+		-o $@ tests/test_prime_need.c src/prime_need.c src/symbol.c src/atom.c $(LDFLAGS)
+
 test-prime-need-algebra: $(PRIME_NEED_TEST_BIN)
 	@result=$$(./$(PRIME_NEED_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(PrimeNeedAlgebraSummary 23 23 0)')" -ne 1 ]; then \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(PrimeNeedAlgebraSummary 78 78 0)')" -ne 1 ]; then \
 		echo "FAIL: Prime Need algebra exact summary absent or duplicated"; \
 		exit 1; \
 	fi
@@ -908,6 +916,20 @@ test-prime-need-correspondence: $(BIN)
 	fi; \
 	echo "PASS: canonical App and ordinary application agree on 12 full observations"
 
+probe-prime-need-observation-boundary: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/need_observation_boundary_tournament.metta 2>&1); \
+	expected=$$(cat \
+		tests/prime/need_observation_boundary_tournament.current.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: open Prime suspension-observation characterization drifted"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: current suspension-observation boundary characterized (law remains open)"
+
 test-prime-evaluation-strategy-contrast: $(BIN)
 	@CETTA="$(abspath $(BIN))" \
 		./scripts/check_prime_evaluation_strategy_contrast.sh
@@ -926,8 +948,144 @@ test-prime-need-gc-lifetime: $(BIN)
 	fi; \
 	echo "PASS: Prime Need episode heap is independent of scratch-GC lifetime"
 
+test-prime-need-effect-isolation: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/need_branch_effect_isolation.metta 2>&1); \
+	expected=$$(cat tests/prime/need_branch_effect_isolation.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: Prime sibling state effects escaped their branch receipt"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: Prime sibling state effects remain branch-local"
+
+test-prime-need-boundaries: $(BIN)
+	@set -eu; \
+		for source in \
+			tests/prime/need_ref_forgery.metta \
+			tests/prime/need_origin_boundary.metta \
+			tests/prime/need_sharing_boundary.metta; do \
+			expected_file="$${source%.metta}.expected"; \
+			actual=$$($(CETTA_BIN_INVOKE) --lang prime "$$source" 2>&1); \
+			expected=$$(cat "$$expected_file"); \
+			if [ "$$actual" != "$$expected" ]; then \
+				echo "FAIL: $$source"; \
+				diff <(printf '%s\n' "$$expected") \
+				     <(printf '%s\n' "$$actual") | head -40; \
+				exit 1; \
+			fi; \
+			echo "PASS: $$source"; \
+		done
+
+test-prime-suspension-rights: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/need_suspension_rights.metta 2>&1); \
+	expected=$$(cat tests/prime/need_suspension_rights.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: Prime suspension rights and origin observation"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: Prime suspension rights attenuate and origin views do not force"
+
+test-prime-contexts: $(BIN) $(PRIME_CONTEXT_MUTATION_TEST_BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/first_class_contexts.metta 2>&1); \
+	expected=$$(cat tests/prime/first_class_contexts.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: Prime first-class context laws"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	he_expected=$$(cat tests/prime/first_class_contexts_he_guard.expected); \
+	for profile in he he-compat he-extended he-prime; do \
+		he_actual=$$($(CETTA_BIN_INVOKE) --lang he --profile "$$profile" \
+			tests/prime/first_class_contexts_he_guard.metta 2>&1); \
+		if [ "$$he_actual" != "$$he_expected" ]; then \
+			echo "FAIL: Prime context surface changed HE profile $$profile"; \
+			diff <(printf '%s\n' "$$he_expected") \
+			     <(printf '%s\n' "$$he_actual") | head -40; \
+			exit 1; \
+		fi; \
+	done; \
+	mutant_output=$$(./$(PRIME_CONTEXT_MUTATION_TEST_BIN) 2>&1 || true); \
+	if ! printf '%s\n' "$$mutant_output" | \
+		grep -Fq 'FAIL: newest context binding shadows without mutating its parent'; then \
+		echo "FAIL: oldest-binding context mutation survived or failed for the wrong reason"; \
+		printf '%s\n' "$$mutant_output" | tail -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: Prime contexts are lazy, persistent, boundedly observable, and HE-inert"
+
+test-prime-need-equation-choice-sharing:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-prime-need-equation-choice-sharing-body
+
+test-prime-need-equation-choice-sharing-body: $(BIN)
+	@set -eu; \
+		stdout_file=$$(mktemp); stderr_file=$$(mktemp); \
+		trap 'rm -f "$$stdout_file" "$$stderr_file"' EXIT; \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+			tests/prime/need_equation_choice_sharing.metta \
+			>"$$stdout_file" 2>"$$stderr_file"; \
+		expected=$$(cat tests/prime/need_equation_choice_sharing.expected); \
+		actual=$$(cat "$$stdout_file"); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: Prime mixed equation answers changed"; \
+			diff <(printf '%s\n' "$$expected") \
+			     <(printf '%s\n' "$$actual") | head -40; \
+			exit 1; \
+		fi; \
+		writes=$$(sed -n \
+			's/^runtime-counter prime-need-receipt-state-write //p' \
+			"$$stderr_file"); \
+		if [ "$$writes" != 1 ]; then \
+			echo "FAIL: mixed equations invoked the source producer $$writes times"; \
+			exit 1; \
+	fi; \
+	echo "PASS: strict and wildcard equations share one source suspension"
+
+test-prime-need-equation-choice-sharing-mutation:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-prime-need-equation-choice-sharing-mutation-body
+
+test-prime-need-equation-choice-sharing-mutation-body: $(BIN)
+	@set -eu; \
+		mutation_dir=runtime/prime-need-mutations; \
+		mkdir -p "$$mutation_dir"; \
+		object="$$mutation_dir/eval-RULE_LOCAL_THUNKS-runtime-stats.o"; \
+		binary="$$mutation_dir/cetta-RULE_LOCAL_THUNKS-runtime-stats"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) \
+			-DCETTA_PRIME_NEED_MUTATION_RULE_LOCAL_THUNKS=1 \
+			-c src/eval.c -o "$$object"; \
+		$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+			"$$object" -o "$$binary" $(LDFLAGS); \
+		stdout_file=$$(mktemp); stderr_file=$$(mktemp); \
+		trap 'rm -f "$$stdout_file" "$$stderr_file"' EXIT; \
+		"$$binary" --emit-runtime-stats --lang prime \
+			tests/prime/need_equation_choice_sharing.metta \
+			>"$$stdout_file" 2>"$$stderr_file"; \
+		writes=$$(sed -n \
+			's/^runtime-counter prime-need-receipt-state-write //p' \
+			"$$stderr_file"); \
+		if [ "$$writes" != 2 ]; then \
+			echo "FAIL: rule-local-thunk mutation produced $$writes writes, expected 2"; \
+			exit 1; \
+		fi; \
+		echo "PASS: rule-local-thunk mutation repeats the source producer and is killed"
+
 test-prime-need-mutations: $(BIN) test-prime-need-algebra \
-		test-prime-need-correspondence test-prime-need-gc-lifetime
+		test-prime-need-correspondence test-prime-need-gc-lifetime \
+		test-prime-need-boundaries \
+		test-prime-need-effect-isolation \
+		test-prime-need-equation-choice-sharing \
+		test-prime-need-equation-choice-sharing-mutation
 	@set -eu; \
 	mutation_dir=runtime/prime-need-mutations; \
 	mkdir -p "$$mutation_dir"; \
@@ -3887,6 +4045,11 @@ test-prime-all: test-prime test-prime-need-algebra \
 	test-prime-need-he-noninterference \
 	test-prime-need-correspondence \
 	test-prime-need-gc-lifetime \
+	test-prime-need-boundaries \
+	test-prime-suspension-rights \
+	test-prime-contexts \
+	test-prime-need-effect-isolation \
+	test-prime-need-equation-choice-sharing \
 	test-prime-evaluation-strategy-contrast \
 	test-prime-need-mutations \
 	test-prime-crossdialect test-prime-universal-name-surface \
@@ -6073,7 +6236,7 @@ refresh-he-matrices:
 	@echo "refreshed HE runtime parity matrices"
 
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence test-prime-need-gc-lifetime test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-surface test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-suspension-rights test-prime-contexts test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-surface test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative test-name-key test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger test-abt-scope-construction-candidates bench-abt bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats

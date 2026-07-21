@@ -24,6 +24,8 @@
 typedef struct CettaForeignValue CettaForeignValue;
 typedef struct CettaBigInt CettaBigInt;
 typedef struct CettaRational CettaRational;
+typedef struct CettaPrimeNeedCapability CettaPrimeNeedCapability;
+typedef struct CettaPrimeContext CettaPrimeContext;
 typedef uint64_t VarId;
 typedef uint32_t NameId;
 typedef uint64_t CettaExprLen;
@@ -52,7 +54,9 @@ typedef enum {
     GV_STATE,
     GV_CAPTURE,
     GV_FOREIGN,
-    GV_RATIONAL
+    GV_RATIONAL,
+    GV_PRIME_NEED_CAPABILITY,
+    GV_PRIME_CONTEXT
 } GroundedKind;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -80,6 +84,8 @@ struct Atom {
                 const char *sval;
                 CettaBigInt *bigint;
                 CettaRational *rational;
+                CettaPrimeNeedCapability *prime_need_capability;
+                CettaPrimeContext *prime_context;
                 bool bval;
                 void *ptr;
             };
@@ -260,9 +266,63 @@ typedef struct {
     CettaEvaluatorOptions options;
 } CaptureClosure;
 
+/* Evaluator-minted identity for one Prime suspension.  There is deliberately
+   no reader syntax for this grounded value. */
+struct CettaPrimeNeedCapability {
+    uint64_t session_id;
+    uint64_t thunk_id;
+    uint64_t authority_id;
+    uint32_t rights;
+};
+
+/* Immutable semantic source of truth for a first-class Prime context.
+   Newest frames occur first; extending a context allocates one frame and
+   shares its parent.  Keys are closed structural names.  Values are closed
+   atoms and may be evaluator-minted Need references while the context remains
+   inside one evaluation episode.
+
+   Algebra:
+     lookup(bind(parent, key, value), key) = value
+     other != key =>
+       lookup(bind(parent, key, value), other) = lookup(parent, other)
+     depth(bind(parent, key, value)) = depth(parent) + 1
+
+   Extension never mutates parent.  Persistence must reify any private Need
+   references before copying this chain into a space. */
+struct CettaPrimeContext {
+    const CettaPrimeContext *parent;
+    Atom *key;
+    Atom *value;
+    uint32_t depth;
+    uint32_t flags;
+};
+
+enum {
+    CETTA_PRIME_NEED_RIGHT_FORCE = 1u << 0,
+    CETTA_PRIME_NEED_RIGHT_INSPECT = 1u << 1,
+    CETTA_PRIME_NEED_RIGHT_ALL =
+        CETTA_PRIME_NEED_RIGHT_FORCE | CETTA_PRIME_NEED_RIGHT_INSPECT,
+};
+
+/* Rights are a bounded subset lattice over {force, inspect}.  Attenuation may
+   select a subset of the current rights and never changes suspension identity;
+   requesting a non-subset fails rather than restoring authority. */
+
 Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
+Atom *atom_prime_need_capability(Arena *a, uint64_t session_id,
+                                 uint64_t thunk_id, uint64_t authority_id);
+Atom *atom_prime_need_capability_with_rights(
+    Arena *a, uint64_t session_id, uint64_t thunk_id,
+    uint64_t authority_id, uint32_t rights);
+const CettaPrimeNeedCapability *atom_prime_need_capability_value(
+    const Atom *atom);
+Atom *atom_prime_context_bind(Arena *a, const CettaPrimeContext *parent,
+                              Atom *key, Atom *value);
+const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
+Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
+uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
 /* Compatibility wrapper; immutable atoms are shared universally when the
    global hash-cons table is active. */

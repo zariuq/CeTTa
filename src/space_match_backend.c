@@ -4263,6 +4263,8 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         imported_builder_push(b, tok);

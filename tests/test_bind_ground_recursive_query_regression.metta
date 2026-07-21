@@ -3,12 +3,12 @@
 ; bindings made nested recursive same-head equations disappear in default CeTTa,
 ; even though the same program evaluates in LeaTTa, Hyperon, and PeTTa.
 
-(= (shift $d $c (Var $k)) (if (< $k $c) (Var $k) (Var (+ $k $d))))
+(= (shift $d $c (idx $k)) (if (< $k $c) (idx $k) (idx (+ $k $d))))
 (= (shift $d $c (Srt $s)) (Srt $s))
 (= (shift $d $c (Pi $A $B)) (Pi (shift $d $c $A) (shift $d (+ $c 1) $B)))
 (= (shift $d $c (Bad $e)) (Bad $e))
 
-(= (nf (Var $k)) (Var $k))
+(= (nf (idx $k)) (idx $k))
 (= (nf (Srt $s)) (Srt $s))
 (= (nf (Pi $A $B)) (Pi (nf $A) (nf $B)))
 (= (nf (Bad $e)) (Bad $e))
@@ -29,14 +29,14 @@
 (= (infer $ctx (Srt type)) (Srt kind))
 (= (infer $ctx (Srt kind)) (Bad kind-is-topsort))
 (= (infer $ctx (Bad $e)) (Bad $e))
-(= (infer $ctx (Var $i)) (ctx-type $i $ctx))
+(= (infer $ctx (idx $i)) (ctx-type $i $ctx))
 (= (infer $ctx (Pi $A $B))
    (let $sA (nf (infer $ctx $A))
      (let $sB (nf (infer (CtxCons $A $ctx) $B))
        (pts-rule $sA $sB))))
 
 (= (id-ty-expanded)
-   (Pi (Srt type) (Pi (Var 0) (Pi (Var 1) (Srt type)))))
+   (Pi (Srt type) (Pi (idx 0) (Pi (idx 1) (Srt type)))))
 
 !(assertEqual (let $x (infer CtxNil (id-ty-expanded)) (nf $x)) (Srt kind))
 !(assertEqual (nf (infer CtxNil (id-ty-expanded))) (Srt kind))
