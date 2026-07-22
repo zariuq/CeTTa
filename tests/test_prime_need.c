@@ -95,6 +95,25 @@ int main(void) {
                   &second_thunk, second_thunk_id, &second_cell) &&
               second_cell.storage_key != storage_key,
           "two ordinary delays remain distinct graph nodes");
+    uint64_t source_occurrence = prime_need_fresh_source_occurrence();
+    uint64_t next_source_occurrence = prime_need_fresh_source_occurrence();
+    CHECK(source_occurrence != 0u &&
+              next_source_occurrence != 0u &&
+              source_occurrence != next_source_occurrence,
+          "dynamic source occurrences have distinct nonzero identities");
+    PrimeNeedSnapshot source_argument;
+    uint64_t source_argument_id = 0u;
+    PrimeNeedCellView source_argument_cell;
+    CHECK(prime_need_snapshot_allocate_source_argument(
+              &arena, &thunk, term, source_occurrence, 2u,
+              &source_argument, &source_argument_id) &&
+              prime_need_snapshot_lookup(
+                  &source_argument, source_argument_id,
+                  &source_argument_cell) &&
+              source_argument_cell.source_occurrence_id ==
+                  source_occurrence &&
+              source_argument_cell.source_argument_index == 2u,
+          "a source argument cell retains application and position identity");
 
     Atom *ref = prime_need_ref(&arena, &thunk, thunk_id);
     uint64_t parsed_id = 0u;
@@ -303,6 +322,41 @@ int main(void) {
               atom_eq(receipt_event.after, term),
           "inspection receipts identify the cell and disclosed origin");
 
+    PrimeNeedReceipt evaluated_source;
+    CHECK(prime_need_receipt_evaluate_source_cell(
+              &arena, &receipt_root, source_argument.session_id,
+              source_argument_id, source_occurrence, 2u, term,
+              &evaluated_source) &&
+              prime_need_receipt_event_at(
+                  &evaluated_source, 1u, &receipt_event) &&
+              receipt_event.kind == PRIME_NEED_RECEIPT_EVALUATE_CELL &&
+              receipt_event.source_occurrence_id == source_occurrence &&
+              receipt_event.source_argument_index == 2u &&
+              atom_eq(receipt_event.before, term),
+          "producer evaluation records source, position, cell, and origin");
+    Atom *equation = atom_expr3(
+        &arena, atom_symbol(&arena, "="), term, left_value);
+    PrimeNeedReceipt used_equation;
+    CHECK(prime_need_receipt_use_equation(
+              &arena, &receipt_root, source_occurrence, 17u,
+              equation, left_value, &used_equation) &&
+              prime_need_receipt_event_at(
+                  &used_equation, 1u, &receipt_event) &&
+              receipt_event.kind == PRIME_NEED_RECEIPT_USE_EQUATION &&
+              receipt_event.source_occurrence_id == source_occurrence &&
+              receipt_event.rule_occurrence_id == 17u &&
+              atom_eq(receipt_event.before, equation) &&
+              atom_eq(receipt_event.after, left_value),
+          "equation use retains dynamic call and admitted rule occurrence");
+    PrimeNeedReceipt resampled;
+    CHECK(prime_need_receipt_resample(
+              &arena, &receipt_root, term, &resampled) &&
+              prime_need_receipt_event_at(
+                  &resampled, 1u, &receipt_event) &&
+              receipt_event.kind == PRIME_NEED_RECEIPT_RESAMPLE &&
+              atom_eq(receipt_event.before, term),
+          "resampling records one fresh evaluation occurrence");
+
     PrimeNeedReceipt observation_left;
     PrimeNeedReceipt observation_right;
     CHECK(prime_need_receipt_observe_cell(
@@ -345,6 +399,22 @@ int main(void) {
           "equal cell observations have a native least joined receipt");
     CHECK(prime_need_receipt_event_count(&same_observation_join) == 3u,
           "native receipts retain equal observation occurrences before the functional quotient");
+    PrimeNeedReceiptEvent joined_event_zero;
+    PrimeNeedReceiptEvent joined_event_one;
+    PrimeNeedReceiptEvent joined_event_two;
+    CHECK(prime_need_receipt_event_at(
+              &same_observation_join, 0u, &joined_event_zero) &&
+              prime_need_receipt_event_at(
+                  &same_observation_join, 1u, &joined_event_one) &&
+              prime_need_receipt_event_at(
+                  &same_observation_join, 2u, &joined_event_two) &&
+              joined_event_zero.event_id != 0u &&
+              joined_event_one.event_id != 0u &&
+              joined_event_two.event_id != 0u &&
+              joined_event_zero.event_id != joined_event_one.event_id &&
+              joined_event_zero.event_id != joined_event_two.event_id &&
+              joined_event_one.event_id != joined_event_two.event_id,
+          "equal receipt payloads retain distinct nonzero occurrence IDs");
 
     PrimeNeedReceipt independent_left;
     PrimeNeedReceipt independent_right;

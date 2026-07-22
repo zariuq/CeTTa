@@ -44,6 +44,8 @@ typedef struct {
     uint64_t evaluator_id;
     uint64_t storage_key;
     uint64_t import_key;
+    uint64_t source_occurrence_id;
+    uint64_t source_argument_index;
 } PrimeNeedCellView;
 
 /* A Prime answer carries the finite causal support that justified it.  The
@@ -66,6 +68,9 @@ typedef enum {
     PRIME_NEED_RECEIPT_INSPECT_ORIGIN,
     PRIME_NEED_RECEIPT_READ_STATE,
     PRIME_NEED_RECEIPT_WRITE_STATE,
+    PRIME_NEED_RECEIPT_USE_EQUATION,
+    PRIME_NEED_RECEIPT_EVALUATE_CELL,
+    PRIME_NEED_RECEIPT_RESAMPLE,
 } PrimeNeedReceiptEventKind;
 
 typedef struct PrimeNeedReceiptFrame PrimeNeedReceiptFrame;
@@ -81,6 +86,9 @@ typedef struct {
     uint64_t event_id;
     uint64_t need_session_id;
     uint64_t thunk_id;
+    uint64_t source_occurrence_id;
+    uint64_t source_argument_index;
+    uint64_t rule_occurrence_id;
     StateCell *state_cell;
     Atom *before;
     Atom *after;
@@ -101,6 +109,11 @@ bool prime_need_snapshot_allocate(Arena *owner,
                                   Atom *term,
                                   PrimeNeedSnapshot *out,
                                   uint64_t *out_thunk_id);
+uint64_t prime_need_fresh_source_occurrence(void);
+bool prime_need_snapshot_allocate_source_argument(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
 bool prime_need_snapshot_allocate_persisted(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t storage_key, PrimeNeedSnapshot *out,
@@ -156,6 +169,16 @@ bool prime_need_receipt_observe_cell(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *outcome,
     PrimeNeedReceipt *out);
+bool prime_need_receipt_observe_source_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *outcome, PrimeNeedReceipt *out);
+bool prime_need_receipt_evaluate_source_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *origin, PrimeNeedReceipt *out);
 bool prime_need_receipt_inspect_origin(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *origin_view,
@@ -166,6 +189,13 @@ bool prime_need_receipt_read_state(
 bool prime_need_receipt_write_state(
     Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
     Atom *before, Atom *after, PrimeNeedReceipt *out);
+bool prime_need_receipt_use_equation(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    Atom *equation, Atom *result, PrimeNeedReceipt *out);
+bool prime_need_receipt_resample(
+    Arena *owner, const PrimeNeedReceipt *base, Atom *origin,
+    PrimeNeedReceipt *out);
 bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
                                     StateCell *cell, Atom **out_value);
 size_t prime_need_receipt_event_count(const PrimeNeedReceipt *receipt);

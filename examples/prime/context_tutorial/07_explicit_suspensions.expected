@@ -1,0 +1,4 @@
+[(delay (superpose (A B)))]
+[A, B]
+[(Pair A A), (Pair B B)]
+[(Triple old new old)]
