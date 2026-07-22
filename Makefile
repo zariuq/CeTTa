@@ -306,6 +306,15 @@ RUNTIME_NAMED_VAR_TEST_SRC = tests/support/test_runtime_named_var.c
 RUNTIME_NAMED_VAR_TEST_OBJ = runtime/bootstrap/test_runtime_named_var.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 RUNTIME_NAMED_VAR_TEST_BIN = runtime/test_runtime_named_var-$(BUILD_CANON)
 RUNTIME_NAMED_VAR_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_BARE_DOLLAR_PARSER_TEST_SRC = tests/support/test_prime_bare_dollar_parser.c
+PRIME_BARE_DOLLAR_PARSER_TEST_OBJ = runtime/bootstrap/test_prime_bare_dollar_parser.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_BARE_DOLLAR_PARSER_TEST_BIN = runtime/test_prime_bare_dollar_parser-$(BUILD_CANON)
+PRIME_BARE_DOLLAR_PARSER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_BARE_DOLLAR_EVAL_DIR = runtime/prime-bare-dollar-evaluator-$(BUILD_CANON)
+PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ = $(PRIME_BARE_DOLLAR_EVAL_DIR)/parser-literal.o
+PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ = $(PRIME_BARE_DOLLAR_EVAL_DIR)/parser-shared.o
+PRIME_BARE_DOLLAR_LITERAL_BIN = $(PRIME_BARE_DOLLAR_EVAL_DIR)/cetta-literal
+PRIME_BARE_DOLLAR_SHARED_BIN = $(PRIME_BARE_DOLLAR_EVAL_DIR)/cetta-shared
 PRIME_READER_AST_ORACLE_SRC = tests/support/prime_reader_ast_oracle.c
 PRIME_READER_AST_ORACLE_OBJ = runtime/bootstrap/prime_reader_ast_oracle.$(BUILD_OBJ_TAG).o
 PRIME_READER_AST_ORACLE_BIN = runtime/prime_reader_ast_oracle-$(BUILD_CANON)
@@ -314,6 +323,7 @@ PRIME_SYNTAX_GSLT_DIR = .generated/prime-universal-name
 PRIME_SYNTAX_GSLT_ENGINE = $(PRIME_SYNTAX_GSLT_DIR)/gslt2parse
 PRIME_SYNTAX_GSLT_PRESENTATION = $(PRIME_SYNTAX_GSLT_DIR)/prime_syntax_gslt.metta
 PRIME_SYNTAX_GSLT_MUTANT = $(PRIME_SYNTAX_GSLT_DIR)/prime_syntax_gslt_no_universal.metta
+PRIME_SYNTAX_GSLT_DOLLAR_SYMBOL = $(PRIME_SYNTAX_GSLT_DIR)/prime_syntax_gslt_bare_dollar_symbol.metta
 PAYLOAD_MAP_CAPACITY_TEST_SRC = tests/support/test_rhometta_payload_map_capacity.c
 PAYLOAD_MAP_CAPACITY_TEST_OBJ = runtime/bootstrap/test_rhometta_payload_map_capacity.$(BUILD_OBJ_TAG).o
 PAYLOAD_MAP_CAPACITY_TEST_BIN = runtime/test_rhometta_payload_map_capacity-$(BUILD_CANON)
@@ -1555,6 +1565,71 @@ test-runtime-named-var: $(RUNTIME_NAMED_VAR_TEST_BIN)
 		exit 1; \
 	fi
 
+test-prime-bare-dollar-parser: $(PRIME_BARE_DOLLAR_PARSER_TEST_BIN)
+	@result=$$("$(PRIME_BARE_DOLLAR_PARSER_TEST_BIN)" 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(PrimeBareDollarParserSummary 25 25 0)')" -ne 1 ]; then \
+		echo "FAIL: Prime bare-dollar parser tournament"; \
+		exit 1; \
+	fi
+
+test-prime-bare-dollar-gslt: $(PRIME_SYNTAX_GSLT_ENGINE) \
+		$(PRIME_SYNTAX_GSLT_PRESENTATION) \
+		$(PRIME_SYNTAX_GSLT_DOLLAR_SYMBOL) \
+		tests/support/prime_syntax_gslt_core.metta \
+		tests/prime/test_bare_dollar_gslt.py
+	@python3 tests/prime/test_bare_dollar_gslt.py \
+		--engine "$(PRIME_SYNTAX_GSLT_ENGINE)" \
+		--core tests/support/prime_syntax_gslt_core.metta \
+		--symbol-presentation "$(PRIME_SYNTAX_GSLT_DOLLAR_SYMBOL)" \
+		--variable-presentation "$(PRIME_SYNTAX_GSLT_PRESENTATION)"
+
+test-prime-bare-dollar-reference:
+	@python3 tests/prime/test_bare_dollar_reference.py
+
+test-prime-bare-dollar-evaluator: $(BIN) \
+		$(PRIME_BARE_DOLLAR_LITERAL_BIN) \
+		$(PRIME_BARE_DOLLAR_SHARED_BIN) \
+		tests/prime/test_bare_dollar_evaluator.py
+	@python3 tests/prime/test_bare_dollar_evaluator.py \
+		--literal "$(PRIME_BARE_DOLLAR_LITERAL_BIN)" \
+		--fresh "$(BIN)" \
+		--shared "$(PRIME_BARE_DOLLAR_SHARED_BIN)"
+
+test-prime-bare-dollar-mutations: $(BIN) \
+		$(PRIME_BARE_DOLLAR_LITERAL_BIN) \
+		$(PRIME_BARE_DOLLAR_SHARED_BIN) \
+		tests/prime/test_bare_dollar_evaluator.py
+	@if python3 tests/prime/test_bare_dollar_evaluator.py \
+		--literal "$(PRIME_BARE_DOLLAR_LITERAL_BIN)" \
+		--fresh "$(PRIME_BARE_DOLLAR_SHARED_BIN)" \
+		--shared "$(PRIME_BARE_DOLLAR_SHARED_BIN)" >/dev/null 2>&1; then \
+		echo "FAIL: fresh-identity-collapse mutation survived"; \
+		exit 1; \
+	fi
+	@if python3 tests/prime/test_bare_dollar_evaluator.py \
+		--literal "$(PRIME_BARE_DOLLAR_LITERAL_BIN)" \
+		--fresh "$(BIN)" \
+		--shared "$(BIN)" >/dev/null 2>&1; then \
+		echo "FAIL: shared-identity-split mutation survived"; \
+		exit 1; \
+	fi
+	@if python3 tests/prime/test_bare_dollar_evaluator.py \
+		--literal "$(BIN)" \
+		--fresh "$(BIN)" \
+		--shared "$(PRIME_BARE_DOLLAR_SHARED_BIN)" >/dev/null 2>&1; then \
+		echo "FAIL: literal-to-variable mutation survived"; \
+		exit 1; \
+	fi
+	@echo "PASS: fresh-collapse, shared-split, and literal-variable mutants killed"
+
+test-prime-bare-dollar-tournament: \
+		test-prime-bare-dollar-parser \
+		test-prime-bare-dollar-gslt \
+		test-prime-bare-dollar-reference \
+		test-prime-bare-dollar-evaluator \
+		test-prime-bare-dollar-mutations
+
 test-prime-universal-name-compile: $(BIN) test-runtime-named-var
 	@source=tests/prime/universal_name_compile.metta; \
 	ir=$$($(CETTA_BIN_INVOKE) --lang prime --compile "$$source" 2>&1); \
@@ -2172,6 +2247,45 @@ $(RUNTIME_NAMED_VAR_TEST_OBJ): $(RUNTIME_NAMED_VAR_TEST_SRC) $(BUILD_CONFIG_HEAD
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
+$(PRIME_BARE_DOLLAR_PARSER_TEST_BIN): $(PRIME_BARE_DOLLAR_PARSER_TEST_OBJ) $(PRIME_BARE_DOLLAR_PARSER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-bare-dollar-parser.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_BARE_DOLLAR_PARSER_TEST_OBJ): $(PRIME_BARE_DOLLAR_PARSER_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ): src/parser.c src/parser.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) \
+		-DCETTA_BARE_DOLLAR_DEFAULT_MODE=PARSER_BARE_DOLLAR_SYMBOL \
+		-MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ): src/parser.c src/parser.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) \
+		-DCETTA_BARE_DOLLAR_DEFAULT_MODE=PARSER_BARE_DOLLAR_SHARED_VARIABLE \
+		-MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_BARE_DOLLAR_LITERAL_BIN): $(PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ) $(OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-bare-dollar-literal.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(filter-out src/parser.$(BUILD_OBJ_TAG).o src/parser.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		$(PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ) -o "$$tmp_out" $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_BARE_DOLLAR_SHARED_BIN): $(PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ) $(OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-bare-dollar-shared.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(filter-out src/parser.$(BUILD_OBJ_TAG).o src/parser.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		$(PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ) -o "$$tmp_out" $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
 $(PRIME_READER_AST_ORACLE_BIN): $(PRIME_READER_AST_ORACLE_OBJ) $(PRIME_READER_AST_ORACLE_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-reader-ast-oracle.XXXXXX"); \
@@ -2194,6 +2308,10 @@ $(PRIME_SYNTAX_GSLT_PRESENTATION): scripts/build_prime_syntax_gslt.py
 $(PRIME_SYNTAX_GSLT_MUTANT): scripts/build_prime_syntax_gslt.py
 	@mkdir -p $(dir $@)
 	python3 $< --without-universal-names $@
+
+$(PRIME_SYNTAX_GSLT_DOLLAR_SYMBOL): scripts/build_prime_syntax_gslt.py
+	@mkdir -p $(dir $@)
+	python3 $< --bare-dollar symbol $@
 
 $(PAYLOAD_MAP_CAPACITY_TEST_BIN): $(PAYLOAD_MAP_CAPACITY_TEST_OBJ) $(PAYLOAD_MAP_CAPACITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -7907,7 +8025,7 @@ refresh-he-matrices:
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-surface test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-surface test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative test-name-key test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger test-abt-scope-construction-candidates bench-abt bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats

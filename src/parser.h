@@ -59,6 +59,19 @@ bool parser_rational_literals_enabled(void);
 bool parser_set_universal_name_syntax_enabled(bool enabled);
 bool parser_universal_name_syntax_enabled(void);
 
+/* Prime's bare `$` is a fresh anonymous variable.  Literal and shared modes
+   remain internal tournament controls.  Every mode is deliberately inactive
+   unless Prime's universal-name syntax is enabled, so it cannot alter an HE
+   reader. */
+typedef enum {
+    PARSER_BARE_DOLLAR_SYMBOL = 0,
+    PARSER_BARE_DOLLAR_FRESH_VARIABLE,
+    PARSER_BARE_DOLLAR_SHARED_VARIABLE,
+} ParserBareDollarMode;
+
+ParserBareDollarMode parser_set_bare_dollar_mode(ParserBareDollarMode mode);
+ParserBareDollarMode parser_bare_dollar_mode(void);
+
 typedef enum {
     PARSER_SYNTAX_QUOTE,
     PARSER_SYNTAX_UNQUOTE,
