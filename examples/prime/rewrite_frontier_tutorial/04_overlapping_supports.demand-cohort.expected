@@ -1,0 +1,1 @@
+[left, right, both, (rewrite-tutorial:overlap X (superpose (B Y))), (rewrite-tutorial:overlap (superpose (A X)) Y), (rewrite-tutorial:overlap A Y), (rewrite-tutorial:overlap X B), (rewrite-tutorial:overlap X Y)]

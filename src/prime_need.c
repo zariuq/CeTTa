@@ -13,6 +13,8 @@ struct PrimeNeedFrame {
     uint64_t evaluator_id;
     uint64_t storage_key;
     uint64_t import_key;
+    uint64_t source_occurrence_id;
+    uint64_t source_argument_index;
     PrimeNeedCacheState cache_state;
     Atom *origin;
     Atom *cached;
@@ -25,6 +27,7 @@ static _Atomic uint64_t g_prime_need_next_authority = 1u;
 static _Atomic uint64_t g_prime_need_next_storage_key = 1u;
 static _Atomic uint64_t g_prime_need_next_receipt_session = 1u;
 static _Atomic uint64_t g_prime_need_next_receipt_event = 1u;
+static _Atomic uint64_t g_prime_need_next_source_occurrence = 1u;
 
 struct PrimeNeedReceiptFrame {
     const PrimeNeedReceiptFrame *left;
@@ -117,6 +120,8 @@ static bool prime_need_snapshot_push(Arena *owner,
                                      uint64_t evaluator_id,
                                      uint64_t storage_key,
                                      uint64_t import_key,
+                                     uint64_t source_occurrence_id,
+                                     uint64_t source_argument_index,
                                      PrimeNeedCacheState cache_state,
                                      Atom *origin,
                                      Atom *cached,
@@ -137,6 +142,8 @@ static bool prime_need_snapshot_push(Arena *owner,
     frame->evaluator_id = evaluator_id;
     frame->storage_key = storage_key;
     frame->import_key = import_key;
+    frame->source_occurrence_id = source_occurrence_id;
+    frame->source_argument_index = source_argument_index;
     frame->cache_state = cache_state;
     frame->origin = origin;
     frame->cached = cached;
@@ -162,6 +169,8 @@ bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
             out->evaluator_id = frame->evaluator_id;
             out->storage_key = frame->storage_key;
             out->import_key = frame->import_key;
+            out->source_occurrence_id = frame->source_occurrence_id;
+            out->source_argument_index = frame->source_argument_index;
             return true;
         }
     }
@@ -209,7 +218,8 @@ static bool prime_need_snapshot_find_imported_cell(
 
 static bool prime_need_snapshot_allocate_with_storage_key(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
-    uint64_t storage_key, PrimeNeedSnapshot *out,
+    uint64_t storage_key, uint64_t source_occurrence_id,
+    uint64_t source_argument_index, PrimeNeedSnapshot *out,
     uint64_t *out_thunk_id) {
     if (!owner || !base || !out || !out_thunk_id || !term ||
         !prime_need_snapshot_present(base))
@@ -234,7 +244,7 @@ static bool prime_need_snapshot_allocate_with_storage_key(
         &g_prime_need_next_authority);
     if (!prime_need_snapshot_push(
             owner, base, 0u, thunk_id, authority_id, 0u, storage_key,
-            import_key,
+            import_key, source_occurrence_id, source_argument_index,
             PRIME_NEED_CACHE_EMPTY, term, NULL, out))
         return false;
     *out_thunk_id = thunk_id;
@@ -247,7 +257,22 @@ bool prime_need_snapshot_allocate(Arena *owner,
                                   PrimeNeedSnapshot *out,
                                   uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, 0u, out, out_thunk_id);
+        owner, base, term, 0u, 0u, 0u, out, out_thunk_id);
+}
+
+uint64_t prime_need_fresh_source_occurrence(void) {
+    return prime_need_fresh_nonzero(&g_prime_need_next_source_occurrence);
+}
+
+bool prime_need_snapshot_allocate_source_argument(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
+    if (source_occurrence_id == 0u)
+        return false;
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, term, 0u, source_occurrence_id,
+        source_argument_index, out, out_thunk_id);
 }
 
 bool prime_need_snapshot_allocate_persisted(
@@ -257,7 +282,7 @@ bool prime_need_snapshot_allocate_persisted(
     if (storage_key == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, storage_key, out, out_thunk_id);
+        owner, base, term, storage_key, 0u, 0u, out, out_thunk_id);
 }
 
 static bool prime_need_snapshot_transition(
@@ -288,6 +313,7 @@ static bool prime_need_snapshot_transition(
         owner, base, 0u, thunk_id, previous.authority_id,
         next == PRIME_NEED_CACHE_EVALUATING ? evaluator_id : 0u,
         previous.storage_key, previous.import_key,
+        previous.source_occurrence_id, previous.source_argument_index,
         next, previous.origin, cached, out);
 }
 
@@ -363,6 +389,8 @@ bool prime_need_snapshot_promote(Arena *dst,
                 dst, &promoted, path[i]->serial, path[i]->thunk_id,
                 path[i]->authority_id, path[i]->evaluator_id,
                 path[i]->storage_key, path[i]->import_key,
+                path[i]->source_occurrence_id,
+                path[i]->source_argument_index,
                 path[i]->cache_state, origin, cached, &next)) {
             free(path);
             return false;
@@ -758,6 +786,15 @@ bool prime_need_receipt_observe_cell(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *outcome,
     PrimeNeedReceipt *out) {
+    return prime_need_receipt_observe_source_cell(
+        owner, base, need_session_id, thunk_id, 0u, 0u, outcome, out);
+}
+
+bool prime_need_receipt_observe_source_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *outcome, PrimeNeedReceipt *out) {
     if (need_session_id == 0u || thunk_id == 0u || !outcome)
         return false;
     return prime_need_receipt_append(
@@ -766,7 +803,29 @@ bool prime_need_receipt_observe_cell(
             .kind = PRIME_NEED_RECEIPT_OBSERVE_CELL,
             .need_session_id = need_session_id,
             .thunk_id = thunk_id,
+            .source_occurrence_id = source_occurrence_id,
+            .source_argument_index = source_argument_index,
             .after = outcome,
+        },
+        out);
+}
+
+bool prime_need_receipt_evaluate_source_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *origin, PrimeNeedReceipt *out) {
+    if (need_session_id == 0u || thunk_id == 0u || !origin)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_EVALUATE_CELL,
+            .need_session_id = need_session_id,
+            .thunk_id = thunk_id,
+            .source_occurrence_id = source_occurrence_id,
+            .source_argument_index = source_argument_index,
+            .before = origin,
         },
         out);
 }
@@ -815,6 +874,39 @@ bool prime_need_receipt_write_state(
             .state_cell = cell,
             .before = before,
             .after = after,
+        },
+        out);
+}
+
+bool prime_need_receipt_use_equation(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    Atom *equation, Atom *result, PrimeNeedReceipt *out) {
+    if (source_occurrence_id == 0u || rule_occurrence_id == 0u ||
+        !equation || !result)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_USE_EQUATION,
+            .source_occurrence_id = source_occurrence_id,
+            .rule_occurrence_id = rule_occurrence_id,
+            .before = equation,
+            .after = result,
+        },
+        out);
+}
+
+bool prime_need_receipt_resample(
+    Arena *owner, const PrimeNeedReceipt *base, Atom *origin,
+    PrimeNeedReceipt *out) {
+    if (!origin)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_RESAMPLE,
+            .before = origin,
         },
         out);
 }

@@ -1,0 +1,2 @@
+[left, right, (rewrite-tutorial:left-first X (superpose (B Y))), (rewrite-tutorial:left-first (superpose (A X)) Y)]
+[right-reversed, left-reversed, (rewrite-tutorial:right-first (superpose (A X)) Y), (rewrite-tutorial:right-first X (superpose (B Y)))]

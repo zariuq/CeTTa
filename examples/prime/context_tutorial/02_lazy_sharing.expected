@@ -1,0 +1,4 @@
+[(Triple sun sun sun), (Triple rain rain rain)]
+[(Pair sun sun), (Pair sun rain), (Pair rain sun), (Pair rain rain)]
+[(Triple north north north), (Triple south south south)]
+[(Pair (ctx:missing unknown) (ctx:missing unknown))]

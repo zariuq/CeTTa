@@ -1,0 +1,4 @@
+[(Pair (proof route-a theorem) (proof route-a theorem)), (Pair (proof route-b theorem) (proof route-b theorem))]
+[(Pair (verified (proof route-a theorem)) (compressed (proof route-a theorem))), (Pair (verified (proof route-b theorem)) (compressed (proof route-b theorem)))]
+[(Pair (proof route-a theorem) (proof route-a theorem)), (Pair (proof route-a theorem) (proof route-b theorem)), (Pair (proof route-b theorem) (proof route-a theorem)), (Pair (proof route-b theorem) (proof route-b theorem))]
+[(ctx:missing (quote (subgoal missing-theorem)))]

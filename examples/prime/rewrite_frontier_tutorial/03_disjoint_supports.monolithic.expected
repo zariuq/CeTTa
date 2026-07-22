@@ -1,0 +1,2 @@
+[left, right, right, (rewrite-tutorial:left-first X Y)]
+[right-reversed, left-reversed, left-reversed, (rewrite-tutorial:right-first X Y)]
