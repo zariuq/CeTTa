@@ -29,6 +29,7 @@ ENABLE_GMP ?= 1
 ENABLE_RUNTIME_STATS ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
 ENABLE_SANITIZERS ?= 0
+ENABLE_PIC ?= 0
 CETTA_PROVENANCE_ASSERT ?= 0
 SANITIZERS ?= address,undefined
 RHO_BENCH_RUNS ?= 3
@@ -45,6 +46,9 @@ $(error ENABLE_GMP must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_SANITIZERS),0 1),$(ENABLE_SANITIZERS))
 $(error ENABLE_SANITIZERS must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_PIC),0 1),$(ENABLE_PIC))
+$(error ENABLE_PIC must be 0 or 1)
 endif
 ifneq ($(filter $(CETTA_PROVENANCE_ASSERT),0 1),$(CETTA_PROVENANCE_ASSERT))
 $(error CETTA_PROVENANCE_ASSERT must be 0 or 1)
@@ -212,10 +216,22 @@ ifeq ($(ENABLE_SANITIZERS),1)
 SANITIZER_TAG := $(subst $(comma),-,$(subst $(space),_,$(SANITIZERS)))
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).sanitize.$(SANITIZER_TAG)
 endif
+ifeq ($(ENABLE_PIC),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).pic
+endif
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).provenance
 endif
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
+GSLT2PARSE_SHARED_ASAN_ENV =
+GSLT2PARSE_SHARED_ASAN_ARGS =
+ifeq ($(ENABLE_SANITIZERS),1)
+ifneq ($(filter address,$(SANITIZER_WORDS)),)
+GSLT2PARSE_ASAN_RUNTIME := $(shell $(CC) -print-file-name=libasan.so)
+GSLT2PARSE_SHARED_ASAN_ENV = LD_PRELOAD="$(GSLT2PARSE_ASAN_RUNTIME)"
+GSLT2PARSE_SHARED_ASAN_ARGS = --isolate-oracle-environment
+endif
+endif
 TSAN_ENABLED := 0
 ifeq ($(ENABLE_SANITIZERS),1)
 ifneq ($(filter thread,$(SANITIZER_WORDS)),)
@@ -245,8 +261,11 @@ ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
 endif
+ifeq ($(ENABLE_PIC),1)
+CFLAGS += -fPIC
+endif
 
-SRC = src/symbol.c src/atom.c src/atom_blob.c src/abt.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/atom_blob.c src/abt.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -278,6 +297,194 @@ RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.
 RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
 RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_CANON)
 RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_gll_utf8_forest.c
+LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ = runtime/bootstrap/test_lib_parse_gll_utf8_forest.$(BUILD_OBJ_TAG).o
+LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN = runtime/test_lib_parse_gll_utf8_forest-$(BUILD_OBJ_TAG)
+LIB_PARSE_GLL_UTF8_FOREST_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+LIB_PARSE_GLR_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_glr_utf8_forest.c
+LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ = runtime/bootstrap/test_lib_parse_glr_utf8_forest.$(BUILD_OBJ_TAG).o
+LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN = runtime/test_lib_parse_glr_utf8_forest-$(BUILD_OBJ_TAG)
+LIB_PARSE_GLR_UTF8_FOREST_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+LIB_PARSE_SLR_PREPARED_TEST_SRC = tests/support/test_lib_parse_slr_prepared.c
+LIB_PARSE_SLR_PREPARED_TEST_OBJ = runtime/bootstrap/test_lib_parse_slr_prepared.$(BUILD_OBJ_TAG).o
+LIB_PARSE_SLR_PREPARED_TEST_BIN = runtime/test_lib_parse_slr_prepared-$(BUILD_OBJ_TAG)
+LIB_PARSE_SLR_PREPARED_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_GLL_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_parser_pack_gll_v1.c
+PARSER_PACK_GLL_V1_TEST_OBJ = runtime/bootstrap/test_parser_pack_gll_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GLL_V1_TEST_BIN = runtime/test_parser_pack_gll_v1-$(BUILD_OBJ_TAG)
+PARSER_PACK_GLL_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_GLR_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_parser_pack_glr_v1.c
+PARSER_PACK_GLR_V1_TEST_OBJ = runtime/bootstrap/test_parser_pack_glr_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GLR_V1_TEST_BIN = runtime/test_parser_pack_glr_v1-$(BUILD_OBJ_TAG)
+PARSER_PACK_GLR_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_LEXICAL_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_parser_pack_lexical_v1.c
+PARSER_PACK_LEXICAL_V1_TEST_OBJ = runtime/bootstrap/test_parser_pack_lexical_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_LEXICAL_V1_TEST_BIN = runtime/test_parser_pack_lexical_v1-$(BUILD_OBJ_TAG)
+PARSER_PACK_GUARD_RELATION_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guard_relation_v1.c
+PARSER_PACK_GUARD_RELATION_V1_OBJ = runtime/bootstrap/parser_pack_guard_relation_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_LEXICAL_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ)
+PARSER_PACK_LEXICAL_PLAN_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_lexical_plan_v1_stream.c
+PARSER_PACK_LEXICAL_PLAN_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_lexical_plan_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN = runtime/parser_pack_lexical_plan_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_LEXICAL_PLAN_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_GUARD_PLAN_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guard_plan_v1.c
+PARSER_PACK_GUARD_PLAN_V1_OBJ = runtime/bootstrap/parser_pack_guard_plan_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARD_PLAN_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_parser_pack_guard_plan_v1.c
+PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ = runtime/bootstrap/test_parser_pack_guard_plan_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARD_PLAN_V1_TEST_BIN = runtime/test_parser_pack_guard_plan_v1-$(BUILD_OBJ_TAG)
+PARSER_PACK_GUARD_PLAN_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ)
+PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guard_evidence_stream_v1.c
+PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ = runtime/bootstrap/parser_pack_guard_evidence_stream_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARD_PLAN_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_guard_plan_v1_stream.c
+PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_guard_plan_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN = runtime/parser_pack_guard_plan_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_GUARD_PLAN_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ)
+PARSER_PACK_GUARDED_LEXICAL_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guarded_lexical_v1.c
+PARSER_PACK_GUARDED_LEXICAL_V1_OBJ = runtime/bootstrap/parser_pack_guarded_lexical_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_guarded_lexical_plan_v1_stream.c
+PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_guarded_lexical_plan_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN = runtime/parser_pack_guarded_lexical_plan_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ)
+PARSER_PACK_GUARD_REF_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guard_ref_v1.c
+PARSER_PACK_GUARD_REF_V1_OBJ = runtime/bootstrap/parser_pack_guard_ref_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARD_REF_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_guard_ref_v1_stream.c
+PARSER_PACK_GUARD_REF_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_guard_ref_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARD_REF_V1_STREAM_BIN = runtime/parser_pack_guard_ref_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_GUARD_REF_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARD_REF_V1_OBJ)
+PARSER_PACK_GUARD_SCALAR_EXEC_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guard_scalar_exec_v1.c
+PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ = runtime/bootstrap/parser_pack_guard_scalar_exec_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guarded_lexical_exec_v1.c
+PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ = runtime/bootstrap/parser_pack_guarded_lexical_exec_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_guarded_lexical_exec_v1_stream.c
+PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_guarded_lexical_exec_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN = runtime/parser_pack_guarded_lexical_exec_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ) $(PARSER_PACK_GUARD_REF_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ) $(SEMANTIC_MASK_NFA_V1_OBJ)
+PARSER_ATOM_PROJECTION_V1_SRC = experiments/gslt2parse_foundation/native/parser_atom_projection_v1.c
+PARSER_ATOM_PROJECTION_V1_HEADER = experiments/gslt2parse_foundation/native/parser_atom_projection_v1.h
+PARSER_ATOM_PROJECTION_V1_OBJ = runtime/bootstrap/parser_atom_projection_v1.$(BUILD_OBJ_TAG).o
+PARSER_ATOM_PROJECTION_EVENTS_V1_SRC = experiments/gslt2parse_foundation/native/parser_atom_projection_events_v1.c
+PARSER_ATOM_PROJECTION_EVENTS_V1_HEADER = experiments/gslt2parse_foundation/native/parser_atom_projection_events_v1.h
+PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ = runtime/bootstrap/parser_atom_projection_events_v1.$(BUILD_OBJ_TAG).o
+PARSER_ATOM_PROJECTION_ACTION_V1_SRC = experiments/gslt2parse_foundation/native/parser_atom_projection_action_v1.c
+PARSER_ATOM_PROJECTION_ACTION_V1_HEADER = experiments/gslt2parse_foundation/native/parser_atom_projection_action_v1.h
+PARSER_ATOM_PROJECTION_ACTION_V1_OBJ = runtime/bootstrap/parser_atom_projection_action_v1.$(BUILD_OBJ_TAG).o
+PARSER_ATOM_PROJECTION_DOMAIN_V1_SRC = experiments/gslt2parse_foundation/native/parser_atom_projection_domain_v1.c
+PARSER_ATOM_PROJECTION_DOMAIN_V1_HEADER = experiments/gslt2parse_foundation/native/parser_atom_projection_domain_v1.h
+PARSER_ATOM_PROJECTION_DOMAIN_V1_OBJ = runtime/bootstrap/parser_atom_projection_domain_v1.$(BUILD_OBJ_TAG).o
+PARSER_ATOM_PROJECTION_CLOSURE_V1_SRC = experiments/gslt2parse_foundation/native/parser_atom_projection_closure_v1.c
+PARSER_ATOM_PROJECTION_CLOSURE_V1_HEADER = experiments/gslt2parse_foundation/native/parser_atom_projection_closure_v1.h
+PARSER_ATOM_PROJECTION_CLOSURE_V1_OBJ = runtime/bootstrap/parser_atom_projection_closure_v1.$(BUILD_OBJ_TAG).o
+PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_atom_projection_closure_v1_stream.c
+PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_OBJ = runtime/bootstrap/parser_atom_projection_closure_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN = runtime/parser_atom_projection_closure_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_DOMAIN_V1_OBJ) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_OBJ)
+SEMANTIC_MASK_NFA_V1_SRC = experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.c
+SEMANTIC_MASK_NFA_V1_HEADER = experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.h
+SEMANTIC_MASK_NFA_V1_OBJ = runtime/bootstrap/semantic_mask_nfa_v1.$(BUILD_OBJ_TAG).o
+SEMANTIC_MASK_NFA_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1_stream.c
+SEMANTIC_MASK_NFA_V1_STREAM_OBJ = runtime/bootstrap/semantic_mask_nfa_v1_stream.$(BUILD_OBJ_TAG).o
+SEMANTIC_MASK_NFA_V1_STREAM_BIN = runtime/semantic_mask_nfa_v1_stream-$(BUILD_OBJ_TAG)
+SEMANTIC_MASK_NFA_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(SEMANTIC_MASK_NFA_V1_OBJ)
+PARSER_PACK_SEMANTIC_MASK_BINDING_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_semantic_mask_binding_v1.c
+PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER = experiments/gslt2parse_foundation/native/parser_pack_semantic_mask_binding_v1.h
+PARSER_PACK_SEMANTIC_MASK_BINDING_V1_OBJ = runtime/bootstrap/parser_pack_semantic_mask_binding_v1.$(BUILD_OBJ_TAG).o
+HE_DOCUMENT_PIPELINE_V1_SRC = experiments/gslt2parse_foundation/adapters/he_document_pipeline_v1.c
+HE_DOCUMENT_PIPELINE_V1_HEADER = experiments/gslt2parse_foundation/adapters/he_document_pipeline_v1.h
+HE_DOCUMENT_PIPELINE_V1_OBJ = runtime/bootstrap/he_document_pipeline_v1.$(BUILD_OBJ_TAG).o
+HE_DOCUMENT_PIPELINE_V1_STREAM_SRC = experiments/gslt2parse_foundation/adapters/he_document_pipeline_v1_stream.c
+HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ = runtime/bootstrap/he_document_pipeline_v1_stream.$(BUILD_OBJ_TAG).o
+HE_DOCUMENT_PIPELINE_V1_STREAM_BIN = runtime/he_document_pipeline_v1_stream-$(BUILD_OBJ_TAG)
+HE_DOCUMENT_PIPELINE_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ) $(PARSER_PACK_GUARD_REF_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ) $(SEMANTIC_MASK_NFA_V1_OBJ) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_OBJ)
+HE_DOCUMENT_PIPELINE_V1_BENCH_SRC = experiments/gslt2parse_foundation/adapters/he_document_pipeline_v1_bench.c
+HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ = runtime/bootstrap/he_document_pipeline_v1_bench.$(BUILD_OBJ_TAG).o
+HE_DOCUMENT_PIPELINE_V1_BENCH_BIN = runtime/he_document_pipeline_v1_bench-$(BUILD_OBJ_TAG)
+PETTA_DOCUMENT_PIPELINE_V1_SRC = experiments/gslt2parse_foundation/adapters/petta_document_pipeline_v1.c
+PETTA_DOCUMENT_PIPELINE_V1_HEADER = experiments/gslt2parse_foundation/adapters/petta_document_pipeline_v1.h
+PETTA_DOCUMENT_PIPELINE_V1_OBJ = runtime/bootstrap/petta_document_pipeline_v1.$(BUILD_OBJ_TAG).o
+PETTA_DOCUMENT_PIPELINE_V1_BIN = runtime/petta_document_pipeline_v1-$(BUILD_OBJ_TAG)
+PETTA_DOCUMENT_PIPELINE_V1_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ) $(PARSER_PACK_GUARD_REF_V1_OBJ) $(PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ) $(SEMANTIC_MASK_NFA_V1_OBJ)
+PETTA_DOCUMENT_PIPELINE_V1_LIB = runtime/libcetta_petta_document_pipeline_v1-$(BUILD_OBJ_TAG).so
+PETTA_DOCUMENT_PIPELINE_V1_SHARED_LINK_OBJ = $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ) $(PARSER_PACK_GUARD_REF_V1_OBJ) $(PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ) $(SEMANTIC_MASK_NFA_V1_OBJ)
+PARSER_PACK_GLL_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_gll_v1_stream.c
+PARSER_PACK_GLL_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_gll_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GLL_V1_STREAM_READER_SRC = experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c
+PARSER_PACK_GLL_V1_STREAM_READER_OBJ = runtime/bootstrap/parser_pack_abi_stream_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GLL_V1_STREAM_BIN = runtime/parser_pack_gll_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_GLL_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_SLR_SUMMARY_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_slr_summary_v1_stream.c
+PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_slr_summary_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN = runtime/parser_pack_slr_summary_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_SLR_SUMMARY_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_GLR_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_glr_v1_stream.c
+PARSER_PACK_GLR_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_glr_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_PACK_GLR_V1_STREAM_BIN = runtime/parser_pack_glr_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_PACK_GLR_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_NATIVE_API_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_native_api_v1.c
+PARSER_PACK_NATIVE_API_V1_HEADER = experiments/gslt2parse_foundation/native/parser_pack_native_api_v1.h
+PARSER_PACK_NATIVE_API_V1_OBJ = runtime/bootstrap/parser_pack_native_api_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_NATIVE_API_V1_LIB = runtime/libcetta_parser_pack_native_v1-$(BUILD_OBJ_TAG).so
+PARSER_PACK_NATIVE_API_V1_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+REGULAR_SPAN_DFA_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_regular_span_dfa_v1.c
+REGULAR_SPAN_DFA_V1_TEST_OBJ = runtime/bootstrap/test_regular_span_dfa_v1.$(BUILD_OBJ_TAG).o
+REGULAR_SPAN_DFA_V1_TEST_BIN = runtime/test_regular_span_dfa_v1-$(BUILD_OBJ_TAG)
+REGULAR_SPAN_DFA_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+REGULAR_SPAN_NFA_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_regular_span_nfa_v1.c
+REGULAR_SPAN_NFA_V1_TEST_OBJ = runtime/bootstrap/test_regular_span_nfa_v1.$(BUILD_OBJ_TAG).o
+REGULAR_SPAN_NFA_V1_TEST_BIN = runtime/test_regular_span_nfa_v1-$(BUILD_OBJ_TAG)
+REGULAR_SPAN_NFA_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+REGULAR_SPAN_DFA_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/regular_span_dfa_v1_stream.c
+REGULAR_SPAN_DFA_V1_STREAM_OBJ = runtime/bootstrap/regular_span_dfa_v1_stream.$(BUILD_OBJ_TAG).o
+REGULAR_SPAN_DFA_V1_STREAM_BIN = runtime/regular_span_dfa_v1_stream-$(BUILD_OBJ_TAG)
+REGULAR_SPAN_DFA_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+FINITE_HORN_ANSWER_STREAM_V1_SRC = experiments/gslt2parse_foundation/native/finite_horn_answer_stream_v1.c
+FINITE_HORN_ANSWER_STREAM_V1_OBJ = runtime/bootstrap/finite_horn_answer_stream_v1.$(BUILD_OBJ_TAG).o
+PARSER_ACTION_BYTECODE_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_action_bytecode_v1_stream.c
+PARSER_ACTION_BYTECODE_V1_STREAM_OBJ = runtime/bootstrap/parser_action_bytecode_v1_stream.$(BUILD_OBJ_TAG).o
+PARSER_ACTION_BYTECODE_V1_STREAM_BIN = runtime/parser_action_bytecode_v1_stream-$(BUILD_OBJ_TAG)
+PARSER_ACTION_BYTECODE_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ)
+GSLT2PARSE_AUX_OBJ = \
+	$(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ) \
+	$(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ) \
+	$(LIB_PARSE_SLR_PREPARED_TEST_OBJ) \
+	$(PARSER_PACK_GLL_V1_TEST_OBJ) \
+	$(PARSER_PACK_GLR_V1_TEST_OBJ) \
+	$(PARSER_PACK_LEXICAL_V1_TEST_OBJ) \
+	$(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_OBJ) \
+	$(PARSER_PACK_GUARD_RELATION_V1_OBJ) \
+	$(PARSER_PACK_GUARD_PLAN_V1_OBJ) \
+	$(PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ) \
+	$(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) \
+	$(PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ) \
+	$(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ) \
+	$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_OBJ) \
+	$(PARSER_PACK_GUARD_REF_V1_OBJ) \
+	$(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ) \
+	$(PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ) \
+	$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) \
+	$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ) \
+	$(PARSER_ATOM_PROJECTION_V1_OBJ) \
+	$(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) \
+	$(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ) \
+	$(PARSER_ATOM_PROJECTION_DOMAIN_V1_OBJ) \
+	$(PARSER_ATOM_PROJECTION_CLOSURE_V1_OBJ) \
+	$(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_OBJ) \
+	$(SEMANTIC_MASK_NFA_V1_OBJ) \
+	$(SEMANTIC_MASK_NFA_V1_STREAM_OBJ) \
+	$(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_OBJ) \
+	$(HE_DOCUMENT_PIPELINE_V1_OBJ) \
+	$(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ) \
+	$(HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ) \
+	$(PETTA_DOCUMENT_PIPELINE_V1_OBJ) \
+	$(PARSER_PACK_GLL_V1_STREAM_OBJ) \
+	$(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) \
+	$(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ) \
+	$(PARSER_PACK_GLR_V1_STREAM_OBJ) \
+	$(PARSER_PACK_NATIVE_API_V1_OBJ) \
+	$(REGULAR_SPAN_DFA_V1_TEST_OBJ) \
+	$(REGULAR_SPAN_NFA_V1_TEST_OBJ) \
+	$(FINITE_HORN_ANSWER_STREAM_V1_OBJ) \
+	$(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ) \
+	$(REGULAR_SPAN_DFA_V1_STREAM_OBJ)
 STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
 VARIANT_SHAPE_TEST_BIN = runtime/test_variant_shape_roundtrip-$(BUILD_OBJ_TAG)
 ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
@@ -299,6 +506,25 @@ PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN = runtime/test_pathmap_backend_
 PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN = runtime/test_pathmap_backend_primary_replace_abi-$(BUILD_OBJ_TAG)
 PATHMAP_TYPED_QUERY_ABI_TEST_BIN = runtime/test_pathmap_typed_query_abi-$(BUILD_OBJ_TAG)
 LIB_PARSE_INFERENCE_BENCH_BIN = runtime/bench_lib_parse_inference_native-$(BUILD_OBJ_TAG)
+GSLT2PARSE_SCHEMA_V1_NATIVE_DIR = experiments/gslt2parse_foundation/native
+GSLT2PARSE_SCHEMA_V1_NATIVE_BIN = runtime/test_finite_horn_gslt_v1-$(BUILD_OBJ_TAG)
+GSLT2PARSE_CHART_V1_NATIVE_BIN = runtime/finite_horn_chart_v1-$(BUILD_OBJ_TAG)
+GSLT2PARSE_PARSER_PACK_ABI_V1_NATIVE_BIN = runtime/test_parser_pack_abi_v1-$(BUILD_OBJ_TAG)
+GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN = runtime/test_parser_pack_abi_v1_stream-$(BUILD_OBJ_TAG)
+GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_term_projection_v1-$(BUILD_OBJ_TAG)
+GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN = runtime/parser_term_projection_v1_stream-$(BUILD_OBJ_TAG)
+GSLT2PARSE_ATOM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_atom_projection_v1-$(BUILD_OBJ_TAG)
+GSLT2PARSE_PETTA_ROOT ?=
+GSLT2PARSE_HE_ROOT ?=
+GSLT2PARSE_GENERIC_ENGINE_SOURCES = \
+	$(filter-out $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_%,$(wildcard $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/*.c)) \
+	$(filter-out $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_%,$(wildcard $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/*.h)) \
+	src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h \
+	src/native_sha256.c src/native_sha256.h
+GSLT2PARSE_GENERIC_COMPILER_SOURCES = \
+	$(wildcard experiments/gslt2parse_foundation/presentations/compiler/*.metta) \
+	$(wildcard experiments/gslt2parse_foundation/presentations/parserpack/*.metta) \
+	$(wildcard experiments/gslt2parse_foundation/presentations/reflection/*.metta)
 SPACE_ENGINES = native native-candidate-exact
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 SPACE_ENGINES += pathmap
@@ -1004,7 +1230,7 @@ endif
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
-DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) $(FALLBACK_EVAL_TEST_OBJ:.o=.d) $(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d)
+DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) $(FALLBACK_EVAL_TEST_OBJ:.o=.d) $(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d) $(GSLT2PARSE_AUX_OBJ:.o=.d)
 
 -include $(DEPS)
 
@@ -1182,6 +1408,359 @@ $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHO
 	mv "$$tmp_out" $@
 
 $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ) $(LIB_PARSE_GLL_UTF8_FOREST_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-gll-utf8-forest.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ) $(LIB_PARSE_GLR_UTF8_FOREST_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-glr-utf8-forest.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ): $(LIB_PARSE_GLR_UTF8_FOREST_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(LIB_PARSE_SLR_PREPARED_TEST_BIN): $(LIB_PARSE_SLR_PREPARED_TEST_OBJ) $(LIB_PARSE_SLR_PREPARED_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-slr-prepared.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(LIB_PARSE_SLR_PREPARED_TEST_OBJ): $(LIB_PARSE_SLR_PREPARED_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GLL_V1_TEST_BIN): $(PARSER_PACK_GLL_V1_TEST_OBJ) $(PARSER_PACK_GLL_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-gll-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GLL_V1_TEST_OBJ): $(PARSER_PACK_GLL_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GLR_V1_TEST_BIN): $(PARSER_PACK_GLR_V1_TEST_OBJ) $(PARSER_PACK_GLR_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-glr-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GLR_V1_TEST_OBJ): $(PARSER_PACK_GLR_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_LEXICAL_V1_TEST_BIN): $(PARSER_PACK_LEXICAL_V1_TEST_OBJ) $(PARSER_PACK_LEXICAL_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-lexical-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_LEXICAL_V1_TEST_OBJ): $(PARSER_PACK_LEXICAL_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-lexical-plan-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_OBJ): $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_RELATION_V1_OBJ): $(PARSER_PACK_GUARD_RELATION_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_PLAN_V1_TEST_BIN): $(PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-guard-plan-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ): $(PARSER_PACK_GUARD_PLAN_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_PLAN_V1_OBJ): $(PARSER_PACK_GUARD_PLAN_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guard-plan-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ): $(PARSER_PACK_GUARD_PLAN_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ): $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guarded-lexical-plan-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN): $(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARD_REF_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guard-ref-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ): $(PARSER_PACK_GUARD_REF_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_REF_V1_OBJ): $(PARSER_PACK_GUARD_REF_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ): $(PARSER_PACK_GUARD_SCALAR_EXEC_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guarded-lexical-exec-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_SRC) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_ATOM_PROJECTION_V1_OBJ): $(PARSER_ATOM_PROJECTION_V1_SRC) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ): $(PARSER_ATOM_PROJECTION_EVENTS_V1_SRC) $(PARSER_ATOM_PROJECTION_EVENTS_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ): $(PARSER_ATOM_PROJECTION_ACTION_V1_SRC) $(PARSER_ATOM_PROJECTION_ACTION_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_ATOM_PROJECTION_DOMAIN_V1_OBJ): $(PARSER_ATOM_PROJECTION_DOMAIN_V1_SRC) $(PARSER_ATOM_PROJECTION_DOMAIN_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_ATOM_PROJECTION_CLOSURE_V1_OBJ): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_SRC) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_HEADER) $(PARSER_ATOM_PROJECTION_DOMAIN_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-atom-projection-closure-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_OBJ): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_SRC) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(SEMANTIC_MASK_NFA_V1_OBJ): $(SEMANTIC_MASK_NFA_V1_SRC) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(SEMANTIC_MASK_NFA_V1_STREAM_BIN): $(SEMANTIC_MASK_NFA_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(SEMANTIC_MASK_NFA_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/semantic-mask-nfa-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(SEMANTIC_MASK_NFA_V1_STREAM_OBJ): $(SEMANTIC_MASK_NFA_V1_STREAM_SRC) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_OBJ): $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_SRC) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN): $(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ) $(HE_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(HE_DOCUMENT_PIPELINE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/he-document-pipeline-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ): $(HE_DOCUMENT_PIPELINE_V1_STREAM_SRC) $(HE_DOCUMENT_PIPELINE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN): $(HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ) $(HE_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(HE_DOCUMENT_PIPELINE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/he-document-pipeline-v1-bench.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ): $(HE_DOCUMENT_PIPELINE_V1_BENCH_SRC) $(HE_DOCUMENT_PIPELINE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(HE_DOCUMENT_PIPELINE_V1_OBJ): $(HE_DOCUMENT_PIPELINE_V1_SRC) $(HE_DOCUMENT_PIPELINE_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(PARSER_ATOM_PROJECTION_EVENTS_V1_HEADER) $(PARSER_ATOM_PROJECTION_ACTION_V1_HEADER) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PETTA_DOCUMENT_PIPELINE_V1_BIN): $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_NATIVE_API_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PETTA_DOCUMENT_PIPELINE_V1_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-document-pipeline-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PETTA_DOCUMENT_PIPELINE_V1_LIB): $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) $(PETTA_DOCUMENT_PIPELINE_V1_SHARED_LINK_OBJ) $(PARSER_PACK_NATIVE_API_V1_LIB) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/libcetta-petta-document-pipeline-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) -shared -Wl,-soname,$(notdir $@) -Wl,-rpath,'$$ORIGIN' \
+		-o "$$tmp_out" $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) \
+		$(PETTA_DOCUMENT_PIPELINE_V1_SHARED_LINK_OBJ) \
+		$(PARSER_PACK_NATIVE_API_V1_LIB) $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PETTA_DOCUMENT_PIPELINE_V1_OBJ): $(PETTA_DOCUMENT_PIPELINE_V1_SRC) $(PETTA_DOCUMENT_PIPELINE_V1_HEADER) $(PARSER_PACK_NATIVE_API_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GLL_V1_STREAM_BIN): $(PARSER_PACK_GLL_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GLL_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-gll-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GLL_V1_STREAM_OBJ): $(PARSER_PACK_GLL_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GLL_V1_STREAM_READER_OBJ): $(PARSER_PACK_GLL_V1_STREAM_READER_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN): $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-slr-summary-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ): $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_GLR_V1_STREAM_BIN): $(PARSER_PACK_GLR_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GLR_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-glr-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_GLR_V1_STREAM_OBJ): $(PARSER_PACK_GLR_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_NATIVE_API_V1_LIB): $(PARSER_PACK_NATIVE_API_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_NATIVE_API_V1_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/libcetta-parser-pack-native-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) -shared -Wl,-soname,$(notdir $@) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_NATIVE_API_V1_OBJ): $(PARSER_PACK_NATIVE_API_V1_SRC) $(PARSER_PACK_NATIVE_API_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(REGULAR_SPAN_DFA_V1_TEST_BIN): $(REGULAR_SPAN_DFA_V1_TEST_OBJ) $(REGULAR_SPAN_DFA_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-regular-span-dfa-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(REGULAR_SPAN_DFA_V1_TEST_OBJ): $(REGULAR_SPAN_DFA_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(REGULAR_SPAN_NFA_V1_TEST_BIN): $(REGULAR_SPAN_NFA_V1_TEST_OBJ) $(REGULAR_SPAN_NFA_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-regular-span-nfa-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(REGULAR_SPAN_NFA_V1_TEST_OBJ): $(REGULAR_SPAN_NFA_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(REGULAR_SPAN_DFA_V1_STREAM_BIN): $(REGULAR_SPAN_DFA_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(REGULAR_SPAN_DFA_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/regular-span-dfa-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(REGULAR_SPAN_DFA_V1_STREAM_OBJ): $(REGULAR_SPAN_DFA_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(FINITE_HORN_ANSWER_STREAM_V1_OBJ): $(FINITE_HORN_ANSWER_STREAM_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_ACTION_BYTECODE_V1_STREAM_BIN): $(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_ACTION_BYTECODE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-action-bytecode-v1-stream.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ): $(PARSER_ACTION_BYTECODE_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -2104,6 +2683,297 @@ test-lib-parse-shared-cert: $(BIN)
 		diff <(cat tests/test_lib_parse_shared_cert_regression.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
+
+test-lib-parse-gll-utf8-forest: $(LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN)
+	@$(LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN)
+
+test-lib-parse-glr-utf8-forest: $(LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN)
+	@$(LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN)
+
+test-lib-parse-slr-prepared: $(LIB_PARSE_SLR_PREPARED_TEST_BIN)
+	@$(LIB_PARSE_SLR_PREPARED_TEST_BIN)
+
+test-gslt2parse-parser-pack-gll-v1-native: $(PARSER_PACK_GLL_V1_TEST_BIN)
+	@$(PARSER_PACK_GLL_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp' \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
+		src/lib_parse_native_grammar.c \
+		src/lib_parse_native_grammar.h; then \
+		echo 'guest-language name leaked into the generic ParserPack GLL path'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-pack-glr-v1-native: $(PARSER_PACK_GLR_V1_TEST_BIN)
+	@$(PARSER_PACK_GLR_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp' \
+		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
+		src/lib_parse_native_grammar.c \
+		src/lib_parse_native_grammar.h; then \
+		echo 'guest-language name leaked into the generic ParserPack GLR path'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-pack-lexical-v1-native: $(PARSER_PACK_LEXICAL_V1_TEST_BIN)
+	@$(PARSER_PACK_LEXICAL_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|cetta[-_ ]?prime' \
+		experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_guard_relation_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_guard_relation_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h \
+		src/lib_parse_native_grammar.c \
+		src/lib_parse_native_grammar.h; then \
+		echo 'guest-language name leaked into the generic lexical projection path'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-pack-guard-plan-v1-native: \
+		$(PARSER_PACK_GUARD_PLAN_V1_TEST_BIN)
+	@$(PARSER_PACK_GUARD_PLAN_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|cetta[-_ ]?prime' \
+		experiments/gslt2parse_foundation/native/parser_pack_guard_plan_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_guard_plan_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_guard_relation_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_guard_relation_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h; then \
+		echo 'guest-language name leaked into the generic positive guard path'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-pack-lexical-v1-matrix: \
+		test-gslt2parse-parser-pack-lexical-v1-native \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(REGULAR_SPAN_DFA_V1_STREAM_BIN) \
+		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		$(PARSER_PACK_GLR_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'GSLT2PARSE_PETTA_ROOT is required for the lexical projection matrix'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_lexical_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--projection-binary $(REGULAR_SPAN_DFA_V1_STREAM_BIN) \
+		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-parser-pack-gll-v1-matrix: \
+		test-gslt2parse-parser-pack-gll-v1-native \
+		$(PARSER_PACK_GLL_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_gll_v1.py \
+		--binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+	@if rg -ni 'metamath|megalodon|tptp' \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1_stream.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.h \
+		src/lib_parse_native_grammar.c \
+		src/lib_parse_native_grammar.h; then \
+		echo 'guest-language name leaked into the generic ParserPack GLL path'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-pack-glr-v1-matrix: \
+		test-gslt2parse-parser-pack-gll-v1-native \
+		test-gslt2parse-parser-pack-glr-v1-native \
+		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		$(PARSER_PACK_GLR_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_gll_v1.py \
+		--binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+	@if rg -ni 'metamath|megalodon|tptp' \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1_stream.c \
+		experiments/gslt2parse_foundation/native/parser_pack_glr_v1_stream.c \
+		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.h \
+		src/lib_parse_native_grammar.c \
+		src/lib_parse_native_grammar.h; then \
+		echo 'guest-language name leaked into a generic ParserPack parser path'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-pack-wide-scale-v1: \
+		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		$(PARSER_PACK_GLR_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/probe_parser_pack_wide_scale_v1.py \
+		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-regular-span-dfa-v1-native: \
+		$(REGULAR_SPAN_DFA_V1_TEST_BIN) \
+		$(REGULAR_SPAN_NFA_V1_TEST_BIN) \
+		$(REGULAR_SPAN_DFA_V1_STREAM_BIN)
+	@$(REGULAR_SPAN_DFA_V1_TEST_BIN)
+	@$(REGULAR_SPAN_NFA_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|cetta[-_ ]?prime' \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h \
+		experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c \
+		experiments/gslt2parse_foundation/native/regular_span_nfa_v1.h \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1_stream.c; then \
+		echo 'guest-language name leaked into the generic regular-span DFA path'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-regular-span-dfa-v1-matrix: \
+		test-gslt2parse-regular-span-dfa-v1-native \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_regular_span_dfa_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--dfa-binary $(REGULAR_SPAN_DFA_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+ifeq ($(ENABLE_PIC),1)
+test-gslt2parse-parser-pack-native-api-v1-matrix: \
+		$(PARSER_PACK_NATIVE_API_V1_LIB)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@$(GSLT2PARSE_SHARED_ASAN_ENV) python3 \
+		tools/test_parser_pack_native_api_v1.py \
+		--library $(PARSER_PACK_NATIVE_API_V1_LIB) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		$(GSLT2PARSE_SHARED_ASAN_ARGS)
+	@if rg -ni 'metamath|megalodon|tptp' \
+		experiments/gslt2parse_foundation/native/parser_pack_native_api_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_api_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.h \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
+		src/lib_parse_native_grammar.c \
+		src/lib_parse_native_grammar.h; then \
+		echo 'guest-language name leaked into the native ParserPack API'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-pack-native-petta-v1: \
+		test-gslt2parse-parser-pack-native-api-v1-matrix
+	@$(if $(and $(filter 1,$(ENABLE_SANITIZERS)),$(filter address,$(SANITIZER_WORDS))), \
+		$(MAKE) --no-print-directory ENABLE_SANITIZERS=0 ENABLE_PIC=1 \
+			GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+			test-gslt2parse-parser-pack-native-petta-v1-body, \
+		$(MAKE) --no-print-directory \
+			GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+			test-gslt2parse-parser-pack-native-petta-v1-body)
+
+test-gslt2parse-parser-pack-native-petta-v1-body: \
+		$(PARSER_PACK_NATIVE_API_V1_LIB)
+	@$(MAKE) -C \
+		"$(GSLT2PARSE_PETTA_ROOT)/experiments/gslt2parse_foundation/native" \
+		test CETTA_ROOT="$(CURDIR)" CETTA_OBJ_TAG="$(BUILD_OBJ_TAG)"
+else
+test-gslt2parse-parser-pack-native-api-v1-matrix \
+test-gslt2parse-parser-pack-native-petta-v1:
+	@echo 'rerun this gate with ENABLE_PIC=1'; \
+	exit 1
+endif
+
+test-gslt2parse-generic-engine-purity-v1:
+	@if rg -ni '\b(he|petta|metta|rho|mrho|rhocalc|hyperon)\b|metamath|megalodon|tptp|cetta[-_ ]?prime|set\.mm' \
+		$(GSLT2PARSE_GENERIC_ENGINE_SOURCES) \
+		$(GSLT2PARSE_GENERIC_COMPILER_SOURCES); then \
+		echo 'guest-language knowledge leaked into a generic GSLT2Parse engine or compiler'; \
+		exit 1; \
+	fi
+	@printf '(GSLT2ParseGenericEnginePurityV1Summary %s 0)\n' \
+		"$(words $(GSLT2PARSE_GENERIC_ENGINE_SOURCES))"
+	@printf '(GSLT2ParseGenericCompilerPurityV1Summary %s 0)\n' \
+		"$(words $(GSLT2PARSE_GENERIC_COMPILER_SOURCES))"
+
+test-gslt2parse-c-production-v1:
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory ENABLE_PIC=1 \
+		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+		GSLT2PARSE_HE_ROOT="$(GSLT2PARSE_HE_ROOT)" \
+		test-gslt2parse-c-production-v1-body
+
+test-gslt2parse-c-production-v1-body: \
+		test-gslt2parse-generic-engine-purity-v1 \
+		test-gslt2parse-schema-v1 \
+		test-gslt2parse-c-horn-v1-differential \
+		test-gslt2parse-parser-pack-guard-compiler-v1 \
+		test-gslt2parse-parser-pack-guard-regular-v1 \
+		test-gslt2parse-parser-pack-lr1-v1 \
+		test-gslt2parse-parser-pack-lexical-plan-v1 \
+		test-gslt2parse-parser-pack-guarded-lexical-v1 \
+		test-gslt2parse-parser-pack-guard-plan-he-v1 \
+		test-gslt2parse-rho-abstract-syntax-v1 \
+		test-gslt2parse-parser-term-projection-v1-native \
+		test-gslt2parse-parser-atom-projection-v1-native \
+		test-gslt2parse-parser-atom-projection-closure-v1 \
+		test-gslt2parse-semantic-mask-span-compiler-v1 \
+		test-gslt2parse-rhocalc-reader-authority-v1 \
+		test-gslt2parse-rhocalc-parser-pack-v1 \
+		test-gslt2parse-rho-surface-convergence-v1 \
+		test-gslt2parse-he-reader-source-correspondence-v1 \
+		test-gslt2parse-he-reader-guard-exec-v1 \
+		test-gslt2parse-he-reader-guarded-lexical-v1 \
+		test-gslt2parse-he-document-pipeline-v1 \
+		test-gslt2parse-he-gslt-parse-only-v1 \
+		test-gslt2parse-petta-form-guard-exec-v1 \
+		test-gslt2parse-petta-document-splitter-v1 \
+		test-gslt2parse-petta-ffi-v1 \
+		test-gslt2parse-stable-parser-parse-only-v1 \
+		test-gslt2parse-parser-pack-guard-plan-prime-v1 \
+		test-gslt2parse-parser-pack-guard-plan-v1-native \
+		test-gslt2parse-parser-pack-abi-v1-matrix \
+		test-gslt2parse-parser-pack-glr-v1-matrix \
+		test-gslt2parse-parser-pack-wide-scale-v1 \
+		test-gslt2parse-parser-pack-lexical-v1-matrix \
+		test-gslt2parse-regular-span-dfa-v1-matrix \
+		test-lib-parse-slr-prepared \
+		test-lib-parse-gll-utf8-forest \
+		test-lib-parse-glr-utf8-forest
+	@echo '(GSLT2ParseCProductionV1Summary 34 0)'
 
 test-lib-parse-native-gparse: $(BIN)
 	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_grammar_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
@@ -5390,16 +6260,710 @@ compile-test: $(BIN)
 	echo "---"; echo "$$pass passed, $$fail failed"; \
 	test $$fail -eq 0
 
+# The finite Horn presentation is an arity-checked, one-carrier reification of
+# the mathematical GSLT core. These gates validate only its schema boundary;
+# parser behavior and backend correspondence have separate gates.
+$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN): \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_finite_horn_gslt_v1.c \
+		src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc -I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_finite_horn_gslt_v1.c \
+		src/native_sha256.c
+
+test-gslt2parse-schema-v1-native: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		bd763693062eeaea7e95fe73f036af4e1707fe1f338c25345a622de25d48e7a4 \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/canaries/two_char_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		0186885115acae44b9e982bc6fc19c236f35fda523e3c94abc1a96c0d4e509a9 \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/syntax_compiler_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		7c07782dfe2a3e50ad0b5a40c1b31e517734eec93ee4721f3eb8d0afab90de23 \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/reflection/finite_horn_reflection_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/syntax_compiler_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_lowering_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_link_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		cfb9f089560129145cb5ff3c1ac21abae130210c9d89e09280152cb0d8453594 \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/parserpack/parser_pack_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/reflection/finite_horn_reflection_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/syntax_compiler_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_lowering_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_link_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/parser_pack_compiler_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		2ac262043b615f049fdb0411675cdc858034ea0ce7c8372f6dee5eaa486cda77 \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/languages/metamath_appendix_e_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		4bb4743974e886104667e91cac389784b6e62a267815bb0745272db2a353f104 \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/char_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/languages/tptp_fof_cnf_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		2eba88d8bb4681540cb84bf6dd15e183cf83ad2821ae682cb94a754b4f2eb36a \
+		--quote-index 3 \
+		573cb858dcf1e678fb6656c00077a53c53d977e51b74211c5dc21b2de91829be \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/char_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/languages/megalodon_dynamic_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		8215c375ff2f12c25403c8a4d71ac0bbf3e479f884f93eb6e5c436ec3075acfb \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/cetta_prime_scalar_classes_v1.metta \
+		experiments/gslt2parse_foundation/presentations/languages/cetta_prime_reader_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		ee90a8366ce08bd38cc04a92ffb81d633031e1f95aa646db87b8fe3e8c708563 \
+		experiments/gslt2parse_foundation/presentations/shared/rho_abstract_syntax_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/rho_runtime_term_abi_v1.metta
+	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
+		89628e2267d53c1826709edb14f0af7ba83aa73afbbaaef1a22fc0cd2aa99a3b \
+		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/he_reader_scalar_classes_v1.metta \
+		experiments/gslt2parse_foundation/presentations/shared/rho_abstract_syntax_v1.metta \
+		experiments/gslt2parse_foundation/presentations/languages/cetta_rho_mrho_reader_v1.metta
+	@if rg -ni 'metamath|megalodon|tptp' \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.h \
+		experiments/gslt2parse_foundation/presentations/parserpack/parser_pack_core_v1.metta \
+		experiments/gslt2parse_foundation/presentations/reflection/finite_horn_reflection_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/syntax_compiler_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_lowering_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_link_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/parser_pack_compiler_v1.metta \
+		experiments/gslt2parse_foundation/presentations/compiler/parser_action_bytecode_compiler_v1.metta; then \
+		echo 'guest-language name leaked into the generic schema or compiler'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-schema-v1: test-gslt2parse-schema-v1-native
+	@python3 tools/test_gslt2parse_schema_v1.py
+
+$(GSLT2PARSE_CHART_V1_NATIVE_BIN): \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_chart_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.h \
+		src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc -I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_chart_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_gslt_v1.c \
+		src/native_sha256.c
+
+test-gslt2parse-c-horn-v1-native: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@python3 tools/test_finite_horn_chart_v1.py \
+		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+
+test-gslt2parse-c-horn-v1-differential: test-gslt2parse-c-horn-v1-native
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_action_bytecode_compiler_v1.py \
+		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--presentation-root \
+		"$(CURDIR)/experiments/gslt2parse_foundation/presentations"
+	@swipl -q -f \
+		"$(GSLT2PARSE_PETTA_ROOT)/experiments/gslt2parse_foundation/test_finite_horn_ground_terms.pl" \
+		-- "$(CURDIR)/experiments/gslt2parse_foundation/presentations"
+
+test-gslt2parse-parser-action-bytecode-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_ACTION_BYTECODE_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_action_bytecode_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--stream-binary $(PARSER_ACTION_BYTECODE_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-lookahead-semantics-v1: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_lookahead_semantics_v1.py \
+		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-parser-pack-guard-compiler-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_guard_compiler_v1.py \
+		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-parser-pack-guard-regular-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_guard_regular_v1.py \
+		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-parser-pack-lr1-v1:
+	@python3 tools/test_parser_pack_lr1_v1.py
+
+test-gslt2parse-parser-pack-lexical-plan-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_lexical_plan_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--plan-binary $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-parser-pack-guarded-lexical-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_guarded_lexical_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-parser-pack-guard-plan-prime-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_guard_plan_prime_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--plan-binary $(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--profile prime
+
+test-gslt2parse-parser-pack-guard-plan-he-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_guard_plan_prime_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--plan-binary $(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--profile he
+
+test-gslt2parse-he-parser-authority-v1:
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_parser_authority_v1.py \
+		--he-root "$(GSLT2PARSE_HE_ROOT)"
+
+test-gslt2parse-he-unicode-residual-dfa-v1:
+	@python3 tools/test_he_unicode_residual_dfa_v1.py
+
+test-gslt2parse-he-string-slr-specialization-v1: \
+		$(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_string_slr_specialization_v1.py \
+		--binary $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-he-reader-source-correspondence-v1: \
+		test-gslt2parse-he-unicode-residual-dfa-v1 \
+		test-gslt2parse-he-string-slr-specialization-v1
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_reader_source_correspondence_v1.py \
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		--cetta-root "$(CURDIR)" \
+		--mettapedia-root "$${METTAPEDIA_ROOT:-../../Mettapedia}"
+
+test-gslt2parse-rho-abstract-syntax-v1:
+	@mettapedia_root="$${METTAPEDIA_ROOT:-../../Mettapedia/lean/mettapedia}"; \
+	python3 tools/test_rho_abstract_syntax_v1.py \
+		--mettapedia-root "$$mettapedia_root"
+
+test-gslt2parse-rhocalc-reader-authority-v1: $(BIN)
+	@python3 tools/test_rhocalc_reader_authority_v1.py \
+		--binary "$(CETTA_SCRIPT_BIN)"
+
+test-gslt2parse-rhocalc-parser-pack-v1: \
+		$(BIN) \
+		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		$(PARSER_PACK_GLR_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_rhocalc_parser_pack_v1.py \
+		--cetta-binary "$(CETTA_SCRIPT_BIN)" \
+		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-rho-surface-convergence-v1: \
+		$(BIN) \
+		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		$(PARSER_PACK_GLR_V1_STREAM_BIN) \
+		$(GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_rhocalc_surface_convergence_v1.py \
+		--cetta-binary "$(CETTA_SCRIPT_BIN)" \
+		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
+		--projection-binary $(GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-stable-parser-parse-only-v1:
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_stable_parser_parse_only_v1.py \
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-he-gslt-parse-only-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_gslt_parse_only_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--pipeline-binary $(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN) \
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+bench-gslt2parse-he-gslt-parse-only-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_gslt_parse_only_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--pipeline-binary $(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN) \
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--benchmark
+
+bench-gslt2parse-stable-parser-parse-only-v1:
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_stable_parser_parse_only_v1.py \
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--benchmark
+
+test-gslt2parse-he-reader-guard-exec-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_reader_guard_exec_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--he-root "$(GSLT2PARSE_HE_ROOT)"
+
+test-gslt2parse-he-reader-guarded-lexical-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_reader_guarded_lexical_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--scalar-exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--he-root "$(GSLT2PARSE_HE_ROOT)"
+
+test-gslt2parse-he-document-pipeline-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_document_pipeline_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--pipeline-binary $(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--he-root "$(GSLT2PARSE_HE_ROOT)"
+
+PREPARED_FINAL_FOREST_PROBE_ITERATIONS ?= 3
+
+bench-gslt2parse-prepared-final-forest-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_guarded_lexical_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--probe-final-forest-growth \
+		--probe-iterations $(PREPARED_FINAL_FOREST_PROBE_ITERATIONS)
+	@python3 tools/test_he_reader_guarded_lexical_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--scalar-exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		--probe-final-forest-growth \
+		--probe-iterations $(PREPARED_FINAL_FOREST_PROBE_ITERATIONS)
+
+test-gslt2parse-petta-form-guard-exec-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_petta_form_guard_exec_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-petta-document-splitter-v1: \
+		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		$(PARSER_PACK_GLR_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_petta_document_splitter_v1.py \
+		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
+		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+ifeq ($(ENABLE_PIC),1)
+test-gslt2parse-petta-document-pipeline-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PETTA_DOCUMENT_PIPELINE_V1_BIN) \
+		$(PETTA_DOCUMENT_PIPELINE_V1_LIB)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory ENABLE_SANITIZERS=0 ENABLE_PIC=1 \
+		runtime/libcetta_parser_pack_native_v1-$(BUILD_CANON).pic.so \
+		runtime/libcetta_petta_document_pipeline_v1-$(BUILD_CANON).pic.so
+	@$(MAKE) -C \
+		"$(GSLT2PARSE_PETTA_ROOT)/experiments/gslt2parse_foundation/native" \
+		all CETTA_ROOT="$(CURDIR)" CETTA_OBJ_TAG="$(BUILD_CANON).pic"
+	@$(GSLT2PARSE_SHARED_ASAN_ENV) python3 \
+		tools/test_petta_document_pipeline_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--pipeline-binary $(PETTA_DOCUMENT_PIPELINE_V1_BIN) \
+		--pipeline-library $(PETTA_DOCUMENT_PIPELINE_V1_LIB) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
+		$(GSLT2PARSE_SHARED_ASAN_ARGS)
+else
+test-gslt2parse-petta-document-pipeline-v1:
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory ENABLE_PIC=1 \
+		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+		test-gslt2parse-petta-document-pipeline-v1
+endif
+
+test-gslt2parse-petta-ffi-v1:
+	@$(MAKE) --no-print-directory ENABLE_PIC=1 \
+		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+		test-gslt2parse-parser-pack-native-petta-v1
+	@$(MAKE) --no-print-directory ENABLE_PIC=1 \
+		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+		test-gslt2parse-petta-document-pipeline-v1
+
+test-gslt2parse-petta-parser-authority-v1:
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_petta_parser_authority_v1.py \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+$(GSLT2PARSE_PARSER_PACK_ABI_V1_NATIVE_BIN): \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_pack_abi_v1.c \
+		src/symbol.c src/atom.c src/native_sha256.c src/native_sha256.h \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) \
+		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_pack_abi_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		src/symbol.c src/atom.c src/native_sha256.c $(LDFLAGS)
+
+test-gslt2parse-parser-pack-abi-v1-native: \
+		$(GSLT2PARSE_PARSER_PACK_ABI_V1_NATIVE_BIN)
+	@$(GSLT2PARSE_PARSER_PACK_ABI_V1_NATIVE_BIN)
+	@if rg -ni 'metamath|megalodon|tptp' \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.h; then \
+		echo 'guest-language name leaked into the generic ParserPack ABI'; \
+		exit 1; \
+	fi
+
+$(GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN): \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_term_projection_v1.c \
+		src/symbol.c src/atom.c src/native_sha256.c src/native_sha256.h \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) \
+		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_term_projection_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		src/symbol.c src/atom.c src/native_sha256.c $(LDFLAGS)
+
+test-gslt2parse-parser-term-projection-v1-native: \
+		$(GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN)
+	@$(GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|rhocalc|rholang|petta|prime' \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.h; then \
+		echo 'guest-language name leaked into the generic term projector'; \
+		exit 1; \
+	fi
+
+$(GSLT2PARSE_ATOM_PROJECTION_V1_NATIVE_BIN): \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_atom_projection_v1.c \
+		$(PARSER_ATOM_PROJECTION_V1_OBJ) \
+		$(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) \
+		$(PARSER_ATOM_PROJECTION_DOMAIN_V1_OBJ) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) \
+		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_atom_projection_v1.c \
+		$(PARSER_ATOM_PROJECTION_V1_OBJ) \
+		$(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) \
+		$(PARSER_ATOM_PROJECTION_DOMAIN_V1_OBJ) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+test-gslt2parse-parser-atom-projection-v1-native: \
+		$(GSLT2PARSE_ATOM_PROJECTION_V1_NATIVE_BIN) \
+		tools/sexpr_atom_projection_plan_v1.py \
+		tools/gslt2parse_schema_v1.py \
+		experiments/gslt2parse_foundation/presentations/shared/sexpr_atom_projection_v1.metta \
+		experiments/gslt2parse_foundation/presentations/languages/he_reader_v1.metta
+	@set -o pipefail; \
+		python3 tools/sexpr_atom_projection_plan_v1.py --profile he-v1 | \
+		$(GSLT2PARSE_ATOM_PROJECTION_V1_NATIVE_BIN) --plan-stdin
+	@if rg -ni 'metamath|megalodon|tptp|rhocalc|rholang|petta|prime' \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_atom_projection_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_atom_projection_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_atom_projection_events_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_atom_projection_events_v1.h; then \
+		echo 'guest-language name leaked into the generic Atom projector'; \
+		exit 1; \
+	fi
+
+test-gslt2parse-parser-atom-projection-closure-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN) \
+		tools/test_parser_atom_projection_closure_v1.py \
+		tools/sexpr_atom_projection_plan_v1.py \
+		experiments/gslt2parse_foundation/presentations/compiler/semantic_text_span_compiler_v1.metta
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the paired PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_atom_projection_closure_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--closure-binary $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+test-gslt2parse-semantic-mask-span-compiler-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(SEMANTIC_MASK_NFA_V1_STREAM_BIN) \
+		tools/test_semantic_mask_span_compiler_v1.py \
+		experiments/gslt2parse_foundation/presentations/compiler/semantic_mask_span_compiler_v1.metta \
+		experiments/gslt2parse_foundation/presentations/canaries/semantic_mask_v1.metta
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the paired PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_semantic_mask_span_compiler_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--stream-binary $(SEMANTIC_MASK_NFA_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
+$(GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN): \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1_stream.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.h \
+		src/symbol.c src/atom.c src/native_sha256.c src/native_sha256.h \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) \
+		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1_stream.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		src/symbol.c src/atom.c src/native_sha256.c $(LDFLAGS)
+
+$(GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN): \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_stream_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_stream_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_pack_abi_v1_stream.c \
+		src/symbol.c src/atom.c src/native_sha256.c src/native_sha256.h \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) \
+		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_pack_abi_v1_stream.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_stream_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		src/symbol.c src/atom.c src/native_sha256.c $(LDFLAGS)
+
+test-gslt2parse-parser-pack-abi-v1-matrix: \
+		$(GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_parser_pack_abi_v1.py \
+		--binary $(GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+	@if rg -ni 'metamath|megalodon|tptp' \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_stream_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_stream_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.h \
+		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_pack_abi_v1_stream.c; then \
+		echo 'guest-language name leaked into the native ParserPack ABI path'; \
+		exit 1; \
+	fi
+
 refresh-he-matrices:
 	@python3 scripts/refresh_he_runtime_matrices.py
 	@python3 -m json.tool specs/he_runtime_impl_matrix.json > /dev/null
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder
+.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger test-abt-scope-construction-candidates bench-abt bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
 .PHONY: test-lib-parse-abt-bridge
+.PHONY: test-lib-parse-glr-utf8-forest
+.PHONY: test-gslt2parse-parser-pack-glr-v1-native test-gslt2parse-parser-pack-glr-v1-matrix test-gslt2parse-parser-pack-wide-scale-v1 test-gslt2parse-parser-pack-lexical-v1-native test-gslt2parse-parser-pack-lexical-v1-matrix test-gslt2parse-generic-engine-purity-v1 test-gslt2parse-c-production-v1 test-gslt2parse-c-production-v1-body
+.PHONY: test-gslt2parse-parser-pack-native-api-v1-matrix test-gslt2parse-parser-pack-native-petta-v1 test-gslt2parse-parser-pack-native-petta-v1-body test-gslt2parse-he-parser-authority-v1 test-gslt2parse-he-unicode-residual-dfa-v1 test-gslt2parse-he-string-slr-specialization-v1 test-gslt2parse-he-reader-source-correspondence-v1 test-gslt2parse-rho-abstract-syntax-v1 test-gslt2parse-rhocalc-reader-authority-v1 test-gslt2parse-rhocalc-parser-pack-v1 test-gslt2parse-he-reader-guard-exec-v1 test-gslt2parse-he-reader-guarded-lexical-v1 test-gslt2parse-he-document-pipeline-v1 test-gslt2parse-he-gslt-parse-only-v1 bench-gslt2parse-he-gslt-parse-only-v1 test-gslt2parse-petta-form-guard-exec-v1 test-gslt2parse-petta-document-splitter-v1 test-gslt2parse-petta-document-pipeline-v1 test-gslt2parse-petta-ffi-v1 test-gslt2parse-petta-parser-authority-v1 test-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-prepared-final-forest-v1
+.PHONY: test-gslt2parse-parser-pack-lexical-plan-v1 test-gslt2parse-parser-pack-guarded-lexical-v1
+.PHONY: test-gslt2parse-rho-surface-convergence-v1

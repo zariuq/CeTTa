@@ -3,7 +3,6 @@
 #include "parser.h"
 #include "rhocalc_core.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -285,9 +284,22 @@ bool rhocalc_is_domain_atom(Atom *atom) {
            rhocalc_is_cost_term_atom(atom);
 }
 
+static bool rp_ascii_space(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\v' ||
+           c == '\f' || c == '\r';
+}
+
+static bool rp_ascii_alpha(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static bool rp_ascii_digit(char c) {
+    return c >= '0' && c <= '9';
+}
+
 static void rp_skip_ws(RhoParser *parser) {
     for (;;) {
-        while (isspace((unsigned char)parser->text[parser->pos])) {
+        while (rp_ascii_space(parser->text[parser->pos])) {
             parser->pos++;
         }
         if (parser->text[parser->pos] == '/' &&
@@ -301,13 +313,19 @@ static void rp_skip_ws(RhoParser *parser) {
         }
         if (parser->text[parser->pos] == '/' &&
             parser->text[parser->pos + 1] == '*') {
+            size_t comment_start = parser->pos;
             parser->pos += 2;
             while (parser->text[parser->pos] &&
                    !(parser->text[parser->pos] == '*' &&
                      parser->text[parser->pos + 1] == '/')) {
                 parser->pos++;
             }
-            if (parser->text[parser->pos]) parser->pos += 2;
+            if (!parser->text[parser->pos]) {
+                parser->pos = comment_start;
+                rp_error(parser, "unterminated block comment");
+                return;
+            }
+            parser->pos += 2;
             continue;
         }
         break;
@@ -330,7 +348,8 @@ static bool rp_consume_span(RhoParser *parser, const char *span) {
 }
 
 static bool rp_word_boundary(char c) {
-    return c == '\0' || !(isalnum((unsigned char)c) || c == '_' || c == '-');
+    return c == '\0' || !(rp_ascii_alpha(c) || rp_ascii_digit(c) ||
+                           c == '_' || c == '-');
 }
 
 static bool rp_consume_keyword(RhoParser *parser, const char *kw) {
@@ -345,11 +364,12 @@ static bool rp_consume_keyword(RhoParser *parser, const char *kw) {
 }
 
 static bool rp_ident_start(char c) {
-    return isalpha((unsigned char)c) || c == '_';
+    return rp_ascii_alpha(c) || c == '_';
 }
 
 static bool rp_ident_char(char c) {
-    return isalnum((unsigned char)c) || c == '_' || c == '-' || c == '?';
+    return rp_ascii_alpha(c) || rp_ascii_digit(c) || c == '_' ||
+           c == '-' || c == '?';
 }
 
 static char *rp_parse_ident(RhoParser *parser) {
