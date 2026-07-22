@@ -27,7 +27,8 @@ from probe_prepared_final_forest_v1 import TOKEN_COUNTS
 from probe_prepared_final_forest_v1 import run_growth_probe
 from probe_prepared_final_forest_v1 import run_flat_replay_canary
 from run_he_parser_oracle_v1 import build_oracle
-from test_he_parser_authority_v1 import ATOM_CASES
+from he_reader_ratified_cases_v1 import RATIFIED_ATOM_CASES
+from he_reader_ratified_cases_v1 import check_rust_observation
 from test_he_parser_authority_v1 import run_case as run_he_case
 from test_he_reader_guard_exec_v1 import expected_decision
 from test_he_reader_guard_exec_v1 import matrix_digest
@@ -59,30 +60,30 @@ ROOT = Path(__file__).resolve().parents[1]
 PRESENTATIONS = ROOT / "experiments" / "gslt2parse_foundation" / "presentations"
 PROFILE = PROFILES["he"]
 
-EXPECTED_GUARDED_ANSWER_COUNT = 33
+EXPECTED_GUARDED_ANSWER_COUNT = 37
 EXPECTED_GUARDED_ANSWER_DIGEST = (
-    "5f2ca06d86bfbaa3f1a9d0a4d10038bf94f8f7f6df60e96eef89e270477ce578"
+    "d751955053b1efc8611dc374e42b8b3500f0e217b8d5f5c147fa7275c7e5e44b"
 )
 EXPECTED_GUARDED_PLAN_DIGEST = (
-    "199d0c654093053436a11af5eb90784b3442502c88995450fdb838e8bf33e611"
+    "c782d8a7d08f1f4b5004855f286bbb90367c9699230a49cdcf96f5f91f03aecf"
 )
 EXPECTED_EXECUTION_PLAN_DIGEST = (
-    "24560d68edf40a5e9884433772bb2de0c4e9f9a8247cb3c5abeba595321b6cc2"
+    "73f10ee4fb310df6006c2bce635e584eebbd4260fd2d039d3efecd2da6b56b35"
 )
 EXPECTED_CURSOR_CERTIFICATE_DIGEST = (
-    "263801583da050bef8b829c5507102102710c828e881bf7408038a099314d39d"
+    "f474ce55b85bb50dd78f33be2361a2722e732e046ae16b39b1afdabfb8e0195f"
 )
 EXPECTED_CURSOR_PROGRAM_DIGEST = (
-    "1fd6017c914f790969ce001a5b7b2eca5dab3d8b4d497ca1587009af592f000e"
+    "df58260e36ad8e9cccddf23831060fa80c4e4637f216fad1d13d3887cafecac3"
 )
 EXPECTED_GUARD_ACTION_COMPILER_DIGEST = (
     "ca623a23e19f2e5369b59906ada3cbcefcfbd2ccba64dedb9c7df6e463877cbf"
 )
 EXPECTED_GUARD_ACTION_ANSWER_DIGEST = (
-    "345adba3c308773b8bfd339f171f600f64e3af6399a2ef4dc97a2e22067a7edb"
+    "9c4ff108eb75369434f5058333b5d921c9da217884eeb8ea02ff26ad3d926df4"
 )
 EXPECTED_GUARD_ACTION_PROGRAM_DIGEST = (
-    "e48b1b598f529e9fa1f81d4000844b531e46a4c7e6c799114a661266ed264369"
+    "bc22bb25525c4126a82f6305742e71897f2688384577295a9f3757753adfae9e"
 )
 GUARD_ACTION_COMPILER_COMPONENTS = (
     "compiler/parser_action_bytecode_compiler_v1.metta",
@@ -90,27 +91,32 @@ GUARD_ACTION_COMPILER_COMPONENTS = (
     "compiler/parser_pack_guard_action_link_v1.metta",
 )
 EXPECTED_PLAN_MATRIX_DIGEST = (
-    "ecb3ed5e57e6838064ec6f34d045acefa8e5c61b6fdc5630f55a8239c673c49c"
+    "732d0fb00923a3bc9c95e9af4350943027c76df3467b938409d6fbb2b1ecb749"
 )
 EXPECTED_EXECUTION_MATRIX_DIGEST = (
-    "29c9c42a55d3aae5c6f92339e342903f329d1181b369c24b1a3f7b5bf3ba0158"
+    "0369fa874a02676e1c0394277a18843f23ab147350302873573cde4e8694b8f5"
 )
 EXPECTED_SLR_SHADOW_MATRIX_DIGEST = (
-    "13424babd9547bdd268263c3dfcfe0791cd1fb2bd77cf6b39803f9e6b2ff1a99"
+    "a40e913b655e4dc9ae862bdb5733934a781213feaadc7f0d5795b2485311e2e7"
 )
 EXPECTED_CURSOR_TRACE_MATRIX_DIGEST = (
-    "fc839185c79ea612bc79034b04074b935fc285eef977730b77b68658965be30b"
+    "2b4de3e0ee179ebb4cdf8481cb17d5faef926ea85ec76d4c36eee0d2da97b617"
 )
 EXPECTED_CURSOR_SEMANTIC_MATRIX_DIGEST = (
-    "7005ceead05d7b7480a0c75c5d170382472abc8fe9bf547580008efa0fe3f216"
+    "fa3a54c7ff1b59e8925dcd71d1397b16a37794836a56066f07320c4f2a56cc09"
 )
 EXPECTED_CURSOR_HYBRID_SEMANTIC_MATRIX_DIGEST = (
-    "28e701a9d20d29cc99f6bf27847dd72c7cedbe9651ee8680d4b718a4c85be68c"
+    "77d9f07b0d7eeabf4f400a30ce5067fa7f7308a235994e9c0aba7fa3a1752176"
 )
 EXPECTED_CURSOR_HYBRID_GROWTH_DIGEST = (
     "8bd5481eb619f9df6f2fa251d31c481f70d04e4a118906aa8c53b46b84610f88"
 )
 GUARDED_TAGS = ("he-comment", "he-variable", "he-word")
+EXPECTED_GUARDED_TAG_COUNTS = {
+    "he-comment": 11,
+    "he-variable": 15,
+    "he-word": 11,
+}
 NEGATIVE_TAGS = ("he-document", "he-string")
 
 
@@ -186,7 +192,10 @@ def native_guarded_answers(chart_binary: Path) -> tuple[str, ...]:
         or terms != tuple(sorted(terms))
         or len(set(terms)) != len(terms)
         or tuple(sorted(set(tags))) != GUARDED_TAGS
-        or any(tags.count(tag) != 11 for tag in GUARDED_TAGS)
+        or any(
+            tags.count(tag) != EXPECTED_GUARDED_TAG_COUNTS[tag]
+            for tag in GUARDED_TAGS
+        )
     ):
         raise GateFailure("native HE guarded answer set changed")
     return terms
@@ -201,6 +210,87 @@ def guard_action_compiler_digest() -> str:
     if observed != EXPECTED_GUARD_ACTION_COMPILER_DIGEST:
         raise GateFailure("guard-action compiler component seal changed")
     return observed
+
+
+def build_generated_cursor(
+    generated_c: Path,
+    generated_binary: Path,
+    prefix: str,
+) -> None:
+    completed = subprocess.run(
+        [
+            "make",
+            "-s",
+            "build-parser-pack-cursor-generated-v1",
+            f"GENERATED_CURSOR_C={generated_c}",
+            f"GENERATED_CURSOR_BIN={generated_binary}",
+            f"GENERATED_CURSOR_PREFIX={prefix}",
+        ],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=120,
+    )
+    if completed.returncode != 0 or not generated_binary.is_file():
+        raise GateFailure(
+            "generated HE cursor did not compile: "
+            + completed.stderr.strip()
+        )
+
+
+def parse_generated_cursor(output: str) -> dict[str, object]:
+    lines = output.splitlines()
+    if (
+        not lines
+        or lines[0] != "parser-pack-cursor-generated-v1"
+        or lines[-1] != "end"
+    ):
+        raise GateFailure("generated cursor output has malformed framing")
+    result: dict[str, object] = {"semantic-result": []}
+    for line in lines[1:-1]:
+        field, separator, value = line.partition("\t")
+        if not separator:
+            raise GateFailure(f"malformed generated cursor record: {line!r}")
+        if field == "semantic-result":
+            values = result[field]
+            assert isinstance(values, list)
+            values.append(value)
+        elif field in result:
+            raise GateFailure(f"duplicate generated cursor field: {field}")
+        else:
+            result[field] = value
+    return result
+
+
+def run_generated_cursor(
+    binary: Path,
+    input_path: Path,
+    *,
+    expect_success: bool,
+) -> dict[str, object]:
+    completed = subprocess.run(
+        [str(binary), str(input_path)],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    if expect_success:
+        if completed.returncode != 0:
+            raise GateFailure(
+                "generated HE cursor execution failed: "
+                + completed.stderr.strip()
+            )
+        return parse_generated_cursor(completed.stdout)
+    if completed.returncode == 0 or not completed.stderr.strip():
+        raise GateFailure("invalid UTF-8 survived generated HE cursor")
+    return {}
 
 
 def native_guard_action_answers(chart_binary: Path) -> tuple[str, ...]:
@@ -378,7 +468,7 @@ def require_plan_seals(
         "guarded-tag-count": "3",
         "guarded-plan-digest": EXPECTED_GUARDED_PLAN_DIGEST,
         "guarded-terminal-extension-count": "3",
-        "composite-grammar-productions": "397",
+        "composite-grammar-productions": "282",
         "slr-states": "49",
         "slr-conflicts": "0",
         "start-closed": "1",
@@ -425,20 +515,20 @@ def require_execution_seals(row: dict[str, object]) -> None:
         "cursor-certificate-first-domain-overlaps": "0",
         "cursor-program-built": "1",
         "cursor-program-digest": EXPECTED_CURSOR_PROGRAM_DIGEST,
-        "cursor-program-dfa-states": "241",
-        "cursor-program-dfa-transitions": "1162",
+        "cursor-program-dfa-states": "82",
+        "cursor-program-dfa-transitions": "375",
         "cursor-program-slr-states": "49",
         "cursor-program-slr-terminals": "35",
-        "cursor-program-slr-nonterminals": "339",
-        "cursor-program-slr-productions": "397",
-        "cursor-program-slr-authored-productions": "397",
+        "cursor-program-slr-nonterminals": "233",
+        "cursor-program-slr-productions": "282",
+        "cursor-program-slr-authored-productions": "282",
         "cursor-program-slr-actions": "1764",
-        "cursor-program-slr-gotos": "16611",
+        "cursor-program-slr-gotos": "11417",
         "cursor-program-terminal-sources": "8",
         "cursor-program-scalar-sources": "4",
         "cursor-program-ordinary-span-sources": "1",
         "cursor-program-guarded-span-sources": "3",
-        "cursor-program-ranges": "34",
+        "cursor-program-ranges": "36",
         "cursor-program-mutation-killed": "2",
         "cursor-program-actions-bound": "1",
         "cursor-program-action-compiler-digest": (
@@ -450,9 +540,9 @@ def require_execution_seals(row: dict[str, object]) -> None:
         "cursor-program-action-program-digest": (
             EXPECTED_GUARD_ACTION_PROGRAM_DIGEST
         ),
-        "cursor-program-action-productions": "397",
-        "cursor-program-action-instructions": "517",
-        "cursor-program-action-agreements": "397",
+        "cursor-program-action-productions": "282",
+        "cursor-program-action-instructions": "386",
+        "cursor-program-action-agreements": "282",
         "cursor-program-action-mutations-killed": "3",
         "cursor-program-value-programs": "7",
         "cursor-program-value-programs-complete": "1",
@@ -463,8 +553,8 @@ def require_execution_seals(row: dict[str, object]) -> None:
         "cursor-program-hybrid-bytes-agreement": "1",
         "cursor-program-hybrid-bytes-source-passes": "1",
         "cursor-program-source-passes": "0",
-        "dfa-states": "241",
-        "dfa-transitions": "1162",
+        "dfa-states": "82",
+        "dfa-transitions": "375",
         "source-passes": "1",
         "dfa-scans": "1",
         "view-replay-source-passes": "0",
@@ -684,6 +774,7 @@ def main() -> int:
     parser.add_argument("--probe-final-forest-growth", action="store_true")
     parser.add_argument("--probe-cursor-hybrid-growth", action="store_true")
     parser.add_argument("--probe-iterations", type=int, default=3)
+    parser.add_argument("--generated-c-output", type=Path)
     arguments = parser.parse_args()
     if arguments.probe_iterations <= 0:
         parser.error("probe-iterations must be positive")
@@ -744,6 +835,7 @@ def main() -> int:
     accepted = 0
     rejected = 0
     authority_agreements = 0
+    authority_disagreements = 0
     scalar_shadow_agreements = 0
     semantic_agreements = 0
     invalid_fail_closed = 0
@@ -757,6 +849,9 @@ def main() -> int:
     cursor_semantic_agreements = 0
     cursor_hybrid_semantic_agreements = 0
     cursor_hybrid_mutations = 0
+    generated_cursor_agreements = 0
+    generated_cursor_invalid_fail_closed = 0
+    generated_cursor_mutations = 0
     action_program_digests: set[str] = set()
     final_forest_benchmark_canaries = 0
     cursor_hybrid_only_canaries = 0
@@ -766,6 +861,7 @@ def main() -> int:
     growth_authority_agreements = 0
     growth_reference_agreements = 0
     cursor_hybrid_growth_authority_agreements = 0
+    generated_c_source = ""
 
     with tempfile.TemporaryDirectory(
         prefix="gslt2parse-he-guarded-lexical-"
@@ -777,6 +873,9 @@ def main() -> int:
         evidence_path = directory / "he-guard.evidence"
         guarded_path = directory / "he-guarded.nfa"
         action_path = directory / "he-actions.pbc"
+        generated_c_path = directory / "he-reader-cursor.generated.c"
+        generated_binary = directory / "he-reader-cursor-generated"
+        generated_prefix = "he_reader_cursor_v1"
         abi_path.write_bytes(abi)
         lexical_path.write_text(
             "\n".join(lexical_terms) + "\n", encoding="utf-8"
@@ -798,6 +897,34 @@ def main() -> int:
             evidence_path,
             guarded_path,
         )
+        emission_probe = directory / "emission-probe.input"
+        emission_probe.write_bytes(RATIFIED_ATOM_CASES["word"][0])
+        emitted = run_exec(
+            exec_binary,
+            paths,
+            emission_probe,
+            regular_digest,
+            guarded_digest,
+            expect_success=True,
+            action_path=action_path,
+            action_compiler_digest=action_compiler_digest,
+            emit_c_path=generated_c_path,
+            emit_c_prefix=generated_prefix,
+        )
+        require_execution_seals(emitted)
+        if (
+            emitted.get("cursor-program-digest")
+            != EXPECTED_CURSOR_PROGRAM_DIGEST
+            or not generated_c_path.is_file()
+            or "require_render" in generated_c_path.read_text(
+                encoding="utf-8"
+            )
+        ):
+            raise GateFailure("HE cursor C emission changed provenance")
+        build_generated_cursor(
+            generated_c_path, generated_binary, generated_prefix
+        )
+        generated_c_source = generated_c_path.read_text(encoding="utf-8")
         plan = parse_plan_stream(
             run_plan(
                 plan_binary,
@@ -814,20 +941,25 @@ def main() -> int:
         first_valid_input: Path | None = None
 
         for index, (label, (input_bytes, expected)) in enumerate(
-            ATOM_CASES.items()
+            RATIFIED_ATOM_CASES.items()
         ):
             input_path = directory / f"case-{index}.input"
             input_path.write_bytes(input_bytes)
             authority = run_he_case(he_oracle, "atoms", input_path)
-            if authority != expected:
-                raise GateFailure(f"HE authority changed for {label}")
+            try:
+                rust_relation = check_rust_observation(label, authority)
+            except RuntimeError as error:
+                raise GateFailure(str(error)) from error
+            if rust_relation == "agrees":
+                authority_agreements += 1
+            else:
+                authority_disagreements += 1
             decision = expected_decision(expected)
             petta = run_petta(petta_root, input_path)
             if petta.get("decision") != decision:
                 raise GateFailure(
-                    f"HE authority and PeTTa LanguageDef differ for {label}"
+                    f"ratified HE contract and PeTTa LanguageDef differ for {label}"
                 )
-            authority_agreements += 1
             if decision == "accepted":
                 accepted += 1
             else:
@@ -853,7 +985,11 @@ def main() -> int:
                     action_path=action_path,
                     action_compiler_digest=action_compiler_digest,
                 )
+                run_generated_cursor(
+                    generated_binary, input_path, expect_success=False
+                )
                 invalid_fail_closed += 1
+                generated_cursor_invalid_fail_closed += 1
                 slr_shadow_invalid_utf8 += 1
                 records.append(
                     {
@@ -861,6 +997,7 @@ def main() -> int:
                         "input": input_bytes.hex(),
                         "label": label,
                         "mode": "invalid-utf8",
+                        "rust_relation": rust_relation,
                     }
                 )
                 slr_shadow_records.append(
@@ -896,6 +1033,35 @@ def main() -> int:
                 benchmark_iterations=2 if label == "word" else None,
             )
             require_execution_seals(lexical)
+            generated = run_generated_cursor(
+                generated_binary, input_path, expect_success=True
+            )
+            expected_generated = {
+                "program-digest": EXPECTED_CURSOR_PROGRAM_DIGEST,
+                "outcome": lexical["cursor-program-outcome"],
+                "trace-digest": lexical["cursor-program-trace-digest"],
+                "tokens": lexical["cursor-program-tokens"],
+                "shifts": lexical["cursor-program-shifts"],
+                "reductions": lexical["cursor-program-reductions"],
+                "mutation-killed": "1",
+            }
+            changed_generated = {
+                field: (expected, generated.get(field))
+                for field, expected in expected_generated.items()
+                if generated.get(field) != expected
+            }
+            if (
+                changed_generated
+                or generated.get("source-passes") != "1"
+                or generated.get("semantic-result")
+                != lexical.get("gll-result")
+            ):
+                raise GateFailure(
+                    f"generated/interpreted HE cursor differs for {label}: "
+                    f"{changed_generated}"
+                )
+            generated_cursor_agreements += 1
+            generated_cursor_mutations += 1
             action_program_digests.add(
                 str(lexical["cursor-program-action-program-digest"])
             )
@@ -1135,6 +1301,7 @@ def main() -> int:
                     ],
                     "projected_tokens": lexical["projected-tokens"],
                     "results": lexical["gll-result"],
+                    "rust_relation": rust_relation,
                 }
             )
 
@@ -1343,7 +1510,8 @@ def main() -> int:
         cursor_hybrid_semantic_records
     )
     if (
-        cursor_program_agreements != len(ATOM_CASES) - invalid_fail_closed
+        cursor_program_agreements
+        != len(RATIFIED_ATOM_CASES) - invalid_fail_closed
         or len(cursor_trace_records) != cursor_program_agreements
     ):
         raise GateFailure("HE cursor program coverage is incomplete")
@@ -1404,12 +1572,12 @@ def main() -> int:
             + observed_cursor_hybrid_semantic_digest
         )
     if (
-        len(slr_shadow_records) != len(ATOM_CASES)
+        len(slr_shadow_records) != len(RATIFIED_ATOM_CASES)
         or slr_shadow_accepted
         + slr_shadow_needs_general
         + slr_shadow_resource_limit
         + slr_shadow_invalid_utf8
-        != len(ATOM_CASES)
+        != len(RATIFIED_ATOM_CASES)
         or final_forest_benchmark_canaries != 1
         or cursor_hybrid_only_canaries != 1
     ):
@@ -1439,6 +1607,10 @@ def main() -> int:
             "HE SLR shadow execution matrix changed: "
             + observed_slr_shadow_digest
         )
+    if arguments.generated_c_output is not None:
+        output_path = arguments.generated_c_output.resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(generated_c_source, encoding="utf-8")
     print(
         f"(HEReaderGuardedLexicalPlanV1Summary {len(lexical_terms)} "
         f"{len(guard_terms)} {len(guarded_terms)} {lexical_agreements} "
@@ -1447,8 +1619,9 @@ def main() -> int:
         f"{EXPECTED_GUARDED_PLAN_DIGEST} {observed_plan_digest} 0)"
     )
     print(
-        f"(HEReaderGuardedLexicalExecV1Summary {len(ATOM_CASES)} "
+        f"(HEReaderGuardedLexicalExecV1Summary {len(RATIFIED_ATOM_CASES)} "
         f"{accepted} {rejected} {authority_agreements} "
+        f"{authority_disagreements} "
         f"{scalar_shadow_agreements} {semantic_agreements} "
         f"{invalid_fail_closed} {source_passes} {dfa_scans} {mutations} "
         f"{EXPECTED_EXECUTION_PLAN_DIGEST} {observed_execution_digest} 0)"
@@ -1460,14 +1633,14 @@ def main() -> int:
     )
     print(
         "(HEReaderCursorProgramV1Summary "
-        "241 1162 49 35 339 397 397 1764 16611 8 4 1 3 34 7 0 1 "
+        "82 375 49 35 233 282 282 1764 11417 8 4 1 3 36 7 0 1 "
         f"{EXPECTED_CURSOR_PROGRAM_DIGEST} 0)"
     )
     if action_program_digests != {EXPECTED_GUARD_ACTION_PROGRAM_DIGEST}:
         raise GateFailure("HE cursor action program identity changed by input")
     print(
         "(HEReaderCursorActionProgramV1Summary "
-        "397 517 397 3 "
+        "282 386 282 3 "
         f"{EXPECTED_GUARD_ACTION_COMPILER_DIGEST} "
         f"{EXPECTED_GUARD_ACTION_ANSWER_DIGEST} "
         f"{EXPECTED_GUARD_ACTION_PROGRAM_DIGEST} 0)"
@@ -1476,6 +1649,13 @@ def main() -> int:
         "(HEReaderCursorExecutionV1Summary "
         f"{len(cursor_trace_records)} {cursor_program_agreements} 0 "
         f"{observed_cursor_trace_digest} 0)"
+    )
+    print(
+        "(HEReaderGeneratedCursorCV1Summary "
+        f"1 {generated_cursor_agreements} "
+        f"{generated_cursor_invalid_fail_closed} "
+        f"{generated_cursor_mutations} "
+        f"{EXPECTED_CURSOR_PROGRAM_DIGEST} 0)"
     )
     print(
         "(HEReaderCursorSemanticV1Summary "

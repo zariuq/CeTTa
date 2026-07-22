@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Certify the finite residual presentation of HE Unicode escapes."""
+"""Certify the finite residual presentation of ratified HE Unicode escapes."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import build_he_reader_gslt_v1 as builder  # noqa: E402
 
 
 EXPECTED_RELATION_DIGEST = (
-    "4d843fd82bd58c9a3fb0595e8d5fb54e5b1009a4cbf457be05ee0b031b6aca21"
+    "8f9246efc0040f3d90a5b61efecd2703c39a2cb8b43a77c52e28206808d63756"
 )
 
 
@@ -52,7 +52,10 @@ def residual_accepts(
 
 
 def authority_accepts(text: str) -> bool:
-    if len(text) > 8 or any(ord(character) not in builder.HEX for character in text):
+    if (
+        not 1 <= len(text) <= 6
+        or any(ord(character) not in builder.HEX for character in text)
+    ):
         return False
     value = int(text, 16) if text else 0
     return value <= 0x10FFFF and not 0xD800 <= value <= 0xDFFF
@@ -102,15 +105,15 @@ def main() -> int:
     digest = relation_digest(sequences)
     if digest != EXPECTED_RELATION_DIGEST:
         raise GateFailure(f"Unicode source relation changed: {digest}")
-    if len(sequences) != 47 or len(states) != 19:
+    if len(sequences) != 30 or len(states) != 17:
         raise GateFailure("Unicode residual relation dimensions changed")
     transition_len = sum(len(state.transitions) for state in states)
-    if transition_len != 36:
+    if transition_len != 28:
         raise GateFailure("Unicode residual transition count changed")
 
     alphabet = abstract_alphabet(sequences)
     quotient_cases = 0
-    for length in range(9):
+    for length in range(8):
         for characters in product(alphabet, repeat=length):
             text = "".join(characters)
             if residual_accepts(states, text) != authority_accepts(text):
@@ -118,7 +121,7 @@ def main() -> int:
                     f"Unicode residual quotient differs on {text!r}"
                 )
             quotient_cases += 1
-    if quotient_cases != 488281:
+    if quotient_cases != 97656:
         raise GateFailure("Unicode residual quotient coverage changed")
 
     acceptance_mutation = list(states)

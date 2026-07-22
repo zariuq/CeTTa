@@ -1,9 +1,11 @@
 (gslt-presentation-v1 ParserPackCompilerV1
   (signature
     (operator compile-pack-class-clause 2)
+    (operator compile-pack-class-use 2)
     (operator compile-pack-exclusions 3)
     (operator compile-pack-production 2)
     (operator flatten-sir-production 3)
+    (operator collect-sir-class-use 2)
     (operator pack-action 3)
     (operator pack-action-list 3)
     (operator pack-binding 2)
@@ -15,6 +17,67 @@
   )
   (equations)
   (rewrites
+    ; Class dependencies are collected from the complete normalized SIR, not
+    ; only from the productions admitted by the base lowering.  In
+    ; particular, a class used solely inside a positive guard must remain in
+    ; the canonical ParserPack so that the guard extension can be composed
+    ; without consulting a second language description.
+    (rule compile-pack-class-use-definition
+      (head (compile-pack-class-use ?name ?class))
+      (body
+        (compile-definition
+          ?name (sir-definition ?name ?grammar))
+        (collect-sir-class-use ?grammar ?class)))
+
+    (rule collect-sir-class-use-here
+      (head (collect-sir-class-use (sir-class ?class) ?class))
+      (body))
+    (rule collect-sir-class-use-alt-left
+      (head (collect-sir-class-use (sir-alt ?left ?right) ?class))
+      (body (collect-sir-class-use ?left ?class)))
+    (rule collect-sir-class-use-alt-right
+      (head (collect-sir-class-use (sir-alt ?left ?right) ?class))
+      (body (collect-sir-class-use ?right ?class)))
+    (rule collect-sir-class-use-seq-left
+      (head (collect-sir-class-use (sir-seq ?left ?right) ?class))
+      (body (collect-sir-class-use ?left ?class)))
+    (rule collect-sir-class-use-seq-right
+      (head (collect-sir-class-use (sir-seq ?left ?right) ?class))
+      (body (collect-sir-class-use ?right ?class)))
+    (rule collect-sir-class-use-left-left
+      (head (collect-sir-class-use (sir-left ?left ?right) ?class))
+      (body (collect-sir-class-use ?left ?class)))
+    (rule collect-sir-class-use-left-right
+      (head (collect-sir-class-use (sir-left ?left ?right) ?class))
+      (body (collect-sir-class-use ?right ?class)))
+    (rule collect-sir-class-use-right-left
+      (head (collect-sir-class-use (sir-right ?left ?right) ?class))
+      (body (collect-sir-class-use ?left ?class)))
+    (rule collect-sir-class-use-right-right
+      (head (collect-sir-class-use (sir-right ?left ?right) ?class))
+      (body (collect-sir-class-use ?right ?class)))
+    (rule collect-sir-class-use-node
+      (head (collect-sir-class-use (sir-node ?label ?body) ?class))
+      (body (collect-sir-class-use ?body ?class)))
+    (rule collect-sir-class-use-star
+      (head (collect-sir-class-use (sir-star ?body) ?class))
+      (body (collect-sir-class-use ?body ?class)))
+    (rule collect-sir-class-use-plus
+      (head (collect-sir-class-use (sir-plus ?body) ?class))
+      (body (collect-sir-class-use ?body ?class)))
+    (rule collect-sir-class-use-opt
+      (head (collect-sir-class-use (sir-opt ?body) ?class))
+      (body (collect-sir-class-use ?body ?class)))
+    (rule collect-sir-class-use-peek
+      (head (collect-sir-class-use (sir-peek ?body) ?class))
+      (body (collect-sir-class-use ?body ?class)))
+    (rule collect-sir-class-use-until-end
+      (head (collect-sir-class-use (sir-until ?end ?item) ?class))
+      (body (collect-sir-class-use ?end ?class)))
+    (rule collect-sir-class-use-until-item
+      (head (collect-sir-class-use (sir-until ?end ?item) ?class))
+      (body (collect-sir-class-use ?item ?class)))
+
     (rule compile-pack-class-point
       (head
         (compile-pack-class-clause

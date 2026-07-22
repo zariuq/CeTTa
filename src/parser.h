@@ -24,6 +24,62 @@ int parse_metta_file_ids(const char *filename, TermUniverse *universe,
 int parse_metta_text_ids(const char *text, TermUniverse *universe,
                          AtomId **out_ids);
 
+typedef int (*ParserDocumentTextIdsBackend)(
+    void *context, const char *text, TermUniverse *universe,
+    AtomId **out_ids);
+typedef int (*ParserDocumentFileIdsBackend)(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids);
+
+typedef struct {
+    void *context;
+    ParserDocumentTextIdsBackend parse_text_ids;
+    ParserDocumentFileIdsBackend parse_file_ids;
+} ParserDocumentIdsBackend;
+
+/* Install one process-wide immutable document reader for the active session. */
+bool parser_set_document_ids_backend(
+    const ParserDocumentIdsBackend *backend);
+void parser_clear_document_ids_backend(void *context);
+
+/*
+ * Project a neutral, already-recognized S-expression document into CeTTa's
+ * host AtomId representation. Word grounding, namespace normalization,
+ * variable co-reference, and profile-controlled rational literals remain
+ * owned by the host rather than by a concrete-syntax engine.
+ */
+bool parser_project_document_ids(Atom *const *atoms, uint32_t atom_len,
+                                 TermUniverse *universe, AtomId **out_ids);
+
+/*
+ * Incremental host projection for compiled readers.  Concrete-syntax
+ * recognition stays in the generated reader while CeTTa retains one
+ * implementation of token grounding, namespace normalization, variable
+ * identity, and profile-controlled expression lowering.
+ *
+ * A projection context is bound to one term universe.  Call begin_form at
+ * each top-level form boundary: variable spellings co-refer within a form and
+ * receive fresh identities in the next form.
+ */
+typedef struct ParserHostProjectionV1 ParserHostProjectionV1;
+
+ParserHostProjectionV1 *parser_host_projection_v1_new(
+    TermUniverse *universe);
+void parser_host_projection_v1_free(ParserHostProjectionV1 *projection);
+bool parser_host_projection_v1_begin_form(
+    ParserHostProjectionV1 *projection);
+AtomId parser_host_projection_v1_word_bytes(
+    ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len);
+AtomId parser_host_projection_v1_variable_bytes(
+    ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len);
+AtomId parser_host_projection_v1_anonymous_variable(
+    ParserHostProjectionV1 *projection);
+AtomId parser_host_projection_v1_string_bytes(
+    ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len);
+AtomId parser_host_projection_v1_expression(
+    ParserHostProjectionV1 *projection, const AtomId *children,
+    CettaExprLen arity);
+
 /* Parse a single S-expression from a string.
    Advances *pos past the parsed expression.
    Returns NULL on end-of-input or error. */
@@ -58,6 +114,18 @@ bool parser_rational_literals_enabled(void);
    Other language profiles retain their own reader. */
 bool parser_set_universal_name_syntax_enabled(bool enabled);
 bool parser_universal_name_syntax_enabled(void);
+
+/* Prime's bare `$` is a fresh anonymous variable. Literal and shared modes
+   remain internal tournament controls. Every mode is inactive unless
+   Prime's universal-name syntax is enabled, so HE keeps `$` as a symbol. */
+typedef enum {
+    PARSER_BARE_DOLLAR_SYMBOL = 0,
+    PARSER_BARE_DOLLAR_FRESH_VARIABLE,
+    PARSER_BARE_DOLLAR_SHARED_VARIABLE,
+} ParserBareDollarMode;
+
+ParserBareDollarMode parser_set_bare_dollar_mode(ParserBareDollarMode mode);
+ParserBareDollarMode parser_bare_dollar_mode(void);
 
 typedef enum {
     PARSER_SYNTAX_QUOTE,
