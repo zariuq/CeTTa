@@ -1,0 +1,2 @@
+[(force ordinary-data)]
+[(Error (App 1 ignored) PrimeNotAFunction)]

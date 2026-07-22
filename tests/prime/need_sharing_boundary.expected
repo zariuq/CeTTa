@@ -1,0 +1,4 @@
+[()]
+[()]
+[(Stored (Pair (delay (superpose (A B))) (delay (superpose (A B)))))]
+[(Pair A A), (Pair B B)]

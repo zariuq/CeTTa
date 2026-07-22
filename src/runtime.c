@@ -1,4 +1,6 @@
 #include "runtime.h"
+#include "name_key.h"
+#include "parser.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -40,6 +42,30 @@ Atom *cetta_expr_elem(Atom *a, CettaExprIndex i) {
 
 Atom *cetta_atom_symbol(Arena *a, const char *name) {
     return atom_symbol(a, name);
+}
+
+Atom *cetta_atom_named_var(Arena *a, const char *key_text, VarId id) {
+    if (!a || !key_text || id == VAR_ID_NONE) return NULL;
+
+    Arena scratch;
+    arena_init(&scratch);
+    Atom **forms = NULL;
+    int count = parse_metta_text(key_text, &scratch, &forms);
+    if (count != 1) {
+        free(forms);
+        arena_free(&scratch);
+        return NULL;
+    }
+
+    NameKeyTable *keys = name_key_table_new(8u);
+    NameId key_id = keys ? name_key_intern(keys, forms[0]) : NAME_ID_NONE;
+    Atom *result = key_id == NAME_ID_NONE
+        ? NULL
+        : atom_var_with_presentation(a, SYMBOL_ID_NONE, forms[0], id);
+    name_key_table_delete(keys);
+    free(forms);
+    arena_free(&scratch);
+    return result;
 }
 
 Atom *cetta_atom_int(Arena *a, int64_t val) {

@@ -31,7 +31,7 @@ EXPECTED_SOURCE_DIGEST = (
     "c4bda32a09da1d091a5d725fb541e239dcea1339c8f312ad0e98763dad426a28"
 )
 EXPECTED_CETTA_SOURCE_DIGEST = (
-    "7436200a621ddcb7c4a8a13e3d6358507f04a8a39716ee5afee416b45573f42a"
+    "8f70dad67fbe38b3306f66880e0f7b39aee7b9d5b3430d01060651299e6361b0"
 )
 EXPECTED_LEATTA_SPEC_DIGEST = (
     "3b6cdc8e6939622cb9705bc43442aa6f86e9f0989eae1b05e31e0cc6817e610b"
@@ -254,7 +254,7 @@ def authority_rows() -> dict[str, dict[str, str]]:
         "he-written-syntax-v1": (EXPECTED_REVISION, EXPECTED_SPEC_DIGEST),
         "he-sexpr-parser-v1": (EXPECTED_REVISION, EXPECTED_SOURCE_DIGEST),
         "cetta-he-compat-parser-v1": (
-            "737f8f01bcc021be4289b875abad4739b4ae5f16",
+            "8dae2cc61fe7072ec9946cb31ffa41151dbe09d5",
             EXPECTED_CETTA_SOURCE_DIGEST,
         ),
         "leatta-he-syntax-v1": (

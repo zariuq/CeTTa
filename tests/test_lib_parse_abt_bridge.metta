@@ -55,7 +55,7 @@
                (h-eqf
                  (h-ngf
                    (h-apf
-                     (h-atf (h-id (Var 0)))))))))))))
+                     (h-atf (h-id (idx 0)))))))))))))
 (= (abt-test:hol-two-bound)
    (h-tbd
      (h-lam
@@ -68,7 +68,7 @@
                    (h-eqf
                      (h-ngf
                        (h-apf
-                         (h-atf (h-id (Var 1)))))))))))))))
+                         (h-atf (h-id (idx 1)))))))))))))))
 (= (abt-test:hol-free-bound-term)
    (h-tbd
      (h-lam
@@ -81,7 +81,7 @@
                    (h-apf
                      (h-app
                        (h-atf (h-id (Con (Lex hol-id y))))
-                       (h-id (Var 0)))))))))))))
+                       (h-id (idx 0)))))))))))))
 (= (abt-test:corrupt-result $result)
    (case $result
      (((Unique $cert)
@@ -101,11 +101,11 @@
 !(assertEqual
   (lp-abt:admit-raw (abt-test:g-lam)
     (Nd lam (Cons (Lf x) (Cons (Lf x) Nil))))
-  (Ok (lam (Var 0))))
+  (Ok (lam (idx 0))))
 !(assertEqual
   (lp-abt:admit-raw (abt-test:g-lam)
     (Nd lam (Cons (Lf y) (Cons (Lf y) Nil))))
-  (Ok (lam (Var 0))))
+  (Ok (lam (idx 0))))
 !(assertEqual
   (lp-abt:admit-raw (abt-test:g-lam)
     (Nd lam (Cons (Lf x) (Cons (Lf y) Nil))))
@@ -114,12 +114,12 @@
   (lp-abt:admit-raw (abt-test:g-lam)
     (Nd lam (Cons (Lf x)
       (Cons (Nd lam (Cons (Lf y) (Cons (Lf x) Nil))) Nil))))
-  (Ok (lam (lam (Var 1)))))
+  (Ok (lam (lam (idx 1)))))
 !(assertEqual
   (lp-abt:admit-raw (abt-test:g-lam)
     (Nd lam (Cons (Lf x)
       (Cons (Nd lam (Cons (Lf x) (Cons (Lf x) Nil))) Nil))))
-  (Ok (lam (lam (Var 0)))))
+  (Ok (lam (lam (idx 0)))))
 
 !(assertEqual
   (lp-abt:signature-set (abt-test:g-rho))
@@ -141,7 +141,7 @@
       (Cons (Lf x)
         (Cons (Nd nquot (Cons (Nd pnil Nil) Nil))
           (Cons (Nd pdrop (Cons (Nd nvar (Cons (Lf x) Nil)) Nil)) Nil)))))
-  (Ok (precv (nquot (pnil)) (pdrop (nvar (Var 0))))))
+  (Ok (precv (nquot (pnil)) (pdrop (nvar (idx 0))))))
 
 !(assertEqual
   (lp-abt:signature-set (abt-test:g-typed))
@@ -157,7 +157,7 @@
     (Nd lamT
       (Cons (Lf x)
         (Cons (Lf A) (Cons (Nd tvar (Cons (Lf x) Nil)) Nil)))))
-  (Ok (lamT (Con A) (tvar (Var 0)))))
+  (Ok (lamT (Con A) (tvar (idx 0)))))
 
 !(assertEqual
   (lp-abt:signature-set (abt-test:g-two))
@@ -171,7 +171,7 @@
     (Nd lam2
       (Cons (Lf x)
         (Cons (Lf y) (Cons (Nd tvar (Cons (Lf x) Nil)) Nil)))))
-  (Ok (lam2 (tvar (Var 1)))))
+  (Ok (lam2 (tvar (idx 1)))))
 
 ; Fail closed on malformed binding metadata and loose indices.
 !(assertEqual

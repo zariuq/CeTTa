@@ -1,0 +1,2 @@
+[left, right, right, (prime-call:cross X Y)]
+[right-reversed, left-reversed, left-reversed, (prime-call:cross-reversed X Y)]

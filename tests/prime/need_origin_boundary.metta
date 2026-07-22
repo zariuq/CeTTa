@@ -1,0 +1,7 @@
+!(bind! &c (new-state 0))
+(= (bump)
+   (let $old (get-state &c)
+     (let $_ (change-state! &c (+ $old 1)) $old)))
+!(let $p (delay (bump))
+   (let $_ (force $p) $p))
+!(get-state &c)

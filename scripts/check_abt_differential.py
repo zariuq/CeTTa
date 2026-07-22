@@ -24,6 +24,19 @@ PETTA_DEPENDENCIES = (
     PETTA_REPLAY,
 )
 
+# Prime's canonical `(App f x)` is executable syntax.  The ABT differential
+# compares transformations of syntax data, so its Prime lane uses an
+# isomorphic, explicitly admitted constructor rather than accidentally asking
+# the evaluator to run the transformed tree.  HE keeps the canonical corpus;
+# only the Prime test presentation is renamed.
+PRIME_DATA_APP = "ABTApp"
+PRIME_DATA_APP_SIGNATURE = (
+    "(AbtSignatures "
+    "(AbtSignature ABTApp (Fields fn arg) "
+    "(BindFields (BCons (BField fn 0) "
+    "(BCons (BField arg 0) BNil)))))"
+)
+
 CANONICAL_ORACLE_PRELUDE = r"""
 (= (oracle-shift $d $c $t) (bind-shift $d $c $t))
 (= (oracle-shift-args $d $c $t) (bind-shift-args $d $c $t))
@@ -83,6 +96,22 @@ def find_waist() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def prime_syntax_data_source(source: str) -> str:
+    """Present canonical ABT application as inert syntax in Prime.
+
+    This is a constructor renaming plus a matching binding declaration, not a
+    second shift/substitution oracle.  Every equation and expected term comes
+    from the same source used by the HE lane.
+    """
+    transformed, app_count = re.subn(r"\(App(?=\s)", "(ABTApp", source)
+    signature_count = transformed.count("(AbtSignatures)")
+    if app_count == 0 or signature_count == 0:
+        raise RuntimeError(
+            "ABT Prime data presentation lost its App/signature anchors"
+        )
+    return transformed.replace("(AbtSignatures)", PRIME_DATA_APP_SIGNATURE)
 
 
 def run_lane(
@@ -180,6 +209,14 @@ def oracle_lines(output: str) -> list[str]:
     return lines
 
 
+def prime_data_oracle_lines(output: str) -> list[str]:
+    """Map the inert Prime test presentation back to canonical ABT spelling."""
+    return [
+        re.sub(r"\(ABTApp(?=\s)", "(App", line)
+        for line in oracle_lines(output)
+    ]
+
+
 def run_three_way_oracle(binary: Path, waist: Path) -> bool:
     corpus = WAIST_ORACLE.read_text(encoding="utf-8")
     case_count = len(re.findall(r"ABTWaistOracle\s+s[0-9]+", corpus))
@@ -189,7 +226,7 @@ def run_three_way_oracle(binary: Path, waist: Path) -> bool:
 
     native = run_source(
         [str(binary), "--lang", "prime"],
-        NATIVE_ORACLE_PRELUDE + "\n" + corpus,
+        prime_syntax_data_source(NATIVE_ORACLE_PRELUDE + "\n" + corpus),
         60,
     )
     canonical = run_source(
@@ -207,7 +244,7 @@ def run_three_way_oracle(binary: Path, waist: Path) -> bool:
                 f"{lane} ABT waist oracle exited {completed.returncode}:\n"
                 f"{completed.stderr}{completed.stdout}"
             )
-    native_lines = oracle_lines(native.stdout)
+    native_lines = prime_data_oracle_lines(native.stdout)
     canonical_lines = oracle_lines(canonical.stdout)
     if (
         len(native_lines) != case_count + 1
@@ -332,6 +369,12 @@ def main() -> int:
         ) as handle:
             handle.write(source)
             generated = Path(handle.name)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".metta",
+            prefix="abt-differential-prime-data-", dir=runtime, delete=False,
+        ) as handle:
+            handle.write(prime_syntax_data_source(source))
+            generated_prime = Path(handle.name)
         run_lane(
             binary,
             generated,
@@ -339,10 +382,15 @@ def main() -> int:
             expected + 1,
             summary,
         )
-        run_lane(binary, generated, ["--lang", "prime"], expected + 1, summary)
+        run_lane(
+            binary, generated_prime, ["--lang", "prime"], expected + 1,
+            summary,
+        )
     finally:
         if generated is not None:
             generated.unlink(missing_ok=True)
+        if generated_prime is not None:
+            generated_prime.unlink(missing_ok=True)
 
     shared_petta_ran = run_three_way_oracle(binary, waist)
     petta_ran = run_petta_replay(waist)

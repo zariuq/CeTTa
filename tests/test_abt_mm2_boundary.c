@@ -65,9 +65,9 @@ int main(void) {
           "default ABT signature admitted at MM2 boundary");
 
     Atom *type = node1(&arena, "Con", atom_symbol(&arena, "A"));
-    Atom *bound = node1(&arena, "Var", atom_int(&arena, 0));
+    Atom *bound = node1(&arena, "idx", atom_int(&arena, 0));
     Atom *canonical = node2(&arena, "Lam", type, bound);
-    Atom *loose = node1(&arena, "Var", atom_int(&arena, 0));
+    Atom *loose = node1(&arena, "idx", atom_int(&arena, 0));
     CHECK(abt_scope_check(&signature, 0u, canonical),
           "closed canonical binder is admitted before transport");
     CHECK(!abt_scope_check(&signature, 0u, loose),

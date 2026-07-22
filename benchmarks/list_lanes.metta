@@ -1,9 +1,9 @@
-; Prototype list-benchmark helpers for CeTTa.
-; These are intentionally small and direct so we can compare the hot list lanes:
-; - fast lists
-; - explicit clists
+; Correctness-preserving workloads for the two finite-sequence presentations.
+; Each pair computes the same integer so benchmark timings cannot hide a
+; representation drift.
 
-!(import! &self list_proto)
+!(import! &self list)
+!(import! &self clist)
 
 (= (bench:list-range-desc $n)
    (if (<= $n 0)

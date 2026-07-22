@@ -43,8 +43,14 @@ tests/prime/conformance/language_identity.metta	prime	metta		any	native	test-pro
 tests/prime/conformance/language_identity.metta	he	metta	he-prime	main	native	test-profiles	property	HE-prime inert-syntax side of the independently versioned lane boundary
 tests/prime/conformance/occurs_check.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/resource_policy.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/syntax_algebra.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_explicit_control.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_explicit_control_negative.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_gc_lifetime.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_storage_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_agenda_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_direct_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_guided_inhabitation.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -312,6 +318,9 @@ tests/test_log_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	
 tests/test_lts_he_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_mi_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_rho_cost_causal_trace.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_rho_cost_observer_transparency.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_lts_rho_cost_parallel_branches.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_lts_rho_cost_parallel_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_lts_rho_cost_search_budget.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_rho_cost_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lts_rho_surface.metta	he	metta	he-extended	main	native	test	golden	-

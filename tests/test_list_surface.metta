@@ -18,3 +18,27 @@
 !(assertEqual (list:range 4 1) ())
 !(assertEqual (list:repeat 3 z) (z z z))
 !(assertEqual (list:repeat 0 z) ())
+
+; Free-monoid and constructor/eliminator laws on the expression domain.
+!(assertEqual (list:append () (a b c)) (a b c))
+!(assertEqual (list:append (a b c) ()) (a b c))
+!(assertEqual
+  (list:append (list:append (a b) (c)) (d e))
+  (list:append (a b) (list:append (c) (d e))))
+!(assertEqual (list:first (list:cons (nested x) (a b))) (nested x))
+!(assertEqual (list:rest (list:cons (nested x) (a b))) (a b))
+!(assertEqual (list:reverse (list:reverse (a (b c) d))) (a (b c) d))
+!(assertEqual (list:len (list:reverse (a (b c) d))) 3)
+!(assertEqual
+  (list:reverse (list:append (a b) (c d)))
+  (list:append (list:reverse (c d)) (list:reverse (a b))))
+!(assertEqual (list:push (a b) c) (list:append (a b) (c)))
+!(assertEqual (list:map (a b c) $x $x) (a b c))
+!(assertEqual
+  (list:map (list:map (1 2 3) $x (+ $x 1)) $y (* $y 2))
+  (list:map (1 2 3) $x (* (+ $x 1) 2)))
+!(assertEqual
+  (list:foldl (list:append (1 2) (3 4)) 0 $acc $item (+ $acc $item))
+  10)
+!(assertEqual (list:len (list:range 2 9)) 7)
+!(assertEqual (list:len (list:repeat 6 (compound value))) 6)

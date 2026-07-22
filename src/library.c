@@ -1559,16 +1559,26 @@ static int imported_file_lookup(CettaLibraryContext *ctx, Space *space,
 
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz) {
+    const char *language_name;
+
     if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                     CETTA_MODULE_PROVIDER_STDLIB)) {
         return false;
     }
+    /* Explicit imports select a language overlay when present, then fall back
+       to the shared library. Merely selecting a language never loads either. */
+    language_name = cetta_language_canonical_name(ctx->session.language_id);
     if (ctx->root_dir[0] != '\0') {
-        int n = snprintf(out, out_sz, "%s/lib/%s.metta", ctx->root_dir, name);
+        int n = snprintf(out, out_sz, "%s/lib/%s/%s.metta",
+                         ctx->root_dir, language_name, name);
+        if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        n = snprintf(out, out_sz, "%s/lib/%s.metta", ctx->root_dir, name);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
     }
     {
-        int n = snprintf(out, out_sz, "lib/%s.metta", name);
+        int n = snprintf(out, out_sz, "lib/%s/%s.metta", language_name, name);
+        if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        n = snprintf(out, out_sz, "lib/%s.metta", name);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
     }
     return false;
@@ -2281,6 +2291,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
     if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_causal_trace) {
         Atom *result;
         const char *detail;
+        uint32_t thread_count;
 
         if (nargs != 1) {
             return lts_rho_cost_causal_trace_error(
@@ -2293,7 +2304,11 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
                 a, args, nargs,
                 atom_string(a, detail ? detail : "expected cost-profile rho term"));
         }
-        result = rhocalc_cost_causal_trace_expr(a, args[0]);
+        thread_count = eval_current_num_threads();
+        result = thread_count > 1u
+            ? rhocalc_cost_causal_trace_parallel_expr(
+                  a, args[0], thread_count)
+            : rhocalc_cost_causal_trace_expr(a, args[0]);
         if (!result) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_trace_error(
@@ -2308,6 +2323,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         const char *detail;
         uint64_t fuel;
         uint64_t search_budget;
+        uint32_t thread_count;
 
         if (nargs != 3) {
             return lts_rho_cost_causal_prefix_error(
@@ -2335,8 +2351,12 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         }
         fuel = (uint64_t)args[0]->ground.ival;
         search_budget = (uint64_t)args[1]->ground.ival;
-        result = rhocalc_cost_causal_prefix_expr(
-            a, args[2], fuel, search_budget);
+        thread_count = eval_current_num_threads();
+        result = thread_count > 1u
+            ? rhocalc_cost_causal_prefix_parallel_expr(
+                  a, args[2], fuel, search_budget, thread_count)
+            : rhocalc_cost_causal_prefix_expr(
+                  a, args[2], fuel, search_budget);
         if (!result) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_prefix_error(

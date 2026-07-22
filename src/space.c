@@ -804,6 +804,8 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         return false;
@@ -845,6 +847,8 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
             return false;
         }
         return false;
@@ -2088,6 +2092,7 @@ void query_results_free(QueryResults *qr) {
 typedef struct {
     VarId var_id;
     SymbolId spelling;
+    Atom *name_key;
 } QueryVisibleVar;
 
 #define QUERY_VISIBLE_INLINE_CAP 8
@@ -2132,18 +2137,20 @@ static bool query_visible_var_set_reserve(QueryVisibleVarSet *set,
     return true;
 }
 
-static bool query_visible_var_set_add(QueryVisibleVarSet *set, VarId var_id,
-                                      SymbolId spelling) {
+static bool query_visible_var_set_add(QueryVisibleVarSet *set, Atom *var) {
+    if (!set || !var || var->kind != ATOM_VAR)
+        return false;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_VISIBLE_DEDUP_SCAN,
-                            set ? set->len : 0);
-    for (CettaExprIndex i = 0; set && i < set->len; i++) {
-        if (set->items[i].var_id == var_id)
+                            set->len);
+    for (CettaExprIndex i = 0; i < set->len; i++) {
+        if (set->items[i].var_id == var->var_id)
             return true;
     }
     if (!query_visible_var_set_reserve(set, set->len + 1))
         return false;
-    set->items[set->len].var_id = var_id;
-    set->items[set->len].spelling = spelling;
+    set->items[set->len].var_id = var->var_id;
+    set->items[set->len].spelling = var->sym_id;
+    set->items[set->len].name_key = var->name_key;
     set->len++;
     return true;
 }
@@ -2162,7 +2169,7 @@ static bool collect_query_visible_vars_rec(Atom *atom, QueryVisibleVarSet *set) 
         return true;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_VISIBLE_NODE_VISIT);
     if (atom->kind == ATOM_VAR)
-        return query_visible_var_set_add(set, atom->var_id, atom->sym_id);
+        return query_visible_var_set_add(set, atom);
     if (atom->kind != ATOM_EXPR)
         return true;
     for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
@@ -2217,8 +2224,10 @@ static Atom *rewrite_query_visible_aliases(Arena *a, Atom *atom,
     if (atom->kind == ATOM_VAR) {
         const QueryVisibleVar *alias =
             query_visible_alias_for_var(atom, visible, full);
-        return alias ? atom_var_with_spelling(a, alias->spelling, alias->var_id)
-                     : atom;
+        return alias
+            ? atom_var_with_presentation(
+                  a, alias->spelling, alias->name_key, alias->var_id)
+            : atom;
     }
     if (atom->kind != ATOM_EXPR)
         return atom;
@@ -2273,7 +2282,10 @@ static Atom *bindings_resolve_query_visible_var(Arena *a, const Bindings *full,
                                               wanted->var_id, exact);
     }
 
-    Atom *slot_var = atom_var_with_spelling(a, wanted->spelling, wanted->var_id);
+    Atom *slot_var = atom_var_with_presentation(
+        a, wanted->spelling, wanted->name_key, wanted->var_id);
+    if (!slot_var)
+        return NULL;
     Atom *resolved = bindings_apply_if_vars(full, a, slot_var);
     if (resolved != slot_var)
         return resolved;
@@ -2299,14 +2311,20 @@ static bool project_query_visible_bindings(Arena *a,
     for (uint32_t i = 0; i < visible->len; i++) {
         Atom *resolved =
             bindings_resolve_query_visible_var(a, full, &visible->items[i]);
+        if (!resolved) {
+            bindings_free(projected);
+            return false;
+        }
         resolved = rewrite_query_visible_aliases(a, resolved, visible, full);
         if (resolved->kind == ATOM_VAR &&
-            resolved->var_id == visible->items[i].var_id &&
-            resolved->sym_id == visible->items[i].spelling) {
+            resolved->var_id == visible->items[i].var_id) {
             continue;
         }
-        if (!bindings_add_id(projected, visible->items[i].var_id,
-                             visible->items[i].spelling, resolved)) {
+        Atom *visible_var = atom_var_with_presentation(
+            a, visible->items[i].spelling, visible->items[i].name_key,
+            visible->items[i].var_id);
+        if (!visible_var ||
+            !bindings_add_var(projected, visible_var, resolved)) {
             bindings_free(projected);
             return false;
         }
@@ -2341,16 +2359,93 @@ void registry_init(Registry *r) {
     r->len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
+    r->name_keys = name_key_table_new(32u);
+    r->index_slots = r->inline_index_slots;
+    r->index_cap = (uint32_t)(sizeof(r->inline_index_slots) /
+                              sizeof(r->inline_index_slots[0]));
+    memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
 }
 
 void registry_free(Registry *r) {
     if (!r) return;
     if (r->entries && r->entries != r->inline_entries)
         free(r->entries);
+    if (r->index_slots && r->index_slots != r->inline_index_slots)
+        free(r->index_slots);
+    name_key_table_delete(r->name_keys);
     r->entries = r->inline_entries;
     r->len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
+    r->name_keys = NULL;
+    r->index_slots = r->inline_index_slots;
+    r->index_cap = (uint32_t)(sizeof(r->inline_index_slots) /
+                              sizeof(r->inline_index_slots[0]));
+    memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
+}
+
+static uint32_t registry_index_hash(SymbolId key, NameId name_id) {
+    uint32_t x = key != SYMBOL_ID_NONE
+        ? ((uint32_t)key ^ UINT32_C(0x243f6a88))
+        : ((uint32_t)name_id ^ UINT32_C(0x9e3779b9));
+    x ^= x >> 16;
+    x *= UINT32_C(0x7feb352d);
+    x ^= x >> 15;
+    x *= UINT32_C(0x846ca68b);
+    x ^= x >> 16;
+    return x;
+}
+
+static bool registry_entry_matches(const RegistryEntry *entry,
+                                   SymbolId key, NameId name_id) {
+    return entry && entry->key == key && entry->name_id == name_id;
+}
+
+static uint32_t registry_index_find(const Registry *r, SymbolId key,
+                                    NameId name_id) {
+    if (!r || !r->index_slots || r->index_cap == 0u)
+        return UINT32_MAX;
+    uint32_t mask = r->index_cap - 1u;
+    uint32_t slot = registry_index_hash(key, name_id) & mask;
+    for (uint32_t probes = 0u; probes < r->index_cap; probes++) {
+        uint32_t encoded = r->index_slots[slot];
+        if (encoded == 0u) return UINT32_MAX;
+        uint32_t index = encoded - 1u;
+        if (index < r->len &&
+            registry_entry_matches(&r->entries[index], key, name_id))
+            return index;
+        slot = (slot + 1u) & mask;
+    }
+    return UINT32_MAX;
+}
+
+static void registry_index_insert(Registry *r, uint32_t entry_index) {
+    RegistryEntry *entry = &r->entries[entry_index];
+    uint32_t mask = r->index_cap - 1u;
+    uint32_t slot = registry_index_hash(entry->key, entry->name_id) & mask;
+    while (r->index_slots[slot] != 0u)
+        slot = (slot + 1u) & mask;
+    r->index_slots[slot] = entry_index + 1u;
+}
+
+static bool registry_index_ensure_capacity(Registry *r,
+                                           uint32_t needed_entries) {
+    if (!r) return false;
+    uint32_t next_cap = r->index_cap ? r->index_cap : 32u;
+    while ((uint64_t)needed_entries * 10u > (uint64_t)next_cap * 7u) {
+        if (next_cap > UINT32_MAX / 2u) return false;
+        next_cap *= 2u;
+    }
+    if (r->index_slots && r->index_cap == next_cap) return true;
+    uint32_t *next = cetta_malloc(sizeof(*next) * (size_t)next_cap);
+    memset(next, 0, sizeof(*next) * (size_t)next_cap);
+    if (r->index_slots && r->index_slots != r->inline_index_slots)
+        free(r->index_slots);
+    r->index_slots = next;
+    r->index_cap = next_cap;
+    for (uint32_t i = 0u; i < r->len; i++)
+        registry_index_insert(r, i);
+    return true;
 }
 
 static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
@@ -2388,26 +2483,25 @@ static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
 
 void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
     if (!r || key == SYMBOL_ID_NONE) return;
-    /* Update existing or add new */
-    for (uint32_t i = 0; i < r->len; i++) {
-        if (r->entries[i].key == key) {
-            r->entries[i].value = value;
-            return;
-        }
+    uint32_t existing = registry_index_find(r, key, NAME_ID_NONE);
+    if (existing != UINT32_MAX) {
+        r->entries[existing].value = value;
+        return;
     }
-    if (!registry_ensure_capacity(r, r->len + 1u))
+    if (!registry_ensure_capacity(r, r->len + 1u) ||
+        !registry_index_ensure_capacity(r, r->len + 1u))
         return;
     r->entries[r->len].key = key;
+    r->entries[r->len].name_id = NAME_ID_NONE;
     r->entries[r->len].value = value;
+    registry_index_insert(r, r->len);
     r->len++;
 }
 
 Atom *registry_lookup_id(Registry *r, SymbolId key) {
     if (!r || key == SYMBOL_ID_NONE) return NULL;
-    for (uint32_t i = 0; i < r->len; i++)
-        if (r->entries[i].key == key)
-            return r->entries[i].value;
-    return NULL;
+    uint32_t index = registry_index_find(r, key, NAME_ID_NONE);
+    return index == UINT32_MAX ? NULL : r->entries[index].value;
 }
 
 void registry_bind(Registry *r, const char *name, Atom *value) {
@@ -2418,13 +2512,75 @@ Atom *registry_lookup(Registry *r, const char *name) {
     return registry_lookup_id(r, symbol_intern_cstr(g_symbols, name));
 }
 
+bool registry_bind_name(Registry *r, Atom *name_key, Atom *value) {
+    if (!r || !r->name_keys || !name_key) return false;
+    NameId id = name_key_intern(r->name_keys, name_key);
+    if (id == NAME_ID_NONE) return false;
+    uint32_t existing = registry_index_find(r, SYMBOL_ID_NONE, id);
+    if (existing != UINT32_MAX) {
+        r->entries[existing].value = value;
+        return true;
+    }
+    if (!registry_ensure_capacity(r, r->len + 1u) ||
+        !registry_index_ensure_capacity(r, r->len + 1u))
+        return false;
+    r->entries[r->len].key = SYMBOL_ID_NONE;
+    r->entries[r->len].name_id = id;
+    r->entries[r->len].value = value;
+    registry_index_insert(r, r->len);
+    r->len++;
+    return true;
+}
+
+Atom *registry_lookup_name(Registry *r, Atom *name_key) {
+    if (!r || !r->name_keys || !name_key) return NULL;
+    NameId id = name_key_find(r->name_keys, name_key);
+    if (id == NAME_ID_NONE) return NULL;
+    uint32_t index = registry_index_find(r, SYMBOL_ID_NONE, id);
+    return index == UINT32_MAX ? NULL : r->entries[index].value;
+}
+
+const Atom *registry_entry_name_key(const Registry *r, uint32_t index) {
+    if (!r || index >= r->len || !r->name_keys ||
+        r->entries[index].key != SYMBOL_ID_NONE ||
+        r->entries[index].name_id == NAME_ID_NONE) {
+        return NULL;
+    }
+    return name_key_lookup(r->name_keys, r->entries[index].name_id);
+}
+
+bool registry_ref_name_key(Atom *ref, Atom **name_key_out) {
+    if (name_key_out) *name_key_out = NULL;
+    if (!ref || ref->kind != ATOM_EXPR || ref->expr.len != 2u ||
+        !atom_is_symbol(ref->expr.elems[0], "resolve-name")) {
+        return false;
+    }
+    Atom *quoted = ref->expr.elems[1];
+    if (!quoted || quoted->kind != ATOM_EXPR || quoted->expr.len != 2u ||
+        !atom_is_symbol_id(quoted->expr.elems[0], g_builtin_syms.quote)) {
+        return false;
+    }
+    if (name_key_out) *name_key_out = quoted->expr.elems[1];
+    return true;
+}
+
+Atom *registry_lookup_ref(Registry *r, Atom *ref) {
+    if (!r || !ref) return NULL;
+    if (ref->kind == ATOM_SYMBOL)
+        return registry_lookup_id(r, ref->sym_id);
+    Atom *name_key = NULL;
+    return registry_ref_name_key(ref, &name_key)
+        ? registry_lookup_name(r, name_key)
+        : NULL;
+}
+
 Space *resolve_space(Registry *r, Atom *ref) {
     /* Grounded space atom → direct pointer */
     if (ref->kind == ATOM_GROUNDED && ref->ground.gkind == GV_SPACE)
         return (Space *)ref->ground.ptr;
     /* Symbol like &self → registry lookup */
-    if (ref->kind == ATOM_SYMBOL) {
-        Atom *val = registry_lookup_id(r, ref->sym_id);
+    if (ref->kind == ATOM_SYMBOL || ref->kind == ATOM_EXPR) {
+        Atom *val = registry_lookup_ref(r, ref);
         if (val && val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE)
             return (Space *)val->ground.ptr;
     }
@@ -3106,6 +3262,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
             return atom_expr2(a, atom_symbol(a, "StateMonad"), cell->content_type);
         return atom_symbol(a, "State");
     }
+    case GV_PRIME_NEED_CAPABILITY:
+        return atom_symbol(a, "PrimeNeedCapability");
+    case GV_PRIME_CONTEXT:
+        return atom_symbol(a, "context");
     }
     return atom_undefined_type(a);
 }
@@ -3944,6 +4104,28 @@ CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
     QueryResultSink sink;
     query_result_sink_init_visit(&sink, visitor, ctx);
     return query_equations_core(s, query, a, &sink);
+}
+
+CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
+                                QueryResultVisitor visitor, void *ctx) {
+    QueryResultSink sink;
+    QueryVisibleVarSet visible;
+    Atom *lhs = NULL;
+    Atom *rhs = NULL;
+    if (!equation || !query || !a || !visitor ||
+        !is_equation_atom(equation, &lhs, &rhs)) {
+        return 0;
+    }
+    query_visible_var_set_init(&visible);
+    if (!collect_query_visible_vars_rec(query, &visible)) {
+        query_visible_var_set_free(&visible);
+        return 0;
+    }
+    query_result_sink_init_visit(&sink, visitor, ctx);
+    (void)query_equation_emit_decoded_epoch(
+        lhs, rhs, query, &visible, a, fresh_var_suffix(), NULL, &sink);
+    query_visible_var_set_free(&visible);
+    return sink.emitted;
 }
 
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {

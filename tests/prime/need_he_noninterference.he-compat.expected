@@ -1,0 +1,3 @@
+[(Pair A A), (Pair B B)]
+[]
+[(Error (== 1 "bad") (BadArgType 2 Number String))]
