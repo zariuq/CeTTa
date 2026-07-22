@@ -1,0 +1,14 @@
+(gslt-presentation-v1 FiniteHornReflectionV1
+  (signature
+    (operator q-app 2)
+    (operator q-cons 2)
+    (operator q-int 1)
+    (operator q-rule 3)
+    (operator q-str 1)
+    (operator q-succ 1)
+    (operator q-sym 1)
+    (operator q-var 1)
+    (operator source-rule 2)
+  )
+  (equations)
+  (rewrites))

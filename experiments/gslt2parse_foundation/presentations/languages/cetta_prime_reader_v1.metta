@@ -1,0 +1,23 @@
+(gslt-presentation-v1 CeTTaPrimeReaderSyntaxV1
+  (signature
+  )
+  (equations)
+  (rewrites
+    (rule def-cetta-prime-atom (head (definition cetta-prime-atom (alt (ref cetta-prime-string) (alt (ref cetta-prime-variable) (alt (ref cetta-prime-expression) (ref cetta-prime-word)))))) (body))
+    (rule def-cetta-prime-comment (head (definition cetta-prime-comment (alt (ref cetta-prime-line-comment-newline) (ref cetta-prime-line-comment-eof)))) (body))
+    (rule def-cetta-prime-expression (head (definition cetta-prime-expression (node expression (right (char (cp 40)) (left (right (ref cetta-prime-skip) (star (left (ref cetta-prime-atom) (ref cetta-prime-skip)))) (char (cp 41))))))) (body))
+    (rule def-cetta-prime-file (head (definition cetta-prime-file (node file (left (right (ref cetta-prime-skip) (star (left (ref cetta-prime-top-atom) (ref cetta-prime-skip)))) eof)))) (body))
+    (rule def-cetta-prime-layout-unit (head (definition cetta-prime-layout-unit (alt (class cetta-prime-whitespace-scalar) (ref cetta-prime-comment)))) (body))
+    (rule def-cetta-prime-line-comment-eof (head (definition cetta-prime-line-comment-eof (node comment (right (char (cp 59)) (until eof (class cetta-prime-non-newline-scalar)))))) (body))
+    (rule def-cetta-prime-line-comment-newline (head (definition cetta-prime-line-comment-newline (node comment (right (char (cp 59)) (until (class cetta-prime-newline-scalar) (class cetta-prime-non-newline-scalar)))))) (body))
+    (rule def-cetta-prime-skip (head (definition cetta-prime-skip (star (ref cetta-prime-layout-unit)))) (body))
+    (rule def-cetta-prime-string (head (definition cetta-prime-string (node string (right (char (cp 34)) (left (star (ref cetta-prime-string-unit)) (char (cp 34))))))) (body))
+    (rule def-cetta-prime-string-escape (head (definition cetta-prime-string-escape (node escape (seq (char (cp 92)) (class cetta-prime-string-escape-scalar))))) (body))
+    (rule def-cetta-prime-string-unit (head (definition cetta-prime-string-unit (alt (ref cetta-prime-string-escape) (class cetta-prime-string-plain-scalar)))) (body))
+    (rule def-cetta-prime-token-boundary (head (definition cetta-prime-token-boundary (alt eof (alt (class cetta-prime-whitespace-scalar) (alt (char (cp 34)) (alt (char (cp 40)) (alt (char (cp 41)) (char (cp 59))))))))) (body))
+    (rule def-cetta-prime-top-atom (head (definition cetta-prime-top-atom (ref cetta-prime-atom))) (body))
+    (rule def-cetta-prime-variable (head (definition cetta-prime-variable (node variable (left (seq (char (cp 36)) (plus (class cetta-prime-token-scalar))) (peek (ref cetta-prime-token-boundary)))))) (body))
+    (rule def-cetta-prime-word (head (definition cetta-prime-word (alt (ref cetta-prime-word-bare-dollar) (ref cetta-prime-word-general)))) (body))
+    (rule def-cetta-prime-word-bare-dollar (head (definition cetta-prime-word-bare-dollar (node word (left (char (cp 36)) (peek (ref cetta-prime-token-boundary)))))) (body))
+    (rule def-cetta-prime-word-general (head (definition cetta-prime-word-general (node word (left (seq (class cetta-prime-token-start-nondollar-scalar) (star (class cetta-prime-token-scalar))) (peek (ref cetta-prime-token-boundary)))))) (body))
+  ))

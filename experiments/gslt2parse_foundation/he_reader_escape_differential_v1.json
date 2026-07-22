@@ -1,0 +1,194 @@
+{
+  "schema": "he-reader-escape-differential-v1",
+  "policy": "observational-only-ratification-neutral",
+  "canonical_semantics": null,
+  "authorities": {
+    "rust_parser": {
+      "path": "hyperon-experimental/lib/src/metta/text.rs",
+      "revision": "3f76dc460da6961f57f69f6c3e550c59c74ada83",
+      "sha256": "c4bda32a09da1d091a5d725fb541e239dcea1339c8f312ad0e98763dad426a28"
+    },
+    "cetta_parser": {
+      "path": "src/parser.c",
+      "sha256": "7436200a621ddcb7c4a8a13e3d6358507f04a8a39716ee5afee416b45573f42a"
+    },
+    "leatta_parser": {
+      "path": "lean/algorithms/Algorithms/MeTTa/Simple/Parser.lean",
+      "revision": "7842a1202f4fa968dd167d7de0933b1173fb7c91",
+      "sha256": "73eb8d692526964a7c754c490702329e552dfce861ea32b584933ec8880bd3f0"
+    },
+    "leatta_consumed_spec": {
+      "path": "lean/batteries/mettail-core/MeTTailCore/MeTTaSyntax/Spec.lean",
+      "revision": "7842a1202f4fa968dd167d7de0933b1173fb7c91",
+      "sha256": "3b6cdc8e6939622cb9705bc43442aa6f86e9f0989eae1b05e31e0cc6817e610b"
+    },
+    "gslt_recognizer": {
+      "path": "experiments/gslt2parse_foundation/presentations/languages/he_reader_v1.metta",
+      "sha256": "271d4d5aeeb524cd0ff6d1e3bd1aeff0bdfacd06160500bf862c01c30337228b"
+    },
+    "gslt_projection": {
+      "path": "experiments/gslt2parse_foundation/presentations/shared/sexpr_atom_projection_v1.metta",
+      "sha256": "22cb96aebd804bad0cf4addf7223cbd7f89cf2b790662f31035a5cc14eebc163"
+    },
+    "cetta_oracle": {
+      "path": "tools/cetta_parser_oracle_v1.c",
+      "sha256": "773096f5cd7b5a96df703a11e2ac58aec92864747705e3cdd21d246cbaa460a3"
+    },
+    "leatta_oracle": {
+      "path": "tools/leatta_parser_oracle_v1.lean",
+      "sha256": "00ad88dab51cc38a6ba970eea79cbdee2efb076cdd9f40f04687a38529c63181"
+    }
+  },
+  "projection_contract": {
+    "profile": "he-v1",
+    "label": "unicode-escape",
+    "min_digits": 1,
+    "max_digits": 6,
+    "max_codepoint": 1114111,
+    "radix": 16
+  },
+  "expected_strict_seam": [
+    "unicode-empty",
+    "unicode-seven-leading-zero",
+    "unicode-eight-leading-zero"
+  ],
+  "cases": [
+    {
+      "id": "simple-newline",
+      "source_hex": "225c6e22",
+      "rust": {"status": "accepted", "value_hex": "220a22"},
+      "cetta": {"status": "accepted", "value_hex": "0a"},
+      "leatta": {"status": "accepted", "value_hex": "225c6e22"}
+    },
+    {
+      "id": "escaped-quote",
+      "source_hex": "22615c226222",
+      "rust": {"status": "accepted", "value_hex": "2261226222"},
+      "cetta": {"status": "accepted", "value_hex": "612262"},
+      "leatta": {"status": "accepted", "value_hex": "22615c226222"}
+    },
+    {
+      "id": "escaped-backslash",
+      "source_hex": "225c5c22",
+      "rust": {"status": "accepted", "value_hex": "225c22"},
+      "cetta": {"status": "accepted", "value_hex": "5c"},
+      "leatta": {"status": "accepted", "value_hex": "225c5c22"}
+    },
+    {
+      "id": "unicode-basic",
+      "source_hex": "225c757b34317d22",
+      "rust": {"status": "accepted", "value_hex": "224122"},
+      "cetta": {"status": "accepted", "value_hex": "757b34317d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b34317d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "41", "recognizer_accepts": true, "projection_covers": true}
+    },
+    {
+      "id": "unicode-no-brace",
+      "source_hex": "225c753030343122",
+      "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
+      "cetta": {"status": "accepted", "value_hex": "7530303431"},
+      "leatta": {"status": "accepted", "value_hex": "225c753030343122"},
+      "unicode": {"opening_braces": 0, "has_closing_brace": false, "body": "0041", "recognizer_accepts": false, "projection_covers": false}
+    },
+    {
+      "id": "unicode-empty",
+      "source_hex": "225c757b7d22",
+      "rust": {"status": "accepted", "value_hex": "220022"},
+      "cetta": {"status": "accepted", "value_hex": "757b7d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b7d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "", "recognizer_accepts": true, "projection_covers": false}
+    },
+    {
+      "id": "unicode-repeat-open",
+      "source_hex": "225c757b7b34317d22",
+      "rust": {"status": "accepted", "value_hex": "224122"},
+      "cetta": {"status": "accepted", "value_hex": "757b7b34317d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b7b34317d22"},
+      "unicode": {"opening_braces": 2, "has_closing_brace": true, "body": "41", "recognizer_accepts": true, "projection_covers": true}
+    },
+    {
+      "id": "unicode-invalid-hex",
+      "source_hex": "225c757b646566677d22",
+      "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
+      "cetta": {"status": "accepted", "value_hex": "757b646566677d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b646566677d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "defg", "recognizer_accepts": false, "projection_covers": false}
+    },
+    {
+      "id": "unicode-nine-digits",
+      "source_hex": "225c757b3031323334353637387d22",
+      "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
+      "cetta": {"status": "accepted", "value_hex": "757b3031323334353637387d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b3031323334353637387d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "012345678", "recognizer_accepts": false, "projection_covers": false}
+    },
+    {
+      "id": "unicode-surrogate",
+      "source_hex": "225c757b443830307d22",
+      "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
+      "cetta": {"status": "accepted", "value_hex": "757b443830307d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b443830307d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "D800", "recognizer_accepts": false, "projection_covers": false}
+    },
+    {
+      "id": "unicode-out-of-range",
+      "source_hex": "225c757b3131303030307d22",
+      "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
+      "cetta": {"status": "accepted", "value_hex": "757b3131303030307d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b3131303030307d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "110000", "recognizer_accepts": false, "projection_covers": false}
+    },
+    {
+      "id": "unicode-unclosed-brace",
+      "source_hex": "225c757b3030343122",
+      "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
+      "cetta": {"status": "accepted", "value_hex": "757b30303431"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b3030343122"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": false, "body": "0041", "recognizer_accepts": false, "projection_covers": false}
+    },
+    {
+      "id": "unicode-seven-leading-zero",
+      "source_hex": "225c757b303030303034317d22",
+      "rust": {"status": "accepted", "value_hex": "224122"},
+      "cetta": {"status": "accepted", "value_hex": "757b303030303034317d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b303030303034317d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "0000041", "recognizer_accepts": true, "projection_covers": false}
+    },
+    {
+      "id": "unicode-eight-leading-zero",
+      "source_hex": "225c757b30303030303034317d22",
+      "rust": {"status": "accepted", "value_hex": "224122"},
+      "cetta": {"status": "accepted", "value_hex": "757b30303030303034317d"},
+      "leatta": {"status": "accepted", "value_hex": "225c757b30303030303034317d22"},
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "00000041", "recognizer_accepts": true, "projection_covers": false}
+    },
+    {
+      "id": "string-unclosed",
+      "source_hex": "22616263",
+      "rust": {"status": "rejected", "error_contains": "Unclosed String Literal"},
+      "cetta": {"status": "rejected"},
+      "leatta": {"status": "accepted", "value_hex": "22616263"}
+    },
+    {
+      "id": "string-backslash-eof",
+      "source_hex": "225c",
+      "rust": {"status": "rejected", "error_contains": "Escaping sequence is not finished"},
+      "cetta": {"status": "rejected"},
+      "leatta": {"status": "accepted", "value_hex": "225c"}
+    },
+    {
+      "id": "byte-nul",
+      "source_hex": "225c78303022",
+      "rust": {"status": "accepted", "value_hex": "220022"},
+      "cetta": {"status": "accepted", "value_hex": "783030"},
+      "leatta": {"status": "accepted", "value_hex": "225c78303022"}
+    },
+    {
+      "id": "unknown-escape",
+      "source_hex": "225c7122",
+      "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
+      "cetta": {"status": "accepted", "value_hex": "71"},
+      "leatta": {"status": "accepted", "value_hex": "225c7122"}
+    }
+  ]
+}

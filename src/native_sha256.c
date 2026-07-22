@@ -2,13 +2,6 @@
 
 #include <string.h>
 
-typedef struct {
-    uint32_t state[8];
-    uint64_t bit_len;
-    uint8_t block[64];
-    uint32_t block_len;
-} CettaNativeSha256;
-
 static uint32_t native_sha_rotr(uint32_t value, uint32_t amount) {
     return (value >> amount) | (value << (32u - amount));
 }
@@ -89,7 +82,7 @@ static void native_sha_transform(CettaNativeSha256 *sha,
     sha->state[7] += h;
 }
 
-static void native_sha_init(CettaNativeSha256 *sha) {
+void cetta_native_sha256_init(CettaNativeSha256 *sha) {
     static const uint32_t initial[8] = {
         0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
         0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u,
@@ -98,9 +91,9 @@ static void native_sha_init(CettaNativeSha256 *sha) {
     memcpy(sha->state, initial, sizeof(initial));
 }
 
-static void native_sha_update(CettaNativeSha256 *sha,
-                              const uint8_t *bytes,
-                              size_t len) {
+void cetta_native_sha256_update(CettaNativeSha256 *sha,
+                                const uint8_t *bytes,
+                                size_t len) {
     for (size_t i = 0; i < len; i++) {
         sha->block[sha->block_len++] = bytes[i];
         if (sha->block_len == 64u) {
@@ -135,17 +128,27 @@ static void native_sha_finish(CettaNativeSha256 *sha, uint8_t digest[32]) {
     }
 }
 
-void cetta_native_sha256_hex(const uint8_t *bytes, size_t len, char out[65]) {
+static void native_sha_hex(const uint8_t digest[32], char out[65]) {
     static const char digits[] = "0123456789abcdef";
-    CettaNativeSha256 sha;
-    uint8_t digest[32];
 
-    native_sha_init(&sha);
-    native_sha_update(&sha, bytes, len);
-    native_sha_finish(&sha, digest);
     for (uint32_t i = 0; i < 32u; i++) {
         out[i * 2u] = digits[digest[i] >> 4u];
         out[i * 2u + 1u] = digits[digest[i] & 0x0fu];
     }
     out[64] = '\0';
+}
+
+void cetta_native_sha256_finish_hex(CettaNativeSha256 *sha, char out[65]) {
+    uint8_t digest[32];
+
+    native_sha_finish(sha, digest);
+    native_sha_hex(digest, out);
+}
+
+void cetta_native_sha256_hex(const uint8_t *bytes, size_t len, char out[65]) {
+    CettaNativeSha256 sha;
+
+    cetta_native_sha256_init(&sha);
+    cetta_native_sha256_update(&sha, bytes, len);
+    cetta_native_sha256_finish_hex(&sha, out);
 }

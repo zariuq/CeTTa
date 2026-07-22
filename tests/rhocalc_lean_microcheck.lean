@@ -633,7 +633,7 @@ theorem costSurface_continued_contract_left_term :
         { term := costBodyTerm, grade := zeroCostGrade }
         { term := costPayloadTerm, grade := zeroCostGrade }).left.term
         =
-      (rhoContinuedCutPresentation.symmetricCut.contract
+      (rhoContinuedCutPresentation.interactionCut.contract
         costChannel costChannel costBodyTerm costPayloadTerm).1 := by
           exact rhoContinuedCutPresentation.contractWrapped_fst_term
             costChannel costChannel
@@ -641,7 +641,7 @@ theorem costSurface_continued_contract_left_term :
             { term := costPayloadTerm, grade := zeroCostGrade }
     _ = semanticCommSubst costBodyTerm costPayloadTerm := by
           simpa [rhoContinuedCutPresentation] using
-            rhoSymmetricCutPresentation_contract_fst
+            rhoInteractionCutPresentation_contract_fst
               costChannel costChannel costBodyTerm costPayloadTerm
     _ = costBodyTerm := by
           exact costSurface_semantic_subst_body_ignores_payload
