@@ -57,42 +57,42 @@ CASES = {
 EXPECTED_DIGESTS = {
     "he": "9640c3b9caacf354a8bd853765d9f15616e58d4a6b429af1c983bd90d185a02d",
     "petta": "a343ebd17f880a01428dc2b0a21f0eb758142eecdaee6934347be47283d4ece2",
-    "prime": "bfe35174dcd2923e2eb0597e004fe7cfb8193fbec440a91f80de9e97e1a7badb",
+    "prime": "f387c60f206ddea72b57aa09f127fb6e922b00a063dfe88cb4c3b97f9fdc7d6b",
     "canary": "177a93c6329859ae5ab0fdf45891e6be268cd5d4747628c68a8b553e9f79311b",
 }
 
 EXPECTED_COUNTS = {
     "he": 3,
     "petta": 1,
-    "prime": 3,
+    "prime": 7,
     "canary": 3,
 }
 
 EXPECTED_PROVENANCE = {
     "he": {
-        "source_digest": "b09ce7368249363ec8f5e624d3554e44ddd05e5011c08adda1351d0a1782eac9",
-        "pre_reflection_digest": "eeee2558595993c6d679bb61ee19bc120d573ace6e50e8535c2a90778f7c3a64",
-        "environment_digest": "21b5ac4aca4548723f28a18fa9cb7c9825d6fe3bc34f690e7265351769917733",
+        "source_digest": "ecf63c6d9c777f34e93d769af322b21bf2082c9e3d7850a4f6fb197e73539580",
+        "pre_reflection_digest": "2d185650ca0a37ca952ce4ee5a0dcf3d425084efcdd0f93aebf28b131244385d",
+        "environment_digest": "a847c6803f107b0f90a63873e306d1d948c799695986e501741673e8772e4ec7",
     },
     "petta": {
         "source_digest": "5f00a6f5734ec6babce012888dbef9642d7be1fcafcbc71f59c5b30bf2073d88",
-        "pre_reflection_digest": "9dd8b14184c0b01accaf76325ddbc2690c86c767b18c0bc38361c144a7da11fe",
-        "environment_digest": "447aad217df6a947a80ee7c96ed673f66d146c9f97c1d7eeed15ca18bde5e954",
+        "pre_reflection_digest": "97b375b8b6e10a9120795420725baa97545055c99887ad8c95943f8136fe3126",
+        "environment_digest": "3aa4efeeb2fb62a16b5462d746d7c6a49460bc2edeed15bde590127acd86a3a5",
     },
     "prime": {
-        "source_digest": "8215c375ff2f12c25403c8a4d71ac0bbf3e479f884f93eb6e5c436ec3075acfb",
-        "pre_reflection_digest": "36556c2a9dc7637a5ba088fabdfa7055806a1d0fbe44e383578803f6da357d9b",
-        "environment_digest": "14bd01e36081494bb46b9a7f0b3212157cd4da22ce06b6855557b8f758ae8cef",
+        "source_digest": "9c39249e6f56edfff37766fecd63ecea2a2664eb2a920e27d74d47c3fbc3f1dd",
+        "pre_reflection_digest": "84c4c49f968a26403fb7ae7eeb99ebcb45b6499b6c88d33ab8dda55d75dcb2b5",
+        "environment_digest": "6d5b3e9cac3e5f1816062c269a4d7bfeb7148ecf1b210937cb879914f1dcfdce",
     },
     "canary": {
         "source_digest": "7e4f09fc2d85ae5c281a16daf9b9649210843bb09b0e5e3af8d85145dc421c26",
-        "pre_reflection_digest": "6278d5dac09bab283399dfa45c3749d6c8d63e335d0a60bbed902aadeeed7e69",
-        "environment_digest": "771c5fce17d32b71f64498298db4acd8877104d0a9b2566dc3ee5d2b1dbc3818",
+        "pre_reflection_digest": "570182be3cbe6658020ef8bf2d39e09733da9b2b2e13ecb2e208131f9ebfae23",
+        "environment_digest": "21e4c4fc1d7f0796470f1f784b7a36a421805e0c1a4de75c1fc4ce18587fee33",
     },
 }
 
 EXPECTED_MATRIX_DIGEST = (
-    "1ee79e8c37d2f6bba8d89ae4d701598c1537081a862c990123b12306967d52bb"
+    "463d9964f4567ec14ae12779c77a4a0d74934cd70d3cdf76448d6162beb651f4"
 )
 
 

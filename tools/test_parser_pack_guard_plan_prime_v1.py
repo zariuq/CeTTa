@@ -15,6 +15,7 @@ import tempfile
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
 from test_parser_pack_guard_compiler_v1 import EXPECTED_DIGESTS
+from test_parser_pack_guard_compiler_v1 import EXPECTED_COUNTS
 from test_parser_pack_guard_compiler_v1 import EXPECTED_PROVENANCE
 from test_parser_pack_guard_compiler_v1 import program_arguments
 from test_parser_pack_guard_compiler_v1 import run_native as run_guard_native
@@ -65,9 +66,9 @@ PROFILES = {
         lexical_case={
             "language": "he",
             "tag": "he-string",
-            "answers": 2987,
+            "answers": 716,
             "answer_digest":
-                "133fa386d9af9bc745ed4d6454f9a1e820bdd3e8507a419a5404cc79b06dbb7c",
+                "36de2ebbf582532c577a334730beb952d9c09eed2edc8b8fe6fc899cad880b6f",
             "extra_tags": (
                 (
                     "he-comment-boundary", 8,
@@ -78,31 +79,31 @@ PROFILES = {
                     "1eba771b1ea2e9be57772e78672a795c85952417ac8fee689d256267c242ff17",
                 ),
                 (
-                    "he-variable-boundary", 18,
-                    "73385478611f96e2715fa99b3ed6b8d254b394447710092b470eafe0d986b426",
+                    "he-variable-boundary", 23,
+                    "dd7396f812e94a06ba02832d8e527cdcd39331ff95d68015cede5b79c816fe41",
                 ),
             ),
         },
         base_pack_digest=
-            "35709e585896d9b3dcd4554e06ba0f0b684097bac1782163caa5dddc998f125f",
+            "a0334e22b53a8319b23870d008af3fcdd27426f26bffd09f14f54565c12936c0",
         lexical_nfa_digest=
-            "1e805b51958fa6ff897e640eb3a2655fedb7d17b00a633dedb7a3eedd3d538be",
+            "32b753c815e05d46d4152c517b5749d4beafe5810aabca89d8d91dc2edf7440e",
         lexical_plan_digest=
-            "2570805dc35f8d0111bae6a87deb55f07d6f1b164a95cbac25ecb1c777b22ca5",
+            "fb8658f0924ad4933dc75fb6e749687d1b63efaa94613aaf780362e041cc799b",
         guard_nfa_digest=
-            "ae0108d564004ce6fad51c1f25de90fac59f902256c0ed1f24d67b941e39745b",
+            "0a680733ee1509d1b72d7f70fd43caca2ca1d914b3f806c16d5090709e930d34",
         guard_plan_digest=
-            "b55c2e18b0ed4438d3374b19e9561cdde1bc0e9df51c2936fac816ec925d1af3",
+            "1302f1eba1e7c64223c3d40498df28766d6931f077fe9b159847013d1c03b895",
         evidence_digest=
-            "f0f7f2aafcabc5e8ede5441d7bdde1a2070b2eef67f3aad33b53002165b6fff5",
+            "2490b06eb70b2295cfa161f1d3fa8d73a33d3c7686264ce55619261e9e4f95cb",
         matrix_digest=
-            "a311ef94440928b03ad27cfeb6027c2eaf933e6e5371eebc9dde51b778579cd8",
+            "2cf1dc1b61a70a188cbe75b0ee5e36ebb90d329caba0bd302aebaea6e01610d4",
         composite_terminal_extensions=7,
-        composite_grammar_productions=397,
+        composite_grammar_productions=282,
     ),
     "prime": ReaderProfile(
         label="prime",
-        profile_name="pre-universal-prime-reader-v1",
+        profile_name="cetta-prime-reader-v1",
         summary_name="ParserPackPositiveGuardPlanPrimeV1MatrixSummary",
         matrix_domain="ParserPackPositiveGuardPlanPrimeV1",
         lexical_case={
@@ -117,21 +118,21 @@ PROFILES = {
             ),),
         },
         base_pack_digest=
-            "d6d0b0e63036e91361a4a0aa0bac0c8399637c776596d251b3666cdcc101f6b6",
+            "103d3ba48e6cebf4649e37387f5b379cbad3be3a9f12dc4e6a6c33c0bc17fc50",
         lexical_nfa_digest=
             "42c38a0bb68c48422d499d8f1983e01c29274419e5df771ce92b3db751c336a7",
         lexical_plan_digest=
-            "6c7c41899b1005417b797e867dd9c930c8a868ba4f077e29c0b76a8adc4d287c",
+            "870d472f3e0aa8a2f0d6176b9057087c99acecf8e538f26dabe9b7efed3927a2",
         guard_nfa_digest=
-            "11b0614be38ca441fc1b036d88366f30fe93c739e460b45308932ff24fd8a92c",
+            "72229e01844933b6e5cd179fd92b792ffb5ab02c302cf5cf98403d4cd1768993",
         guard_plan_digest=
-            "c14b7a21767ba30e1e0c5aeb10d74da6744b3689c6c83d91de9bd3e2701d5fc2",
+            "774bacc52b488bfa63e1f7af2e8f051b7cb555743a0644c4488db5aaa7a5b6d6",
         evidence_digest=
-            "84ebea67a3f7a16cef1ebf5b5996c393013673b5270b0da1a80357eea92df06a",
+            "b06ca9109b4a03aaceae80be0c28d2060d78cc3c4a210b974ab6803121790f70",
         matrix_digest=
-            "947e4da8ca2a42fa224ecfa4f2d3dfb0959a11a08ecef3125e993cbe38624636",
-        composite_terminal_extensions=5,
-        composite_grammar_productions=114,
+            "c3b3c17f747762fba00c0d7c8674dcdc7add71bf93671e52248ab98894846ec7",
+        composite_terminal_extensions=9,
+        composite_grammar_productions=186,
     ),
 }
 
@@ -141,27 +142,27 @@ DETERMINISM_SEALS = {
         "slr": {
             "slr-accepts": "1",
             "slr-conflicts": "0",
-            "slr-gotos": "153",
-            "slr-reductions": "360",
-            "slr-shifts": "37",
-            "slr-states": "79",
+            "slr-gotos": "155",
+            "slr-reductions": "362",
+            "slr-shifts": "38",
+            "slr-states": "82",
         },
         "lr1": {
             "accepts": 1,
             "conflict_cells": 0,
             "conflicts": 0,
-            "gotos": 179,
+            "gotos": 181,
             "grammar_digest":
-                "724576f028072e20e449229c7149f210d6c0518a04f424a4faaaff6bf7b55976",
-            "max_state_items": 147,
-            "nonterminals": 54,
-            "productions": 397,
-            "reachable_productions": 64,
-            "reductions": 544,
-            "shifts": 46,
-            "states": 116,
+                "e9e218d104b9659917c4926457464df960331b53257a996a91d222cb3b54d3b7",
+            "max_state_items": 146,
+            "nonterminals": 56,
+            "productions": 282,
+            "reachable_productions": 66,
+            "reductions": 546,
+            "shifts": 47,
+            "states": 119,
             "table_digest":
-                "e4ff24003038f6f49529a181ab177cc1f61d31f62d098ff2829958d774dc58a0",
+                "1007e25c12b884dcd3bab0a371f28fd7b6fe12843f07abc8154aaa2e61ec687c",
             "terminals": 14,
         },
     },
@@ -175,6 +176,7 @@ class GateFailure(RuntimeError):
 def profile_guard_row(
     chart_binary: Path, profile: ReaderProfile
 ) -> dict[str, object]:
+    expected_count = EXPECTED_COUNTS[profile.label]
     row = run_guard_native(
         chart_binary,
         [
@@ -188,12 +190,12 @@ def profile_guard_row(
     )
     if (
         row.get("outcome") != "Ambiguous"
-        or row.get("answers") != 3
+        or row.get("answers") != expected_count
         or row.get("term_digest") != EXPECTED_DIGESTS[profile.label]
         or not isinstance(row.get("terms"), list)
         or not isinstance(row.get("certs"), list)
-        or len(row["terms"]) != 3
-        or len(row["certs"]) != 3
+        or len(row["terms"]) != expected_count
+        or len(row["certs"]) != expected_count
     ):
         raise GateFailure(
             f"native {profile.label} positive-guard evidence changed"
@@ -485,7 +487,8 @@ def require_exact(
             native_value = int(native_value)
         if native_value != petta.get(petta_field):
             raise GateFailure(
-                f"C and PeTTa {profile.label} plans differ at {native_field}"
+                f"C and PeTTa {profile.label} plans differ at {native_field}: "
+                f"C={native_value!r}, PeTTa={petta.get(petta_field)!r}"
             )
     expected_scalars = {
         "base-pack-digest": profile.base_pack_digest,
@@ -497,7 +500,8 @@ def require_exact(
         "guard-plan-digest": profile.guard_plan_digest,
         "composite-terminal-extension-count":
             str(profile.composite_terminal_extensions),
-        "guard-production-extension-count": "3",
+        "guard-production-extension-count":
+            str(EXPECTED_COUNTS[profile.label]),
         "composite-grammar-productions":
             str(profile.composite_grammar_productions),
     }
@@ -519,7 +523,11 @@ def require_exact(
             f"C and PeTTa {profile.label} plan inventories differ"
         )
     evidence_layout = native.get("guard-entry-evidence")
-    if evidence_layout != [[0, 0, 1], [1, 1, 1], [2, 2, 1]]:
+    expected_evidence_layout = [
+        [index, index, 1]
+        for index in range(EXPECTED_COUNTS[profile.label])
+    ]
+    if evidence_layout != expected_evidence_layout:
         raise GateFailure(f"native {profile.label} proof layout changed")
     evidence_digest = native.get("guard-evidence-digest")
     if (
@@ -547,10 +555,13 @@ def require_determinism_seal(
         return
     expected_slr = seal["slr"]
     assert isinstance(expected_slr, dict)
+    observed_slr = {field: native.get(field) for field in expected_slr}
     for field, expected in expected_slr.items():
         if native.get(field) != expected:
             raise GateFailure(
-                f"{profile.label} deterministic SLR seal changed at {field}"
+                f"{profile.label} deterministic SLR seal changed at {field}: "
+                f"expected {expected!r}, observed {native.get(field)!r}; "
+                f"full observed seal={observed_slr!r}"
             )
     try:
         lr1 = summary_json(analyze_lr1(composite_grammar(
@@ -726,7 +737,8 @@ def main() -> int:
         )
     print(
         f"({profile.summary_name} "
-        f"{len(lexical_terms)} {len(guard_terms)} 3 "
+        f"{len(lexical_terms)} {len(guard_terms)} "
+        f"{EXPECTED_COUNTS[profile.label]} "
         f"1 {lexical_agreements} {guard_replays} "
         f"{mutations} {native['guard-plan-digest']} "
         f"{native['guard-evidence-digest']} {digest} 0)"

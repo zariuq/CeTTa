@@ -31,7 +31,7 @@ EXPECTED_SOURCE_DIGEST = (
     "c4bda32a09da1d091a5d725fb541e239dcea1339c8f312ad0e98763dad426a28"
 )
 EXPECTED_CETTA_SOURCE_DIGEST = (
-    "8f70dad67fbe38b3306f66880e0f7b39aee7b9d5b3430d01060651299e6361b0"
+    "a9136b16231b687b0c26adefde1bb6da71d4c431b0bc1d1e2854c158d0276554"
 )
 EXPECTED_LEATTA_SPEC_DIGEST = (
     "3b6cdc8e6939622cb9705bc43442aa6f86e9f0989eae1b05e31e0cc6817e610b"
@@ -81,6 +81,7 @@ MANIFEST_FIELDS = (
 DISPOSITIONS = {
     "modeled-valid",
     "rejection-modeled",
+    "implementation-divergence",
     "separate-boundary",
 }
 BOUNDARIES = {
@@ -131,6 +132,8 @@ CONTRACT_BASES = {
     "written-weak-requirement",
     "written-incomplete",
     "written-silent",
+    "ratified-clarification",
+    "ratified-extension",
 }
 CONTRACT_RELATIONS = {
     "conforms",
@@ -193,7 +196,7 @@ CETTA_MARKERS = (
     r"text\[\*pos\] != '\\n'",
     r"c != '\"'",
     r"default:\s*return c;",
-    r"tok\[0\] == '\$' && len > 1",
+    r"if \(tok\[0\] == '\$'\) \{\s*if \(len > 1\)",
     r"strcmp\(tok, \"True\"\)",
     r"strtoll\(tok",
 )
@@ -325,7 +328,7 @@ def presentation_rules() -> set[str]:
     return set(re.findall(r"\(rule\s+([^\s()]+)", text))
 
 
-def check_manifest(source: str, rules: set[str]) -> tuple[int, int, int]:
+def check_manifest(source: str, rules: set[str]) -> tuple[int, int, int, int]:
     with MANIFEST.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         if tuple(reader.fieldnames or ()) != MANIFEST_FIELDS:
@@ -337,6 +340,7 @@ def check_manifest(source: str, rules: set[str]) -> tuple[int, int, int]:
 
     modeled = 0
     rejected = 0
+    divergences = 0
     separate = 0
     for row in rows:
         if (
@@ -383,9 +387,11 @@ def check_manifest(source: str, rules: set[str]) -> tuple[int, int, int]:
             modeled += 1
         elif row["disposition"] == "rejection-modeled":
             rejected += 1
+        elif row["disposition"] == "implementation-divergence":
+            divergences += 1
         else:
             separate += 1
-    return modeled, rejected, separate
+    return modeled, rejected, divergences, separate
 
 
 def check_contract(rules: set[str]) -> tuple[int, int, int]:
@@ -430,6 +436,8 @@ def check_contract(rules: set[str]) -> tuple[int, int, int]:
         if disposition == "settled" and row["contract_basis"] not in {
             "written-direct",
             "written-delegation",
+            "ratified-clarification",
+            "ratified-extension",
         }:
             raise GateFailure(
                 f"settled clause lacks a direct basis: {row['clause_id']}"
@@ -584,7 +592,7 @@ def main() -> int:
         "LeaTTa parser", leatta_parser, LEATTA_PARSER_FORBIDDEN_MARKERS
     )
     rules = presentation_rules()
-    modeled, rejected, separate = check_manifest(source, rules)
+    modeled, rejected, divergences, separate = check_manifest(source, rules)
     settled, ratification, separate_layers = check_contract(rules)
     check_generated_presentations()
     rust_whitespace = rust_whitespace_scalars()
@@ -596,7 +604,8 @@ def main() -> int:
 
     print(
         "(HEReaderSourceCorrespondenceV1Summary "
-        f"{len(EXPECTED_OBLIGATIONS)} {modeled} {rejected} {separate} "
+        f"{len(EXPECTED_OBLIGATIONS)} {modeled} {rejected} {divergences} "
+        f"{separate} "
         f"{len(rust_whitespace)} {len(SOURCE_MARKERS)} 0)"
     )
     print(

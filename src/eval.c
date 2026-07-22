@@ -125,6 +125,14 @@ typedef struct {
     SymbolId ctx_missing;
     SymbolId ctx_window;
     SymbolId ctx_entry;
+    SymbolId cyclic_need_thunk;
+    SymbolId need_demand_in_progress;
+    SymbolId stack_overflow;
+    SymbolId need_heap_update_failed;
+    SymbolId need_receipt_update_failed;
+    SymbolId missing_need_thunk;
+    SymbolId need_reification_cycle;
+    SymbolId no_return;
 } PrimeNeedSymbolIds;
 
 static __thread PrimeNeedSymbolIds g_prime_need_symbol_ids = {0};
@@ -167,6 +175,20 @@ static const PrimeNeedSymbolIds *prime_need_symbols(void) {
         ids.ctx_missing = symbol_intern_cstr(g_symbols, "ctx:missing");
         ids.ctx_window = symbol_intern_cstr(g_symbols, "ctx:window");
         ids.ctx_entry = symbol_intern_cstr(g_symbols, "ctx:entry");
+        ids.cyclic_need_thunk = symbol_intern_cstr(
+            g_symbols, "CyclicPrimeNeedThunk");
+        ids.need_demand_in_progress = symbol_intern_cstr(
+            g_symbols, "PrimeNeedDemandInProgress");
+        ids.stack_overflow = symbol_intern_cstr(g_symbols, "StackOverflow");
+        ids.need_heap_update_failed = symbol_intern_cstr(
+            g_symbols, "PrimeNeedHeapUpdateFailed");
+        ids.need_receipt_update_failed = symbol_intern_cstr(
+            g_symbols, "PrimeNeedReceiptUpdateFailed");
+        ids.missing_need_thunk = symbol_intern_cstr(
+            g_symbols, "MissingPrimeNeedThunk");
+        ids.need_reification_cycle = symbol_intern_cstr(
+            g_symbols, "PrimeNeedReificationCycle");
+        ids.no_return = symbol_intern_cstr(g_symbols, "NoReturn");
     }
     g_prime_need_symbol_ids = ids;
     return &g_prime_need_symbol_ids;
@@ -11807,15 +11829,16 @@ static bool prime_need_record_cell_observation(
 static bool prime_need_fault_is_completed(Atom *fault) {
     if (!atom_is_error(fault) || fault->expr.len < 3u)
         return false;
+    const PrimeNeedSymbolIds *ids = prime_need_symbols();
     Atom *reason = fault->expr.elems[2];
-    return !atom_is_symbol(reason, "CyclicPrimeNeedThunk") &&
-           !atom_is_symbol(reason, "PrimeNeedDemandInProgress") &&
-           !atom_is_symbol(reason, "StackOverflow") &&
-           !atom_is_symbol(reason, "PrimeNeedHeapUpdateFailed") &&
-           !atom_is_symbol(reason, "PrimeNeedReceiptUpdateFailed") &&
-           !atom_is_symbol(reason, "MissingPrimeNeedThunk") &&
-           !atom_is_symbol(reason, "PrimeNeedReificationCycle") &&
-           !atom_is_symbol(reason, "NoReturn");
+    return !atom_is_symbol_id(reason, ids->cyclic_need_thunk) &&
+           !atom_is_symbol_id(reason, ids->need_demand_in_progress) &&
+           !atom_is_symbol_id(reason, ids->stack_overflow) &&
+           !atom_is_symbol_id(reason, ids->need_heap_update_failed) &&
+           !atom_is_symbol_id(reason, ids->need_receipt_update_failed) &&
+           !atom_is_symbol_id(reason, ids->missing_need_thunk) &&
+           !atom_is_symbol_id(reason, ids->need_reification_cycle) &&
+           !atom_is_symbol_id(reason, ids->no_return);
 }
 #endif
 

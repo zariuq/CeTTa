@@ -34,16 +34,16 @@ CASES = {
             "languages/cetta_prime_reader_v1.metta",
         ),
         "productions": (
-            111,
-            "f2bb690b7e97cd70b481396eb0362e9ea2cca03b4d11528e480a63b1ec9275db",
+            179,
+            "b3d25912cf037b8785f45979d62951c69814d0556d0c53e0788bc504211fe669",
         ),
         "classes": (
-            12,
-            "029d29c94f6adecb93a4b5b90b206ce13fcf07c956a6b27eec01d5166a22bf3a",
+            14,
+            "9158ab8e1e5d7839bc1c8cdb54ecd1275fb3affc28b1a45077002e490e9e39d6",
         ),
         "actions": (
-            111,
-            "e763389636f330ac3c2cb20f69c9c97f26965c7ac6a57044e375589b95955213",
+            179,
+            "b9194af90380048ffbf7a50f0b54f560fe7c5dac97116c961a17bbfa56a4f833",
         ),
     },
     "metamath": {

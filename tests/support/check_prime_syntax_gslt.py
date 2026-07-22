@@ -28,6 +28,10 @@ CASES = (
     ReaderCase("quote-open-syntax", "@($x)", "Unique"),
     ReaderCase("unquote-symbol", "*@doc", "Unique"),
     ReaderCase("unquote-expression", "*@(agent Max Botnick)", "Unique"),
+    ReaderCase("unquote-direct-expression", "*(agent Max Botnick)", "Unique"),
+    ReaderCase("unquote-direct-string", '*"moo"', "Unique"),
+    ReaderCase("anonymous-variable", "$", "Unique"),
+    ReaderCase("independent-anonymous-variables", "(P $ $)", "Unique"),
     ReaderCase("ordinary-variable", "$x", "Unique"),
     ReaderCase("structural-variable-symbol", "$@foo", "Unique"),
     ReaderCase("structural-variable-string", '$@"moo"', "Unique"),
@@ -36,6 +40,7 @@ CASES = (
     ReaderCase("structural-reference-symbol", "&@doc", "Unique"),
     ReaderCase("structural-reference-expression", "&@(agent Max Botnick)", "Unique"),
     ReaderCase("ordinary-star-head", "(* a b)", "Unique"),
+    ReaderCase("ordinary-star-before-space", "* (a)", "Unique"),
     ReaderCase(
         "structural-lambda-name",
         '(lam @(mm-var "ph") (wff @(mm-var "ph")))',

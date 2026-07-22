@@ -266,7 +266,7 @@ PROVENANCE_CPPFLAGS =
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
 PROVENANCE_CPPFLAGS = -DCETTA_PROVENANCE_ASSERT=1
 endif
-CPPFLAGS = -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(PROVENANCE_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(PROVENANCE_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
@@ -278,7 +278,21 @@ ifeq ($(ENABLE_PIC),1)
 CFLAGS += -fPIC
 endif
 
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+HE_COMPILED_READER_RUNTIME_SRC = \
+	src/he_compiled_reader.c \
+	src/gslt_direct_reader_v1.c \
+	src/generated/he_reader_direct_v1.generated.c
+PETTA_COMPILED_READER_RUNTIME_SRC = \
+	src/petta_compiled_reader.c \
+	src/generated/petta_reader_direct_v1.generated.c
+PRIME_COMPILED_READER_RUNTIME_SRC = \
+	src/prime_compiled_reader.c \
+	src/generated/prime_reader_direct_v1.generated.c
+COMPILED_READER_RUNTIME_SRC = \
+	$(HE_COMPILED_READER_RUNTIME_SRC) \
+	$(PETTA_COMPILED_READER_RUNTIME_SRC) \
+	$(PRIME_COMPILED_READER_RUNTIME_SRC)
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -292,8 +306,27 @@ FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OB
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)
 BIN_FORCE = FORCE
 endif
+COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
-FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o,$(OBJ))
+FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o $(COMPILED_READER_RUNTIME_OBJ),$(OBJ))
+HE_COMPILED_READER_TEST_SRC = tests/support/test_he_compiled_reader_v1.c
+HE_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_he_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+HE_COMPILED_READER_TEST_BIN = runtime/test_he_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+HE_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
+PETTA_COMPILED_READER_TEST_SRC = tests/support/test_petta_compiled_reader_v1.c
+PETTA_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_petta_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_COMPILED_READER_TEST_BIN = runtime/test_petta_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PETTA_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
+PRIME_COMPILED_READER_TEST_SRC = tests/support/test_prime_compiled_reader_v1.c
+PRIME_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_prime_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_COMPILED_READER_TEST_BIN = runtime/test_prime_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
+HE_COMPILED_READER_BENCH_SRC = tests/bench_he_compiled_reader_v1.c
+HE_COMPILED_READER_BENCH_OBJ = runtime/bootstrap/bench_he_compiled_reader_v1.$(BUILD_OBJ_TAG).o
+HE_COMPILED_READER_BENCH_BIN = runtime/bench_he_compiled_reader_v1-$(BUILD_OBJ_TAG)
+HE_COMPILED_READER_BENCH_LINK_OBJ = $(HE_COMPILED_READER_TEST_LINK_OBJ)
+HE_COMPILED_READER_BENCH_INPUT ?= lib/stdlib.metta
+HE_COMPILED_READER_BENCH_ITERATIONS ?= 101
 PRIME_DELAYED_AMBIGUITY_TEST_SRC = tests/support/test_prime_delayed_ambiguity.c
 PRIME_DELAYED_AMBIGUITY_TEST_OBJ = runtime/bootstrap/test_prime_delayed_ambiguity.$(BUILD_OBJ_TAG).o
 PRIME_DELAYED_AMBIGUITY_TEST_BIN = runtime/test_prime_delayed_ambiguity-$(BUILD_CANON)
@@ -380,10 +413,14 @@ PARSER_PACK_GUARD_SCALAR_EXEC_V1_SRC = experiments/gslt2parse_foundation/native/
 PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ = runtime/bootstrap/parser_pack_guard_scalar_exec_v1.$(BUILD_OBJ_TAG).o
 PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_guarded_lexical_exec_v1.c
 PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ = runtime/bootstrap/parser_pack_guarded_lexical_exec_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_CURSOR_C_EMITTER_V1_SRC = experiments/gslt2parse_foundation/native/parser_pack_cursor_c_emitter_v1.c
+PARSER_PACK_CURSOR_C_EMITTER_V1_OBJ = runtime/bootstrap/parser_pack_cursor_c_emitter_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_CURSOR_GENERATED_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_parser_pack_cursor_generated_v1.c
 PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_SRC = experiments/gslt2parse_foundation/native/parser_pack_guarded_lexical_exec_v1_stream.c
 PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ = runtime/bootstrap/parser_pack_guarded_lexical_exec_v1_stream.$(BUILD_OBJ_TAG).o
 PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN = runtime/parser_pack_guarded_lexical_exec_v1_stream-$(BUILD_OBJ_TAG)
-PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ) $(PARSER_PACK_GUARD_REF_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ) $(SEMANTIC_MASK_NFA_V1_OBJ)
+PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(PARSER_PACK_GUARD_RELATION_V1_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ) $(PARSER_PACK_GUARD_REF_V1_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) $(PARSER_PACK_CURSOR_C_EMITTER_V1_OBJ) $(PARSER_ATOM_PROJECTION_V1_OBJ) $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ) $(SEMANTIC_MASK_NFA_V1_OBJ)
+PARSER_PACK_CURSOR_GENERATED_V1_LINK_OBJ = $(sort $(filter-out src/generated/he_reader_cursor_v1.generated.$(BUILD_OBJ_TAG).o,$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_LINK_OBJ)))
 PARSER_ATOM_PROJECTION_V1_SRC = experiments/gslt2parse_foundation/native/parser_atom_projection_v1.c
 PARSER_ATOM_PROJECTION_V1_HEADER = experiments/gslt2parse_foundation/native/parser_atom_projection_v1.h
 PARSER_ATOM_PROJECTION_V1_OBJ = runtime/bootstrap/parser_atom_projection_v1.$(BUILD_OBJ_TAG).o
@@ -486,6 +523,7 @@ GSLT2PARSE_AUX_OBJ = \
 	$(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ) \
 	$(PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ) \
 	$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ) \
+	$(PARSER_PACK_CURSOR_C_EMITTER_V1_OBJ) \
 	$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ) \
 	$(PARSER_ATOM_PROJECTION_V1_OBJ) \
 	$(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ) \
@@ -557,6 +595,27 @@ GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN = runtime/parser_term_projection_v1_str
 GSLT2PARSE_ATOM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_atom_projection_v1-$(BUILD_OBJ_TAG)
 GSLT2PARSE_PETTA_ROOT ?=
 GSLT2PARSE_HE_ROOT ?=
+GSLT2PARSE_HE_GENERATED_C_OUTPUT ?=
+GSLT2PARSE_HE_CURSOR_GENERATED_C = src/generated/he_reader_cursor_v1.generated.c
+GSLT2PARSE_HE_PROJECTION_GENERATED_H = src/generated/cetta_he_projection_v1.generated.h
+GSLT2PARSE_HE_DIRECT_GENERATED_C = src/generated/he_reader_direct_v1.generated.c
+GSLT2PARSE_HE_DIRECT_GENERATED_H = src/generated/he_reader_direct_v1.generated.h
+GSLT2PARSE_HE_PROJECTION_SOURCE = experiments/gslt2parse_foundation/presentations/shared/cetta_he_atom_projection_v1.metta
+GSLT2PARSE_HE_READER_SOURCE = experiments/gslt2parse_foundation/presentations/languages/he_reader_v1.metta
+GSLT2PARSE_HE_SCALAR_SOURCE = experiments/gslt2parse_foundation/presentations/shared/he_reader_scalar_classes_v1.metta
+GSLT2PARSE_PETTA_DIRECT_GENERATED_C = src/generated/petta_reader_direct_v1.generated.c
+GSLT2PARSE_PETTA_DIRECT_GENERATED_H = src/generated/petta_reader_direct_v1.generated.h
+GSLT2PARSE_PETTA_PROJECTION_SOURCE = experiments/gslt2parse_foundation/presentations/shared/cetta_petta_atom_projection_v1.metta
+GSLT2PARSE_PETTA_SPLITTER_SOURCE = experiments/gslt2parse_foundation/presentations/languages/petta_document_splitter_v1.metta
+GSLT2PARSE_PETTA_SPLITTER_SCALAR_SOURCE = experiments/gslt2parse_foundation/presentations/shared/petta_document_splitter_scalar_classes_v1.metta
+GSLT2PARSE_PETTA_FORM_SOURCE = experiments/gslt2parse_foundation/presentations/languages/petta_form_reader_v1.metta
+GSLT2PARSE_PETTA_FORM_SCALAR_SOURCE = experiments/gslt2parse_foundation/presentations/shared/petta_form_reader_scalar_classes_v1.metta
+GSLT2PARSE_PRIME_DIRECT_GENERATED_C = src/generated/prime_reader_direct_v1.generated.c
+GSLT2PARSE_PRIME_DIRECT_GENERATED_H = src/generated/prime_reader_direct_v1.generated.h
+GSLT2PARSE_PRIME_PROJECTION_SOURCE = experiments/gslt2parse_foundation/presentations/shared/cetta_prime_atom_projection_v1.metta
+GSLT2PARSE_PRIME_READER_SOURCE = experiments/gslt2parse_foundation/presentations/languages/cetta_prime_reader_v1.metta
+GSLT2PARSE_PRIME_SCALAR_SOURCE = experiments/gslt2parse_foundation/presentations/shared/cetta_prime_scalar_classes_v1.metta
+GSLT2PARSE_GENERATED_CHECK_DIR = runtime/gslt2parse-generated-check
 GSLT2PARSE_GENERIC_ENGINE_SOURCES = \
 	$(filter-out $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_%,$(wildcard $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/*.c)) \
 	$(filter-out $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_%,$(wildcard $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/*.h)) \
@@ -1994,6 +2053,10 @@ STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
+	$(HE_COMPILED_READER_TEST_OBJ:.o=.d) \
+	$(PETTA_COMPILED_READER_TEST_OBJ:.o=.d) \
+	$(PRIME_COMPILED_READER_TEST_OBJ:.o=.d) \
+	$(HE_COMPILED_READER_BENCH_OBJ:.o=.d) \
 	$(PRIME_DELAYED_AMBIGUITY_TEST_OBJ:.o=.d) \
 	$(PRIME_PACKAGE_VALIDATION_TEST_OBJ:.o=.d) \
 	$(RUNTIME_NAMED_VAR_TEST_OBJ:.o=.d) \
@@ -2051,7 +2114,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	touch "$@"
 
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(CC) -Isrc -I. $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
+	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -2136,6 +2199,50 @@ $(FALLBACK_EVAL_TEST_BIN): $(FALLBACK_EVAL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_O
 	mv "$$tmp_out" $@
 
 $(FALLBACK_EVAL_TEST_OBJ): $(FALLBACK_EVAL_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(HE_COMPILED_READER_TEST_BIN): $(HE_COMPILED_READER_TEST_OBJ) $(HE_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-compiled-reader.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(HE_COMPILED_READER_TEST_OBJ): $(HE_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PETTA_COMPILED_READER_TEST_BIN): $(PETTA_COMPILED_READER_TEST_OBJ) $(PETTA_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-compiled-reader.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PETTA_COMPILED_READER_TEST_OBJ): $(PETTA_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_COMPILED_READER_TEST_BIN): $(PRIME_COMPILED_READER_TEST_OBJ) $(PRIME_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-compiled-reader.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_COMPILED_READER_TEST_OBJ): $(PRIME_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(HE_COMPILED_READER_BENCH_BIN): $(HE_COMPILED_READER_BENCH_OBJ) $(HE_COMPILED_READER_BENCH_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-he-compiled-reader.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(HE_COMPILED_READER_BENCH_OBJ): $(HE_COMPILED_READER_BENCH_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -2376,6 +2483,21 @@ $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ): $(PARSER_PACK_GUARDED_LEXICAL
 $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_SRC) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_CURSOR_C_EMITTER_V1_OBJ): $(PARSER_PACK_CURSOR_C_EMITTER_V1_SRC) experiments/gslt2parse_foundation/native/parser_pack_cursor_c_emitter_v1.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+.PHONY: build-parser-pack-cursor-generated-v1
+build-parser-pack-cursor-generated-v1: $(PARSER_PACK_CURSOR_GENERATED_V1_LINK_OBJ) $(BUILD_CONFIG_HEADER)
+	@test -n "$(GENERATED_CURSOR_C)" -a -f "$(GENERATED_CURSOR_C)"
+	@test -n "$(GENERATED_CURSOR_BIN)" -a -n "$(GENERATED_CURSOR_PREFIX)"
+	@mkdir -p "$(dir $(GENERATED_CURSOR_BIN))"
+	$(CC) $(CPPFLAGS) -Iexperiments/gslt2parse_foundation/native $(CFLAGS) \
+		-DPP_CURSOR_GENERATED_PREFIX=$(GENERATED_CURSOR_PREFIX) \
+		-o "$(GENERATED_CURSOR_BIN)" \
+		$(PARSER_PACK_CURSOR_GENERATED_V1_TEST_SRC) "$(GENERATED_CURSOR_C)" \
+		$(PARSER_PACK_CURSOR_GENERATED_V1_LINK_OBJ) $(LDFLAGS)
 
 $(PARSER_ATOM_PROJECTION_V1_OBJ): $(PARSER_ATOM_PROJECTION_V1_SRC) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -3814,6 +3936,7 @@ test-gslt2parse-c-production-v1-body: \
 		test-gslt2parse-rhocalc-reader-authority-v1 \
 		test-gslt2parse-rhocalc-parser-pack-v1 \
 		test-gslt2parse-rho-surface-convergence-v1 \
+		test-gslt2parse-he-reader-source-faithfulness-v1 \
 		test-gslt2parse-he-reader-source-correspondence-v1 \
 		test-gslt2parse-he-reader-guard-exec-v1 \
 		test-gslt2parse-he-reader-guarded-lexical-v1 \
@@ -5052,7 +5175,7 @@ test-prime-all: test-prime test-prime-need-algebra \
 	test-prime-type-capacity-mutation
 	@echo "PASS: full Prime correctness gate"
 
-test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
+test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-he-compiled-reader-v1 test-petta-compiled-reader-v1 test-prime-compiled-reader-v1 test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
@@ -5910,6 +6033,134 @@ test-fallback-eval-session: $(FALLBACK_EVAL_TEST_BIN)
 		exit 1; \
 	fi
 
+.PHONY: test-he-compiled-reader-v1
+test-he-compiled-reader-v1: $(HE_COMPILED_READER_TEST_BIN) $(BIN)
+	@result=$$(./$(HE_COMPILED_READER_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | \
+		grep -Fxc '(HECompiledReaderV1Summary 44 44 0 routed-text 1 routed-file 1)')" -ne 1 ]; then \
+		echo "FAIL: compiled HE reader exact integration summary absent or duplicated"; \
+		exit 1; \
+	fi; \
+	if ./$(BIN) --lang he -e '$$' >/dev/null 2>runtime/test-he-compiled-reader-route.err; then \
+		echo "FAIL: HE CLI bypassed the compiled reader's bare-variable rejection"; \
+		exit 1; \
+	fi; \
+	if ! grep -Fq 'compiled HE reader' runtime/test-he-compiled-reader-route.err; then \
+		echo "FAIL: HE CLI rejection did not originate at the compiled reader"; \
+		exit 1; \
+	fi; \
+	for profile in he he-compat he-extended he-prime; do \
+		if ./$(BIN) --lang he --profile "$$profile" -e '$$' \
+				>/dev/null 2>runtime/test-he-compiled-reader-route.err; then \
+			echo "FAIL: $$profile bypassed compiled bare-variable rejection"; \
+			exit 1; \
+		fi; \
+		if ! grep -Fq 'compiled HE reader' \
+				runtime/test-he-compiled-reader-route.err; then \
+			echo "FAIL: $$profile rejection did not originate at compiled reader"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: all four HE profiles select the compiled LanguageDef reader"
+
+.PHONY: test-petta-compiled-reader-v1
+test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(PETTA_COMPILED_READER_TEST_BIN) $(BIN)
+	@result=$$(./$(PETTA_COMPILED_READER_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | \
+		grep -Fxc '(PeTTaCompiledReaderV1Summary 24 24 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
+		echo "FAIL: compiled PeTTa reader exact integration summary absent or duplicated"; \
+		exit 1; \
+	fi; \
+	text_result=$$(./$(BIN) --lang petta -e '!(+ 1 2)' 2>&1); \
+	if [ "$$text_result" != '[3]' ]; then \
+		echo "FAIL: --lang petta text path did not use the compiled reader"; \
+		printf '%s\n' "$$text_result"; \
+		exit 1; \
+	fi; \
+	file_result=$$(./$(BIN) --lang petta \
+		tests/support/petta_compiled_reader_cli.metta 2>&1); \
+	if [ "$$file_result" != '[5]' ]; then \
+		echo "FAIL: --lang petta file path did not use the compiled reader"; \
+		printf '%s\n' "$$file_result"; \
+		exit 1; \
+	fi; \
+	if ./$(BIN) --lang petta -e 'bare-top-token' \
+			>/dev/null 2>runtime/test-petta-compiled-reader-route.err; then \
+		echo "FAIL: --lang petta bypassed its document grammar"; \
+		exit 1; \
+	fi; \
+	if ! grep -Fq 'compiled PeTTa reader' \
+			runtime/test-petta-compiled-reader-route.err; then \
+		echo "FAIL: PeTTa rejection did not originate at the compiled reader"; \
+		exit 1; \
+	fi; \
+	if ! ./$(BIN) --lang prime -e 'bare-top-token' >/dev/null 2>&1; then \
+		echo "FAIL: PeTTa reader installation leaked into --lang prime"; \
+		exit 1; \
+	fi; \
+	if ./$(BIN) --lang petta --profile he-extended -e '!(+ 1 2)' \
+			>/dev/null 2>runtime/test-petta-compiled-reader-profile.err; then \
+		echo "FAIL: PeTTa was silently treated as an HE profile"; \
+		exit 1; \
+	fi; \
+	if ! grep -Fq "language 'petta' has no named profiles" \
+			runtime/test-petta-compiled-reader-profile.err; then \
+		echo "FAIL: PeTTa/HE profile boundary diagnostic changed"; \
+		exit 1; \
+	fi; \
+	echo "PASS: --lang petta owns compiled text/file parsing and remains distinct from HE and Prime"
+
+.PHONY: test-prime-compiled-reader-v1
+test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 test-gslt-prefix-reader-compiler-v1 $(PRIME_COMPILED_READER_TEST_BIN) $(BIN)
+	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 89 89 0 cases 39)')" -ne 1 ]; then \
+		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
+		exit 1; \
+	fi; \
+	text_result=$$(./$(BIN) --lang prime -e '!(+ 1 2)' 2>&1); \
+	if [ "$$text_result" != '[3]' ]; then \
+		echo "FAIL: --lang prime text path did not use the compiled reader"; \
+		printf '%s\n' "$$text_result"; \
+		exit 1; \
+	fi; \
+	file_result=$$(./$(BIN) --lang prime \
+		tests/support/prime_compiled_reader_cli.metta 2>&1); \
+	if [ "$$file_result" != '[5]' ]; then \
+		echo "FAIL: --lang prime file path did not use the compiled reader"; \
+		printf '%s\n' "$$file_result"; \
+		exit 1; \
+	fi; \
+	if ./$(BIN) --lang prime -e '@' \
+			>/dev/null 2>runtime/test-prime-compiled-reader-route.err; then \
+		echo "FAIL: --lang prime bypassed prefix-payload rejection"; \
+		exit 1; \
+	fi; \
+	if ! grep -Fq 'compiled Prime reader' \
+			runtime/test-prime-compiled-reader-route.err; then \
+		echo "FAIL: Prime rejection did not originate at the compiled reader"; \
+		exit 1; \
+	fi; \
+	if ! ./$(BIN) --lang he --profile he-extended -e '@' \
+			>/dev/null 2>&1; then \
+		echo "FAIL: Prime prefix policy leaked into the HE reader"; \
+		exit 1; \
+	fi; \
+	if ./$(BIN) --lang prime --profile he-extended -e '!(+ 1 2)' \
+			>/dev/null 2>runtime/test-prime-compiled-reader-profile.err; then \
+		echo "FAIL: Prime was silently treated as he-extended"; \
+		exit 1; \
+	fi; \
+	if ! grep -Fq "language 'prime' has no named profiles" \
+			runtime/test-prime-compiled-reader-profile.err; then \
+		echo "FAIL: Prime/HE profile boundary diagnostic changed"; \
+		exit 1; \
+	fi; \
+	echo "PASS: --lang prime owns its compiled reader and remains distinct from HE profiles"
+
 test-rhometta-payload-map-capacity-c: $(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 	@./$(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 
@@ -5921,6 +6172,12 @@ test-rhocalc-abt-substitution: $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN)
 		echo "FAIL: rho/ABT substitution correspondence exact summary absent or duplicated"; \
 		exit 1; \
 	fi
+
+.PHONY: bench-he-compiled-reader-v1
+bench-he-compiled-reader-v1: $(HE_COMPILED_READER_BENCH_BIN)
+	@./$(HE_COMPILED_READER_BENCH_BIN) \
+		"$(HE_COMPILED_READER_BENCH_INPUT)" \
+		"$(HE_COMPILED_READER_BENCH_ITERATIONS)"
 
 test-import-modes: $(BIN)
 	@default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
@@ -7243,7 +7500,7 @@ test-gslt2parse-schema-v1-native: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_lowering_v1.metta \
 		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_link_v1.metta
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		cfb9f089560129145cb5ff3c1ac21abae130210c9d89e09280152cb0d8453594 \
+		52969138eb6959175337d2afb72c5cfa6dc43fb25c703f4a0d454fb6fbaf3a03 \
 		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/parserpack/parser_pack_core_v1.metta \
@@ -7270,7 +7527,7 @@ test-gslt2parse-schema-v1-native: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/languages/megalodon_dynamic_v1.metta
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		8215c375ff2f12c25403c8a4d71ac0bbf3e479f884f93eb6e5c436ec3075acfb \
+		9c39249e6f56edfff37766fecd63ecea2a2664eb2a920e27d74d47c3fbc3f1dd \
 		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta \
@@ -7281,7 +7538,7 @@ test-gslt2parse-schema-v1-native: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 		experiments/gslt2parse_foundation/presentations/shared/rho_abstract_syntax_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/rho_runtime_term_abi_v1.metta
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		89628e2267d53c1826709edb14f0af7ba83aa73afbbaaef1a22fc0cd2aa99a3b \
+		5042f6651530edd7a0d8dd397e6fd21ebca21b1ab8693bbd9c1efd99fd2c4895 \
 		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta \
@@ -7451,9 +7708,33 @@ test-gslt2parse-he-string-slr-specialization-v1: \
 		--binary $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN) \
 		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
+test-gslt2parse-he-reader-escape-differential-v1:
+	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_reader_escape_differential_v1.py \
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		--cetta-root "$(CURDIR)" \
+		--mettapedia-root "$${METTAPEDIA_ROOT:-../../Mettapedia}"
+
+test-gslt2parse-he-reader-source-faithfulness-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN)
+	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
+		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@python3 tools/test_he_reader_source_faithfulness_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
+
 test-gslt2parse-he-reader-source-correspondence-v1: \
 		test-gslt2parse-he-unicode-residual-dfa-v1 \
-		test-gslt2parse-he-string-slr-specialization-v1
+		test-gslt2parse-he-string-slr-specialization-v1 \
+		test-gslt2parse-he-reader-escape-differential-v1 \
+		test-gslt2parse-he-reader-source-faithfulness-v1
 	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
 		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
 		exit 1; \
@@ -7600,7 +7881,178 @@ test-gslt2parse-he-reader-guarded-lexical-v1: \
 		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
 		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
 		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--he-root "$(GSLT2PARSE_HE_ROOT)"
+		--he-root "$(GSLT2PARSE_HE_ROOT)" \
+		$(if $(strip $(GSLT2PARSE_HE_GENERATED_C_OUTPUT)),--generated-c-output "$(GSLT2PARSE_HE_GENERATED_C_OUTPUT)",)
+
+.PHONY: refresh-he-compiled-reader-projection-v1 \
+	test-he-compiled-reader-projection-generated-v1 \
+	refresh-he-compiled-reader-cursor-v1 \
+	test-he-compiled-reader-cursor-generated-v1 \
+	refresh-he-compiled-reader-direct-v1 \
+	test-he-compiled-reader-direct-generated-v1 \
+	test-gslt-direct-reader-compiler-v1 \
+	test-he-compiled-reader-generation-v1 \
+	refresh-petta-compiled-reader-direct-v1 \
+	test-petta-compiled-reader-direct-generated-v1 \
+	refresh-prime-compiled-reader-direct-v1 \
+	test-prime-compiled-reader-direct-generated-v1 \
+	test-gslt-prefix-reader-compiler-v1
+
+refresh-he-compiled-reader-projection-v1:
+	@python3 tools/generate_compiled_atom_projection_v1.py \
+		--profile cetta-he-v1 \
+		--prefix cetta_he_projection_v1 \
+		--projection "$(GSLT2PARSE_HE_PROJECTION_SOURCE)" \
+		--reader "$(GSLT2PARSE_HE_READER_SOURCE)" \
+		--output "$(GSLT2PARSE_HE_PROJECTION_GENERATED_H)"
+
+test-he-compiled-reader-projection-generated-v1:
+	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
+	@candidate="$(GSLT2PARSE_GENERATED_CHECK_DIR)/cetta_he_projection_v1.generated.h"; \
+	python3 tools/generate_compiled_atom_projection_v1.py \
+		--profile cetta-he-v1 \
+		--prefix cetta_he_projection_v1 \
+		--projection "$(GSLT2PARSE_HE_PROJECTION_SOURCE)" \
+		--reader "$(GSLT2PARSE_HE_READER_SOURCE)" \
+		--output "$$candidate"; \
+	if ! cmp -s "$$candidate" "$(GSLT2PARSE_HE_PROJECTION_GENERATED_H)"; then \
+		echo "FAIL: checked-in HE host projection is not generated from its LanguageDefs"; \
+		sha256sum "$(GSLT2PARSE_HE_PROJECTION_GENERATED_H)" "$$candidate"; \
+		exit 1; \
+	fi; \
+	echo "PASS: checked-in HE host projection regenerates byte-for-byte"
+
+refresh-he-compiled-reader-cursor-v1:
+	@$(MAKE) --no-print-directory \
+		GSLT2PARSE_HE_ROOT="$(GSLT2PARSE_HE_ROOT)" \
+		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+		GSLT2PARSE_HE_GENERATED_C_OUTPUT="$(GSLT2PARSE_HE_CURSOR_GENERATED_C)" \
+		test-gslt2parse-he-reader-guarded-lexical-v1
+
+test-he-compiled-reader-cursor-generated-v1:
+	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
+	@candidate="$(GSLT2PARSE_GENERATED_CHECK_DIR)/he_reader_cursor_v1.generated.c"; \
+	$(MAKE) --no-print-directory \
+		GSLT2PARSE_HE_ROOT="$(GSLT2PARSE_HE_ROOT)" \
+		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
+		GSLT2PARSE_HE_GENERATED_C_OUTPUT="$$candidate" \
+		test-gslt2parse-he-reader-guarded-lexical-v1; \
+	if ! cmp -s "$$candidate" "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)"; then \
+		echo "FAIL: checked-in HE cursor is not generated from its LanguageDef"; \
+		sha256sum "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)" "$$candidate"; \
+		exit 1; \
+	fi; \
+	echo "PASS: checked-in HE cursor regenerates byte-for-byte"
+
+refresh-he-compiled-reader-direct-v1:
+	@python3 tools/compile_gslt_direct_reader_v1.py \
+		--syntax "$(GSLT2PARSE_HE_READER_SOURCE)" \
+		--classes "$(GSLT2PARSE_HE_SCALAR_SOURCE)" \
+		--projection "$(GSLT2PARSE_HE_PROJECTION_SOURCE)" \
+		--profile cetta-he-v1 \
+		--c-prefix he_reader_direct_v1 \
+		--output-c "$(GSLT2PARSE_HE_DIRECT_GENERATED_C)" \
+		--output-h "$(GSLT2PARSE_HE_DIRECT_GENERATED_H)"
+
+test-he-compiled-reader-direct-generated-v1:
+	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
+	@candidate_c="$(GSLT2PARSE_GENERATED_CHECK_DIR)/he_reader_direct_v1.generated.c"; \
+	candidate_h="$(GSLT2PARSE_GENERATED_CHECK_DIR)/he_reader_direct_v1.generated.h"; \
+	python3 tools/compile_gslt_direct_reader_v1.py \
+		--syntax "$(GSLT2PARSE_HE_READER_SOURCE)" \
+		--classes "$(GSLT2PARSE_HE_SCALAR_SOURCE)" \
+		--projection "$(GSLT2PARSE_HE_PROJECTION_SOURCE)" \
+		--profile cetta-he-v1 \
+		--c-prefix he_reader_direct_v1 \
+		--output-c "$$candidate_c" \
+		--output-h "$$candidate_h"; \
+	if ! cmp -s "$$candidate_c" "$(GSLT2PARSE_HE_DIRECT_GENERATED_C)" || \
+	   ! cmp -s "$$candidate_h" "$(GSLT2PARSE_HE_DIRECT_GENERATED_H)"; then \
+		echo "FAIL: checked-in HE direct reader is not generated from its LanguageDefs"; \
+		sha256sum "$(GSLT2PARSE_HE_DIRECT_GENERATED_C)" "$$candidate_c"; \
+		sha256sum "$(GSLT2PARSE_HE_DIRECT_GENERATED_H)" "$$candidate_h"; \
+		exit 1; \
+	fi; \
+	echo "PASS: checked-in HE direct reader regenerates byte-for-byte"
+
+test-gslt-direct-reader-compiler-v1: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@python3 tools/test_gslt_direct_reader_compiler_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+
+test-he-compiled-reader-generation-v1: \
+	test-he-compiled-reader-projection-generated-v1 \
+	test-he-compiled-reader-cursor-generated-v1 \
+	test-he-compiled-reader-direct-generated-v1 \
+	test-gslt-direct-reader-compiler-v1
+
+refresh-petta-compiled-reader-direct-v1:
+	@python3 tools/compile_gslt_petta_direct_reader_v1.py \
+		--splitter-syntax "$(GSLT2PARSE_PETTA_SPLITTER_SOURCE)" \
+		--splitter-classes "$(GSLT2PARSE_PETTA_SPLITTER_SCALAR_SOURCE)" \
+		--form-syntax "$(GSLT2PARSE_PETTA_FORM_SOURCE)" \
+		--form-classes "$(GSLT2PARSE_PETTA_FORM_SCALAR_SOURCE)" \
+		--projection "$(GSLT2PARSE_PETTA_PROJECTION_SOURCE)" \
+		--profile cetta-petta-v1 \
+		--c-prefix petta_reader_direct_v1 \
+		--output-c "$(GSLT2PARSE_PETTA_DIRECT_GENERATED_C)" \
+		--output-h "$(GSLT2PARSE_PETTA_DIRECT_GENERATED_H)"
+
+test-petta-compiled-reader-direct-generated-v1:
+	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
+	@candidate_c="$(GSLT2PARSE_GENERATED_CHECK_DIR)/petta_reader_direct_v1.generated.c"; \
+	candidate_h="$(GSLT2PARSE_GENERATED_CHECK_DIR)/petta_reader_direct_v1.generated.h"; \
+	python3 tools/compile_gslt_petta_direct_reader_v1.py \
+		--splitter-syntax "$(GSLT2PARSE_PETTA_SPLITTER_SOURCE)" \
+		--splitter-classes "$(GSLT2PARSE_PETTA_SPLITTER_SCALAR_SOURCE)" \
+		--form-syntax "$(GSLT2PARSE_PETTA_FORM_SOURCE)" \
+		--form-classes "$(GSLT2PARSE_PETTA_FORM_SCALAR_SOURCE)" \
+		--projection "$(GSLT2PARSE_PETTA_PROJECTION_SOURCE)" \
+		--profile cetta-petta-v1 \
+		--c-prefix petta_reader_direct_v1 \
+		--output-c "$$candidate_c" \
+		--output-h "$$candidate_h"; \
+	if ! cmp -s "$$candidate_c" "$(GSLT2PARSE_PETTA_DIRECT_GENERATED_C)" || \
+	   ! cmp -s "$$candidate_h" "$(GSLT2PARSE_PETTA_DIRECT_GENERATED_H)"; then \
+		echo "FAIL: checked-in PeTTa direct reader is not generated from its composed LanguageDefs"; \
+		sha256sum "$(GSLT2PARSE_PETTA_DIRECT_GENERATED_C)" "$$candidate_c"; \
+		sha256sum "$(GSLT2PARSE_PETTA_DIRECT_GENERATED_H)" "$$candidate_h"; \
+		exit 1; \
+	fi; \
+	echo "PASS: checked-in PeTTa direct reader regenerates byte-for-byte"
+
+refresh-prime-compiled-reader-direct-v1:
+	@python3 tools/compile_gslt_prefix_reader_v1.py \
+		--syntax "$(GSLT2PARSE_PRIME_READER_SOURCE)" \
+		--classes "$(GSLT2PARSE_PRIME_SCALAR_SOURCE)" \
+		--projection "$(GSLT2PARSE_PRIME_PROJECTION_SOURCE)" \
+		--profile cetta-prime-v1 \
+		--c-prefix prime_reader_direct_v1 \
+		--output-c "$(GSLT2PARSE_PRIME_DIRECT_GENERATED_C)" \
+		--output-h "$(GSLT2PARSE_PRIME_DIRECT_GENERATED_H)"
+
+test-prime-compiled-reader-direct-generated-v1:
+	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
+	@candidate_c="$(GSLT2PARSE_GENERATED_CHECK_DIR)/prime_reader_direct_v1.generated.c"; \
+	candidate_h="$(GSLT2PARSE_GENERATED_CHECK_DIR)/prime_reader_direct_v1.generated.h"; \
+	python3 tools/compile_gslt_prefix_reader_v1.py \
+		--syntax "$(GSLT2PARSE_PRIME_READER_SOURCE)" \
+		--classes "$(GSLT2PARSE_PRIME_SCALAR_SOURCE)" \
+		--projection "$(GSLT2PARSE_PRIME_PROJECTION_SOURCE)" \
+		--profile cetta-prime-v1 \
+		--c-prefix prime_reader_direct_v1 \
+		--output-c "$$candidate_c" \
+		--output-h "$$candidate_h"; \
+	if ! cmp -s "$$candidate_c" "$(GSLT2PARSE_PRIME_DIRECT_GENERATED_C)" || \
+	   ! cmp -s "$$candidate_h" "$(GSLT2PARSE_PRIME_DIRECT_GENERATED_H)"; then \
+		echo "FAIL: checked-in Prime reader is not generated from its LanguageDefs"; \
+		sha256sum "$(GSLT2PARSE_PRIME_DIRECT_GENERATED_C)" "$$candidate_c"; \
+		sha256sum "$(GSLT2PARSE_PRIME_DIRECT_GENERATED_H)" "$$candidate_h"; \
+		exit 1; \
+	fi; \
+	echo "PASS: checked-in Prime direct reader regenerates byte-for-byte"
+
+test-gslt-prefix-reader-compiler-v1:
+	@python3 tools/test_gslt_prefix_reader_compiler_v1.py
 
 test-gslt2parse-he-document-pipeline-v1: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
@@ -7915,7 +8367,7 @@ refresh-he-matrices:
 .PHONY: test-lib-parse-abt-bridge
 .PHONY: test-lib-parse-glr-utf8-forest
 .PHONY: test-gslt2parse-parser-pack-glr-v1-native test-gslt2parse-parser-pack-glr-v1-matrix test-gslt2parse-parser-pack-wide-scale-v1 test-gslt2parse-parser-pack-lexical-v1-native test-gslt2parse-parser-pack-lexical-v1-matrix test-gslt2parse-generic-engine-purity-v1 test-gslt2parse-c-production-v1 test-gslt2parse-c-production-v1-body
-.PHONY: test-gslt2parse-parser-pack-native-api-v1-matrix test-gslt2parse-parser-pack-native-petta-v1 test-gslt2parse-parser-pack-native-petta-v1-body test-gslt2parse-he-parser-authority-v1 test-gslt2parse-he-unicode-residual-dfa-v1 test-gslt2parse-he-string-slr-specialization-v1 test-gslt2parse-he-reader-source-correspondence-v1 test-gslt2parse-rho-abstract-syntax-v1 test-gslt2parse-rhocalc-reader-authority-v1 test-gslt2parse-rhocalc-parser-pack-v1 test-gslt2parse-he-reader-guard-exec-v1 test-gslt2parse-he-reader-guarded-lexical-v1 test-gslt2parse-he-document-pipeline-v1 test-gslt2parse-he-gslt-parse-only-v1 bench-gslt2parse-he-gslt-parse-only-v1 test-gslt2parse-petta-form-guard-exec-v1 test-gslt2parse-petta-document-splitter-v1 test-gslt2parse-petta-document-pipeline-v1 test-gslt2parse-petta-ffi-v1 test-gslt2parse-petta-parser-authority-v1 test-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-prepared-final-forest-v1
+.PHONY: test-gslt2parse-parser-pack-native-api-v1-matrix test-gslt2parse-parser-pack-native-petta-v1 test-gslt2parse-parser-pack-native-petta-v1-body test-gslt2parse-he-parser-authority-v1 test-gslt2parse-he-unicode-residual-dfa-v1 test-gslt2parse-he-string-slr-specialization-v1 test-gslt2parse-he-reader-escape-differential-v1 test-gslt2parse-he-reader-source-faithfulness-v1 test-gslt2parse-he-reader-source-correspondence-v1 test-gslt2parse-rho-abstract-syntax-v1 test-gslt2parse-rhocalc-reader-authority-v1 test-gslt2parse-rhocalc-parser-pack-v1 test-gslt2parse-he-reader-guard-exec-v1 test-gslt2parse-he-reader-guarded-lexical-v1 test-gslt2parse-he-document-pipeline-v1 test-gslt2parse-he-gslt-parse-only-v1 bench-gslt2parse-he-gslt-parse-only-v1 test-gslt2parse-petta-form-guard-exec-v1 test-gslt2parse-petta-document-splitter-v1 test-gslt2parse-petta-document-pipeline-v1 test-gslt2parse-petta-ffi-v1 test-gslt2parse-petta-parser-authority-v1 test-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-prepared-final-forest-v1
 .PHONY: test-gslt2parse-parser-pack-lexical-plan-v1 test-gslt2parse-parser-pack-guarded-lexical-v1
 .PHONY: test-gslt2parse-rho-surface-convergence-v1
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-var-scope-across-exprs test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-rhocalc-cost-differential test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

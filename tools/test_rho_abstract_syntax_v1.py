@@ -21,7 +21,7 @@ RUNTIME_ABI = PRESENTATIONS / "shared" / "rho_runtime_term_abi_v1.metta"
 STRICT_RHO = PRESENTATIONS / "languages" / "cetta_rho_reader_v1.metta"
 STRICT_MRHO = PRESENTATIONS / "languages" / "cetta_rho_mrho_reader_v1.metta"
 LEAN_EXPORTER = ROOT / "tests" / "support" / "export_rho_abstract_syntax_v1.lean"
-EXPECTED_ORIGIN_COMMIT = "7842a1202f4fa968dd167d7de0933b1173fb7c91"
+EXPECTED_ORIGIN_COMMIT = "3513b71898622ee653feac2e3648561db0d400ab"
 EXPECTED_ORIGIN_SHA256 = "4aed44b85b147e0142bedf8824cd51d4da4c43562f756fcf75a1bc92cd07386a"
 EXPECTED_PACKAGE_DIGEST = "ee90a8366ce08bd38cc04a92ffb81d633031e1f95aa646db87b8fe3e8c708563"
 

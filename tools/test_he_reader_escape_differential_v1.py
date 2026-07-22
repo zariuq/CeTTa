@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a ratification-neutral Rust/CeTTa/LeaTTa escape differential."""
+"""Run the ratified HE escape contract against Rust/CeTTa/LeaTTa."""
 
 from __future__ import annotations
 
@@ -84,11 +84,17 @@ def load_fixture() -> dict[str, Any]:
         raise GateFailure("escape differential fixture is unreadable") from error
     if fixture.get("schema") != "he-reader-escape-differential-v1":
         raise GateFailure("escape differential schema changed")
+    expected_semantics = {
+        "simple_escape": "apostrophe-quote-backslash-n-r-t",
+        "byte_escape": "exactly-two-hex-digits-through-7f",
+        "unicode_escape": "one-brace-one-through-six-hex-unicode-scalar",
+        "malformed_escape": "rejected",
+    }
     if (
-        fixture.get("policy") != "observational-only-ratification-neutral"
-        or fixture.get("canonical_semantics") is not None
+        fixture.get("policy") != "ratified-he-syntax-v1"
+        or fixture.get("canonical_semantics") != expected_semantics
     ):
-        raise GateFailure("escape fixture silently selects canonical semantics")
+        raise GateFailure("escape fixture lacks the ratified HE semantics")
     cases = fixture.get("cases")
     if not isinstance(cases, list) or len(cases) != 18:
         raise GateFailure("escape differential case inventory changed")
@@ -187,6 +193,7 @@ def build_cetta_oracle(cetta_root: Path) -> Path:
             str(ROOT / "tools" / "cetta_parser_oracle_v1.c"),
             str(cetta_root / "src" / "symbol.c"),
             str(cetta_root / "src" / "atom.c"),
+            str(cetta_root / "src" / "name_key.c"),
             str(cetta_root / "src" / "parser.c"),
             "-lpthread",
             "-lm",
@@ -334,7 +341,7 @@ def check_unicode_seam(fixture: dict[str, Any]) -> tuple[int, int, int, int]:
             or body != expected.get("body")
         ):
             raise GateFailure(f"{case['id']}: Unicode envelope changed")
-        accepts = opening >= 1 and closing and residual_accepts(states, body)
+        accepts = opening == 1 and closing and residual_accepts(states, body)
         covers = accepts and minimum <= len(body) <= maximum
         if (
             accepts != expected.get("recognizer_accepts")
@@ -348,7 +355,7 @@ def check_unicode_seam(fixture: dict[str, Any]) -> tuple[int, int, int, int]:
     expected_seam = fixture.get("expected_strict_seam")
     if not isinstance(expected_seam, list) or seam != set(expected_seam):
         raise GateFailure("GSLT recognition/action strict seam changed")
-    if (unicode_cases, recognized, projected, len(seam)) != (11, 5, 2, 3):
+    if (unicode_cases, recognized, projected, len(seam)) != (11, 1, 1, 0):
         raise GateFailure("GSLT Unicode seam accounting changed")
     return unicode_cases, recognized, projected, len(seam)
 
