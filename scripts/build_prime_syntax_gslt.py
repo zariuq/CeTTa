@@ -71,7 +71,14 @@ def unary_form(head: str, value: str) -> str:
     return f"(expression (cons {symbol(head)} (cons {value} nil)))"
 
 
-def emit(path: Path, *, include_universal_names: bool = True) -> None:
+def emit(
+    path: Path,
+    *,
+    include_universal_names: bool = True,
+    bare_dollar: str = "variable",
+) -> None:
+    if bare_dollar not in {"symbol", "variable"}:
+        raise ValueError(f"unsupported bare-dollar classification: {bare_dollar}")
     out: list[str] = []
     out.append("""; Prime concrete reader as an ordinary scannerless GSLT/Horn presentation.
 ; The input alphabet is UTF-8 code units.  No lexical callback, token table,
@@ -210,9 +217,12 @@ def emit(path: Path, *, include_universal_names: bool = True) -> None:
     # spellings.  Everything else remains an uninterpreted symbol.
     out.append(rule("classify-token-start", "(classify-token ?raw ?atom)",
                     "(classify-start ?raw ?raw ?atom)"))
+    bare_dollar_atom = (
+        "(symbol ?original)" if bare_dollar == "symbol" else "(variable nil)"
+    )
     out += [
         fact("classify-dollar-alone",
-             "(classify-start (cons (cp 36) nil) ?original (symbol ?original))"),
+             f"(classify-start (cons (cp 36) nil) ?original {bare_dollar_atom})"),
         rule("classify-dollar-variable",
              "(classify-start (cons (cp 36) (cons ?cp ?tail)) ?original (variable (cons ?cp ?tail)))",
              "(member dollar-tail-start ?cp)"),
@@ -417,9 +427,19 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("output", type=Path)
     ap.add_argument("--without-universal-names", action="store_true")
+    ap.add_argument(
+        "--bare-dollar",
+        choices=("symbol", "variable"),
+        default="variable",
+        help="classify bare `$` lexically; variable identity is an elaboration policy",
+    )
     args = ap.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    emit(args.output, include_universal_names=not args.without_universal_names)
+    emit(
+        args.output,
+        include_universal_names=not args.without_universal_names,
+        bare_dollar=args.bare_dollar,
+    )
 
 if __name__ == "__main__":
     main()
