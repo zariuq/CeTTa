@@ -1,0 +1,15 @@
+; Regression: MM2 variables are EXPRESSION-LOCAL.
+;
+; A variable-bearing expression must not shift the variable indices of any later
+; expression. Before the per-expression scope fix in bridge_parse_expr_chunk, the
+; file-global variable table made the rule below emit a VarRef with no matching
+; NewVar, so the template instantiated an unbound variable and (b 1) came out as (b $).
+;
+; The two variable-bearing facts before the rule are the whole point of this fixture:
+; every other mm2 fixture has at most one, which is exactly the condition under which
+; the defect cannot appear.
+
+(a 1)
+(t $q)
+(u $r $r)
+(exec (1) (, (a $x)) (, (b $x)))

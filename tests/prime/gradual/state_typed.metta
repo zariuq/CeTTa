@@ -1,5 +1,8 @@
-; Runtime half of a typed mutable-state example.  Annotation erasure must not
-; change the state transitions or the values observed around them.
+; Runtime half of a typed state-effect example.  Annotation erasure must not
+; change either the receipt-local writes or the ambient observations around
+; them.  nop is an explicit effect sink, so it demands its argument under
+; Prime Need; without an explicit commit policy, the demanded write remains in
+; its branch receipt and does not mutate the ambient cell.
 
 (: prime-grad:read (-> (StateMonad Number) Number))
 (: prime-grad:increment! (-> (StateMonad Number) (StateMonad Number)))

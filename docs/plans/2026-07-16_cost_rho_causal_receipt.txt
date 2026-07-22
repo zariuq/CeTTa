@@ -140,9 +140,9 @@ Lean semantics and valuations
 
 The owned modules are:
 
-* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Receipt.lean`;
-* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Valuation.lean`;
-* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Costed/Examples.lean`.
+* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Cost/Receipt.lean`;
+* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Cost/Valuation.lean`;
+* `Mettapedia/Languages/ProcessCalculi/RhoCalculus/Cost/Examples.lean`.
 
 `CausalReceipt` requires a finite event carrier.  Its direct arcs carry natural
 multiplicity and a rank certificate; the generated reachability relation is

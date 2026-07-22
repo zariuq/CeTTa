@@ -138,7 +138,7 @@
 (= (lp-abt:tree-go $g $tree)
    (case $tree
      (((Lf $value) (Ok (Con $value)))
-      ((Bv $index) (Ok (Var $index)))
+      ((Bv $index) (Ok (idx $index)))
       ((Nd $label $kids) (lp-abt:tree-node $g $label $kids))
       ($other (Rejected bad-canonical-tree)))))
 

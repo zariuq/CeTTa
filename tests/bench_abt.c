@@ -33,7 +33,7 @@ static int compare_u64(const void *left, const void *right) {
 }
 
 static Atom *abt_leaf(Arena *arena) {
-    return atom_expr2(arena, atom_symbol(arena, "Var"), atom_int(arena, 0));
+    return atom_expr2(arena, atom_symbol(arena, "idx"), atom_int(arena, 0));
 }
 
 static Atom *build_balanced_abt(Arena *arena, uint32_t depth) {
@@ -69,7 +69,7 @@ static Atom *build_deep_binder(Arena *arena, const char *head,
                                uint32_t depth) {
     assert(depth > 0u);
     Atom *term = atom_expr2(
-        arena, atom_symbol(arena, "Var"), atom_int(arena, depth - 1u));
+        arena, atom_symbol(arena, "idx"), atom_int(arena, depth - 1u));
     Atom *type = atom_symbol(arena, "A");
     for (uint32_t i = 0; i < depth; i++)
         term = atom_expr3(arena, atom_symbol(arena, head), type, term);

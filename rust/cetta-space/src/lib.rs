@@ -53,24 +53,49 @@ impl<'a> BridgeExprParser<'a> {
     }
 }
 
-pub fn bridge_parse_single_expr(space: &mut Space, input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut parse_buffer = vec![0u8; input.len().saturating_mul(4).saturating_add(4096)];
-    let mut parser = BridgeExprParser::new(space)?;
-    let mut context = Context::new(input);
+/// Parse exactly one expression, in a fresh binder scope.
+///
+/// MM2/MORK variables are EXPRESSION-LOCAL: `Tag::NewVar` marks a variable's first
+/// occurrence within an expression, and `Tag::VarRef(i)` indexes the `NewVar`s introduced
+/// within that same expression. The scope must therefore be reset for every expression --
+/// MORK does this in its loader (`MORK/kernel/src/space.rs`, `it.variables.clear()` at the
+/// end of each `load_all_sexpr_impl` iteration). Carrying one table across a whole file
+/// shifts every later expression's indices and yields dangling `VarRef`s.
+///
+/// This is the single place CeTTa establishes that scope; every parse entry point goes
+/// through it, so the invariant cannot be lost by adding another caller. Clearing on entry
+/// rather than exit also covers the first expression and survives any future early return.
+fn parse_one_expr(
+    parser: &mut BridgeExprParser<'_>,
+    context: &mut Context<'_>,
+    capacity: usize,
+    what: &str,
+) -> Result<Vec<u8>, String> {
+    context.variables.clear();
+
+    let mut parse_buffer = vec![0u8; capacity];
     let mut ez = ExprZipper::new(Expr {
         ptr: parse_buffer.as_mut_ptr(),
     });
-
     parser
-        .sexpr(&mut context, &mut ez)
-        .map_err(|e| format!("pattern parse failed: {:?}", e))?;
+        .sexpr(context, &mut ez)
+        .map_err(|e| format!("{} parse failed: {:?}", what, e))?;
+    parse_buffer.truncate(ez.loc);
+    Ok(parse_buffer)
+}
+
+pub fn bridge_parse_single_expr(space: &mut Space, input: &[u8]) -> Result<Vec<u8>, String> {
+    let capacity = input.len().saturating_mul(4).saturating_add(4096);
+    let mut parser = BridgeExprParser::new(space)?;
+    let mut context = Context::new(input);
+
+    let parse_buffer = parse_one_expr(&mut parser, &mut context, capacity, "pattern")?;
 
     skip_trailing(&mut context).map_err(|e| format!("pattern trailing parse failed: {:?}", e))?;
     if context.loc < context.src.len() {
         return Err("pattern contains trailing non-whitespace input".to_string());
     }
 
-    parse_buffer.truncate(ez.loc);
     Ok(parse_buffer)
 }
 
@@ -86,14 +111,8 @@ pub fn bridge_parse_expr_chunk(space: &mut Space, input: &[u8]) -> Result<Vec<Ve
         }
 
         let remaining = &context.src[context.loc..];
-        let mut parse_buffer = vec![0u8; remaining.len().saturating_mul(4).saturating_add(4096)];
-        let mut ez = ExprZipper::new(Expr {
-            ptr: parse_buffer.as_mut_ptr(),
-        });
-        parser
-            .sexpr(&mut context, &mut ez)
-            .map_err(|e| format!("chunk parse failed: {:?}", e))?;
-        parse_buffer.truncate(ez.loc);
+        let capacity = remaining.len().saturating_mul(4).saturating_add(4096);
+        let parse_buffer = parse_one_expr(&mut parser, &mut context, capacity, "chunk")?;
         out.push(parse_buffer);
     }
 

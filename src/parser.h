@@ -54,4 +54,43 @@ const char *parser_canonicalize_namespace_token(Arena *a, const char *tok);
 bool parser_set_rational_literals_enabled(bool enabled);
 bool parser_rational_literals_enabled(void);
 
+/* Prime's reflective surface: @e, *n, and structurally named $@e variables.
+   Other language profiles retain their own reader. */
+bool parser_set_universal_name_syntax_enabled(bool enabled);
+bool parser_universal_name_syntax_enabled(void);
+
+typedef enum {
+    PARSER_SYNTAX_QUOTE,
+    PARSER_SYNTAX_UNQUOTE,
+    PARSER_SYNTAX_VAR,
+    PARSER_SYNTAX_REF,
+    PARSER_SYNTAX_EXEC,
+} ParserSyntaxFormKind;
+
+typedef struct {
+    ParserSyntaxFormKind kind;
+    const char *compact;
+    const char *expanded;
+} ParserSyntaxFormSpec;
+
+typedef enum {
+    PARSER_SYNTAX_PRINT_COMPACT,
+    PARSER_SYNTAX_PRINT_EXPANDED,
+} ParserSyntaxPrintMode;
+
+/* One notation ledger is shared by reader lowering and both printers. */
+const ParserSyntaxFormSpec *parser_syntax_form_specs(size_t *count_out);
+
+/* Parse one complete source form. A leading top-level ! is represented as
+   (syn:exec form), so source directives remain ordinary inspectable data. */
+Atom *parser_read_source_form(Arena *a, const char *text);
+
+/* Render reader-admissible syntax. Returns NULL for runtime-only grounded
+   handles, whose debug renderings are intentionally not reader syntax. */
+char *parser_render_syntax(Arena *a, Atom *atom, ParserSyntaxPrintMode mode);
+
+bool parser_syn_exec_payload(Atom *form, Atom **payload_out);
+bool parser_syn_exec_payload_id(const TermUniverse *universe, AtomId form_id,
+                                AtomId *payload_out);
+
 #endif /* CETTA_PARSER_H */

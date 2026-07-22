@@ -1,9 +1,13 @@
-; Fast list helpers for CeTTa.
+; Finite sequences represented by the children of an ordinary expression.
 ;
-; Design intent:
-; - This is the normal list lane users should reach for.
-; - It is backed by ordinary expressions and thin wrappers over native primitives.
-; - Explicit cons-lists live separately in clist.metta.
+; Algebraic domain: list operations range over Expression atoms, identified
+; with the free monoid of finite Atom sequences. On that domain:
+;   append has () as identity and is associative;
+;   reverse is an involution and preserves length;
+;   cons/first/rest satisfy first(cons x xs)=x and rest(cons x xs)=xs.
+; first, rest, at, and cons retain the native partiality of car-atom,
+; cdr-atom, index-atom, and cons-atom outside their stated domains.
+; Explicit inductive lists and the representation isomorphism live in clist.
 
 (= (list:is-empty $xs)
    (== $xs ()))
@@ -47,7 +51,8 @@
 
 (= (list:reverse-acc $xs $acc)
    (let ($head $tail) (decons-atom $xs)
-     (eval (list:reverse-acc $tail (cons-atom $head $acc)))))
+     (let $next (eval (cons-atom $head $acc))
+       (eval (list:reverse-acc $tail $next)))))
 
 (= (list:map $xs $var $body)
    (map-atom $xs $var $body))
