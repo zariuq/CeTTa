@@ -1,7 +1,12 @@
 {
   "schema": "he-reader-escape-differential-v1",
-  "policy": "observational-only-ratification-neutral",
-  "canonical_semantics": null,
+  "policy": "ratified-he-syntax-v1",
+  "canonical_semantics": {
+    "simple_escape": "apostrophe-quote-backslash-n-r-t",
+    "byte_escape": "exactly-two-hex-digits-through-7f",
+    "unicode_escape": "one-brace-one-through-six-hex-unicode-scalar",
+    "malformed_escape": "rejected"
+  },
   "authorities": {
     "rust_parser": {
       "path": "hyperon-experimental/lib/src/metta/text.rs",
@@ -10,21 +15,21 @@
     },
     "cetta_parser": {
       "path": "src/parser.c",
-      "sha256": "7436200a621ddcb7c4a8a13e3d6358507f04a8a39716ee5afee416b45573f42a"
+      "sha256": "a9136b16231b687b0c26adefde1bb6da71d4c431b0bc1d1e2854c158d0276554"
     },
     "leatta_parser": {
       "path": "lean/algorithms/Algorithms/MeTTa/Simple/Parser.lean",
-      "revision": "7842a1202f4fa968dd167d7de0933b1173fb7c91",
+      "revision": "3513b71898622ee653feac2e3648561db0d400ab",
       "sha256": "73eb8d692526964a7c754c490702329e552dfce861ea32b584933ec8880bd3f0"
     },
     "leatta_consumed_spec": {
       "path": "lean/batteries/mettail-core/MeTTailCore/MeTTaSyntax/Spec.lean",
-      "revision": "7842a1202f4fa968dd167d7de0933b1173fb7c91",
+      "revision": "3513b71898622ee653feac2e3648561db0d400ab",
       "sha256": "3b6cdc8e6939622cb9705bc43442aa6f86e9f0989eae1b05e31e0cc6817e610b"
     },
     "gslt_recognizer": {
       "path": "experiments/gslt2parse_foundation/presentations/languages/he_reader_v1.metta",
-      "sha256": "271d4d5aeeb524cd0ff6d1e3bd1aeff0bdfacd06160500bf862c01c30337228b"
+      "sha256": "d5b3fe033971baff9a71dfe8964d7e9139f2006a6789a6a1b2ef9249025e6d18"
     },
     "gslt_projection": {
       "path": "experiments/gslt2parse_foundation/presentations/shared/sexpr_atom_projection_v1.metta",
@@ -47,11 +52,7 @@
     "max_codepoint": 1114111,
     "radix": 16
   },
-  "expected_strict_seam": [
-    "unicode-empty",
-    "unicode-seven-leading-zero",
-    "unicode-eight-leading-zero"
-  ],
+  "expected_strict_seam": [],
   "cases": [
     {
       "id": "simple-newline",
@@ -96,7 +97,7 @@
       "rust": {"status": "accepted", "value_hex": "220022"},
       "cetta": {"status": "accepted", "value_hex": "757b7d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b7d22"},
-      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "", "recognizer_accepts": true, "projection_covers": false}
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "", "recognizer_accepts": false, "projection_covers": false}
     },
     {
       "id": "unicode-repeat-open",
@@ -104,7 +105,7 @@
       "rust": {"status": "accepted", "value_hex": "224122"},
       "cetta": {"status": "accepted", "value_hex": "757b7b34317d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b7b34317d22"},
-      "unicode": {"opening_braces": 2, "has_closing_brace": true, "body": "41", "recognizer_accepts": true, "projection_covers": true}
+      "unicode": {"opening_braces": 2, "has_closing_brace": true, "body": "41", "recognizer_accepts": false, "projection_covers": false}
     },
     {
       "id": "unicode-invalid-hex",
@@ -152,7 +153,7 @@
       "rust": {"status": "accepted", "value_hex": "224122"},
       "cetta": {"status": "accepted", "value_hex": "757b303030303034317d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b303030303034317d22"},
-      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "0000041", "recognizer_accepts": true, "projection_covers": false}
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "0000041", "recognizer_accepts": false, "projection_covers": false}
     },
     {
       "id": "unicode-eight-leading-zero",
@@ -160,7 +161,7 @@
       "rust": {"status": "accepted", "value_hex": "224122"},
       "cetta": {"status": "accepted", "value_hex": "757b30303030303034317d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b30303030303034317d22"},
-      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "00000041", "recognizer_accepts": true, "projection_covers": false}
+      "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "00000041", "recognizer_accepts": false, "projection_covers": false}
     },
     {
       "id": "string-unclosed",

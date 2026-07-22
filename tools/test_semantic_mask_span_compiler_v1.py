@@ -41,10 +41,10 @@ CANARY_SOURCES = (
 )
 
 EXPECTED_SOURCE_DIGEST = (
-    "b09ce7368249363ec8f5e624d3554e44ddd05e5011c08adda1351d0a1782eac9"
+    "ecf63c6d9c777f34e93d769af322b21bf2082c9e3d7850a4f6fb197e73539580"
 )
 EXPECTED_COMPILER_DIGEST = (
-    "29b48a49350f45bdaebb777556f2d6ec855bf35610d7bb02110c4a7e7bdeba64"
+    "61e47fd81d24ee79e119810f99ee49bccfd1e03a7675850bc16feee1e1cb2a16"
 )
 EXPECTED_ROOT_LINK_DIGEST = (
     "e0ab61597f3feec4d99ce9586a6294be1a897b27ebfb623f043eb73f78308f7e"
@@ -65,23 +65,23 @@ MASK_CASES = {
     "variable": {
         "recognition": "he-variable",
         "guarded": True,
-        "answers": 11,
+        "answers": 15,
         "mask_digest": (
-            "872ddeb3e4a9187f522b0cba0b080e0c781f20098c941fe3c57caf3e446d8507"
+            "450ccf1a889bce49199e3c3e1944724a154dab2abce262c4001762872db36af5"
         ),
         "recognition_digest": (
-            "3eda97d4c6fe0429cbe5712b4ed6a740d628c0dc0ce379d83c1ea7b6fa7f505b"
+            "23913c837514116a645ab9ef84121799dea82b44b7578071d0b9deeba239a412"
         ),
     },
     "string": {
         "recognition": "he-string",
         "guarded": False,
-        "answers": 2987,
+        "answers": 716,
         "mask_digest": (
-            "8e0b3f59bd182c84e2b143ccd7922c818d7ac9446b091219bda754debbe0c377"
+            "03d5be20a906cb44673e9d41e49f26bbc1db52307790563783d6d92d0cfb0ecc"
         ),
         "recognition_digest": (
-            "133fa386d9af9bc745ed4d6454f9a1e820bdd3e8507a419a5404cc79b06dbb7c"
+            "36de2ebbf582532c577a334730beb952d9c09eed2edc8b8fe6fc899cad880b6f"
         ),
     },
 }
@@ -128,24 +128,24 @@ EXPECTED_CERTIFICATES: dict[str, dict[str, str]] = {
         "source-digest": EXPECTED_SOURCE_DIGEST,
         "semantic-compiler-digest": EXPECTED_COMPILER_DIGEST,
         "mask-answer-digest": (
-            "8d4ab010903292df3ad69be1d17742f8bb6b821f71da9e746296ae53321f6c9b"
+            "23fad975287370b444d90b68c856c8090367e94c3a7d7cb980aab662d41f6454"
         ),
-        "mask-answers": "12",
+        "mask-answers": "16",
         "recognition-answer-digest": str(
             MASK_CASES["variable"]["recognition_digest"]
         ),
-        "recognition-answers": "11",
+        "recognition-answers": "15",
         "mask-build-outcome": "completed",
         "mask-action-build-outcome": "completed",
         "recognition-build-outcome": "completed",
-        "mask-states": "3",
-        "mask-transitions": "29",
+        "mask-states": "4",
+        "mask-transitions": "46",
         "mask-actions": "2",
         "mask-wrappers": "0",
         "mask-root-links": "1",
         "action-local": "1",
-        "functionality-pairs": "3",
-        "functionality-work": "3",
+        "functionality-pairs": "4",
+        "functionality-work": "4",
         "functional": "1",
         "mask-in-recognition": "1",
         "recognition-in-mask": "1",
@@ -158,24 +158,24 @@ EXPECTED_CERTIFICATES: dict[str, dict[str, str]] = {
         "source-digest": EXPECTED_SOURCE_DIGEST,
         "semantic-compiler-digest": EXPECTED_COMPILER_DIGEST,
         "mask-answer-digest": (
-            "68d353a37da0de9e8e0691ad202e66715b20ddbd9444d9691722ae1848a61dea"
+            "0c6a8fe766d2693f5aebb400f0ec1eab1042e613e68344be34a59f98b98c6abe"
         ),
-        "mask-answers": "2988",
+        "mask-answers": "717",
         "recognition-answer-digest": str(
             MASK_CASES["string"]["recognition_digest"]
         ),
-        "recognition-answers": "2987",
+        "recognition-answers": "716",
         "mask-build-outcome": "completed",
-        "mask-action-build-outcome": "annotation-conflict",
+        "mask-action-build-outcome": "completed",
         "recognition-build-outcome": "completed",
-        "mask-states": "231",
-        "mask-transitions": "1068",
+        "mask-states": "71",
+        "mask-transitions": "261",
         "mask-actions": "5",
         "mask-wrappers": "3",
         "mask-root-links": "1",
-        "action-local": "0",
-        "functionality-pairs": "480",
-        "functionality-work": "3523",
+        "action-local": "1",
+        "functionality-pairs": "76",
+        "functionality-work": "393",
         "functional": "1",
         "mask-in-recognition": "1",
         "recognition-in-mask": "1",
@@ -187,8 +187,8 @@ EXPECTED_CERTIFICATES: dict[str, dict[str, str]] = {
 }
 for _label, _probe in {
     "word": ("1", "4", "4", "0", "0", "15"),
-    "variable": ("1", "4", "3", "1", "0", "13"),
-    "string": ("0", "0", "0", "0", "0", "0"),
+    "variable": ("1", "4", "3", "1", "0", "10"),
+    "string": ("1", "15", "1", "9", "5", "28"),
 }.items():
     EXPECTED_CERTIFICATES[_label].update(
         {
@@ -217,17 +217,17 @@ for _label, _trace in {
         "trace-probe-wrapper": "0",
         "trace-probe-work": "20",
         "certificate-digest": (
-            "4eb9a0f6df9a813269e2b32a3ad1a40d786f41b3e712b7fe17c0d082c0423d73"
+            "f524eec7219ac20d4897c4938d1ea63f2ae75c1e9389bdcde8ef77ed74403167"
         ),
     },
     "variable": {
         "mask-trace-build-outcome": "completed",
-        "trace-states": "3",
-        "trace-transitions": "31",
-        "trace-action-local-transitions": "31",
-        "trace-backsteps": "125",
-        "trace-functionality-pairs": "3",
-        "trace-functionality-work": "3",
+        "trace-states": "4",
+        "trace-transitions": "49",
+        "trace-action-local-transitions": "49",
+        "trace-backsteps": "259",
+        "trace-functionality-pairs": "4",
+        "trace-functionality-work": "4",
         "trace-probe-ran": "1",
         "trace-probe-scalars": "4",
         "trace-probe-copy": "3",
@@ -235,25 +235,25 @@ for _label, _trace in {
         "trace-probe-wrapper": "0",
         "trace-probe-work": "14",
         "certificate-digest": (
-            "b3cff164dad3bcc10537053de9dac20ef2b58e30b09433d8a30517d7f7128b6f"
+            "1090fd34ba75b8592c948e95f0ad4d46cc0ad9c6a0d82c7dbf60e46d0bedcf07"
         ),
     },
     "string": {
         "mask-trace-build-outcome": "completed",
-        "trace-states": "231",
-        "trace-transitions": "2345",
-        "trace-action-local-transitions": "2181",
-        "trace-backsteps": "89006",
-        "trace-functionality-pairs": "480",
-        "trace-functionality-work": "3523",
+        "trace-states": "71",
+        "trace-transitions": "710",
+        "trace-action-local-transitions": "710",
+        "trace-backsteps": "16754",
+        "trace-functionality-pairs": "76",
+        "trace-functionality-work": "393",
         "trace-probe-ran": "1",
         "trace-probe-scalars": "15",
         "trace-probe-copy": "1",
         "trace-probe-drop": "9",
         "trace-probe-wrapper": "5",
-        "trace-probe-work": "66",
+        "trace-probe-work": "62",
         "certificate-digest": (
-            "22841f5f9ffa5da2b9391eaf7d831a3f81edf05c5e615db525d06a3531b88c5d"
+            "5f58ab94dd4d59318412a5c0457f99d2e8015bac817d2e9610a8a569dc1606b6"
         ),
     },
 }.items():

@@ -30,10 +30,10 @@ COMPILER_PATHS = (
 )
 WRAPPERS = ("simple-escape", "byte-escape", "unicode-escape")
 EXPECTED_ANSWER_DIGEST = (
-    "fd9506c997442c2510fd364e94211ba2ee401cc1d151a260f6410b93f9a20232"
+    "08b6201fac57e84996343a0256fe8fcef0281cab110e12ac1e078692fbb13ff8"
 )
 EXPECTED_MATRIX_DIGEST = (
-    "f0444cd85fd050a98d9053536b4542acec9da897bad4ef95c6c45a4a4930158c"
+    "612ed4f45c087bb6d0b99d4c6e2e00e96a083b9ec9817a6528173f755bdc2294"
 )
 
 
@@ -310,7 +310,7 @@ def main() -> int:
         expected_wrappers = (
             ("simple-escape", baseline["wrappers"][0][1], "1", baseline["wrappers"][0][3], "-"),
             ("byte-escape", baseline["wrappers"][1][1], "1", baseline["wrappers"][1][3], "-"),
-            ("unicode-escape", baseline["wrappers"][2][1], "0", baseline["wrappers"][2][3], "-"),
+            ("unicode-escape", baseline["wrappers"][2][1], "1", baseline["wrappers"][2][3], "-"),
         )
         if (
             baseline.get("source-digest") != source_digest
@@ -324,8 +324,8 @@ def main() -> int:
             or baseline.get("root-tag-count") != "3"
             or baseline.get("completed-wrappers") != "3"
             or baseline.get("stopped-wrapper") != "-"
-            or baseline.get("all-included") != "0"
-            or baseline.get("certified") != "0"
+            or baseline.get("all-included") != "1"
+            or baseline.get("certified") != "1"
             or baseline.get("wrappers") != expected_wrappers
             or len(str(baseline.get("certificate-digest", ""))) != 64
         ):
@@ -361,7 +361,7 @@ def main() -> int:
                 narrowed_wrappers[1][3],
                 "31,30",
             )
-            or narrowed_wrappers[2][2] != "0"
+            or narrowed_wrappers[2][2] != "1"
             or narrowed.get("all-included") != "0"
         ):
             raise GateFailure("narrowed byte-domain mutation survived")

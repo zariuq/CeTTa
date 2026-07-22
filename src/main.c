@@ -1,6 +1,9 @@
 #define _GNU_SOURCE
 #include "atom.h"
 #include "parser.h"
+#include "he_compiled_reader.h"
+#include "petta_compiled_reader.h"
+#include "prime_compiled_reader.h"
 #include "space.h"
 #include "eval.h"
 #include "library.h"
@@ -1466,6 +1469,90 @@ static void main_add_builtin_type_decls(Space *space, Arena *arena,
         space_add(space, eqeq_decl);
 }
 
+static int main_he_compiled_text_backend(
+    void *context, const char *text, TermUniverse *universe,
+    AtomId **out_ids) {
+    char error[512] = {0};
+    HECompiledReaderV1Receipt receipt;
+    int result = he_compiled_reader_v1_parse_text_ids(
+        context, text, universe, out_ids, &receipt, error, sizeof(error));
+    if (result < 0 && error[0])
+        fprintf(stderr, "error: compiled HE reader: %s\n", error);
+    return result;
+}
+
+static int main_he_compiled_file_backend(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids) {
+    char error[512] = {0};
+    HECompiledReaderV1Receipt receipt;
+    int result = he_compiled_reader_v1_parse_file_ids(
+        context, filename, universe, out_ids, &receipt, error, sizeof(error));
+    if (result < 0 && error[0])
+        fprintf(stderr, "error: compiled HE reader: %s\n", error);
+    return result;
+}
+
+static int main_petta_compiled_text_backend(
+    void *context, const char *text, TermUniverse *universe,
+    AtomId **out_ids) {
+    char error[512] = {0};
+    PeTTaCompiledReaderV1Receipt receipt;
+    int result = petta_compiled_reader_v1_parse_text_ids(
+        context, text, universe, out_ids, &receipt, error, sizeof(error));
+    if (result < 0 && error[0])
+        fprintf(stderr, "error: compiled PeTTa reader: %s\n", error);
+    return result;
+}
+
+static int main_petta_compiled_file_backend(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids) {
+    char error[512] = {0};
+    PeTTaCompiledReaderV1Receipt receipt;
+    int result = petta_compiled_reader_v1_parse_file_ids(
+        context, filename, universe, out_ids, &receipt, error, sizeof(error));
+    if (result < 0 && error[0])
+        fprintf(stderr, "error: compiled PeTTa reader: %s\n", error);
+    return result;
+}
+
+static int main_prime_compiled_text_backend(
+    void *context, const char *text, TermUniverse *universe,
+    AtomId **out_ids) {
+    char error[512] = {0};
+    PrimeCompiledReaderV1Receipt receipt;
+    int result = prime_compiled_reader_v1_parse_text_ids(
+        context, text, universe, out_ids, &receipt, error, sizeof(error));
+    if (result < 0 && error[0])
+        fprintf(stderr, "error: compiled Prime reader: %s\n", error);
+    return result;
+}
+
+static int main_prime_compiled_file_backend(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids) {
+    char error[512] = {0};
+    PrimeCompiledReaderV1Receipt receipt;
+    int result = prime_compiled_reader_v1_parse_file_ids(
+        context, filename, universe, out_ids, &receipt, error, sizeof(error));
+    if (result < 0 && error[0])
+        fprintf(stderr, "error: compiled Prime reader: %s\n", error);
+    return result;
+}
+
+static void main_he_compiled_reader_free(void *context) {
+    he_compiled_reader_v1_free(context);
+}
+
+static void main_petta_compiled_reader_free(void *context) {
+    petta_compiled_reader_v1_free(context);
+}
+
+static void main_prime_compiled_reader_free(void *context) {
+    prime_compiled_reader_v1_free(context);
+}
+
 typedef struct {
     char *inline_buf;
     Atom **atoms;
@@ -1491,6 +1578,8 @@ typedef struct {
     bool parser_rational_literals_old;
     bool parser_universal_names_set;
     bool parser_universal_names_old;
+    void *document_reader_context;
+    void (*document_reader_free)(void *context);
 } CettaMainCleanup;
 
 static void cetta_main_cleanup_registry_spaces(Registry *registry, Space *root_space) {
@@ -1529,6 +1618,11 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     cleanup->atoms = NULL;
     free(cleanup->atom_ids);
     cleanup->atom_ids = NULL;
+    parser_clear_document_ids_backend(cleanup->document_reader_context);
+    if (cleanup->document_reader_free)
+        cleanup->document_reader_free(cleanup->document_reader_context);
+    cleanup->document_reader_context = NULL;
+    cleanup->document_reader_free = NULL;
 
     if (cleanup->registry_initialized) {
         if (cleanup->space_initialized) {
@@ -2080,6 +2174,9 @@ int main(int argc, char **argv) {
     CettaLibraryContext libraries;
     Space space;
     Registry registry;
+    HECompiledReaderV1 *he_compiled_reader = NULL;
+    PeTTaCompiledReaderV1 *petta_compiled_reader = NULL;
+    PrimeCompiledReaderV1 *prime_compiled_reader = NULL;
     CettaMainCleanup cleanup = {0};
     bool lang_is_mm2 = strcmp(lang->canonical, "mm2") == 0;
     int n = 0;
@@ -2093,6 +2190,8 @@ int main(int argc, char **argv) {
     cleanup.symbol_table = &symbol_table;
     cleanup.var_intern_table = &var_intern_table;
     cleanup.hashcons_table = &hashcons_table;
+    cleanup.document_reader_context = NULL;
+    cleanup.document_reader_free = NULL;
     cleanup.libraries = &libraries;
     cleanup.space = &space;
     cleanup.registry = &registry;
@@ -2189,6 +2288,87 @@ int main(int argc, char **argv) {
             lang->id == CETTA_LANGUAGE_PRIME);
     cleanup.parser_universal_names_set = true;
 
+    if (lang->id == CETTA_LANGUAGE_HE) {
+        char reader_error[512] = {0};
+        ParserDocumentIdsBackend reader_backend;
+        he_compiled_reader = he_compiled_reader_v1_new();
+        cleanup.document_reader_context = he_compiled_reader;
+        cleanup.document_reader_free = main_he_compiled_reader_free;
+        if (!he_compiled_reader ||
+            !he_compiled_reader_v1_prepare(
+                he_compiled_reader, reader_error, sizeof(reader_error))) {
+            fprintf(stderr, "error: could not prepare compiled HE reader: %s\n",
+                    reader_error[0] ? reader_error : "unknown failure");
+            rc = 1;
+            goto cleanup;
+        }
+        reader_backend = (ParserDocumentIdsBackend){
+            .context = he_compiled_reader,
+            .parse_text_ids = main_he_compiled_text_backend,
+            .parse_file_ids = main_he_compiled_file_backend,
+        };
+        if (!parser_set_document_ids_backend(&reader_backend)) {
+            fprintf(stderr,
+                    "error: could not install compiled HE document reader\n");
+            rc = 1;
+            goto cleanup;
+        }
+    } else if (lang->id == CETTA_LANGUAGE_PETTA) {
+        char reader_error[512] = {0};
+        ParserDocumentIdsBackend reader_backend;
+        petta_compiled_reader = petta_compiled_reader_v1_new();
+        cleanup.document_reader_context = petta_compiled_reader;
+        cleanup.document_reader_free = main_petta_compiled_reader_free;
+        if (!petta_compiled_reader ||
+            !petta_compiled_reader_v1_prepare(
+                petta_compiled_reader, reader_error,
+                sizeof(reader_error))) {
+            fprintf(stderr,
+                    "error: could not prepare compiled PeTTa reader: %s\n",
+                    reader_error[0] ? reader_error : "unknown failure");
+            rc = 1;
+            goto cleanup;
+        }
+        reader_backend = (ParserDocumentIdsBackend){
+            .context = petta_compiled_reader,
+            .parse_text_ids = main_petta_compiled_text_backend,
+            .parse_file_ids = main_petta_compiled_file_backend,
+        };
+        if (!parser_set_document_ids_backend(&reader_backend)) {
+            fprintf(stderr,
+                    "error: could not install compiled PeTTa document reader\n");
+            rc = 1;
+            goto cleanup;
+        }
+    } else if (lang->id == CETTA_LANGUAGE_PRIME) {
+        char reader_error[512] = {0};
+        ParserDocumentIdsBackend reader_backend;
+        prime_compiled_reader = prime_compiled_reader_v1_new();
+        cleanup.document_reader_context = prime_compiled_reader;
+        cleanup.document_reader_free = main_prime_compiled_reader_free;
+        if (!prime_compiled_reader ||
+            !prime_compiled_reader_v1_prepare(
+                prime_compiled_reader, reader_error,
+                sizeof(reader_error))) {
+            fprintf(stderr,
+                    "error: could not prepare compiled Prime reader: %s\n",
+                    reader_error[0] ? reader_error : "unknown failure");
+            rc = 1;
+            goto cleanup;
+        }
+        reader_backend = (ParserDocumentIdsBackend){
+            .context = prime_compiled_reader,
+            .parse_text_ids = main_prime_compiled_text_backend,
+            .parse_file_ids = main_prime_compiled_file_backend,
+        };
+        if (!parser_set_document_ids_backend(&reader_backend)) {
+            fprintf(stderr,
+                    "error: could not install compiled Prime document reader\n");
+            rc = 1;
+            goto cleanup;
+        }
+    }
+
     space_init_with_universe(&space, &libraries.term_universe);
     cleanup.space_initialized = true;
     if (!space_match_backend_try_set(&space, space_engine)) {
@@ -2211,8 +2391,10 @@ int main(int argc, char **argv) {
 
     if (!lang_is_mm2) {
         n = inline_text
-            ? parse_metta_text_ids(inline_text, &libraries.term_universe, &atom_ids)
-            : parse_metta_file_ids(filename, &libraries.term_universe, &atom_ids);
+            ? parse_metta_text_ids(
+                  inline_text, &libraries.term_universe, &atom_ids)
+            : parse_metta_file_ids(
+                  filename, &libraries.term_universe, &atom_ids);
         cleanup.atom_ids = atom_ids;
         if (n < 0) {
             if (inline_text) {
