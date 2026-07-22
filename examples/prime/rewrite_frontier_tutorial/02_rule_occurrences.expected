@@ -1,0 +1,3 @@
+[specific-a, (general A), (general B)]
+[duplicated, duplicated]
+[strict, (wild A), (wild B)]

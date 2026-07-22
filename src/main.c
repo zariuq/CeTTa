@@ -33,6 +33,7 @@ static void handle_sigsegv(int sig) {
 
 static bool g_count_only = false;
 static bool g_quiet_results = false;
+static uint64_t g_prime_need_trace_form = 0u;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 static const uint32_t CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT = 100000u;
 static const int CETTA_RHOCALC_EXIT_REDUCTION_LIMIT_EXHAUSTED = 3;
@@ -90,6 +91,232 @@ static bool result_set_all_rhocalc_domain(ResultSet *rs) {
         if (!rhocalc_is_domain_atom(rs->items[i])) return false;
     }
     return true;
+}
+
+typedef struct {
+    uint64_t raw;
+    uint64_t local;
+} PrimeNeedTraceId;
+
+typedef struct {
+    uint64_t session;
+    uint64_t thunk;
+    uint64_t local;
+} PrimeNeedTraceCell;
+
+typedef struct {
+    StateCell *raw;
+    uint64_t local;
+} PrimeNeedTraceState;
+
+typedef struct {
+    FILE *out;
+    uint64_t form;
+    uint64_t answer;
+    PrimeNeedTraceId *events;
+    size_t events_len;
+    PrimeNeedTraceId *sessions;
+    size_t sessions_len;
+    PrimeNeedTraceId *sources;
+    size_t sources_len;
+    PrimeNeedTraceId *rules;
+    size_t rules_len;
+    PrimeNeedTraceId *receipts;
+    size_t receipts_len;
+    PrimeNeedTraceCell *cells;
+    size_t cells_len;
+    PrimeNeedTraceState *states;
+    size_t states_len;
+    bool allocation_failed;
+} PrimeNeedTracePrinter;
+
+static uint64_t prime_need_trace_id(
+    PrimeNeedTraceId **items, size_t *len, uint64_t raw) {
+    if (!items || !len || raw == 0u)
+        return 0u;
+    for (size_t i = 0u; i < *len; i++)
+        if ((*items)[i].raw == raw)
+            return (*items)[i].local;
+    if (*len == SIZE_MAX / sizeof(**items))
+        return 0u;
+    PrimeNeedTraceId *next = realloc(
+        *items, sizeof(**items) * (*len + 1u));
+    if (!next)
+        return 0u;
+    *items = next;
+    uint64_t local = (uint64_t)(*len + 1u);
+    next[*len] = (PrimeNeedTraceId){.raw = raw, .local = local};
+    (*len)++;
+    return local;
+}
+
+static uint64_t prime_need_trace_cell(
+    PrimeNeedTracePrinter *trace, uint64_t session, uint64_t thunk) {
+    if (!trace || session == 0u || thunk == 0u)
+        return 0u;
+    for (size_t i = 0u; i < trace->cells_len; i++)
+        if (trace->cells[i].session == session &&
+            trace->cells[i].thunk == thunk)
+            return trace->cells[i].local;
+    if (trace->cells_len == SIZE_MAX / sizeof(*trace->cells))
+        return 0u;
+    PrimeNeedTraceCell *next = realloc(
+        trace->cells,
+        sizeof(*trace->cells) * (trace->cells_len + 1u));
+    if (!next)
+        return 0u;
+    trace->cells = next;
+    uint64_t local = (uint64_t)(trace->cells_len + 1u);
+    next[trace->cells_len++] = (PrimeNeedTraceCell){
+        .session = session, .thunk = thunk, .local = local,
+    };
+    return local;
+}
+
+static uint64_t prime_need_trace_state(
+    PrimeNeedTracePrinter *trace, StateCell *state) {
+    if (!trace || !state)
+        return 0u;
+    for (size_t i = 0u; i < trace->states_len; i++)
+        if (trace->states[i].raw == state)
+            return trace->states[i].local;
+    if (trace->states_len == SIZE_MAX / sizeof(*trace->states))
+        return 0u;
+    PrimeNeedTraceState *next = realloc(
+        trace->states,
+        sizeof(*trace->states) * (trace->states_len + 1u));
+    if (!next)
+        return 0u;
+    trace->states = next;
+    uint64_t local = (uint64_t)(trace->states_len + 1u);
+    next[trace->states_len++] = (PrimeNeedTraceState){
+        .raw = state, .local = local,
+    };
+    return local;
+}
+
+static const char *prime_need_trace_event_name(
+    PrimeNeedReceiptEventKind kind) {
+    switch (kind) {
+    case PRIME_NEED_RECEIPT_OBSERVE_CELL:
+        return "observe-cell";
+    case PRIME_NEED_RECEIPT_INSPECT_ORIGIN:
+        return "inspect-origin";
+    case PRIME_NEED_RECEIPT_READ_STATE:
+        return "read-state";
+    case PRIME_NEED_RECEIPT_WRITE_STATE:
+        return "write-state";
+    case PRIME_NEED_RECEIPT_USE_EQUATION:
+        return "use-equation";
+    case PRIME_NEED_RECEIPT_EVALUATE_CELL:
+        return "evaluate-cell";
+    case PRIME_NEED_RECEIPT_RESAMPLE:
+        return "resample";
+    }
+    return "unknown";
+}
+
+static void prime_need_trace_answer(
+    Atom *answer, const PrimeNeedReceipt *receipt, void *context) {
+    PrimeNeedTracePrinter *trace = context;
+    if (!trace || !trace->out || !answer)
+        return;
+    trace->answer++;
+    uint64_t receipt_id = receipt
+        ? prime_need_trace_id(
+              &trace->receipts, &trace->receipts_len,
+              receipt->session_id)
+        : 0u;
+    if (receipt && receipt->session_id != 0u && receipt_id == 0u)
+        trace->allocation_failed = true;
+    size_t event_count = receipt
+        ? prime_need_receipt_event_count(receipt) : 0u;
+    fprintf(trace->out,
+            "(prime-need:answer %" PRIu64 " %" PRIu64 " (value ",
+            trace->form, trace->answer);
+    atom_print(answer, trace->out);
+    fprintf(trace->out, ") (receipt %" PRIu64,
+            receipt_id);
+    for (size_t i = 0u; i < event_count; i++) {
+        PrimeNeedReceiptEvent event;
+        if (!prime_need_receipt_event_at(receipt, i, &event))
+            continue;
+        uint64_t event_id = prime_need_trace_id(
+            &trace->events, &trace->events_len, event.event_id);
+        if (event.event_id != 0u && event_id == 0u)
+            trace->allocation_failed = true;
+        fprintf(trace->out, " (event %" PRIu64 " %s",
+                event_id, prime_need_trace_event_name(event.kind));
+        if (event.need_session_id != 0u) {
+            uint64_t session_id = prime_need_trace_id(
+                &trace->sessions, &trace->sessions_len,
+                event.need_session_id);
+            if (session_id == 0u)
+                trace->allocation_failed = true;
+            fprintf(trace->out, " (need-session %" PRIu64 ")",
+                    session_id);
+        }
+        if (event.source_occurrence_id != 0u) {
+            uint64_t source_id = prime_need_trace_id(
+                &trace->sources, &trace->sources_len,
+                event.source_occurrence_id);
+            if (source_id == 0u)
+                trace->allocation_failed = true;
+            fprintf(trace->out, " (application %" PRIu64 ")", source_id);
+        }
+        if ((event.kind == PRIME_NEED_RECEIPT_OBSERVE_CELL ||
+             event.kind == PRIME_NEED_RECEIPT_EVALUATE_CELL) &&
+            event.source_occurrence_id != 0u)
+            fprintf(trace->out, " (argument %" PRIu64 ")",
+                    event.source_argument_index + 1u);
+        if (event.need_session_id != 0u && event.thunk_id != 0u) {
+            uint64_t cell_id = prime_need_trace_cell(
+                trace, event.need_session_id, event.thunk_id);
+            if (cell_id == 0u)
+                trace->allocation_failed = true;
+            fprintf(trace->out, " (cell %" PRIu64 ")", cell_id);
+        }
+        if (event.rule_occurrence_id != 0u) {
+            uint64_t rule_id = prime_need_trace_id(
+                &trace->rules, &trace->rules_len,
+                event.rule_occurrence_id);
+            if (rule_id == 0u)
+                trace->allocation_failed = true;
+            fprintf(trace->out, " (rule %" PRIu64 ")", rule_id);
+        }
+        if (event.state_cell) {
+            uint64_t state_id = prime_need_trace_state(
+                trace, event.state_cell);
+            if (state_id == 0u)
+                trace->allocation_failed = true;
+            fprintf(trace->out, " (state %" PRIu64 ")", state_id);
+        }
+        if (event.before) {
+            fputs(" (before ", trace->out);
+            atom_print(event.before, trace->out);
+            fputc(')', trace->out);
+        }
+        if (event.after) {
+            fputs(" (after ", trace->out);
+            atom_print(event.after, trace->out);
+            fputc(')', trace->out);
+        }
+        fputc(')', trace->out);
+    }
+    fputs("))\n", trace->out);
+}
+
+static void prime_need_trace_printer_free(PrimeNeedTracePrinter *trace) {
+    if (!trace)
+        return;
+    free(trace->events);
+    free(trace->sessions);
+    free(trace->sources);
+    free(trace->rules);
+    free(trace->receipts);
+    free(trace->cells);
+    free(trace->states);
+    memset(trace, 0, sizeof(*trace));
 }
 
 static bool path_has_suffix(const char *path, const char *suffix) {
@@ -904,6 +1131,8 @@ static void print_usage(FILE *out) {
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
+    fputs("       cetta --emit-prime-need-trace <file.metta> # emit per-answer Prime receipts to stderr\n", out);
+    fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
     fputs("       cetta --eval-hashcons <file.metta>      # experimental: hash-cons eval-arena atoms\n", out);
     fputs("       cetta --pretty-vars <file.metta>       # pretty-print result vars for humans\n", out);
     fputs("       cetta --raw-vars <file.metta>          # print raw internal var epochs\n", out);
@@ -1391,6 +1620,9 @@ int main(int argc, char **argv) {
     bool compile_stdlib_mode = false;
     bool count_only = false;
     bool emit_runtime_stats = false;
+    bool emit_prime_need_trace = false;
+    bool prime_need_trace_failed = false;
+    const char *prime_rewrite_frontier = NULL;
     bool eval_hashcons = false;
     bool list_profiles = false;
     bool translate_mode = false;
@@ -1454,6 +1686,27 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
             emit_runtime_stats = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--emit-prime-need-trace") == 0) {
+            emit_prime_need_trace = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--prime-rewrite-frontier") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            const char *value = argv[++i];
+            if (strcmp(value, "monolithic") != 0 &&
+                strcmp(value, "candidate-local") != 0 &&
+                strcmp(value, "demand-cohort") != 0) {
+                fprintf(stderr,
+                        "error: invalid Prime rewrite frontier '%s'\n",
+                        value);
+                return 2;
+            }
+            prime_rewrite_frontier = value;
             continue;
         }
         if (strcmp(argv[i], "--eval-hashcons") == 0) {
@@ -1667,6 +1920,19 @@ int main(int argc, char **argv) {
 
     const CettaLanguageSpec *lang = source_endpoint.lang;
     profile = source_endpoint.profile;
+
+    if (emit_prime_need_trace && lang->id != CETTA_LANGUAGE_PRIME) {
+        fprintf(stderr,
+                "error: --emit-prime-need-trace requires --lang prime\n");
+        free(inline_buf);
+        return 2;
+    }
+    if (prime_rewrite_frontier && lang->id != CETTA_LANGUAGE_PRIME) {
+        fprintf(stderr,
+                "error: --prime-rewrite-frontier requires --lang prime\n");
+        free(inline_buf);
+        return 2;
+    }
 
     if (list_profiles) {
         cetta_profile_print_inventory_for_language(stdout, lang->id);
@@ -1908,6 +2174,11 @@ int main(int argc, char **argv) {
             &libraries.session, "num-threads",
             CETTA_EVAL_OPTION_VALUE_INT, repr, (int64_t)num_threads);
     }
+    if (prime_rewrite_frontier) {
+        cetta_eval_session_record_generic_setting(
+            &libraries.session, "prime-rewrite-frontier",
+            CETTA_EVAL_OPTION_VALUE_SYMBOL, prime_rewrite_frontier, 0);
+    }
     eval_set_library_context(&libraries);
     cleanup.parser_rational_literals_old =
         parser_set_rational_literals_enabled(
@@ -2057,22 +2328,56 @@ int main(int argc, char **argv) {
             Atom *expr = term_universe_copy_atom(&libraries.term_universe, &arena,
                                                  payload_id);
             ResultSet rs;
+            EvalOutcome detailed;
+            ResultSet *results = &rs;
+            PrimeNeedTracePrinter trace = {0};
             if (!expr) {
                 fprintf(stderr, "error: could not decode top-level eval form\n");
                 rc = 1;
                 goto cleanup;
             }
-            result_set_init(&rs);
-            eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
-            write_results(output_spool, &rs, lang->id, profile);
+            if (emit_prime_need_trace) {
+                eval_outcome_init(&detailed);
+                results = &detailed.results;
+                trace.out = stderr;
+                trace.form = ++g_prime_need_trace_form;
+                eval_top_with_registry_outcome(
+                    &space, &eval_arena, &arena, &registry, expr,
+                    &detailed, prime_need_trace_answer, &trace);
+                fprintf(stderr,
+                        "(prime-need:completion %" PRIu64 " %s"
+                        " (steps %" PRIu64 "))\n",
+                        trace.form,
+                        eval_completion_reason(detailed.completion),
+                        detailed.steps_spent);
+            } else {
+                result_set_init(&rs);
+                eval_top_with_registry(
+                    &space, &eval_arena, &arena, &registry, expr, &rs);
+            }
+            write_results(output_spool, results, lang->id, profile);
             if (fflush(output_spool) != 0) {
                 fprintf(stderr, "error: could not write output spool\n");
-                result_set_free(&rs);
+                if (emit_prime_need_trace)
+                    eval_outcome_free(&detailed);
+                else
+                    result_set_free(&rs);
+                prime_need_trace_printer_free(&trace);
                 rc = 1;
                 goto cleanup;
             }
-            bool stop_after_error = result_set_has_error(&rs);
-            result_set_free(&rs);
+            bool stop_after_error = result_set_has_error(results);
+            if (trace.allocation_failed) {
+                fprintf(stderr,
+                        "error: could not allocate Prime receipt trace identity\n");
+                stop_after_error = true;
+                prime_need_trace_failed = true;
+            }
+            if (emit_prime_need_trace)
+                eval_outcome_free(&detailed);
+            else
+                result_set_free(&rs);
+            prime_need_trace_printer_free(&trace);
             eval_release_temporary_spaces();
             eval_reset_form_gc_survivor();
             arena_free(&eval_arena);
@@ -2111,7 +2416,7 @@ int main(int argc, char **argv) {
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = 0;
+    rc = prime_need_trace_failed ? 1 : 0;
 
 cleanup:
     cetta_main_cleanup(&cleanup);
