@@ -22,7 +22,7 @@ bool grounded_op_is_type_pure(SymbolId id);
    accumulator/item variables and freshens the remaining variables so the step
    expression can be reused safely across evaluator and grounded folds. */
 Atom *cetta_fold_bind_step_atom(Arena *a, Atom *atom,
-                                SymbolId acc_spelling, Atom *acc_val,
-                                SymbolId item_spelling, Atom *item_val);
+                                Atom *acc_var, Atom *acc_val,
+                                Atom *item_var, Atom *item_val);
 
 #endif /* CETTA_GROUNDED_H */

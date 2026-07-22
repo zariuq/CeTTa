@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 87,
+    ABT_EXPECTED_CHECKS = 109,
 };
 
 static unsigned failures = 0;
@@ -51,7 +51,7 @@ static Atom *node4(Arena *arena, const char *head,
 }
 
 static Atom *var(Arena *arena, int64_t index) {
-    return node1(arena, "Var", atom_int(arena, index));
+    return node1(arena, "idx", atom_int(arena, index));
 }
 
 static void test_default_signature_blob(Arena *arena) {
@@ -416,6 +416,60 @@ static void test_locally_nameless_seams(Arena *arena,
                   abt_open(signature, arena, free_x, structured_closed),
                   free_body);
 
+    Atom *named_x = node1(arena, "quote", atom_string(arena, "x"));
+    Atom *named_y = node1(arena, "quote", atom_string(arena, "y"));
+    Atom *named_body = node2(
+        arena, "App", named_x, node2(arena, "Lam", type, named_x));
+    check_atom_eq("bind admits an explicit quoted-string name",
+                  abt_bind(signature, arena, named_x, named_body), closed);
+    check_atom_eq("open restores an explicit quoted-string name",
+                  abt_open(signature, arena, named_x, closed), named_body);
+    check_atom_eq("generated name spellings erase alpha-invariantly",
+                  abt_bind(signature, arena, named_y,
+                           node2(arena, "App", named_y,
+                                 node2(arena, "Lam", type, named_y))),
+                  closed);
+    check_atom_eq("bind shifts pre-existing loose indices before closing",
+                  abt_bind(signature, arena, named_x,
+                           node2(arena, "App", var(arena, 0), named_x)),
+                  node2(arena, "App", var(arena, 1), var(arena, 0)));
+    check_atom_eq("bind preserves a different generated surface name",
+                  abt_bind(signature, arena, named_x,
+                           node2(arena, "App", named_y, named_x)),
+                  node2(arena, "App", named_y, var(arena, 0)));
+
+    Atom *mm_ph = node1(arena, "quote",
+                        node1(arena, "mm-var", atom_string(arena, "ph")));
+    Atom *quoted_body = node2(
+        arena, "App", mm_ph, node2(arena, "Lam", type, mm_ph));
+    check_atom_eq("bind admits an explicit quoted structural name",
+                  abt_bind(signature, arena, mm_ph, quoted_body), closed);
+    check_atom_eq("open restores an explicit quoted structural name",
+                  abt_open(signature, arena, mm_ph, closed), quoted_body);
+
+    Atom *quoted_loose = node1(arena, "quote", var(arena, 99));
+    CHECK(abt_shift(signature, arena, 1, 0u, quoted_loose) == quoted_loose,
+          "shift is opaque beneath quotation");
+    CHECK(abt_subst(signature, arena, 0u, atom_symbol(arena, "z"),
+                    quoted_loose) == quoted_loose,
+          "substitution is opaque beneath quotation");
+    CHECK(abt_scope_check(signature, 0u, quoted_loose),
+          "quoted syntax is closed with respect to outer object binders");
+    Atom *quoted_matcher_var = node1(arena, "quote", atom_var(arena, "x"));
+    CHECK(abt_shift(signature, arena, 1, 0u, quoted_matcher_var) ==
+              quoted_matcher_var,
+          "ordinary open quoted code is opaque to object-variable shifting");
+    CHECK(abt_scope_check(signature, 0u, quoted_matcher_var),
+          "matcher variables inside ordinary quoted code do not become object indices");
+    CHECK(abt_alpha_eq(quoted_matcher_var, quoted_matcher_var),
+          "ordinary open quoted code remains structurally comparable");
+    CHECK(abt_bind(signature, arena, quoted_matcher_var, x_body) == NULL,
+          "an open quote remains inadmissible as a persistent binder key");
+    CHECK(!abt_scope_check(signature, 0u, named_x),
+          "quoted-string name syntax is not canonical ABT");
+    CHECK(abt_bind(signature, arena, var(arena, 0), x_body) == NULL,
+          "bind rejects a loose canonical index as a name");
+
     Atom *mixed = node2(arena, "App", x, var(arena, 0));
     Atom *mixed_closed = node2(arena, "App", var(arena, 0), var(arena, 0));
     check_atom_eq("close distinguishes a free spelling from a bound index",
@@ -428,12 +482,12 @@ static void test_locally_nameless_seams(Arena *arena,
               signature, 0u, node2(arena, "Lam", type, var(arena, 1))),
           "scope check rejects a loose variable");
     CHECK(!abt_scope_check(signature, 0u,
-                           node1(arena, "Var", atom_symbol(arena, "bad"))),
-          "scope check rejects malformed Var syntax");
+                           node1(arena, "idx", atom_symbol(arena, "bad"))),
+          "scope check rejects malformed idx syntax");
     CHECK(!abt_alpha_eq(
-              node1(arena, "Var", atom_symbol(arena, "bad")),
-              node1(arena, "Var", atom_symbol(arena, "bad"))),
-          "alpha equality rejects malformed Var syntax");
+              node1(arena, "idx", atom_symbol(arena, "bad")),
+              node1(arena, "idx", atom_symbol(arena, "bad"))),
+          "alpha equality rejects malformed idx syntax");
 
     /* Canonical counterpart of rho capture avoidance: substituting an outer
        receive variable beneath an inner receive must not capture a free name
@@ -519,6 +573,39 @@ static void test_named_readback(Arena *arena,
     check_atom_eq("named parsing resolves lexical scope innermost-first",
                   abt_parse(signature, arena, shadow_surface), nested);
 
+    Atom *named_x = node1(arena, "quote", atom_string(arena, "arg-1"));
+    Atom *named_surface = node4(
+        arena, "ABTBind", atom_symbol(arena, "Lam"),
+        node1(arena, "Binders", named_x), type, named_x);
+    check_atom_eq("named parsing accepts quoted-string identities",
+                  abt_parse(signature, arena, named_surface), simple);
+
+    Atom *mm_ph = node1(arena, "quote",
+                        node1(arena, "mm-var", atom_string(arena, "ph")));
+    Atom *quoted_surface = node4(
+        arena, "ABTBind", atom_symbol(arena, "Lam"),
+        node1(arena, "Binders", mm_ph), type, mm_ph);
+    check_atom_eq("named parsing accepts quoted structural identities",
+                  abt_parse(signature, arena, quoted_surface), simple);
+    Atom *mm_ps = node1(arena, "quote",
+                        node1(arena, "mm-var", atom_string(arena, "ps")));
+    Atom *quoted_distinct = node4(
+        arena, "ABTBind", atom_symbol(arena, "Lam"),
+        node1(arena, "Binders", mm_ph), type, mm_ps);
+    check_atom_eq("distinct quoted names remain distinct constants",
+                  abt_parse(signature, arena, quoted_distinct),
+                  node2(arena, "Lam", type, mm_ps));
+    Atom *raw_compound = node1(
+        arena, "mm-var", atom_string(arena, "ph"));
+    CHECK(abt_parse(
+              signature, arena,
+              node4(arena, "ABTBind", atom_symbol(arena, "Lam"),
+                    node1(arena, "Binders", raw_compound), type,
+                    raw_compound)) == NULL,
+          "unquoted compound binder names fail closed");
+    CHECK(abt_parse(signature, arena, named_x) == NULL,
+          "unbound quoted-string syntax cannot cross canonicalization");
+
     AbtSignature scoped_signature;
     abt_signature_init(&scoped_signature);
     CHECK(abt_signature_add_defaults(&scoped_signature, arena),
@@ -554,6 +641,13 @@ static void test_named_readback(Arena *arena,
         node2(arena, "App", x, x));
     CHECK(abt_parse(&scoped_signature, arena, duplicate_surface) == NULL,
           "duplicate binders fail closed");
+    Atom *duplicate_quoted_surface = node4(
+        arena, "ABTBind", atom_symbol(arena, "ScopedPair"),
+        node2(arena, "Binders", mm_ph, mm_ph),
+        atom_symbol(arena, "payload"), node2(arena, "App", mm_ph, mm_ph));
+    CHECK(abt_parse(
+              &scoped_signature, arena, duplicate_quoted_surface) == NULL,
+          "structurally duplicate quoted binders fail closed");
     abt_signature_free(&scoped_signature);
 
     CHECK(abt_parse(signature, arena, node2(arena, "Lam", type, x)) == NULL,
@@ -599,7 +693,7 @@ static bool deep_lam_has_depth(Atom *term) {
         term = term->expr.elems[2];
     }
     return depth == ABT_DEEP_TERM_DEPTH && term && term->kind == ATOM_EXPR &&
-           term->expr.len == 2u && atom_is_symbol(term->expr.elems[0], "Var") &&
+           term->expr.len == 2u && atom_is_symbol(term->expr.elems[0], "idx") &&
            term->expr.elems[1]->kind == ATOM_GROUNDED &&
            term->expr.elems[1]->ground.gkind == GV_INT &&
            term->expr.elems[1]->ground.ival == 0;

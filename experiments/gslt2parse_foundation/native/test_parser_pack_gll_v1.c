@@ -433,6 +433,13 @@ static void deep_ambiguous_equality_gate(TestCounts *counts, Arena *arena) {
     uint8_t *input = malloc(DEEP_INPUT_LEN);
     char error[512] = {0};
     uint32_t root_index;
+    /* The original 1024-byte-per-scalar ceiling was calibrated with the
+       40-byte Atom ABI.  Semantic replay results legitimately contain Atoms;
+       scale that linear ceiling when the host Atom ABI grows, while the
+       materialized/spare checks below independently reject retained canonical
+       scratch. */
+    size_t retained_result_limit =
+        ((size_t)DEEP_INPUT_LEN * 1024u * sizeof(Atom)) / 40u;
 
     if (!input) {
         (void)expect(counts, false, "allocate deep ambiguous GLL input");
@@ -465,7 +472,7 @@ static void deep_ambiguous_equality_gate(TestCounts *counts, Arena *arena) {
         counts,
         !result.canonical_forest_materialized &&
         result.arena.spare_bytes == 0u &&
-        result.arena.live_bytes <= (size_t)DEEP_INPUT_LEN * 1024u,
+        result.arena.live_bytes <= retained_result_limit,
         "large GLL forest canonical scratch is not retained by the result");
     ppnative_v1_result_free(&result);
     ppabi_v1_pack_free(&pack);

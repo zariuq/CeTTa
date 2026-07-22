@@ -1,0 +1,4 @@
+[(proof pair-intro proof-p proof-q)]
+[(Triple proof-p proof-q (ctx:missing hypothesis-q))]
+[(Pair provisional-proof checked-proof)]
+[evidence-p]

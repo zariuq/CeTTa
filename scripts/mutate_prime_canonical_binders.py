@@ -23,9 +23,9 @@ def main() -> int:
         source = replace_once(
             source,
             "        return prime_canonical_scope_index(scope, type->var_id, &index)\n"
-            "            ? prime_canonical_var(a, index) : NULL;",
+            "            ? prime_canonical_idx(a, index) : NULL;",
             "        return prime_canonical_scope_index(scope, type->var_id, &index)\n"
-            "            ? prime_canonical_var(a, index) : type;",
+            "            ? prime_canonical_idx(a, index) : type;",
         )
         source = replace_once(
             source,

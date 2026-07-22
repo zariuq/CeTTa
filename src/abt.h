@@ -49,7 +49,7 @@ const AbtSignatureEntry *abt_signature_lookup(const AbtSignature *signature,
                                               SymbolId head,
                                               uint32_t arity);
 
-/* Iterative, capture-avoiding operations over canonical (Var k) terms.
+/* Iterative, capture-avoiding operations over canonical (idx k) terms.
    Inputs must outlive the returned atom; unchanged subterms may be shared.
    NULL means malformed/cyclic ABT input or arithmetic overflow. */
 Atom *abt_shift(const AbtSignature *signature, Arena *arena,
@@ -58,13 +58,21 @@ Atom *abt_subst(const AbtSignature *signature, Arena *arena,
                 uint64_t index, Atom *substitution, Atom *term);
 
 /* Locally-nameless seams.  close replaces structurally equal occurrences of
-   name with (Var depth); open performs the inverse replacement without the
-   index decrement performed by substitution.  Names may be structured atoms
-   such as (Free x), which keeps free-name syntax disjoint from package data. */
+   name with (idx depth); open performs the inverse replacement without the
+   index decrement performed by substitution.  A key may be a bare symbol or
+   quoted closed structural syntax. */
 Atom *abt_close(const AbtSignature *signature, Arena *arena,
                 Atom *name, Atom *term);
 Atom *abt_open(const AbtSignature *signature, Arena *arena,
                Atom *fresh_name, Atom *term);
+
+/* Introduce one surrounding binder in a mixed named/canonical surface.
+   Existing loose indices are shifted outward while occurrences structurally
+   equal to name become the new index zero.  This single traversal is required
+   so shifting existing indices and closing the selected name happen under the
+   same binder-depth accounting. */
+Atom *abt_bind(const AbtSignature *signature, Arena *arena,
+               Atom *name, Atom *term);
 
 /* Invertible, capture-free structural presentation for errors, tools, and
    REPLs.  This is deliberately not a language's mixfix printer.  A binding

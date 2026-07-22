@@ -1,0 +1,7 @@
+[(ctx:window 2 2 (ctx:entry second (quote (+ 1 1))) (ctx:entry first (quote 1)))]
+[()]
+[(Pair (ctx:window 1 1 (ctx:entry pending (quote (ctx-tutorial:inspection-bump)))) 0)]
+[(ctx:window 1 1 (ctx:entry pending (quote (private-plan alpha))))]
+[()]
+[()]
+[(Pair A A), (Pair B B)]

@@ -2,6 +2,7 @@
 #define CETTA_SPACE_H
 
 #include "atom.h"
+#include "name_key.h"
 #include "match.h"
 #include "subst_tree.h"
 #include "term_universe.h"
@@ -225,6 +226,12 @@ bool query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
 void query_results_diag_set_capacity_limit_override(CettaCount limit);
 CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
                                  QueryResultVisitor visitor, void *ctx);
+/* Match exactly one admitted (= lhs rhs) atom against query.  This is the
+   single-candidate form of query_equations_visit: it applies the same
+   freshening, bidirectional matching, visible-variable projection, and RHS
+   substitution, but performs no candidate selection. */
+CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
+                                QueryResultVisitor visitor, void *ctx);
 CettaCount query_results_visit(const QueryResults *qr,
                                QueryResultVisitor visitor, void *ctx);
 void query_results_free(QueryResults *qr);
@@ -238,6 +245,7 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head);
 
 typedef struct {
     SymbolId key;
+    NameId name_id;
     Atom *value;  /* Usually a grounded space atom, but can be anything */
 } RegistryEntry;
 
@@ -245,6 +253,12 @@ typedef struct {
     RegistryEntry *entries;
     uint32_t len, cap;
     RegistryEntry inline_entries[16];
+    NameKeyTable *name_keys;
+    /* Open-addressed entry index. Slots store entry-index + 1; zero is empty.
+       Iteration order remains the insertion order in entries. */
+    uint32_t *index_slots;
+    uint32_t index_cap;
+    uint32_t inline_index_slots[32];
 } Registry;
 
 void registry_init(Registry *r);
@@ -253,6 +267,13 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
+bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);
+Atom *registry_lookup_name(Registry *r, Atom *name_key);
+const Atom *registry_entry_name_key(const Registry *r, uint32_t index);
+
+/* Canonical structural reference: (resolve-name (quote <closed-key>)). */
+bool registry_ref_name_key(Atom *ref, Atom **name_key_out);
+Atom *registry_lookup_ref(Registry *r, Atom *ref);
 
 /* Resolve a space reference (symbol like &self, &ws, or grounded space atom)
    to a Space pointer. Returns NULL if not a space. */

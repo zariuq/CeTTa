@@ -46,27 +46,42 @@
              False
              (abtc:unique $tail)))))
 
-; The experimental narrow domain distinguishes object-variable references
-; from constants and rejects arbitrary program subtrees as binder keys.
-(= (abtc:identifier-payload $payload)
-   (let $meta (get-metatype $payload)
-     (if (== $meta Symbol)
-         True
-         (if (== $meta Grounded)
-             (== (get-type $payload) String)
+; The selected surface domain keeps the two stages explicit:
+;   * a bare symbol is a human binder name;
+;   * (quote closed-expression) is an explicit structural name.
+; Canonical (idx Nat), malformed nonnumeric idx forms, unquoted compound terms,
+; and open quoted syntax are not binder names.  The recursive closedness check
+; is presentation-level data; it does not reinterpret a name as a string.
+
+(= (abtc:closed-items $items)
+   (if (== $items ())
+       True
+       (let ($head $tail) (decons-atom $items)
+         (if (abtc:closed $head)
+             (abtc:closed-items $tail)
              False))))
 
-(= (abtc:tagged-identifier $name)
-   (case $name
-     (((Free $payload) (abtc:identifier-payload $payload))
-      ($_ False))))
+(= (abtc:closed $atom)
+   (let $meta (get-metatype $atom)
+     (if (== $meta Variable)
+         False
+         (if (== $meta Expression)
+             (abtc:closed-items $atom)
+             True))))
 
-(= (abtc:all-tagged-identifiers $names)
+(= (abtc:name $name)
+   (if (== (get-metatype $name) Symbol)
+       True
+   (case $name
+     (((quote $payload) (abtc:closed $payload))
+      ($_ False)))))
+
+(= (abtc:all-names $names)
    (if (== $names ())
        True
        (let ($name $rest) (decons-atom $names)
-         (if (abtc:tagged-identifier $name)
-             (abtc:all-tagged-identifiers $rest)
+         (if (abtc:name $name)
+             (abtc:all-names $rest)
              False))))
 
 (= (abtc:signature-decls $signatures)
@@ -172,8 +187,7 @@
 ; indices move outward before the new name is closed at index zero.  This is
 ; intentionally different from the unsound shift(-1, close(...)) repair.
 (= (abtc:add-binder $signatures $name $term)
-   (let $shifted (__cetta_abt_shift $signatures 1 0 $term)
-     (__cetta_abt_close $signatures $name $shifted)))
+   (__cetta_abt_bind $signatures $name $term))
 
 (= (abtc:close-prefix $signatures $names $depth $term)
    (if (== $depth 0)
@@ -219,7 +233,7 @@
            (if (== (get-metatype $binders) Expression)
                (let ($binder-tag $names) (decons-atom $binders)
                  (if (== $binder-tag Binders)
-                     (if (abtc:all-tagged-identifiers $names)
+                     (if (abtc:all-names $names)
                          (if (abtc:unique $names)
                              (case (abtc:find-signature
                                      $head $values $declarations)
@@ -285,7 +299,7 @@
 (= (abtc:oracle-atom $atom $environment)
    (if (== (get-metatype $atom) Symbol)
        (case (abtc:oracle-lookup $atom $environment 0)
-         (((ABTCOracleBound $index) (Var $index))
+         (((ABTCOracleBound $index) (idx $index))
           ((ABTCOracleFree $free) $free)))
        $atom))
 
@@ -317,10 +331,9 @@
       ($rejected $rejected))))
 
 ; One shared semantic corpus compares all three routes.  A consumes the
-; current symbol-only ABTBind presentation; B independently resolves that same
-; presentation; C consumes restricted tagged identifiers.  Different surface
-; name domains are deliberate here because choosing the production domain is
-; reserved for Zar; equality is required only of the resulting canonical ABT.
+; current ABTBind presentation; B independently resolves the symbol corpus;
+; C consumes generated and explicitly quoted structural names.  Equality is
+; required only of the resulting canonical ABT, in which names are erased.
 (= (abtc:abc-agree $symbol-presentation $candidate-c)
    (let $candidate-a
      (__cetta_abt_parse (abtc:test-signatures) $symbol-presentation)
@@ -332,122 +345,140 @@
              False)))))
 
 !(assertEqual
-   (abtc:lam (Free "x") Nat (Free "x"))
-   (ABTConstructionOK (Lam Nat (Var 0))))
+   (abtc:lam (quote "x") Nat (quote "x"))
+   (ABTConstructionOK (Lam Nat (idx 0))))
 !(assertEqual
    (abtc:abc-agree
      (ABTBind Lam (Binders x) Nat x)
-     (abtc:lam (Free "x") Nat (Free "x")))
+     (abtc:lam (quote "x") Nat (quote "x")))
    True)
 !(assertEqual
    (abtc:abc-agree
      (ABTBind Lam (Binders x) Nat
        (ABTBind Lam (Binders y) Nat x))
-     (abtc:lam (Free "x") Nat
-       (case (abtc:lam (Free "y") Nat (Free "x"))
+     (abtc:lam (quote "x") Nat
+       (case (abtc:lam (quote "y") Nat (quote "x"))
          (((ABTConstructionOK $inner) $inner)))))
    True)
 !(assertEqual
    (abtc:abc-agree
      (ABTBind Lam (Binders x) Nat
        (ABTBind Lam (Binders x) Nat x))
-     (abtc:lam (Free "x") Nat
-       (case (abtc:lam (Free "x") Nat (Free "x"))
+     (abtc:lam (quote "x") Nat
+       (case (abtc:lam (quote "x") Nat (quote "x"))
          (((ABTConstructionOK $inner) $inner)))))
    True)
 !(assertEqual
    (abtc:abc-agree
      (ABTBind Pi (Binders x) Nat (App Vec x))
      (abtc:construct
-       (abtc:test-signatures) Pi (Binders (Free "x"))
-       (Nat (App Vec (Free "x")))))
+       (abtc:test-signatures) Pi (Binders (quote "x"))
+       (Nat (App Vec (quote "x")))))
    True)
 !(assertEqual
    (abtc:abc-agree
      (ABTBind Lam (Binders x) Nat (Pair free x))
-     (abtc:lam (Free "x") Nat (Pair free (Free "x"))))
+     (abtc:lam (quote "x") Nat (Pair free (quote "x"))))
    True)
 !(assertEqual
-   (abtc:lam (Free "x") Nat (Free "x"))
-   (abtc:lam (Free "renamed") Nat (Free "renamed")))
+   (abtc:lam (quote "x") Nat (quote "x"))
+   (abtc:lam (quote "renamed") Nat (quote "renamed")))
 !(assertEqual
-   (abtc:lam (Free "x") Nat
-     (case (abtc:lam (Free "y") Nat (Free "x"))
+   (abtc:lam (quote "x") Nat
+     (case (abtc:lam (quote "y") Nat (quote "x"))
        (((ABTConstructionOK $inner) $inner))))
-   (ABTConstructionOK (Lam Nat (Lam Nat (Var 1)))))
+   (ABTConstructionOK (Lam Nat (Lam Nat (idx 1)))))
 !(assertEqual
-   (abtc:lam (Free "x") Nat
-     (case (abtc:lam (Free "x") Nat (Free "x"))
+   (abtc:lam (quote "x") Nat
+     (case (abtc:lam (quote "x") Nat (quote "x"))
        (((ABTConstructionOK $inner) $inner))))
-   (ABTConstructionOK (Lam Nat (Lam Nat (Var 0)))))
+   (ABTConstructionOK (Lam Nat (Lam Nat (idx 0)))))
 !(assertEqual
-   (abtc:lam (Free "x") Nat (Pair x (Free "x")))
-   (ABTConstructionOK (Lam Nat (Pair x (Var 0)))))
+   (abtc:lam (quote "x") Nat (Pair x (quote "x")))
+   (ABTConstructionOK (Lam Nat (Pair x (idx 0)))))
 !(assertEqual
-   (abtc:lam (Free "x") Nat (App (Var 0) (Free "x")))
-   (ABTConstructionOK (Lam Nat (App (Var 1) (Var 0)))))
+   (abtc:lam (quote "x") Nat (App (idx 0) (quote "x")))
+   (ABTConstructionOK (Lam Nat (App (idx 1) (idx 0)))))
 !(assertEqual
    (abtc:construct
-     (abtc:test-signatures) Pi (Binders (Free "x"))
-     (Nat (Vec (Free "x"))))
-   (ABTConstructionOK (Pi Nat (Vec (Var 0)))))
+     (abtc:test-signatures) Pi (Binders (quote "x"))
+     (Nat (Vec (quote "x"))))
+   (ABTConstructionOK (Pi Nat (Vec (idx 0)))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) MultiScope
-     (Binders (Free "x") (Free "y") (Free "z"))
-     ((Free "x") (Free "x")
-       (App (Free "x") (Free "y"))
-       (Triple (Free "x") (Free "y") (Free "z"))))
+     (Binders (quote "x") (quote "y") (quote "z"))
+     (free-x (quote "x")
+       (App (quote "x") (quote "y"))
+       (Triple (quote "x") (quote "y") (quote "z"))))
    (ABTConstructionOK
      (MultiScope
-       (Free "x")
-       (Var 0)
-       (App (Var 1) (Var 0))
-       (Triple (Var 2) (Var 1) (Var 0)))))
+       free-x
+       (idx 0)
+       (App (idx 1) (idx 0))
+       (Triple (idx 2) (idx 1) (idx 0)))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) Lam
-     (Binders (Free "x") (Free "x")) (Nat (Free "x")))
+     (Binders (quote "x") (quote "x")) (Nat (quote "x")))
    (ABTConstructionRejected DuplicateBinder
-     (Binders (Free "x") (Free "x"))))
+     (Binders (quote "x") (quote "x"))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) Lam
-     (Binders (Free (compound x))) (Nat (Free (compound x))))
+     (Binders (compound x)) (Nat (compound x)))
    (ABTConstructionRejected InvalidBinderIdentifier
-     (Binders (Free (compound x)))))
+     (Binders (compound x))))
 !(assertEqual
    (abtc:construct
-     (abtc:test-signatures) Lam (Binders (Free 1)) (Nat (Free 1)))
+     (abtc:test-signatures) Lam (Binders (idx 1)) (Nat (idx 1)))
    (ABTConstructionRejected InvalidBinderIdentifier
-     (Binders (Free 1))))
+     (Binders (idx 1))))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) Lam (Binders x) (Nat x))
-   (ABTConstructionRejected InvalidBinderIdentifier (Binders x)))
+   (ABTConstructionOK (Lam Nat (idx 0))))
+!(assertEqual
+   (abtc:lam
+     (quote (mm-var "ph")) Nat (quote (mm-var "ph")))
+   (ABTConstructionOK (Lam Nat (idx 0))))
+!(assertEqual
+   (abtc:lam (quote "arg-1") Nat (quote "arg-1"))
+   (ABTConstructionOK (Lam Nat (idx 0))))
+!(assertEqual
+   (__cetta_abt_parse
+     (abtc:test-signatures)
+     (ABTBind Lam (Binders (quote "arg-1")) Nat (quote "arg-1")))
+   (Lam Nat (idx 0)))
+!(assertEqual
+   (abtc:name (quote (mm-var $open)))
+   False)
+!(assertEqual
+   (__cetta_abt_bind (abtc:test-signatures) x (quote x))
+   (quote x))
 !(assertEqual
    (abtc:construct
      (abtc:test-signatures) Lam (Binders) (Nat body))
    (ABTConstructionRejected BinderCountMismatch (Expected 1 Actual 0)))
 !(assertEqual
    (__cetta_abt_subst
-     (abtc:test-signatures) 0 (Var 0) (Lam Nat (Var 1)))
-   (Lam Nat (Var 1)))
+     (abtc:test-signatures) 0 (idx 0) (Lam Nat (idx 1)))
+   (Lam Nat (idx 1)))
 !(assertEqual
    (__cetta_abt_shift
      (abtc:test-signatures) -1 0
      (__cetta_abt_close
-       (abtc:test-signatures) (Free "x")
-       (Lam Nat (App (Free "x") (Var 0)))))
-   (Lam Nat (App (Var 0) (Var 0))))
+       (abtc:test-signatures) (quote (mm-var "x"))
+       (Lam Nat (App (quote (mm-var "x")) (idx 0)))))
+   (Lam Nat (App (idx 0) (idx 0))))
 !(assertEqual
    (__cetta_abt_scope_check
      (abtc:test-signatures) 0
      (__cetta_abt_shift
        (abtc:test-signatures) -1 0
        (__cetta_abt_close
-         (abtc:test-signatures) (Free "x")
-         (Lam Nat (App (Free "x") (Var 0))))))
+         (abtc:test-signatures) (quote (mm-var "x"))
+         (Lam Nat (App (quote (mm-var "x")) (idx 0))))))
    True)
 !(assertEqual
    (__cetta_abt_signature_admitted
@@ -455,4 +486,4 @@
        (AbtSignature Bad (Fields body body) Bind0)))
    False)
 
-!(println! (ABTScopeConstructionCandidateSummary 22 22 0))
+!(println! (ABTScopeConstructionCandidateSummary 27 27 0))

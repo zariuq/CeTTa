@@ -80,6 +80,101 @@ static void test_store_format_contract(void) {
     term_universe_free(&universe);
 }
 
+static void test_structural_variable_name_store_contract(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    Atom *key = atom_expr3(
+        &scratch, atom_symbol(&scratch, "agent"),
+        atom_symbol(&scratch, "Max"), atom_symbol(&scratch, "Botnick"));
+    Atom *named = atom_var_with_name_key(&scratch, key, 77u);
+    AtomId named_id = term_universe_store_atom_id(
+        &universe, &scratch, named);
+    assert(named_id != CETTA_ATOM_ID_NONE);
+    assert(tu_var_id(&universe, named_id) == 77u);
+    assert(tu_sym(&universe, named_id) == SYMBOL_ID_NONE);
+    AtomId key_id = tu_var_name_key_id(&universe, named_id);
+    assert(key_id != CETTA_ATOM_ID_NONE);
+    assert(!tu_has_vars(&universe, key_id));
+
+    char *text = term_universe_atom_to_parseable_string(
+        &scratch, &universe, named_id);
+    assert(strcmp(text, "$@(agent Max Botnick)") == 0);
+    Atom *copy = term_universe_copy_atom(&universe, &scratch, named_id);
+    assert(copy && copy->kind == ATOM_VAR && copy->var_id == 77u);
+    assert(copy->name_key && atom_eq(copy->name_key, key));
+
+    Atom *fresh = atom_freshen_epoch(&scratch, named, 23u);
+    assert(fresh && fresh->kind == ATOM_VAR);
+    assert(var_epoch_suffix(fresh->var_id) == 23u);
+    assert(fresh->name_key && atom_eq(fresh->name_key, key));
+    Atom *renamed = rename_vars(&scratch, named, 31u);
+    assert(renamed && renamed->kind == ATOM_VAR);
+    assert(var_epoch_suffix(renamed->var_id) == 31u);
+    assert(renamed->name_key && atom_eq(renamed->name_key, key));
+
+    Bindings bindings;
+    bindings_init(&bindings);
+    Atom *payload = atom_symbol(&scratch, "payload");
+    assert(bindings_add_var(&bindings, named, payload));
+    assert(bindings.len == 1u);
+    assert(bindings.entries[0].name_key);
+    assert(atom_eq(bindings.entries[0].name_key, key));
+    Atom *encoded_bindings = bindings_to_atom(&scratch, &bindings);
+    assert(encoded_bindings);
+    Bindings decoded_bindings;
+    assert(bindings_from_atom(encoded_bindings, &decoded_bindings));
+    assert(decoded_bindings.len == 1u);
+    assert(decoded_bindings.entries[0].name_key);
+    assert(atom_eq(decoded_bindings.entries[0].name_key, key));
+    bindings_free(&decoded_bindings);
+    bindings_free(&bindings);
+
+    assert(term_universe_migrate_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    assert(tu_var_name_key_id(&universe, named_id) == key_id);
+    char *wide_text = term_universe_atom_to_parseable_string(
+        &scratch, &universe, named_id);
+    assert(strcmp(wide_text, "$@(agent Max Botnick)") == 0);
+
+    Atom *seen_named = atom_expr2(
+        &scratch, atom_symbol(&scratch, "seen"), named);
+    AtomId seen_named_id = term_universe_store_atom_id(
+        &universe, &scratch, seen_named);
+    assert(seen_named_id != CETTA_ATOM_ID_NONE);
+    SubstTree stree;
+    stree_init(&stree);
+    assert(stree_insert_id(&stree, &universe, seen_named_id, 91u));
+    Atom *seen_value = atom_expr2(
+        &scratch, atom_symbol(&scratch, "seen"),
+        atom_symbol(&scratch, "value"));
+    SubstMatchSet matches;
+    smset_init(&matches);
+    stree_query_bucket(
+        &stree.buckets[stree_head_hash(
+            tu_head_sym(&universe, seen_named_id))],
+        &scratch, seen_value, NULL, &matches);
+    assert(matches.len == 1u);
+    assert(matches.items[0].atom_idx == 91u);
+    assert(matches.items[0].bindings.len == 1u);
+    assert(matches.items[0].bindings.entries[0].name_key);
+    assert(atom_eq(matches.items[0].bindings.entries[0].name_key, key));
+    assert(atom_is_symbol(
+        matches.items[0].bindings.entries[0].val, "value"));
+    smset_free(&matches);
+    stree_free(&stree);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
 static void test_store_format_migration_contract(void) {
     Arena persistent;
     Arena scratch;
@@ -848,6 +943,7 @@ int main(void) {
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
     test_store_format_contract();
+    test_structural_variable_name_store_contract();
     test_store_format_migration_contract();
     test_compact_ceiling_migrate_then_continue_witness();
     test_compact_ceiling_migrate_on_expr_insert_witness();

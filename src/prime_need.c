@@ -1,0 +1,1109 @@
+#include "prime_need.h"
+
+#include <stdatomic.h>
+#include <stdlib.h>
+
+struct PrimeNeedFrame {
+    const PrimeNeedFrame *parent;
+    uint64_t session_id;
+    uint64_t serial;
+    uint64_t thunk_id;
+    uint64_t depth;
+    uint64_t authority_id;
+    uint64_t evaluator_id;
+    uint64_t storage_key;
+    uint64_t import_key;
+    uint64_t source_occurrence_id;
+    uint64_t source_argument_index;
+    PrimeNeedCacheState cache_state;
+    Atom *origin;
+    Atom *cached;
+};
+
+static _Atomic uint64_t g_prime_need_next_session = 1u;
+static _Atomic uint64_t g_prime_need_next_serial = 1u;
+static _Atomic uint64_t g_prime_need_next_thunk = 1u;
+static _Atomic uint64_t g_prime_need_next_authority = 1u;
+static _Atomic uint64_t g_prime_need_next_storage_key = 1u;
+static _Atomic uint64_t g_prime_need_next_receipt_session = 1u;
+static _Atomic uint64_t g_prime_need_next_receipt_event = 1u;
+static _Atomic uint64_t g_prime_need_next_source_occurrence = 1u;
+
+struct PrimeNeedReceiptFrame {
+    const PrimeNeedReceiptFrame *left;
+    const PrimeNeedReceiptFrame *right;
+    uint64_t session_id;
+    uint64_t event_id;
+    uint64_t depth;
+    bool has_event;
+    PrimeNeedReceiptEvent event;
+};
+
+static uint64_t prime_need_fresh_nonzero(_Atomic uint64_t *counter) {
+    uint64_t value = atomic_fetch_add_explicit(
+        counter, 1u, memory_order_relaxed);
+    if (value != 0u)
+        return value;
+    return atomic_fetch_add_explicit(counter, 1u, memory_order_relaxed);
+}
+
+void prime_need_snapshot_init(PrimeNeedSnapshot *snapshot) {
+    if (!snapshot)
+        return;
+    snapshot->top = NULL;
+    snapshot->session_id = 0u;
+}
+
+bool prime_need_snapshot_present(const PrimeNeedSnapshot *snapshot) {
+    return snapshot && snapshot->session_id != 0u;
+}
+
+bool prime_need_snapshot_begin(PrimeNeedSnapshot *snapshot) {
+    if (!snapshot)
+        return false;
+    if (prime_need_snapshot_present(snapshot))
+        return true;
+    snapshot->top = NULL;
+    snapshot->session_id = prime_need_fresh_nonzero(
+        &g_prime_need_next_session);
+    return snapshot->session_id != 0u;
+}
+
+static const PrimeNeedFrame *prime_need_frame_at_depth(
+    const PrimeNeedFrame *frame, uint64_t depth) {
+    while (frame && frame->depth > depth)
+        frame = frame->parent;
+    return frame && frame->depth == depth ? frame : NULL;
+}
+
+bool prime_need_snapshot_is_ancestor(const PrimeNeedSnapshot *ancestor,
+                                     const PrimeNeedSnapshot *descendant) {
+    if (!ancestor || !descendant)
+        return false;
+    if (!prime_need_snapshot_present(ancestor))
+        return true;
+    if (!prime_need_snapshot_present(descendant) ||
+        ancestor->session_id != descendant->session_id)
+        return false;
+    if (!ancestor->top)
+        return true;
+    if (!descendant->top ||
+        ancestor->top->depth > descendant->top->depth)
+        return false;
+    const PrimeNeedFrame *at_depth = prime_need_frame_at_depth(
+        descendant->top, ancestor->top->depth);
+    return at_depth && at_depth->serial == ancestor->top->serial;
+}
+
+bool prime_need_snapshot_merge(PrimeNeedSnapshot *dst,
+                               const PrimeNeedSnapshot *src) {
+    if (!dst || !src || !prime_need_snapshot_present(src))
+        return dst != NULL;
+    if (!prime_need_snapshot_present(dst) ||
+        prime_need_snapshot_is_ancestor(dst, src)) {
+        *dst = *src;
+        return true;
+    }
+#ifdef CETTA_PRIME_NEED_MUTATION_SIBLING_MERGE
+    /* Deliberately invalid mutation: sibling refinements are not ordered. */
+    *dst = *src;
+    return true;
+#endif
+    return prime_need_snapshot_is_ancestor(src, dst);
+}
+
+static bool prime_need_snapshot_push(Arena *owner,
+                                     const PrimeNeedSnapshot *base,
+                                     uint64_t serial,
+                                     uint64_t thunk_id,
+                                     uint64_t authority_id,
+                                     uint64_t evaluator_id,
+                                     uint64_t storage_key,
+                                     uint64_t import_key,
+                                     uint64_t source_occurrence_id,
+                                     uint64_t source_argument_index,
+                                     PrimeNeedCacheState cache_state,
+                                     Atom *origin,
+                                     Atom *cached,
+                                     PrimeNeedSnapshot *out) {
+    if (!owner || !base || !out || !prime_need_snapshot_present(base) ||
+        thunk_id == 0u || authority_id == 0u || !origin)
+        return false;
+    PrimeNeedFrame *frame = arena_alloc(owner, sizeof(*frame));
+    if (!frame)
+        return false;
+    frame->parent = base->top;
+    frame->session_id = base->session_id;
+    frame->serial = serial ? serial : prime_need_fresh_nonzero(
+        &g_prime_need_next_serial);
+    frame->thunk_id = thunk_id;
+    frame->depth = base->top ? base->top->depth + 1u : 1u;
+    frame->authority_id = authority_id;
+    frame->evaluator_id = evaluator_id;
+    frame->storage_key = storage_key;
+    frame->import_key = import_key;
+    frame->source_occurrence_id = source_occurrence_id;
+    frame->source_argument_index = source_argument_index;
+    frame->cache_state = cache_state;
+    frame->origin = origin;
+    frame->cached = cached;
+    out->top = frame;
+    out->session_id = base->session_id;
+    return frame->serial != 0u;
+}
+
+bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
+                                uint64_t thunk_id,
+                                PrimeNeedCellView *out) {
+    if (!snapshot || !out || !prime_need_snapshot_present(snapshot) ||
+        thunk_id == 0u)
+        return false;
+    for (const PrimeNeedFrame *frame = snapshot->top; frame;
+         frame = frame->parent) {
+        if (frame->session_id == snapshot->session_id &&
+            frame->thunk_id == thunk_id) {
+            out->cache_state = frame->cache_state;
+            out->origin = frame->origin;
+            out->cached = frame->cached;
+            out->authority_id = frame->authority_id;
+            out->evaluator_id = frame->evaluator_id;
+            out->storage_key = frame->storage_key;
+            out->import_key = frame->import_key;
+            out->source_occurrence_id = frame->source_occurrence_id;
+            out->source_argument_index = frame->source_argument_index;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool prime_need_snapshot_find_storage_key(
+    const PrimeNeedSnapshot *snapshot, uint64_t storage_key,
+    uint64_t *out_thunk_id) {
+    if (!snapshot || storage_key == 0u ||
+        !prime_need_snapshot_present(snapshot))
+        return false;
+    for (const PrimeNeedFrame *frame = snapshot->top; frame;
+         frame = frame->parent) {
+        if (frame->session_id == snapshot->session_id &&
+            frame->storage_key == storage_key) {
+            if (out_thunk_id)
+                *out_thunk_id = frame->thunk_id;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool prime_need_snapshot_find_imported_cell(
+    const PrimeNeedSnapshot *snapshot, uint64_t import_key,
+    Atom *origin, uint64_t *out_thunk_id) {
+    if (!snapshot || import_key == 0u || !origin ||
+        !prime_need_snapshot_present(snapshot))
+        return false;
+    for (const PrimeNeedFrame *frame = snapshot->top; frame;
+         frame = frame->parent) {
+        if (frame->session_id != snapshot->session_id ||
+            !atom_eq(frame->origin, origin))
+            continue;
+        if (frame->storage_key == import_key ||
+            frame->import_key == import_key) {
+            if (out_thunk_id)
+                *out_thunk_id = frame->thunk_id;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool prime_need_snapshot_allocate_with_storage_key(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t storage_key, uint64_t source_occurrence_id,
+    uint64_t source_argument_index, PrimeNeedSnapshot *out,
+    uint64_t *out_thunk_id) {
+    if (!owner || !base || !out || !out_thunk_id || !term ||
+        !prime_need_snapshot_present(base))
+        return false;
+    uint64_t import_key = storage_key;
+    if (import_key != 0u &&
+        prime_need_snapshot_find_imported_cell(
+            base, import_key, term, out_thunk_id)) {
+        *out = *base;
+        return true;
+    }
+    if (storage_key == 0u ||
+        prime_need_snapshot_find_storage_key(base, storage_key, NULL)) {
+        do {
+            storage_key = prime_need_fresh_nonzero(
+                &g_prime_need_next_storage_key);
+        } while (prime_need_snapshot_find_storage_key(
+                     base, storage_key, NULL));
+    }
+    uint64_t thunk_id = prime_need_fresh_nonzero(&g_prime_need_next_thunk);
+    uint64_t authority_id = prime_need_fresh_nonzero(
+        &g_prime_need_next_authority);
+    if (!prime_need_snapshot_push(
+            owner, base, 0u, thunk_id, authority_id, 0u, storage_key,
+            import_key, source_occurrence_id, source_argument_index,
+            PRIME_NEED_CACHE_EMPTY, term, NULL, out))
+        return false;
+    *out_thunk_id = thunk_id;
+    return true;
+}
+
+bool prime_need_snapshot_allocate(Arena *owner,
+                                  const PrimeNeedSnapshot *base,
+                                  Atom *term,
+                                  PrimeNeedSnapshot *out,
+                                  uint64_t *out_thunk_id) {
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, term, 0u, 0u, 0u, out, out_thunk_id);
+}
+
+uint64_t prime_need_fresh_source_occurrence(void) {
+    return prime_need_fresh_nonzero(&g_prime_need_next_source_occurrence);
+}
+
+bool prime_need_snapshot_allocate_source_argument(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
+    if (source_occurrence_id == 0u)
+        return false;
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, term, 0u, source_occurrence_id,
+        source_argument_index, out, out_thunk_id);
+}
+
+bool prime_need_snapshot_allocate_persisted(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t storage_key, PrimeNeedSnapshot *out,
+    uint64_t *out_thunk_id) {
+    if (storage_key == 0u)
+        return false;
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, term, storage_key, 0u, 0u, out, out_thunk_id);
+}
+
+static bool prime_need_snapshot_transition(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    PrimeNeedCacheState expected, PrimeNeedCacheState next,
+    uint64_t evaluator_id, Atom *cached, PrimeNeedSnapshot *out) {
+    PrimeNeedCellView previous;
+    if (!owner || !base || !out ||
+        !prime_need_snapshot_lookup(base, thunk_id, &previous))
+        return false;
+    if (previous.cache_state != expected || evaluator_id == 0u)
+        return false;
+    if (expected == PRIME_NEED_CACHE_EVALUATING &&
+        previous.evaluator_id != evaluator_id)
+        return false;
+    if (next == PRIME_NEED_CACHE_EVALUATING) {
+        if (expected != PRIME_NEED_CACHE_EMPTY || cached)
+            return false;
+    } else if (next == PRIME_NEED_CACHE_VALUE ||
+               next == PRIME_NEED_CACHE_STABLE_FAULT) {
+        if (expected != PRIME_NEED_CACHE_EVALUATING || !cached)
+            return false;
+    } else if (next != PRIME_NEED_CACHE_EMPTY || cached ||
+               expected != PRIME_NEED_CACHE_EVALUATING) {
+        return false;
+    }
+    return prime_need_snapshot_push(
+        owner, base, 0u, thunk_id, previous.authority_id,
+        next == PRIME_NEED_CACHE_EVALUATING ? evaluator_id : 0u,
+        previous.storage_key, previous.import_key,
+        previous.source_occurrence_id, previous.source_argument_index,
+        next, previous.origin, cached, out);
+}
+
+bool prime_need_snapshot_start_evaluation(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, PrimeNeedSnapshot *out) {
+    return prime_need_snapshot_transition(
+        owner, base, thunk_id, PRIME_NEED_CACHE_EMPTY,
+        PRIME_NEED_CACHE_EVALUATING, evaluator_id, NULL, out);
+}
+
+bool prime_need_snapshot_resolve_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out) {
+    return prime_need_snapshot_transition(
+        owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
+        PRIME_NEED_CACHE_VALUE, evaluator_id, value, out);
+}
+
+bool prime_need_snapshot_resolve_stable_fault(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *fault, PrimeNeedSnapshot *out) {
+#ifdef CETTA_PRIME_NEED_MUTATION_FAULT_NOT_CACHED
+    (void)fault;
+    return prime_need_snapshot_retry_evaluation(
+        owner, base, thunk_id, evaluator_id, out);
+#else
+    return prime_need_snapshot_transition(
+        owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
+        PRIME_NEED_CACHE_STABLE_FAULT, evaluator_id, fault, out);
+#endif
+}
+
+bool prime_need_snapshot_retry_evaluation(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, PrimeNeedSnapshot *out) {
+    return prime_need_snapshot_transition(
+        owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
+        PRIME_NEED_CACHE_EMPTY, evaluator_id, NULL, out);
+}
+
+bool prime_need_snapshot_promote(Arena *dst,
+                                 PrimeNeedSnapshot *snapshot) {
+    if (!dst || !snapshot || !snapshot->top)
+        return dst && snapshot;
+    uint64_t depth = snapshot->top->depth;
+    if (depth > SIZE_MAX / sizeof(const PrimeNeedFrame *))
+        return false;
+    const PrimeNeedFrame **path = malloc(sizeof(*path) * (size_t)depth);
+    if (!path)
+        return false;
+    const PrimeNeedFrame *cursor = snapshot->top;
+    for (uint64_t i = depth; i > 0u; i--) {
+        if (!cursor) {
+            free(path);
+            return false;
+        }
+        path[i - 1u] = cursor;
+        cursor = cursor->parent;
+    }
+    PrimeNeedSnapshot promoted = {.top = NULL,
+                                  .session_id = snapshot->session_id};
+    for (uint64_t i = 0u; i < depth; i++) {
+        Atom *origin = atom_deep_copy(dst, path[i]->origin);
+        Atom *cached = path[i]->cached
+            ? atom_deep_copy(dst, path[i]->cached) : NULL;
+        if (!origin || (path[i]->cached && !cached)) {
+            free(path);
+            return false;
+        }
+        PrimeNeedSnapshot next;
+        if (!prime_need_snapshot_push(
+                dst, &promoted, path[i]->serial, path[i]->thunk_id,
+                path[i]->authority_id, path[i]->evaluator_id,
+                path[i]->storage_key, path[i]->import_key,
+                path[i]->source_occurrence_id,
+                path[i]->source_argument_index,
+                path[i]->cache_state, origin, cached, &next)) {
+            free(path);
+            return false;
+        }
+        promoted = next;
+    }
+    free(path);
+    *snapshot = promoted;
+    return true;
+}
+
+Atom *prime_need_ref(Arena *arena, const PrimeNeedSnapshot *snapshot,
+                     uint64_t thunk_id) {
+    PrimeNeedCellView cell;
+    if (!arena || !snapshot || !prime_need_snapshot_present(snapshot) ||
+        !prime_need_snapshot_lookup(snapshot, thunk_id, &cell))
+        return NULL;
+    return atom_prime_need_capability(
+        arena, snapshot->session_id, thunk_id, cell.authority_id);
+}
+
+bool prime_need_ref_parse_rights(const Atom *atom, uint64_t *session_id,
+                                 uint64_t *thunk_id,
+                                 uint64_t *authority_id,
+                                 uint32_t *rights) {
+    const CettaPrimeNeedCapability *capability =
+        atom_prime_need_capability_value(atom);
+    if (!capability || capability->session_id == 0u ||
+        capability->thunk_id == 0u || capability->authority_id == 0u ||
+        capability->rights == 0u ||
+        (capability->rights & ~CETTA_PRIME_NEED_RIGHT_ALL) != 0u)
+        return false;
+    if (session_id)
+        *session_id = capability->session_id;
+    if (thunk_id)
+        *thunk_id = capability->thunk_id;
+    if (authority_id)
+        *authority_id = capability->authority_id;
+    if (rights)
+        *rights = capability->rights;
+    return true;
+}
+
+bool prime_need_ref_parse(const Atom *atom, uint64_t *session_id,
+                          uint64_t *thunk_id, uint64_t *authority_id) {
+    return prime_need_ref_parse_rights(atom, session_id, thunk_id,
+                                       authority_id, NULL);
+}
+
+bool prime_need_ref_belongs_to(const Atom *atom,
+                               const PrimeNeedSnapshot *snapshot,
+                               uint64_t *thunk_id) {
+    uint64_t session = 0u;
+    uint64_t id = 0u;
+    uint64_t authority = 0u;
+    PrimeNeedCellView cell;
+    if (!snapshot ||
+        !prime_need_ref_parse(atom, &session, &id, &authority) ||
+        session != snapshot->session_id)
+        return false;
+    if (!prime_need_snapshot_lookup(snapshot, id, &cell) ||
+        cell.authority_id != authority)
+        return false;
+    if (thunk_id)
+        *thunk_id = id;
+    return true;
+}
+
+bool prime_need_ref_belongs_to_with_rights(
+    const Atom *atom, const PrimeNeedSnapshot *snapshot,
+    uint32_t required_rights, uint64_t *thunk_id) {
+    uint64_t session = 0u;
+    uint64_t id = 0u;
+    uint64_t authority = 0u;
+    uint32_t rights = 0u;
+    PrimeNeedCellView cell;
+    if (!snapshot || required_rights == 0u ||
+        (required_rights & ~CETTA_PRIME_NEED_RIGHT_ALL) != 0u ||
+        !prime_need_ref_parse_rights(atom, &session, &id, &authority,
+                                     &rights) ||
+        session != snapshot->session_id ||
+        (rights & required_rights) != required_rights)
+        return false;
+    if (!prime_need_snapshot_lookup(snapshot, id, &cell) ||
+        cell.authority_id != authority)
+        return false;
+    if (thunk_id)
+        *thunk_id = id;
+    return true;
+}
+
+Atom *prime_need_ref_restrict(Arena *arena, const Atom *atom,
+                              const PrimeNeedSnapshot *snapshot,
+                              uint32_t rights) {
+    uint64_t session = 0u;
+    uint64_t thunk = 0u;
+    uint64_t authority = 0u;
+    uint32_t existing = 0u;
+    if (!arena || !snapshot || rights == 0u ||
+        (rights & ~CETTA_PRIME_NEED_RIGHT_ALL) != 0u ||
+        !prime_need_ref_parse_rights(atom, &session, &thunk, &authority,
+                                     &existing) ||
+        session != snapshot->session_id ||
+        (rights & existing) != rights ||
+        !prime_need_ref_belongs_to(atom, snapshot, NULL))
+        return NULL;
+    return atom_prime_need_capability_with_rights(
+        arena, session, thunk, authority, rights);
+}
+
+typedef struct {
+    const PrimeNeedReceiptFrame **items;
+    size_t len;
+    size_t cap;
+} PrimeNeedReceiptFrames;
+
+static void prime_need_receipt_frames_free(PrimeNeedReceiptFrames *frames) {
+    if (!frames)
+        return;
+    free(frames->items);
+    frames->items = NULL;
+    frames->len = 0u;
+    frames->cap = 0u;
+}
+
+static bool prime_need_receipt_frames_contains(
+    const PrimeNeedReceiptFrames *frames,
+    const PrimeNeedReceiptFrame *frame) {
+    if (!frames || !frame)
+        return false;
+    for (size_t i = 0u; i < frames->len; i++)
+        if (frames->items[i] == frame)
+            return true;
+    return false;
+}
+
+static bool prime_need_receipt_frames_push(
+    PrimeNeedReceiptFrames *frames,
+    const PrimeNeedReceiptFrame *frame) {
+    if (!frames || !frame)
+        return false;
+    if (prime_need_receipt_frames_contains(frames, frame))
+        return true;
+    if (frames->len == frames->cap) {
+        size_t next = frames->cap ? frames->cap * 2u : 16u;
+        if (next < frames->cap ||
+            next > SIZE_MAX / sizeof(*frames->items))
+            return false;
+        const PrimeNeedReceiptFrame **items = realloc(
+            frames->items, next * sizeof(*frames->items));
+        if (!items)
+            return false;
+        frames->items = items;
+        frames->cap = next;
+    }
+    frames->items[frames->len++] = frame;
+    return true;
+}
+
+static bool prime_need_receipt_collect_all(
+    const PrimeNeedReceiptFrame *top,
+    PrimeNeedReceiptFrames *frames) {
+    PrimeNeedReceiptFrames work = {0};
+    if (!top)
+        return true;
+    if (!prime_need_receipt_frames_push(&work, top))
+        return false;
+    for (size_t i = 0u; i < work.len; i++) {
+        const PrimeNeedReceiptFrame *frame = work.items[i];
+        if (frame->left &&
+            !prime_need_receipt_frames_push(&work, frame->left)) {
+            prime_need_receipt_frames_free(&work);
+            return false;
+        }
+        if (frame->right &&
+            !prime_need_receipt_frames_push(&work, frame->right)) {
+            prime_need_receipt_frames_free(&work);
+            return false;
+        }
+    }
+    *frames = work;
+    return true;
+}
+
+static bool prime_need_receipt_reachable(
+    const PrimeNeedReceiptFrame *top,
+    const PrimeNeedReceiptFrame *target) {
+    PrimeNeedReceiptFrames frames = {0};
+    bool found = false;
+    if (!target)
+        return true;
+    if (!top || !prime_need_receipt_collect_all(top, &frames))
+        return false;
+    found = prime_need_receipt_frames_contains(&frames, target);
+    prime_need_receipt_frames_free(&frames);
+    return found;
+}
+
+void prime_need_receipt_init(PrimeNeedReceipt *receipt) {
+    if (!receipt)
+        return;
+    receipt->top = NULL;
+    receipt->session_id = 0u;
+    receipt->owner = NULL;
+}
+
+bool prime_need_receipt_begin(Arena *owner, PrimeNeedReceipt *receipt) {
+    if (!owner || !receipt)
+        return false;
+    if (prime_need_receipt_present(receipt))
+        return receipt->owner == owner;
+    receipt->top = NULL;
+    receipt->session_id = prime_need_fresh_nonzero(
+        &g_prime_need_next_receipt_session);
+    receipt->owner = owner;
+    return receipt->session_id != 0u;
+}
+
+bool prime_need_receipt_present(const PrimeNeedReceipt *receipt) {
+    return receipt && receipt->session_id != 0u && receipt->owner;
+}
+
+bool prime_need_receipt_is_ancestor(const PrimeNeedReceipt *ancestor,
+                                    const PrimeNeedReceipt *descendant) {
+    if (!ancestor || !descendant)
+        return false;
+    if (!prime_need_receipt_present(ancestor))
+        return true;
+    if (!prime_need_receipt_present(descendant) ||
+        ancestor->session_id != descendant->session_id)
+        return false;
+    return prime_need_receipt_reachable(descendant->top, ancestor->top);
+}
+
+static bool prime_need_receipt_event_same_identity(
+    const PrimeNeedReceiptFrame *left,
+    const PrimeNeedReceiptFrame *right) {
+    return left && right && left->has_event && right->has_event &&
+           left->event_id != 0u && left->event_id == right->event_id;
+}
+
+static bool prime_need_receipt_events_conflict(
+    const PrimeNeedReceiptFrame *left,
+    const PrimeNeedReceiptFrame *right) {
+    if (!left || !right || !left->has_event || !right->has_event ||
+        prime_need_receipt_event_same_identity(left, right))
+        return false;
+    const PrimeNeedReceiptEvent *a = &left->event;
+    const PrimeNeedReceiptEvent *b = &right->event;
+    if ((a->kind == PRIME_NEED_RECEIPT_OBSERVE_CELL ||
+         a->kind == PRIME_NEED_RECEIPT_INSPECT_ORIGIN) &&
+        a->kind == b->kind) {
+        return a->need_session_id == b->need_session_id &&
+               a->thunk_id == b->thunk_id &&
+               !atom_eq(a->after, b->after);
+    }
+    bool a_state = a->kind == PRIME_NEED_RECEIPT_READ_STATE ||
+                   a->kind == PRIME_NEED_RECEIPT_WRITE_STATE;
+    bool b_state = b->kind == PRIME_NEED_RECEIPT_READ_STATE ||
+                   b->kind == PRIME_NEED_RECEIPT_WRITE_STATE;
+    if (!a_state || !b_state || a->state_cell != b->state_cell)
+        return false;
+    if (a->kind == PRIME_NEED_RECEIPT_READ_STATE &&
+        b->kind == PRIME_NEED_RECEIPT_READ_STATE)
+        return !atom_eq(a->after, b->after);
+    /* State writes are occurrence-bearing effects.  Two incomparable
+     * branches may not silently identify, commute, or union them. */
+    return true;
+}
+
+bool prime_need_receipt_compatible(const PrimeNeedReceipt *left,
+                                   const PrimeNeedReceipt *right) {
+    if (!left || !right)
+        return false;
+    if (!prime_need_receipt_present(left) ||
+        !prime_need_receipt_present(right))
+        return true;
+    if (left->session_id != right->session_id)
+        return false;
+    if (prime_need_receipt_is_ancestor(left, right) ||
+        prime_need_receipt_is_ancestor(right, left))
+        return true;
+    PrimeNeedReceiptFrames left_frames = {0};
+    PrimeNeedReceiptFrames right_frames = {0};
+    if (!prime_need_receipt_collect_all(left->top, &left_frames) ||
+        !prime_need_receipt_collect_all(right->top, &right_frames)) {
+        prime_need_receipt_frames_free(&left_frames);
+        prime_need_receipt_frames_free(&right_frames);
+        return false;
+    }
+    bool compatible = true;
+    for (size_t i = 0u; compatible && i < left_frames.len; i++) {
+        const PrimeNeedReceiptFrame *a = left_frames.items[i];
+        if (!a->has_event)
+            continue;
+        for (size_t j = 0u; j < right_frames.len; j++) {
+            const PrimeNeedReceiptFrame *b = right_frames.items[j];
+            if (b->has_event &&
+                prime_need_receipt_events_conflict(a, b)) {
+                compatible = false;
+                break;
+            }
+        }
+    }
+    prime_need_receipt_frames_free(&left_frames);
+    prime_need_receipt_frames_free(&right_frames);
+    return compatible;
+}
+
+static PrimeNeedReceiptFrame *prime_need_receipt_alloc_frame(Arena *owner) {
+    return owner ? arena_alloc(owner, sizeof(PrimeNeedReceiptFrame)) : NULL;
+}
+
+bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
+                              const PrimeNeedReceipt *src) {
+    if (!dst || !src || !prime_need_receipt_present(src))
+        return dst != NULL;
+    if (!prime_need_receipt_present(dst)) {
+        *dst = *src;
+        return true;
+    }
+    if (prime_need_receipt_is_ancestor(dst, src)) {
+        *dst = *src;
+        return true;
+    }
+    if (prime_need_receipt_is_ancestor(src, dst))
+        return true;
+    if (!prime_need_receipt_compatible(dst, src))
+        return false;
+    Arena *owner = dst->owner ? dst->owner : src->owner;
+    PrimeNeedReceiptFrame *join = prime_need_receipt_alloc_frame(owner);
+    if (!join)
+        return false;
+    *join = (PrimeNeedReceiptFrame){
+        .left = dst->top,
+        .right = src->top,
+        .session_id = dst->session_id,
+        .event_id = 0u,
+        .depth = (dst->top->depth > src->top->depth
+                      ? dst->top->depth : src->top->depth) + 1u,
+        .has_event = false,
+    };
+    dst->top = join;
+    dst->owner = owner;
+    return true;
+}
+
+static bool prime_need_receipt_append(
+    Arena *owner, const PrimeNeedReceipt *base,
+    PrimeNeedReceiptEvent event, PrimeNeedReceipt *out) {
+    if (!out)
+        return false;
+    Arena *actual_owner = base && base->owner ? base->owner : owner;
+    if (!actual_owner)
+        return false;
+    uint64_t session_id = base && prime_need_receipt_present(base)
+        ? base->session_id
+        : prime_need_fresh_nonzero(&g_prime_need_next_receipt_session);
+    uint64_t event_id = prime_need_fresh_nonzero(
+        &g_prime_need_next_receipt_event);
+    if (session_id == 0u || event_id == 0u)
+        return false;
+    Atom *before = event.before
+        ? atom_deep_copy(actual_owner, event.before) : NULL;
+    Atom *after = event.after
+        ? atom_deep_copy(actual_owner, event.after) : NULL;
+    if ((event.before && !before) || (event.after && !after))
+        return false;
+    PrimeNeedReceiptFrame *frame = prime_need_receipt_alloc_frame(actual_owner);
+    if (!frame)
+        return false;
+    event.event_id = event_id;
+    event.before = before;
+    event.after = after;
+    *frame = (PrimeNeedReceiptFrame){
+        .left = base ? base->top : NULL,
+        .right = NULL,
+        .session_id = session_id,
+        .event_id = event_id,
+        .depth = base && base->top ? base->top->depth + 1u : 1u,
+        .has_event = true,
+        .event = event,
+    };
+    *out = (PrimeNeedReceipt){
+        .top = frame,
+        .session_id = session_id,
+        .owner = actual_owner,
+    };
+    return true;
+}
+
+bool prime_need_receipt_observe_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id, Atom *outcome,
+    PrimeNeedReceipt *out) {
+    return prime_need_receipt_observe_source_cell(
+        owner, base, need_session_id, thunk_id, 0u, 0u, outcome, out);
+}
+
+bool prime_need_receipt_observe_source_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *outcome, PrimeNeedReceipt *out) {
+    if (need_session_id == 0u || thunk_id == 0u || !outcome)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_OBSERVE_CELL,
+            .need_session_id = need_session_id,
+            .thunk_id = thunk_id,
+            .source_occurrence_id = source_occurrence_id,
+            .source_argument_index = source_argument_index,
+            .after = outcome,
+        },
+        out);
+}
+
+bool prime_need_receipt_evaluate_source_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *origin, PrimeNeedReceipt *out) {
+    if (need_session_id == 0u || thunk_id == 0u || !origin)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_EVALUATE_CELL,
+            .need_session_id = need_session_id,
+            .thunk_id = thunk_id,
+            .source_occurrence_id = source_occurrence_id,
+            .source_argument_index = source_argument_index,
+            .before = origin,
+        },
+        out);
+}
+
+bool prime_need_receipt_inspect_origin(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id, Atom *origin_view,
+    PrimeNeedReceipt *out) {
+    if (need_session_id == 0u || thunk_id == 0u || !origin_view)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_INSPECT_ORIGIN,
+            .need_session_id = need_session_id,
+            .thunk_id = thunk_id,
+            .after = origin_view,
+        },
+        out);
+}
+
+bool prime_need_receipt_read_state(
+    Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
+    Atom *value, PrimeNeedReceipt *out) {
+    if (!cell || !value)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_READ_STATE,
+            .state_cell = cell,
+            .after = value,
+        },
+        out);
+}
+
+bool prime_need_receipt_write_state(
+    Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
+    Atom *before, Atom *after, PrimeNeedReceipt *out) {
+    if (!cell || !before || !after)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_WRITE_STATE,
+            .state_cell = cell,
+            .before = before,
+            .after = after,
+        },
+        out);
+}
+
+bool prime_need_receipt_use_equation(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    Atom *equation, Atom *result, PrimeNeedReceipt *out) {
+    if (source_occurrence_id == 0u || rule_occurrence_id == 0u ||
+        !equation || !result)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_USE_EQUATION,
+            .source_occurrence_id = source_occurrence_id,
+            .rule_occurrence_id = rule_occurrence_id,
+            .before = equation,
+            .after = result,
+        },
+        out);
+}
+
+bool prime_need_receipt_resample(
+    Arena *owner, const PrimeNeedReceipt *base, Atom *origin,
+    PrimeNeedReceipt *out) {
+    if (!origin)
+        return false;
+    return prime_need_receipt_append(
+        owner, base,
+        (PrimeNeedReceiptEvent){
+            .kind = PRIME_NEED_RECEIPT_RESAMPLE,
+            .before = origin,
+        },
+        out);
+}
+
+bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
+                                    StateCell *cell, Atom **out_value) {
+    if (!receipt || !cell || !out_value ||
+        !prime_need_receipt_present(receipt))
+        return false;
+    PrimeNeedReceiptFrames frames = {0};
+    if (!prime_need_receipt_collect_all(receipt->top, &frames))
+        return false;
+    const PrimeNeedReceiptFrame *latest = NULL;
+    for (size_t i = 0u; i < frames.len; i++) {
+        const PrimeNeedReceiptFrame *frame = frames.items[i];
+        if (!frame->has_event || frame->event.state_cell != cell ||
+            (frame->event.kind != PRIME_NEED_RECEIPT_READ_STATE &&
+             frame->event.kind != PRIME_NEED_RECEIPT_WRITE_STATE))
+            continue;
+        if (!latest || frame->depth > latest->depth ||
+            (frame->depth == latest->depth &&
+             frame->event_id > latest->event_id))
+            latest = frame;
+    }
+    prime_need_receipt_frames_free(&frames);
+    if (!latest || !latest->event.after)
+        return false;
+    *out_value = latest->event.after;
+    return true;
+}
+
+static int prime_need_receipt_event_compare(const void *left,
+                                            const void *right) {
+    const PrimeNeedReceiptFrame *const *a = left;
+    const PrimeNeedReceiptFrame *const *b = right;
+    if ((*a)->event_id < (*b)->event_id)
+        return -1;
+    if ((*a)->event_id > (*b)->event_id)
+        return 1;
+    return 0;
+}
+
+static bool prime_need_receipt_collect_events(
+    const PrimeNeedReceipt *receipt, PrimeNeedReceiptFrames *events) {
+    PrimeNeedReceiptFrames all = {0};
+    if (!receipt || !events || !prime_need_receipt_present(receipt))
+        return receipt && events;
+    if (!prime_need_receipt_collect_all(receipt->top, &all))
+        return false;
+    for (size_t i = 0u; i < all.len; i++) {
+        if (all.items[i]->has_event &&
+            !prime_need_receipt_frames_push(events, all.items[i])) {
+            prime_need_receipt_frames_free(&all);
+            prime_need_receipt_frames_free(events);
+            return false;
+        }
+    }
+    prime_need_receipt_frames_free(&all);
+    if (events->len > 1u) {
+        qsort(events->items, events->len, sizeof(*events->items),
+              prime_need_receipt_event_compare);
+    }
+    return true;
+}
+
+size_t prime_need_receipt_event_count(const PrimeNeedReceipt *receipt) {
+    PrimeNeedReceiptFrames events = {0};
+    if (!prime_need_receipt_collect_events(receipt, &events))
+        return 0u;
+    size_t count = events.len;
+    prime_need_receipt_frames_free(&events);
+    return count;
+}
+
+bool prime_need_receipt_event_at(const PrimeNeedReceipt *receipt,
+                                 size_t index,
+                                 PrimeNeedReceiptEvent *out_event) {
+    PrimeNeedReceiptFrames events = {0};
+    if (!out_event ||
+        !prime_need_receipt_collect_events(receipt, &events) ||
+        index >= events.len) {
+        prime_need_receipt_frames_free(&events);
+        return false;
+    }
+    *out_event = events.items[index]->event;
+    prime_need_receipt_frames_free(&events);
+    return true;
+}
+
+bool prime_need_receipt_equal(const PrimeNeedReceipt *left,
+                              const PrimeNeedReceipt *right) {
+    if (!left || !right)
+        return false;
+    if (!prime_need_receipt_present(left) ||
+        !prime_need_receipt_present(right))
+        return !prime_need_receipt_present(left) &&
+               !prime_need_receipt_present(right);
+    if (left->session_id != right->session_id)
+        return false;
+    PrimeNeedReceiptFrames a = {0};
+    PrimeNeedReceiptFrames b = {0};
+    if (!prime_need_receipt_collect_events(left, &a) ||
+        !prime_need_receipt_collect_events(right, &b)) {
+        prime_need_receipt_frames_free(&a);
+        prime_need_receipt_frames_free(&b);
+        return false;
+    }
+    bool equal = a.len == b.len;
+    for (size_t i = 0u; equal && i < a.len; i++)
+        equal = a.items[i]->event_id == b.items[i]->event_id;
+    prime_need_receipt_frames_free(&a);
+    prime_need_receipt_frames_free(&b);
+    return equal;
+}
+
+bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt) {
+    if (!dst || !receipt)
+        return false;
+    if (!prime_need_receipt_present(receipt))
+        return true;
+    if (!receipt->top) {
+        receipt->owner = dst;
+        return true;
+    }
+    PrimeNeedReceiptFrames originals = {0};
+    if (!prime_need_receipt_collect_all(receipt->top, &originals))
+        return false;
+    PrimeNeedReceiptFrame **copies = calloc(
+        originals.len, sizeof(*copies));
+    bool *done = calloc(originals.len, sizeof(*done));
+    if (!copies || !done) {
+        free(copies);
+        free(done);
+        prime_need_receipt_frames_free(&originals);
+        return false;
+    }
+    size_t completed = 0u;
+    while (completed < originals.len) {
+        bool progressed = false;
+        for (size_t i = 0u; i < originals.len; i++) {
+            if (done[i])
+                continue;
+            const PrimeNeedReceiptFrame *source = originals.items[i];
+            PrimeNeedReceiptFrame *left = NULL;
+            PrimeNeedReceiptFrame *right = NULL;
+            bool parents_ready = true;
+            for (size_t j = 0u; j < originals.len; j++) {
+                if (originals.items[j] == source->left) {
+                    if (!done[j])
+                        parents_ready = false;
+                    left = copies[j];
+                }
+                if (originals.items[j] == source->right) {
+                    if (!done[j])
+                        parents_ready = false;
+                    right = copies[j];
+                }
+            }
+            if (!parents_ready)
+                continue;
+            PrimeNeedReceiptFrame *copy = prime_need_receipt_alloc_frame(dst);
+            if (!copy)
+                goto fail;
+            *copy = *source;
+            copy->left = left;
+            copy->right = right;
+            if (source->has_event) {
+                copy->event.before = source->event.before
+                    ? atom_deep_copy(dst, source->event.before) : NULL;
+                copy->event.after = source->event.after
+                    ? atom_deep_copy(dst, source->event.after) : NULL;
+                if ((source->event.before && !copy->event.before) ||
+                    (source->event.after && !copy->event.after))
+                    goto fail;
+            }
+            copies[i] = copy;
+            done[i] = true;
+            completed++;
+            progressed = true;
+        }
+        if (!progressed)
+            goto fail;
+    }
+    for (size_t i = 0u; i < originals.len; i++) {
+        if (originals.items[i] == receipt->top) {
+            receipt->top = copies[i];
+            receipt->owner = dst;
+            free(copies);
+            free(done);
+            prime_need_receipt_frames_free(&originals);
+            return true;
+        }
+    }
+
+fail:
+    free(copies);
+    free(done);
+    prime_need_receipt_frames_free(&originals);
+    return false;
+}

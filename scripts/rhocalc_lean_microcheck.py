@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fcntl
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -113,31 +115,42 @@ def main() -> int:
     if not build_targets:
         build_targets = ["Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge"]
 
-    build = subprocess.run(
-        ["lake", "build", *build_targets],
-        cwd=str(mettapedia_root),
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    if build.returncode != 0:
-        sys.stderr.write(build.stdout)
-        sys.stderr.write(build.stderr)
-        return build.returncode
+    env = os.environ.copy()
+    lock_dir = mettapedia_root / ".lake"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / "rhocalc_lean_microcheck.lock"
 
-    proc = subprocess.run(
-        ["lake", "env", "lean", str(lean_file)],
-        cwd=str(mettapedia_root),
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    if proc.returncode == 0:
-        return 0
+    with lock_path.open("w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
 
-    sys.stderr.write(proc.stdout)
-    sys.stderr.write(proc.stderr)
-    return proc.returncode
+        for target in build_targets:
+            build = subprocess.run(
+                ["lake", "build", target],
+                cwd=str(mettapedia_root),
+                env=env,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            if build.returncode != 0:
+                sys.stderr.write(build.stdout)
+                sys.stderr.write(build.stderr)
+                return build.returncode
+
+        proc = subprocess.run(
+            ["lake", "env", "lean", str(lean_file)],
+            cwd=str(mettapedia_root),
+            env=env,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if proc.returncode == 0:
+            return 0
+
+        sys.stderr.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
+        return proc.returncode
 
 
 if __name__ == "__main__":

@@ -183,7 +183,7 @@ static void emit_compiled_symbol_name(FILE *out, const char *head,
 /* ── Variable Capture Table ─────────────────────────────────────────────── */
 
 typedef struct {
-    SymbolId spelling;
+    VarId var_id;
     char llvm_reg[32];
 } VarCapture;
 
@@ -218,17 +218,17 @@ static void capture_reserve(CaptureTable *ct, size_t needed) {
     ct->cap = next_cap;
 }
 
-static void capture_add(CaptureTable *ct, SymbolId spelling, const char *reg) {
+static void capture_add(CaptureTable *ct, VarId var_id, const char *reg) {
     capture_reserve(ct, ct->len + 1);
-    ct->caps[ct->len].spelling = spelling;
+    ct->caps[ct->len].var_id = var_id;
     strncpy(ct->caps[ct->len].llvm_reg, reg, 31);
     ct->caps[ct->len].llvm_reg[31] = '\0';
     ct->len++;
 }
 
-static const char *capture_lookup(CaptureTable *ct, SymbolId spelling) {
+static const char *capture_lookup(CaptureTable *ct, VarId var_id) {
     for (size_t i = 0; i < ct->len; i++)
-        if (ct->caps[i].spelling == spelling)
+        if (ct->caps[i].var_id == var_id)
             return ct->caps[i].llvm_reg;
     return NULL;
 }
@@ -238,7 +238,7 @@ static const char *capture_lookup(CaptureTable *ct, SymbolId spelling) {
 static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
                          int fail_label, CaptureTable *captures) {
     if (pattern->kind == ATOM_VAR) {
-        const char *existing = capture_lookup(captures, pattern->sym_id);
+        const char *existing = capture_lookup(captures, pattern->var_id);
         if (existing) {
             int l = g_label++;
             fprintf(out, "  %%dupeq%d = call i1 @cetta_atom_eq(%%Atom* %s, %%Atom* %s)\n",
@@ -246,7 +246,7 @@ static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
             fprintf(out, "  br i1 %%dupeq%d, label %%dupok%d, label %%fail%d\n", l, l, fail_label);
             fprintf(out, "dupok%d:\n", l);
         } else {
-            capture_add(captures, pattern->sym_id, atom_reg);
+            capture_add(captures, pattern->var_id, atom_reg);
         }
         return;
     }
@@ -337,15 +337,17 @@ static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
 /* ── RHS Emission (with direct calls for compiled heads) ────────────────── */
 
 /* Forward declaration — emit_rhs and emit_call_or_build are mutually aware */
-static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
-                             EqGroupSet *all_groups);
+static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
+                            CaptureTable *captures, EqGroupSet *all_groups);
 
 /* Emit a direct call to a compiled function, returning the first result as
    an Atom* register. This path is only used for groups already proven safe
    for direct singleton calls, so arguments are passed directly as stable
    values instead of being re-evaluated here. */
-static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_atom,
-                                     CaptureTable *captures, EqGroupSet *all_groups) {
+static const char *emit_direct_call(FILE *out, Arena *compiler_arena,
+                                    EqGroup *g, Atom *call_atom,
+                                    CaptureTable *captures,
+                                    EqGroupSet *all_groups) {
     static char reg[32];
 
     /* Build already-stable argument atoms, skipping the head symbol for n-ary calls. */
@@ -354,7 +356,9 @@ static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_atom,
         nargs = call_atom->expr.len - 1;
     const char **arg_regs = cetta_malloc(sizeof(const char *) * (nargs ? nargs : 1));
     for (CettaExprIndex i = 0; i < nargs; i++) {
-        arg_regs[i] = strdup(emit_rhs(out, call_atom->expr.elems[i + 1], captures, all_groups));
+        arg_regs[i] = strdup(emit_rhs(
+            out, compiler_arena, call_atom->expr.elems[i + 1],
+            captures, all_groups));
     }
 
     /* Allocate temporary ResultSet for the compiled function's results */
@@ -380,27 +384,38 @@ static const char *emit_direct_call(FILE *out, EqGroup *g, Atom *call_atom,
     return reg;
 }
 
-static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
-                             EqGroupSet *all_groups) {
+static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
+                            CaptureTable *captures,
+                            EqGroupSet *all_groups) {
     static char reg[32];
 
     if (rhs->kind == ATOM_VAR) {
-        const char *name = atom_name_cstr(rhs);
-        const char *cap = capture_lookup(captures, rhs->sym_id);
+        const char *cap = capture_lookup(captures, rhs->var_id);
         if (cap) return cap;
+        const char *name = rhs->name_key
+            ? atom_to_parseable_string(compiler_arena, rhs->name_key)
+            : atom_name_cstr(rhs);
         int t = g_tmp++;
         snprintf(reg, sizeof(reg), "%%var%d", t);
-        fprintf(out, "  %s = call %%Atom* @cetta_atom_var(%%Arena* %%arena, i8* "
+        fprintf(out,
+                "  %s = call %%Atom* @%s(%%Arena* %%arena, i8* "
                 "getelementptr([%zu x i8], [%zu x i8]* @str_",
-                reg, strlen(name)+1, strlen(name)+1);
+                reg, rhs->name_key ? "cetta_atom_named_var"
+                                   : "cetta_atom_var",
+                strlen(name)+1, strlen(name)+1);
         emit_mangled(out, name);
-        fprintf(out, ", i32 0, i32 0))\n");
+        if (rhs->name_key)
+            fprintf(out, ", i32 0, i32 0), i64 %" PRIu64 ")\n",
+                    (uint64_t)rhs->var_id);
+        else
+            fprintf(out, ", i32 0, i32 0))\n");
         return reg;
     }
     if (rhs->kind == ATOM_SYMBOL) {
         EqGroup *target = eq_group_lookup(all_groups, rhs->sym_id, 0);
         if (target && target->direct_call_safe)
-            return emit_direct_call(out, target, rhs, captures, all_groups);
+            return emit_direct_call(
+                out, compiler_arena, target, rhs, captures, all_groups);
 
         const char *name = atom_name_cstr(rhs);
         int t = g_tmp++;
@@ -479,14 +494,17 @@ static const char *emit_rhs(FILE *out, Atom *rhs, CaptureTable *captures,
                                               rhs->expr.len - 1);
             if (target && target->direct_call_safe &&
                 compile_call_args_are_stable(rhs, all_groups)) {
-                return emit_direct_call(out, target, rhs, captures, all_groups);
+                return emit_direct_call(
+                    out, compiler_arena, target, rhs, captures, all_groups);
             }
         }
 
         /* Not a compiled head → build atom tree, let metta_eval handle it */
         const char **child_regs = cetta_malloc(sizeof(const char *) * rhs->expr.len);
         for (CettaExprIndex i = 0; i < rhs->expr.len; i++)
-            child_regs[i] = strdup(emit_rhs(out, rhs->expr.elems[i], captures, all_groups));
+            child_regs[i] = strdup(emit_rhs(
+                out, compiler_arena, rhs->expr.elems[i],
+                captures, all_groups));
         int t = g_tmp++;
         snprintf(reg, sizeof(reg), "%%arr%d", t);
         fprintf(out, "  %s = alloca %%Atom*, i64 %" PRIu64 "\n", reg,
@@ -522,7 +540,8 @@ static void emit_str_const(FILE *out, const char *name) {
     fprintf(out, "\\00\"\n");
 }
 
-static void collect_syms(Atom *a, const char ***syms, size_t *n, size_t *cap) {
+static void collect_syms(Arena *arena, Atom *a, const char ***syms,
+                         size_t *n, size_t *cap) {
     if (a->kind == ATOM_SYMBOL) {
         const char *name = atom_name_cstr(a);
         for (size_t i = 0; i < *n; i++)
@@ -531,7 +550,9 @@ static void collect_syms(Atom *a, const char ***syms, size_t *n, size_t *cap) {
         (*syms)[(*n)++] = name;
     }
     if (a->kind == ATOM_VAR) {
-        const char *name = atom_name_cstr(a);
+        const char *name = a->name_key
+            ? atom_to_parseable_string(arena, a->name_key)
+            : atom_name_cstr(a);
         for (size_t i = 0; i < *n; i++)
             if (strcmp((*syms)[i], name) == 0) return;
         if (*n >= *cap) { *cap = *cap ? *cap * 2 : 32; *syms = cetta_realloc((void*)*syms, sizeof(const char *) * *cap); }
@@ -545,13 +566,12 @@ static void collect_syms(Atom *a, const char ***syms, size_t *n, size_t *cap) {
     }
     if (a->kind == ATOM_EXPR)
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
-            collect_syms(a->expr.elems[i], syms, n, cap);
+            collect_syms(arena, a->expr.elems[i], syms, n, cap);
 }
 
 /* ── Top-Level Compiler ─────────────────────────────────────────────────── */
 
 void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
-    (void)a;
     EqGroupSet gs;
     analyze_equations(s, a, &gs);
     if (gs.len == 0) { fprintf(out, "; No compilable equations\n"); return; }
@@ -559,10 +579,11 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     /* Collect all string constants */
     const char **syms = NULL; size_t nsyms = 0, csyms = 0;
     for (size_t gi = 0; gi < gs.len; gi++) {
-        collect_syms(atom_symbol_id(a, gs.groups[gi].head_id), &syms, &nsyms, &csyms);
+        collect_syms(a, atom_symbol_id(a, gs.groups[gi].head_id),
+                     &syms, &nsyms, &csyms);
         for (size_t ei = 0; ei < gs.groups[gi].len; ei++) {
-            collect_syms(gs.groups[gi].lhs[ei], &syms, &nsyms, &csyms);
-            collect_syms(gs.groups[gi].rhs[ei], &syms, &nsyms, &csyms);
+            collect_syms(a, gs.groups[gi].lhs[ei], &syms, &nsyms, &csyms);
+            collect_syms(a, gs.groups[gi].rhs[ei], &syms, &nsyms, &csyms);
         }
     }
 
@@ -588,6 +609,7 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     fprintf(out, "; Atom constructors\n");
     fprintf(out, "declare %%Atom* @cetta_atom_symbol(%%Arena*, i8*)\n");
     fprintf(out, "declare %%Atom* @cetta_atom_var(%%Arena*, i8*)\n");
+    fprintf(out, "declare %%Atom* @cetta_atom_named_var(%%Arena*, i8*, i64)\n");
     fprintf(out, "declare %%Atom* @cetta_atom_int(%%Arena*, i64)\n");
     fprintf(out, "declare %%Atom* @cetta_atom_bigint(%%Arena*, i8*)\n");
     fprintf(out, "declare %%Atom* @cetta_atom_rational(%%Arena*, i8*)\n");
@@ -646,7 +668,7 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
             }
 
             /* Build RHS — direct calls for compiled heads, metta_eval for others */
-            const char *rhs_reg = emit_rhs(out, g->rhs[ei], &captures, &gs);
+            const char *rhs_reg = emit_rhs(out, a, g->rhs[ei], &captures, &gs);
 
             /* Evaluate the constructed RHS via metta_eval.
                For direct-call results (already evaluated), metta_eval on an atom

@@ -359,7 +359,8 @@ static Atom *bindings_resolve_atom(Bindings *b, Atom *atom) {
         if (next == atom) return atom;
         if (next->kind == ATOM_VAR &&
             (binding_var_eq(next->var_id, atom->var_id) ||
-             next->sym_id == atom->sym_id))
+             (!next->name_key && !atom->name_key &&
+              next->sym_id == atom->sym_id)))
             return atom;
         atom = next;
         if (++dereferences > dereference_limit) return atom;
@@ -450,11 +451,13 @@ static bool bindings_store_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
 }
 
 static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
-                                          SymbolId spelling, Atom *val,
+                                          SymbolId spelling, Atom *name_key,
+                                          Atom *val,
                                           bool normalize_constraints,
                                           bool legacy_name_fallback);
 static bool bindings_add_internal(Bindings *b, VarId var_id, SymbolId spelling,
-                                  Atom *val, bool normalize_constraints,
+                                  Atom *name_key, Atom *val,
+                                  bool normalize_constraints,
                                   bool legacy_name_fallback);
 static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
                                                      Atom *rhs,
@@ -490,6 +493,8 @@ void bindings_init(Bindings *b) {
     b->constraints = NULL;
     b->eq_len = 0;
     b->eq_cap = 0;
+    prime_need_snapshot_init(&b->prime_need);
+    prime_need_receipt_init(&b->prime_receipt);
     bindings_lookup_cache_reset(b);
 }
 
@@ -534,6 +539,8 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
             dst->lookup_cache_indices[i] = src->lookup_cache_indices[i];
         }
     }
+    dst->prime_need = src->prime_need;
+    dst->prime_receipt = src->prime_receipt;
     return true;
 }
 
@@ -546,13 +553,18 @@ bool bindings_copy(Bindings *dst, const Bindings *src) {
     return true;
 }
 
-bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
+bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
+                                             Arena *dst) {
     if (!bindings || !dst)
         return true;
     for (uint32_t i = 0; i < bindings->len; i++) {
+        Atom *promoted_name_key = atom_deep_copy(
+            dst, bindings->entries[i].name_key);
         Atom *promoted = atom_deep_copy(dst, bindings->entries[i].val);
-        if (bindings->entries[i].val && !promoted)
+        if ((bindings->entries[i].name_key && !promoted_name_key) ||
+            (bindings->entries[i].val && !promoted))
             return false;
+        bindings->entries[i].name_key = promoted_name_key;
         bindings->entries[i].val = promoted;
     }
     for (uint32_t i = 0; i < bindings->eq_len; i++) {
@@ -568,6 +580,13 @@ bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
     bindings->lookup_cache_count = 0;
     bindings->lookup_cache_next = 0;
     return true;
+}
+
+bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
+    if (!bindings_promote_logical_atoms_to_arena(bindings, dst))
+        return false;
+    return prime_need_snapshot_promote(dst, &bindings->prime_need) &&
+           prime_need_receipt_promote(dst, &bindings->prime_receipt);
 }
 
 void bindings_move(Bindings *dst, Bindings *src) {
@@ -587,6 +606,13 @@ Atom *bindings_lookup_id(Bindings *b, VarId var_id) {
 
 Atom *bindings_lookup_var(Bindings *b, Atom *var) {
     return bindings_lookup_id(b, var->var_id);
+}
+
+Atom *binding_variable_atom(Arena *a, const Binding *binding) {
+    if (!a || !binding || binding->legacy_name_fallback)
+        return NULL;
+    return atom_var_with_presentation(
+        a, binding->spelling, binding->name_key, binding->var_id);
 }
 
 Atom *bindings_resolve_atom_preview(Bindings *b, Atom *atom) {
@@ -612,11 +638,12 @@ char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix) {
 }
 
 static Atom *epoch_var_atom(Arena *a, Atom *var, uint32_t epoch) {
-    return atom_var_with_spelling(a, var->sym_id, var_epoch_id(var->var_id, epoch));
+    return atom_var_like(a, var, var_epoch_id(var->var_id, epoch));
 }
 
 static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
-                                          SymbolId spelling, Atom *val,
+                                          SymbolId spelling, Atom *name_key,
+                                          Atom *val,
                                           bool normalize_constraints,
                                           bool legacy_name_fallback) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_ADD);
@@ -634,6 +661,10 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
     int32_t existing_idx = bindings_lookup_index(b, var_id);
     Atom *existing = existing_idx >= 0 ? b->entries[existing_idx].val : NULL;
     if (existing) {
+        Atom *existing_key = b->entries[existing_idx].name_key;
+        if ((existing_key || name_key) &&
+            (!existing_key || !name_key || !atom_eq(existing_key, name_key)))
+            return false;
         /* Already bound — unify structurally instead of demanding
            literal equality, so repeated higher-order type constraints
            can refine earlier variable bindings. */
@@ -663,6 +694,7 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
     }
     b->entries[b->len].var_id = var_id;
     b->entries[b->len].spelling = spelling;
+    b->entries[b->len].name_key = name_key;
     b->entries[b->len].val = val;
     b->entries[b->len].legacy_name_fallback = legacy_name_fallback;
     bindings_lookup_cache_note(b, var_id, b->len);
@@ -673,12 +705,13 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
 }
 
 static bool bindings_add_internal(Bindings *b, VarId var_id, SymbolId spelling,
-                                  Atom *val, bool normalize_constraints,
+                                  Atom *name_key, Atom *val,
+                                  bool normalize_constraints,
                                   bool legacy_name_fallback) {
     Bindings next;
     if (!bindings_clone(&next, b))
         return false;
-    if (!bindings_add_inplace_internal(&next, var_id, spelling, val,
+    if (!bindings_add_inplace_internal(&next, var_id, spelling, name_key, val,
                                        normalize_constraints,
                                        legacy_name_fallback)) {
         bindings_free(&next);
@@ -689,7 +722,8 @@ static bool bindings_add_internal(Bindings *b, VarId var_id, SymbolId spelling,
 }
 
 bool bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val) {
-    return bindings_add_internal(b, var_id, spelling, val, true, false);
+    return bindings_add_internal(
+        b, var_id, spelling, NULL, val, true, false);
 }
 
 bool bindings_add_id_acyclic(Bindings *b, VarId var_id, SymbolId spelling,
@@ -697,7 +731,7 @@ bool bindings_add_id_acyclic(Bindings *b, VarId var_id, SymbolId spelling,
     Bindings next;
     if (!bindings_clone(&next, b))
         return false;
-    if (!bindings_add_inplace_internal(&next, var_id, spelling, val,
+    if (!bindings_add_inplace_internal(&next, var_id, spelling, NULL, val,
                                        true, false) ||
         bindings_has_loop(&next)) {
         bindings_free(&next);
@@ -708,7 +742,27 @@ bool bindings_add_id_acyclic(Bindings *b, VarId var_id, SymbolId spelling,
 }
 
 bool bindings_add_var(Bindings *b, Atom *var, Atom *val) {
-    return bindings_add_id(b, var->var_id, var->sym_id, val);
+    if (!var || var->kind != ATOM_VAR)
+        return false;
+    return bindings_add_internal(
+        b, var->var_id, var->sym_id, var->name_key, val, true, false);
+}
+
+bool bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val) {
+    if (!var || var->kind != ATOM_VAR)
+        return false;
+    Bindings next;
+    if (!bindings_clone(&next, b))
+        return false;
+    if (!bindings_add_inplace_internal(
+            &next, var->var_id, var->sym_id, var->name_key,
+            val, true, false) ||
+        bindings_has_loop(&next)) {
+        bindings_free(&next);
+        return false;
+    }
+    bindings_replace(b, &next);
+    return true;
 }
 
 static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
@@ -723,12 +777,14 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, Atom *lhs,
     }
     if (lhs->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, lhs->var_id, lhs->sym_id, rhs, false, false)) {
+                b, lhs->var_id, lhs->sym_id, lhs->name_key,
+                rhs, false, false)) {
             return false;
         }
     } else if (rhs->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, rhs->var_id, rhs->sym_id, lhs, false, false)) {
+                b, rhs->var_id, rhs->sym_id, rhs->name_key,
+                lhs, false, false)) {
             return false;
         }
     } else if (!atom_contains_unbound_var(b, lhs) &&
@@ -765,6 +821,11 @@ bool bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
 static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
+    if (!prime_need_snapshot_merge(&dst->prime_need, &src->prime_need))
+        return false;
+    if (!prime_need_receipt_merge(&dst->prime_receipt,
+                                  &src->prime_receipt))
+        return false;
     uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
     BindingConstraint *pending = bindings_temp_constraints_alloc(
@@ -778,7 +839,9 @@ static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
     dst->eq_len = 0;
     for (uint32_t i = 0; i < src->len; i++) {
         if (!bindings_add_inplace_internal(dst, src->entries[i].var_id,
-                                           src->entries[i].spelling, src->entries[i].val,
+                                           src->entries[i].spelling,
+                                           src->entries[i].name_key,
+                                           src->entries[i].val,
                                            false,
                                            src->entries[i].legacy_name_fallback)) {
             bindings_temp_constraints_release(pending, pending_cap,
@@ -814,11 +877,15 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
 }
 
 bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
-    if (!src || (src->len == 0 && src->eq_len == 0))
+    if (!src || (src->len == 0 && src->eq_len == 0 &&
+                 !prime_need_snapshot_present(&src->prime_need) &&
+                 !prime_need_receipt_present(&src->prime_receipt)))
         return true;
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
-    if (dst && dst->len == 0 && dst->eq_len == 0) {
+    if (dst && dst->len == 0 && dst->eq_len == 0 &&
+        !prime_need_snapshot_present(&dst->prime_need) &&
+        !prime_need_receipt_present(&dst->prime_receipt)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
         Bindings cloned;
         if (!bindings_clone(&cloned, src))
@@ -1260,8 +1327,9 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
         for (uint32_t i = 0; i < b->len; i++) {
             Atom *key = b->entries[i].legacy_name_fallback
                 ? atom_symbol_id(a, b->entries[i].spelling)
-                : atom_var_with_spelling(a, b->entries[i].spelling,
-                                         b->entries[i].var_id);
+                : binding_variable_atom(a, &b->entries[i]);
+            if (!key)
+                return NULL;
             assigns[i] = atom_expr2(a,
                 key,
                 b->entries[i].val);
@@ -1304,10 +1372,12 @@ bool bindings_from_atom(Atom *atom, Bindings *out) {
         Atom *key = assign->expr.elems[0];
         VarId id = VAR_ID_NONE;
         SymbolId spelling = SYMBOL_ID_NONE;
+        Atom *name_key = NULL;
         bool legacy_name_fallback = false;
         if (key->kind == ATOM_VAR) {
             id = key->var_id;
             spelling = key->sym_id;
+            name_key = key->name_key;
         } else if (key->kind == ATOM_SYMBOL) {
             id = g_var_intern ? var_intern(g_var_intern, key->sym_id)
                               : fresh_var_id();
@@ -1317,7 +1387,7 @@ bool bindings_from_atom(Atom *atom, Bindings *out) {
             bindings_free(out);
             return false;
         }
-        if (!bindings_add_inplace_internal(out, id, spelling,
+        if (!bindings_add_inplace_internal(out, id, spelling, name_key,
                                            assign->expr.elems[1], true,
                                            legacy_name_fallback)) {
             bindings_free(out);
@@ -1442,6 +1512,8 @@ static bool bindings_builder_snapshot(BindingsBuilder *bb) {
         .eq_len = bb->current.eq_len,
         .lookup_cache_count = bb->current.lookup_cache_count,
         .lookup_cache_next = bb->current.lookup_cache_next,
+        .prime_need = bb->current.prime_need,
+        .prime_receipt = bb->current.prime_receipt,
     };
     return true;
 }
@@ -1491,6 +1563,8 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.eq_len = entry->eq_len;
         bb->current.lookup_cache_count = entry->lookup_cache_count;
         bb->current.lookup_cache_next = entry->lookup_cache_next;
+        bb->current.prime_need = entry->prime_need;
+        bb->current.prime_receipt = entry->prime_receipt;
     }
 }
 
@@ -1503,7 +1577,8 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
                                                      bool normalize_constraints);
 
 static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
-                                             SymbolId spelling, Atom *val,
+                                             SymbolId spelling, Atom *name_key,
+                                             Atom *val,
                                              bool legacy_name_fallback) {
     if (!bb)
         return false;
@@ -1518,6 +1593,10 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
 
     int32_t existing_idx = bindings_lookup_index(&bb->current, var_id);
     if (existing_idx >= 0) {
+        Atom *existing_key = bb->current.entries[existing_idx].name_key;
+        if ((existing_key || name_key) &&
+            (!existing_key || !name_key || !atom_eq(existing_key, name_key)))
+            return false;
         Atom *existing = bb->current.entries[existing_idx].val;
         if (legacy_name_fallback &&
             !bb->current.entries[existing_idx].legacy_name_fallback) {
@@ -1541,6 +1620,7 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
     }
     bb->current.entries[bb->current.len].var_id = var_id;
     bb->current.entries[bb->current.len].spelling = spelling;
+    bb->current.entries[bb->current.len].name_key = name_key;
     bb->current.entries[bb->current.len].val = val;
     bb->current.entries[bb->current.len].legacy_name_fallback = legacy_name_fallback;
     bindings_lookup_cache_note(&bb->current, var_id, bb->current.len);
@@ -1550,11 +1630,15 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
 
 bool bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
                                    SymbolId spelling, Atom *val) {
-    return bindings_builder_add_id_internal(bb, var_id, spelling, val, false);
+    return bindings_builder_add_id_internal(
+        bb, var_id, spelling, NULL, val, false);
 }
 
 bool bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var, Atom *val) {
-    return bindings_builder_add_id_fresh(bb, var->var_id, var->sym_id, val);
+    if (!var || var->kind != ATOM_VAR)
+        return false;
+    return bindings_builder_add_id_internal(
+        bb, var->var_id, var->sym_id, var->name_key, val, false);
 }
 
 static bool bindings_builder_store_constraint(BindingsBuilder *bb,
@@ -1611,12 +1695,12 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
         return true;
     if (lhs->kind == ATOM_VAR) {
         if (!bindings_builder_add_id_internal(bb, lhs->var_id, lhs->sym_id,
-                                              rhs, false)) {
+                                              lhs->name_key, rhs, false)) {
             return false;
         }
     } else if (rhs->kind == ATOM_VAR) {
         if (!bindings_builder_add_id_internal(bb, rhs->var_id, rhs->sym_id,
-                                              lhs, false)) {
+                                              rhs->name_key, lhs, false)) {
             return false;
         }
     } else if (!atom_contains_unbound_var(current, lhs) &&
@@ -1635,12 +1719,26 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
     if (!bb || !src)
         return true;
-    if (src->len == 0 && src->eq_len == 0)
+    if (src->len == 0 && src->eq_len == 0 &&
+        !prime_need_snapshot_present(&src->prime_need) &&
+        !prime_need_receipt_present(&src->prime_receipt))
         return true;
     bindings_assert_no_private_variant_slots(&bb->current);
     bindings_assert_no_private_variant_slots(src);
 
     uint32_t mark = bindings_builder_save(bb);
+    if (!bindings_builder_snapshot(bb))
+        return false;
+    if (!prime_need_snapshot_merge(&bb->current.prime_need,
+                                   &src->prime_need)) {
+        bindings_builder_rollback(bb, mark);
+        return false;
+    }
+    if (!prime_need_receipt_merge(&bb->current.prime_receipt,
+                                  &src->prime_receipt)) {
+        bindings_builder_rollback(bb, mark);
+        return false;
+    }
     uint32_t pending_cap = bb->current.eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
     BindingConstraint *pending = bindings_temp_constraints_alloc(
@@ -1655,6 +1753,7 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     for (uint32_t i = 0; i < src->len; i++) {
         if (!bindings_builder_add_id_internal(bb, src->entries[i].var_id,
                                               src->entries[i].spelling,
+                                              src->entries[i].name_key,
                                               src->entries[i].val,
                                               src->entries[i].legacy_name_fallback)) {
             bindings_temp_constraints_release(pending, pending_cap,
@@ -1918,7 +2017,7 @@ static Atom *rename_var_map_lookup(RenameVarMap *map, VarId id) {
 
 static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, Atom *var) {
     uint32_t suffix = fresh_var_suffix();
-    Atom *fresh = atom_var_with_spelling(a, var->sym_id, var_epoch_id(var->var_id, suffix));
+    Atom *fresh = atom_var_like(a, var, var_epoch_id(var->var_id, suffix));
     if (map->len >= map->cap) {
         uint32_t next_cap = map->cap ? map->cap * 2u : 8u;
         if (next_cap < map->cap ||
@@ -2087,7 +2186,7 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RENAME_VARS);
     switch (atom->kind) {
     case ATOM_VAR: {
-        return atom_var_with_spelling(a, atom->sym_id, var_epoch_id(atom->var_id, suffix));
+        return atom_var_like(a, atom, var_epoch_id(atom->var_id, suffix));
     }
     case ATOM_EXPR: {
         Atom **new_elems = NULL;
@@ -2157,6 +2256,9 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
+            return atom_eq(pattern, target);
         }
         return false;
 
@@ -2206,6 +2308,9 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
+            return atom_eq(pattern, target);
         }
         return false;
 
@@ -2944,7 +3049,10 @@ retry_pair:
                 right_original = false;
                 goto retry_pair;
             }
-            if (!bindings_add_id(b, right_id, right->sym_id, left)) goto fail;
+            Atom *binding_var = right_original
+                ? epoch_var_atom(a, right, epoch) : right;
+            if (!binding_var || !bindings_add_var(b, binding_var, left))
+                goto fail;
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
@@ -3045,6 +3153,8 @@ static bool stored_grounded_equal(Atom *left,
     case GV_STATE:
     case GV_CAPTURE:
     case GV_FOREIGN:
+    case GV_PRIME_NEED_CAPABILITY:
+    case GV_PRIME_CONTEXT:
         return false;
     }
     return false;
@@ -3098,8 +3208,8 @@ retry_pair:
                     continue;
                 }
                 if (left->var_id == right_var_id) continue;
-                Atom *value = atom_var_with_spelling(
-                    a, tu_sym(candidate_universe, right_id), right_var_id);
+                Atom *value = term_universe_copy_atom_epoch(
+                    candidate_universe, a, right_id, epoch);
                 if (!value || !bindings_add_var(b, left, value)) goto fail;
                 continue;
             }
@@ -3124,8 +3234,10 @@ retry_pair:
                     goto fail;
                 continue;
             }
-            if (!bindings_add_id(b, right_var_id,
-                                 tu_sym(candidate_universe, right_id), left))
+            Atom *binding_var = term_universe_copy_atom_epoch(
+                candidate_universe, a, right_id, epoch);
+            if (!binding_var ||
+                !bindings_add_var(b, binding_var, left))
                 goto fail;
             continue;
         }
@@ -3164,6 +3276,11 @@ fail:
 }
 
 bool bindings_eq(Bindings *a, Bindings *b) {
+    if (!(prime_need_snapshot_is_ancestor(&a->prime_need, &b->prime_need) &&
+          prime_need_snapshot_is_ancestor(&b->prime_need, &a->prime_need)))
+        return false;
+    if (!prime_need_receipt_equal(&a->prime_receipt, &b->prime_receipt))
+        return false;
     if (a->len != b->len) return false;
     if (a->eq_len != b->eq_len) return false;
     for (uint32_t i = 0; i < a->len; i++) {

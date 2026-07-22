@@ -80,7 +80,7 @@ static Atom *variant_shape_create_slot_var(Arena *dst, Atom *src_var,
 
     switch (options ? options->slot_policy : CETTA_VARIANT_SLOT_FIXED_SPELLING) {
     case CETTA_VARIANT_SLOT_SOURCE_SPELLING:
-        return atom_var_with_spelling(dst, src_var->sym_id, canonical_id);
+        return atom_var_like(dst, src_var, canonical_id);
     case CETTA_VARIANT_SLOT_ORDINAL_NAME: {
         char name[64];
         snprintf(name, sizeof(name), "%s%u", slot_name, ordinal);
@@ -126,7 +126,7 @@ static Atom *variant_shape_create_materialized_var(Arena *dst, Atom *src_var,
                                                    uint32_t ordinal, void *ctx) {
     (void)ordinal;
     (void)ctx;
-    return atom_var_with_spelling(dst, src_var->sym_id, fresh_var_id());
+    return atom_var_like(dst, src_var, fresh_var_id());
 }
 
 static Atom *variant_shape_rewrite_materialized_var(Arena *dst, Atom *src_var,
@@ -164,7 +164,7 @@ static bool variant_shape_build_slot_env(const CettaVarMap *src_to_slot,
         Atom *slot = src_to_slot->items[i].mapped_var;
         Atom *live_var = cetta_var_map_lookup(slot_to_src, slot->var_id);
         if (!slot || !live_var ||
-            !bindings_add_id(slot_env, slot->var_id, slot->sym_id, live_var)) {
+            !bindings_add_var(slot_env, slot, live_var)) {
             return false;
         }
     }
@@ -181,9 +181,11 @@ bool variant_shape_canonicalize_bindings(Arena *dst, const Bindings *src,
     if (!src)
         return true;
     for (uint32_t i = 0; i < src->len; i++) {
-        Atom *binding_var =
-            atom_var_with_spelling(dst, src->entries[i].spelling,
-                                   src->entries[i].var_id);
+        Atom *binding_var = binding_variable_atom(dst, &src->entries[i]);
+        if (!binding_var) {
+            bindings_free(out);
+            return false;
+        }
         Atom *slot_var =
             cetta_var_map_get_or_add(src_to_slot, dst, binding_var,
                                      variant_shape_create_slot_var,
@@ -192,7 +194,7 @@ bool variant_shape_canonicalize_bindings(Arena *dst, const Bindings *src,
                                                          src_to_slot, NULL,
                                                          options);
         if (!slot_var || !slot_val ||
-            !bindings_add_id(out, slot_var->var_id, slot_var->sym_id, slot_val)) {
+            !bindings_add_var(out, slot_var, slot_val)) {
             bindings_free(out);
             return false;
         }
@@ -226,9 +228,11 @@ bool variant_shape_materialize_bindings(Arena *dst, const Bindings *src,
     if (!src)
         return true;
     for (uint32_t i = 0; i < src->len; i++) {
-        Atom *binding_var =
-            atom_var_with_spelling(dst, src->entries[i].spelling,
-                                   src->entries[i].var_id);
+        Atom *binding_var = binding_variable_atom(dst, &src->entries[i]);
+        if (!binding_var) {
+            bindings_free(out);
+            return false;
+        }
         Atom *goal_var = cetta_var_map_lookup(goal_instantiation,
                                               src->entries[i].var_id);
         if (!goal_var) {
@@ -241,8 +245,7 @@ bool variant_shape_materialize_bindings(Arena *dst, const Bindings *src,
                                                                 goal_instantiation,
                                                                 local_slots);
         if (!goal_var || !materialized_val ||
-            !bindings_add_id(out, goal_var->var_id, goal_var->sym_id,
-                             materialized_val)) {
+            !bindings_add_var(out, goal_var, materialized_val)) {
             bindings_free(out);
             return false;
         }

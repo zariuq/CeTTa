@@ -512,6 +512,7 @@ typedef enum {
     ABT_TRANSFORM_SUBST,
     ABT_TRANSFORM_CLOSE,
     ABT_TRANSFORM_OPEN,
+    ABT_TRANSFORM_BIND,
 } AbtTransformKind;
 
 typedef struct {
@@ -569,24 +570,95 @@ static bool abt_task_push(AbtTaskStack *stack, AbtTask task) {
     return true;
 }
 
-/* 0 is not Var, 1 is a valid Var, -1 is malformed Var syntax. */
-static int abt_var_index(Atom *term, uint64_t *index) {
-    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0 ||
-        !atom_is_symbol(term->expr.elems[0], "Var"))
-        return 0;
-    if (term->expr.len != 2u ||
-        term->expr.elems[1]->kind != ATOM_GROUNDED ||
-        term->expr.elems[1]->ground.gkind != GV_INT ||
-        term->expr.elems[1]->ground.ival < 0)
-        return -1;
-    *index = (uint64_t)term->expr.elems[1]->ground.ival;
-    return 1;
+static bool abt_is_quote_form(Atom *term) {
+    return term && term->kind == ATOM_EXPR && term->expr.len == 2u &&
+           atom_is_symbol(term->expr.elems[0], "quote");
 }
 
-static Atom *abt_make_var(Arena *arena, uint64_t index) {
+/* 0 is not an index, 1 is a canonical index, and -1 is malformed. */
+static int abt_idx_form(Atom *term, uint64_t *index) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u ||
+        !atom_is_symbol(term->expr.elems[0], "idx"))
+        return 0;
+    if (term->expr.len != 2u) return -1;
+    Atom *payload = term->expr.elems[1];
+    if (payload->kind == ATOM_GROUNDED &&
+        payload->ground.gkind == GV_INT) {
+        if (payload->ground.ival < 0) return -1;
+        *index = (uint64_t)payload->ground.ival;
+        return 1;
+    }
+    return -1;
+}
+
+static bool abt_closed_stable_graph(Atom *root) {
+    if (!root || atom_has_vars(root) ||
+        (root->flags & ATOM_FLAG_HASH_STABLE) == 0u)
+        return false;
+    AbtTaskStack stack;
+    AbtActiveSet active;
+    abt_tasks_init(&stack);
+    abt_active_init(&active);
+    if (!abt_task_push(&stack, (AbtTask){
+            ABT_TASK_VISIT, root, 0u, NULL, NULL}))
+        goto fail;
+    while (stack.len > 0u) {
+        AbtTask task = stack.tasks[--stack.len];
+        if (task.kind == ABT_TASK_BUILD) {
+            abt_active_leave(&active, task.term);
+            continue;
+        }
+        Atom *current = task.term;
+        if (!current || current->kind == ATOM_VAR ||
+            (current->flags & ATOM_FLAG_HASH_STABLE) == 0u)
+            goto fail;
+        if (current->kind != ATOM_EXPR) continue;
+        if (!abt_active_enter(&active, current) ||
+            !abt_task_push(&stack, (AbtTask){
+                ABT_TASK_BUILD, current, 0u, NULL, NULL}))
+            goto fail;
+        for (CettaExprIndex i = current->expr.len; i > 0u; i--)
+            if (!abt_task_push(&stack, (AbtTask){
+                    ABT_TASK_VISIT, current->expr.elems[i - 1u],
+                    0u, NULL, NULL}))
+                goto fail;
+    }
+    abt_active_free(&active);
+    abt_tasks_free(&stack);
+    return true;
+
+fail:
+    abt_active_free(&active);
+    abt_tasks_free(&stack);
+    return false;
+}
+
+/* Keys accepted by close/open/bind are closed structural atoms.  Canonical
+   loose indices remain forbidden; quote makes a structural name explicit. */
+static bool abt_key_admitted(const AbtSignature *signature, Atom *name) {
+    uint64_t ignored = 0u;
+    int form = abt_idx_form(name, &ignored);
+    if (form != 0) return false;
+    if (abt_is_quote_form(name))
+        return abt_closed_stable_graph(name);
+    return abt_scope_check(signature, 0u, name);
+}
+
+static bool abt_surface_binder_name(Atom *name) {
+    if (name && name->kind == ATOM_SYMBOL) return true;
+    if (abt_is_quote_form(name))
+        return abt_closed_stable_graph(name);
+    return false;
+}
+
+static int abt_idx_index(Atom *term, uint64_t *index) {
+    return abt_idx_form(term, index);
+}
+
+static Atom *abt_make_idx(Arena *arena, uint64_t index) {
     if (index > INT64_MAX) return NULL;
     return atom_expr2(
-        arena, atom_symbol(arena, "Var"), atom_int(arena, (int64_t)index));
+        arena, atom_symbol(arena, "idx"), atom_int(arena, (int64_t)index));
 }
 
 static bool abt_depth_add(uint64_t depth, uint32_t increment,
@@ -611,11 +683,11 @@ static Atom *abt_transform_var(const AbtSignature *signature, Arena *arena,
         if (transform->delta >= 0) {
             uint64_t amount = (uint64_t)transform->delta;
             if (variable > (uint64_t)INT64_MAX - amount) return NULL;
-            return abt_make_var(arena, variable + amount);
+            return abt_make_idx(arena, variable + amount);
         }
         uint64_t amount = (uint64_t)(-(transform->delta + 1)) + 1u;
         if (variable < amount) return NULL;
-        return abt_make_var(arena, variable - amount);
+        return abt_make_idx(arena, variable - amount);
     }
     case ABT_TRANSFORM_SUBST:
         if (transform->index > UINT64_MAX - depth) return NULL;
@@ -628,13 +700,18 @@ static Atom *abt_transform_var(const AbtSignature *signature, Arena *arena,
                              transform->replacement);
         }
         if (variable > target && CETTA_ABT_MUTATION != 2)
-            return abt_make_var(arena, variable - 1u);
+            return abt_make_idx(arena, variable - 1u);
         return original;
     case ABT_TRANSFORM_OPEN:
         if (variable == depth) return transform->replacement;
         return original;
     case ABT_TRANSFORM_CLOSE:
         return original;
+    case ABT_TRANSFORM_BIND: {
+        if (variable < depth) return original;
+        if (variable == UINT64_MAX) return NULL;
+        return abt_make_idx(arena, variable + 1u);
+    }
     }
     return NULL;
 }
@@ -642,9 +719,16 @@ static Atom *abt_transform_var(const AbtSignature *signature, Arena *arena,
 static Atom *abt_transform_term(const AbtSignature *signature, Arena *arena,
                                 const AbtTransform *transform, Atom *term) {
     if (!signature || !arena || !transform || !term) return NULL;
-    if (transform->kind != ABT_TRANSFORM_SHIFT &&
+    if (transform->kind == ABT_TRANSFORM_SUBST &&
         (!transform->replacement ||
          !abt_alpha_eq(transform->replacement, transform->replacement)))
+        return NULL;
+    if ((transform->kind == ABT_TRANSFORM_CLOSE ||
+         transform->kind == ABT_TRANSFORM_OPEN ||
+         transform->kind == ABT_TRANSFORM_BIND) &&
+        !(CETTA_ABT_MUTATION == 17 &&
+          transform->kind != ABT_TRANSFORM_BIND) &&
+        !abt_key_admitted(signature, transform->replacement))
         return NULL;
 
     Atom *result = NULL;
@@ -685,17 +769,33 @@ static Atom *abt_transform_term(const AbtSignature *signature, Arena *arena,
             *task.destination = memoized;
             continue;
         }
-        if (transform->kind == ABT_TRANSFORM_CLOSE &&
-            abt_alpha_eq(current, transform->replacement)) {
-            *task.destination = abt_make_var(arena, task.depth);
+        if ((transform->kind == ABT_TRANSFORM_CLOSE ||
+             transform->kind == ABT_TRANSFORM_BIND) &&
+            !(CETTA_ABT_MUTATION == 23 &&
+              transform->kind == ABT_TRANSFORM_BIND) &&
+            atom_eq(current, transform->replacement)) {
+            *task.destination = abt_make_idx(arena, task.depth);
             if (!*task.destination || !abt_transform_memo_store(
                     &memo, current, task.depth, *task.destination))
                 goto fail;
             continue;
         }
 
+        /* Quoted syntax is inert under object-language transformations.  It
+           can be closed as one whole name by the equality case above, but an
+           unrelated outer binder/substitution never traverses its payload.
+           Ordinary quoted code may contain MeTTa matcher variables; only a
+           quote used as a persistent binder key must satisfy closedness. */
+        if (abt_is_quote_form(current)) {
+            *task.destination = current;
+            if (!abt_transform_memo_store(
+                    &memo, current, task.depth, current))
+                goto fail;
+            continue;
+        }
+
         uint64_t variable = 0;
-        int var_status = abt_var_index(current, &variable);
+        int var_status = abt_idx_form(current, &variable);
         if (var_status < 0) goto fail;
         if (var_status > 0) {
             *task.destination = abt_transform_var(
@@ -793,8 +893,7 @@ Atom *abt_subst(const AbtSignature *signature, Arena *arena,
 
 Atom *abt_close(const AbtSignature *signature, Arena *arena,
                 Atom *name, Atom *term) {
-    if (CETTA_ABT_MUTATION != 17 &&
-        !abt_scope_check(signature, 0u, name))
+    if (CETTA_ABT_MUTATION != 17 && !abt_key_admitted(signature, name))
         return NULL;
     AbtTransform transform = {
         .kind = ABT_TRANSFORM_CLOSE,
@@ -808,13 +907,25 @@ Atom *abt_close(const AbtSignature *signature, Arena *arena,
 Atom *abt_open(const AbtSignature *signature, Arena *arena,
                Atom *fresh_name, Atom *term) {
     if (CETTA_ABT_MUTATION != 17 &&
-        !abt_scope_check(signature, 0u, fresh_name))
+        !abt_key_admitted(signature, fresh_name))
         return NULL;
     AbtTransform transform = {
         .kind = ABT_TRANSFORM_OPEN,
         .delta = 0,
         .index = 0,
         .replacement = fresh_name,
+    };
+    return abt_transform_term(signature, arena, &transform, term);
+}
+
+Atom *abt_bind(const AbtSignature *signature, Arena *arena,
+               Atom *name, Atom *term) {
+    if (!abt_key_admitted(signature, name)) return NULL;
+    AbtTransform transform = {
+        .kind = ABT_TRANSFORM_BIND,
+        .delta = 0,
+        .index = 0,
+        .replacement = name,
     };
     return abt_transform_term(signature, arena, &transform, term);
 }
@@ -1007,8 +1118,15 @@ Atom *abt_print(const AbtSignature *signature, Arena *arena, Atom *term) {
             *task.destination = memoized;
             continue;
         }
+        if (abt_is_quote_form(current)) {
+            if (!abt_transform_memo_store(
+                    &memo, current, task.depth, current))
+                goto fail;
+            *task.destination = current;
+            continue;
+        }
         uint64_t variable = 0u;
-        int var_status = abt_var_index(current, &variable);
+        int var_status = abt_idx_index(current, &variable);
         if (var_status < 0 || (var_status > 0 && variable >= task.depth))
             goto fail;
         if (var_status > 0) {
@@ -1118,13 +1236,13 @@ fail:
 
 typedef struct AbtNameBinding AbtNameBinding;
 struct AbtNameBinding {
-    SymbolId name;
+    Atom *name;
     uint64_t level;
     AbtNameBinding *previous_same;
 };
 
 typedef struct {
-    SymbolId name;
+    Atom *name;
     AbtNameBinding *top;
 } AbtNameSlot;
 
@@ -1136,14 +1254,8 @@ typedef struct {
     uint64_t depth;
 } AbtNameEnv;
 
-static size_t abt_name_hash(SymbolId name) {
-    uint32_t value = name;
-    value ^= value >> 16;
-    value *= UINT32_C(0x7feb352d);
-    value ^= value >> 15;
-    value *= UINT32_C(0x846ca68b);
-    value ^= value >> 16;
-    return (size_t)value;
+static size_t abt_name_hash(Atom *name) {
+    return (size_t)atom_hash(name);
 }
 
 static void abt_name_env_init(AbtNameEnv *env) {
@@ -1170,9 +1282,9 @@ static bool abt_name_env_grow(AbtNameEnv *env) {
     env->slots = next;
     env->cap = next_cap;
     for (size_t i = 0u; i < old_cap; i++) {
-        if (old_slots[i].name == SYMBOL_ID_NONE) continue;
+        if (!old_slots[i].name) continue;
         size_t pos = abt_name_hash(old_slots[i].name) & (next_cap - 1u);
-        while (next[pos].name != SYMBOL_ID_NONE)
+        while (next[pos].name)
             pos = (pos + 1u) & (next_cap - 1u);
         next[pos] = old_slots[i];
     }
@@ -1180,9 +1292,9 @@ static bool abt_name_env_grow(AbtNameEnv *env) {
     return true;
 }
 
-static AbtNameSlot *abt_name_env_slot(AbtNameEnv *env, SymbolId name,
+static AbtNameSlot *abt_name_env_slot(AbtNameEnv *env, Atom *name,
                                       bool create) {
-    if (name == SYMBOL_ID_NONE) return NULL;
+    if (!name) return NULL;
     if (create && (env->used + 1u) * 4u >= env->cap * 3u &&
         !abt_name_env_grow(env))
         return NULL;
@@ -1190,8 +1302,8 @@ static AbtNameSlot *abt_name_env_slot(AbtNameEnv *env, SymbolId name,
     size_t pos = abt_name_hash(name) & mask;
     for (;;) {
         AbtNameSlot *slot = &env->slots[pos];
-        if (slot->name == name) return slot;
-        if (slot->name == SYMBOL_ID_NONE) {
+        if (slot->name && atom_eq(slot->name, name)) return slot;
+        if (!slot->name) {
             if (!create) return NULL;
             slot->name = name;
             slot->top = NULL;
@@ -1207,10 +1319,10 @@ static bool abt_name_env_enter(AbtNameEnv *env, Arena *arena,
     if (env->depth > UINT64_MAX - (uint64_t)count) return false;
     for (uint32_t i = 0u; i < count; i++) {
         Atom *name = names->expr.elems[i + 1u];
-        AbtNameSlot *slot = abt_name_env_slot(env, name->sym_id, true);
+        AbtNameSlot *slot = abt_name_env_slot(env, name, true);
         if (!slot) return false;
         AbtNameBinding *binding = arena_alloc(arena, sizeof(*binding));
-        binding->name = name->sym_id;
+        binding->name = name;
         binding->level = env->depth;
         binding->previous_same = slot->top;
         slot->top = binding;
@@ -1223,10 +1335,10 @@ static bool abt_name_env_leave(AbtNameEnv *env, Atom *names,
                                uint32_t count) {
     if (env->depth < (uint64_t)count) return false;
     for (uint32_t i = count; i > 0u; i--) {
-        SymbolId name = names->expr.elems[i]->sym_id;
+        Atom *name = names->expr.elems[i];
         AbtNameSlot *slot = abt_name_env_slot(env, name, false);
         env->depth--;
-        if (!slot || !slot->top || slot->top->name != name ||
+        if (!slot || !slot->top || !atom_eq(slot->top->name, name) ||
             slot->top->level != env->depth)
             return false;
         slot->top = slot->top->previous_same;
@@ -1234,7 +1346,7 @@ static bool abt_name_env_leave(AbtNameEnv *env, Atom *names,
     return true;
 }
 
-static AbtNameBinding *abt_name_env_lookup(AbtNameEnv *env, SymbolId name) {
+static AbtNameBinding *abt_name_env_lookup(AbtNameEnv *env, Atom *name) {
     AbtNameSlot *slot = abt_name_env_slot(env, name, false);
     return slot ? slot->top : NULL;
 }
@@ -1301,10 +1413,10 @@ static bool abt_parse_binders(Atom *names, uint32_t count) {
         return false;
     for (uint32_t i = 0u; i < count; i++) {
         Atom *name = names->expr.elems[i + 1u];
-        if (!name || name->kind != ATOM_SYMBOL) return false;
+        if (!abt_surface_binder_name(name)) return false;
         if (CETTA_ABT_MUTATION == 22) continue;
         for (uint32_t j = 0u; j < i; j++)
-            if (names->expr.elems[j + 1u]->sym_id == name->sym_id)
+            if (atom_eq(names->expr.elems[j + 1u], name))
                 return false;
     }
     return true;
@@ -1357,25 +1469,32 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *surface) {
         }
 
         Atom *current = task.term;
-        if (current->kind == ATOM_SYMBOL) {
-            AbtNameBinding *binding = abt_name_env_lookup(
-                &env, current->sym_id);
+        if (abt_surface_binder_name(current)) {
+            AbtNameBinding *binding = abt_name_env_lookup(&env, current);
             if (!binding) {
-                *task.destination = current;
+                if (current->kind == ATOM_SYMBOL ||
+                    abt_is_quote_form(current)) {
+                    *task.destination = current;
+                    continue;
+                }
             } else {
                 if (binding->level >= env.depth) goto fail;
-                *task.destination = abt_make_var(
+                *task.destination = abt_make_idx(
                     arena, env.depth - binding->level - 1u);
                 if (!*task.destination) goto fail;
+                continue;
             }
-            continue;
         }
         if (current->kind != ATOM_EXPR) {
             *task.destination = current;
             continue;
         }
+        if (abt_is_quote_form(current)) {
+            *task.destination = current;
+            continue;
+        }
         uint64_t forbidden_index = 0u;
-        if (abt_var_index(current, &forbidden_index) != 0) goto fail;
+        if (abt_idx_index(current, &forbidden_index) != 0) goto fail;
 
         bool is_bind = current->expr.len > 0u &&
             atom_is_symbol(current->expr.elems[0], "ABTBind");
@@ -1484,8 +1603,11 @@ bool abt_scope_check(const AbtSignature *signature, uint64_t initial_depth,
             abt_active_leave(&active, task.term);
             continue;
         }
+        if (abt_is_quote_form(task.term)) {
+            continue;
+        }
         uint64_t variable = 0;
-        int var_status = abt_var_index(task.term, &variable);
+        int var_status = abt_idx_index(task.term, &variable);
         if (var_status < 0 || (var_status > 0 && variable >= task.depth))
             goto fail;
         if (var_status > 0 || task.term->kind != ATOM_EXPR) continue;
@@ -1565,10 +1687,17 @@ bool abt_alpha_eq(Atom *left, Atom *right) {
             if (!atom_eq(task.left, task.right)) goto unequal;
             continue;
         }
+        if (abt_is_quote_form(task.left) || abt_is_quote_form(task.right)) {
+            if (!abt_is_quote_form(task.left) ||
+                !abt_is_quote_form(task.right) ||
+                !atom_eq(task.left, task.right))
+                goto unequal;
+            continue;
+        }
         uint64_t left_index = 0;
         uint64_t right_index = 0;
-        if (abt_var_index(task.left, &left_index) < 0 ||
-            abt_var_index(task.right, &right_index) < 0)
+        if (abt_idx_index(task.left, &left_index) < 0 ||
+            abt_idx_index(task.right, &right_index) < 0)
             goto unequal;
         if (task.left->expr.len != task.right->expr.len) goto unequal;
 
@@ -1663,6 +1792,7 @@ typedef enum {
     ABT_OP_SUBST,
     ABT_OP_CLOSE,
     ABT_OP_OPEN,
+    ABT_OP_BIND,
     ABT_OP_PRINT,
     ABT_OP_PARSE,
     ABT_OP_SCOPE_CHECK,
@@ -1683,6 +1813,8 @@ static AbtOpKind abt_op_kind(SymbolId id) {
         return ABT_OP_CLOSE;
     if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_open"))
         return ABT_OP_OPEN;
+    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_bind"))
+        return ABT_OP_BIND;
     if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_print"))
         return ABT_OP_PRINT;
     if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_parse"))
@@ -1708,7 +1840,8 @@ bool abt_op_data_arg(SymbolId id, uint32_t arg_index) {
         return arg_index == 0u || arg_index == 3u;
     if (kind == ABT_OP_SUBST)
         return arg_index == 0u || arg_index == 2u || arg_index == 3u;
-    if (kind == ABT_OP_CLOSE || kind == ABT_OP_OPEN)
+    if (kind == ABT_OP_CLOSE || kind == ABT_OP_OPEN ||
+        kind == ABT_OP_BIND)
         return arg_index <= 2u;
     if (kind == ABT_OP_PRINT || kind == ABT_OP_PARSE)
         return arg_index <= 1u;
@@ -1799,6 +1932,13 @@ Atom *abt_grounded_dispatch(Arena *arena, Atom *head,
                 arena, head, args, nargs, "ABTIncorrectArity");
         }
         result = abt_open(&signature, arena, args[1], args[2]);
+    } else if (kind == ABT_OP_BIND) {
+        if (nargs != 3u) {
+            abt_signature_free(&signature);
+            return abt_grounded_error(
+                arena, head, args, nargs, "ABTIncorrectArity");
+        }
+        result = abt_bind(&signature, arena, args[1], args[2]);
     } else if (kind == ABT_OP_PRINT) {
         if (nargs != 2u) {
             abt_signature_free(&signature);

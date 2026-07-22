@@ -2,6 +2,7 @@
 #define CETTA_MATCH_H
 
 #include "atom.h"
+#include "prime_need.h"
 #include "term_universe.h"
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
@@ -9,6 +10,7 @@
 typedef struct {
     VarId var_id;
     SymbolId spelling;
+    Atom *name_key;
     Atom *val;
     bool legacy_name_fallback;
 } Binding;
@@ -29,6 +31,11 @@ typedef struct {
     uint32_t lookup_cache_indices[4];
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
+    /* This internal store is orthogonal to logical substitutions. */
+    PrimeNeedSnapshot prime_need;
+    /* Causal support and branch-local effects are a second orthogonal
+     * component.  It is immutable/persistent like the Need snapshot. */
+    PrimeNeedReceipt prime_receipt;
 } Bindings;
 
 typedef struct {
@@ -43,6 +50,8 @@ typedef struct {
     uint32_t eq_len;
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
+    PrimeNeedSnapshot prime_need;
+    PrimeNeedReceipt prime_receipt;
 } BindingsBuilderTrailEntry;
 
 typedef struct {
@@ -59,6 +68,8 @@ void      bindings_free(Bindings *b);
 bool      bindings_clone(Bindings *dst, const Bindings *src);
 bool      bindings_copy(Bindings *dst, const Bindings *src);
 bool      bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst);
+bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
+                                                   Arena *dst);
 size_t    bindings_entry_active_bytes(void);
 size_t    bindings_constraint_active_bytes(void);
 void      bindings_thread_cache_free(void);
@@ -66,11 +77,13 @@ void      bindings_move(Bindings *dst, Bindings *src);
 void      bindings_replace(Bindings *dst, Bindings *src);
 Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
 Atom     *bindings_lookup_var(Bindings *b, Atom *var);
+Atom     *binding_variable_atom(Arena *a, const Binding *binding);
 Atom     *bindings_resolve_atom_preview(Bindings *b, Atom *atom);
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
 bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
                                   SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
+bool      bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
@@ -128,7 +141,7 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
 
 /* Rename all variables in atom except the variables mentioned anywhere inside
    `ignore_spec`. Non-ignored variables are freshened consistently per original
-   identity. Canonical ABT `(Var k)` expressions contain no metavariables and
+   identity. Canonical ABT `(idx k)` expressions contain no metavariables and
    remain inert. Returns a new arena-allocated atom, the original atom if
    unchanged, or NULL for a malformed cyclic variable-bearing graph. */
 Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);

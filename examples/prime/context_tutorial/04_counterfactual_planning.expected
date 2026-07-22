@@ -1,0 +1,3 @@
+[(Pair (assessment cautious clear dry) (assessment bold clear dry)), (Pair (assessment cautious clear rain) (assessment bold clear rain)), (Pair (assessment cautious muddy dry) (assessment bold muddy dry)), (Pair (assessment cautious muddy rain) (assessment bold muddy rain))]
+[(Triple (ctx:missing route) north south)]
+[(world-summary low local)]
