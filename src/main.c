@@ -53,6 +53,7 @@ typedef enum {
 typedef struct {
     VarId var_id;
     const char *base_name;
+    const char *preferred_name;
     const char *display_name;
 } CettaDisplayVarEntry;
 
@@ -386,6 +387,7 @@ static bool display_var_map_push(CettaDisplayVarMap *map, VarId var_id,
     }
     map->entries[map->len].var_id = var_id;
     map->entries[map->len].base_name = base_name;
+    map->entries[map->len].preferred_name = NULL;
     map->entries[map->len].display_name = NULL;
     map->len++;
     return true;
@@ -471,12 +473,51 @@ static const char *display_namespace_name(Arena *arena, const char *name,
     return pretty;
 }
 
+static bool display_var_name_is_assigned(const CettaDisplayVarMap *map,
+                                         const char *name) {
+    for (uint32_t i = 0; i < map->len; i++) {
+        if (map->entries[i].display_name &&
+            strcmp(map->entries[i].display_name, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool display_var_name_is_preferred(const CettaDisplayVarMap *map,
+                                          const char *name) {
+    for (uint32_t i = 0; i < map->len; i++) {
+        if (map->entries[i].preferred_name &&
+            strcmp(map->entries[i].preferred_name, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static char *display_var_suffixed_name(Arena *arena, const char *base,
+                                       uint32_t suffix) {
+    char suffix_text[32];
+    int suffix_len = snprintf(suffix_text, sizeof(suffix_text), "_%u", suffix);
+    if (suffix_len < 0 || (size_t)suffix_len >= sizeof(suffix_text)) return NULL;
+    size_t base_len = strlen(base);
+    if (base_len > SIZE_MAX - (size_t)suffix_len - 1u) return NULL;
+    char *name = arena_alloc(arena, base_len + (size_t)suffix_len + 1u);
+    if (!name) return NULL;
+    memcpy(name, base, base_len);
+    memcpy(name + base_len, suffix_text, (size_t)suffix_len + 1u);
+    return name;
+}
+
 static bool display_var_finalize(CettaDisplayVarMap *map, Arena *arena,
                                  bool pretty_namespaces) {
     for (uint32_t i = 0; i < map->len; i++) {
+        map->entries[i].preferred_name = display_namespace_name(
+            arena, map->entries[i].base_name, pretty_namespaces);
+    }
+    for (uint32_t i = 0; i < map->len; i++) {
         const char *base = map->entries[i].base_name;
-        const char *display_base =
-            display_namespace_name(arena, base, pretty_namespaces);
+        const char *display_base = map->entries[i].preferred_name;
         uint32_t group_size = 0;
         uint32_t rank = 0;
         for (uint32_t j = 0; j < map->len; j++) {
@@ -486,16 +527,25 @@ static bool display_var_finalize(CettaDisplayVarMap *map, Arena *arena,
                 rank++;
             }
         }
-        if (group_size <= 1 || rank == 0) {
+        if ((group_size <= 1 || rank == 0) &&
+            !display_var_name_is_assigned(map, display_base)) {
             map->entries[i].display_name = display_base;
             continue;
         }
-        char buf[256];
-        snprintf(buf, sizeof(buf), "%s_%u", display_base, rank);
-        map->entries[i].display_name = arena_strdup(arena, buf);
-        if (!map->entries[i].display_name) {
-            return false;
-        }
+        uint32_t suffix = rank ? rank : 1u;
+        char *candidate = NULL;
+        do {
+            candidate = display_var_suffixed_name(arena, display_base, suffix);
+            if (!candidate) return false;
+            if (suffix == UINT32_MAX &&
+                (display_var_name_is_preferred(map, candidate) ||
+                 display_var_name_is_assigned(map, candidate))) {
+                return false;
+            }
+            suffix++;
+        } while (display_var_name_is_preferred(map, candidate) ||
+                 display_var_name_is_assigned(map, candidate));
+        map->entries[i].display_name = candidate;
     }
     return true;
 }

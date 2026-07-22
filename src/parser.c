@@ -28,8 +28,14 @@
 #define CETTA_SYNTAX_NOTATION_MUTATION 0
 #endif
 
+#ifndef CETTA_BARE_DOLLAR_DEFAULT_MODE
+#define CETTA_BARE_DOLLAR_DEFAULT_MODE PARSER_BARE_DOLLAR_FRESH_VARIABLE
+#endif
+
 static __thread bool g_rational_literals_enabled = true;
 static __thread bool g_universal_name_syntax_enabled = false;
+static __thread ParserBareDollarMode g_bare_dollar_mode =
+    CETTA_BARE_DOLLAR_DEFAULT_MODE;
 
 static const ParserSyntaxFormSpec g_syntax_forms[] = {
     {PARSER_SYNTAX_QUOTE,
@@ -97,6 +103,17 @@ bool parser_set_universal_name_syntax_enabled(bool enabled) {
 
 bool parser_universal_name_syntax_enabled(void) {
     return g_universal_name_syntax_enabled;
+}
+
+ParserBareDollarMode parser_set_bare_dollar_mode(
+    ParserBareDollarMode mode) {
+    ParserBareDollarMode old = g_bare_dollar_mode;
+    g_bare_dollar_mode = mode;
+    return old;
+}
+
+ParserBareDollarMode parser_bare_dollar_mode(void) {
+    return g_bare_dollar_mode;
 }
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
@@ -282,6 +299,18 @@ static VarId parser_var_scope_id(ParserVarScope *scope, SymbolId spelling) {
     scope->ids[scope->len] = id;
     scope->len++;
     return id;
+}
+
+static bool parser_bare_dollar_is_variable(void) {
+    return g_universal_name_syntax_enabled &&
+           g_bare_dollar_mode != PARSER_BARE_DOLLAR_SYMBOL;
+}
+
+static VarId parser_bare_dollar_id(ParserVarScope *scope,
+                                   SymbolId spelling) {
+    return g_bare_dollar_mode == PARSER_BARE_DOLLAR_SHARED_VARIABLE
+               ? parser_var_scope_id(scope, spelling)
+               : fresh_var_id();
 }
 
 static NameId parser_var_scope_name_key_id(ParserVarScope *scope,
@@ -627,12 +656,21 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     memcpy(tok, text + start, len);
     tok[len] = '\0';
 
-    /* Variable: starts with $ */
-    if (tok[0] == '$' && len > 1) {
-        const char *spelling_text = parser_canonicalize_namespace_token(a, tok + 1);
-        SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
-        VarId id = parser_var_scope_id(scope, spelling);
-        return atom_var_with_spelling(a, spelling, id);
+    /* Variable: starts with $.  Prime's bare `$` is a fresh anonymous
+       variable; the alternate identity policies remain tournament controls. */
+    if (tok[0] == '$') {
+        if (len > 1) {
+            const char *spelling_text =
+                parser_canonicalize_namespace_token(a, tok + 1);
+            SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
+            VarId id = parser_var_scope_id(scope, spelling);
+            return atom_var_with_spelling(a, spelling, id);
+        }
+        if (parser_bare_dollar_is_variable()) {
+            SymbolId spelling = symbol_intern_cstr(g_symbols, "");
+            VarId id = parser_bare_dollar_id(scope, spelling);
+            return atom_var_with_spelling(a, spelling, id);
+        }
     }
 
     /* Boolean */
@@ -822,12 +860,19 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
     memcpy(tok, text + start, len);
     tok[len] = '\0';
 
-    if (tok[0] == '$' && len > 1) {
-        const char *spelling_text =
-            parser_canonicalize_namespace_token(scratch, tok + 1);
-        SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
-        VarId id = parser_var_scope_id(scope, spelling);
-        return tu_intern_var(universe, spelling, id);
+    if (tok[0] == '$') {
+        if (len > 1) {
+            const char *spelling_text =
+                parser_canonicalize_namespace_token(scratch, tok + 1);
+            SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
+            VarId id = parser_var_scope_id(scope, spelling);
+            return tu_intern_var(universe, spelling, id);
+        }
+        if (parser_bare_dollar_is_variable()) {
+            SymbolId spelling = symbol_intern_cstr(g_symbols, "");
+            VarId id = parser_bare_dollar_id(scope, spelling);
+            return tu_intern_var(universe, spelling, id);
+        }
     }
 
     if (strcmp(tok, "True") == 0)
