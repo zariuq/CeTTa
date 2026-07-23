@@ -195,6 +195,14 @@ static inline uint64_t space_revision(const Space *s) {
     return s ? s->revision : 0;
 }
 
+/* A process-global monotonic counter bumped on every space revision bump.
+ * It is a sound over-approximation of "no consulted space changed": if this
+ * value is unchanged between two points, no space was mutated in between, so
+ * a fortiori every space a computation consulted is unchanged.  Ground-call
+ * memoization uses it as a conservative whole-episode invalidation key; it is
+ * read only by opt-in memoization and changes no existing behaviour. */
+uint64_t space_global_mutation_epoch(void);
+
 /* An in-process read token for one live Space revision.  The Space must
    outlive the token; this is deliberately not a persistent or serializable
    identity.  Keeping the owning Space and revision beside a logical index

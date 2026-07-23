@@ -1796,10 +1796,17 @@ static void recompute_has_non_exact_atoms(Space *s) {
     s->native.has_non_exact_atoms_dirty = false;
 }
 
+static uint64_t g_space_global_mutation_epoch = 0u;
+
+uint64_t space_global_mutation_epoch(void) {
+    return g_space_global_mutation_epoch;
+}
+
 static void space_bump_revision(Space *s) {
     if (!s)
         return;
     s->revision++;
+    g_space_global_mutation_epoch++;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
 }
 

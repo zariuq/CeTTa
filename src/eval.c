@@ -1462,10 +1462,25 @@ static Atom *guard_mork_handle_surface(Space *s, Arena *a, Atom *call,
 
 static CettaTableMode active_search_table_mode(void) {
     const CettaEvalOptionEntry *table_mode = active_eval_option("search-table-mode");
-    if (table_mode && table_mode->kind == CETTA_EVAL_OPTION_VALUE_SYMBOL) {
-        if (strcmp(table_mode->repr, "variant") == 0) {
-            return CETTA_TABLE_MODE_VARIANT;
+    const char *repr = NULL;
+    if (table_mode && table_mode->kind == CETTA_EVAL_OPTION_VALUE_SYMBOL)
+        repr = table_mode->repr;
+    if (!repr) {
+        /* Env fallback (read once) so benchmarks can opt in without editing
+         * the source under test.  A `pragma!` still takes precedence. */
+        static int env_checked = 0;
+        static const char *env_repr = NULL;
+        if (!env_checked) {
+            env_repr = getenv("CETTA_TABLE_MODE");
+            env_checked = 1;
         }
+        repr = env_repr;
+    }
+    if (repr) {
+        if (strcmp(repr, "variant") == 0)
+            return CETTA_TABLE_MODE_VARIANT;
+        if (strcmp(repr, "ground-call") == 0)
+            return CETTA_TABLE_MODE_GROUND_CALL;
     }
     return CETTA_TABLE_MODE_NONE;
 }
@@ -25333,6 +25348,208 @@ generic_dispatch:
     }
 }
 
+#if !CETTA_PRIME_EVAL_STACK
+/* metta_call_impl installs a local `outcome_set_add` macro (bound to its own
+ * locals) that stays active down to its #undef further below; drop it here so
+ * the memo helpers use the real function. */
+#undef outcome_set_add
+/* ── Ground-call memoization (CETTA_TABLE_MODE_GROUND_CALL), sync path ──────
+ *
+ * A dependence-safe memo for ground function calls, off by default (enabled by
+ * `pragma! search-table-mode ground-call` or `CETTA_TABLE_MODE=ground-call`).
+ * The key must be the call with its demanded arguments forced to values: lazy
+ * recursion reaches the evaluator as `(f (- 20 1))`, never `(f 19)`, so keying
+ * on the raw atom would never hit.  We therefore force each argument to a
+ * single ground value and dispatch — and key on — that forced form; for a call
+ * whose arguments are all needed (fib and its kin) this is observationally
+ * identical to lazy dispatch, since a needed argument is forced either way.
+ * Admission at commit is conjunctive: non-empty bag of ground values (or
+ * completed stable faults) whose receipt delta is pure.  Invalidation is the
+ * global mutation epoch inside the table.  This v1 targets the synchronous
+ * (default) build; the async eval-stack commit site is future work. */
+static uint64_t g_ground_memo_lookups = 0u;
+static uint64_t g_ground_memo_hits = 0u;
+
+static void prime_ground_memo_report_atexit(void) {
+    if (getenv("CETTA_GROUND_MEMO_STATS"))
+        fprintf(stderr,
+                "[ground-memo] lookups=%llu hits=%llu\n",
+                (unsigned long long)g_ground_memo_lookups,
+                (unsigned long long)g_ground_memo_hits);
+}
+
+typedef struct {
+    OutcomeSet *os;
+} GroundMemoReplayCtx;
+
+static bool prime_ground_memo_replay_visit(Atom *result, void *vctx) {
+    GroundMemoReplayCtx *ctx = vctx;
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(ctx->os, result, &empty);
+    return true;
+}
+
+typedef struct {
+    Atom *canonical;
+    uint64_t hash;
+    PrimeNeedReceipt before;
+    bool commit_pending;
+} GroundMemoState;
+
+static bool prime_ground_memo_applicable(Space *s, Atom *atom) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
+        !atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return false;
+    Atom *head = atom->expr.elems[0];
+    return head->kind == ATOM_SYMBOL && !is_grounded_op(head->sym_id) &&
+           space_equations_may_match_known_head(s, head->sym_id);
+}
+
+static bool prime_ground_memo_is_numeric_literal(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED)
+        return false;
+    switch (atom->ground.gkind) {
+    case GV_INT:
+    case GV_FLOAT:
+    case GV_BIGINT:
+    case GV_RATIONAL:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Syntactically pure grounded arithmetic: a numeric literal, or a grounded
+ * numeric operator (+ - * / // %) applied to such expressions.  These are
+ * terminating and effect-free by construction, so forcing them to compute a
+ * memo key cannot change observable behaviour regardless of whether the callee
+ * would have demanded them.  Any other argument shape is NOT pre-forced. */
+static bool prime_ground_memo_is_pure_arith(const Atom *atom) {
+    if (prime_ground_memo_is_numeric_literal(atom))
+        return true;
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return false;
+    const Atom *head = atom->expr.elems[0];
+    if (head->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId op = head->sym_id;
+    if (op != g_builtin_syms.op_plus && op != g_builtin_syms.op_minus &&
+        op != g_builtin_syms.op_mul && op != g_builtin_syms.op_div &&
+        op != g_builtin_syms.op_floor_div && op != g_builtin_syms.op_mod)
+        return false;
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++)
+        if (!prime_ground_memo_is_pure_arith(atom->expr.elems[i]))
+            return false;
+    return true;
+}
+
+/* Force one argument to a single numeric value for keying; NULL means "not
+ * memoizable" — the argument is not syntactically pure arithmetic (so
+ * pre-forcing could change behaviour for an unneeded arg), or it fails to
+ * reduce to exactly one numeric value.  A numeric literal is returned as-is. */
+static Atom *prime_ground_memo_force_arg(Space *s, Arena *a, Atom *arg,
+                                         int fuel) {
+    if (!arg || atom_has_vars(arg))
+        return NULL;
+    if (prime_ground_memo_is_numeric_literal(arg))
+        return arg;
+    if (!prime_ground_memo_is_pure_arith(arg))
+        return NULL;
+    OutcomeSet os;
+    outcome_set_init(&os);
+    metta_eval_bind(s, a, arg, fuel, &os);
+    Atom *result = NULL;
+    if (os.len == 1u) {
+        Atom *v = outcome_atom_materialize(a, &os.items[0]);
+        if (prime_ground_memo_is_numeric_literal(v))
+            result = v;
+    }
+    outcome_set_free(&os);
+    return result;
+}
+
+/* Returns true and fills `os` on a memo HIT.  On a MISS of an applicable call,
+ * returns false and (via *state) hands back the forced dispatch atom plus the
+ * data the caller commits after the forced call completes.  Returns false with
+ * no pending commit when the call is not memoizable. */
+static bool prime_ground_memo_begin(Space *s, Arena *a, Atom *atom, int fuel,
+                                    OutcomeSet *os, Atom **out_dispatch,
+                                    GroundMemoState *state) {
+    state->commit_pending = false;
+    *out_dispatch = atom;
+    if (!prime_ground_memo_applicable(s, atom))
+        return false;
+    TableStore *table = eval_active_episode_table();
+    if (!table || table->mode != CETTA_TABLE_MODE_GROUND_CALL)
+        return false;
+
+    CettaExprIndex nargs = atom->expr.len;
+    Atom **elems = arena_alloc(a, sizeof(Atom *) * (size_t)nargs);
+    if (!elems)
+        return false;
+    elems[0] = atom->expr.elems[0];
+    for (CettaExprIndex i = 1u; i < nargs; i++) {
+        Atom *forced = prime_ground_memo_force_arg(s, a, atom->expr.elems[i],
+                                                   fuel);
+        if (!forced)
+            return false;
+        elems[i] = forced;
+    }
+    Atom *forced_call = atom_expr(a, elems, nargs);
+    if (!forced_call || atom_has_vars(forced_call))
+        return false;
+
+    Atom *canonical = NULL;
+    uint64_t hash = 0u;
+    if (!canonical_ground_call_key(forced_call, a, &canonical, &hash))
+        return false;
+
+    if (g_ground_memo_lookups == 0u)
+        atexit(prime_ground_memo_report_atexit);
+    g_ground_memo_lookups++;
+
+    GroundMemoReplayCtx ctx = { .os = os };
+    if (table_store_ground_lookup(table, canonical, hash,
+                                  prime_ground_memo_replay_visit, &ctx)) {
+        g_ground_memo_hits++;
+        return true;
+    }
+
+    *out_dispatch = forced_call;
+    state->canonical = canonical;
+    state->hash = hash;
+    state->before = g_prime_need_receipt_active;
+    state->commit_pending = true;
+    return false;
+}
+
+static void prime_ground_memo_commit(Space *s, Arena *a, GroundMemoState *state,
+                                     OutcomeSet *os) {
+    (void)s;
+    if (!state->commit_pending || os->len == 0u)
+        return;
+    Atom **answers = arena_alloc(a, sizeof(Atom *) * (size_t)os->len);
+    if (!answers)
+        return;
+    uint32_t answer_len = 0u;
+    for (CettaCount i = 0u; i < os->len; i++) {
+        Atom *v = outcome_atom_materialize(a, &os->items[i]);
+        bool admissible_value = v && !atom_is_empty(v) && !atom_has_vars(v) &&
+            (!atom_is_error(v) || prime_need_fault_is_completed(v));
+        if (!admissible_value ||
+            !prime_need_receipt_delta_is_pure(
+                &state->before, &os->items[i].env.prime_receipt))
+            return; /* any inadmissible occurrence: do not cache the call */
+        answers[answer_len++] = v;
+    }
+    TableStore *table = eval_active_episode_table();
+    if (table && table->mode == CETTA_TABLE_MODE_GROUND_CALL)
+        table_store_ground_commit(table, state->canonical, state->hash,
+                                  answers, answer_len);
+}
+#endif /* !CETTA_PRIME_EVAL_STACK */
+
 static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                        bool preserve_bindings, OutcomeSet *os) {
 #if CETTA_PRIME_EVAL_STACK
@@ -25347,7 +25564,12 @@ static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         s, a, atom, etype, fuel, preserve_bindings,
         NULL, -1, os);
 #else
-    metta_call_impl(s, a, atom, etype, fuel, preserve_bindings, os);
+    GroundMemoState memo;
+    Atom *dispatch = atom;
+    if (prime_ground_memo_begin(s, a, atom, fuel, os, &dispatch, &memo))
+        return; /* memo hit: os filled from the stored bag */
+    metta_call_impl(s, a, dispatch, etype, fuel, preserve_bindings, os);
+    prime_ground_memo_commit(s, a, &memo, os);
 #endif
 }
 

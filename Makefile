@@ -3226,7 +3226,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -3307,6 +3307,26 @@ endif
 test-light: test test-width-tuple-stack test-wide-typed-call-stack
 
 test-correctness: test
+
+# Ground-call memoization goldens (Prime, CETTA_TABLE_MODE_GROUND_CALL).  Each
+# golden self-enables the mode via `pragma! search-table-mode ground-call` and
+# asserts a soundness property (hit/miss equivalence, invalidation, no-dup,
+# multiplicity, lazy soundness, error-not-cached, state-not-cached).  The
+# planted-mutation harness (scripts/test_ground_call_mutations.sh) is a separate
+# heavier gate: it rebuilds three deliberately broken variants and proves each
+# golden catches its defect.
+test-ground-call: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/test_ground_call_*.metta; do \
+		out=$$($(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		if [ "$$out" = "[()]" ]; then \
+			echo "PASS: $$f"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; printf '%s\n' "$$out" | head -5; fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "$$pass passed, $$fail failed"; \
+	[ "$$fail" -eq 0 ]
 
 # HE step-rules lane: baseline witnesses must pass, then the same witnesses
 # must FAIL with each covered rule disabled (anti-decorative gate: proves the

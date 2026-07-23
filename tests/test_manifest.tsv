@@ -235,6 +235,13 @@ tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta	he	metta	he-exte
 tests/test_gparse_native_rho_mrho_text.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_slr_parse_shared.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_slr_summary.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_ground_call_error_not_cached.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_ground_call_hit_miss.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_ground_call_invalidation.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_ground_call_lazy_soundness.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_ground_call_multiplicity.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_ground_call_nodup.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_ground_call_state_not_cached.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
 tests/test_hash_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_compat_surface_regressions.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_he_frontier_algebra_regression.metta	he	metta	he-extended	main	native	test	golden	-
