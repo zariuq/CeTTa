@@ -56,9 +56,9 @@ SOURCES = {
 QUERY = "(compile-span-nfa (pp-positive-guard-tag ?state) ?edge)"
 EXPECTED = {
     "he": {
-        "count": 55,
+        "count": 60,
         "tag_count": 3,
-        "digest": "ae0108d564004ce6fad51c1f25de90fac59f902256c0ed1f24d67b941e39745b",
+        "digest": "0a680733ee1509d1b72d7f70fd43caca2ca1d914b3f806c16d5090709e930d34",
     },
     "petta": {
         "count": 10,
@@ -66,13 +66,13 @@ EXPECTED = {
         "digest": "ed42222f9affc916ccbd1a27d8c5472a1e8dbc56e6238c91f7f36c18831a4d41",
     },
     "prime": {
-        "count": 90,
-        "tag_count": 3,
-        "digest": "11b0614be38ca441fc1b036d88366f30fe93c739e460b45308932ff24fd8a92c",
+        "count": 173,
+        "tag_count": 7,
+        "digest": "72229e01844933b6e5cd179fd92b792ffb5ab02c302cf5cf98403d4cd1768993",
     },
 }
 EXPECTED_MATRIX_DIGEST = (
-    "a8b4d8988d23df4b69cad7745d432b0887369baf353cbd072a1a8326b025339e"
+    "2b44611def9122833c25d560c1b3a0162a90ed6a8f4f093e44abfc745052780f"
 )
 
 

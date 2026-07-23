@@ -57,8 +57,23 @@
         (different ?codepoint (cp 41))
         (different ?codepoint (cp 59))))
 
-    (rule member-cetta-prime-token-start-nondollar-scalar
-      (head (member cetta-prime-token-start-nondollar-scalar ?codepoint))
+    (rule member-cetta-prime-token-start-nonat-scalar
+      (head (member cetta-prime-token-start-nonat-scalar ?codepoint))
+      (body
+        (different ?codepoint (cp 9))
+        (different ?codepoint (cp 10))
+        (different ?codepoint (cp 11))
+        (different ?codepoint (cp 12))
+        (different ?codepoint (cp 13))
+        (different ?codepoint (cp 32))
+        (different ?codepoint (cp 34))
+        (different ?codepoint (cp 40))
+        (different ?codepoint (cp 41))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 64))))
+
+    (rule member-cetta-prime-token-start-plain-scalar
+      (head (member cetta-prime-token-start-plain-scalar ?codepoint))
       (body
         (different ?codepoint (cp 9))
         (different ?codepoint (cp 10))
@@ -68,6 +83,23 @@
         (different ?codepoint (cp 32))
         (different ?codepoint (cp 34))
         (different ?codepoint (cp 36))
+        (different ?codepoint (cp 38))
         (different ?codepoint (cp 40))
         (different ?codepoint (cp 41))
-        (different ?codepoint (cp 59))))))
+        (different ?codepoint (cp 42))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 64))))
+
+    (rule member-cetta-prime-star-payload-start-scalar
+      (head (member cetta-prime-star-payload-start-scalar ?codepoint))
+      (body
+        (different ?codepoint (cp 0))
+        (different ?codepoint (cp 9))
+        (different ?codepoint (cp 10))
+        (different ?codepoint (cp 11))
+        (different ?codepoint (cp 12))
+        (different ?codepoint (cp 13))
+        (different ?codepoint (cp 32))
+        (different ?codepoint (cp 41))
+        (different ?codepoint (cp 59))))
+  ))

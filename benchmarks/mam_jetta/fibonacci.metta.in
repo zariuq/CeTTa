@@ -1,0 +1,10 @@
+; JeTTa performance-suite workload 1: naïve Fibonacci.
+; @N@ is replaced by the benchmark driver.
+
+(= (mam:fib $n)
+   (if (< $n 2)
+       $n
+       (+ (mam:fib (- $n 1))
+          (mam:fib (- $n 2)))))
+
+!(mam:fib @N@)

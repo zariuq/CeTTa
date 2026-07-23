@@ -48,7 +48,7 @@ CASES = {
             "shared/he_reader_scalar_classes_v1.metta",
             "languages/he_reader_v1.metta",
         ),
-        "summary": (394, 143, 537, 0),
+        "summary": (279, 144, 423, 0),
     },
     "prime": {
         "start": "cetta-prime-file",
@@ -60,7 +60,7 @@ CASES = {
             "shared/cetta_prime_scalar_classes_v1.metta",
             "languages/cetta_prime_reader_v1.metta",
         ),
-        "summary": (111, 12, 123, 0),
+        "summary": (179, 14, 193, 0),
     },
     "rho": {
         "start": "cetta-rho-document",
@@ -87,7 +87,7 @@ CASES = {
             "shared/rho_abstract_syntax_v1.metta",
             "languages/cetta_rho_mrho_reader_v1.metta",
         ),
-        "summary": (125, 28, 153, 1),
+        "summary": (125, 29, 154, 1),
     },
     "cost-rho": {
         "start": "cetta-cost-rho-document",

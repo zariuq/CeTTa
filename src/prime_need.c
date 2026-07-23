@@ -1,4 +1,5 @@
 #include "prime_need.h"
+#include "stats.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -505,15 +506,29 @@ typedef struct {
     const PrimeNeedReceiptFrame **items;
     size_t len;
     size_t cap;
+    const PrimeNeedReceiptFrame **seen;
+    size_t seen_cap;
 } PrimeNeedReceiptFrames;
 
 static void prime_need_receipt_frames_free(PrimeNeedReceiptFrames *frames) {
     if (!frames)
         return;
     free(frames->items);
+    free(frames->seen);
     frames->items = NULL;
     frames->len = 0u;
     frames->cap = 0u;
+    frames->seen = NULL;
+    frames->seen_cap = 0u;
+}
+
+static size_t prime_need_receipt_frame_hash(
+    const PrimeNeedReceiptFrame *frame) {
+    uintptr_t value = (uintptr_t)frame;
+    value ^= value >> 17u;
+    value *= (uintptr_t)0xed5ad4bbu;
+    value ^= value >> 11u;
+    return (size_t)value;
 }
 
 static bool prime_need_receipt_frames_contains(
@@ -521,16 +536,61 @@ static bool prime_need_receipt_frames_contains(
     const PrimeNeedReceiptFrame *frame) {
     if (!frames || !frame)
         return false;
+    if (frames->seen && frames->seen_cap > 0u) {
+        size_t mask = frames->seen_cap - 1u;
+        size_t slot = prime_need_receipt_frame_hash(frame) & mask;
+        while (frames->seen[slot]) {
+            if (frames->seen[slot] == frame)
+                return true;
+            slot = (slot + 1u) & mask;
+        }
+        return false;
+    }
     for (size_t i = 0u; i < frames->len; i++)
         if (frames->items[i] == frame)
             return true;
     return false;
 }
 
+static bool prime_need_receipt_frames_reserve_seen(
+    PrimeNeedReceiptFrames *frames, size_t count) {
+    if (!frames)
+        return false;
+    size_t needed = 16u;
+    while (needed / 2u < count) {
+        if (needed > SIZE_MAX / 2u)
+            return false;
+        needed *= 2u;
+    }
+    if (frames->seen_cap >= needed)
+        return true;
+    if (needed > SIZE_MAX / sizeof(*frames->seen))
+        return false;
+    const PrimeNeedReceiptFrame **seen = calloc(
+        needed, sizeof(*seen));
+    if (!seen)
+        return false;
+    size_t mask = needed - 1u;
+    for (size_t i = 0u; i < frames->len; i++) {
+        size_t slot =
+            prime_need_receipt_frame_hash(frames->items[i]) & mask;
+        while (seen[slot])
+            slot = (slot + 1u) & mask;
+        seen[slot] = frames->items[i];
+    }
+    free(frames->seen);
+    frames->seen = seen;
+    frames->seen_cap = needed;
+    return true;
+}
+
 static bool prime_need_receipt_frames_push(
     PrimeNeedReceiptFrames *frames,
     const PrimeNeedReceiptFrame *frame) {
     if (!frames || !frame)
+        return false;
+    if (!prime_need_receipt_frames_reserve_seen(
+            frames, frames->len + 1u))
         return false;
     if (prime_need_receipt_frames_contains(frames, frame))
         return true;
@@ -546,6 +606,11 @@ static bool prime_need_receipt_frames_push(
         frames->items = items;
         frames->cap = next;
     }
+    size_t mask = frames->seen_cap - 1u;
+    size_t slot = prime_need_receipt_frame_hash(frame) & mask;
+    while (frames->seen[slot])
+        slot = (slot + 1u) & mask;
+    frames->seen[slot] = frame;
     frames->items[frames->len++] = frame;
     return true;
 }
@@ -575,17 +640,83 @@ static bool prime_need_receipt_collect_all(
     return true;
 }
 
+static bool prime_need_receipt_reaches_exact(
+    const PrimeNeedReceiptFrame *top,
+    const PrimeNeedReceiptFrame *target,
+    size_t *visited_out) {
+    PrimeNeedReceiptFrames work = {0};
+    size_t visited = 0u;
+    bool found = false;
+    if (!top || !target)
+        goto done;
+    if (!prime_need_receipt_frames_push(&work, top))
+        goto done;
+    for (size_t i = 0u; i < work.len; i++) {
+        const PrimeNeedReceiptFrame *frame = work.items[i];
+        visited++;
+        if (frame == target) {
+            found = true;
+            break;
+        }
+        if (frame->left &&
+            !prime_need_receipt_frames_push(&work, frame->left))
+            goto done;
+        if (frame->right &&
+            !prime_need_receipt_frames_push(&work, frame->right))
+            goto done;
+    }
+
+done:
+    if (visited_out)
+        *visited_out = visited;
+    prime_need_receipt_frames_free(&work);
+    return found;
+}
+
 static bool prime_need_receipt_reachable(
     const PrimeNeedReceiptFrame *top,
     const PrimeNeedReceiptFrame *target) {
-    PrimeNeedReceiptFrames frames = {0};
-    bool found = false;
-    if (!target)
+    size_t visited = 0u;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_QUERY);
+    if (!target) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_EMPTY_TARGET_ACCEPT);
         return true;
-    if (!top || !prime_need_receipt_collect_all(top, &frames))
+    }
+    if (!top || top->session_id != target->session_id) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_BOUNDARY_REJECT);
         return false;
-    found = prime_need_receipt_frames_contains(&frames, target);
-    prime_need_receipt_frames_free(&frames);
+    }
+    if (top == target) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_SELF_ACCEPT);
+        return true;
+    }
+    /* Every receipt edge points to a frame of strictly smaller depth.
+     * Equal-depth distinct frames therefore cannot reach one another, and a
+     * direct parent is the overwhelmingly common extension case.  Resolve
+     * both without collecting the transitive DAG. */
+    if (top->depth <= target->depth) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_DEPTH_REJECT);
+        return false;
+    }
+    if (top->left == target || top->right == target) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_PARENT_ACCEPT);
+        return true;
+    }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_FALLBACK);
+    bool found = prime_need_receipt_reaches_exact(
+        top, target, &visited);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_FALLBACK_FRAME,
+        (uint64_t)visited);
+#endif
     return found;
 }
 

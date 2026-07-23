@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit the pinned HE scalar classes and scannerless reader presentation."""
+"""Emit the ratified HE scalar classes and scannerless reader presentation."""
 
 from __future__ import annotations
 
@@ -37,11 +37,14 @@ HE_WHITESPACE = {
     0x3000,
 }
 
+HE_EOL = {0x000A, 0x000D}
+
 HEX = {ord(char) for char in "0123456789abcdefABCDEF"}
 HEX_NONZERO = HEX - {ord("0")}
-HEX_FOUR_FIRST = {ord(char) for char in "123456789abcefABCEF"}
 HEX_D = {ord("d"), ord("D")}
 HEX_LOW_SEVEN = {ord(char) for char in "01234567"}
+HEX_NONZERO_NOND = HEX_NONZERO - HEX_D
+HEX_ABOVE_ONE_NOND = HEX_NONZERO_NOND - {ord("1")}
 SIMPLE_ESCAPES = {ord(char) for char in "'\"\\nrt"}
 
 UNICODE_HEX_CLASS_POINTS = {
@@ -49,12 +52,11 @@ UNICODE_HEX_CLASS_POINTS = {
     "he-one-scalar": {ord("1")},
     "he-hex-scalar": HEX,
     "he-hex-nonzero-scalar": HEX_NONZERO,
-    "he-hex-four-first-scalar": HEX_FOUR_FIRST,
     "he-hex-d-scalar": HEX_D,
     "he-hex-low-seven-scalar": HEX_LOW_SEVEN,
     "he-hex-high-eight-scalar": HEX - HEX_LOW_SEVEN,
-    "he-hex-nonzero-nond-scalar": HEX_NONZERO - HEX_D,
-    "he-hex-above-one-nond-scalar": HEX_FOUR_FIRST - {ord("1")},
+    "he-hex-nonzero-nond-scalar": HEX_NONZERO_NOND,
+    "he-hex-above-one-nond-scalar": HEX_ABOVE_ONE_NOND,
 }
 
 UNICODE_HEX_CLASS_NAMES = {
@@ -156,7 +158,8 @@ def emit_except_class(out: list[str], name: str, exclusions: set[int]) -> None:
 
 def emit_classes(path: Path) -> None:
     out = [
-        "; Scalar classes pinned to HE SExprParser at authority revision 3f76dc46.\n",
+        "; Scalar classes for the ratified HE reader contract.\n",
+        "; Rust HE revision 3f76dc46 is an implementation observation, not the sole syntax authority.\n",
         "; The input carrier is decoded Unicode scalars; malformed UTF-8 is rejected before class lookup.\n",
         "(gslt-presentation-v1 HEReaderScalarClassesV1\n",
         "  (signature)\n",
@@ -164,11 +167,10 @@ def emit_classes(path: Path) -> None:
         "  (rewrites\n",
     ]
     emit_point_class(out, "he-whitespace-scalar", HE_WHITESPACE)
-    emit_point_class(out, "he-newline-scalar", {0x0A})
+    emit_point_class(out, "he-newline-scalar", HE_EOL)
     emit_point_class(out, "he-simple-escape-scalar", SIMPLE_ESCAPES)
     emit_point_class(out, "he-hex-scalar", HEX)
     emit_point_class(out, "he-hex-nonzero-scalar", HEX_NONZERO)
-    emit_point_class(out, "he-hex-four-first-scalar", HEX_FOUR_FIRST)
     emit_point_class(out, "he-hex-d-scalar", HEX_D)
     emit_point_class(out, "he-hex-low-seven-scalar", HEX_LOW_SEVEN)
     emit_point_class(out, "he-zero-scalar", {ord("0")})
@@ -177,15 +179,15 @@ def emit_classes(path: Path) -> None:
         out, "he-hex-high-eight-scalar", HEX - HEX_LOW_SEVEN
     )
     emit_point_class(
-        out, "he-hex-nonzero-nond-scalar", HEX_NONZERO - HEX_D
+        out, "he-hex-nonzero-nond-scalar", HEX_NONZERO_NOND
     )
     emit_point_class(
         out,
         "he-hex-above-one-nond-scalar",
-        HEX_FOUR_FIRST - {ord("1")},
+        HEX_ABOVE_ONE_NOND,
     )
 
-    emit_except_class(out, "he-non-newline-scalar", {0x0A})
+    emit_except_class(out, "he-non-newline-scalar", HE_EOL)
     emit_except_class(out, "he-string-plain-scalar", {0x22, 0x5C})
     emit_except_class(
         out,
@@ -200,7 +202,7 @@ def emit_classes(path: Path) -> None:
     emit_except_class(
         out,
         "he-variable-tail-scalar",
-        HE_WHITESPACE | {0x23, 0x28, 0x29},
+        HE_WHITESPACE | {0x23, 0x28, 0x29, 0x3B},
     )
     out.append("  ))\n")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,8 +210,8 @@ def emit_classes(path: Path) -> None:
 
 
 def unicode_valid_class_sequences() -> list[tuple[str, ...]]:
-    sequences: set[tuple[str, ...]] = {()}
-    for total_digits in range(1, 9):
+    sequences: set[tuple[str, ...]] = set()
+    for total_digits in range(1, 7):
         sequences.add(tuple(["he-zero-scalar"] * total_digits))
         for significant_digits in range(1, min(6, total_digits) + 1):
             leading_zeros = total_digits - significant_digits
@@ -226,7 +228,7 @@ def unicode_valid_class_sequences() -> list[tuple[str, ...]]:
                 sequences.add(
                     tuple(
                         prefix
-                        + ["he-hex-four-first-scalar"]
+                        + ["he-hex-nonzero-nond-scalar"]
                         + ["he-hex-scalar"] * 3
                     )
                 )
@@ -374,8 +376,8 @@ def emit_reader(path: Path) -> None:
     valid_sequences = unicode_valid_class_sequences()
     unicode_dfa = unicode_residual_dfa(valid_sequences)
     out = [
-        "; HE empty-tokenizer concrete syntax as scannerless GSLT data.\n",
-        "; Recognition matches the pinned Rust SExprParser, including its exact string-escape language.\n",
+        "; Ratified HE empty-tokenizer concrete syntax as scannerless GSLT data.\n",
+        "; The written HE syntax, Rust HE, CeTTa he-compat, and LeaTTa are triangulated conformance sources.\n",
         "; Runtime regex token actions and syntax-tree recovery/span metadata are separate versioned layers.\n",
         "(gslt-presentation-v1 HEReaderSyntaxV1\n",
         "  (signature)\n",
@@ -383,34 +385,21 @@ def emit_reader(path: Path) -> None:
         "  (rewrites\n",
     ]
 
-    out.extend(
-        [
-            definition(
-                "def-he-unicode-extra-opens",
-                "he-unicode-extra-opens",
-                app("star", char(ord("{"))),
-            ),
-        ]
-    )
     for state_id, state in enumerate(unicode_dfa):
         name = f"he-unicode-state-{state_id:03d}"
         branches = []
         if state.accepting:
-            branches.append(ref("he-unicode-extra-opens"))
+            branches.append(seq([]))
         for transition in state.transitions:
             branches.append(
-                app(
-                    "right",
-                    ref("he-unicode-extra-opens"),
-                    seq(
-                        [
-                            cls(transition.class_name),
-                            ref(
-                                "he-unicode-state-"
-                                f"{transition.target:03d}"
-                            ),
-                        ]
-                    ),
+                seq(
+                    [
+                        cls(transition.class_name),
+                        ref(
+                            "he-unicode-state-"
+                            f"{transition.target:03d}"
+                        ),
+                    ]
                 )
             )
         out.append(definition(f"def-{name}", name, alt(branches)))
@@ -543,6 +532,7 @@ def emit_reader(path: Path) -> None:
                         cls("he-whitespace-scalar"),
                         char(ord("(")),
                         char(ord(")")),
+                        char(ord(";")),
                     ]
                 ),
             ),
@@ -575,7 +565,12 @@ def emit_reader(path: Path) -> None:
                         app(
                             "right",
                             char(ord("$")),
-                            app("star", cls("he-variable-tail-scalar")),
+                            seq(
+                                [
+                                    cls("he-variable-tail-scalar"),
+                                    app("star", cls("he-variable-tail-scalar")),
+                                ]
+                            ),
                         ),
                         app("peek", ref("he-variable-boundary")),
                     ),

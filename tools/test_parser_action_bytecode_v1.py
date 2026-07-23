@@ -30,29 +30,29 @@ COMPILER = (
 )
 EXPECTED = {
     "base-pack-digest":
-        "35709e585896d9b3dcd4554e06ba0f0b684097bac1782163caa5dddc998f125f",
+        "a0334e22b53a8319b23870d008af3fcdd27426f26bffd09f14f54565c12936c0",
     "compiler-digest":
         "4ab357c261d8cf9b3fa9fe8ada3de7fde6263f463006bd81cbd6057e959450bd",
     "answer-set-digest":
-        "81bb363ebd1cad73db03405344f5a9310e925ffce524e90bce505fd42802e69e",
+        "4ea00d441b832d4d33fde53ea47ea8495c89da661821916634aedc9698957b8f",
     "program-digest":
-        "42c439922caed3a4dfa4b72285c4c3ccc59daa7f81fc3330d6c918a43d0a6f40",
-    "productions": "394",
-    "instructions": "514",
-    "push-slots": "431",
-    "push-constants": "23",
-    "applications": "60",
+        "7685da3feb748dcd704cbf2186659ecb8d3f77e9c21ba7d4eda679085e90a5f6",
+    "productions": "279",
+    "instructions": "383",
+    "push-slots": "294",
+    "push-constants": "37",
+    "applications": "52",
     "max-stack": "4",
-    "tree-bytecode-agreements": "394",
+    "tree-bytecode-agreements": "279",
     "projection-action-program-digest":
-        "ecfed524ef705d258c25a9ea02e7e0c630483949d559e882acad50494919ddcc",
-    "projection-action-agreements": "394",
-    "projection-specialized-agreements": "394",
+        "33010e4e3445e829ef4307e6c063c57857483061f2fdf61ae53252b7b92dffde",
+    "projection-action-agreements": "279",
+    "projection-specialized-agreements": "279",
     "projection-interpreted-productions": "2",
-    "projection-value-productions": "337",
-    "projection-binary-productions": "55",
-    "projection-pair-applications": "38",
-    "projection-cons-applications": "13",
+    "projection-value-productions": "230",
+    "projection-binary-productions": "47",
+    "projection-pair-applications": "31",
+    "projection-cons-applications": "12",
     "projection-node-applications": "9",
     "projection-action-mutations-killed": "4",
     "projection-document-agreements": "1",
@@ -75,6 +75,7 @@ def compiler_digest() -> str:
 
 def compile_actions(chart_binary: Path) -> list[str]:
     case = ACTION_CASES["he"]
+    expected_count, expected_digest = case["actions"]
     result = run_json(
         chart_binary,
         [
@@ -89,10 +90,10 @@ def compile_actions(chart_binary: Path) -> list[str]:
     terms = result.get("terms")
     if (
         result.get("outcome") != "Ambiguous"
-        or result.get("answers") != 394
-        or result.get("term_digest") != EXPECTED["answer-set-digest"]
+        or result.get("answers") != expected_count
+        or result.get("term_digest") != expected_digest
         or not isinstance(terms, list)
-        or len(terms) != 394
+        or len(terms) != expected_count
         or not all(isinstance(term, str) for term in terms)
     ):
         raise GateFailure("HE action compiler answer set changed")

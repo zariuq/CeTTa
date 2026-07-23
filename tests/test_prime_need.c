@@ -386,16 +386,40 @@ int main(void) {
               &arena, &receipt_root, thunk.session_id, second_thunk_id,
               left_value, &same_observation_right),
           "siblings may independently observe the same cell outcome");
-    CHECK(prime_need_receipt_compatible(
-              &same_observation_left, &same_observation_right),
-          "equal observations of one Need cell are compatible");
+    PrimeNeedReceipt same_observation_left_deep;
+    PrimeNeedReceipt same_observation_left_deeper;
+    CHECK(prime_need_receipt_observe_cell(
+              &arena, &same_observation_left, thunk.session_id,
+              second_thunk_id + 10u, left_value,
+              &same_observation_left_deep) &&
+              prime_need_receipt_observe_cell(
+                  &arena, &same_observation_left_deep,
+                  thunk.session_id, second_thunk_id + 11u,
+                  left_value, &same_observation_left_deeper) &&
+              prime_need_receipt_compatible(
+                  &same_observation_left,
+                  &same_observation_right) &&
+              !prime_need_receipt_is_ancestor(
+                  &same_observation_left, &same_observation_right) &&
+              !prime_need_receipt_is_ancestor(
+                  &same_observation_right, &same_observation_left) &&
+              prime_need_receipt_is_ancestor(
+                  &same_observation_left,
+                  &same_observation_left_deeper) &&
+              !prime_need_receipt_is_ancestor(
+                  &same_observation_right,
+                  &same_observation_left_deeper),
+          "exact reachability accepts a deep ancestor and rejects "
+          "a shallower disconnected sibling");
     PrimeNeedReceipt same_observation_join = same_observation_left;
     CHECK(prime_need_receipt_merge(
               &same_observation_join, &same_observation_right) &&
               prime_need_receipt_is_ancestor(
                   &same_observation_left, &same_observation_join) &&
               prime_need_receipt_is_ancestor(
-                  &same_observation_right, &same_observation_join),
+                  &same_observation_right, &same_observation_join) &&
+              prime_need_receipt_is_ancestor(
+                  &same_observation_join, &same_observation_join),
           "equal cell observations have a native least joined receipt");
     CHECK(prime_need_receipt_event_count(&same_observation_join) == 3u,
           "native receipts retain equal observation occurrences before the functional quotient");
