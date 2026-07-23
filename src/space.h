@@ -194,6 +194,34 @@ bool space_length_u32_checked(const Space *s, uint32_t *out_len);
 static inline uint64_t space_revision(const Space *s) {
     return s ? s->revision : 0;
 }
+
+/* An in-process read token for one live Space revision.  The Space must
+   outlive the token; this is deliberately not a persistent or serializable
+   identity.  Keeping the owning Space and revision beside a logical index
+   prevents an equation occurrence from being mistaken for an AtomId or for
+   an occurrence admitted by a later mutation. */
+typedef struct {
+    const Space *space;
+    uint64_t revision;
+} SpaceReadToken;
+
+typedef struct {
+    SpaceReadToken read;
+    CettaIndex logical_index;
+} SpaceEquationOccurrenceId;
+
+typedef struct {
+    SpaceEquationOccurrenceId id;
+    Atom *equation;
+    Atom *lhs;
+    Atom *rhs;
+} SpaceEquationOccurrence;
+
+SpaceReadToken space_read_token(const Space *s);
+bool space_read_token_is_current(SpaceReadToken token);
+bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
+                                       SpaceEquationOccurrence *out);
+
 bool space_contains_exact(Space *s, Atom *atom);
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);

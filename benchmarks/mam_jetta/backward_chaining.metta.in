@@ -1,0 +1,47 @@
+; JeTTa performance-suite workload 5: repeated recursive deduction from one
+; logical call shape. The checksum is @N@ when every deduction reaches T.
+
+(Evaluation (philosopher Plato))
+(Evaluation (likes-to-wrestle Plato))
+
+(Implication
+   (And
+     (Evaluation (philosopher $x))
+     (Evaluation (likes-to-wrestle $x)))
+   (Evaluation (human $x)))
+
+(Implication
+   (Evaluation (human $x))
+   (Evaluation (mortal $x)))
+
+(= (mam:deduce (Evaluation ($predicate $x)))
+   (match &self
+     (Evaluation ($predicate $x))
+     T))
+
+(= (mam:deduce (Evaluation ($predicate $x)))
+   (match &self
+     (Implication $antecedent (Evaluation ($predicate $x)))
+     (mam:deduce $antecedent)))
+
+(= (mam:deduce (And $left $right))
+   (mam:and (mam:deduce $left) (mam:deduce $right)))
+
+(= (mam:and T T) T)
+
+(= (mam:deduction-once $iteration)
+   (let $zero (* 0 $iteration)
+     (let $subject
+       (if (== $zero 0) Plato Not-Plato)
+       (if (== (mam:deduce (Evaluation (mortal $subject))) T)
+           1
+           0))))
+
+(= (mam:deduction-loop $remaining $sum)
+   (if (< $remaining 1)
+       $sum
+       (let $next (- $remaining 1)
+         (let $value (mam:deduction-once $next)
+           (mam:deduction-loop $next (+ $sum $value))))))
+
+!(mam:deduction-loop @N@ 0)

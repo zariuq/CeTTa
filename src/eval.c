@@ -125,6 +125,14 @@ typedef struct {
     SymbolId ctx_missing;
     SymbolId ctx_window;
     SymbolId ctx_entry;
+    SymbolId cyclic_need_thunk;
+    SymbolId need_demand_in_progress;
+    SymbolId stack_overflow;
+    SymbolId need_heap_update_failed;
+    SymbolId need_receipt_update_failed;
+    SymbolId missing_need_thunk;
+    SymbolId need_reification_cycle;
+    SymbolId no_return;
 } PrimeNeedSymbolIds;
 
 static __thread PrimeNeedSymbolIds g_prime_need_symbol_ids = {0};
@@ -167,6 +175,20 @@ static const PrimeNeedSymbolIds *prime_need_symbols(void) {
         ids.ctx_missing = symbol_intern_cstr(g_symbols, "ctx:missing");
         ids.ctx_window = symbol_intern_cstr(g_symbols, "ctx:window");
         ids.ctx_entry = symbol_intern_cstr(g_symbols, "ctx:entry");
+        ids.cyclic_need_thunk = symbol_intern_cstr(
+            g_symbols, "CyclicPrimeNeedThunk");
+        ids.need_demand_in_progress = symbol_intern_cstr(
+            g_symbols, "PrimeNeedDemandInProgress");
+        ids.stack_overflow = symbol_intern_cstr(g_symbols, "StackOverflow");
+        ids.need_heap_update_failed = symbol_intern_cstr(
+            g_symbols, "PrimeNeedHeapUpdateFailed");
+        ids.need_receipt_update_failed = symbol_intern_cstr(
+            g_symbols, "PrimeNeedReceiptUpdateFailed");
+        ids.missing_need_thunk = symbol_intern_cstr(
+            g_symbols, "MissingPrimeNeedThunk");
+        ids.need_reification_cycle = symbol_intern_cstr(
+            g_symbols, "PrimeNeedReificationCycle");
+        ids.no_return = symbol_intern_cstr(g_symbols, "NoReturn");
     }
     g_prime_need_symbol_ids = ids;
     return &g_prime_need_symbol_ids;
@@ -11807,15 +11829,16 @@ static bool prime_need_record_cell_observation(
 static bool prime_need_fault_is_completed(Atom *fault) {
     if (!atom_is_error(fault) || fault->expr.len < 3u)
         return false;
+    const PrimeNeedSymbolIds *ids = prime_need_symbols();
     Atom *reason = fault->expr.elems[2];
-    return !atom_is_symbol(reason, "CyclicPrimeNeedThunk") &&
-           !atom_is_symbol(reason, "PrimeNeedDemandInProgress") &&
-           !atom_is_symbol(reason, "StackOverflow") &&
-           !atom_is_symbol(reason, "PrimeNeedHeapUpdateFailed") &&
-           !atom_is_symbol(reason, "PrimeNeedReceiptUpdateFailed") &&
-           !atom_is_symbol(reason, "MissingPrimeNeedThunk") &&
-           !atom_is_symbol(reason, "PrimeNeedReificationCycle") &&
-           !atom_is_symbol(reason, "NoReturn");
+    return !atom_is_symbol_id(reason, ids->cyclic_need_thunk) &&
+           !atom_is_symbol_id(reason, ids->need_demand_in_progress) &&
+           !atom_is_symbol_id(reason, ids->stack_overflow) &&
+           !atom_is_symbol_id(reason, ids->need_heap_update_failed) &&
+           !atom_is_symbol_id(reason, ids->need_receipt_update_failed) &&
+           !atom_is_symbol_id(reason, ids->missing_need_thunk) &&
+           !atom_is_symbol_id(reason, ids->need_reification_cycle) &&
+           !atom_is_symbol_id(reason, ids->no_return);
 }
 #endif
 
@@ -14872,125 +14895,273 @@ eval_direct_for_current(Space *s, Arena *a, Atom *type, Atom *atom,
     outcome_set_free(&inner);
 }
 
+typedef enum {
+    INTERPRET_FUNCTION_ARGS_FRAME_ENTER = 0,
+    INTERPRET_FUNCTION_ARGS_FRAME_ITERATE = 1,
+    INTERPRET_FUNCTION_ARGS_FRAME_AFTER_ITER_CHILD = 2,
+    INTERPRET_FUNCTION_ARGS_FRAME_AFTER_ONLY_CHILD = 3,
+} InterpretFunctionArgsFrameState;
+
+typedef enum {
+    INTERPRET_FUNCTION_ARGS_PUSH = 0,
+    INTERPRET_FUNCTION_ARGS_POP = 1,
+} InterpretFunctionArgsAction;
+
+/* Argument interpretation is a depth-first Cartesian traversal.  Frames are
+   allocated at their maximum possible depth because a child borrows the
+   parent frame's active binding environment until it returns. */
+typedef struct {
+    CettaExprIndex idx;
+    const Bindings *env;
+    Atom *orig_arg;
+    Atom *arg_type;
+    OutcomeSet arg_os;
+    BindingsBuilder merged_builder;
+    BindingsMergeAttempt active_attempt;
+    BindingsBuilder child_builder;
+    CettaCount arg_index;
+    InterpretFunctionArgsFrameState state;
+    bool arg_os_initialized;
+    bool merged_builder_initialized;
+    bool active_attempt_initialized;
+    bool child_builder_initialized;
+} InterpretFunctionArgsFrame;
+
+static void interpret_function_args_frame_init(
+    InterpretFunctionArgsFrame *frame, CettaExprIndex idx,
+    const Bindings *env) {
+    memset(frame, 0, sizeof(*frame));
+    frame->idx = idx;
+    frame->env = env;
+    frame->state = INTERPRET_FUNCTION_ARGS_FRAME_ENTER;
+}
+
+static void interpret_function_args_frame_finish_child(
+    InterpretFunctionArgsFrame *frame) {
+    if (frame->child_builder_initialized) {
+        bindings_builder_free(&frame->child_builder);
+        frame->child_builder_initialized = false;
+    }
+    if (frame->active_attempt_initialized) {
+        bindings_merge_attempt_finish(&frame->merged_builder,
+                                      &frame->active_attempt);
+        frame->active_attempt_initialized = false;
+    }
+}
+
+static void interpret_function_args_frame_cleanup(
+    InterpretFunctionArgsFrame *frame) {
+    if (!frame)
+        return;
+    interpret_function_args_frame_finish_child(frame);
+    if (frame->merged_builder_initialized) {
+        bindings_builder_free(&frame->merged_builder);
+        frame->merged_builder_initialized = false;
+    }
+    if (frame->arg_os_initialized) {
+        outcome_set_free(&frame->arg_os);
+        frame->arg_os_initialized = false;
+    }
+}
+
+static InterpretFunctionArgsAction interpret_function_args_frame_step(
+    Space *s, Arena *a, Atom *op, Atom **orig_args, Atom **arg_types,
+    CettaExprLen nargs, Atom **prefix, int fuel, OutcomeSet *os,
+    InterpretFunctionArgsFrame *frame, const Bindings **child_env) {
+    __attribute__((cleanup(prime_need_active_leave)))
+    PrimeNeedActiveGuard need_guard = prime_need_active_enter(frame->env);
+    *child_env = NULL;
+
+    if (frame->idx == nargs) {
+        Atom **call_elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1u));
+        call_elems[0] = op;
+        for (CettaExprIndex i = 0; i < nargs; i++)
+            call_elems[i + 1u] = prefix[i];
+        outcome_set_add(os, atom_expr(a, call_elems, nargs + 1u), frame->env);
+        return INTERPRET_FUNCTION_ARGS_POP;
+    }
+
+    if (frame->state == INTERPRET_FUNCTION_ARGS_FRAME_ENTER) {
+        frame->orig_arg = orig_args[frame->idx];
+        frame->arg_type = function_domain_type(
+            (Bindings *)frame->env, a, arg_types[frame->idx], NULL);
+        Atom *bound_arg = bindings_apply_if_vars(
+            frame->env, a, frame->orig_arg);
+        uint64_t need_thunk_id = 0u;
+        bool suspended = prime_need_ref_is_active(bound_arg, &need_thunk_id);
+        bool normalize_observation =
+            prime_need_argument_requires_normal_form(op, frame->idx);
+        bool control_continuation =
+            prime_need_argument_is_control_continuation(op, frame->idx);
+
+        if (!normalize_observation && !suspended &&
+            (atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom) ||
+             bound_arg->kind == ATOM_VAR)) {
+            if (!control_continuation &&
+                atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom) &&
+                prime_need_atom_has_observable_ref(bound_arg)) {
+                bound_arg = prime_need_reify_suspended(
+                    a, bound_arg, &g_prime_need_active);
+                if (!bound_arg) {
+                    outcome_set_add(
+                        os,
+                        atom_error(a, frame->orig_arg,
+                                   atom_symbol(a,
+                                               "PrimeNeedReificationCycle")),
+                        frame->env);
+                    return INTERPRET_FUNCTION_ARGS_POP;
+                }
+            }
+            prefix[frame->idx] = bound_arg;
+            if (eval_dependent_telescope_enabled()) {
+                if (!bindings_builder_init(&frame->child_builder,
+                                           frame->env))
+                    return INTERPRET_FUNCTION_ARGS_POP;
+                frame->child_builder_initialized = true;
+                if (!bind_domain_binder_builder(
+                        &frame->child_builder, arg_types[frame->idx],
+                        bound_arg))
+                    return INTERPRET_FUNCTION_ARGS_POP;
+                *child_env = bindings_builder_bindings(
+                    &frame->child_builder);
+            } else {
+                *child_env = frame->env;
+            }
+            frame->state =
+                INTERPRET_FUNCTION_ARGS_FRAME_AFTER_ONLY_CHILD;
+            return INTERPRET_FUNCTION_ARGS_PUSH;
+        }
+
+        outcome_set_init(&frame->arg_os);
+        frame->arg_os_initialized = true;
+        if (normalize_observation)
+            prime_need_normalize_observation_atom(
+                s, a, bound_arg, fuel, frame->env, &frame->arg_os);
+        else
+            metta_eval_bind_typed(
+                s, a, frame->arg_type, bound_arg, fuel, &frame->arg_os);
+
+        if (!bindings_builder_init(&frame->merged_builder, frame->env))
+            return INTERPRET_FUNCTION_ARGS_POP;
+        frame->merged_builder_initialized = true;
+        frame->state = INTERPRET_FUNCTION_ARGS_FRAME_ITERATE;
+    }
+
+    while (frame->arg_index < frame->arg_os.len) {
+        Outcome *arg_outcome = &frame->arg_os.items[frame->arg_index++];
+        Atom *arg_atom = outcome_atom_materialize_traced(
+            a, arg_outcome,
+            CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
+        BindingsMergeAttempt attempt;
+        if (!bindings_builder_merge_or_clone(
+                &frame->merged_builder, frame->env,
+                &arg_outcome->env, &attempt))
+            continue;
+
+        frame->active_attempt = attempt;
+        if (!frame->active_attempt.used_builder)
+            frame->active_attempt.env = &frame->active_attempt.owned;
+        frame->active_attempt_initialized = true;
+
+        bool error_is_data =
+            prime_need_argument_treats_error_as_data(op, frame->idx);
+        if (atom_is_empty_or_error(arg_atom) && !error_is_data &&
+            !atom_eq(arg_atom, frame->orig_arg)) {
+            outcome_set_add(os, arg_atom, frame->active_attempt.env);
+            interpret_function_args_frame_finish_child(frame);
+            continue;
+        }
+
+        prefix[frame->idx] = arg_atom;
+        if (frame->active_attempt.used_builder) {
+            if (!bind_domain_binder_builder(
+                    &frame->merged_builder, arg_types[frame->idx],
+                    arg_atom)) {
+                interpret_function_args_frame_finish_child(frame);
+                continue;
+            }
+            *child_env = bindings_builder_bindings(&frame->merged_builder);
+        } else {
+            bindings_builder_init_owned(
+                &frame->child_builder, &frame->active_attempt.owned);
+            frame->child_builder_initialized = true;
+            if (!bind_domain_binder_builder(
+                    &frame->child_builder, arg_types[frame->idx],
+                    arg_atom)) {
+                interpret_function_args_frame_finish_child(frame);
+                continue;
+            }
+            *child_env = bindings_builder_bindings(&frame->child_builder);
+        }
+        frame->state = INTERPRET_FUNCTION_ARGS_FRAME_AFTER_ITER_CHILD;
+        return INTERPRET_FUNCTION_ARGS_PUSH;
+    }
+
+    return INTERPRET_FUNCTION_ARGS_POP;
+}
+
 static void interpret_function_args(Space *s, Arena *a, Atom *op,
                                     Atom **orig_args, Atom **arg_types,
                                     CettaExprLen nargs, CettaExprIndex idx,
                                     Atom **prefix,
-                                    const Bindings *env, int fuel, OutcomeSet *os) {
-    __attribute__((cleanup(prime_need_active_leave)))
-    PrimeNeedActiveGuard need_guard = prime_need_active_enter(env);
-    if (idx == nargs) {
-        Atom **call_elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
-        call_elems[0] = op;
-        for (CettaExprIndex i = 0; i < nargs; i++)
-            call_elems[i + 1] = prefix[i];
-        outcome_set_add(os, atom_expr(a, call_elems, nargs + 1), env);
+                                    const Bindings *env, int fuel,
+                                    OutcomeSet *os) {
+    if (idx > nargs)
         return;
-    }
-
-    Atom *orig_arg = orig_args[idx];
-    Atom *arg_type = function_domain_type((Bindings *)env, a, arg_types[idx], NULL);
-    Atom *bound_arg = bindings_apply_if_vars(env, a, orig_arg);
-    uint64_t need_thunk_id = 0u;
-    bool suspended = prime_need_ref_is_active(bound_arg, &need_thunk_id);
-    bool normalize_observation =
-        prime_need_argument_requires_normal_form(op, idx);
-    bool control_continuation =
-        prime_need_argument_is_control_continuation(op, idx);
-    bool error_is_data =
-        prime_need_argument_treats_error_as_data(op, idx);
-    if (!normalize_observation && !suspended &&
-        (atom_is_symbol_id(arg_type, g_builtin_syms.atom) ||
-         bound_arg->kind == ATOM_VAR)) {
-        if (!control_continuation &&
-            atom_is_symbol_id(arg_type, g_builtin_syms.atom) &&
-            prime_need_atom_has_observable_ref(bound_arg)) {
-            bound_arg = prime_need_reify_suspended(
-                a, bound_arg, &g_prime_need_active);
-            if (!bound_arg) {
-                outcome_set_add(
-                    os,
-                    atom_error(a, orig_arg,
-                               atom_symbol(a,
-                                           "PrimeNeedReificationCycle")),
-                    env);
-                return;
-            }
-        }
-        prefix[idx] = bound_arg;
-        if (eval_dependent_telescope_enabled()) {
-            BindingsBuilder merged;
-            if (!bindings_builder_init(&merged, env))
-                return;
-            if (!bind_domain_binder_builder(&merged, arg_types[idx], bound_arg)) {
-                bindings_builder_free(&merged);
-                return;
-            }
-            interpret_function_args(s, a, op, orig_args, arg_types, nargs,
-                                    idx + 1, prefix,
-                                    (const Bindings *)bindings_builder_bindings(&merged),
-                                    fuel, os);
-            bindings_builder_free(&merged);
-        } else {
-            interpret_function_args(s, a, op, orig_args, arg_types, nargs,
-                                    idx + 1, prefix, env, fuel, os);
-        }
+    CettaExprLen remaining = nargs - idx;
+    if (!cetta_expr_len_fits_size(remaining))
         return;
-    }
-
-    OutcomeSet arg_os;
-    outcome_set_init(&arg_os);
-    if (normalize_observation)
-        prime_need_normalize_observation_atom(
-            s, a, bound_arg, fuel, env, &arg_os);
-    else
-        metta_eval_bind_typed(s, a, arg_type, bound_arg, fuel, &arg_os);
-
-    BindingsBuilder merged_builder;
-    if (!bindings_builder_init(&merged_builder, env)) {
-        outcome_set_free(&arg_os);
+    size_t frame_cap = (size_t)remaining;
+    if (frame_cap == SIZE_MAX ||
+        frame_cap + 1u > SIZE_MAX / sizeof(InterpretFunctionArgsFrame))
         return;
-    }
-    for (CettaCount i = 0; i < arg_os.len; i++) {
-        BindingsMergeAttempt attempt;
-        Atom *arg_atom =
-            outcome_atom_materialize_traced(
-                a, &arg_os.items[i],
-                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
-        if (!bindings_builder_merge_or_clone(&merged_builder, env,
-                                             &arg_os.items[i].env, &attempt))
-            continue;
-        if (atom_is_empty_or_error(arg_atom) && !error_is_data &&
-            !atom_eq(arg_atom, orig_arg)) {
-            outcome_set_add(os, arg_atom, attempt.env);
-            bindings_merge_attempt_finish(&merged_builder, &attempt);
+    frame_cap++;
+
+    enum { INTERPRET_FUNCTION_ARGS_INLINE_FRAMES = 8 };
+    InterpretFunctionArgsFrame
+        inline_frames[INTERPRET_FUNCTION_ARGS_INLINE_FRAMES];
+    InterpretFunctionArgsFrame *frames =
+        frame_cap <= INTERPRET_FUNCTION_ARGS_INLINE_FRAMES
+            ? inline_frames
+            : cetta_malloc(sizeof(*frames) * frame_cap);
+    size_t frame_len = 0u;
+    interpret_function_args_frame_init(
+        &frames[frame_len++], idx, env);
+
+    while (frame_len > 0u) {
+        InterpretFunctionArgsFrame *frame = &frames[frame_len - 1u];
+        if (frame->state ==
+            INTERPRET_FUNCTION_ARGS_FRAME_AFTER_ITER_CHILD) {
+            interpret_function_args_frame_finish_child(frame);
+            frame->state = INTERPRET_FUNCTION_ARGS_FRAME_ITERATE;
             continue;
         }
-        prefix[idx] = arg_atom;
-        if (attempt.used_builder) {
-            if (bind_domain_binder_builder(&merged_builder, arg_types[idx],
-                                           arg_atom)) {
-                interpret_function_args(s, a, op, orig_args, arg_types, nargs,
-                                        idx + 1, prefix,
-                                        (const Bindings *)bindings_builder_bindings(&merged_builder),
-                                        fuel, os);
-            }
-        } else {
-            BindingsBuilder attempt_builder;
-            bindings_builder_init_owned(&attempt_builder, &attempt.owned);
-            if (bind_domain_binder_builder(&attempt_builder, arg_types[idx],
-                                           arg_atom)) {
-                interpret_function_args(s, a, op, orig_args, arg_types, nargs,
-                                        idx + 1, prefix,
-                                        (const Bindings *)bindings_builder_bindings(&attempt_builder),
-                                        fuel, os);
-            }
-            bindings_builder_free(&attempt_builder);
+        if (frame->state ==
+            INTERPRET_FUNCTION_ARGS_FRAME_AFTER_ONLY_CHILD) {
+            interpret_function_args_frame_cleanup(frame);
+            frame_len--;
+            continue;
         }
-        bindings_merge_attempt_finish(&merged_builder, &attempt);
+
+        const Bindings *child_env = NULL;
+        InterpretFunctionArgsAction action =
+            interpret_function_args_frame_step(
+                s, a, op, orig_args, arg_types, nargs, prefix, fuel, os,
+                frame, &child_env);
+        if (action == INTERPRET_FUNCTION_ARGS_POP) {
+            interpret_function_args_frame_cleanup(frame);
+            frame_len--;
+            continue;
+        }
+        assert(action == INTERPRET_FUNCTION_ARGS_PUSH);
+        assert(child_env != NULL);
+        assert(frame_len < frame_cap);
+        interpret_function_args_frame_init(
+            &frames[frame_len++], frame->idx + 1u, child_env);
     }
-    bindings_builder_free(&merged_builder);
-    outcome_set_free(&arg_os);
+
+    if (frames != inline_frames)
+        free(frames);
 }
 
 static void dispatch_capture_outcomes(Space *s, Arena *a, Atom *head, Atom **args,
@@ -17407,6 +17578,7 @@ static bool prime_need_try_equation_call(
 
     CettaExprIndex nargs = atom->expr.len - 1u;
     CettaCount logical_len = space_length64(s);
+    SpaceReadToken equation_read = space_read_token(s);
     bool no_arguments_demand = false;
     bool *demand_probe = nargs
         ? arena_alloc(a, sizeof(*demand_probe) * (size_t)nargs)
@@ -17422,11 +17594,19 @@ static bool prime_need_try_equation_call(
        space. */
     size_t plan_count = 0u;
     for (CettaIndex i = 0u; i < logical_len; i++) {
-        Atom *equation = space_get_at64(s, i);
-        if (!prime_need_equation_demand(equation, atom, demand_probe))
+        SpaceEquationOccurrence occurrence;
+        SpaceEquationOccurrenceId occurrence_id = {
+            .read = equation_read,
+            .logical_index = i,
+        };
+        if (!space_equation_occurrence_resolve(occurrence_id, &occurrence) ||
+            !prime_need_equation_demand(
+                occurrence.equation, atom, demand_probe))
             continue;
         plan_count++;
     }
+    if (!space_read_token_is_current(equation_read))
+        return false;
     if (plan_count == 0u)
         return false;
     if (plan_count > SIZE_MAX / sizeof(PrimeNeedEquationPlan))
@@ -17436,8 +17616,14 @@ static bool prime_need_try_equation_call(
         cetta_malloc(sizeof(*plans) * plan_count);
     size_t initialized_plans = 0u;
     for (CettaIndex i = 0u; i < logical_len; i++) {
-        Atom *equation = space_get_at64(s, i);
-        if (!prime_need_equation_demand(equation, atom, demand_probe))
+        SpaceEquationOccurrence occurrence;
+        SpaceEquationOccurrenceId occurrence_id = {
+            .read = equation_read,
+            .logical_index = i,
+        };
+        if (!space_equation_occurrence_resolve(occurrence_id, &occurrence) ||
+            !prime_need_equation_demand(
+                occurrence.equation, atom, demand_probe))
             continue;
         bool *demand = nargs
             ? arena_alloc(a, sizeof(*demand) * (size_t)nargs)
@@ -17450,8 +17636,9 @@ static bool prime_need_try_equation_call(
             memcpy(demand, demand_probe,
                    sizeof(*demand) * (size_t)nargs);
         plans[initialized_plans] = (PrimeNeedEquationPlan){
-            .equation = equation,
-            .rule_occurrence_id = (uint64_t)i + 1u,
+            .equation = occurrence.equation,
+            .rule_occurrence_id =
+                (uint64_t)occurrence.id.logical_index + 1u,
             .demand = demand,
         };
         outcome_set_init(&plans[initialized_plans].results);
@@ -17459,6 +17646,10 @@ static bool prime_need_try_equation_call(
     }
     if (initialized_plans != plan_count) {
         prime_need_equation_plans_free(plans, initialized_plans);
+        return false;
+    }
+    if (!space_read_token_is_current(equation_read)) {
+        prime_need_equation_plans_free(plans, plan_count);
         return false;
     }
 

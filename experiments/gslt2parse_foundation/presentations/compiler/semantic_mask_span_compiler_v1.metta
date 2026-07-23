@@ -119,10 +119,10 @@
         (compile-semantic-mask-grammar
           semantic-mask-drop (sir-eps ?value) mrx-eps))
       (body))
-    (rule compile-semantic-mask-eps-copy-nil
+    (rule compile-semantic-mask-eps-nil
       (head
         (compile-semantic-mask-grammar
-          semantic-mask-copy (sir-eps nil) mrx-eps))
+          ?mode (sir-eps nil) mrx-eps))
       (body))
     (rule compile-semantic-mask-lit
       (head

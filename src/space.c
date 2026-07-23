@@ -1618,6 +1618,39 @@ static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
     return true;
 }
 
+SpaceReadToken space_read_token(const Space *s) {
+    return (SpaceReadToken){
+        .space = s,
+        .revision = space_revision(s),
+    };
+}
+
+bool space_read_token_is_current(SpaceReadToken token) {
+    return token.space && token.revision == space_revision(token.space);
+}
+
+bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
+                                       SpaceEquationOccurrence *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!out || !space_read_token_is_current(id.read) ||
+        id.logical_index >= space_length64(id.read.space)) {
+        return false;
+    }
+    Atom *equation = space_get_at64(id.read.space, id.logical_index);
+    Atom *lhs = NULL;
+    Atom *rhs = NULL;
+    if (!equation || !is_equation_atom(equation, &lhs, &rhs) ||
+        !space_read_token_is_current(id.read)) {
+        return false;
+    }
+    out->id = id;
+    out->equation = equation;
+    out->lhs = lhs;
+    out->rhs = rhs;
+    return true;
+}
+
 static bool space_equation_child_ids_at_id(const Space *s, AtomId atom_id,
                                            AtomId *lhs_id_out, AtomId *rhs_id_out) {
     if (!s || !s->native.universe || atom_id == CETTA_ATOM_ID_NONE)

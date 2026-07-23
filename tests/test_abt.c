@@ -465,8 +465,8 @@ static void test_locally_nameless_seams(Arena *arena,
           "ordinary open quoted code remains structurally comparable");
     CHECK(abt_bind(signature, arena, quoted_matcher_var, x_body) == NULL,
           "an open quote remains inadmissible as a persistent binder key");
-    CHECK(!abt_scope_check(signature, 0u, named_x),
-          "quoted-string name syntax is not canonical ABT");
+    CHECK(abt_scope_check(signature, 0u, named_x),
+          "quoted-string data is closed canonical ABT");
     CHECK(abt_bind(signature, arena, var(arena, 0), x_body) == NULL,
           "bind rejects a loose canonical index as a name");
 
@@ -603,8 +603,8 @@ static void test_named_readback(Arena *arena,
                     node1(arena, "Binders", raw_compound), type,
                     raw_compound)) == NULL,
           "unquoted compound binder names fail closed");
-    CHECK(abt_parse(signature, arena, named_x) == NULL,
-          "unbound quoted-string syntax cannot cross canonicalization");
+    check_atom_eq("unbound quoted-string data crosses canonicalization unchanged",
+                  abt_parse(signature, arena, named_x), named_x);
 
     AbtSignature scoped_signature;
     abt_signature_init(&scoped_signature);

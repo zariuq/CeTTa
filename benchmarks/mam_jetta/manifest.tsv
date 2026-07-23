@@ -1,0 +1,6 @@
+case	template	paper_scale	checksum
+fibonacci	fibonacci.metta.in	30	fib
+interpreter	interpreter.metta.in	1000000	mul:144
+differentiation	differentiation.metta.in	1000000	mul:27
+synthesis	synthesis.metta.in	40	identity
+backward_chaining	backward_chaining.metta.in	1000	identity

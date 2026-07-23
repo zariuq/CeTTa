@@ -21,13 +21,13 @@ class Contender:
     binary: Path
 
 
-def invoke(
+def run(
     contender: Contender,
     expressions: tuple[str, ...],
     *,
     language: str = "prime",
     pretty_vars: bool = False,
-) -> str:
+) -> subprocess.CompletedProcess[str]:
     command = [str(contender.binary), "--lang", language]
     if language == "he":
         command.extend(("--profile", "he-compat"))
@@ -35,12 +35,27 @@ def invoke(
         command.append("--pretty-vars")
     for expression in expressions:
         command.extend(("-e", expression))
-    completed = subprocess.run(
+    return subprocess.run(
         command,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+    )
+
+
+def invoke(
+    contender: Contender,
+    expressions: tuple[str, ...],
+    *,
+    language: str = "prime",
+    pretty_vars: bool = False,
+) -> str:
+    completed = run(
+        contender,
+        expressions,
+        language=language,
+        pretty_vars=pretty_vars,
     )
     if completed.returncode != 0:
         raise AssertionError(
@@ -83,6 +98,24 @@ def main() -> int:
         if actual != expected:
             raise AssertionError(
                 f"{policy}/{label}: expected {expected!r}, got {actual!r}"
+            )
+        checks += 1
+
+    def expect_syntax_rejection(
+        policy: str,
+        label: str,
+        expressions: tuple[str, ...],
+        *,
+        language: str,
+    ) -> None:
+        nonlocal checks
+        completed = run(
+            contenders[policy], expressions, language=language
+        )
+        if completed.returncode != 1 or "could not parse" not in completed.stdout:
+            raise AssertionError(
+                f"{policy}/{label}: expected syntax rejection, got exit "
+                f"{completed.returncode}:\n{completed.stdout}"
             )
         checks += 1
 
@@ -457,11 +490,10 @@ def main() -> int:
             ),
             "[accepted]",
         )
-        expect(
+        expect_syntax_rejection(
             policy,
             "he-isolation",
             ("! (unify (P $ $) (P a b) accepted rejected)",),
-            "[rejected]",
             language="he",
         )
 

@@ -3,6 +3,7 @@
 #include "finite_horn_answer_stream_v1.h"
 #include "finite_horn_ground_term_v1.h"
 #include "parser_pack_abi_stream_v1.h"
+#include "parser_pack_cursor_c_emitter_v1.h"
 #include "parser_pack_guard_evidence_stream_v1.h"
 #include "parser_pack_guarded_lexical_exec_v1.h"
 
@@ -795,7 +796,9 @@ static bool run(const char *abi_path,
                 const char *action_answer_path,
                 const char *action_compiler_digest,
                 uint32_t benchmark_iterations,
-                bool cursor_hybrid_only) {
+                bool cursor_hybrid_only,
+                const char *emit_c_path,
+                const char *emit_c_prefix) {
     const PPGuardedLexExecV1Limits limits = {
         .dfa_state_limit = UINT32_C(65536),
         .dfa_transition_limit = UINT32_C(2000000),
@@ -976,8 +979,37 @@ static bool run(const char *abi_path,
              &guarded_plan,
              action_answers.terms, action_answers.len,
              action_compiler_digest, action_answers.digest,
-             error, sizeof(error)))) {
+            error, sizeof(error)))) {
         goto rejected;
+    }
+    if (emit_c_path) {
+        FILE *generated = NULL;
+        bool emitted;
+        int close_status;
+
+        if (!emit_c_prefix || !cursor_program.actions_bound) {
+            (void)snprintf(
+                error, sizeof(error),
+                "generated C requires a bound cursor/action program");
+            goto rejected;
+        }
+        generated = fopen(emit_c_path, "wb");
+        if (!generated) {
+            (void)snprintf(
+                error, sizeof(error), "cannot open generated C output");
+            goto rejected;
+        }
+        emitted = ppguarded_lex_cursor_v1_emit_c(
+            &cursor_program, generated, emit_c_prefix,
+            error, sizeof(error));
+        close_status = fclose(generated);
+        if (!emitted || close_status != 0) {
+            if (error[0] == '\0') {
+                (void)snprintf(
+                    error, sizeof(error), "cannot finish generated C output");
+            }
+            goto rejected;
+        }
     }
     if (cursor_hybrid_only) {
         if (!run_cursor_hybrid_only(
@@ -1918,12 +1950,14 @@ int main(int argc, char **argv) {
     SymbolTable symbols;
     const char *action_answer_path = NULL;
     const char *action_compiler_digest = NULL;
+    const char *emit_c_path = NULL;
+    const char *emit_c_prefix = NULL;
     int benchmark_index = 0;
     uint32_t benchmark_iterations = 0u;
     bool cursor_hybrid_only = false;
     bool ok;
 
-    if (argc < 9 || argc > 13) {
+    if (argc < 9 || argc > 14) {
         fprintf(stderr,
                 "usage: parser_pack_guarded_lexical_exec_v1_stream "
                 "ABI LEXICAL_NFA GUARD_NFA GUARD_EVIDENCE GUARDED_NFA "
@@ -1931,7 +1965,8 @@ int main(int argc, char **argv) {
                 "[BENCHMARK_ITERATIONS | "
                 "ACTION_ANSWERS ACTION_COMPILER_SHA256 "
                 "[BENCHMARK_ITERATIONS | "
-                "--cursor-hybrid-only BENCHMARK_ITERATIONS]]\n");
+                "--cursor-hybrid-only BENCHMARK_ITERATIONS | "
+                "--emit-c OUTPUT_C IDENTIFIER_PREFIX]]\n");
         return 1;
     }
     if (argc >= 11) {
@@ -1946,6 +1981,13 @@ int main(int argc, char **argv) {
             }
             cursor_hybrid_only = true;
             benchmark_index = 12;
+        } else if (argc == 14) {
+            if (strcmp(argv[11], "--emit-c") != 0) {
+                fprintf(stderr, "invalid cursor C-emission mode\n");
+                return 1;
+            }
+            emit_c_path = argv[12];
+            emit_c_prefix = argv[13];
         }
     } else if (argc == 10) {
         benchmark_index = 9;
@@ -1971,7 +2013,7 @@ int main(int argc, char **argv) {
     ok = run(argv[1], argv[2], argv[3], argv[4], argv[5], argv[6],
              argv[7], argv[8], action_answer_path,
              action_compiler_digest, benchmark_iterations,
-             cursor_hybrid_only);
+             cursor_hybrid_only, emit_c_path, emit_c_prefix);
     symbol_table_free(&symbols);
     g_symbols = NULL;
     return ok ? 0 : 1;
