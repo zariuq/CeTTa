@@ -1,0 +1,62 @@
+; Parallel settlement: disjoint funded reactions execute as concurrent
+; waves, and the answer does not depend on the schedule.
+;
+; Eight settlements run on eight distinct channels, each funded by its own
+; purse.  Sequentially they fire one at a time; with --num-threads N the
+; engine executes compatible firings in waves, where each worker first
+; atomically claims the exact endpoint and funding occurrences it needs.
+; Because claims are disjoint and the residual is kept in canonical form,
+; the sequential run and every threaded run produce this same state.
+;
+; Run:  ./cetta --lang rhocalc --profile cost examples/rho/cost/parallel_settlement.mrho
+;       ./cetta --num-threads 4 --lang rhocalc --profile cost examples/rho/cost/parallel_settlement.mrho
+
+(rho:cost:par
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger1 $m (rho:cost:signed rho:nil settled1))
+      (rho:send ledger1 (rho:cost:signed rho:nil pay1)))
+    bank1)
+  (rho:cost:purse ledger1 (rho:cost:stack-cons bank1 rho:cost:stack-empty))
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger2 $m (rho:cost:signed rho:nil settled2))
+      (rho:send ledger2 (rho:cost:signed rho:nil pay2)))
+    bank2)
+  (rho:cost:purse ledger2 (rho:cost:stack-cons bank2 rho:cost:stack-empty))
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger3 $m (rho:cost:signed rho:nil settled3))
+      (rho:send ledger3 (rho:cost:signed rho:nil pay3)))
+    bank3)
+  (rho:cost:purse ledger3 (rho:cost:stack-cons bank3 rho:cost:stack-empty))
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger4 $m (rho:cost:signed rho:nil settled4))
+      (rho:send ledger4 (rho:cost:signed rho:nil pay4)))
+    bank4)
+  (rho:cost:purse ledger4 (rho:cost:stack-cons bank4 rho:cost:stack-empty))
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger5 $m (rho:cost:signed rho:nil settled5))
+      (rho:send ledger5 (rho:cost:signed rho:nil pay5)))
+    bank5)
+  (rho:cost:purse ledger5 (rho:cost:stack-cons bank5 rho:cost:stack-empty))
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger6 $m (rho:cost:signed rho:nil settled6))
+      (rho:send ledger6 (rho:cost:signed rho:nil pay6)))
+    bank6)
+  (rho:cost:purse ledger6 (rho:cost:stack-cons bank6 rho:cost:stack-empty))
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger7 $m (rho:cost:signed rho:nil settled7))
+      (rho:send ledger7 (rho:cost:signed rho:nil pay7)))
+    bank7)
+  (rho:cost:purse ledger7 (rho:cost:stack-cons bank7 rho:cost:stack-empty))
+  (rho:cost:signed
+    (rho:par
+      (rho:recv ledger8 $m (rho:cost:signed rho:nil settled8))
+      (rho:send ledger8 (rho:cost:signed rho:nil pay8)))
+    bank8)
+  (rho:cost:purse ledger8 (rho:cost:stack-cons bank8 rho:cost:stack-empty)))

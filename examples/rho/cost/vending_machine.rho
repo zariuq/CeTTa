@@ -1,0 +1,27 @@
+// A funded vending machine: reactions that are not paid for do not fire.
+//
+// Cost-profile surface:
+//   {P}sig                 a process P signed by `sig`
+//   purse c {s : ()}       a purse on channel c holding one token signed `s`
+//   purse c {s : s : ()}   the same purse with two stacked tokens
+//   purse c {()}           an empty purse on channel c
+//
+// A sale is a COMM between a machine receive and a customer send.  The
+// funding rule is located: the sale consumes one token per endpoint
+// signature -- here machine * customer -- and those tokens must be found
+// in purses sitting on the `vend` channel itself.  There is no ambient
+// bank account.
+//
+// The till holds two `machine` tokens; alice has a coin in the channel
+// purse; bob has none.  Exactly one sale fires (alice's).  Bob's order is
+// left facing a live machine endpoint and a till that could pay the
+// machine's own share: an unfunded reaction is disabled, not slowed.
+//
+// Run: ./cetta --lang rhocalc --profile cost examples/rho/cost/vending_machine.rho
+
+{for ($order <- vend) {{0}served}}machine
+| {for ($order <- vend) {{0}served}}machine
+| {vend!({0}coin)}alice
+| {vend!({0}coin)}bob
+| purse vend {machine : machine : ()}
+| purse vend {alice : ()}
