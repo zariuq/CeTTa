@@ -1,5 +1,6 @@
 #include "table_store.h"
 #include "stats.h"
+#include "term_universe.h"
 #include "variant_instance.h"
 #include "variant_shape.h"
 
@@ -187,6 +188,163 @@ void table_store_init(TableStore *store, CettaTableMode mode,
     store->cap = 0;
     store->mode = mode;
     store->answer_bank = answer_bank;
+    store->ground = NULL;
+}
+
+bool canonical_ground_call_key(Atom *call, Arena *arena,
+                               Atom **out_canonical, uint64_t *out_hash) {
+    if (!call || !arena || atom_has_vars(call))
+        return false;
+    Atom *canonical = term_universe_canonicalize_atom(arena, call);
+    if (!canonical)
+        return false;
+    if (out_canonical)
+        *out_canonical = canonical;
+    if (out_hash)
+        *out_hash = (uint64_t)atom_hash(canonical);
+    return true;
+}
+
+/* ── Ground-call memo store (CETTA_TABLE_MODE_GROUND_CALL) ─────────────────
+ *
+ * A flat set of entries keyed by (hash, atom_eq on the canonical ground call).
+ * Each entry owns a deep copy of the canonical call in a dedicated arena and a
+ * whole answer bag as AnswerRefs into the shared AnswerBank.  Invalidation is
+ * the process-global mutation epoch captured at commit: a lookup hits only if
+ * no space has been mutated since (a sound over-approximation of "every space
+ * this call consulted is unchanged").  Stale entries are refreshed in place on
+ * re-commit, never duplicated. */
+typedef struct {
+    Atom *canonical;
+    uint64_t hash;
+    uint64_t epoch;
+    TableStoredAnswers answers;
+} GroundCallEntry;
+
+struct GroundCallStore {
+    Arena arena;
+    GroundCallEntry *entries;
+    uint32_t len;
+    uint32_t cap;
+    AnswerBank *answer_bank;
+};
+
+static GroundCallStore *ground_store_ensure(TableStore *store) {
+    if (!store)
+        return NULL;
+    if (store->ground)
+        return store->ground;
+    GroundCallStore *ground = cetta_malloc(sizeof(*ground));
+    arena_init(&ground->arena);
+    arena_set_runtime_kind(&ground->arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    ground->entries = NULL;
+    ground->len = 0;
+    ground->cap = 0;
+    ground->answer_bank = store->answer_bank;
+    store->ground = ground;
+    return ground;
+}
+
+static void ground_store_free(GroundCallStore *ground) {
+    if (!ground)
+        return;
+    for (uint32_t i = 0; i < ground->len; i++)
+        table_stored_answers_free(&ground->entries[i].answers);
+    free(ground->entries);
+    arena_free(&ground->arena);
+    free(ground);
+}
+
+static GroundCallEntry *ground_store_find(GroundCallStore *ground,
+                                          Atom *canonical, uint64_t hash) {
+    if (!ground || !canonical)
+        return NULL;
+    for (uint32_t i = 0; i < ground->len; i++) {
+        if (ground->entries[i].hash == hash &&
+            atom_eq(ground->entries[i].canonical, canonical))
+            return &ground->entries[i];
+    }
+    return NULL;
+}
+
+bool table_store_ground_lookup(TableStore *store, Atom *canonical,
+                               uint64_t hash,
+                               TableGroundAnswerVisitor visit, void *ctx) {
+    if (!store || store->mode != CETTA_TABLE_MODE_GROUND_CALL ||
+        !store->ground || !canonical || !visit)
+        return false;
+    GroundCallEntry *entry = ground_store_find(store->ground, canonical, hash);
+    if (!entry
+#ifndef GROUND_MEMO_MUTATION_IGNORE_EPOCH
+        || entry->epoch != space_global_mutation_epoch()
+#endif
+        )
+        return false;
+    AnswerBank *bank = store->ground->answer_bank;
+    for (CettaCount i = 0; i < entry->answers.len; i++) {
+        const AnswerRecord *rec = answer_bank_get(bank, entry->answers.items[i]);
+        if (!rec || !rec->result)
+            return false;
+        if (!visit(rec->result, ctx))
+            return false;
+#ifdef GROUND_MEMO_MUTATION_BAG_TO_SET
+        break; /* planted mutation: replay only the first occurrence */
+#endif
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_ANSWER_STAGED);
+    return true;
+}
+
+bool table_store_ground_commit(TableStore *store, Atom *canonical,
+                               uint64_t hash,
+                               Atom *const *answers, uint32_t answer_len) {
+    if (!store || store->mode != CETTA_TABLE_MODE_GROUND_CALL || !canonical ||
+        (answer_len > 0 && !answers))
+        return false;
+    GroundCallStore *ground = ground_store_ensure(store);
+    if (!ground)
+        return false;
+    AnswerBank *bank = ground->answer_bank;
+    if (!bank)
+        return false;
+
+    GroundCallEntry *entry = ground_store_find(ground, canonical, hash);
+    if (entry) {
+        /* Refresh in place: drop the stale bag, keep the canonical key. */
+        table_stored_answers_free(&entry->answers);
+        table_stored_answers_init(&entry->answers);
+    } else {
+        if (ground->len == ground->cap) {
+            uint32_t next_cap = ground->cap ? ground->cap * 2u : 8u;
+            GroundCallEntry *grown = cetta_realloc(
+                ground->entries, sizeof(GroundCallEntry) * (size_t)next_cap);
+            if (!grown)
+                return false;
+            ground->entries = grown;
+            ground->cap = next_cap;
+        }
+        entry = &ground->entries[ground->len];
+        entry->canonical = atom_deep_copy(&ground->arena, canonical);
+        if (!entry->canonical)
+            return false;
+        entry->hash = hash;
+        table_stored_answers_init(&entry->answers);
+        ground->len++;
+    }
+
+    for (uint32_t i = 0; i < answer_len; i++) {
+        AnswerRef ref = CETTA_ANSWER_REF_NONE;
+        if (!answers[i] ||
+            !answer_bank_add(bank, answers[i], NULL, NULL, &ref) ||
+            !table_stored_answers_push_move(&entry->answers, ref)) {
+            /* Leave the entry present but mark it stale so it can never hit:
+             * an impossible epoch forces a miss until a clean re-commit. */
+            entry->epoch = UINT64_MAX;
+            return false;
+        }
+    }
+    entry->epoch = space_global_mutation_epoch();
+    return true;
 }
 
 void table_store_free(TableStore *store) {
@@ -199,6 +357,8 @@ void table_store_free(TableStore *store) {
     store->len = 0;
     store->cap = 0;
     store->answer_bank = NULL;
+    ground_store_free(store->ground);
+    store->ground = NULL;
 }
 
 bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
