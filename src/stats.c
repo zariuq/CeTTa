@@ -249,6 +249,10 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "cost-rho-parallel-acquired-claim",
     "cost-rho-parallel-released-claim",
     "prime-need-receipt-state-write",
+    "match-native-probe",
+    "match-native-trie-lookup",
+    "match-native-candidates",
+    "match-smset-rows",
 };
 
 static int64_t clamp_counter(uint64_t value) {

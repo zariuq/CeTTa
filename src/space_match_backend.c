@@ -272,6 +272,7 @@ static bool subst_match_same(const SubstMatch *a, const SubstMatch *b) {
 static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
                                 uint32_t epoch, const Bindings *bindings,
                                 bool exact) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_SMSET_ROWS);
     if (out->len >= out->cap) {
         CettaIndex next_cap = out->cap ? out->cap * 2 : 8;
         if (out->items == out->inline_items) {
@@ -644,21 +645,26 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
 static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (s->native.len <= MATCH_TRIE_THRESHOLD) {
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES,
+                                s->native.len);
         *out = cetta_malloc(sizeof(CettaIndex) * (s->native.len ? s->native.len : 1));
         for (CettaIndex i = 0; i < s->native.len; i++) (*out)[i] = i;
         return s->native.len;
     }
     native_ensure_match_trie(s);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
     CettaIndex ncand = 0, ccand = 0;
     disc_lookup(st->match_trie, pattern, out, &ncand, &ccand);
     if (ncand > 1) {
         ncand = sort_unique_cetta_index(*out, ncand);
     }
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, ncand);
     return ncand;
 }
 
 static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_PROBE);
     smset_init(out);
     if (s->native.len == 0) return;
     if (s->native.len <= MATCH_TRIE_THRESHOLD) {
@@ -7142,6 +7148,7 @@ static CettaIndex all_linear_candidates(Space *s, CettaIndex **out) {
 
 static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
                                          SubstMatchSet *out) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_PROBE);
     smset_init(out);
     if (s->native.len == 0) return;
     CettaIndex *candidates = NULL;
@@ -7962,6 +7969,23 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
     }
     bindings_free(&merged);
     return false;
+}
+
+bool space_match_backend_supports_seeded_candidates(Space *s) {
+    return s && !s->overlay_base &&
+           (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+            s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) &&
+           !space_match_backend_is_attached_compiled(s);
+}
+
+bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
+                                           Atom *pattern, Bindings *env,
+                                           Arena *a) {
+    if (!s || atom_idx >= s->native.len)
+        return false;
+    uint32_t suffix = fresh_var_suffix();
+    return match_space_atom_epoch(s, atom_idx, pattern, env, a, suffix) &&
+           !bindings_has_loop(env);
 }
 
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
