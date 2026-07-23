@@ -1,0 +1,13 @@
+Funded pair, ample allowances -> fires, then proven quiescent:
+Same pair, zero fuel -> fuel-exhausted, untouched state:
+Same pair, search allowance 1 -> search-exhausted, not quiescent:
+Two covers for one spend -> two successors, never truncated:
+[()]
+[()]
+[(lts:rho:cost:prefix lts:rho:cost:quiescent (lts:rho:cost:receipt ((lts:rho:cost:event 0 () ((lts:rho:cost:funding desk clerk)) clerk)) (rho:cost:par (rho:cost:purse desk rho:cost:stack-empty) (rho:cost:signed rho:nil stamped))))]
+[()]
+[(lts:rho:cost:prefix lts:rho:cost:fuel-exhausted (lts:rho:cost:receipt () (rho:cost:par (rho:cost:purse desk (rho:cost:stack-cons clerk rho:cost:stack-empty)) (rho:cost:signed (rho:par (rho:recv desk $m (rho:cost:signed rho:nil stamped)) (rho:send desk (rho:cost:signed rho:nil form))) clerk))))]
+[()]
+[(lts:rho:cost:prefix lts:rho:cost:search-exhausted (lts:rho:cost:receipt () (rho:cost:par (rho:cost:purse desk (rho:cost:stack-cons clerk rho:cost:stack-empty)) (rho:cost:signed (rho:par (rho:recv desk $m (rho:cost:signed rho:nil stamped)) (rho:send desk (rho:cost:signed rho:nil form))) clerk))))]
+[()]
+[(lts:rho:cost:step coin (rho:cost:par (rho:cost:purse desk rho:cost:stack-empty) (rho:cost:purse desk (rho:cost:stack-cons coin (rho:cost:stack-cons coin rho:cost:stack-empty))) (rho:cost:signed rho:nil stamped))), (lts:rho:cost:step coin (rho:cost:par (rho:cost:purse desk (rho:cost:stack-cons coin rho:cost:stack-empty)) (rho:cost:purse desk (rho:cost:stack-cons coin rho:cost:stack-empty)) (rho:cost:signed rho:nil stamped)))]

@@ -3476,7 +3476,64 @@ test-rhocalc-cost-commit-audit-body: $(BIN)
 test-rhocalc-canonical-selector-differential: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_canonical_selector_differential.py "$(CETTA_SCRIPT_BIN)"
 
-test-rhocalc: $(BIN) test-rhocalc-canonical-selector-differential test-rhocalc-abt-substitution
+test-rho-examples: $(BIN)
+	@pass=0; fail=0; \
+	for f in examples/rho/pure/*.mrho examples/rho/pure/*.rho; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		if [ ! -f "$$exp" ]; then continue; fi; \
+		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	for f in examples/rho/cost/*.mrho examples/rho/cost/*.rho; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		if [ ! -f "$$exp" ]; then continue; fi; \
+		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc --profile cost "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	for f in examples/rho/cost/*.metta; do \
+		[ -f "$$f" ] || continue; \
+		exp="$${f%.*}.expected"; \
+		if [ ! -f "$$exp" ]; then continue; fi; \
+		result=$$($(CETTA_BIN_INVOKE) "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	result=$$($(CETTA_BIN_INVOKE) --num-threads 4 --lang rhocalc --profile cost examples/rho/cost/parallel_settlement.mrho 2>&1); \
+	if [ "$$result" = "$$(cat examples/rho/cost/parallel_settlement.expected)" ]; then \
+		echo "PASS: examples/rho/cost/parallel_settlement.mrho (threaded matches sequential)"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: examples/rho/cost/parallel_settlement.mrho (threaded)"; \
+		diff <(cat examples/rho/cost/parallel_settlement.expected) <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "$$pass passed, $$fail failed"; \
+	[ "$$fail" -eq 0 ]
+
+test-rhocalc: $(BIN) test-rhocalc-canonical-selector-differential test-rhocalc-abt-substitution test-rho-examples
 	@pass=0; fail=0; \
 	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
 		[ -f "$$f" ] || continue; \
