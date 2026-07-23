@@ -39,10 +39,26 @@
 
 typedef enum {
     CETTA_TABLE_MODE_NONE = 0,
-    CETTA_TABLE_MODE_VARIANT = 1
+    CETTA_TABLE_MODE_VARIANT = 1,
+    /* Ground-call memoization (Prime), consulted at the ground-call boundary
+     * before equation dispatch — NOT the space-query layer that VARIANT uses.
+     * A completed ground canonical call whose receipt delta is pure and whose
+     * consulted spaces still match their captured revisions replays its whole
+     * answer bag.  Off by default; see canonical_ground_call_key and
+     * prime_need_receipt_delta_is_pure. */
+    CETTA_TABLE_MODE_GROUND_CALL = 2
 } CettaTableMode;
 
+/* Ground-call memo key (composition of the two briefing gaps' first half).
+ * Succeeds only for a GROUND call (no variables); for such a call
+ * term-universe canonicalization is structurally identity, so the key is the
+ * canonical term plus its interning-compatible structural hash.  The caller
+ * disambiguates hash collisions with atom_eq on the canonical term. */
+bool canonical_ground_call_key(Atom *call, Arena *arena,
+                               Atom **out_canonical, uint64_t *out_hash);
+
 typedef struct TableStoreEntry TableStoreEntry;
+typedef struct GroundCallStore GroundCallStore;
 typedef struct {
     void *impl;
 } TableQueryHandle;
@@ -53,7 +69,30 @@ typedef struct {
     uint32_t cap;
     CettaTableMode mode;
     AnswerBank *answer_bank;
+    /* Ground-call memo entries (CETTA_TABLE_MODE_GROUND_CALL); lazily
+     * allocated, NULL under other modes. */
+    GroundCallStore *ground;
 } TableStore;
+
+/* Called once per stored answer occurrence during a ground-call replay. */
+typedef bool (*TableGroundAnswerVisitor)(Atom *result, void *ctx);
+
+/* Replay the whole memoized answer bag for a ground canonical call if a live
+ * entry exists (found by hash then atom_eq, and the global mutation epoch is
+ * unchanged since commit).  Returns true and visits every stored occurrence in
+ * order on a hit; returns false (no visit) on a miss.  Multiplicity is
+ * preserved: duplicate occurrences replay as duplicates. */
+bool table_store_ground_lookup(TableStore *store, Atom *canonical,
+                               uint64_t hash,
+                               TableGroundAnswerVisitor visit, void *ctx);
+
+/* Commit the whole answer bag of a completed, admitted ground canonical call.
+ * Idempotent on (hash, canonical) at the current epoch: re-committing an
+ * identical key replaces rather than duplicates.  The caller is responsible
+ * for the admission conjuncts (ground, completed, pure receipt delta). */
+bool table_store_ground_commit(TableStore *store, Atom *canonical,
+                               uint64_t hash,
+                               Atom *const *answers, uint32_t answer_len);
 
 typedef bool (*TableDelayedResultVisitor)(Atom *result,
                                           const Bindings *bindings,

@@ -1877,6 +1877,64 @@ bool prime_need_receipt_event_at(const PrimeNeedReceipt *receipt,
     return true;
 }
 
+/* Ground-call memoization admission, effect half.
+ *
+ * A completed call is memoizable only if the work it did between call entry
+ * (`before`) and completion (`after`) touched no mutable or stochastic
+ * dependence: no READ_STATE (its result would depend on cell contents that
+ * can change), no WRITE_STATE (it is itself an effect a replay would drop),
+ * and no RESAMPLE (its result is one draw of a distribution, not a function
+ * of the call).  USE_EQUATION / OBSERVE_CELL / INSPECT_ORIGIN / EVALUATE_CELL
+ * are pure evaluation bookkeeping and do not taint.
+ *
+ * The judgement is over the DELTA only: the events `after` reaches that
+ * `before` does not.  Ambient effects already recorded in `before` belong to
+ * the surrounding context, not to this call, and must not veto its memo entry.
+ * The receipt is a persistent immutable event DAG, so a frame shared between
+ * `before` and `after` is the same pointer; delta membership is exact pointer
+ * set-difference.  On any allocation failure the verdict is "impure" — a false
+ * negative only forfeits a cache entry, whereas a false positive is unsound. */
+bool prime_need_receipt_delta_is_pure(const PrimeNeedReceipt *before,
+                                      const PrimeNeedReceipt *after) {
+#ifdef GROUND_MEMO_MUTATION_ADMIT_IMPURE
+    (void)before;
+    (void)after;
+    return true; /* planted mutation: treat every call as pure */
+#endif
+    if (!after || !prime_need_receipt_present(after))
+        return true;
+    PrimeNeedReceiptFrames added = {0};
+    PrimeNeedReceiptFrames prior = {0};
+    if (!prime_need_receipt_collect_events(after, &added)) {
+        prime_need_receipt_frames_free(&added);
+        return false;
+    }
+    if (before && prime_need_receipt_present(before) &&
+        !prime_need_receipt_collect_events(before, &prior)) {
+        prime_need_receipt_frames_free(&added);
+        prime_need_receipt_frames_free(&prior);
+        return false;
+    }
+    bool pure = true;
+    for (size_t i = 0u; i < added.len && pure; i++) {
+        const PrimeNeedReceiptFrame *frame = added.items[i];
+        if (prime_need_receipt_frames_contains(&prior, frame))
+            continue; /* shared with `before`: not this call's dependence */
+        switch (frame->event.kind) {
+        case PRIME_NEED_RECEIPT_READ_STATE:
+        case PRIME_NEED_RECEIPT_WRITE_STATE:
+        case PRIME_NEED_RECEIPT_RESAMPLE:
+            pure = false;
+            break;
+        default:
+            break;
+        }
+    }
+    prime_need_receipt_frames_free(&added);
+    prime_need_receipt_frames_free(&prior);
+    return pure;
+}
+
 bool prime_need_receipt_equal(const PrimeNeedReceipt *left,
                               const PrimeNeedReceipt *right) {
     if (!left || !right)
