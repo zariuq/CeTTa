@@ -55,3 +55,10 @@
 /src/*.stage0.o
 /runtime/bootstrap/bridge-workspace.*/
 /rust/target/
+
+# Compiled objects, deps, and caches — all build flavors, all subdirs
+*.o
+*.d
+__pycache__/
+*.pyc
+/cetta-*
