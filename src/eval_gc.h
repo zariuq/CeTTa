@@ -23,6 +23,13 @@ typedef struct {
 
 static __thread EvalGc g_eval_gc;
 
+static void eval_gc_init_survivor_arena(Arena *arena) {
+    arena_init(arena);
+    arena_set_hashcons(arena, NULL);
+    arena_set_runtime_kind(
+        arena, CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+}
+
 static void eval_gc_init_once(void) {
     if (g_eval_gc.ready)
         return;
@@ -38,10 +45,7 @@ static void eval_gc_init_once(void) {
     g_eval_gc.collections = 0;
     g_eval_gc.reclaimed_bytes = 0;
 
-    arena_init(&g_eval_gc.survivor);
-    arena_set_hashcons(&g_eval_gc.survivor, NULL);
-    arena_set_runtime_kind(&g_eval_gc.survivor,
-                           CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    eval_gc_init_survivor_arena(&g_eval_gc.survivor);
     g_eval_gc.ready = true;
 }
 
@@ -63,6 +67,33 @@ static inline bool eval_gc_safe_point(const Arena *arena, size_t os_len,
                                       size_t live_above_anchor) {
     return eval_gc_enabled() && eval_gc_can_collect_arena(arena) && os_len == 0 &&
            live_above_anchor >= g_eval_gc.budget_bytes;
+}
+
+/* A copying collector must not recopy a growing live graph after every fixed
+ * quantum of fresh allocation.  Requiring at least one survivor-graph's worth
+ * of fresh allocation in addition to the configured nursery quantum gives
+ * the usual semispace amortization: as the continuation grows, collection
+ * intervals grow with it.  Callers that do not retain a multi-root survivor
+ * graph pass zero. */
+static inline bool eval_gc_budget_reached_with_floor(
+    const Arena *arena, ArenaMark anchor, size_t survivor_floor_bytes) {
+    if (!eval_gc_enabled() || !eval_gc_can_collect_arena(arena))
+        return false;
+    size_t live_above_anchor =
+        arena->live_bytes >= anchor.live_bytes
+            ? arena->live_bytes - anchor.live_bytes
+            : 0u;
+    size_t effective_budget = g_eval_gc.budget_bytes;
+    if (survivor_floor_bytes > SIZE_MAX - effective_budget)
+        effective_budget = SIZE_MAX;
+    else
+        effective_budget += survivor_floor_bytes;
+    return live_above_anchor >= effective_budget;
+}
+
+static inline bool eval_gc_budget_reached(const Arena *arena,
+                                          ArenaMark anchor) {
+    return eval_gc_budget_reached_with_floor(arena, anchor, 0u);
 }
 
 static void eval_gc_note_survivor_usage(void) {
@@ -116,6 +147,43 @@ static void eval_gc_collect(Arena *eval_arena, ArenaMark anchor,
                             (uint64_t)reclaimed);
 }
 
+/* Commit an already-evacuated multi-root collection.  The evacuated arena is
+   moved into the stable thread-local survivor slot so external owner pointers
+   keep naming one Arena object across collections. */
+static inline void eval_gc_commit_evacuated(
+    Arena *eval_arena, ArenaMark anchor, Arena *evacuated) {
+    if (!eval_arena || !evacuated)
+        return;
+    if (!g_eval_gc.ready)
+        eval_gc_init_once();
+
+    size_t before = eval_arena->live_bytes;
+    eval_gc_note_survivor_usage();
+    arena_reset(eval_arena, anchor);
+
+    /* The provenance registry keys arenas by the Arena object's address.
+       Unregister the temporary before moving its block lists. */
+    arena_set_runtime_kind(
+        evacuated, CETTA_ARENA_RUNTIME_KIND_OTHER);
+    arena_free(&g_eval_gc.survivor);
+    g_eval_gc.survivor = *evacuated;
+    memset(evacuated, 0, sizeof(*evacuated));
+    arena_set_runtime_kind(
+        &g_eval_gc.survivor,
+        CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    eval_gc_note_survivor_usage();
+
+    size_t after = eval_arena->live_bytes;
+    size_t reclaimed = before > after ? before - after : 0u;
+    g_eval_gc.collections++;
+    g_eval_gc.reclaimed_bytes += reclaimed;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_EVAL_TAIL_SAFE_POINT_COUNT);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_EVAL_TAIL_RECLAIMED_BYTES,
+        (uint64_t)reclaimed);
+}
+
 static void eval_gc_survivor_reset(void) {
     if (!g_eval_gc.ready)
         return;
@@ -129,10 +197,7 @@ static void eval_gc_survivor_reset(void) {
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_EVAL_TAIL_SURVIVOR_RESET_BYTES,
                             (uint64_t)reset_bytes);
     arena_free(&g_eval_gc.survivor);
-    arena_init(&g_eval_gc.survivor);
-    arena_set_hashcons(&g_eval_gc.survivor, NULL);
-    arena_set_runtime_kind(&g_eval_gc.survivor,
-                           CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    eval_gc_init_survivor_arena(&g_eval_gc.survivor);
 }
 
 #endif

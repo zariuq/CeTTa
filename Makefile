@@ -32,6 +32,28 @@ ENABLE_SANITIZERS ?= 0
 ENABLE_PIC ?= 0
 CETTA_PROVENANCE_ASSERT ?= 0
 RHOCOST_COMMIT_AUDIT ?= 0
+ENABLE_PRIME_RECEIPT_PRIMARY_INDEX ?= 0
+ENABLE_PRIME_NEED_HEAP_INDEX ?= 0
+ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
+ENABLE_PRIME_EVAL_STACK ?= 0
+PRIME_NEED_ALGEBRA_CHECKS := 87
+PRIME_NEED_CLOSURE_CAPTURE_GATE :=
+PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
+PRIME_EVAL_STACK_GATE :=
+PRIME_EVAL_STACK_STATS_GATE :=
+ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
+PRIME_NEED_ALGEBRA_CHECKS := 95
+PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
+endif
+endif
+ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
+PRIME_EVAL_STACK_GATE := test-prime-eval-stack
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+PRIME_EVAL_STACK_STATS_GATE := test-prime-eval-stack-stats
+endif
+endif
 SANITIZERS ?= address,undefined
 RHO_BENCH_RUNS ?= 3
 RHO_BENCH_THREADS ?= 1,2,4,8
@@ -62,6 +84,18 @@ $(error CETTA_PROVENANCE_ASSERT must be 0 or 1)
 endif
 ifneq ($(filter $(RHOCOST_COMMIT_AUDIT),0 1),$(RHOCOST_COMMIT_AUDIT))
 $(error RHOCOST_COMMIT_AUDIT must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX),0 1),$(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX))
+$(error ENABLE_PRIME_RECEIPT_PRIMARY_INDEX must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_PRIME_NEED_HEAP_INDEX),0 1),$(ENABLE_PRIME_NEED_HEAP_INDEX))
+$(error ENABLE_PRIME_NEED_HEAP_INDEX must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),0 1),$(ENABLE_PRIME_NEED_CLOSURE_CAPTURE))
+$(error ENABLE_PRIME_NEED_CLOSURE_CAPTURE must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_PRIME_EVAL_STACK),0 1),$(ENABLE_PRIME_EVAL_STACK))
+$(error ENABLE_PRIME_EVAL_STACK must be 0 or 1)
 endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
@@ -235,6 +269,18 @@ endif
 ifeq ($(RHOCOST_COMMIT_AUDIT),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).rhocost-audit
 endif
+ifeq ($(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-receipt-primary-index
+endif
+ifeq ($(ENABLE_PRIME_NEED_HEAP_INDEX),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-need-heap-index
+endif
+ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-need-closure-capture
+endif
+ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-eval-stack
+endif
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
 GSLT2PARSE_SHARED_ASAN_ENV =
 GSLT2PARSE_SHARED_ASAN_ARGS =
@@ -266,7 +312,23 @@ PROVENANCE_CPPFLAGS =
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
 PROVENANCE_CPPFLAGS = -DCETTA_PROVENANCE_ASSERT=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(PROVENANCE_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+PRIME_RECEIPT_INDEX_CPPFLAGS =
+ifeq ($(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX),1)
+PRIME_RECEIPT_INDEX_CPPFLAGS = -DCETTA_PRIME_RECEIPT_PRIMARY_INDEX=1
+endif
+PRIME_NEED_HEAP_INDEX_CPPFLAGS =
+ifeq ($(ENABLE_PRIME_NEED_HEAP_INDEX),1)
+PRIME_NEED_HEAP_INDEX_CPPFLAGS = -DCETTA_PRIME_NEED_HEAP_INDEX=1
+endif
+PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS =
+ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
+PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS = -DCETTA_PRIME_NEED_CLOSURE_CAPTURE=1
+endif
+PRIME_EVAL_STACK_CPPFLAGS =
+ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
+PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
+endif
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
@@ -568,6 +630,7 @@ NAME_KEY_TEST_BIN = runtime/test_name_key-$(BUILD_OBJ_TAG)
 NAME_KEY_MUTATION_TEST_BIN = runtime/test_name_key_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_TEST_BIN = runtime/test_prime_need-$(BUILD_OBJ_TAG)
 PRIME_CONTEXT_MUTATION_TEST_BIN = runtime/test_prime_context_mutation-$(BUILD_OBJ_TAG)
+PRIME_NEED_UNIT_CPPFLAGS = -DCETTA_RUNTIME_STATS_NOOP=1
 REGISTRY_RESOLVER_TEST_SRC = tests/test_registry_resolver.c
 REGISTRY_RESOLVER_TEST_OBJ = runtime/bootstrap/test_registry_resolver.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 REGISTRY_RESOLVER_TEST_BIN = runtime/test_registry_resolver-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -682,6 +745,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/abt_chain_scope.metta \
 	tests/prime/conformance/abt_let_scope.metta \
 	tests/prime/conformance/abt_sealed_boundary.metta \
+	tests/prime/conformance/cell_lexical_refinement.metta \
 	tests/prime/conformance/canonical_binders.metta \
 	tests/prime/conformance/resource_policy.metta \
 	tests/prime/conformance/occurs_check.metta \
@@ -701,7 +765,8 @@ PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/atp_resolution_replay.metta \
 	tests/prime/practical/atp_resolution_search.metta \
 	tests/prime/practical/atp_superposition_replay.metta \
-	tests/prime/practical/atp_agenda_library.metta
+	tests/prime/practical/atp_agenda_library.metta \
+	tests/prime/practical/need_control_branch_discriminators.metta
 PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRACTICAL_TESTS)
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
@@ -1139,11 +1204,14 @@ test-atom-deep-copy-iterative: $(ATOM_DEEP_COPY_TEST_BIN)
 
 $(NAME_KEY_TEST_BIN): tests/test_name_key.c src/name_key.c src/name_key.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_name_key.c src/name_key.c src/symbol.c src/atom.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_RUNTIME_STATS_NOOP=1 \
+		-o $@ tests/test_name_key.c src/name_key.c src/symbol.c src/atom.c $(LDFLAGS)
 
 $(NAME_KEY_MUTATION_TEST_BIN): tests/test_name_key.c src/name_key.c src/name_key.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NAME_KEY_MUTATION=1 -o $@ tests/test_name_key.c src/name_key.c src/symbol.c src/atom.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_RUNTIME_STATS_NOOP=1 \
+		-DCETTA_NAME_KEY_MUTATION=1 -o $@ \
+		tests/test_name_key.c src/name_key.c src/symbol.c src/atom.c $(LDFLAGS)
 
 test-name-key: $(NAME_KEY_TEST_BIN) $(NAME_KEY_MUTATION_TEST_BIN)
 	@result=$$(./$(NAME_KEY_TEST_BIN) 2>&1); \
@@ -1160,20 +1228,90 @@ test-name-key: $(NAME_KEY_TEST_BIN) $(NAME_KEY_MUTATION_TEST_BIN)
 
 $(PRIME_NEED_TEST_BIN): tests/test_prime_need.c src/prime_need.c src/prime_need.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need.c src/prime_need.c src/symbol.c src/atom.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need.c src/prime_need.c src/symbol.c src/atom.c $(LDFLAGS)
 
 $(PRIME_CONTEXT_MUTATION_TEST_BIN): tests/test_prime_need.c src/prime_need.c src/prime_need.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_CONTEXT_MUTATION=1 \
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_CONTEXT_MUTATION=1 \
 		-o $@ tests/test_prime_need.c src/prime_need.c src/symbol.c src/atom.c $(LDFLAGS)
 
 test-prime-need-algebra: $(PRIME_NEED_TEST_BIN)
 	@result=$$(./$(PRIME_NEED_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(PrimeNeedAlgebraSummary 84 84 0)')" -ne 1 ]; then \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(PrimeNeedAlgebraSummary $(PRIME_NEED_ALGEBRA_CHECKS) $(PRIME_NEED_ALGEBRA_CHECKS) 0)')" -ne 1 ]; then \
 		echo "FAIL: Prime Need algebra exact summary absent or duplicated"; \
 		exit 1; \
 	fi
+
+test-prime-need-closure-capture: $(BIN)
+	@if [ "$(ENABLE_PRIME_NEED_CLOSURE_CAPTURE)" != 1 ]; then \
+		echo "FAIL: enable ENABLE_PRIME_NEED_CLOSURE_CAPTURE=1 for this experimental gate"; \
+		exit 1; \
+	fi
+	@actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/need_closure_capture.metta 2>&1); \
+	expected=$$(cat tests/prime/need_closure_capture.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: Prime Need exact closure-capture contract drifted"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: Prime Need exact closure captures preserve positive, negative, and transitive cases"
+
+test-prime-need-closure-capture-stats: $(BIN)
+	@if [ "$(ENABLE_PRIME_NEED_CLOSURE_CAPTURE)" != 1 ] || \
+	    [ "$(ENABLE_RUNTIME_STATS)" != 1 ]; then \
+		echo "FAIL: enable exact closure capture and runtime stats for this gate"; \
+		exit 1; \
+	fi
+	@CETTA_BIN="$(abspath $(BIN))" \
+		./scripts/test_prime_need_capture_stats.sh
+
+test-prime-eval-stack: $(BIN)
+	@if [ "$(ENABLE_PRIME_EVAL_STACK)" != 1 ]; then \
+		echo "FAIL: enable ENABLE_PRIME_EVAL_STACK=1 for this experimental gate"; \
+		exit 1; \
+	fi
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		-e '!(if (superpose (True False True)) A B)' 2>&1); \
+	if [ "$$actual" != '[A, B, A]' ]; then \
+		echo "FAIL: explicit Prime stack changed if branch order or multiplicity"; \
+		printf '%s\n' "$$actual"; \
+		exit 1; \
+	fi; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		-e '!(+ (superpose (1 2 1)) 10)' 2>&1); \
+	if [ "$$actual" != '[11, 12, 11]' ]; then \
+		echo "FAIL: explicit Prime stack changed strict argument order or multiplicity"; \
+		printf '%s\n' "$$actual"; \
+		exit 1; \
+	fi; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		-e '!(let $$x (superpose (1 2)) (+ $$x $$x))' 2>&1); \
+	if [ "$$actual" != '[2, 4]' ]; then \
+		echo "FAIL: explicit Prime stack changed call-time choice"; \
+		printf '%s\n' "$$actual"; \
+		exit 1; \
+	fi; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang he --profile he-extended \
+		-e '!(+ 1 2)' 2>&1); \
+	if [ "$$actual" != '[3]' ]; then \
+		echo "FAIL: Prime-only explicit stack changed HE evaluation"; \
+		printf '%s\n' "$$actual"; \
+		exit 1; \
+	fi; \
+	echo "PASS: explicit Prime stack preserves branch order, bag multiplicity, call-time choice, and HE isolation"
+
+test-prime-eval-stack-stats: $(BIN)
+	@if [ "$(ENABLE_PRIME_EVAL_STACK)" != 1 ] || \
+	    [ "$(ENABLE_RUNTIME_STATS)" != 1 ]; then \
+		echo "FAIL: enable the explicit Prime stack and runtime stats for this gate"; \
+		exit 1; \
+	fi
+	@CETTA_BIN="$(abspath $(BIN))" \
+		./scripts/test_prime_eval_stack_stats.sh
 
 test-prime-need-he-noninterference: $(BIN)
 	@set -eu; \
@@ -1255,6 +1393,13 @@ test-prime-equation-call-sharing-tournament: $(BIN)
 		echo "FAIL: Prime native receipt mutation summary absent or duplicated"; \
 		exit 1; \
 	fi
+
+test-prime-cell-causal-reference:
+	@python3 tests/prime/test_cell_causal_reference.py
+
+test-prime-shared-cause-probability: $(BIN)
+	@CETTA_BIN="$(abspath $(BIN))" \
+		python3 tests/prime/test_shared_cause_probability.py
 
 test-prime-evaluation-strategy-contrast: $(BIN)
 	@CETTA="$(abspath $(BIN))" \
@@ -1416,7 +1561,13 @@ test-prime-rewrite-frontier-tutorial: $(BIN)
 
 test-prime-equation-call-constitution: \
 	test-prime-equation-call-sharing-tournament \
+	test-prime-cell-causal-reference \
+	test-prime-shared-cause-probability \
 	test-prime-need-algebra \
+	$(PRIME_NEED_CLOSURE_CAPTURE_GATE) \
+	$(PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE) \
+	$(PRIME_EVAL_STACK_GATE) \
+	$(PRIME_EVAL_STACK_STATS_GATE) \
 	test-prime-contexts \
 	test-prime-context-tutorial \
 	test-prime-rewrite-frontier-tutorial \
@@ -1491,7 +1642,7 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 	@set -eu; \
 	mutation_dir=runtime/prime-need-mutations; \
 	mkdir -p "$$mutation_dir"; \
-	for mutation in EAGER CBN STORAGE_LEAK SCRATCH_OWNER FUNCTION_BINDING_LEAK RULE_LOCAL_THUNKS DROP_RESIDUAL REGISTRY_PATTERN_INERT DROP_RESULT_CONTRACT; do \
+	for mutation in EAGER CBN STORAGE_LEAK SCRATCH_OWNER FUNCTION_BINDING_LEAK RULE_LOCAL_THUNKS DROP_RESIDUAL REGISTRY_PATTERN_INERT DROP_RESULT_CONTRACT DYNAMIC_SCOPE; do \
 		case "$$mutation" in \
 			EAGER) source=tests/prime/need_application.metta; \
 			       expected=tests/prime/need_application.expected ;; \
@@ -1507,6 +1658,8 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 			                                                          expected=tests/prime/need_application.expected ;; \
 			DROP_RESULT_CONTRACT) source=tests/prime/gradual/annotation_boundary.metta; \
 			                      expected=tests/prime/gradual/annotation_boundary.expected ;; \
+			DYNAMIC_SCOPE) source=tests/prime/conformance/cell_lexical_refinement.metta; \
+			               expected=tests/prime/conformance/cell_lexical_refinement.expected ;; \
 		esac; \
 		object="$$mutation_dir/eval-$$mutation.o"; \
 		binary="$$mutation_dir/cetta-$$mutation"; \
@@ -1530,7 +1683,7 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		echo "PASS: Prime Need $$mutation mutation killed"; \
 	done; \
 	sibling_bin="$$mutation_dir/test-sibling-merge"; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) \
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) \
 		-DCETTA_PRIME_NEED_MUTATION_SIBLING_MERGE=1 \
 		-o "$$sibling_bin" tests/test_prime_need.c src/prime_need.c \
 		src/symbol.c src/atom.c $(LDFLAGS); \
@@ -1543,7 +1696,7 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 	fi; \
 	echo "PASS: Prime Need SIBLING_MERGE mutation killed"; \
 	fault_bin="$$mutation_dir/test-fault-not-cached"; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) \
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) \
 		-DCETTA_PRIME_NEED_MUTATION_FAULT_NOT_CACHED=1 \
 		-o "$$fault_bin" tests/test_prime_need.c src/prime_need.c \
 		src/symbol.c src/atom.c $(LDFLAGS); \
@@ -4979,7 +5132,7 @@ test-prime-occurs-check-mutation: $(BIN)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" \
 		-o "$$mutation_dir/he_typing.o" || exit 1; \
 	base_objects='$(filter-out src/match.$(BUILD_OBJ_TAG).o src/match.$(BUILD_OBJ_TAG).runtime-stats.o src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))'; \
-	he_object='src/he_typing.$(BUILD_OBJ_TAG).o'; \
+	he_object='$(filter src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))'; \
 	$(CC) $$base_objects "$$mutation_dir/match.o" "$$he_object" \
 		-o "$$mutation_dir/cetta-corrupt-producer" $(LDFLAGS) || exit 1; \
 	$(CC) $$base_objects "$$mutation_dir/match.o" \

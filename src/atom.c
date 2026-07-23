@@ -61,6 +61,11 @@ typedef struct {
     size_t used;
 } AtomDeepCopyMemo;
 
+struct AtomDeepCopySession {
+    Arena *dst;
+    AtomDeepCopyMemo memo;
+};
+
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
 static void cetta_oom(size_t size) {
@@ -2414,6 +2419,40 @@ Atom *atom_deep_copy(Arena *dst, Atom *src) {
     Atom *out = atom_deep_copy_impl(dst, src, false, &memo);
     atom_deep_copy_memo_free(&memo);
     return out;
+}
+
+AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
+    if (!dst)
+        return NULL;
+    AtomDeepCopySession *session = cetta_malloc(sizeof(*session));
+    session->dst = dst;
+    atom_deep_copy_memo_init(&session->memo);
+    return session;
+}
+
+Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
+    if (!session || !session->dst || !src)
+        return NULL;
+    Atom *forwarded = atom_deep_copy_memo_lookup(&session->memo, src);
+    if (forwarded)
+        return forwarded;
+    if (arena_owns_ptr(session->dst, src)) {
+        if (!atom_deep_copy_memo_store(&session->memo, src, src))
+            return NULL;
+        cetta_provenance_assert_not_transient_except(
+            src, "atom_deep_copy_session_copy.destination-owned",
+            session->dst);
+        return src;
+    }
+    return atom_deep_copy_impl(
+        session->dst, src, false, &session->memo);
+}
+
+void atom_deep_copy_session_free(AtomDeepCopySession *session) {
+    if (!session)
+        return;
+    atom_deep_copy_memo_free(&session->memo);
+    free(session);
 }
 
 Atom *atom_deep_copy_shared(Arena *dst, Atom *src) {

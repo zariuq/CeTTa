@@ -58,10 +58,40 @@ int main(void) {
     assert(copy != list);
     check_deep_shared_list(copy);
 
+    Atom *shared = atom_expr2(
+        &source, atom_symbol(&source, "shared"),
+        atom_int(&source, 11));
+    Atom *left = atom_expr2(
+        &source, atom_symbol(&source, "left"), shared);
+    Atom *right = atom_expr2(
+        &source, atom_symbol(&source, "right"), shared);
+    Atom *equal_left = atom_expr2(
+        &source, atom_symbol(&source, "equal"),
+        atom_int(&source, 12));
+    Atom *equal_right = atom_expr2(
+        &source, atom_symbol(&source, "equal"),
+        atom_int(&source, 12));
+    assert(equal_left != equal_right);
+
+    AtomDeepCopySession *session =
+        atom_deep_copy_session_new(&destination);
+    assert(session != NULL);
+    Atom *left_copy = atom_deep_copy_session_copy(session, left);
+    Atom *right_copy = atom_deep_copy_session_copy(session, right);
+    Atom *equal_left_copy =
+        atom_deep_copy_session_copy(session, equal_left);
+    Atom *equal_right_copy =
+        atom_deep_copy_session_copy(session, equal_right);
+    assert(left_copy != NULL && right_copy != NULL);
+    assert(left_copy->expr.elems[1] == right_copy->expr.elems[1]);
+    assert(equal_left_copy != equal_right_copy);
+    assert(atom_deep_copy_session_copy(session, left_copy) == left_copy);
+    atom_deep_copy_session_free(session);
+
     arena_free(&destination);
     arena_free(&source);
     symbol_table_free(&symbols);
     g_symbols = NULL;
-    puts("PASS: iterative atom deep copy");
+    puts("PASS: iterative and multi-root atom deep copy");
     return 0;
 }

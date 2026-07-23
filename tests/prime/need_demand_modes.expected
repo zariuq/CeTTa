@@ -7,4 +7,6 @@
 [(force ordinary-data)]
 [7]
 [A]
+[+, -, *]
+[Ops, +, -, *]
 [(Error (+ (delay 1) 2) (BadArgType 1 Number (suspension Number)))]
