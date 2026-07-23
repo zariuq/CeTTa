@@ -1,0 +1,23 @@
+// Eval at COMM: running code you were sent, with no execution primitive.
+//
+// The rho-calculus has no "run" instruction.  A quoted process is inert
+// data -- until it is communicated.  The runner idiom makes execution cost
+// exactly one handshake:
+//
+//     run!(P) | for ($y <- run) { *$y }   --COMM-->   P
+//
+// The send carries the program P as data (the engine quotes it on the
+// wire); the receiver drops (runs) whatever arrives.  Channels are quoted
+// processes, so run = @{0} and out = @{@{0}!(0)} are two distinct names.
+//
+// Here P = out!(0) is itself a send that completes a second handshake with
+// a receiver already waiting on out.  The whole program settles at 0 only
+// if the delivered code actually ran: first COMM delivers P, the drop
+// activates it, and the second COMM consumes it.
+//
+// Run: ./cetta --lang rhocalc examples/rho/pure/eval_at_comm.rho
+// Expected: 0
+
+@{0}!(@{@{0}!(0)}!(0)) |
+for ($y <- @{0}) {*$y} |
+for ($r <- @{@{0}!(0)}) {0}

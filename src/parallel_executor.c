@@ -1,3 +1,15 @@
+/*
+ * parallel_executor.c — the shared worker-pool substrate for threaded
+ * reduction.  A fixed set of pthreads drains one ready queue of opaque
+ * tasks; workers may push follow-up tasks while running, and the queue
+ * closes itself when it is empty with no task in flight.  Each worker owns
+ * a scratch arena reset only at executor teardown.  The first failure is
+ * recorded and wakes every worker; run() joins all threads before the
+ * coordinator reads any task result.  Both rho executors (the strict-core
+ * channel-bucket rendezvous and the cost-profile waves in rhocalc_core.c)
+ * are clients.
+ */
+
 #include "parallel_executor.h"
 #include "stats.h"
 

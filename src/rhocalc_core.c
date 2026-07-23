@@ -1,3 +1,62 @@
+/*
+ * rhocalc_core.c — the rho-calculus engine behind `cetta --lang rhocalc`.
+ *
+ * The object language is Meredith and Radestock's reflective higher-order
+ * rho-calculus.  Processes and names are mutually defined — a name is a
+ * quoted process @P, and *x (drop) runs the process a name quotes — and the
+ * single computational rule is COMM, the rendezvous of a send and a receive
+ * on one channel:
+ *
+ *     x!(m) | for(y <- x){P}   ——COMM——>   P[y := m]
+ *
+ * Two semantic profiles share this file:
+ *
+ *   strict-core   The pure asynchronous spine: exactly the six constructors
+ *                 rho:nil, rho:par, rho:send, rho:recv, rho:quote, rho:drop,
+ *                 with COMM as the only reduction.  A free-standing drop is
+ *                 inert; dequotation happens only through substitution after
+ *                 a COMM.  The rhometta extension (rho:eval-payload) defers a
+ *                 MeTTa term as a payload evaluated at the COMM, with each
+ *                 payload run against sibling-isolated copy-on-write scratch.
+ *
+ *   cost          Funded reactions.  Processes are signed
+ *                 (rho:cost:signed body sig), channels carry purses of
+ *                 tokens (rho:cost:purse surface stack), and a COMM fires
+ *                 only when purses located on its own channel exactly cover
+ *                 the consumed signature product — an unfunded reaction is
+ *                 disabled, not slowed.  Every firing can emit a causal
+ *                 event (fresh id, producer-cause list, funding records,
+ *                 consumed signature); a run's ordered events plus its
+ *                 residual form a receipt.  Frontier enumeration is exact
+ *                 and never silently truncated; bounded execution reports
+ *                 fuel/search exhaustion honestly and never claims
+ *                 quiescence it has not proven.
+ *
+ * Shared machinery: alpha-invariant canonical keys give both profiles a
+ * canonical form (rho:par flattened and key-sorted, the name equivalence
+ * @(*x) = x oriented as a simplification), so structural congruence becomes
+ * string equality on keys.  Purse location follows the same name
+ * equivalence: aliases of a channel are the same account.
+ *
+ * Concurrency: the strict-core threaded executor matches endpoints through
+ * per-channel buckets; the cost profile executes waves of compatible
+ * firings, where each worker atomically claims the exact endpoint and
+ * funding-cover occurrences (in sorted resource order) before firing, and
+ * every wave commit is re-validated against occurrence accounting.  Causal
+ * receipts are an optional observer on either path: a state-only run and a
+ * receipt-observed run consume identical resources.
+ *
+ * Surfaces: lib/lts/rho/cost.metta and lib/lts/rho.metta (MeTTa API),
+ * .rho / .mrho text (rhocalc_syntax.c), and the CLI (main.c;
+ * `--lang rhocalc [--profile cost] [--num-threads N]`).  Tests live in
+ * tests/test_lts_rho_cost_*.metta, tests/rhocalc_run/, and
+ * tests/rhocalc_cost_run/; a differential harness replays compiled-C
+ * receipts as Lean derivations.  The design commitments — located funding,
+ * causality from consumption, exact receipts with lossy valuations derived
+ * afterward — follow the cost-accounting programme for the reflective
+ * higher-order calculus; the companion papers state the theory.
+ */
+
 #include "rhocalc_core.h"
 #include <assert.h>
 #include <limits.h>
@@ -200,6 +259,8 @@ static RhoSymbolIds g_rho_syms = {0};
 static __thread bool g_rho_async_worker_active = false;
 static __thread char g_rhocalc_validation_error[256];
 static _Atomic uint64_t g_rhocalc_cost_wave_turn = 0u;
+
+/* ── Symbol interning and head dispatch ─────────────────────────────────── */
 
 static void rho_symbols_ensure(void) {
     if (g_rho_syms.ready) return;
@@ -548,6 +609,13 @@ static bool rho_endpoint_vec_push(RhoEndpointVec *vec,
     return true;
 }
 
+/* ── Strict-core grammar validation ─────────────────────────────────────────
+ *
+ * Mutual recursion mirrors the calculus: names and processes check each
+ * other, a recv binder opens a scope over its body, and a quotation seals
+ * the surrounding scope (a quoted process starts a fresh scope).  Non-core
+ * forms are rejected with a stored diagnostic, never left inert. */
+
 static bool rho_check_proc(Atom *proc, RhoScope *scope,
                            bool allow_eval_payloads);
 
@@ -694,6 +762,16 @@ bool rhocalc_process_well_formed_with_semantic_profile(
     }
     return rhocalc_process_well_formed(proc);
 }
+
+/* ── Alpha-invariant canonical keys ─────────────────────────────────────────
+ *
+ * Every term gets a text key in which bound variables are numbered by
+ * binding order ($#0, $#1, ...) and free variables keep their identity, so
+ * alpha-equivalent terms share one key.  Keys make structural congruence a
+ * string comparison: rho:par components sort by key, successor sets dedup
+ * by key, and endpoint matching compares channel keys.  The name
+ * equivalence @(*x) = x is collapsed while keying, so aliases of a channel
+ * compare equal. */
 
 static void rho_alpha_init(RhoAlphaEnv *env) {
     env->items = NULL;
@@ -937,6 +1015,13 @@ static int rho_endpoint_cmp_key(const void *lhs, const void *rhs) {
     return 0;
 }
 
+/* ── Canonical form ─────────────────────────────────────────────────────────
+ *
+ * Normalization flattens nested rho:par, drops rho:nil components, sorts
+ * the survivors under their canonical keys, and orients the name
+ * cancellation @(*x) -> x as a directed simplification.  Two structurally
+ * congruent processes normalize to the same term. */
+
 static Atom *rho_normalize_proc(Arena *arena, Atom *proc);
 static Atom *rho_normalize_name(Arena *arena, Atom *name);
 
@@ -1031,6 +1116,14 @@ static Atom *rho_normalize_proc(Arena *arena, Atom *proc) {
     }
     return proc;
 }
+
+/* ── Free variables, renaming, capture-avoiding substitution ────────────────
+ *
+ * COMM substitutes the sent name for the receive binder.  When the
+ * replacement's free variables would be captured by an inner binder, that
+ * binder is freshened first.  Substituting a quotation into a drop position
+ * unquotes it (*@P -> P): this is the calculus's only dequotation, and it
+ * happens exclusively here, under a matched COMM. */
 
 static bool rho_proc_has_free_var(Atom *proc, VarId var_id);
 
@@ -1371,7 +1464,9 @@ static bool rho_collect_endpoints(RhoAtomVec *components,
     return true;
 }
 
-/* Read-only-snapshot support: a per-payload map from each original space to its
+/* ── rhometta payload isolation ─────────────────────────────────────────────
+ *
+ * Read-only-snapshot support: a per-payload map from each original space to its
  * copy-on-write overlay.  Every space a payload could reach gets one, so writes
  * land in per-payload scratch and never escape to a sibling payload. */
 typedef struct {
@@ -2311,6 +2406,14 @@ static Atom *rho_embed_payload_result_name(Arena *arena, Atom *result) {
     return rho_unary(arena, "rho:quote", rho_value_proc(arena, result));
 }
 
+/* ── COMM continuations and successor emission ──────────────────────────────
+ *
+ * A matched send/receive pair yields the receiver body with the sent name
+ * substituted in.  An ordinary payload yields exactly one continuation; a
+ * deferred rhometta payload is evaluated here, at the COMM, and yields one
+ * continuation per MeTTa result — nondeterministic evaluation becomes a
+ * branching reaction. */
+
 static bool rho_compute_comm_continuations(Arena *arena,
                                            const RhoEndpoint *send_endpoint,
                                            const RhoEndpoint *recv_endpoint,
@@ -2402,6 +2505,15 @@ static bool rho_emit_comm_results(Arena *arena, RhoAtomVec *components,
     rho_vec_free(&bodies);
     return ok;
 }
+
+/* ── Sequential machine and canonical successor selection ───────────────────
+ *
+ * The sequential machine rebuilds its COMM index (components, sends,
+ * receives) from the residual each round.  The canonical scheduler always
+ * fires the key-least successor; on pure terms it streams candidate keys
+ * against the best key so far (rho_pure_reaction_key) instead of
+ * materializing and sorting the whole frontier.  The rotating scheduler
+ * cycles through the frontier for fairness probes. */
 
 static RhoRuntimeProfile rho_runtime_profile_default(uint32_t reduction_limit) {
     RhoRuntimeProfile profile;
@@ -2808,6 +2920,14 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
     rhocalc_successor_set_free(&successors);
     return true;
 }
+
+/* ── Threaded strict-core executor ──────────────────────────────────────────
+ *
+ * Worker threads decompose tasks into components and publish send/receive
+ * endpoints into per-channel buckets.  A bucket-locked rendezvous pairs one
+ * send with one receive, spends one unit of the shared reduction budget,
+ * and enqueues one continuation; see the run invariant at RhoAsyncExecutor
+ * above.  The final state is unmatched endpoints plus stuck residuals. */
 
 static void rho_async_fail(RhoAsyncExecutor *executor, const char *fmt, ...) {
     va_list ap;
@@ -3824,6 +3944,15 @@ Atom *rhocalc_quiescent_frontier_expr_with_eval_context(
     return result;
 }
 
+/* ── Cost profile: term views and constructors ──────────────────────────────
+ *
+ * Cost terms extend the process layer with rho:cost:signed (a process body
+ * carrying a signature), rho:cost:purse (a token stack located at a channel
+ * surface), rho:cost:stack-empty / rho:cost:stack-cons, and signature
+ * products rho:cost:sig-mul over ground signature symbols.  Signatures form
+ * a free commutative monoid: products are kept as sorted multisets of
+ * ground atoms, so signature equality is multiset equality. */
+
 typedef enum {
     RHOCOST_TERM_BAD = 0,
     RHOCOST_TERM_NIL,
@@ -4450,7 +4579,16 @@ static bool rhocost_parallel_task_vec_push(
     return true;
 }
 
-/*
+/* ── Parallel waves: atomic occurrence claims ───────────────────────────────
+ *
+ * A wave runs compatible firings concurrently.  Before firing, a worker
+ * atomically claims every exact occurrence its plan touches — both
+ * endpoints and every funding token — in sorted resource order; a wave
+ * admits only pairwise-disjoint claims, and each committed wave is
+ * re-validated against occurrence accounting before the residual is
+ * rebuilt.  The sequential semantics stays the reference: a wave is a legal
+ * parallel refinement, not a new relation.
+ *
  * Claim bytes are the resource-ownership boundary: acquisition is acq_rel,
  * failed observation is acquire, and relinquishment is release.  Candidate
  * data is immutable before worker creation, and the coordinator reads worker
@@ -4787,6 +4925,14 @@ static char *rhocost_key_signature(Atom *sig) {
     return out.data ? out.data : rho_heap_strdup("sig()");
 }
 
+/* ── Cost grammar validation ────────────────────────────────────────────────
+ *
+ * The cost grammar is strict: signatures are ground symbols or sig-mul
+ * products of them, raw token stacks occur only inside purses, a signed
+ * body is a pure process (no rho:val / rho:eval-payload in this slice), and
+ * drop is a wrapped term rather than a process body.  Rejections carry an
+ * explicit diagnostic. */
+
 static bool rhocost_check_term_rec(Atom *term);
 
 static bool rhocost_check_signature(Atom *sig) {
@@ -5049,6 +5195,13 @@ static bool rhocost_whole_redex_vec_push(RhoCostWholeRedexVec *vec,
     vec->len++;
     return true;
 }
+
+/* ── Cost canonical keys and normalization ──────────────────────────────────
+ *
+ * The cost layer mirrors the strict-core key/normal-form discipline over
+ * the extended grammar: term-par components sort under alpha-invariant
+ * keys, signatures normalize to sorted multisets, and purse locations key
+ * through the same name equivalence as channels. */
 
 static Atom *rhocost_normalize_term(Arena *arena, Atom *term);
 
@@ -5393,6 +5546,12 @@ static void rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out) 
     (void)rho_vec_push(out, norm);
 }
 
+/* ── Cost substitution ──────────────────────────────────────────────────────
+ *
+ * Cost COMM substitutes the sent signed term for the receive binder, with
+ * the same capture-avoidance and drop-unquoting discipline as the pure
+ * layer, extended through signed bodies and purse surfaces. */
+
 static bool rhocost_term_has_free_var(Atom *term, VarId var_id);
 
 static bool rhocost_name_has_free_var(Atom *name, VarId var_id) {
@@ -5701,6 +5860,15 @@ static Atom *rhocost_subst_term(Arena *arena, Atom *term,
     return term;
 }
 
+/* ── Funded-candidate collection ────────────────────────────────────────────
+ *
+ * A firing candidate is either a split redex — a signed receive and a
+ * signed send on the same channel key, whose signatures multiply into the
+ * demand — or a whole redex, one signed par of a matched receive/send pair
+ * demanding its single signature.  Purse tokens on the same channel key are
+ * the only funding sources.  Every candidate must be exactly covered:
+ * chosen token signatures partition the demand with nothing left over. */
+
 static bool rhocost_signed_body_endpoint(uint32_t component_index,
                                          Atom *term,
                                          RhoCostSignedEndpointVec *recvs,
@@ -5920,6 +6088,17 @@ static Atom *rhocost_trace_components_term(
     rho_vec_free(&terms);
     return result;
 }
+
+/* ── Causal provenance and event records ────────────────────────────────────
+ *
+ * Each state component optionally remembers which event produced it.  When
+ * a firing consumes components, the producers of those exact occurrences
+ * become the event's cause list — repetitions kept, so consuming two
+ * outputs of event 0 yields causes (0 0).  Initial components have no
+ * producer and contribute no arc: indistinguishable initial occurrences
+ * acquire no invented identity.  An event records its fresh run-local id,
+ * that cause list, one funding record per consumed purse head (surface and
+ * head signature), and the raw consumed signature. */
 
 static bool rhocost_step_consumes_component(const RhoCostStep *step,
                                             uint32_t component_index) {
@@ -6149,6 +6328,16 @@ static bool rhocost_emit_parallel_candidate(
         (RhoCostParallelTaskVec *)context, participant_indices,
         participant_len, tokens, chosen_tokens, consumed_sig, recv, send);
 }
+
+/* ── Exact-cover funding search ─────────────────────────────────────────────
+ *
+ * Funding selection is a genuine exact-cover problem (a demand of ten unit
+ * coins over twenty unit purses admits C(20,10) covers), explored with an
+ * explicit depth-first take/skip stack over the available tokens.  The
+ * search control makes budgets honest: an unbounded search enumerates every
+ * cover; a bounded search spends one unit per frame, records exhaustion
+ * distinctly from emptiness, and can stop after the first witness for
+ * lazy first-cover execution.  Exhaustion is never reported as quiescence. */
 
 static bool rhocost_cover_tokens_cursor(Arena *arena,
                                         RhoAtomVec *components,
@@ -7067,6 +7256,14 @@ typedef enum {
     RHOCOST_PARALLEL_RUN_SEARCH_EXHAUSTED
 } RhoCostParallelRunStatus;
 
+/* ── Parallel run driver ────────────────────────────────────────────────────
+ *
+ * Wave loop: enumerate funded candidates, start a wave under the remaining
+ * fuel, apply the checked commit, repeat until the frontier is empty or an
+ * allowance ends.  With a causal observer the emitted event order is a
+ * checked linearization of the wave's causal order, validated at the end of
+ * the run; without one the same transitions run state-only. */
+
 static bool rhocost_parallel_run(
     Arena *arena, Atom *term, uint32_t thread_count,
     bool bounded_fuel, uint64_t fuel, bool fuel_precedes_frontier,
@@ -7239,6 +7436,15 @@ static bool rhocost_collect_steps(Arena *arena, Atom *term,
     rho_vec_free(&components);
     return ok;
 }
+
+/* ── Sequential causal trace and bounded prefix ─────────────────────────────
+ *
+ * One terminating pure cost-rho path with a receipt.  Unbounded, the run
+ * ends only at proven quiescence.  Bounded, it takes separate firing and
+ * cover-search allowances and returns (lts:rho:cost:prefix STATUS RECEIPT)
+ * where STATUS is quiescent only after exhaustive search, fuel-exhausted
+ * when the firing allowance ends first, and search-exhausted when cover
+ * search stops while further search remains semantically relevant. */
 
 static Atom *rhocalc_cost_causal_run_expr(Arena *arena, Atom *term,
                                           bool bounded, uint64_t fuel,
@@ -7626,6 +7832,12 @@ static bool rho_collect_successors(Arena *arena, Atom *proc,
     rho_vec_free(&components);
     return true;
 }
+
+/* ── Public reduction entry points ──────────────────────────────────────────
+ *
+ * The CLI and library surfaces land here: run a term to quiescence under a
+ * runtime profile (scheduler policy, reduction limit, worker count) and a
+ * semantic profile (strict-core or cost), sequentially or threaded. */
 
 bool rhocalc_reduce_to_quiescence_with_profile(Arena *arena, Atom *proc,
                                                const RhoRuntimeProfile *profile,
