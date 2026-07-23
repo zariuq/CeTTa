@@ -32,6 +32,7 @@ typedef uint64_t CettaExprLen;
 typedef uint64_t CettaExprIndex;
 typedef struct HashConsTable HashConsTable;
 typedef struct ArenaFinalizer ArenaFinalizer;
+typedef struct AtomDeepCopySession AtomDeepCopySession;
 
 #define VAR_ID_NONE ((VarId)0)
 #define NAME_ID_NONE ((NameId)0)
@@ -378,6 +379,12 @@ char *atom_to_parseable_string(Arena *a, Atom *atom);
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
+/* A multi-root copy episode.  Every call shares one source-pointer forwarding
+   table, so pointer-DAG sharing is preserved across separately named roots.
+   A root already owned by the destination is returned unchanged. */
+AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src);
+void atom_deep_copy_session_free(AtomDeepCopySession *session);
 /* Deep-copy with structural sharing for immutable atoms, also preserving source
    pointer sharing within one copy episode.
    Safe only for arenas whose contents outlive the global hash-cons table. */

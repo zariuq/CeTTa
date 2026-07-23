@@ -15,6 +15,11 @@ without changing that graph or selecting a native implementation:
 Every candidate is checked against an independent graph traversal on every
 ordered frame pair.  The reported costs are deterministic parent-edge visits
 and abstract retained bytes, not Python wall-clock measurements.
+
+The self-test also kills a tempting but unsound shortcut: inheriting one
+``(chain root, rank)`` label through every unary-parent frame.  Two unequal
+siblings can inherit the same root, making the deeper sibling appear to reach
+the shallower one.
 """
 
 from __future__ import annotations
@@ -248,6 +253,62 @@ class PrimaryTreeBinaryLifting(Candidate):
         )
 
 
+class NaiveUnaryChainLabels(Candidate):
+    name = "naive-unary-chain-labels"
+
+    def __init__(self, graph: ReceiptGraph) -> None:
+        super().__init__(graph)
+        chain_roots: list[int] = []
+        chain_ranks: list[int] = []
+        for frame_id, frame in enumerate(graph.frames):
+            self.metrics.build_parent_edges += len(frame.parents)
+            if len(frame.parents) == 1:
+                parent_id = frame.parents[0]
+                chain_roots.append(chain_roots[parent_id])
+                chain_ranks.append(chain_ranks[parent_id] + 1)
+            else:
+                chain_roots.append(frame_id)
+                chain_ranks.append(0)
+            self.metrics.build_index_steps += 1
+        self.chain_roots = tuple(chain_roots)
+        self.chain_ranks = tuple(chain_ranks)
+        # One root identifier and one rank word per frame.
+        self.metrics.retained_bytes = len(graph) * 16
+
+    def _same_chain_ancestor(
+        self, child_id: int, target_id: int
+    ) -> bool:
+        self.metrics.query_index_steps += 1
+        return (
+            self.chain_roots[child_id] == self.chain_roots[target_id]
+            and self.chain_ranks[target_id] <= self.chain_ranks[child_id]
+        )
+
+    def query(self, child_id: int, target_id: int) -> bool:
+        self.metrics.queries += 1
+        child = self.graph.frames[child_id]
+        target = self.graph.frames[target_id]
+        if child.session != target.session:
+            self.metrics.fast_rejects += 1
+            return False
+        if child_id == target_id:
+            self.metrics.fast_accepts += 1
+            return True
+        if child.depth <= target.depth:
+            self.metrics.fast_rejects += 1
+            return False
+        if target_id in child.parents:
+            self.metrics.fast_accepts += 1
+            return True
+        if self._same_chain_ancestor(child_id, target_id):
+            self.metrics.fast_accepts += 1
+            return True
+        self.metrics.fallback_queries += 1
+        return exact_traversal(
+            self.graph, child_id, target_id, self.metrics
+        )
+
+
 class BloomRejectTraversal(Candidate):
     name = "bloom-reject+fallback"
 
@@ -368,6 +429,17 @@ def diamond_graph(levels: int) -> ReceiptGraph:
     return ReceiptGraph(tuple(frames))
 
 
+def uneven_fork_graph() -> ReceiptGraph:
+    return ReceiptGraph(
+        (
+            Frame(session=0, depth=0, parents=()),
+            Frame(session=0, depth=1, parents=(0,)),
+            Frame(session=0, depth=1, parents=(0,)),
+            Frame(session=0, depth=2, parents=(1,)),
+        )
+    )
+
+
 def wide_join_graph(width: int) -> ReceiptGraph:
     if width < 2:
         raise ValueError("wide join width must be at least two")
@@ -450,6 +522,7 @@ def assert_candidate_exact_on_queries(
 def tournament_graphs(size: int) -> Iterable[tuple[str, ReceiptGraph]]:
     yield "chain", chain_graph(size)
     yield "diamonds", diamond_graph(max(1, size // 2))
+    yield "uneven-fork", uneven_fork_graph()
     yield "wide-join", wide_join_graph(max(2, size))
     yield "two-sessions", two_session_graph(max(1, size // 2))
 
@@ -617,6 +690,14 @@ class ReceiptIndexTournamentTests(unittest.TestCase):
         self.assertEqual(candidate.metrics.query_parent_edges, 0)
         self.assertGreater(candidate.metrics.query_index_steps, 0)
 
+    def test_naive_unary_chain_labels_have_a_fork_false_positive(
+        self,
+    ) -> None:
+        graph = uneven_fork_graph()
+        candidate = NaiveUnaryChainLabels(graph)
+        self.assertTrue(candidate.query(3, 2))
+        self.assertFalse(exact_traversal(graph, 3, 2))
+
     def test_bloom_rejection_retains_exact_fallback(self) -> None:
         graph = wide_join_graph(24)
         candidate = BloomRejectTraversal(
@@ -673,7 +754,8 @@ def main(argv: list[str]) -> int:
         if result.wasSuccessful():
             print(
                 "PrimeReceiptIndexTournamentSummary "
-                "PASS exact-candidates=4 depth-only-killed=1"
+                "PASS exact-candidates=4 "
+                "depth-only-killed=1 naive-chain-killed=1"
             )
             return 0
         return 1

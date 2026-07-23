@@ -39,6 +39,12 @@
    (+ 0 1)
    (superpose (A (prime-need:demand-omega 0))))
 
+; Shape observers consume a visible expression as syntax data even when its
+; first element is callable.  Hidden Prime control is still forced far enough
+; to reveal the outer expression.
+!(superpose (+ - *))
+!(superpose (force (delay (Ops + - *))))
+
 ; A typed strict consumer rejects a suspension instead of forcing it.  Keep
 ; this negative observation last because an uncaught checked contradiction
 ; terminates the source file's remaining top-level directives.

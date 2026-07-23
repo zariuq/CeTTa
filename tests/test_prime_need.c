@@ -40,6 +40,10 @@ int main(void) {
     CHECK(prime_need_snapshot_allocate(&arena, &root, term, &thunk,
                                        &thunk_id),
           "allocate extends the root");
+    CHECK(!prime_need_snapshot_excludes_arena(&thunk, &arena) &&
+              prime_need_snapshot_excludes_arena(
+                  &thunk, &promoted_arena),
+          "snapshot ownership audit distinguishes its owner arena");
     CHECK(prime_need_snapshot_is_ancestor(&root, &thunk),
           "root precedes allocation");
     PrimeNeedCellView cell;
@@ -48,6 +52,14 @@ int main(void) {
               cell.origin == term && cell.cached == NULL &&
               cell.authority_id != 0u && cell.evaluator_id == 0u,
           "allocation stores an immutable origin and empty cache");
+    PrimeNeedSnapshot promoted_thunk = thunk;
+    CHECK(prime_need_snapshot_promote(
+              &promoted_arena, &promoted_thunk) &&
+              prime_need_snapshot_excludes_arena(
+                  &promoted_thunk, &arena) &&
+              !prime_need_snapshot_excludes_arena(
+                  &promoted_thunk, &promoted_arena),
+          "snapshot promotion removes every source-arena frame");
     uint64_t storage_key = cell.storage_key;
     PrimeNeedSnapshot rehydrated;
     uint64_t rehydrated_id = 0u;
@@ -114,6 +126,77 @@ int main(void) {
                   source_occurrence &&
               source_argument_cell.source_argument_index == 2u,
           "a source argument cell retains application and position identity");
+
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    VarId capture_ids[] = {202u, 101u, 202u};
+    PrimeNeedSnapshot captured;
+    uint64_t captured_id = 0u;
+    PrimeNeedCellView captured_cell;
+    CHECK(prime_need_snapshot_allocate_closure(
+              &arena, &source_argument, term,
+              capture_ids, 3u, &captured, &captured_id) &&
+              prime_need_snapshot_lookup(
+                  &captured, captured_id, &captured_cell) &&
+              captured_cell.capture_known &&
+              captured_cell.capture_var_count == 2u &&
+              captured_cell.capture_var_ids[0] == 101u &&
+              captured_cell.capture_var_ids[1] == 202u,
+          "closure allocation stores a canonical exact capture set");
+    PrimeNeedSnapshot captured_evaluating;
+    CHECK(prime_need_snapshot_start_evaluation(
+              &arena, &captured, captured_id, 13u,
+              &captured_evaluating) &&
+              prime_need_snapshot_lookup(
+                  &captured_evaluating, captured_id,
+                  &captured_cell) &&
+              captured_cell.capture_known &&
+              captured_cell.capture_var_count == 2u &&
+              captured_cell.capture_var_ids[0] == 101u &&
+              captured_cell.capture_var_ids[1] == 202u,
+          "cache transitions preserve exact closure captures");
+    PrimeNeedSnapshot empty_capture;
+    uint64_t empty_capture_id = 0u;
+    PrimeNeedCellView empty_capture_cell;
+    CHECK(prime_need_snapshot_allocate_closure(
+              &arena, &captured, term, NULL, 0u,
+              &empty_capture, &empty_capture_id) &&
+              prime_need_snapshot_lookup(
+                  &empty_capture, empty_capture_id,
+                  &empty_capture_cell) &&
+              empty_capture_cell.capture_known &&
+              empty_capture_cell.capture_var_count == 0u &&
+              empty_capture_cell.capture_var_ids == NULL,
+          "an exact empty capture is distinct from unavailable metadata");
+    PrimeNeedCellView legacy_capture_cell;
+    CHECK(prime_need_snapshot_lookup(
+              &thunk, thunk_id, &legacy_capture_cell) &&
+              !legacy_capture_cell.capture_known &&
+              legacy_capture_cell.capture_var_count == 0u,
+          "legacy allocation remains an explicit fail-closed fallback");
+    PrimeNeedSnapshot captured_persisted;
+    uint64_t captured_persisted_id = 0u;
+    CHECK(prime_need_snapshot_allocate_persisted_closure(
+              &arena, &source_argument, term, UINT64_C(8128),
+              capture_ids, 3u, &captured_persisted,
+              &captured_persisted_id),
+          "persisted closure allocation admits an exact capture set");
+    VarId same_capture_ids[] = {101u, 202u};
+    PrimeNeedSnapshot captured_reused;
+    uint64_t captured_reused_id = 0u;
+    CHECK(prime_need_snapshot_allocate_persisted_closure(
+              &arena, &captured_persisted, term, UINT64_C(8128),
+              same_capture_ids, 2u, &captured_reused,
+              &captured_reused_id) &&
+              captured_reused_id == captured_persisted_id &&
+              captured_reused.top == captured_persisted.top,
+          "persisted closure identity accepts the same capture set");
+    VarId conflicting_capture_id = 303u;
+    CHECK(!prime_need_snapshot_allocate_persisted_closure(
+              &arena, &captured_persisted, term, UINT64_C(8128),
+              &conflicting_capture_id, 1u, &captured_reused,
+              &captured_reused_id),
+          "persisted closure identity rejects conflicting capture metadata");
+#endif
 
     Atom *ref = prime_need_ref(&arena, &thunk, thunk_id);
     uint64_t parsed_id = 0u;
@@ -283,6 +366,20 @@ int main(void) {
               &arena, &thunk, thunk_id, 41u, fault_value, &invalid),
           "resolution cannot skip the evaluating state");
 
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    PrimeNeedSnapshot captured_promoted = captured_evaluating;
+    CHECK(prime_need_snapshot_promote(
+              &promoted_arena, &captured_promoted) &&
+              prime_need_snapshot_lookup(
+                  &captured_promoted, captured_id,
+                  &captured_cell) &&
+              captured_cell.capture_known &&
+              captured_cell.capture_var_count == 2u &&
+              captured_cell.capture_var_ids[0] == 101u &&
+              captured_cell.capture_var_ids[1] == 202u,
+          "promotion preserves exact closure captures");
+#endif
+
     PrimeNeedReceipt receipt_root;
     prime_need_receipt_init(&receipt_root);
     CHECK(!prime_need_receipt_present(&receipt_root),
@@ -291,6 +388,11 @@ int main(void) {
               prime_need_receipt_present(&receipt_root) &&
               prime_need_receipt_event_count(&receipt_root) == 0u,
           "an evaluation episode has an explicit empty receipt root");
+    CHECK(!prime_need_receipt_excludes_arena(
+              &receipt_root, &arena) &&
+              prime_need_receipt_excludes_arena(
+                  &receipt_root, &promoted_arena),
+          "receipt ownership audit distinguishes its owner arena");
     PrimeNeedReceipt empty_promoted = receipt_root;
     CHECK(prime_need_receipt_promote(&promoted_arena, &empty_promoted) &&
               prime_need_receipt_equal(&empty_promoted, &receipt_root),
@@ -516,7 +618,11 @@ int main(void) {
     CHECK(prime_need_receipt_promote(
               &promoted_arena, &promoted_receipt) &&
               prime_need_receipt_equal(
-                  &promoted_receipt, &independent_join),
+                  &promoted_receipt, &independent_join) &&
+              prime_need_receipt_excludes_arena(
+                  &promoted_receipt, &arena) &&
+              !prime_need_receipt_excludes_arena(
+                  &promoted_receipt, &promoted_arena),
           "receipt promotion preserves event identity and causal support");
 
     Atom *context_x = atom_symbol(&arena, "x");
