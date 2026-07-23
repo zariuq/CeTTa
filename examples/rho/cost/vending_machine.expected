@@ -1,0 +1,1 @@
+purse vend {()} | purse vend {machine : ()} | {0}served | {for ($order <- vend) {{0}served}}machine | {vend!({0}coin)}bob
