@@ -124,8 +124,21 @@ bool variant_instance_clone(VariantInstance *dst, const VariantInstance *src) {
 
 bool variant_instance_promote_atoms_to_arena(Arena *dst,
                                              VariantInstance *instance) {
+    if (!dst)
+        return true;
+    AtomDeepCopySession *session = atom_deep_copy_session_new(dst);
+    if (!session)
+        return false;
+    bool promoted =
+        variant_instance_promote_atoms_with_session(session, instance);
+    atom_deep_copy_session_free(session);
+    return promoted;
+}
+
+bool variant_instance_promote_atoms_with_session(
+    AtomDeepCopySession *session, VariantInstance *instance) {
     VariantInstanceStorage *storage = variant_instance_storage(instance);
-    if (!dst || !storage)
+    if (!session || !storage)
         return true;
     for (uint32_t i = 0; i < storage->slot_count; i++) {
         Atom *slot_val = storage->slot_vals[i];
@@ -133,7 +146,8 @@ bool variant_instance_promote_atoms_to_arena(Arena *dst,
             storage->slot_vals[i] = NULL;
             continue;
         }
-        Atom *promoted = atom_deep_copy(dst, slot_val);
+        Atom *promoted =
+            atom_deep_copy_session_copy(session, slot_val);
         if (!promoted)
             return false;
         storage->slot_vals[i] = promoted;

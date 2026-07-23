@@ -3,6 +3,11 @@
 
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
+
+#ifndef CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+#define CETTA_PRIME_RECEIPT_PRIMARY_INDEX 0
+#endif
 
 struct PrimeNeedFrame {
     const PrimeNeedFrame *parent;
@@ -19,7 +24,146 @@ struct PrimeNeedFrame {
     PrimeNeedCacheState cache_state;
     Atom *origin;
     Atom *cached;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    bool capture_known;
+    const VarId *capture_var_ids;
+    size_t capture_var_count;
+#endif
 };
+
+#if CETTA_PRIME_NEED_HEAP_INDEX
+enum {
+    PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL = 4u,
+    PRIME_NEED_HEAP_INDEX_LEVELS =
+        64u / PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL,
+};
+
+struct PrimeNeedHeapIndexNode {
+    const PrimeNeedFrame *value;
+    uint16_t child_mask;
+    uint16_t child_count;
+    const PrimeNeedHeapIndexNode *children[];
+};
+
+static size_t prime_need_popcount16(uint16_t bits) {
+    size_t count = 0u;
+    while (bits != 0u) {
+        bits = (uint16_t)(bits & (uint16_t)(bits - 1u));
+        count++;
+    }
+    return count;
+}
+
+static PrimeNeedHeapIndexNode *prime_need_heap_index_node_alloc(
+    Arena *owner, uint16_t child_count) {
+    if (!owner ||
+        (size_t)child_count >
+            (SIZE_MAX - sizeof(PrimeNeedHeapIndexNode)) /
+                sizeof(const PrimeNeedHeapIndexNode *))
+        return NULL;
+    size_t bytes = sizeof(PrimeNeedHeapIndexNode) +
+        (size_t)child_count * sizeof(const PrimeNeedHeapIndexNode *);
+    PrimeNeedHeapIndexNode *node = arena_alloc(owner, bytes);
+    if (!node)
+        return NULL;
+    node->value = NULL;
+    node->child_mask = 0u;
+    node->child_count = child_count;
+    return node;
+}
+
+static bool prime_need_heap_index_insert_at(
+    Arena *owner, const PrimeNeedHeapIndexNode *base,
+    uint64_t thunk_id, unsigned depth, const PrimeNeedFrame *value,
+    const PrimeNeedHeapIndexNode **out) {
+    if (!owner || !value || !out ||
+        depth > PRIME_NEED_HEAP_INDEX_LEVELS)
+        return false;
+
+    if (depth == PRIME_NEED_HEAP_INDEX_LEVELS) {
+        PrimeNeedHeapIndexNode *leaf =
+            prime_need_heap_index_node_alloc(owner, 0u);
+        if (!leaf)
+            return false;
+        leaf->value = value;
+        *out = leaf;
+        return true;
+    }
+
+    unsigned shift =
+        (PRIME_NEED_HEAP_INDEX_LEVELS - depth - 1u) *
+        PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL;
+    unsigned slot = (unsigned)((thunk_id >> shift) & UINT64_C(0xf));
+    uint16_t bit = (uint16_t)(UINT16_C(1) << slot);
+    uint16_t old_mask = base ? base->child_mask : 0u;
+    bool replacing = (old_mask & bit) != 0u;
+    size_t position = prime_need_popcount16(
+        (uint16_t)(old_mask & (uint16_t)(bit - 1u)));
+    const PrimeNeedHeapIndexNode *old_child =
+        replacing ? base->children[position] : NULL;
+    const PrimeNeedHeapIndexNode *new_child = NULL;
+    if (!prime_need_heap_index_insert_at(
+            owner, old_child, thunk_id, depth + 1u, value, &new_child))
+        return false;
+
+    uint16_t new_mask = (uint16_t)(old_mask | bit);
+    uint16_t new_count = (uint16_t)prime_need_popcount16(new_mask);
+    PrimeNeedHeapIndexNode *node =
+        prime_need_heap_index_node_alloc(owner, new_count);
+    if (!node)
+        return false;
+    node->value = base ? base->value : NULL;
+    node->child_mask = new_mask;
+
+    size_t old_position = 0u;
+    for (size_t new_position = 0u;
+         new_position < (size_t)new_count; new_position++) {
+        if (new_position == position) {
+            node->children[new_position] = new_child;
+            if (replacing)
+                old_position++;
+        } else {
+            node->children[new_position] = base->children[old_position++];
+        }
+    }
+    *out = node;
+    return true;
+}
+
+static const PrimeNeedFrame *prime_need_heap_index_lookup(
+    const PrimeNeedHeapIndexNode *root, uint64_t thunk_id,
+    size_t *steps_out) {
+    const PrimeNeedHeapIndexNode *cursor = root;
+    size_t steps = 0u;
+    for (unsigned depth = 0u;
+         depth < PRIME_NEED_HEAP_INDEX_LEVELS; depth++) {
+        if (!cursor)
+            goto not_found;
+        unsigned shift =
+            (PRIME_NEED_HEAP_INDEX_LEVELS - depth - 1u) *
+            PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL;
+        unsigned slot =
+            (unsigned)((thunk_id >> shift) & UINT64_C(0xf));
+        uint16_t bit = (uint16_t)(UINT16_C(1) << slot);
+        steps++;
+        if ((cursor->child_mask & bit) == 0u)
+            goto not_found;
+        size_t position = prime_need_popcount16(
+            (uint16_t)(cursor->child_mask &
+                       (uint16_t)(bit - 1u)));
+        cursor = cursor->children[position];
+    }
+    steps++;
+    if (steps_out)
+        *steps_out = steps;
+    return cursor ? cursor->value : NULL;
+
+not_found:
+    if (steps_out)
+        *steps_out = steps;
+    return NULL;
+}
+#endif
 
 static _Atomic uint64_t g_prime_need_next_session = 1u;
 static _Atomic uint64_t g_prime_need_next_serial = 1u;
@@ -30,6 +174,19 @@ static _Atomic uint64_t g_prime_need_next_receipt_session = 1u;
 static _Atomic uint64_t g_prime_need_next_receipt_event = 1u;
 static _Atomic uint64_t g_prime_need_next_source_occurrence = 1u;
 
+static void prime_need_reserve_storage_keys_through(uint64_t key) {
+    if (key == UINT64_MAX)
+        return;
+    uint64_t desired = key + 1u;
+    uint64_t current = atomic_load_explicit(
+        &g_prime_need_next_storage_key, memory_order_relaxed);
+    while (current < desired &&
+           !atomic_compare_exchange_weak_explicit(
+               &g_prime_need_next_storage_key, &current, desired,
+               memory_order_relaxed, memory_order_relaxed)) {
+    }
+}
+
 struct PrimeNeedReceiptFrame {
     const PrimeNeedReceiptFrame *left;
     const PrimeNeedReceiptFrame *right;
@@ -38,7 +195,293 @@ struct PrimeNeedReceiptFrame {
     uint64_t depth;
     bool has_event;
     PrimeNeedReceiptEvent event;
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+    const PrimeNeedReceiptFrame **primary_ancestors;
+    size_t primary_ancestor_count;
+    uint64_t primary_depth;
+#endif
 };
+
+typedef struct {
+    const void **slots;
+    size_t cap;
+    size_t used;
+} PrimeNeedPointerSet;
+
+struct PrimeNeedArenaAudit {
+    const Arena *forbidden;
+    PrimeNeedPointerSet snapshot_frames;
+    PrimeNeedPointerSet receipt_frames;
+};
+
+static size_t prime_need_pointer_hash(const void *ptr) {
+    uintptr_t bits = (uintptr_t)ptr;
+    bits >>= 4u;
+    bits ^= bits >> 17u;
+    bits *= (uintptr_t)UINT64_C(0x9e3779b97f4a7c15);
+    return (size_t)(bits ^ (bits >> 29u));
+}
+
+static bool prime_need_pointer_set_reserve(
+    PrimeNeedPointerSet *set, size_t needed) {
+    if (!set)
+        return false;
+    size_t cap = set->cap ? set->cap : 16u;
+    while (needed > cap / 2u) {
+        if (cap > SIZE_MAX / 2u)
+            return false;
+        cap *= 2u;
+    }
+    if (cap == set->cap)
+        return true;
+    const void **slots = calloc(cap, sizeof(*slots));
+    if (!slots)
+        return false;
+    size_t mask = cap - 1u;
+    for (size_t i = 0u; i < set->cap; i++) {
+        const void *item = set->slots[i];
+        if (!item)
+            continue;
+        size_t slot = prime_need_pointer_hash(item) & mask;
+        while (slots[slot])
+            slot = (slot + 1u) & mask;
+        slots[slot] = item;
+    }
+    free(set->slots);
+    set->slots = slots;
+    set->cap = cap;
+    return true;
+}
+
+static bool prime_need_pointer_set_insert(
+    PrimeNeedPointerSet *set, const void *ptr, bool *inserted) {
+    if (!set || !ptr || !inserted ||
+        !prime_need_pointer_set_reserve(set, set->used + 1u))
+        return false;
+    size_t mask = set->cap - 1u;
+    size_t slot = prime_need_pointer_hash(ptr) & mask;
+    while (set->slots[slot]) {
+        if (set->slots[slot] == ptr) {
+            *inserted = false;
+            return true;
+        }
+        slot = (slot + 1u) & mask;
+    }
+    set->slots[slot] = ptr;
+    set->used++;
+    *inserted = true;
+    return true;
+}
+
+PrimeNeedArenaAudit *prime_need_arena_audit_new(
+    const Arena *forbidden) {
+    if (!forbidden)
+        return NULL;
+    PrimeNeedArenaAudit *audit = calloc(1u, sizeof(*audit));
+    if (!audit)
+        return NULL;
+    audit->forbidden = forbidden;
+    return audit;
+}
+
+bool prime_need_arena_audit_snapshot(
+    PrimeNeedArenaAudit *audit, const PrimeNeedSnapshot *snapshot) {
+    if (!audit || !snapshot)
+        return false;
+    if (snapshot->session_id == 0u)
+        return true;
+    if (snapshot->top &&
+        (!snapshot->owner || snapshot->owner == audit->forbidden))
+        return false;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    if (snapshot->heap_index &&
+        arena_owns_ptr(audit->forbidden, snapshot->heap_index))
+        return false;
+    if (snapshot->lineage_index &&
+        arena_owns_ptr(audit->forbidden, snapshot->lineage_index))
+        return false;
+#endif
+    for (const PrimeNeedFrame *frame = snapshot->top; frame;
+         frame = frame->parent) {
+        bool inserted = false;
+        if (!prime_need_pointer_set_insert(
+                &audit->snapshot_frames, frame, &inserted))
+            return false;
+        if (!inserted)
+            break;
+        if (arena_owns_ptr(audit->forbidden, frame) ||
+            arena_owns_ptr(audit->forbidden, frame->origin) ||
+            arena_owns_ptr(audit->forbidden, frame->cached))
+            return false;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        if (frame->capture_var_ids &&
+            arena_owns_ptr(
+                audit->forbidden, frame->capture_var_ids))
+            return false;
+#endif
+    }
+    return true;
+}
+
+bool prime_need_arena_audit_receipt(
+    PrimeNeedArenaAudit *audit, const PrimeNeedReceipt *receipt) {
+    if (!audit || !receipt)
+        return false;
+    if (receipt->session_id == 0u || !receipt->owner)
+        return true;
+    if (receipt->owner == audit->forbidden)
+        return false;
+
+    const PrimeNeedReceiptFrame **work = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    if (receipt->top) {
+        cap = 16u;
+        work = malloc(cap * sizeof(*work));
+        if (!work)
+            return false;
+        work[len++] = receipt->top;
+    }
+    bool excludes = true;
+    while (excludes && len > 0u) {
+        const PrimeNeedReceiptFrame *frame = work[--len];
+        bool inserted = false;
+        if (!prime_need_pointer_set_insert(
+                &audit->receipt_frames, frame, &inserted)) {
+            excludes = false;
+            break;
+        }
+        if (!inserted)
+            continue;
+        excludes =
+            !arena_owns_ptr(audit->forbidden, frame) &&
+            !arena_owns_ptr(audit->forbidden, frame->event.before) &&
+            !arena_owns_ptr(audit->forbidden, frame->event.after) &&
+            !arena_owns_ptr(audit->forbidden, frame->event.state_cell);
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+        excludes =
+            excludes &&
+            !arena_owns_ptr(
+                audit->forbidden, frame->primary_ancestors);
+#endif
+        if (!excludes)
+            break;
+        size_t additions =
+            (frame->left ? 1u : 0u) + (frame->right ? 1u : 0u);
+        if (additions > SIZE_MAX - len) {
+            excludes = false;
+            break;
+        }
+        size_t needed = len + additions;
+        if (needed > cap) {
+            size_t next = cap ? cap : 16u;
+            while (next < needed) {
+                if (next > SIZE_MAX / 2u) {
+                    excludes = false;
+                    break;
+                }
+                next *= 2u;
+            }
+            if (!excludes)
+                break;
+            const PrimeNeedReceiptFrame **grown =
+                realloc(work, next * sizeof(*grown));
+            if (!grown) {
+                excludes = false;
+                break;
+            }
+            work = grown;
+            cap = next;
+        }
+        if (frame->left)
+            work[len++] = frame->left;
+        if (frame->right)
+            work[len++] = frame->right;
+    }
+    free(work);
+    return excludes;
+}
+
+void prime_need_arena_audit_free(PrimeNeedArenaAudit *audit) {
+    if (!audit)
+        return;
+    free(audit->snapshot_frames.slots);
+    free(audit->receipt_frames.slots);
+    free(audit);
+}
+
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+static void prime_need_receipt_build_primary_index(
+    Arena *owner, PrimeNeedReceiptFrame *frame) {
+    frame->primary_ancestors = NULL;
+    frame->primary_ancestor_count = 0u;
+    frame->primary_depth = 0u;
+    if (!owner || !frame->left ||
+        frame->left->primary_depth == UINT64_MAX)
+        return;
+
+    frame->primary_depth = frame->left->primary_depth + 1u;
+    size_t level_count = 0u;
+    for (uint64_t distance = frame->primary_depth;
+         distance != 0u; distance >>= 1u)
+        level_count++;
+    if (level_count == 0u ||
+        level_count > SIZE_MAX / sizeof(*frame->primary_ancestors))
+        return;
+
+    const PrimeNeedReceiptFrame **ancestors = arena_alloc(
+        owner, level_count * sizeof(*ancestors));
+    if (!ancestors)
+        return;
+    ancestors[0] = frame->left;
+    size_t built = 1u;
+    for (size_t level = 1u; level < level_count; level++) {
+        const PrimeNeedReceiptFrame *half = ancestors[level - 1u];
+        if (!half || half->primary_ancestor_count < level)
+            break;
+        ancestors[level] = half->primary_ancestors[level - 1u];
+        if (!ancestors[level])
+            break;
+        built++;
+    }
+    frame->primary_ancestors = ancestors;
+    frame->primary_ancestor_count = built;
+}
+
+static bool prime_need_receipt_primary_reaches(
+    const PrimeNeedReceiptFrame *top,
+    const PrimeNeedReceiptFrame *target,
+    size_t *steps_out) {
+    size_t steps = 0u;
+    if (!top || !target ||
+        top->primary_depth < target->primary_depth)
+        goto not_found;
+
+    const PrimeNeedReceiptFrame *cursor = top;
+    uint64_t distance =
+        top->primary_depth - target->primary_depth;
+    size_t level = 0u;
+    while (distance != 0u) {
+        if ((distance & 1u) != 0u) {
+            if (!cursor || cursor->primary_ancestor_count <= level)
+                goto not_found;
+            cursor = cursor->primary_ancestors[level];
+            steps++;
+        }
+        distance >>= 1u;
+        level++;
+    }
+    steps++;
+    if (steps_out)
+        *steps_out = steps;
+    return cursor == target;
+
+not_found:
+    if (steps_out)
+        *steps_out = steps;
+    return false;
+}
+#endif
 
 static uint64_t prime_need_fresh_nonzero(_Atomic uint64_t *counter) {
     uint64_t value = atomic_fetch_add_explicit(
@@ -48,11 +491,63 @@ static uint64_t prime_need_fresh_nonzero(_Atomic uint64_t *counter) {
     return atomic_fetch_add_explicit(counter, 1u, memory_order_relaxed);
 }
 
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+static int prime_need_var_id_compare(const void *left, const void *right) {
+    VarId l = *(const VarId *)left;
+    VarId r = *(const VarId *)right;
+    return l < r ? -1 : (l > r ? 1 : 0);
+}
+
+static bool prime_need_capture_copy(
+    Arena *owner, const VarId *ids, size_t count,
+    const VarId **out_ids, size_t *out_count) {
+    if (!owner || !out_ids || !out_count || (count != 0u && !ids) ||
+        count > SIZE_MAX / sizeof(*ids))
+        return false;
+    *out_ids = NULL;
+    *out_count = 0u;
+    if (count == 0u)
+        return true;
+    VarId *copy = arena_alloc(owner, count * sizeof(*copy));
+    if (!copy)
+        return false;
+    memcpy(copy, ids, count * sizeof(*copy));
+    qsort(copy, count, sizeof(*copy), prime_need_var_id_compare);
+    size_t unique_count = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        if (copy[i] == VAR_ID_NONE)
+            return false;
+        if (unique_count == 0u || copy[unique_count - 1u] != copy[i])
+            copy[unique_count++] = copy[i];
+    }
+    *out_ids = copy;
+    *out_count = unique_count;
+    return true;
+}
+
+static bool prime_need_capture_equal(
+    const PrimeNeedCellView *cell,
+    const VarId *ids, size_t count) {
+    if (!cell || !cell->capture_known || cell->capture_var_count != count)
+        return false;
+    if (count == 0u)
+        return true;
+    return cell->capture_var_ids && ids &&
+        memcmp(cell->capture_var_ids, ids, count * sizeof(*ids)) == 0;
+}
+#endif
+
 void prime_need_snapshot_init(PrimeNeedSnapshot *snapshot) {
     if (!snapshot)
         return;
     snapshot->top = NULL;
     snapshot->session_id = 0u;
+    snapshot->max_storage_key = 0u;
+    snapshot->owner = NULL;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    snapshot->heap_index = NULL;
+    snapshot->lineage_index = NULL;
+#endif
 }
 
 bool prime_need_snapshot_present(const PrimeNeedSnapshot *snapshot) {
@@ -67,18 +562,31 @@ bool prime_need_snapshot_begin(PrimeNeedSnapshot *snapshot) {
     snapshot->top = NULL;
     snapshot->session_id = prime_need_fresh_nonzero(
         &g_prime_need_next_session);
+    snapshot->max_storage_key = 0u;
+    snapshot->owner = NULL;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    snapshot->heap_index = NULL;
+    snapshot->lineage_index = NULL;
+#endif
     return snapshot->session_id != 0u;
 }
 
 static const PrimeNeedFrame *prime_need_frame_at_depth(
-    const PrimeNeedFrame *frame, uint64_t depth) {
-    while (frame && frame->depth > depth)
+    const PrimeNeedFrame *frame, uint64_t depth, size_t *steps_out) {
+    size_t steps = 0u;
+    while (frame && frame->depth > depth) {
         frame = frame->parent;
+        steps++;
+    }
+    if (steps_out)
+        *steps_out = steps;
     return frame && frame->depth == depth ? frame : NULL;
 }
 
 bool prime_need_snapshot_is_ancestor(const PrimeNeedSnapshot *ancestor,
                                      const PrimeNeedSnapshot *descendant) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_ANCESTOR_QUERY);
     if (!ancestor || !descendant)
         return false;
     if (!prime_need_snapshot_present(ancestor))
@@ -91,8 +599,25 @@ bool prime_need_snapshot_is_ancestor(const PrimeNeedSnapshot *ancestor,
     if (!descendant->top ||
         ancestor->top->depth > descendant->top->depth)
         return false;
-    const PrimeNeedFrame *at_depth = prime_need_frame_at_depth(
-        descendant->top, ancestor->top->depth);
+    const PrimeNeedFrame *at_depth = NULL;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    if (descendant->lineage_index) {
+        size_t steps = 0u;
+        at_depth = prime_need_heap_index_lookup(
+            descendant->lineage_index, ancestor->top->depth, &steps);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_ANCESTOR_INDEX_STEP,
+            (uint64_t)steps);
+    } else
+#endif
+    {
+        size_t steps = 0u;
+        at_depth = prime_need_frame_at_depth(
+            descendant->top, ancestor->top->depth, &steps);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_ANCESTOR_LOG_STEP,
+            (uint64_t)steps);
+    }
     return at_depth && at_depth->serial == ancestor->top->serial;
 }
 
@@ -126,9 +651,15 @@ static bool prime_need_snapshot_push(Arena *owner,
                                      PrimeNeedCacheState cache_state,
                                      Atom *origin,
                                      Atom *cached,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+                                     bool capture_known,
+                                     const VarId *capture_var_ids,
+                                     size_t capture_var_count,
+#endif
                                      PrimeNeedSnapshot *out) {
     if (!owner || !base || !out || !prime_need_snapshot_present(base) ||
-        thunk_id == 0u || authority_id == 0u || !origin)
+        thunk_id == 0u || authority_id == 0u || !origin ||
+        (base->top && base->owner != owner))
         return false;
     PrimeNeedFrame *frame = arena_alloc(owner, sizeof(*frame));
     if (!frame)
@@ -148,9 +679,56 @@ static bool prime_need_snapshot_push(Arena *owner,
     frame->cache_state = cache_state;
     frame->origin = origin;
     frame->cached = cached;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    frame->capture_known = capture_known;
+    frame->capture_var_ids = capture_var_ids;
+    frame->capture_var_count = capture_var_count;
+#endif
+    if (frame->serial == 0u)
+        return false;
     out->top = frame;
     out->session_id = base->session_id;
-    return frame->serial != 0u;
+    out->max_storage_key =
+        storage_key > base->max_storage_key
+            ? storage_key
+            : base->max_storage_key;
+    out->owner = owner;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    out->heap_index = NULL;
+    out->lineage_index = NULL;
+    if (!base->top || base->heap_index) {
+        const PrimeNeedHeapIndexNode *index = NULL;
+        if (prime_need_heap_index_insert_at(
+                owner, base->heap_index, thunk_id, 0u, frame, &index))
+            out->heap_index = index;
+    }
+    if (!base->top || base->lineage_index) {
+        const PrimeNeedHeapIndexNode *index = NULL;
+        if (prime_need_heap_index_insert_at(
+                owner, base->lineage_index, frame->depth, 0u,
+                frame, &index))
+            out->lineage_index = index;
+    }
+#endif
+    return true;
+}
+
+static void prime_need_cell_view_from_frame(
+    const PrimeNeedFrame *frame, PrimeNeedCellView *out) {
+    out->cache_state = frame->cache_state;
+    out->origin = frame->origin;
+    out->cached = frame->cached;
+    out->authority_id = frame->authority_id;
+    out->evaluator_id = frame->evaluator_id;
+    out->storage_key = frame->storage_key;
+    out->import_key = frame->import_key;
+    out->source_occurrence_id = frame->source_occurrence_id;
+    out->source_argument_index = frame->source_argument_index;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    out->capture_known = frame->capture_known;
+    out->capture_var_ids = frame->capture_var_ids;
+    out->capture_var_count = frame->capture_var_count;
+#endif
 }
 
 bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
@@ -159,19 +737,36 @@ bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
     if (!snapshot || !out || !prime_need_snapshot_present(snapshot) ||
         thunk_id == 0u)
         return false;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_QUERY);
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    if (snapshot->heap_index) {
+        size_t steps = 0u;
+        const PrimeNeedFrame *frame = prime_need_heap_index_lookup(
+            snapshot->heap_index, thunk_id, &steps);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_INDEX_STEP,
+            (uint64_t)steps);
+        if (!frame) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_INDEX_MISS);
+            return false;
+        }
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_INDEX_HIT);
+        prime_need_cell_view_from_frame(frame, out);
+        return true;
+    }
+#endif
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_LOG_FALLBACK);
     for (const PrimeNeedFrame *frame = snapshot->top; frame;
          frame = frame->parent) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_LOG_FRAME);
         if (frame->session_id == snapshot->session_id &&
             frame->thunk_id == thunk_id) {
-            out->cache_state = frame->cache_state;
-            out->origin = frame->origin;
-            out->cached = frame->cached;
-            out->authority_id = frame->authority_id;
-            out->evaluator_id = frame->evaluator_id;
-            out->storage_key = frame->storage_key;
-            out->import_key = frame->import_key;
-            out->source_occurrence_id = frame->source_occurrence_id;
-            out->source_argument_index = frame->source_argument_index;
+            prime_need_cell_view_from_frame(frame, out);
             return true;
         }
     }
@@ -186,6 +781,8 @@ static bool prime_need_snapshot_find_storage_key(
         return false;
     for (const PrimeNeedFrame *frame = snapshot->top; frame;
          frame = frame->parent) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_STORAGE_KEY_SCAN_FRAME);
         if (frame->session_id == snapshot->session_id &&
             frame->storage_key == storage_key) {
             if (out_thunk_id)
@@ -220,24 +817,57 @@ static bool prime_need_snapshot_find_imported_cell(
 static bool prime_need_snapshot_allocate_with_storage_key(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t storage_key, uint64_t source_occurrence_id,
-    uint64_t source_argument_index, PrimeNeedSnapshot *out,
+    uint64_t source_argument_index,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    bool capture_known, const VarId *capture_var_ids,
+    size_t capture_var_count,
+#endif
+    PrimeNeedSnapshot *out,
     uint64_t *out_thunk_id) {
     if (!owner || !base || !out || !out_thunk_id || !term ||
         !prime_need_snapshot_present(base))
         return false;
     uint64_t import_key = storage_key;
+    if (import_key != 0u)
+        prime_need_reserve_storage_keys_through(import_key);
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    const VarId *owned_capture_ids = NULL;
+    size_t owned_capture_count = 0u;
+    if (capture_known &&
+        !prime_need_capture_copy(
+            owner, capture_var_ids, capture_var_count,
+            &owned_capture_ids, &owned_capture_count))
+        return false;
+#endif
     if (import_key != 0u &&
         prime_need_snapshot_find_imported_cell(
             base, import_key, term, out_thunk_id)) {
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        if (capture_known) {
+            PrimeNeedCellView existing;
+            if (!prime_need_snapshot_lookup(
+                    base, *out_thunk_id, &existing))
+                return false;
+            if (existing.capture_known &&
+                !prime_need_capture_equal(
+                    &existing, owned_capture_ids,
+                    owned_capture_count))
+                return false;
+        }
+#endif
         *out = *base;
         return true;
     }
-    if (storage_key == 0u ||
-        prime_need_snapshot_find_storage_key(base, storage_key, NULL)) {
+    bool storage_key_in_use =
+        storage_key != 0u &&
+        storage_key <= base->max_storage_key &&
+        prime_need_snapshot_find_storage_key(base, storage_key, NULL);
+    if (storage_key == 0u || storage_key_in_use) {
         do {
             storage_key = prime_need_fresh_nonzero(
                 &g_prime_need_next_storage_key);
-        } while (prime_need_snapshot_find_storage_key(
+        } while (storage_key <= base->max_storage_key &&
+                 prime_need_snapshot_find_storage_key(
                      base, storage_key, NULL));
     }
     uint64_t thunk_id = prime_need_fresh_nonzero(&g_prime_need_next_thunk);
@@ -246,7 +876,11 @@ static bool prime_need_snapshot_allocate_with_storage_key(
     if (!prime_need_snapshot_push(
             owner, base, 0u, thunk_id, authority_id, 0u, storage_key,
             import_key, source_occurrence_id, source_argument_index,
-            PRIME_NEED_CACHE_EMPTY, term, NULL, out))
+            PRIME_NEED_CACHE_EMPTY, term, NULL,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+            capture_known, owned_capture_ids, owned_capture_count,
+#endif
+            out))
         return false;
     *out_thunk_id = thunk_id;
     return true;
@@ -258,7 +892,11 @@ bool prime_need_snapshot_allocate(Arena *owner,
                                   PrimeNeedSnapshot *out,
                                   uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, 0u, 0u, 0u, out, out_thunk_id);
+        owner, base, term, 0u, 0u, 0u,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        false, NULL, 0u,
+#endif
+        out, out_thunk_id);
 }
 
 uint64_t prime_need_fresh_source_occurrence(void) {
@@ -273,7 +911,11 @@ bool prime_need_snapshot_allocate_source_argument(
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
         owner, base, term, 0u, source_occurrence_id,
-        source_argument_index, out, out_thunk_id);
+        source_argument_index,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        false, NULL, 0u,
+#endif
+        out, out_thunk_id);
 }
 
 bool prime_need_snapshot_allocate_persisted(
@@ -283,8 +925,48 @@ bool prime_need_snapshot_allocate_persisted(
     if (storage_key == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, storage_key, 0u, 0u, out, out_thunk_id);
+        owner, base, term, storage_key, 0u, 0u,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        false, NULL, 0u,
+#endif
+        out, out_thunk_id);
 }
+
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+bool prime_need_snapshot_allocate_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, term, 0u, 0u, 0u, true,
+        capture_var_ids, capture_var_count, out, out_thunk_id);
+}
+
+bool prime_need_snapshot_allocate_source_argument_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
+    if (source_occurrence_id == 0u)
+        return false;
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, term, 0u, source_occurrence_id,
+        source_argument_index, true, capture_var_ids,
+        capture_var_count, out, out_thunk_id);
+}
+
+bool prime_need_snapshot_allocate_persisted_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t storage_key,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
+    if (storage_key == 0u)
+        return false;
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, term, storage_key, 0u, 0u, true,
+        capture_var_ids, capture_var_count, out, out_thunk_id);
+}
+#endif
 
 static bool prime_need_snapshot_transition(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
@@ -315,7 +997,12 @@ static bool prime_need_snapshot_transition(
         next == PRIME_NEED_CACHE_EVALUATING ? evaluator_id : 0u,
         previous.storage_key, previous.import_key,
         previous.source_occurrence_id, previous.source_argument_index,
-        next, previous.origin, cached, out);
+        next, previous.origin, cached,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        previous.capture_known, previous.capture_var_ids,
+        previous.capture_var_count,
+#endif
+        out);
 }
 
 bool prime_need_snapshot_start_evaluation(
@@ -375,8 +1062,12 @@ bool prime_need_snapshot_promote(Arena *dst,
         path[i - 1u] = cursor;
         cursor = cursor->parent;
     }
-    PrimeNeedSnapshot promoted = {.top = NULL,
-                                  .session_id = snapshot->session_id};
+    PrimeNeedSnapshot promoted = {
+        .top = NULL,
+        .session_id = snapshot->session_id,
+        .max_storage_key = 0u,
+        .owner = NULL,
+    };
     for (uint64_t i = 0u; i < depth; i++) {
         Atom *origin = atom_deep_copy(dst, path[i]->origin);
         Atom *cached = path[i]->cached
@@ -385,6 +1076,18 @@ bool prime_need_snapshot_promote(Arena *dst,
             free(path);
             return false;
         }
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        const VarId *capture_var_ids = NULL;
+        size_t capture_var_count = 0u;
+        if (path[i]->capture_known &&
+            !prime_need_capture_copy(
+                dst, path[i]->capture_var_ids,
+                path[i]->capture_var_count,
+                &capture_var_ids, &capture_var_count)) {
+            free(path);
+            return false;
+        }
+#endif
         PrimeNeedSnapshot next;
         if (!prime_need_snapshot_push(
                 dst, &promoted, path[i]->serial, path[i]->thunk_id,
@@ -392,7 +1095,12 @@ bool prime_need_snapshot_promote(Arena *dst,
                 path[i]->storage_key, path[i]->import_key,
                 path[i]->source_occurrence_id,
                 path[i]->source_argument_index,
-                path[i]->cache_state, origin, cached, &next)) {
+                path[i]->cache_state, origin, cached,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+                path[i]->capture_known, capture_var_ids,
+                capture_var_count,
+#endif
+                &next)) {
             free(path);
             return false;
         }
@@ -401,6 +1109,27 @@ bool prime_need_snapshot_promote(Arena *dst,
     free(path);
     *snapshot = promoted;
     return true;
+}
+
+bool prime_need_snapshot_excludes_arena(
+    const PrimeNeedSnapshot *snapshot, const Arena *forbidden) {
+    PrimeNeedArenaAudit *audit =
+        prime_need_arena_audit_new(forbidden);
+    if (!audit)
+        return false;
+    bool excludes = prime_need_arena_audit_snapshot(
+        audit, snapshot);
+    prime_need_arena_audit_free(audit);
+    return excludes;
+}
+
+bool prime_need_snapshot_owner_excludes_arena(
+    const PrimeNeedSnapshot *snapshot, const Arena *forbidden) {
+    if (!snapshot || !forbidden)
+        return false;
+    if (!prime_need_snapshot_present(snapshot) || !snapshot->top)
+        return true;
+    return snapshot->owner && snapshot->owner != forbidden;
 }
 
 Atom *prime_need_ref(Arena *arena, const PrimeNeedSnapshot *snapshot,
@@ -708,6 +1437,21 @@ static bool prime_need_receipt_reachable(
             CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_PARENT_ACCEPT);
         return true;
     }
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+    size_t index_steps = 0u;
+    bool indexed = prime_need_receipt_primary_reaches(
+        top, target, &index_steps);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_INDEX_STEP,
+        (uint64_t)index_steps);
+#endif
+    if (indexed) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_INDEX_ACCEPT);
+        return true;
+    }
+#endif
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_FALLBACK);
     bool found = prime_need_receipt_reaches_exact(
@@ -864,6 +1608,9 @@ bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
                       ? dst->top->depth : src->top->depth) + 1u,
         .has_event = false,
     };
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+    prime_need_receipt_build_primary_index(owner, join);
+#endif
     dst->top = join;
     dst->owner = owner;
     return true;
@@ -905,6 +1652,9 @@ static bool prime_need_receipt_append(
         .has_event = true,
         .event = event,
     };
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+    prime_need_receipt_build_primary_index(actual_owner, frame);
+#endif
     *out = (PrimeNeedReceipt){
         .top = frame,
         .session_id = session_id,
@@ -1213,6 +1963,9 @@ bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt) {
                     (source->event.after && !copy->event.after))
                     goto fail;
             }
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+            prime_need_receipt_build_primary_index(dst, copy);
+#endif
             copies[i] = copy;
             done[i] = true;
             completed++;
@@ -1237,4 +1990,16 @@ fail:
     free(done);
     prime_need_receipt_frames_free(&originals);
     return false;
+}
+
+bool prime_need_receipt_excludes_arena(
+    const PrimeNeedReceipt *receipt, const Arena *forbidden) {
+    PrimeNeedArenaAudit *audit =
+        prime_need_arena_audit_new(forbidden);
+    if (!audit)
+        return false;
+    bool excludes = prime_need_arena_audit_receipt(
+        audit, receipt);
+    prime_need_arena_audit_free(audit);
+    return excludes;
 }

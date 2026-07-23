@@ -3,6 +3,14 @@
 
 #include "atom.h"
 
+#ifndef CETTA_PRIME_NEED_HEAP_INDEX
+#define CETTA_PRIME_NEED_HEAP_INDEX 0
+#endif
+
+#ifndef CETTA_PRIME_NEED_CLOSURE_CAPTURE
+#define CETTA_PRIME_NEED_CLOSURE_CAPTURE 0
+#endif
+
 /* Prime's call-by-need store is a persistent, branch-local extension order.
  *
  * A snapshot is a finite path of cell updates.  Lookup observes the newest
@@ -13,8 +21,10 @@
  * cells, but no refinement can leak sideways into a sibling.
  *
  * Frames are arena-owned and immutable.  Cloning a snapshot is O(1), an
- * update is O(1), and promotion copies the path and its atom payloads into a
- * longer-lived arena.
+ * update appends one semantic history frame, and promotion copies the path
+ * and its atom payloads into a longer-lived arena.  An optional immutable
+ * radix index path-copies a bounded route to each newest cell frame; it is a
+ * derived lookup accelerator and never replaces the semantic history.
  *
  * Persisted graph keys name cells only together with their immutable origin.
  * Rehydrating the same (key, origin) pair preserves sharing.  Substitution may
@@ -30,10 +40,20 @@ typedef enum {
 } PrimeNeedCacheState;
 
 typedef struct PrimeNeedFrame PrimeNeedFrame;
+typedef struct PrimeNeedArenaAudit PrimeNeedArenaAudit;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+typedef struct PrimeNeedHeapIndexNode PrimeNeedHeapIndexNode;
+#endif
 
 typedef struct {
     const PrimeNeedFrame *top;
     uint64_t session_id;
+    uint64_t max_storage_key;
+    Arena *owner;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    const PrimeNeedHeapIndexNode *heap_index;
+    const PrimeNeedHeapIndexNode *lineage_index;
+#endif
 } PrimeNeedSnapshot;
 
 typedef struct {
@@ -46,6 +66,11 @@ typedef struct {
     uint64_t import_key;
     uint64_t source_occurrence_id;
     uint64_t source_argument_index;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    bool capture_known;
+    const VarId *capture_var_ids;
+    size_t capture_var_count;
+#endif
 } PrimeNeedCellView;
 
 /* A Prime answer carries the finite causal support that justified it.  The
@@ -103,6 +128,14 @@ bool prime_need_snapshot_merge(PrimeNeedSnapshot *dst,
                                const PrimeNeedSnapshot *src);
 bool prime_need_snapshot_promote(Arena *dst,
                                  PrimeNeedSnapshot *snapshot);
+bool prime_need_snapshot_excludes_arena(
+    const PrimeNeedSnapshot *snapshot, const Arena *forbidden);
+bool prime_need_snapshot_owner_excludes_arena(
+    const PrimeNeedSnapshot *snapshot, const Arena *forbidden);
+PrimeNeedArenaAudit *prime_need_arena_audit_new(
+    const Arena *forbidden);
+bool prime_need_arena_audit_snapshot(
+    PrimeNeedArenaAudit *audit, const PrimeNeedSnapshot *snapshot);
 
 bool prime_need_snapshot_allocate(Arena *owner,
                                   const PrimeNeedSnapshot *base,
@@ -118,6 +151,22 @@ bool prime_need_snapshot_allocate_persisted(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t storage_key, PrimeNeedSnapshot *out,
     uint64_t *out_thunk_id);
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+bool prime_need_snapshot_allocate_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+bool prime_need_snapshot_allocate_source_argument_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+bool prime_need_snapshot_allocate_persisted_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t storage_key,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+#endif
 bool prime_need_snapshot_start_evaluation(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, PrimeNeedSnapshot *out);
@@ -162,6 +211,11 @@ bool prime_need_receipt_compatible(const PrimeNeedReceipt *left,
 bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
                               const PrimeNeedReceipt *src);
 bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt);
+bool prime_need_receipt_excludes_arena(
+    const PrimeNeedReceipt *receipt, const Arena *forbidden);
+bool prime_need_arena_audit_receipt(
+    PrimeNeedArenaAudit *audit, const PrimeNeedReceipt *receipt);
+void prime_need_arena_audit_free(PrimeNeedArenaAudit *audit);
 bool prime_need_receipt_equal(const PrimeNeedReceipt *left,
                               const PrimeNeedReceipt *right);
 

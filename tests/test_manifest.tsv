@@ -39,6 +39,7 @@ tests/prime/conformance/abt_chain_scope.metta	prime	metta		any	native	test-prime
 tests/prime/conformance/abt_let_scope.metta	prime	metta		any	native	test-prime	golden	Prime provisional ABT let-scope evidence regression
 tests/prime/conformance/abt_sealed_boundary.metta	prime	metta		any	native	test-prime	golden	Prime derived ABT sealed-boundary evidence regression
 tests/prime/conformance/canonical_binders.metta	prime	metta		any	native	test-prime	golden	Prime derived canonical-binder evidence regression
+tests/prime/conformance/cell_lexical_refinement.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/language_identity.metta	prime	metta		any	native	test-profiles	property	Prime language-identity side of the independently versioned lane boundary
 tests/prime/conformance/language_identity.metta	he	metta	he-prime	main	native	test-profiles	property	HE-prime inert-syntax side of the independently versioned lane boundary
 tests/prime/conformance/occurs_check.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -60,6 +61,7 @@ tests/prime/practical/atp_indexed_library.metta	prime	metta		any	native	test-pri
 tests/prime/practical/atp_resolution_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_resolution_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_superposition_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/need_control_branch_discriminators.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/prism_agenda_policy_contrast.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
 tests/prime/practical/typed_pln_chainer.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime_02_completion_resources.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

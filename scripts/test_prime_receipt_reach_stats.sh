@@ -42,18 +42,25 @@ boundary=$(counter prime-need-receipt-reach-boundary-reject)
 self=$(counter prime-need-receipt-reach-self-accept)
 depth=$(counter prime-need-receipt-reach-depth-reject)
 parent=$(counter prime-need-receipt-reach-parent-accept)
+index=$(counter prime-need-receipt-reach-index-accept)
+index_steps=$(counter prime-need-receipt-reach-index-step)
 fallback=$(counter prime-need-receipt-reach-fallback)
 frames=$(counter prime-need-receipt-reach-fallback-frame)
-accounted=$((empty + boundary + self + depth + parent + fallback))
+accounted=$((empty + boundary + self + depth + parent + index + fallback))
 
 if ((queries != accounted)); then
     echo "FAIL: receipt reachability outcomes do not partition queries" >&2
     exit 1
 fi
-if ((fallback == 0 || frames <= fallback)); then
-    echo "FAIL: probe did not exercise multi-frame exact fallback" >&2
+if ((index > 0)); then
+    if ((index_steps < index || fallback != 0 || frames != 0)); then
+        echo "FAIL: indexed probe did not replace the recursive fallback" >&2
+        exit 1
+    fi
+elif ((fallback == 0 || frames <= fallback)); then
+    echo "FAIL: baseline probe did not exercise multi-frame exact fallback" >&2
     exit 1
 fi
 
 printf '%s\n' \
-    "PrimeReceiptReachStatsSummary PASS queries=${queries} fallback=${fallback} frames=${frames}"
+    "PrimeReceiptReachStatsSummary PASS queries=${queries} index=${index} index_steps=${index_steps} fallback=${fallback} frames=${frames}"
