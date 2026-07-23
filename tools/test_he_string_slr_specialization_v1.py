@@ -30,24 +30,24 @@ SUMMARY = re.compile(
     r"^\(ParserPackSLRSummaryV1 "
     r"(\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) 0\)$"
 )
-EXPECTED_NATIVE = (339, 394, 9, 353, 87, 439, 876, 1, 0)
-EXPECTED_MUTANT = (341, 397, 9, 355, 87, 441, 878, 1, 1)
+EXPECTED_NATIVE = (233, 279, 9, 209, 52, 219, 314, 1, 0)
+EXPECTED_MUTANT = (235, 282, 9, 211, 52, 221, 316, 1, 1)
 EXPECTED_LR1 = {
     "accepts": 1,
     "conflict_cells": 0,
     "conflicts": 0,
-    "gotos": 451,
+    "gotos": 219,
     "grammar_digest":
-        "4086ffac5f80f9d1141efbec2b2e6ca48d02b0178d4b9251f11b22903695b71f",
-    "max_state_items": 63,
-    "nonterminals": 266,
-    "productions": 394,
-    "reachable_productions": 306,
-    "reductions": 600,
-    "shifts": 93,
-    "states": 371,
+        "88c81a1f40fbe97d117f54c802ea20d7248f5a51be1ddb05bf24ba01cb4abd53",
+    "max_state_items": 61,
+    "nonterminals": 156,
+    "productions": 279,
+    "reachable_productions": 186,
+    "reductions": 282,
+    "shifts": 52,
+    "states": 209,
     "table_digest":
-        "88a754494ed3aaa72ab4ffdf9faa42cf8b16a3a13aa90cdca27e801a776fbadd",
+        "7e882e0a08aff99751d967376efc3f4cded707e1f71acd617b4c0c26e10a1e9e",
     "terminals": 17,
 }
 

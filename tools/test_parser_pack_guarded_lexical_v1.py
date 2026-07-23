@@ -83,9 +83,9 @@ EXPECTED_NATIVE = {
     "guard-source-digest":
         "5f00a6f5734ec6babce012888dbef9642d7be1fcafcbc71f59c5b30bf2073d88",
     "guard-pre-reflection-digest":
-        "9dd8b14184c0b01accaf76325ddbc2690c86c767b18c0bc38361c144a7da11fe",
+        "97b375b8b6e10a9120795420725baa97545055c99887ad8c95943f8136fe3126",
     "guard-environment-digest":
-        "447aad217df6a947a80ee7c96ed673f66d146c9f97c1d7eeed15ca18bde5e954",
+        "3aa4efeeb2fb62a16b5462d746d7c6a49460bc2edeed15bde590127acd86a3a5",
     "guard-answer-set-digest":
         "a343ebd17f880a01428dc2b0a21f0eb758142eecdaee6934347be47283d4ece2",
     "guard-evidence-count": "1",
@@ -94,16 +94,16 @@ EXPECTED_NATIVE = {
     "guard-nfa-answers": "10",
     "guard-tag-count": "1",
     "guard-plan-digest":
-        "f1b1ff28e55adb64b16efc830cc9383734fa2ba1aea70b6a2ca35e88314ca2f2",
+        "7814a2e726fb3e62519fbe57940ce0cacc7d83b4f5fe77f6487b6d4631006659",
     "guard-evidence-digest":
-        "d95031b28476e52e0dd92cb28132bccdfadcaea275e122717c6547d9077c101e",
+        "a5e7b8da5050b20fc55b36a1f10135b94562143f818a2b2d6f73f8860fb63511",
     "guarded-compiler-digest":
         "395867dc43f7a202ec500faf1dfb28b281fd04e699a63a48d4d90f937204c181",
     "guarded-nfa-answer-digest": EXPECTED_GUARDED_DIGEST,
     "guarded-nfa-answers": str(EXPECTED_GUARDED_ANSWERS),
     "guarded-tag-count": "1",
     "guarded-plan-digest":
-        "e91345f2f3bc406d4d32b7f343aa8dbf62f241ee6e1a5fa565a8aa93e9414132",
+        "a338fa2cb3c2c63dca764f3ecdf8b47cbaa580b7cf611d3ad8f27f223fcce1ef",
     "guarded-terminal-extension-count": "1",
     "composite-grammar-productions": "85",
     "slr-states": "36",
@@ -133,13 +133,13 @@ EXPECTED_LR1 = {
     "terminals": 6,
 }
 EXPECTED_MATRIX_DIGEST = (
-    "8061029b1ed74a2e55894226a435e8f1dc2a46718a26814aa63cd07b7d0f7e74"
+    "65789fc1a5ebb285157ce36bd0f48ab76ed4c60c2a38e4d0073d9738f9f7b71d"
 )
 EXPECTED_EXECUTION_PLAN_DIGEST = (
-    "103be21b9387444196f0c09c060612f879ea3c81faa5b941086305b9b2ea8285"
+    "1c6873759c8dd5725dbf609de5cecc58a7e589c9aa096c874877f822b17499b4"
 )
 EXPECTED_EXECUTION_MATRIX_DIGEST = (
-    "2152d7f56804ce1a1a98ecbf246e30be7428f10e14791e6fd55bfcb7d1d250ad"
+    "fb9d472196d94951cd2943b1266c50507243fd93723ed80a53c857b3ec18def3"
 )
 EXPECTED_SLR_SHADOW_MATRIX_DIGEST = (
     "d57c5b504d9a65aaa22c186930228d04f3b4b75243661f83798d7eeaab0edb1b"
@@ -363,6 +363,8 @@ def run_exec(
     action_compiler_digest: str | None = None,
     benchmark_iterations: int | None = None,
     cursor_hybrid_only: bool = False,
+    emit_c_path: Path | None = None,
+    emit_c_prefix: str | None = None,
 ) -> dict[str, object]:
     if benchmark_iterations is not None and benchmark_iterations <= 0:
         raise GateFailure("benchmark iterations must be positive")
@@ -374,6 +376,15 @@ def run_exec(
         raise GateFailure(
             "cursor-only hybrid execution requires actions and iterations"
         )
+    if (emit_c_path is None) != (emit_c_prefix is None):
+        raise GateFailure("generated C path and prefix must be supplied together")
+    if emit_c_path is not None and (
+        benchmark_iterations is not None
+        or cursor_hybrid_only
+        or action_path is None
+        or action_compiler_digest is None
+    ):
+        raise GateFailure("generated C requires bound actions and no benchmark")
     command = [
         str(binary),
         *(str(path) for path in paths),
@@ -391,6 +402,8 @@ def run_exec(
         if cursor_hybrid_only:
             command.append("--cursor-hybrid-only")
         command.append(str(benchmark_iterations))
+    elif emit_c_path is not None:
+        command.extend(("--emit-c", str(emit_c_path), str(emit_c_prefix)))
     completed = subprocess.run(
         command,
         cwd=ROOT,

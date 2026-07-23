@@ -46,7 +46,9 @@ tests/prime/conformance/resource_policy.metta	prime	metta		any	native	test-prime
 tests/prime/conformance/syntax_algebra.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/first_class_contexts.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_demand_modes.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_explicit_control.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_explicit_control_negative.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_gc_lifetime.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -58,6 +60,7 @@ tests/prime/practical/atp_indexed_library.metta	prime	metta		any	native	test-pri
 tests/prime/practical/atp_resolution_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_resolution_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/atp_superposition_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/prism_agenda_policy_contrast.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
 tests/prime/practical/typed_pln_chainer.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime_02_completion_resources.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/spec_include_unit.metta	he	metta	he-extended	main	native	test	golden	-

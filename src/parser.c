@@ -36,6 +36,8 @@ static __thread bool g_rational_literals_enabled = true;
 static __thread bool g_universal_name_syntax_enabled = false;
 static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
+static ParserDocumentIdsBackend g_document_ids_backend;
+static __thread bool g_document_ids_backend_active = false;
 
 static const ParserSyntaxFormSpec g_syntax_forms[] = {
     {PARSER_SYNTAX_QUOTE,
@@ -114,6 +116,21 @@ ParserBareDollarMode parser_set_bare_dollar_mode(
 
 ParserBareDollarMode parser_bare_dollar_mode(void) {
     return g_bare_dollar_mode;
+}
+
+bool parser_set_document_ids_backend(
+    const ParserDocumentIdsBackend *backend) {
+    if (!backend || !backend->context || !backend->parse_text_ids ||
+        !backend->parse_file_ids || g_document_ids_backend.context) {
+        return false;
+    }
+    g_document_ids_backend = *backend;
+    return true;
+}
+
+void parser_clear_document_ids_backend(void *context) {
+    if (context && g_document_ids_backend.context == context)
+        memset(&g_document_ids_backend, 0, sizeof(g_document_ids_backend));
 }
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
@@ -254,6 +271,14 @@ typedef struct {
     uint32_t name_len;
     uint32_t name_cap;
 } ParserVarScope;
+
+struct ParserHostProjectionV1 {
+    TermUniverse *universe;
+    Arena scratch;
+    ArenaMark scratch_root;
+    ParserVarScope scope;
+    bool form_active;
+};
 
 static void parser_var_scope_init(ParserVarScope *scope) {
     scope->spellings = NULL;
@@ -538,6 +563,256 @@ static ParserSynLowerStatus parser_lower_syn_expression_id(
     return PARSER_SYN_LOWER_INVALID;
 }
 
+static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
+                                     const char *tok) {
+    char *endp;
+    long long val;
+
+    if (!universe || !scratch || !tok || !*tok)
+        return CETTA_ATOM_ID_NONE;
+    if (strcmp(tok, "True") == 0)
+        return tu_intern_bool(universe, true);
+    if (strcmp(tok, "False") == 0)
+        return tu_intern_bool(universe, false);
+    if (strcmp(tok, "PI") == 0)
+        return tu_intern_float(universe, M_PI);
+    if (strcmp(tok, "EXP") == 0)
+        return tu_intern_float(universe, M_E);
+
+    errno = 0;
+    val = strtoll(tok, &endp, 10);
+    if (*endp == '\0' && errno == 0)
+        return tu_intern_int(universe, (int64_t)val);
+    if (!strchr(tok, '.')) {
+        if (g_rational_literals_enabled && strchr(tok, '/')) {
+            AtomId rational_id = tu_intern_rational(universe, tok);
+            if (rational_id != CETTA_ATOM_ID_NONE)
+                return rational_id;
+        }
+        char *canonical = cetta_bigint_canonicalize_owned(tok);
+        if (canonical) {
+            free(canonical);
+            return tu_intern_bigint(universe, tok);
+        }
+    }
+    if (strchr(tok, '.')) {
+        char *fendp;
+        double fval;
+        errno = 0;
+        fval = strtod(tok, &fendp);
+        if (*fendp == '\0' && errno == 0)
+            return tu_intern_float(universe, fval);
+    }
+    return tu_intern_symbol(
+        universe, symbol_intern_cstr(
+                      g_symbols,
+                      parser_canonicalize_namespace_token(scratch, tok)));
+}
+
+ParserHostProjectionV1 *parser_host_projection_v1_new(
+    TermUniverse *universe) {
+    ParserHostProjectionV1 *projection;
+
+    if (!universe || !g_symbols)
+        return NULL;
+    projection = calloc(1u, sizeof(*projection));
+    if (!projection)
+        return NULL;
+    projection->universe = universe;
+    arena_init(&projection->scratch);
+    arena_set_hashcons(&projection->scratch, NULL);
+    projection->scratch_root = arena_mark(&projection->scratch);
+    parser_var_scope_init(&projection->scope);
+    return projection;
+}
+
+void parser_host_projection_v1_free(ParserHostProjectionV1 *projection) {
+    if (!projection)
+        return;
+    parser_var_scope_free(&projection->scope);
+    arena_free(&projection->scratch);
+    free(projection);
+}
+
+bool parser_host_projection_v1_begin_form(
+    ParserHostProjectionV1 *projection) {
+    if (!projection || !projection->universe || !g_symbols)
+        return false;
+    parser_var_scope_free(&projection->scope);
+    parser_var_scope_init(&projection->scope);
+    arena_reset(&projection->scratch, projection->scratch_root);
+    projection->form_active = true;
+    return true;
+}
+
+static char *parser_host_projection_v1_cstr(
+    ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len,
+    bool require_nonempty) {
+    char *text;
+
+    if (!projection || !projection->form_active ||
+        (require_nonempty && len == 0u) || (len > 0u && !bytes) ||
+        (len > 0u && memchr(bytes, '\0', len))) {
+        return NULL;
+    }
+    text = arena_alloc(&projection->scratch, len + 1u);
+    if (len > 0u)
+        memcpy(text, bytes, len);
+    text[len] = '\0';
+    return text;
+}
+
+AtomId parser_host_projection_v1_word_bytes(
+    ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len) {
+    char *text = parser_host_projection_v1_cstr(
+        projection, bytes, len, true);
+    return text ? parser_project_word_id(
+                      projection->universe, &projection->scratch, text)
+                : CETTA_ATOM_ID_NONE;
+}
+
+AtomId parser_host_projection_v1_variable_bytes(
+    ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len) {
+    char *text = parser_host_projection_v1_cstr(
+        projection, bytes, len, true);
+    const char *canonical;
+    SymbolId spelling;
+
+    if (!text)
+        return CETTA_ATOM_ID_NONE;
+    canonical = parser_canonicalize_namespace_token(
+        &projection->scratch, text);
+    spelling = symbol_intern_cstr(g_symbols, canonical);
+    return tu_intern_var(
+        projection->universe, spelling,
+        parser_var_scope_id(&projection->scope, spelling));
+}
+
+AtomId parser_host_projection_v1_anonymous_variable(
+    ParserHostProjectionV1 *projection) {
+    SymbolId spelling;
+    if (!projection || !projection->form_active || !projection->universe ||
+        !g_symbols) {
+        return CETTA_ATOM_ID_NONE;
+    }
+    spelling = symbol_intern_cstr(g_symbols, "");
+    return tu_intern_var(projection->universe, spelling, fresh_var_id());
+}
+
+AtomId parser_host_projection_v1_string_bytes(
+    ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len) {
+    char *text = parser_host_projection_v1_cstr(
+        projection, bytes, len, false);
+    return text ? tu_intern_string(projection->universe, text)
+                : CETTA_ATOM_ID_NONE;
+}
+
+AtomId parser_host_projection_v1_expression(
+    ParserHostProjectionV1 *projection, const AtomId *children,
+    CettaExprLen arity) {
+    AtomId result = CETTA_ATOM_ID_NONE;
+    ParserSynLowerStatus lowered;
+
+    if (!projection || !projection->form_active ||
+        (arity > 0u && !children)) {
+        return CETTA_ATOM_ID_NONE;
+    }
+    lowered = parser_lower_syn_expression_id(
+        projection->universe, &projection->scratch, children, arity,
+        &projection->scope, &result);
+    if (lowered == PARSER_SYN_LOWER_NOT_FORM)
+        return tu_expr_from_ids(projection->universe, children, arity);
+    if (lowered == PARSER_SYN_LOWER_INVALID)
+        return CETTA_ATOM_ID_NONE;
+    return result;
+}
+
+static AtomId parser_project_atom_id_scoped(
+    ParserHostProjectionV1 *projection, Atom *atom, uint32_t depth) {
+    if (!projection || !atom || depth == 0u)
+        return CETTA_ATOM_ID_NONE;
+    switch (atom->kind) {
+    case ATOM_SYMBOL: {
+        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
+        size_t len = symbol_len(g_symbols, atom->sym_id);
+        return parser_host_projection_v1_word_bytes(
+            projection, (const uint8_t *)bytes, len);
+    }
+    case ATOM_VAR: {
+        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
+        size_t len = symbol_len(g_symbols, atom->sym_id);
+        return len == 0u
+                   ? parser_host_projection_v1_anonymous_variable(projection)
+                   : parser_host_projection_v1_variable_bytes(
+                         projection, (const uint8_t *)bytes, len);
+    }
+    case ATOM_GROUNDED:
+        return term_universe_store_atom_id(
+            projection->universe, &projection->scratch, atom);
+    case ATOM_EXPR: {
+        AtomId *children = NULL;
+        AtomId result = CETTA_ATOM_ID_NONE;
+        CettaExprLen arity = atom->expr.len;
+        if (arity > 0u) {
+            children = cetta_malloc(sizeof(*children) * (size_t)arity);
+            if (!children)
+                return CETTA_ATOM_ID_NONE;
+        }
+        for (CettaExprIndex index = 0u; index < arity; index++) {
+            children[index] = parser_project_atom_id_scoped(
+                projection, atom->expr.elems[index], depth - 1u);
+            if (children[index] == CETTA_ATOM_ID_NONE)
+                goto done;
+        }
+        result = parser_host_projection_v1_expression(
+            projection, children, arity);
+done:
+        free(children);
+        return result;
+    }
+    }
+    return CETTA_ATOM_ID_NONE;
+}
+
+bool parser_project_document_ids(Atom *const *atoms, uint32_t atom_len,
+                                 TermUniverse *universe, AtomId **out_ids) {
+    ParserHostProjectionV1 *projection = NULL;
+    AtomId *ids = NULL;
+
+    if (!out_ids)
+        return false;
+    *out_ids = NULL;
+    if (!universe || (atom_len > 0u && !atoms))
+        return false;
+    if (atom_len > 0u) {
+        ids = cetta_malloc(sizeof(*ids) * (size_t)atom_len);
+        if (!ids)
+            return false;
+    }
+    projection = parser_host_projection_v1_new(universe);
+    if (!projection) {
+        free(ids);
+        return false;
+    }
+    for (uint32_t index = 0u; index < atom_len; index++) {
+        if (!parser_host_projection_v1_begin_form(projection)) {
+            free(ids);
+            parser_host_projection_v1_free(projection);
+            return false;
+        }
+        ids[index] = parser_project_atom_id_scoped(
+            projection, atoms[index], CETTA_PARSE_DEPTH_LIMIT);
+        if (ids[index] == CETTA_ATOM_ID_NONE) {
+            free(ids);
+            parser_host_projection_v1_free(projection);
+            return false;
+        }
+    }
+    parser_host_projection_v1_free(projection);
+    *out_ids = ids;
+    return true;
+}
+
 /* ── Parse a single token or expression ─────────────────────────────────── */
 
 static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
@@ -656,8 +931,8 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     memcpy(tok, text + start, len);
     tok[len] = '\0';
 
-    /* Variable: starts with $.  Prime's bare `$` is a fresh anonymous
-       variable; the alternate identity policies remain tournament controls. */
+    /* Prime's bare `$` is a fresh anonymous variable. Named variables keep
+       their ordinary per-form co-reference. */
     if (tok[0] == '$') {
         if (len > 1) {
             const char *spelling_text =
@@ -875,44 +1150,7 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
         }
     }
 
-    if (strcmp(tok, "True") == 0)
-        return tu_intern_bool(universe, true);
-    if (strcmp(tok, "False") == 0)
-        return tu_intern_bool(universe, false);
-    if (strcmp(tok, "PI") == 0)
-        return tu_intern_float(universe, M_PI);
-    if (strcmp(tok, "EXP") == 0)
-        return tu_intern_float(universe, M_E);
-
-    char *endp;
-    errno = 0;
-    long long val = strtoll(tok, &endp, 10);
-    if (*endp == '\0' && errno == 0)
-        return tu_intern_int(universe, (int64_t)val);
-    if (!strchr(tok, '.')) {
-        if (g_rational_literals_enabled && strchr(tok, '/')) {
-            AtomId rational_id = tu_intern_rational(universe, tok);
-            if (rational_id != CETTA_ATOM_ID_NONE)
-                return rational_id;
-        }
-        char *canonical = cetta_bigint_canonicalize_owned(tok);
-        if (canonical) {
-            free(canonical);
-            return tu_intern_bigint(universe, tok);
-        }
-    }
-
-    if (strchr(tok, '.')) {
-        char *fendp;
-        errno = 0;
-        double fval = strtod(tok, &fendp);
-        if (*fendp == '\0' && errno == 0)
-            return tu_intern_float(universe, fval);
-    }
-
-    return tu_intern_symbol(
-        universe, symbol_intern_cstr(
-                      g_symbols, parser_canonicalize_namespace_token(scratch, tok)));
+    return parser_project_word_id(universe, scratch, tok);
 }
 
 AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos) {
@@ -1425,18 +1663,52 @@ int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
     return count;
 }
 
-int parse_metta_text_ids(const char *text, TermUniverse *universe,
-                         AtomId **out_ids) {
+int parse_metta_text_ids_diagnostic(const char *text,
+                                    TermUniverse *universe,
+                                    AtomId **out_ids, char *error_buf,
+                                    size_t error_buf_size) {
+    int result;
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
     if (!text) {
         if (out_ids)
             *out_ids = NULL;
         return -1;
     }
+    if (g_document_ids_backend.parse_text_ids &&
+        !g_document_ids_backend_active) {
+        g_document_ids_backend_active = true;
+        result = g_document_ids_backend.parse_text_ids(
+            g_document_ids_backend.context, text, universe, out_ids,
+            error_buf, error_buf_size);
+        g_document_ids_backend_active = false;
+        return result;
+    }
     return parse_metta_buffer_ids(text, universe, out_ids);
 }
 
-int parse_metta_file_ids(const char *filename, TermUniverse *universe,
+int parse_metta_text_ids(const char *text, TermUniverse *universe,
                          AtomId **out_ids) {
+    return parse_metta_text_ids_diagnostic(
+        text, universe, out_ids, NULL, 0u);
+}
+
+int parse_metta_file_ids_diagnostic(const char *filename,
+                                    TermUniverse *universe,
+                                    AtomId **out_ids, char *error_buf,
+                                    size_t error_buf_size) {
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (g_document_ids_backend.parse_file_ids &&
+        !g_document_ids_backend_active) {
+        int result;
+        g_document_ids_backend_active = true;
+        result = g_document_ids_backend.parse_file_ids(
+            g_document_ids_backend.context, filename, universe, out_ids,
+            error_buf, error_buf_size);
+        g_document_ids_backend_active = false;
+        return result;
+    }
     FILE *f = fopen(filename, "r");
     if (!f)
         return -1;
@@ -1453,4 +1725,10 @@ int parse_metta_file_ids(const char *filename, TermUniverse *universe,
     (void)nread;
     free(text);
     return count;
+}
+
+int parse_metta_file_ids(const char *filename, TermUniverse *universe,
+                         AtomId **out_ids) {
+    return parse_metta_file_ids_diagnostic(
+        filename, universe, out_ids, NULL, 0u);
 }

@@ -1,0 +1,72 @@
+; JeTTa performance-suite workload 4: depth-bounded synthesis of the
+; Fibonacci recurrence. This intentionally retains operators as data and a
+; variable in call-head position. @N@ independent solves are checksummed.
+
+(= (mam:sq nat 1) 1)
+(= (mam:sq nat 2) 2)
+(= (mam:sq nat 3) 3)
+(= (mam:sq nat 4) 4)
+(= (mam:sq nat 5) 5)
+(= (mam:len nat) 5)
+
+(= (mam:sq fib 1) 1)
+(= (mam:sq fib 2) 1)
+(= (mam:sq fib 3) 2)
+(= (mam:sq fib 4) 3)
+(= (mam:sq fib 5) 5)
+(= (mam:sq fib 6) 8)
+(= (mam:len fib) 6)
+
+(= (mam:gen $depth $iteration)
+   (let $zero (* 0 $iteration)
+     (superpose (N (C (+ 1 $zero)) (C 2) (X 1) (X 2)))))
+(= (mam:gen $depth $iteration)
+   (if (> (+ $depth (* 0 $iteration)) 0)
+       (Bin
+         (superpose (+ - *))
+         (mam:gen (- $depth 1) $iteration)
+         (mam:gen (- $depth 1) $iteration))
+       (empty)))
+
+(= (mam:synth-eval N $sequence $n) $n)
+(= (mam:synth-eval (C $constant) $sequence $n) $constant)
+(= (mam:synth-eval (X $offset) $sequence $n)
+   (mam:sq $sequence (- $n $offset)))
+(= (mam:synth-eval (Bin $operator $left $right) $sequence $n)
+   ($operator
+     (mam:synth-eval $left $sequence $n)
+     (mam:synth-eval $right $sequence $n)))
+
+(= (mam:check $expression $sequence $n)
+   (if (> $n (mam:len $sequence))
+       True
+       (if (== (mam:synth-eval $expression $sequence $n)
+               (mam:sq $sequence $n))
+           (mam:check $expression $sequence (+ $n 1))
+           False)))
+
+(= (mam:solve $sequence $depth $iteration)
+   (let $expression (mam:gen $depth $iteration)
+     (if (mam:check $expression $sequence 3)
+         $expression
+         (empty))))
+
+(= (mam:synthesis-once $iteration)
+   (let $answers (collapse (mam:solve fib 1 $iteration))
+     (let $matches
+       (filter-atom
+         $answers
+         $answer
+         (eval (== $answer (Bin + (X 1) (X 2)))))
+       (if (> (size-atom $matches) 0)
+           1
+           0))))
+
+(= (mam:synthesis-loop $remaining $sum)
+   (if (< $remaining 1)
+       $sum
+       (let $next (- $remaining 1)
+         (let $value (mam:synthesis-once $next)
+           (mam:synthesis-loop $next (+ $sum $value))))))
+
+!(mam:synthesis-loop @N@ 0)

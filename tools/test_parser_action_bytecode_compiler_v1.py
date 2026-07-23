@@ -13,10 +13,10 @@ from test_finite_horn_chart_v1 import COMMON, PRESENTATIONS, CASES, run_json
 
 
 EXPECTED_MATRIX_DIGEST = (
-    "ef7c2eca86058012d83f0a72500346607851547629949373b2ca5f496e5541da"
+    "44fc543a0f265e5d978b9370114530a0e8855656c9c27e2042b991bc3a11f913"
 )
 EXPECTED_GUARD_MATRIX_DIGEST = (
-    "4ecc8cfaa6397e7210c5146767947bb6c19ed76dfab137139f28423a2f2554be"
+    "05a6bfff40ee347c1131ea14c865679e6a14085585ee4c2137bfb66ad5c08844"
 )
 GUARD_ACTION_ROWS = {
     "extension": {
@@ -30,9 +30,9 @@ GUARD_ACTION_ROWS = {
     },
     "union": {
         "relation": "compile-guard-extended-action-program",
-        "count": 397,
+        "count": 282,
         "digest":
-            "345adba3c308773b8bfd339f171f600f64e3af6399a2ef4dc97a2e22067a7edb",
+            "9c4ff108eb75369434f5058333b5d921c9da217884eeb8ea02ff26ad3d926df4",
         "petta_count": "guard_union_count",
         "petta_digest": "guard_union_digest",
         "petta_terms": "guard_union_terms",
@@ -49,8 +49,8 @@ ACTION_CASES = {
             "languages/he_reader_v1.metta",
         ),
         "actions": (
-            394,
-            "81bb363ebd1cad73db03405344f5a9310e925ffce524e90bce505fd42802e69e",
+            279,
+            "4ea00d441b832d4d33fde53ea47ea8495c89da661821916634aedc9698957b8f",
         ),
     },
     **CASES,
@@ -281,8 +281,8 @@ def main() -> int:
         raise GateFailure("action compiler matrix seal changed")
     guard_digest = guard_matrix_digest()
     if (
-        guard_native_certificates != 400
-        or petta.get("guard_replay_count") != 400
+        guard_native_certificates != 285
+        or petta.get("guard_replay_count") != 285
         or guard_digest != EXPECTED_GUARD_MATRIX_DIGEST
     ):
         raise GateFailure("guard-action compiler evidence or seal changed")

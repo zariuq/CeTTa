@@ -1,0 +1,42 @@
+; JeTTa performance-suite workload 3: SICP-style symbolic differentiation
+; followed by numeric evaluation at x = 3.
+;
+; JeTTa's compiler reduces nested calls in constructor arguments. CeTTa keeps
+; data constructors inert, so mam:derivative-value names the corresponding
+; explicit evaluation boundary. The checksum is 27 * @N@.
+
+(= (mam:d x $iteration)
+   (let $zero (* 0 $iteration)
+     (Lit (+ 1 $zero))))
+(= (mam:d (Lit $n) $iteration)
+   (let $zero (* 0 $iteration)
+     (Lit $zero)))
+(= (mam:d (Plus $a $b) $iteration)
+   (let $da (mam:d $a $iteration)
+     (let $db (mam:d $b $iteration)
+       (Plus $da $db))))
+(= (mam:d (Mul $a $b) $iteration)
+   (let $da (mam:d $a $iteration)
+     (let $db (mam:d $b $iteration)
+       (Plus (Mul $da $b) (Mul $a $db)))))
+
+(= (mam:eval-poly x) 3)
+(= (mam:eval-poly (Lit $n)) $n)
+(= (mam:eval-poly (Plus $a $b))
+   (+ (mam:eval-poly $a) (mam:eval-poly $b)))
+(= (mam:eval-poly (Mul $a $b))
+   (* (mam:eval-poly $a) (mam:eval-poly $b)))
+
+(= (mam:derivative-value $expression $iteration)
+   (let $derivative (mam:d $expression $iteration)
+     (mam:eval-poly $derivative)))
+
+!(let $iterations (range-atom @N@)
+   (foldl-atom
+     $iterations
+     0
+     $sum
+     $iteration
+     (eval
+       (+ $sum
+          (mam:derivative-value (Mul x (Mul x x)) $iteration)))))

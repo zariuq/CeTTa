@@ -13,9 +13,10 @@ import tempfile
 from typing import Any
 
 from gslt2parse_schema_v1 import render
+from he_reader_ratified_cases_v1 import RATIFIED_ATOM_CASES
+from he_reader_ratified_cases_v1 import check_rust_observation
 from run_he_parser_oracle_v1 import build_oracle
 from sexpr_atom_projection_plan_v1 import compile_artifact
-from test_he_parser_authority_v1 import ATOM_CASES
 from test_he_parser_authority_v1 import run_case as run_he_case
 from test_he_reader_guard_exec_v1 import expected_decision
 from test_he_reader_guard_exec_v1 import matrix_digest
@@ -56,18 +57,17 @@ from test_semantic_mask_span_compiler_v1 import SEMANTIC_COMPILER_PREFIX
 ROOT = Path(__file__).resolve().parents[1]
 HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 EXPECTED_MATRIX_DIGEST = (
-    "22e605e6cf685906b47e9c275eed4662d56b2a4963dc9b75b16d4bf0899cedac"
+    "b2b1dd78a8b4087df48ed71d2b09cfd4d52d6009cd6692e6857a5def8a4f23e1"
 )
 EXPECTED_SEMANTIC_MASK_ANSWER_DIGEST = (
-    "9d5b079f212bf2de8f66ae75ba43ec2e3e135982714eb63e17adbe95fa61d1c7"
+    "978a1efdabf631d4736d2b0cd7dee832cfe2c40a3d45f8b0eec97fc5b289e4a1"
 )
 EXPECTED_SEMANTIC_MASK_BINDING_DIGEST = (
-    "a7a6d761a903ca79ef6bd199ddcdb681a7076968e2b9d9e6aa5cddba51fff70f"
+    "be9e4de55893f3f7980493d07c10a218a7053b48fc34a3f42705c3b8da3b366e"
 )
 EXPECTED_MASK_EXECUTION = {
     "word": (1, 5, 5),
     "variable": (1, 2, 1),
-    "bare-dollar-variable": (1, 1, 0),
     "repeated-variable": (3, 5, 3),
     "string-escapes": (1, 26, 8),
     "empty-expression": (0, 0, 0),
@@ -194,7 +194,7 @@ def compile_semantic_mask_artifact(
             raise GateFailure(f"HE semantic-mask root link lacks {label}")
         terms.append(links[label])
     artifact = tuple(sorted(set(terms)))
-    if len(artifact) != 3012:
+    if len(artifact) != 745:
         raise GateFailure("HE semantic-mask artifact collapsed source answers")
     digest = mask_answer_digest(artifact)
     if digest != EXPECTED_SEMANTIC_MASK_ANSWER_DIGEST:
@@ -305,14 +305,14 @@ def require_receipt(
         "action-answer-digest": EXPECTED_GUARD_ACTION_ANSWER_DIGEST,
         "action-program-digest": EXPECTED_GUARD_ACTION_PROGRAM_DIGEST,
         "projection-action-program-digest":
-            "fe3f3d3feea287ee37e49a42941578643346dcd92e503f9a23cd8fd9f46f5b27",
+            "1b4e40b04f9f41068b0ad6d22586a253649c47963ada2d8268ef091462d7fb6c",
         "semantic-mask-compiler-digest":
             EXPECTED_SEMANTIC_MASK_COMPILER_DIGEST,
         "semantic-mask-answer-digest":
             EXPECTED_SEMANTIC_MASK_ANSWER_DIGEST,
         "semantic-mask-binding-digest":
             EXPECTED_SEMANTIC_MASK_BINDING_DIGEST,
-        "projection-action-productions": "397",
+        "projection-action-productions": "282",
         "semantic-mask-bound-terminals": "3",
         "prepared-builds": "1",
         "source-passes": "1",
@@ -440,6 +440,7 @@ def main() -> int:
     rejected = 0
     invalid_utf8 = 0
     authority_agreements = 0
+    authority_disagreements = 0
     reference_agreements = 0
     atom_agreements = 0
     replay_agreements = 0
@@ -476,18 +477,27 @@ def main() -> int:
         )
         first_valid_input: Path | None = None
 
-        for index, (label, (input_bytes, expected)) in enumerate(ATOM_CASES.items()):
+        for index, (label, (input_bytes, expected)) in enumerate(
+            RATIFIED_ATOM_CASES.items()
+        ):
             input_path = directory / f"case-{index}.input"
             input_path.write_bytes(input_bytes)
             input_paths_by_label[label] = input_path
             authority = run_he_case(he_oracle, "atoms", input_path)
-            if authority != expected:
-                raise GateFailure(f"HE authority changed for {label}")
-            authority_agreements += 1
+            try:
+                rust_relation = check_rust_observation(label, authority)
+            except RuntimeError as error:
+                raise GateFailure(str(error)) from error
+            if rust_relation == "agrees":
+                authority_agreements += 1
+            else:
+                authority_disagreements += 1
             reference = run_petta(petta_root, input_path)
             decision = expected_decision(expected)
             if reference.get("decision") != decision:
-                raise GateFailure(f"HE and PeTTa decisions differ for {label}")
+                raise GateFailure(
+                    f"ratified HE contract and PeTTa decisions differ for {label}"
+                )
 
             if reference.get("decode") == "invalid-utf8":
                 run_pipeline(
@@ -508,21 +518,25 @@ def main() -> int:
                         "input": input_bytes.hex(),
                         "label": label,
                         "mode": "invalid-utf8-fail-closed",
+                        "rust_relation": rust_relation,
                     }
                 )
                 continue
 
-            row = run_pipeline(
-                pipeline_binary,
-                paths,
-                projection_path,
-                input_path,
-                regular_digest,
-                guarded_digest,
-                action_digest,
-                semantic_mask_compiler_digest,
-                expect_success=True,
-            )
+            try:
+                row = run_pipeline(
+                    pipeline_binary,
+                    paths,
+                    projection_path,
+                    input_path,
+                    regular_digest,
+                    guarded_digest,
+                    action_digest,
+                    semantic_mask_compiler_digest,
+                    expect_success=True,
+                )
+            except GateFailure as error:
+                raise GateFailure(f"{label}: {error}") from error
             input_scalars = reference.get("input_scalars")
             if not isinstance(input_scalars, int):
                 raise GateFailure("PeTTa reference omitted its scalar receipt")
@@ -575,6 +589,7 @@ def main() -> int:
                     "cursor_trace": row["cursor-trace-digest"],
                     "input": input_bytes.hex(),
                     "label": label,
+                    "rust_relation": rust_relation,
                     "projected_tokens": row["projected-tokens"],
                 }
             )
@@ -759,8 +774,9 @@ def main() -> int:
             "prepared HE pipeline matrix changed: " + observed_digest
         )
     print(
-        f"(HEDocumentPipelineV1Summary {len(ATOM_CASES)} {accepted} "
+        f"(HEDocumentPipelineV1Summary {len(RATIFIED_ATOM_CASES)} {accepted} "
         f"{rejected} {invalid_utf8} {authority_agreements} "
+        f"{authority_disagreements} "
         f"{reference_agreements} {atom_agreements} {replay_agreements} "
         f"{lexical_agreements} {mutations} {EXPECTED_MATRIX_DIGEST} 0)"
     )

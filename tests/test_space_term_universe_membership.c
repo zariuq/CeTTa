@@ -393,11 +393,12 @@ int main(void) {
             atom_symbol_id(&equation_scratch, source_head),
         };
         Atom *source_lhs = atom_expr(&equation_scratch, source_lhs_elems, 1);
-        space_add(&equation_space,
-                  atom_expr3(&equation_scratch,
-                             atom_symbol_id(&equation_scratch,
-                                            g_builtin_syms.equals),
-                             source_lhs, atom_true(&equation_scratch)));
+        Atom *source_equation =
+            atom_expr3(&equation_scratch,
+                       atom_symbol_id(&equation_scratch,
+                                      g_builtin_syms.equals),
+                       source_lhs, atom_true(&equation_scratch));
+        space_add(&equation_space, source_equation);
         assert(space_equations_may_match_known_head(&equation_space,
                                                     source_head));
         assert(!space_equations_may_match_known_head(&equation_space,
@@ -430,6 +431,57 @@ int main(void) {
                              atom_true(&equation_scratch)));
         assert(space_equations_may_match_known_head(&equation_space,
                                                     absent_colliding_head));
+
+        Space occurrence_space;
+        space_init_with_universe(&occurrence_space, &equation_universe);
+        space_add(&occurrence_space, source_equation);
+        space_add(&occurrence_space, source_equation);
+        assert(space_length64(&occurrence_space) == 2);
+        SpaceReadToken occurrence_read = space_read_token(&occurrence_space);
+        assert(space_read_token_is_current(occurrence_read));
+        SpaceEquationOccurrence first_occurrence;
+        SpaceEquationOccurrence second_occurrence;
+        SpaceEquationOccurrenceId first_id = {
+            .read = occurrence_read,
+            .logical_index = 0,
+        };
+        SpaceEquationOccurrenceId second_id = {
+            .read = occurrence_read,
+            .logical_index = 1,
+        };
+        assert(space_equation_occurrence_resolve(first_id,
+                                                 &first_occurrence));
+        assert(space_equation_occurrence_resolve(second_id,
+                                                 &second_occurrence));
+        assert(first_occurrence.id.logical_index !=
+               second_occurrence.id.logical_index);
+        assert(atom_eq(first_occurrence.equation,
+                       second_occurrence.equation));
+        assert(atom_eq(first_occurrence.lhs, source_lhs));
+        assert(first_occurrence.rhs->kind == ATOM_GROUNDED);
+        assert(first_occurrence.rhs->ground.gkind == GV_BOOL);
+        assert(first_occurrence.rhs->ground.bval);
+
+        space_add(&occurrence_space,
+                  atom_symbol(&equation_scratch, "not-an-equation"));
+        assert(!space_read_token_is_current(occurrence_read));
+        assert(!space_equation_occurrence_resolve(first_id,
+                                                  &first_occurrence));
+        assert(first_occurrence.equation == NULL);
+        SpaceReadToken current_read = space_read_token(&occurrence_space);
+        SpaceEquationOccurrenceId non_equation_id = {
+            .read = current_read,
+            .logical_index = 2,
+        };
+        assert(!space_equation_occurrence_resolve(non_equation_id,
+                                                  &first_occurrence));
+        SpaceEquationOccurrenceId out_of_range_id = {
+            .read = current_read,
+            .logical_index = 3,
+        };
+        assert(!space_equation_occurrence_resolve(out_of_range_id,
+                                                  &first_occurrence));
+        space_free(&occurrence_space);
 
         space_free(&equation_space);
         term_universe_free(&equation_universe);

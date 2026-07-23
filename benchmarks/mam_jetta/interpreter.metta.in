@@ -1,0 +1,37 @@
+; JeTTa performance-suite workload 2: an evaluator for a small expression
+; language. JeTTa declares Int; CeTTa's corresponding grounded numeric type is
+; Number, so this fixture leaves the two computational rules unannotated.
+;
+; Each fold iteration evaluates the same nested Let program. The checksum is
+; 144 * @N@, which proves that every iteration produced the expected value.
+
+(= (mam:lookup $key (Cons (Bind $k $v) $rest))
+   (if (== $key $k)
+       $v
+       (mam:lookup $key $rest)))
+
+(= (mam:ev (Lit $n) $env) $n)
+(= (mam:ev (Var $x) $env) (mam:lookup $x $env))
+(= (mam:ev (Add $a $b) $env)
+   (+ (mam:ev $a $env) (mam:ev $b $env)))
+(= (mam:ev (Mul $a $b) $env)
+   (* (mam:ev $a $env) (mam:ev $b $env)))
+(= (mam:ev (Let $x $e $body) $env)
+   (let $value (mam:ev $e $env)
+     (mam:ev $body (Cons (Bind $x $value) $env))))
+
+(= (mam:interpreter-once $iteration)
+   (let $n-value (+ 2 (* 0 $iteration))
+     (mam:ev
+       (Let n
+            (Add (Var n) (Lit 10))
+            (Mul (Var n) (Var n)))
+       (Cons (Bind n $n-value) Nil))))
+
+!(let $iterations (range-atom @N@)
+   (foldl-atom
+     $iterations
+     0
+     $sum
+     $iteration
+     (eval (+ $sum (mam:interpreter-once $iteration)))))

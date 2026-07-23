@@ -37,6 +37,9 @@ PRIME_DATA_APP_SIGNATURE = (
     "(BCons (BField arg 0) BNil)))))"
 )
 
+METTAKERNEL_INDEX_HEAD = "Var"
+CETTA_INDEX_HEAD = "idx"
+
 CANONICAL_ORACLE_PRELUDE = r"""
 (= (oracle-shift $d $c $t) (bind-shift $d $c $t))
 (= (oracle-shift-args $d $c $t) (bind-shift-args $d $c $t))
@@ -112,6 +115,53 @@ def prime_syntax_data_source(source: str) -> str:
             "ABT Prime data presentation lost its App/signature anchors"
         )
     return transformed.replace("(AbtSignatures)", PRIME_DATA_APP_SIGNATURE)
+
+
+def rename_index_heads(source: str, old: str, new: str) -> tuple[str, int]:
+    """Rename one structural de Bruijn constructor, never arbitrary text."""
+    return re.subn(rf"(?<=\(){re.escape(old)}(?=\s)", new, source)
+
+
+def mettakernel_waist_for_cetta(source: str) -> str:
+    """Present the external MeTTaKernel waist in CeTTa's index spelling.
+
+    The waist and CeTTa use isomorphic locally nameless terms but currently
+    spell the de Bruijn constructor differently.  The differential must rename
+    that presentation before comparing operations; leaving the waist's Var
+    rules beside CeTTa idx data merely tests that an unmatched call residualizes.
+    """
+    old_count = len(re.findall(r"\(Var(?=\s)", source))
+    new_count = len(re.findall(r"\(idx(?=\s)", source))
+    if old_count and new_count:
+        raise RuntimeError("MeTTaKernel waist mixes Var and idx constructors")
+    if new_count:
+        return source
+    if not old_count:
+        raise RuntimeError("MeTTaKernel waist has no recognized index constructor")
+    transformed, renamed = rename_index_heads(
+        source, METTAKERNEL_INDEX_HEAD, CETTA_INDEX_HEAD
+    )
+    if renamed != old_count or re.search(r"\(Var(?=\s)", transformed):
+        raise RuntimeError("MeTTaKernel waist index presentation rename was partial")
+    return transformed
+
+
+def cetta_index_data_for_petta(source: str) -> str:
+    """Present the shared idx corpus to the Var-based PeTTa companion."""
+    transformed, renamed = rename_index_heads(
+        source, CETTA_INDEX_HEAD, METTAKERNEL_INDEX_HEAD
+    )
+    if renamed == 0:
+        raise RuntimeError("shared ABT corpus contains no CeTTa idx constructor")
+    return transformed
+
+
+def petta_index_data_for_cetta(source: str) -> str:
+    """Canonicalize PeTTa's Var-shaped oracle output back to CeTTa idx."""
+    transformed, _ = rename_index_heads(
+        source, METTAKERNEL_INDEX_HEAD, CETTA_INDEX_HEAD
+    )
+    return transformed
 
 
 def run_lane(
@@ -231,7 +281,7 @@ def run_three_way_oracle(binary: Path, waist: Path) -> bool:
     )
     canonical = run_source(
         [str(binary), "--profile", "he-extended", "--lang", "he"],
-        waist.read_text(encoding="utf-8")
+        mettakernel_waist_for_cetta(waist.read_text(encoding="utf-8"))
         + "\n"
         + CANONICAL_ORACLE_PRELUDE
         + "\n"
@@ -266,11 +316,11 @@ def run_three_way_oracle(binary: Path, waist: Path) -> bool:
         )
         return False
 
-    petta_corpus = re.sub(
+    petta_corpus = cetta_index_data_for_petta(re.sub(
         r"\boracle-[a-z-]+",
         lambda match: match.group(0).replace("-", "_"),
         corpus,
-    )
+    ))
     petta = run_source(
         ["bash", str(launcher)],
         petta_waist.read_text(encoding="utf-8")
@@ -280,7 +330,10 @@ def run_three_way_oracle(binary: Path, waist: Path) -> bool:
         + petta_corpus,
         180,
     )
-    petta_lines = oracle_lines(petta.stdout)
+    petta_lines = [
+        petta_index_data_for_cetta(line)
+        for line in oracle_lines(petta.stdout)
+    ]
     if petta.returncode != 0 or petta_lines != native_lines:
         raise RuntimeError(
             f"PeTTa shared ABT corpus differs or exited {petta.returncode}:\n"
@@ -347,7 +400,11 @@ def main() -> int:
         print("SKIP: ABT differential (set METTAPEDIA_ROOT to a Mettapedia checkout)")
         return 0
 
-    source = waist.read_text(encoding="utf-8") + "\n" + FIXTURE.read_text(encoding="utf-8")
+    source = (
+        mettakernel_waist_for_cetta(waist.read_text(encoding="utf-8"))
+        + "\n"
+        + FIXTURE.read_text(encoding="utf-8")
+    )
     fixture_assertions = len(
         re.findall(
             r"!\s*\(assertEqual(?:ToResult)?\b",

@@ -14,7 +14,8 @@ import tempfile
 from run_he_parser_oracle_v1 import authority_digest
 from run_he_parser_oracle_v1 import authority_revision
 from run_he_parser_oracle_v1 import build_oracle
-from test_he_parser_authority_v1 import ATOM_CASES
+from he_reader_ratified_cases_v1 import RATIFIED_ATOM_CASES
+from he_reader_ratified_cases_v1 import check_rust_observation
 from test_he_parser_authority_v1 import EXPECTED_REVISION
 from test_he_parser_authority_v1 import EXPECTED_SOURCE_DIGEST
 from test_he_parser_authority_v1 import run_case as run_he_case
@@ -33,16 +34,16 @@ PRESENTATIONS = ROOT / "experiments" / "gslt2parse_foundation" / "presentations"
 PROFILE = PROFILES["he"]
 
 EXPECTED_GUARD_PLAN_DIGEST = (
-    "8b2ac9b156824617cb60bc324137e31afebb829fdb3c990275bb49d1130cc7ee"
+    "5eaf5bbb05a0e458bd45816c1f81cbe237ab1a4347f6e141d2a175d17bacf911"
 )
 EXPECTED_GUARD_EVIDENCE_DIGEST = (
-    "d17d1eac27c5bae323f25b6e8a05a2ee63a014ade91f0d31d2f87535fda0edc0"
+    "9ddf0d2c96fea48f818f5af104179056c06c0e047c75c015ae7e83bfa69176df"
 )
 EXPECTED_MATRIX_DIGEST = (
-    "824a1752f0950fcb07ef7171bca39c65366615c0c461d3da49331851197c114f"
+    "d200dd6f9972654ec071e1b25ff70754fbd6085c5667f3cd85a1453560da342f"
 )
 EXPECTED_HOST_ACTION_MATRIX_DIGEST = (
-    "ae7b2002aa7090892e85adf073f0be458c3fa0f0882d33a7c40c4029442e2b70"
+    "eb69abdd6c8763efce81785c9d0426249a1ad7d429e61c30576f8bd669f6980e"
 )
 EXPECTED_ACTION_REFERENCE_DIGEST = (
     "40a7b37232dc171b8a288922a7c83c60189eaac7788a72f49d032a3ad0e66589"
@@ -207,7 +208,7 @@ def require_native_seals(row: dict[str, object]) -> None:
         "guard-plan-digest": EXPECTED_GUARD_PLAN_DIGEST,
         "guard-evidence-digest": EXPECTED_GUARD_EVIDENCE_DIGEST,
         "guard-nfa-answer-digest": PROFILE.guard_nfa_digest,
-        "guard-nfa-answers": "55",
+        "guard-nfa-answers": "60",
         "guard-tags": "3",
         "source-passes": "1",
         "gll-outcome": "completed",
@@ -331,6 +332,7 @@ def main() -> int:
     accepted = 0
     rejected = 0
     authority_agreements = 0
+    authority_disagreements = 0
     dual_native_agreements = 0
     semantic_agreements = 0
     host_action_agreements = 0
@@ -350,24 +352,29 @@ def main() -> int:
 
         first_valid_input: Path | None = None
         for index, (label, (input_bytes, expected)) in enumerate(
-            ATOM_CASES.items()
+            RATIFIED_ATOM_CASES.items()
         ):
             input_path = directory / f"case-{index}.input"
             input_path.write_bytes(input_bytes)
             authority = run_he_case(he_oracle, "atoms", input_path)
-            if authority != expected:
-                raise GateFailure(f"HE authority changed for {label}")
+            try:
+                rust_relation = check_rust_observation(label, authority)
+            except RuntimeError as error:
+                raise GateFailure(str(error)) from error
+            if rust_relation == "agrees":
+                authority_agreements += 1
+            else:
+                authority_disagreements += 1
             decision = expected_decision(expected)
             petta = run_petta(petta_root, input_path)
             if petta.get("decision") != decision:
                 raise GateFailure(
-                    f"HE authority and PeTTa LanguageDef differ for {label}"
+                    f"ratified HE contract and PeTTa LanguageDef differ for {label}"
                 )
-            authority_agreements += 1
             host_documents = petta["host_documents"]
             if decision == "accepted":
                 expected_host_documents = [
-                    [authority_atom(value) for value in authority]
+                    [authority_atom(value) for value in expected]
                 ]
                 if host_documents != expected_host_documents:
                     raise GateFailure(
@@ -385,6 +392,7 @@ def main() -> int:
                     "host_documents": host_documents,
                     "input": input_bytes.hex(),
                     "label": label,
+                    "rust_relation": rust_relation,
                 }
             )
             if decision == "accepted":
@@ -410,6 +418,7 @@ def main() -> int:
                         "label": label,
                         "mode": "invalid-utf8",
                         "results": [],
+                        "rust_relation": rust_relation,
                     }
                 )
                 continue
@@ -426,7 +435,7 @@ def main() -> int:
             require_native_seals(native)
             if native.get("gll-decision") != decision:
                 raise GateFailure(
-                    f"HE authority and native guarded reader differ for {label}"
+                    f"ratified HE contract and native guarded reader differ for {label}"
                 )
             dual_native_agreements += 1
             native_results = native["gll-result"]
@@ -448,6 +457,7 @@ def main() -> int:
                     "mode": "valid-utf8",
                     "relation": native["guard-relation-digest"],
                     "results": native_results,
+                    "rust_relation": rust_relation,
                 }
             )
 
@@ -477,7 +487,8 @@ def main() -> int:
         raise GateFailure(f"HE host action matrix changed: {host_digest}")
     print(
         f"(HEReaderGuardExecV1Summary {len(records)} {accepted} {rejected} "
-        f"{authority_agreements} {dual_native_agreements} "
+        f"{authority_agreements} {authority_disagreements} "
+        f"{dual_native_agreements} "
         f"{semantic_agreements} {invalid_fail_closed + mutations} "
         f"{digest} 0)"
     )
