@@ -15125,6 +15125,117 @@ static Arena *match_result_direct_eval_scratch_arena(
     return &scratch->arena;
 }
 
+/* Per-(space,revision) summary of non-exact atoms' head symbols. When a ground
+   probe misses the exact index and its head is absent here (and no var-headed
+   non-exact atom exists), the miss is definitive — the general query cannot
+   produce a match. Thread-local; rebuilt lazily when the space revision moves. */
+#define JOINFP_CACHE_SLOTS 8
+#define JOINFP_MAX_HEADS 32
+typedef struct {
+    const Space *space;
+    uint64_t revision;
+    bool valid;
+    bool overflow;            /* too many distinct heads: never definitive */
+    bool has_varhead_nonexact;
+    uint32_t nheads;
+    SymbolId heads[JOINFP_MAX_HEADS];
+} JoinFpNonexactCache;
+static __thread JoinFpNonexactCache g_joinfp_cache[JOINFP_CACHE_SLOTS];
+
+static bool joinfp_ground_miss_definitive(Space *space, Atom *grounded) {
+    if (!grounded || grounded->kind != ATOM_EXPR || grounded->expr.len == 0 ||
+        grounded->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId probe_head = grounded->expr.elems[0]->sym_id;
+    uint32_t slot = (uint32_t)(((uintptr_t)space >> 4) % JOINFP_CACHE_SLOTS);
+    JoinFpNonexactCache *c = &g_joinfp_cache[slot];
+    if (!c->valid || c->space != space || c->revision != space->revision) {
+        c->space = space;
+        c->revision = space->revision;
+        c->valid = true;
+        c->overflow = false;
+        c->has_varhead_nonexact = false;
+        c->nheads = 0;
+        CettaCount len = space_length64(space);
+        for (CettaIndex i = 0; i < len; i++) {
+            Atom *atom = space_get_at64(space, i);
+            if (!atom)
+                continue;
+            if (space_atom_is_exact_indexable(atom))
+                continue;
+            if (atom->kind == ATOM_EXPR && atom->expr.len > 0 &&
+                atom->expr.elems[0]->kind == ATOM_SYMBOL) {
+                SymbolId h = atom->expr.elems[0]->sym_id;
+                bool seen = false;
+                for (uint32_t j = 0; j < c->nheads; j++) {
+                    if (c->heads[j] == h) { seen = true; break; }
+                }
+                if (!seen) {
+                    if (c->nheads >= JOINFP_MAX_HEADS) {
+                        c->overflow = true;
+                        break;
+                    }
+                    c->heads[c->nheads++] = h;
+                }
+            } else {
+                /* bare var, var-headed expr, or anything else non-exact:
+                   conservatively matchable by any probe */
+                c->has_varhead_nonexact = true;
+                break;
+            }
+        }
+    }
+    if (c->overflow || c->has_varhead_nonexact)
+        return false;
+    for (uint32_t j = 0; j < c->nheads; j++) {
+        if (c->heads[j] == probe_head)
+            return false;
+    }
+    return true;
+}
+
+static bool match_chain_join_fastpath_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *e = getenv("CETTA_JOIN_FASTPATH");
+        cached = (e && *e && *e != '0') ? 1 : 0;
+    }
+    return cached == 1;
+}
+
+/* Experimental ground-probe fast path (CETTA_JOIN_FASTPATH=1): a fully ground
+   probe against an exact-only space is a pure membership/multiplicity check;
+   the general query+merge machinery adds no bindings for it. Mirrors the
+   exact-shortcut conditions in space_subst_query exactly. */
+static bool match_chain_ground_exact_probe(Space *space, Atom *grounded,
+                                           CettaIndex *out_hits) {
+    if (!match_chain_join_fastpath_enabled())
+        return false;
+    if (!space || space->overlay_base ||
+        space->match_backend.kind == SPACE_ENGINE_PATHMAP)
+        return false;
+    if (!grounded || atom_has_vars(grounded))
+        return false;
+    if (!space_atom_is_exact_indexable(grounded))
+        return false;
+    CettaIndex *exact = NULL;
+    CettaIndex nexact = space_exact_match_indices64(space, grounded, &exact);
+    free(exact);
+    if (nexact > 0) {          /* mirrors space_subst_query's exact shortcut */
+        *out_hits = nexact;
+        return true;
+    }
+    if (space_contains_only_exact_atoms(space)) {  /* definitive miss */
+        *out_hits = 0;
+        return true;
+    }
+    if (joinfp_ground_miss_definitive(space, grounded)) {
+        *out_hits = 0;         /* head absent among non-exact atoms */
+        return true;
+    }
+    return false;              /* a var atom could match: general path */
+}
+
 static void match_chain_note_eval_live_peak(const Arena *a,
                                             CettaRuntimeCounter counter) {
     if (!a)
@@ -16020,6 +16131,84 @@ static void interpret_tuple(Space *s, Arena *a,
         free(frames);
 }
 
+typedef struct {
+    Space *s;
+    Arena *a;
+    int fuel;
+    OutcomeSet *os;
+    Space **step_spaces;
+    Atom **step_patterns;
+    uint32_t nsteps;
+    MatchVisibleVarSet *visible;
+    MatchResultSnapshot *snapshot;
+    DeferredSpaceSet *deferred_spaces;
+    MatchResultDirectEvalScratch *direct_scratch;
+    Atom *body;
+    Space **query_spaces;
+    uint32_t nquery_spaces;
+} MatchChainDfsCtx;
+
+/* Depth-first streamed chain execution (CETTA_JOIN_FASTPATH=1): extend one
+   binding through all remaining steps before touching the next result, so no
+   per-level frontier array ever materializes. Same probe/merge/emission
+   machinery as the breadth-first path; answer bags are identical (order is
+   ratified non-semantic). Depth bounded by MAX_CHAIN. */
+static void match_chain_dfs(MatchChainDfsCtx *ctx, uint32_t si, Bindings *cur) {
+    if (si == ctx->nsteps) {
+        Bindings projected;
+        if (!project_match_visible_bindings(ctx->a, ctx->visible, cur,
+                                            &projected))
+            return;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+        match_result_apply_emit_or_snapshot(
+            ctx->s, ctx->a, ctx->fuel, ctx->os, ctx->snapshot,
+            ctx->deferred_spaces, ctx->direct_scratch, &projected, ctx->body,
+            ctx->query_spaces, ctx->nquery_spaces);
+        bindings_free(&projected);
+        return;
+    }
+    Space *space = ctx->step_spaces[si];
+    Atom *grounded =
+        bindings_apply_if_vars(cur, ctx->a, ctx->step_patterns[si]);
+    CettaIndex fp_hits = 0;
+    if (match_chain_ground_exact_probe(space, grounded, &fp_hits)) {
+        for (CettaIndex k = 0; k < fp_hits; k++)
+            match_chain_dfs(ctx, si + 1, cur); /* ground probe binds nothing */
+        return;
+    }
+    if (space_match_backend_supports_seeded_candidates(space)) {
+        CettaIndex *cands = NULL;
+        CettaIndex ncand =
+            space_match_backend_candidates64(space, grounded, &cands);
+        for (CettaIndex ci = 0; ci < ncand; ci++) {
+            Bindings mb;
+            bindings_init(&mb);
+            if (bindings_try_merge_live(&mb, cur) &&
+                space_match_backend_match_atom_seeded(space, cands[ci],
+                                                      grounded, &mb, ctx->a)) {
+                match_chain_dfs(ctx, si + 1, &mb);
+            }
+            bindings_free(&mb);
+        }
+        free(cands);
+        return;
+    }
+    SubstMatchSet smr;
+    smset_init(&smr);
+    space_subst_query(space, ctx->a, grounded, &smr);
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBST_RESULTS_PEAK, smr.len);
+    for (CettaIndex ci = 0; ci < smr.len; ci++) {
+        Bindings mb;
+        if (space_subst_match_with_seed(space, grounded, &smr.items[ci], cur,
+                                        ctx->a, &mb)) {
+            match_chain_dfs(ctx, si + 1, &mb);
+            bindings_free(&mb);
+        }
+    }
+    smset_free(&smr);
+}
+
 static __attribute__((noinline)) bool
 handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
              OutcomeSet *os) {
@@ -16310,6 +16499,35 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             }
         }
 
+        if (match_chain_join_fastpath_enabled() && !preserve_bindings &&
+            nsteps > 1) {
+            MatchResultSnapshot dfs_snapshot = {0};
+            Space *dfs_spaces[MAX_CHAIN];
+            Atom *dfs_patterns[MAX_CHAIN];
+            for (uint32_t qi = 0; qi < nsteps; qi++) {
+                dfs_spaces[qi] = steps[qi].space;
+                dfs_patterns[qi] = steps[qi].pattern;
+            }
+            MatchChainDfsCtx dfs_ctx = {
+                .s = s, .a = a, .fuel = fuel, .os = os,
+                .step_spaces = dfs_spaces, .step_patterns = dfs_patterns,
+                .nsteps = nsteps, .visible = &visible,
+                .snapshot = &dfs_snapshot,
+                .deferred_spaces = &deferred_spaces,
+                .direct_scratch = &direct_scratch,
+                .body = body,
+                .query_spaces = dfs_spaces, .nquery_spaces = nsteps,
+            };
+            Bindings dfs_root;
+            bindings_init(&dfs_root);
+            match_chain_dfs(&dfs_ctx, 0, &dfs_root);
+            bindings_free(&dfs_root);
+            match_result_snapshot_eval(s, a, &dfs_snapshot, fuel, os);
+            match_result_snapshot_free(&dfs_snapshot);
+            match_visible_var_set_free(&visible);
+            return true;
+        }
+
         Bindings frontier_inline_a[1];
         Bindings frontier_inline_b[1];
         Bindings *cur_inline = frontier_inline_a;
@@ -16336,6 +16554,33 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 match_chain_note_eval_live_peak(
                     a,
                     CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
+                CettaIndex fp_hits = 0;
+                if (match_chain_ground_exact_probe(step->space, grounded,
+                                                   &fp_hits)) {
+                    for (CettaIndex k = 0; k < fp_hits; k++) {
+                        if (nnext >= cnext &&
+                            !bindings_array_grow(&next_binds, nnext, &cnext,
+                                                 next_inline))
+                            break;
+                        if (k + 1 == fp_hits) {
+                            bindings_move(&next_binds[nnext++], &cur_binds[bi]);
+                            bindings_init(&cur_binds[bi]);
+                        } else {
+                            Bindings fp_copy;
+                            bindings_init(&fp_copy);
+                            if (!bindings_try_merge_live(&fp_copy,
+                                                         &cur_binds[bi])) {
+                                bindings_free(&fp_copy);
+                                continue;
+                            }
+                            bindings_move(&next_binds[nnext++], &fp_copy);
+                        }
+                        cetta_runtime_stats_update_max(
+                            CETTA_RUNTIME_COUNTER_MATCH_CHAIN_FRONTIER_BINDINGS_PEAK,
+                            nnext);
+                    }
+                    continue;
+                }
                 SubstMatchSet smr;
                 smset_init(&smr);
                 size_t query_before = a ? a->live_bytes : 0;
@@ -16423,6 +16668,25 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     match_chain_note_eval_live_peak(
                         a,
                         CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
+                    CettaIndex fp_hits = 0;
+                    if (match_chain_ground_exact_probe(last->space, grounded,
+                                                       &fp_hits)) {
+                        for (CettaIndex k = 0; k < fp_hits; k++) {
+                            Bindings projected;
+                            if (!project_match_visible_bindings(
+                                    a, &visible, &cur_binds[bi], &projected))
+                                break;
+                            cetta_runtime_stats_inc(
+                                CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                            match_result_apply_emit_or_snapshot(
+                                s, a, fuel, os, &snapshot, &deferred_spaces,
+                                &direct_scratch, &projected, body,
+                                query_spaces, nquery_spaces);
+                            bindings_free(&projected);
+                            g_chain_progress++;
+                        }
+                        continue;
+                    }
                     SubstMatchSet smr;
                     smset_init(&smr);
                     size_t query_before = a ? a->live_bytes : 0;
@@ -16509,6 +16773,25 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     match_chain_note_eval_live_peak(
                         a,
                         CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
+                    CettaIndex fp_hits = 0;
+                    if (match_chain_ground_exact_probe(last->space, grounded,
+                                                       &fp_hits)) {
+                        for (CettaIndex k = 0; k < fp_hits; k++) {
+                            Bindings projected;
+                            if (!project_match_visible_bindings(
+                                    a, &visible, &cur_binds[bi], &projected))
+                                break;
+                            cetta_runtime_stats_inc(
+                                CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                            Atom *fp_result =
+                                bindings_apply_if_vars(&projected, a, body);
+                            eval_for_caller(s, a, NULL, fp_result, fuel,
+                                            &projected, preserve_bindings, os);
+                            bindings_free(&projected);
+                            g_chain_progress++;
+                        }
+                        continue;
+                    }
                     SubstMatchSet smr;
                     smset_init(&smr);
                     size_t query_before = a ? a->live_bytes : 0;
