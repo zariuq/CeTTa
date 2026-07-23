@@ -1,0 +1,9 @@
+Three funded stages, one channel, one purse; the receipt
+records who consumed what from whom:
+Two independent settlements: no false arc between them:
+[()]
+[()]
+[()]
+[(lts:rho:cost:receipt ((lts:rho:cost:event 0 () ((lts:rho:cost:funding market farm)) farm) (lts:rho:cost:event 1 (0 0) ((lts:rho:cost:funding market roaster)) roaster) (lts:rho:cost:event 2 (1 1) ((lts:rho:cost:funding market cafe)) cafe)) (rho:cost:par (rho:cost:purse market rho:cost:stack-empty) (rho:cost:signed rho:nil espresso)))]
+[()]
+[(lts:rho:cost:receipt ((lts:rho:cost:event 0 () ((lts:rho:cost:funding spot trader-a)) trader-a) (lts:rho:cost:event 1 () ((lts:rho:cost:funding forward trader-b)) trader-b)) (rho:cost:par (rho:cost:purse spot rho:cost:stack-empty) (rho:cost:purse forward rho:cost:stack-empty) (rho:cost:signed rho:nil forward-done) (rho:cost:signed rho:nil spot-done)))]

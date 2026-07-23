@@ -414,6 +414,25 @@ Uses queue-space for BFS frontier and hash-space for visited-set dedup. This is
 a longer-running example; prefer the smaller files below for a quick smoke
 test.
 
+### Rho-calculus process engine (`--lang rhocalc`)
+
+The same binary is a concurrent process engine for the reflective
+higher-order rho-calculus: sends and receives rendezvous on quoted-process
+channels, with COMM as the only reduction. The `cost` profile adds funded
+reactions — a reaction fires only when purses located on its own channel
+pay for it, and a run can emit a causal receipt of every spend:
+
+```
+$ ./cetta --lang rhocalc --profile cost examples/rho/cost/vending_machine.rho
+purse vend {()} | purse vend {machine : ()} | {0}served | {for ($order <- vend) {{0}served}}machine | {vend!({0}coin)}bob
+```
+
+One funded sale fired; the unfunded order is left facing a live endpoint —
+disabled, not slowed. See `docs/rhocalc.md` for the guided tour (calculus,
+surfaces, receipts, honest budgets, threaded waves), `examples/rho/` for
+runnable showcases (`make test-rho-examples`), and `make test-rhocalc` for
+the full lane.
+
 ## Good First Things To Run
 
 Small regression-sized examples:
