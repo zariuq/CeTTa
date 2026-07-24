@@ -106,6 +106,22 @@ typedef struct {
     Arena *owner;
 } PrimeNeedReceipt;
 
+/* Per-occurrence Prime contract carrier.
+ *
+ * A Bindings occurrence's Prime state -- the world it evaluated under and the
+ * causal support it accumulated -- lives here, referenced from Bindings by an
+ * 8-byte pointer that is NULL for pure-HE evaluation.  This keeps the shared
+ * Bindings/HE matcher paths free of Prime-only storage: an HE match/collapse
+ * row pays one null pointer, not the inlined snapshot+receipt handles.  It is
+ * the named home of the Prime per-occurrence contract; today it carries the
+ * world (Need snapshot) and causal receipt by value and grows the remaining
+ * contract components (multiplicity, fault status, pinned space revision) in
+ * place without disturbing the noninterference boundary. */
+typedef struct {
+    PrimeNeedSnapshot prime_need;
+    PrimeNeedReceipt  prime_receipt;
+} PrimeOccurrence;
+
 typedef struct {
     PrimeNeedReceiptEventKind kind;
     uint64_t event_id;

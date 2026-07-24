@@ -31,11 +31,13 @@ typedef struct {
     uint32_t lookup_cache_indices[4];
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
-    /* This internal store is orthogonal to logical substitutions. */
-    PrimeNeedSnapshot prime_need;
-    /* Causal support and branch-local effects are a second orthogonal
-     * component.  It is immutable/persistent like the Need snapshot. */
-    PrimeNeedReceipt prime_receipt;
+    /* Prime per-occurrence state -- the Need world (orthogonal to logical
+     * substitutions) plus causal support/branch-local effects -- lives behind
+     * this lazily-materialized pointer.  It is NULL for pure-HE evaluation, so
+     * the shared matcher pays only 8 bytes here instead of the inlined
+     * snapshot+receipt handles; Prime allocates the PrimeOccurrence on first
+     * use.  Access via the bindings_need_* / bindings_receipt_* views below. */
+    PrimeOccurrence *prime_ext;
 } Bindings;
 
 typedef struct {
@@ -75,6 +77,23 @@ size_t    bindings_constraint_active_bytes(void);
 void      bindings_thread_cache_free(void);
 void      bindings_move(Bindings *dst, Bindings *src);
 void      bindings_replace(Bindings *dst, Bindings *src);
+
+/* Prime per-occurrence (prime_ext) views.  Reads are valid even when the
+ * occurrence is absent -- they return a shared zero-initialized singleton,
+ * matching the former zero-inited inline fields.  Mutable views materialize the
+ * PrimeOccurrence on first use (Prime-only; HE evaluation never calls them). */
+const PrimeNeedSnapshot *bindings_need_view(const Bindings *b);
+const PrimeNeedReceipt  *bindings_receipt_view(const Bindings *b);
+PrimeNeedSnapshot        *bindings_need_mut(Bindings *b);
+PrimeNeedReceipt         *bindings_receipt_mut(Bindings *b);
+bool                      bindings_prime_present(const Bindings *b);
+/* Copy both Prime components from src into dst (materializing dst's occurrence
+ * only when src has present state; otherwise dst's occurrence is released). */
+void      bindings_prime_assign(Bindings *dst, const Bindings *src);
+/* Set dst's Prime components from explicit values (builder-trail restore, which
+ * snapshots by value); clears dst's occurrence when both values are absent. */
+void      bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
+                             const PrimeNeedReceipt *receipt);
 Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
 Atom     *bindings_lookup_var(Bindings *b, Atom *var);
 Atom     *binding_variable_atom(Arena *a, const Binding *binding);

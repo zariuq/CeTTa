@@ -486,6 +486,79 @@ static bool bindings_normalize_constraints(Bindings *b) {
     return true;
 }
 
+/* --- Prime per-occurrence (prime_ext) accessors -------------------------- *
+ * The occurrence is absent (NULL) in pure-HE evaluation; reads then resolve to
+ * a shared zero-initialized singleton (top==NULL => "not present"), exactly
+ * matching the former zero-inited inline fields.  Mutable views materialize the
+ * occurrence lazily -- only Prime evaluation reaches them. */
+static const PrimeOccurrence g_prime_occurrence_empty;
+
+const PrimeNeedSnapshot *bindings_need_view(const Bindings *b) {
+    return b->prime_ext ? &b->prime_ext->prime_need
+                        : &g_prime_occurrence_empty.prime_need;
+}
+
+const PrimeNeedReceipt *bindings_receipt_view(const Bindings *b) {
+    return b->prime_ext ? &b->prime_ext->prime_receipt
+                        : &g_prime_occurrence_empty.prime_receipt;
+}
+
+static PrimeOccurrence *bindings_prime_ext_materialize(Bindings *b) {
+    if (!b->prime_ext) {
+        PrimeOccurrence *ext = cetta_malloc(sizeof(PrimeOccurrence));
+        prime_need_snapshot_init(&ext->prime_need);
+        prime_need_receipt_init(&ext->prime_receipt);
+        b->prime_ext = ext;
+    }
+    return b->prime_ext;
+}
+
+PrimeNeedSnapshot *bindings_need_mut(Bindings *b) {
+    return &bindings_prime_ext_materialize(b)->prime_need;
+}
+
+PrimeNeedReceipt *bindings_receipt_mut(Bindings *b) {
+    return &bindings_prime_ext_materialize(b)->prime_receipt;
+}
+
+bool bindings_prime_present(const Bindings *b) {
+    return b->prime_ext &&
+           (prime_need_snapshot_present(&b->prime_ext->prime_need) ||
+            prime_need_receipt_present(&b->prime_ext->prime_receipt));
+}
+
+/* Reset an existing occurrence to empty without freeing it (kept for reuse to
+ * avoid alloc churn on hot Prime merge/rollback paths). */
+static void prime_occurrence_reset(PrimeOccurrence *ext) {
+    prime_need_snapshot_init(&ext->prime_need);
+    prime_need_receipt_init(&ext->prime_receipt);
+}
+
+void bindings_prime_assign(Bindings *dst, const Bindings *src) {
+    if (src->prime_ext &&
+        (prime_need_snapshot_present(&src->prime_ext->prime_need) ||
+         prime_need_receipt_present(&src->prime_ext->prime_receipt))) {
+        *bindings_prime_ext_materialize(dst) = *src->prime_ext;
+    } else if (dst->prime_ext) {
+        prime_occurrence_reset(dst->prime_ext);
+    }
+}
+
+void bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
+                        const PrimeNeedReceipt *receipt) {
+    bool present = (need && prime_need_snapshot_present(need)) ||
+                   (receipt && prime_need_receipt_present(receipt));
+    if (present) {
+        PrimeOccurrence *ext = bindings_prime_ext_materialize(dst);
+        if (need) ext->prime_need = *need;
+        else prime_need_snapshot_init(&ext->prime_need);
+        if (receipt) ext->prime_receipt = *receipt;
+        else prime_need_receipt_init(&ext->prime_receipt);
+    } else if (dst->prime_ext) {
+        prime_occurrence_reset(dst->prime_ext);
+    }
+}
+
 void bindings_init(Bindings *b) {
     b->entries = NULL;
     b->len = 0;
@@ -493,8 +566,7 @@ void bindings_init(Bindings *b) {
     b->constraints = NULL;
     b->eq_len = 0;
     b->eq_cap = 0;
-    prime_need_snapshot_init(&b->prime_need);
-    prime_need_receipt_init(&b->prime_receipt);
+    b->prime_ext = NULL;
     bindings_lookup_cache_reset(b);
 }
 
@@ -511,6 +583,10 @@ void bindings_free(Bindings *b) {
             b->eq_cap);
     bindings_entries_release(b->entries, b->cap);
     bindings_constraints_release(b->constraints, b->eq_cap);
+    if (b->prime_ext) {
+        free(b->prime_ext);
+        b->prime_ext = NULL;
+    }
     bindings_init(b);
 }
 
@@ -539,8 +615,7 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
             dst->lookup_cache_indices[i] = src->lookup_cache_indices[i];
         }
     }
-    dst->prime_need = src->prime_need;
-    dst->prime_receipt = src->prime_receipt;
+    bindings_prime_assign(dst, src);
     return true;
 }
 
@@ -585,8 +660,9 @@ bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
 bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
     if (!bindings_promote_logical_atoms_to_arena(bindings, dst))
         return false;
-    return prime_need_snapshot_promote(dst, &bindings->prime_need) &&
-           prime_need_receipt_promote(dst, &bindings->prime_receipt);
+    return !bindings->prime_ext ||
+           (prime_need_snapshot_promote(dst, &bindings->prime_ext->prime_need) &&
+            prime_need_receipt_promote(dst, &bindings->prime_ext->prime_receipt));
 }
 
 void bindings_move(Bindings *dst, Bindings *src) {
@@ -821,11 +897,16 @@ bool bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
 static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
-    if (!prime_need_snapshot_merge(&dst->prime_need, &src->prime_need))
-        return false;
-    if (!prime_need_receipt_merge(&dst->prime_receipt,
-                                  &src->prime_receipt))
-        return false;
+    /* Only touch Prime state (and materialize dst's occurrence) when either
+     * side carries any: HE merges stay allocation-free. */
+    if (bindings_prime_present(dst) || bindings_prime_present(src)) {
+        if (!prime_need_snapshot_merge(bindings_need_mut(dst),
+                                       bindings_need_view(src)))
+            return false;
+        if (!prime_need_receipt_merge(bindings_receipt_mut(dst),
+                                      bindings_receipt_view(src)))
+            return false;
+    }
     uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
     BindingConstraint *pending = bindings_temp_constraints_alloc(
@@ -878,14 +959,12 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
 
 bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
     if (!src || (src->len == 0 && src->eq_len == 0 &&
-                 !prime_need_snapshot_present(&src->prime_need) &&
-                 !prime_need_receipt_present(&src->prime_receipt)))
+                 !bindings_prime_present(src)))
         return true;
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
     if (dst && dst->len == 0 && dst->eq_len == 0 &&
-        !prime_need_snapshot_present(&dst->prime_need) &&
-        !prime_need_receipt_present(&dst->prime_receipt)) {
+        !bindings_prime_present(dst)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
         Bindings cloned;
         if (!bindings_clone(&cloned, src))
@@ -1512,8 +1591,8 @@ static bool bindings_builder_snapshot(BindingsBuilder *bb) {
         .eq_len = bb->current.eq_len,
         .lookup_cache_count = bb->current.lookup_cache_count,
         .lookup_cache_next = bb->current.lookup_cache_next,
-        .prime_need = bb->current.prime_need,
-        .prime_receipt = bb->current.prime_receipt,
+        .prime_need = *bindings_need_view(&bb->current),
+        .prime_receipt = *bindings_receipt_view(&bb->current),
     };
     return true;
 }
@@ -1563,8 +1642,8 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.eq_len = entry->eq_len;
         bb->current.lookup_cache_count = entry->lookup_cache_count;
         bb->current.lookup_cache_next = entry->lookup_cache_next;
-        bb->current.prime_need = entry->prime_need;
-        bb->current.prime_receipt = entry->prime_receipt;
+        bindings_prime_set(&bb->current, &entry->prime_need,
+                           &entry->prime_receipt);
     }
 }
 
@@ -1719,9 +1798,7 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
     if (!bb || !src)
         return true;
-    if (src->len == 0 && src->eq_len == 0 &&
-        !prime_need_snapshot_present(&src->prime_need) &&
-        !prime_need_receipt_present(&src->prime_receipt))
+    if (src->len == 0 && src->eq_len == 0 && !bindings_prime_present(src))
         return true;
     bindings_assert_no_private_variant_slots(&bb->current);
     bindings_assert_no_private_variant_slots(src);
@@ -1729,15 +1806,17 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     uint32_t mark = bindings_builder_save(bb);
     if (!bindings_builder_snapshot(bb))
         return false;
-    if (!prime_need_snapshot_merge(&bb->current.prime_need,
-                                   &src->prime_need)) {
-        bindings_builder_rollback(bb, mark);
-        return false;
-    }
-    if (!prime_need_receipt_merge(&bb->current.prime_receipt,
-                                  &src->prime_receipt)) {
-        bindings_builder_rollback(bb, mark);
-        return false;
+    if (bindings_prime_present(&bb->current) || bindings_prime_present(src)) {
+        if (!prime_need_snapshot_merge(bindings_need_mut(&bb->current),
+                                       bindings_need_view(src))) {
+            bindings_builder_rollback(bb, mark);
+            return false;
+        }
+        if (!prime_need_receipt_merge(bindings_receipt_mut(&bb->current),
+                                      bindings_receipt_view(src))) {
+            bindings_builder_rollback(bb, mark);
+            return false;
+        }
     }
     uint32_t pending_cap = bb->current.eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
@@ -3276,10 +3355,13 @@ fail:
 }
 
 bool bindings_eq(Bindings *a, Bindings *b) {
-    if (!(prime_need_snapshot_is_ancestor(&a->prime_need, &b->prime_need) &&
-          prime_need_snapshot_is_ancestor(&b->prime_need, &a->prime_need)))
+    if (!(prime_need_snapshot_is_ancestor(bindings_need_view(a),
+                                          bindings_need_view(b)) &&
+          prime_need_snapshot_is_ancestor(bindings_need_view(b),
+                                          bindings_need_view(a))))
         return false;
-    if (!prime_need_receipt_equal(&a->prime_receipt, &b->prime_receipt))
+    if (!prime_need_receipt_equal(bindings_receipt_view(a),
+                                  bindings_receipt_view(b)))
         return false;
     if (a->len != b->len) return false;
     if (a->eq_len != b->eq_len) return false;
