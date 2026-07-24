@@ -88,7 +88,7 @@ static void prime_need_observe_top_answer(
         !g_prime_need_answer_observer)
         return;
     const PrimeNeedReceipt *receipt = env
-        ? &env->prime_receipt : &g_prime_need_receipt_active;
+        ? bindings_receipt_view(env) : &g_prime_need_receipt_active;
     g_prime_need_answer_observer(
         answer, receipt, g_prime_need_answer_observer_context);
 }
@@ -208,10 +208,10 @@ static PrimeNeedActiveGuard prime_need_active_enter(const Bindings *env) {
     };
     if (env) {
         g_prime_need_logical_env = env;
-        if (prime_need_snapshot_present(&env->prime_need))
-            g_prime_need_active = env->prime_need;
-        if (prime_need_receipt_present(&env->prime_receipt))
-            g_prime_need_receipt_active = env->prime_receipt;
+        if (prime_need_snapshot_present(bindings_need_view(env)))
+            g_prime_need_active = *bindings_need_view(env);
+        if (prime_need_receipt_present(bindings_receipt_view(env)))
+            g_prime_need_receipt_active = *bindings_receipt_view(env);
     }
     return guard;
 }
@@ -819,7 +819,7 @@ static bool prime_need_effective_state(
     PrimeNeedReceipt receipt;
     prime_need_receipt_init(&receipt);
     if (env)
-        receipt = env->prime_receipt;
+        receipt = *bindings_receipt_view(env);
     if (!prime_need_receipt_merge(&receipt,
                                   &g_prime_need_receipt_active))
         return false;
@@ -843,7 +843,7 @@ static bool prime_need_record_state_read(
     if (!prime_need_receipt_read_state(
             prime_need_owner(a), &base, cell, value, &observed))
         return false;
-    env->prime_receipt = observed;
+    *bindings_receipt_mut(env) = observed;
     return true;
 }
 
@@ -858,7 +858,7 @@ static bool prime_need_record_state_write(
     if (!prime_need_receipt_write_state(
             prime_need_owner(a), &base, cell, before, after, &written))
         return false;
-    env->prime_receipt = written;
+    *bindings_receipt_mut(env) = written;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_STATE_WRITE);
     return true;
@@ -2042,9 +2042,9 @@ static Atom *outcome_preview_atom(const Outcome *out) {
 }
 
 static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs);
-static bool try_count_collapse_match(Space *s, Arena *a, Atom *atom,
-                                     const Bindings *current_env, int fuel,
-                                     uint64_t *out_count);
+static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
+                                           const Bindings *current_env, int fuel,
+                                           uint64_t *out_count);
 static Atom *materialize_runtime_token(Space *s, Arena *a, Atom *atom);
 static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int fuel);
 static Atom *space_arg_error(Arena *a, Atom *call, const char *message);
@@ -2283,14 +2283,18 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
     uint32_t nargs = 0;
     if (!expr_nargs_u32(atom, &nargs))
         return expr_arity_too_large_error(a, atom);
-    if ((head->sym_id == g_builtin_syms.size ||
-         head->sym_id == g_builtin_syms.size_atom) &&
-        nargs == 1) {
+    /* `size` is STRICT: it evaluates its (collapse …) argument and counts the
+     * resulting tuple.  When the argument is (collapse MATCH) we evaluate the
+     * match as a stream and count the rows without ever materializing the
+     * tuple — an O(1)-memory strict evaluation.  `size-atom` is NON-STRICT and
+     * must NOT be fused here: it returns the literal arity of its unevaluated
+     * argument (e.g. 2 for (collapse …)). */
+    if (head->sym_id == g_builtin_syms.size && nargs == 1) {
         uint64_t count = 0;
         Atom *applied = (!prefix || prefix->len == 0)
             ? atom
             : bindings_apply_if_vars(prefix, a, atom);
-        if (try_count_collapse_match(s, a, applied, NULL, fuel, &count))
+        if (try_stream_count_size_collapse(s, a, applied, NULL, fuel, &count))
             return atom_int(a, (int64_t)count);
     }
     Atom **args = arena_alloc(a, sizeof(Atom *) * nargs);
@@ -2624,9 +2628,17 @@ static bool bindings_array_grow(Bindings **items, uint32_t len, uint32_t *cap,
 }
 
 static bool bindings_capture_active_need(Bindings *env) {
-    return env && prime_need_snapshot_merge(&env->prime_need,
-                                             &g_prime_need_active) &&
-           prime_need_receipt_merge(&env->prime_receipt,
+    if (!env)
+        return false;
+    /* No active Prime state (pure-HE evaluation): nothing to capture, and the
+     * merges below would be no-ops.  Skip them so the outcome env keeps its
+     * NULL prime_ext and no per-outcome PrimeOccurrence is allocated. */
+    if (!prime_need_snapshot_present(&g_prime_need_active) &&
+        !prime_need_receipt_present(&g_prime_need_receipt_active))
+        return true;
+    return prime_need_snapshot_merge(bindings_need_mut(env),
+                                     &g_prime_need_active) &&
+           prime_need_receipt_merge(bindings_receipt_mut(env),
                                     &g_prime_need_receipt_active);
 }
 
@@ -2686,9 +2698,9 @@ static bool bindings_project_control_continuation(Arena *a, Atom *body,
         return false;
 #endif
     Atom *closure_surface = body;
-    if (full && prime_need_snapshot_present(&full->prime_need)) {
+    if (full && prime_need_snapshot_present(bindings_need_view(full))) {
         closure_surface = prime_need_reify_suspended(
-            a, body, &full->prime_need);
+            a, body, bindings_need_view(full));
         if (!closure_surface)
             return false;
     }
@@ -2935,14 +2947,14 @@ static void outcome_set_append_promoted(Arena *a, OutcomeSet *dst,
 
 static inline bool bindings_has_value_entries(const Bindings *env) {
     return env && (env->len > 0 ||
-                   prime_need_snapshot_present(&env->prime_need) ||
-                   prime_need_receipt_present(&env->prime_receipt));
+                   prime_need_snapshot_present(bindings_need_view(env)) ||
+                   prime_need_receipt_present(bindings_receipt_view(env)));
 }
 
 static inline bool bindings_has_any_entries(const Bindings *env) {
     return env && (env->len > 0 || env->eq_len > 0 ||
-                   prime_need_snapshot_present(&env->prime_need) ||
-                   prime_need_receipt_present(&env->prime_receipt));
+                   prime_need_snapshot_present(bindings_need_view(env)) ||
+                   prime_need_receipt_present(bindings_receipt_view(env)));
 }
 
 static bool bindings_effective_merge(Bindings *owned,
@@ -3102,8 +3114,7 @@ static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
         Bindings projected;
         bindings_init(&projected);
         if (effective) {
-            projected.prime_need = effective->prime_need;
-            projected.prime_receipt = effective->prime_receipt;
+            bindings_prime_assign(&projected, effective);
         }
         outcome_set_add(os, applied, &projected);
         if (effective == &carried)
@@ -4877,8 +4888,7 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
 
     bindings_init(out);
     if (full) {
-        out->prime_need = full->prime_need;
-        out->prime_receipt = full->prime_receipt;
+        bindings_prime_assign(out, full);
     }
     if (!full || full->len == 0)
         return true;
@@ -4936,8 +4946,7 @@ static bool bindings_project_exact_var_set(
         return false;
     bindings_init(out);
     if (full) {
-        out->prime_need = full->prime_need;
-        out->prime_receipt = full->prime_receipt;
+        bindings_prime_assign(out, full);
     }
     if (!full || full->len == 0u || wanted->len == 0u)
         return true;
@@ -5005,8 +5014,7 @@ static bool bindings_project_body_exact_env(Arena *a, Atom *body,
     if (!full || full->len == 0u || !atom_contains_vars(body)) {
         bindings_init(out);
         if (full) {
-            out->prime_need = full->prime_need;
-            out->prime_receipt = full->prime_receipt;
+            bindings_prime_assign(out, full);
         }
         return true;
     }
@@ -5033,7 +5041,7 @@ bindings_project_control_capture_env(Arena *a, Atom *body,
         CETTA_RUNTIME_COUNTER_PRIME_NEED_CAPTURE_PROJECTION_QUERY);
     free_var_set_init(&captures);
     if (!prime_need_collect_capture_vars(
-            body, full ? &full->prime_need : NULL,
+            body, full ? bindings_need_view(full) : NULL,
             &captures, &complete)) {
         free_var_set_free(&captures);
         return PRIME_NEED_CAPTURE_PROJECTION_ERROR;
@@ -8404,6 +8412,73 @@ static bool prime_let_branch_visit(Arena *a, Atom *atom,
     return true;
 }
 
+/* Upgrade A: per-branch eval-arena mark/reset.
+ *
+ * A direct-walk let branch (one `superpose`/`hyperpose` alternative) evaluates
+ * its substituted body into the shared eval arena and RETAINS that scratch to
+ * the end of the enclosing eval, making peak eval-arena O(N) in the number of
+ * branches.  For a branch whose body is a grounded effect returning the unit
+ * value () (e.g. `(add-atom &space X)`), the effect deep-copies X into
+ * space-owned (persistent) storage and the recorded result carries nothing out
+ * of the arena.  Such a branch's scratch is dead the instant its (unit) outcome
+ * is recorded, so it can be reclaimed immediately, making peak eval-arena O(1).
+ *
+ * We only reclaim when EVERY outcome this branch appended is provably free of
+ * references into the reset region: the outcome atom is the unit () and does
+ * not live in the arena, its logical env is empty, and any captured Prime
+ * need/receipt is owned by a different (longer-lived) arena.  `arena_owns_ptr`
+ * makes the check self-guarding: when hash-consing is off the unit atom lives
+ * in the arena and the branch is (correctly) not reclaimed. Every other branch
+ * shape keeps the previous behaviour exactly. */
+static bool g_let_branch_arena_reset_enabled_cached = false;
+static bool g_let_branch_arena_reset_enabled = true;
+
+static bool let_branch_arena_reset_enabled(void) {
+    if (!g_let_branch_arena_reset_enabled_cached) {
+        const char *disable = getenv("CETTA_DISABLE_LET_BRANCH_ARENA_RESET");
+        g_let_branch_arena_reset_enabled =
+            !(disable && disable[0] != '\0' && disable[0] != '0');
+        g_let_branch_arena_reset_enabled_cached = true;
+    }
+    return g_let_branch_arena_reset_enabled;
+}
+
+/* True iff every outcome in os->items[from .. os->len) is an effect-only,
+ * unit-result outcome that carries nothing out of `scratch`. */
+/* True iff every outcome in os->items[from .. os->len) is an effect-only,
+ * unit-result outcome whose only reference into `scratch` is the (unit) result
+ * atom itself.  Such an outcome carries no logical bindings and no Prime
+ * need/receipt into the reset region, so re-pointing its result to a stable ()
+ * makes the branch's scratch fully dead. */
+static bool let_branch_outcomes_are_resettable(const OutcomeSet *os,
+                                               CettaCount from,
+                                               const Arena *scratch) {
+    for (CettaCount i = from; i < os->len; i++) {
+        const Outcome *o = &os->items[i];
+        /* Only the plain inline atom+env shape; no variant/answer-ref payload
+         * that could hold further scratch references. */
+        if (o->kind != CETTA_OUTCOME_INLINE)
+            return false;
+        Atom *r = o->atom;
+        /* Result must be the unit value (): an empty expression. */
+        if (!r || r->kind != ATOM_EXPR || r->expr.len != 0)
+            return false;
+        /* Logical substitutions must be empty (nothing bound out). */
+        if (o->env.len != 0 || o->env.eq_len != 0)
+            return false;
+        /* Any captured Prime need/receipt must be owned by a longer-lived
+         * arena, not the scratch we are about to reset. */
+        if (prime_need_snapshot_present(bindings_need_view(&o->env)) &&
+            !prime_need_snapshot_owner_excludes_arena(bindings_need_view(&o->env),
+                                                      scratch))
+            return false;
+        if (prime_need_receipt_present(bindings_receipt_view(&o->env)) &&
+            !prime_need_receipt_excludes_arena(bindings_receipt_view(&o->env), scratch))
+            return false;
+    }
+    return true;
+}
+
 static bool let_direct_branch_visit(Arena *a, Atom *atom,
                                     const Bindings *env, void *ctx) {
     (void)a;
@@ -8427,6 +8502,10 @@ static bool let_direct_branch_visit(Arena *a, Atom *atom,
     BindingsBuilder b;
     if (!bindings_builder_init(&b, env))
         return true;
+
+    const bool try_reset = let_branch_arena_reset_enabled();
+    const CettaCount os_len_before = let_ctx->os->len;
+    const ArenaMark branch_mark = arena_mark(let_ctx->a);
 
     bool ok = false;
     if (let_ctx->pat->kind == ATOM_VAR)
@@ -8460,6 +8539,36 @@ static bool let_direct_branch_visit(Arena *a, Atom *atom,
         bindings_free(&visible);
     }
     bindings_builder_free(&b);
+    /* Upgrade A: reclaim this branch's eval-arena scratch when every outcome it
+     * recorded is an effect-only unit result that carries nothing out of the
+     * arena, and no live Prime need/receipt references it.  Caps peak
+     * eval-arena at O(1) in the number of branches. */
+    if (try_reset && let_ctx->os->len > os_len_before &&
+        let_branch_outcomes_are_resettable(let_ctx->os, os_len_before,
+                                           let_ctx->a) &&
+        prime_need_snapshot_owner_excludes_arena(&g_prime_need_active,
+                                                 let_ctx->a) &&
+        (!prime_need_receipt_present(&g_prime_need_receipt_active) ||
+         prime_need_receipt_excludes_arena(&g_prime_need_receipt_active,
+                                           let_ctx->a))) {
+        /* Re-point each (unit) result to a () allocated in the long-lived
+         * persistent arena so the branch's eval-arena scratch — including the
+         * arena-allocated unit — becomes fully dead and reclaimable.  When the
+         * persistent arena is hash-consed (the common case) this is the single
+         * process-lifetime () and costs nothing. */
+        Arena *persist = eval_persistent_arena();
+        if (persist && persist != let_ctx->a) {
+            Atom *stable_unit = atom_unit(persist);
+            if (stable_unit && !arena_owns_ptr(let_ctx->a, stable_unit)) {
+                for (CettaCount i = os_len_before; i < let_ctx->os->len; i++) {
+                    Outcome *o = &let_ctx->os->items[i];
+                    o->atom = stable_unit;
+                    o->materialized_atom = stable_unit;
+                }
+                arena_reset(let_ctx->a, branch_mark);
+            }
+        }
+    }
     return true;
 }
 
@@ -8477,8 +8586,8 @@ static bool stream_visit_collect(Arena *a, Atom *atom, const Bindings *env, void
         if (env && (env->len > 0u || env->eq_len > 0u))
             item = bindings_apply_if_vars((Bindings *)env, a, item);
         const PrimeNeedSnapshot *snapshot =
-            env && prime_need_snapshot_present(&env->prime_need)
-                ? &env->prime_need
+            env && prime_need_snapshot_present(bindings_need_view(env))
+                ? bindings_need_view(env)
                 : &g_prime_need_active;
         if (item && prime_need_snapshot_present(snapshot))
             item = prime_need_reify_suspended(a, item, snapshot);
@@ -8622,8 +8731,8 @@ static bool eval_bound_single_with_scratch(Space *s, Arena *a, Arena *scratch,
                 candidate = bindings_apply_if_vars(
                     (Bindings *)candidate_env, scratch, candidate);
             const PrimeNeedSnapshot *snapshot =
-                prime_need_snapshot_present(&candidate_env->prime_need)
-                    ? &candidate_env->prime_need
+                prime_need_snapshot_present(bindings_need_view(candidate_env))
+                    ? bindings_need_view(candidate_env)
                     : &g_prime_need_active;
             if (prime_need_snapshot_present(snapshot))
                 candidate = prime_need_reify_suspended(
@@ -8678,8 +8787,8 @@ static bool reduce_stream_visit(Arena *work_a, Atom *item, const Bindings *env, 
             observed_item = bindings_apply_if_vars(
                 (Bindings *)env, reduce->a, observed_item);
         const PrimeNeedSnapshot *snapshot =
-            env && prime_need_snapshot_present(&env->prime_need)
-                ? &env->prime_need
+            env && prime_need_snapshot_present(bindings_need_view(env))
+                ? bindings_need_view(env)
                 : &g_prime_need_active;
         if (prime_need_snapshot_present(snapshot))
             observed_item = prime_need_reify_suspended(
@@ -11964,7 +12073,7 @@ static bool prime_need_record_cell_observation(
     uint64_t thunk_id, Atom *outcome) {
     if (!env || !outcome)
         return false;
-    PrimeNeedReceipt base = env->prime_receipt;
+    PrimeNeedReceipt base = *bindings_receipt_view(env);
     if (!prime_need_receipt_merge(&base, &g_prime_need_receipt_active))
         return false;
     PrimeNeedCellView cell = {0};
@@ -11976,7 +12085,7 @@ static bool prime_need_record_cell_observation(
             cell.source_occurrence_id, cell.source_argument_index,
             outcome, &observed))
         return false;
-    env->prime_receipt = observed;
+    *bindings_receipt_mut(env) = observed;
     return true;
 }
 
@@ -12147,8 +12256,8 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
         eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
         return;
     }
-    lexical_env.prime_need = evaluating;
-    lexical_env.prime_receipt = producer_receipt;
+    *bindings_need_mut(&lexical_env) = evaluating;
+    *bindings_receipt_mut(&lexical_env) = producer_receipt;
     const Bindings *cell_env = &lexical_env;
 #endif
     const Bindings *previous_logical_env = g_prime_need_logical_env;
@@ -12196,7 +12305,7 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
         Atom *value = outcome_atom_materialize(a, &forced.items[i]);
         if (!value || atom_is_empty(value))
             continue;
-        PrimeNeedSnapshot branch = forced.items[i].env.prime_need;
+        PrimeNeedSnapshot branch = *bindings_need_view(&forced.items[i].env);
         if (!prime_need_snapshot_present(&branch))
             branch = evaluating;
         PrimeNeedSnapshot cached;
@@ -12244,7 +12353,7 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
                              (unsigned long long)thunk_id);
             continue;
         }
-        visible.prime_need = cached;
+        *bindings_need_mut(&visible) = cached;
         Bindings branch_env;
         Bindings no_caller;
         bindings_init(&no_caller);
@@ -12258,7 +12367,7 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
         }
         bindings_free(&visible);
         if (!prime_need_receipt_merge(
-                &branch_env.prime_receipt, &producer_receipt)) {
+                bindings_receipt_mut(&branch_env), &producer_receipt)) {
             bindings_free(&branch_env);
             continue;
         }
@@ -12627,6 +12736,97 @@ static bool prime_need_reify_push(PrimeNeedReifyFrame **frames,
    evaluation.  The iterative active-path checks make the operation total on
    admitted acyclic syntax and reject either pointer cycles or cycles through
    thunk payloads. */
+/* Path-compression memo for prime_need_reify_suspended_mode.
+ *
+ * Reify reconstructs a suspended term by following each cell's stable `origin`
+ * (never `cache_state`/`cached`), so the reified observation-form of a cell is a
+ * pure function of (session, thunk_id) and is safe to cache and reuse. Without
+ * this, reify re-walks the whole O(depth) suspension chain on every evaluation
+ * step (O(n^2) cell lookups, O(n^3) with the cell index disabled).
+ *
+ * Only the observation path (persist_sharing == false) is memoized: it is the
+ * hot path and its output carries no per-reference data (the opaque no-INSPECT
+ * case is decided before the memo, and the persist form embeds per-ref rights).
+ * The cache is scoped to a single output arena and cleared when that arena
+ * changes, so cached atoms can never dangle across arenas. */
+typedef struct {
+    uint64_t thunk_id;
+    uint64_t session_id;
+    uint8_t used;
+    Atom *result;
+} PrimeNeedReifyMemoEntry;
+
+static __thread const Arena *g_reify_memo_arena = NULL;
+static __thread PrimeNeedReifyMemoEntry *g_reify_memo = NULL;
+static __thread size_t g_reify_memo_cap = 0u;
+static __thread size_t g_reify_memo_len = 0u;
+
+static void prime_need_reify_memo_scope(const Arena *arena) {
+    if (arena == g_reify_memo_arena)
+        return;
+    g_reify_memo_arena = arena;
+    g_reify_memo_len = 0u;
+    if (g_reify_memo_cap)
+        memset(g_reify_memo, 0, g_reify_memo_cap * sizeof(*g_reify_memo));
+}
+
+static Atom *prime_need_reify_memo_get(uint64_t session_id, uint64_t thunk_id) {
+    if (!g_reify_memo_cap)
+        return NULL;
+    size_t mask = g_reify_memo_cap - 1u;
+    size_t h = (size_t)((thunk_id * 0x9E3779B97F4A7C15ull) >> 32) & mask;
+    for (size_t i = 0u; i < g_reify_memo_cap; i++) {
+        PrimeNeedReifyMemoEntry *e = &g_reify_memo[(h + i) & mask];
+        if (!e->used)
+            return NULL;
+        if (e->thunk_id == thunk_id && e->session_id == session_id)
+            return e->result;
+    }
+    return NULL;
+}
+
+static void prime_need_reify_memo_put(uint64_t session_id, uint64_t thunk_id,
+                                      Atom *result) {
+    if (!result)
+        return;
+    if ((g_reify_memo_len + 1u) * 2u > g_reify_memo_cap) {
+        size_t new_cap = g_reify_memo_cap ? g_reify_memo_cap * 2u : 64u;
+        PrimeNeedReifyMemoEntry *grown =
+            calloc(new_cap, sizeof(*grown));
+        if (!grown)
+            return; /* memo is best-effort; correctness does not depend on it */
+        size_t new_mask = new_cap - 1u;
+        for (size_t i = 0u; i < g_reify_memo_cap; i++) {
+            PrimeNeedReifyMemoEntry *e = &g_reify_memo[i];
+            if (!e->used)
+                continue;
+            size_t h = (size_t)((e->thunk_id * 0x9E3779B97F4A7C15ull) >> 32)
+                       & new_mask;
+            while (grown[h].used)
+                h = (h + 1u) & new_mask;
+            grown[h] = *e;
+        }
+        free(g_reify_memo);
+        g_reify_memo = grown;
+        g_reify_memo_cap = new_cap;
+    }
+    size_t mask = g_reify_memo_cap - 1u;
+    size_t h = (size_t)((thunk_id * 0x9E3779B97F4A7C15ull) >> 32) & mask;
+    for (size_t i = 0u; i < g_reify_memo_cap; i++) {
+        PrimeNeedReifyMemoEntry *e = &g_reify_memo[(h + i) & mask];
+        if (e->used && (e->thunk_id != thunk_id || e->session_id != session_id))
+            continue;
+        if (!e->used) {
+            g_reify_memo_len++;
+            e->used = 1u;
+            e->thunk_id = thunk_id;
+            e->session_id = session_id;
+        }
+        e->result = result;
+        return;
+    }
+}
+
 static Atom *prime_need_reify_suspended_mode(
     Arena *arena, Atom *root, const PrimeNeedSnapshot *snapshot,
     bool persist_sharing) {
@@ -12639,6 +12839,8 @@ static Atom *prime_need_reify_suspended_mode(
     if (!arena || !root || !snapshot ||
         !prime_need_snapshot_present(snapshot))
         return root;
+    if (!persist_sharing)
+        prime_need_reify_memo_scope(arena);
     if (!prime_need_reify_push(
             &frames, &len, &cap, inline_frames,
             (PrimeNeedReifyFrame){.source = root,
@@ -12662,6 +12864,11 @@ static Atom *prime_need_reify_suspended_mode(
                         origin,
                     },
                     4u);
+            } else if (frame->resolving_thunk) {
+                /* Cache the completed observation-form for path compression. */
+                prime_need_reify_memo_put(snapshot->session_id,
+                                          frame->resolving_thunk,
+                                          *frame->destination);
             }
             len--;
             continue;
@@ -12683,6 +12890,15 @@ static Atom *prime_need_reify_suspended_mode(
                         arena, syms->suspension_opaque);
                     len--;
                     continue;
+                }
+                if (!persist_sharing) {
+                    Atom *memoized = prime_need_reify_memo_get(
+                        snapshot->session_id, thunk_id);
+                    if (memoized) {
+                        *frame->destination = memoized;
+                        len--;
+                        continue;
+                    }
                 }
                 for (size_t i = 0u; i < len; i++)
                     if (frames[i].resolving_thunk == thunk_id)
@@ -13002,8 +13218,8 @@ static void prime_need_normalize_observation_atom(
 
     if (prime_need_observation_barrier(applied)) {
         const PrimeNeedSnapshot *snapshot =
-            env && prime_need_snapshot_present(&env->prime_need)
-                ? &env->prime_need
+            env && prime_need_snapshot_present(bindings_need_view(env))
+                ? bindings_need_view(env)
                 : &g_prime_need_active;
         Atom *reified = prime_need_snapshot_present(snapshot)
             ? prime_need_reify_suspended(a, applied, snapshot)
@@ -13102,8 +13318,8 @@ static Atom *prime_need_transform_data(Arena *arena, Atom *root,
     if (env && (env->len > 0u || env->eq_len > 0u))
         exported = bindings_apply_if_vars((Bindings *)env, arena, exported);
     const PrimeNeedSnapshot *snapshot =
-        env && prime_need_snapshot_present(&env->prime_need)
-            ? &env->prime_need
+        env && prime_need_snapshot_present(bindings_need_view(env))
+            ? bindings_need_view(env)
             : &g_prime_need_active;
     if (exported && prime_need_snapshot_present(snapshot))
         exported = prime_need_reify_suspended_mode(
@@ -13128,7 +13344,7 @@ static bool prime_need_allocate_ref_with_storage_key(
     if (!a || !term || !branch_env || !out_ref ||
         !bindings_clone(branch_env, base_env))
         return false;
-    PrimeNeedSnapshot base = branch_env->prime_need;
+    PrimeNeedSnapshot base = *bindings_need_view(branch_env);
     /* The logical environment may carry an ancestor snapshot while the
      * currently evaluated branch has since allocated thunks.  A newly
      * delayed term can mention those references, so allocation must extend
@@ -13232,7 +13448,7 @@ static bool prime_need_allocate_ref_with_storage_key(
         bindings_free(branch_env);
         return false;
     }
-    branch_env->prime_need = allocated;
+    *bindings_need_mut(branch_env) = allocated;
     *out_ref = prime_need_ref(a, &allocated, thunk_id);
     if (!*out_ref) {
         bindings_free(branch_env);
@@ -13276,7 +13492,7 @@ static bool prime_need_rehydrate_stored_value(
             base_env, branch_env, &ref))
         return false;
     Atom *restricted = prime_need_ref_restrict(
-        a, ref, &branch_env->prime_need, rights);
+        a, ref, bindings_need_view(branch_env), rights);
     if (!restricted) {
         bindings_free(branch_env);
         return false;
@@ -13355,7 +13571,7 @@ static bool prime_need_record_origin_inspection(
     uint64_t thunk_id, Atom *origin) {
     if (!env || !origin)
         return false;
-    PrimeNeedReceipt base = env->prime_receipt;
+    PrimeNeedReceipt base = *bindings_receipt_view(env);
     if (!prime_need_receipt_merge(&base, &g_prime_need_receipt_active))
         return false;
     PrimeNeedReceipt observed;
@@ -13363,7 +13579,7 @@ static bool prime_need_record_origin_inspection(
             prime_need_owner(a), &base, need_session_id, thunk_id,
             origin, &observed))
         return false;
-    env->prime_receipt = observed;
+    *bindings_receipt_mut(env) = observed;
     return true;
 }
 
@@ -13385,8 +13601,8 @@ static PrimeNeedOriginStatus prime_need_origin_view(
     if (!promise || !prime_need_is_promise(promise))
         return PRIME_NEED_ORIGIN_NOT_SUSPENSION;
     const PrimeNeedSnapshot *snapshot =
-        env && prime_need_snapshot_present(&env->prime_need)
-            ? &env->prime_need
+        env && prime_need_snapshot_present(bindings_need_view(env))
+            ? bindings_need_view(env)
             : &g_prime_need_active;
     uint64_t thunk_id = 0u;
     if (!prime_need_ref_belongs_to(
@@ -13467,7 +13683,7 @@ static void prime_need_eval_observe_origin(
             continue;
         }
         if (!prime_need_record_origin_inspection(
-                a, &branch, branch.prime_need.session_id,
+                a, &branch, bindings_need_view(&branch)->session_id,
                 thunk_id, origin))
             continue;
         Atom *view = atom_expr2(
@@ -13552,7 +13768,7 @@ static void prime_need_eval_restrict(
             }
             uint32_t existing = 0u;
             if (!prime_need_ref_belongs_to(
-                    producer->expr.elems[1], &branch.prime_need, NULL) ||
+                    producer->expr.elems[1], bindings_need_view(&branch), NULL) ||
                 !prime_need_ref_parse_rights(
                     producer->expr.elems[1], NULL, NULL, NULL,
                     &existing)) {
@@ -13580,7 +13796,7 @@ static void prime_need_eval_restrict(
                 continue;
             }
             Atom *restricted = prime_need_ref_restrict(
-                a, producer->expr.elems[1], &branch.prime_need,
+                a, producer->expr.elems[1], bindings_need_view(&branch),
                 requested);
             Atom *promise = restricted
                 ? atom_expr2(
@@ -13651,11 +13867,11 @@ static void prime_need_eval_relation(
                 right, &rs, &rt, &ra);
             bool left_inspect = left_valid &&
                 prime_need_ref_belongs_to_with_rights(
-                    left->expr.elems[1], &branch.prime_need,
+                    left->expr.elems[1], bindings_need_view(&branch),
                     CETTA_PRIME_NEED_RIGHT_INSPECT, NULL);
             bool right_inspect = right_valid &&
                 prime_need_ref_belongs_to_with_rights(
-                    right->expr.elems[1], &branch.prime_need,
+                    right->expr.elems[1], bindings_need_view(&branch),
                     CETTA_PRIME_NEED_RIGHT_INSPECT, NULL);
             if (!left_valid || !right_valid) {
                 outcome_set_add_prefixed(
@@ -13685,9 +13901,9 @@ static void prime_need_eval_relation(
                 PrimeNeedCellView lc;
                 PrimeNeedCellView rc;
                 equal = prime_need_snapshot_lookup(
-                            &branch.prime_need, lt, &lc) &&
+                            bindings_need_view(&branch), lt, &lc) &&
                         prime_need_snapshot_lookup(
-                            &branch.prime_need, rt, &rc) &&
+                            bindings_need_view(&branch), rt, &rc) &&
                         lc.origin && rc.origin &&
                         atom_eq(lc.origin, rc.origin);
             }
@@ -14087,7 +14303,7 @@ static void prime_need_eval_force(Space *s, Arena *a, Atom *form, int fuel,
             continue;
         }
         if (prime_need_is_resampler(producer)) {
-            PrimeNeedReceipt base = branch.prime_receipt;
+            PrimeNeedReceipt base = *bindings_receipt_view(&branch);
             if (!prime_need_receipt_merge(
                     &base, &g_prime_need_receipt_active))
                 continue;
@@ -14096,7 +14312,7 @@ static void prime_need_eval_force(Space *s, Arena *a, Atom *form, int fuel,
                     prime_need_owner(a), &base,
                     producer->expr.elems[1], &resampled))
                 continue;
-            branch.prime_receipt = resampled;
+            *bindings_receipt_mut(&branch) = resampled;
             g_prime_need_receipt_active = resampled;
             eval_for_caller(s, a, NULL, producer->expr.elems[1], fuel,
                             &branch, preserve_bindings, os);
@@ -14882,8 +15098,7 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
         Bindings projected;
         bindings_init(&projected);
         if (effective) {
-            projected.prime_need = effective->prime_need;
-            projected.prime_receipt = effective->prime_receipt;
+            bindings_prime_assign(&projected, effective);
         }
         if (effective == &merged)
             bindings_free(&merged);
@@ -17282,8 +17497,11 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
         ms = s;
     if (!ms || space_is_ordered(ms))
         return false;
-    if (!space_engine_uses_pathmap(ms->match_backend.kind) && atom_has_vars(templ))
-        return false;
+    /* No engine-specific bail on variable templates: count_template_units is
+     * conservative (it counts a row only when the projected template is
+     * single-result data, otherwise the whole streamed count reports failure
+     * and the caller falls back to materialize-then-count).  This lets the
+     * native engine stream-count (friend $y $x)-shaped scans in O(1) memory. */
     if (guard_mork_space_surface(a, match_atom, ms, "match", "mork:match"))
         return false;
 
@@ -17341,16 +17559,23 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
     return true;
 }
 
-static bool try_count_collapse_match(Space *s, Arena *a, Atom *atom,
-                                     const Bindings *current_env, int fuel,
-                                     uint64_t *out_count) {
+/* Streamed count for the STRICT `size` consumer over (collapse MATCH).
+ *
+ * This is the resurrection of the former dispatch count-fusion, restricted to
+ * its one sound case: `size` is strict, so evaluating (size (collapse MATCH))
+ * genuinely evaluates the collapse and consumes its tuple linearly by counting.
+ * We therefore stream the match rows and count them, never materializing the
+ * O(N) tuple.  It must NOT be reached for `size-atom` (non-strict) — the caller
+ * guards on g_builtin_syms.size only. */
+static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
+                                           const Bindings *current_env, int fuel,
+                                           uint64_t *out_count) {
     Atom *target;
     if (!atom || atom->kind != ATOM_EXPR || expr_nargs(atom) != 1 ||
         !out_count || (current_env && current_env->len != 0)) {
         return false;
     }
-    if (atom_head_symbol_id(atom) != g_builtin_syms.size &&
-        atom_head_symbol_id(atom) != g_builtin_syms.size_atom) {
+    if (atom_head_symbol_id(atom) != g_builtin_syms.size) {
         return false;
     }
     target = expr_arg(atom, 0);
@@ -17588,15 +17813,14 @@ static bool prime_need_forced_world_push(BindingSet *worlds,
     if (!worlds || !env)
         return false;
     for (CettaCount i = 0u; i < worlds->len; i++) {
-        if (worlds->items[i].prime_need.top == env->prime_need.top &&
-            prime_need_receipt_equal(&worlds->items[i].prime_receipt,
-                                     &env->prime_receipt))
+        if (bindings_need_view(&worlds->items[i])->top == bindings_need_view(env)->top &&
+            prime_need_receipt_equal(bindings_receipt_view(&worlds->items[i]),
+                                     bindings_receipt_view(env)))
             return true;
     }
     Bindings semantic_world;
     bindings_init(&semantic_world);
-    semantic_world.prime_need = env->prime_need;
-    semantic_world.prime_receipt = env->prime_receipt;
+    bindings_prime_assign(&semantic_world, env);
     bool pushed = binding_set_push(worlds, &semantic_world);
     bindings_free(&semantic_world);
     return pushed;
@@ -17685,7 +17909,7 @@ static bool prime_need_collect_raw_equation_result(
     if (!raw || !result || !raw->raw_results ||
         !bindings_clone_merge(&merged, raw->base_env, bindings))
         return true;
-    PrimeNeedReceipt base = merged.prime_receipt;
+    PrimeNeedReceipt base = *bindings_receipt_view(&merged);
     if (!prime_need_receipt_merge(
             &base, &g_prime_need_receipt_active)) {
         bindings_free(&merged);
@@ -17699,7 +17923,7 @@ static bool prime_need_collect_raw_equation_result(
         bindings_free(&merged);
         return true;
     }
-    merged.prime_receipt = used;
+    *bindings_receipt_mut(&merged) = used;
     raw->matched = true;
     outcome_set_add(raw->raw_results, result, &merged);
     bindings_free(&merged);
@@ -18250,7 +18474,7 @@ static bool prime_need_try_equation_call(
                 return false;
             equation_env = &inherited_env;
         }
-        if (!prime_need_snapshot_merge(&inherited_env.prime_need,
+        if (!prime_need_snapshot_merge(bindings_need_mut(&inherited_env),
                                        &g_prime_need_active))
             return false;
     }
@@ -18547,16 +18771,16 @@ static bool prime_need_try_equation_call(
         Atom *raw_atom = outcome_atom_materialize(a, raw);
         bool raw_has_ref = false;
         (void)prime_need_result_refs_resolved(
-            raw_atom, &raw->env.prime_need, &raw_has_ref);
+            raw_atom, bindings_need_view(&raw->env), &raw_has_ref);
         bool published_in_descendant = false;
         if (raw_has_ref) {
             for (CettaCount wi = 0u; wi < forced_worlds.len; wi++) {
                 const Bindings *world = &forced_worlds.items[wi];
                 bool world_has_ref = false;
                 if (!prime_need_snapshot_is_ancestor(
-                        &raw->env.prime_need, &world->prime_need) ||
+                        bindings_need_view(&raw->env), bindings_need_view(world)) ||
                     !prime_need_result_refs_resolved(
-                        raw_atom, &world->prime_need, &world_has_ref) ||
+                        raw_atom, bindings_need_view(world), &world_has_ref) ||
                     !world_has_ref)
                     continue;
                 Bindings published;
@@ -18813,11 +19037,14 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     }
     bool profile_disabled_whole_call_surface =
         active_profile_disables_whole_call_surface(head_id);
+    /* Strict `size` over (collapse MATCH): stream the rows and count without
+     * materializing the tuple.  `size-atom` is non-strict and is intentionally
+     * excluded (it returns the arity of its unevaluated argument). */
     if (!profile_disabled_whole_call_surface &&
-        (head_id == g_builtin_syms.size || head_id == g_builtin_syms.size_atom) &&
+        head_id == g_builtin_syms.size &&
         nargs == 1) {
         uint64_t count = 0;
-        if (try_count_collapse_match(s, a, atom, current_env, fuel, &count)) {
+        if (try_stream_count_size_collapse(s, a, atom, current_env, fuel, &count)) {
             outcome_set_add(os, atom_int(a, (int64_t)count), &_empty);
             return true;
         }
@@ -19665,10 +19892,10 @@ static bool prime_eval_stack_capture_dynamic_env(
     bindings_init(out);
     if (logical_env && !bindings_clone(out, logical_env))
         return false;
-    if (!prime_need_snapshot_present(&out->prime_need))
-        out->prime_need = g_prime_need_active;
-    if (!prime_need_receipt_present(&out->prime_receipt))
-        out->prime_receipt = g_prime_need_receipt_active;
+    if (!prime_need_snapshot_present(bindings_need_view(out)))
+        *bindings_need_mut(out) = g_prime_need_active;
+    if (!prime_need_receipt_present(bindings_receipt_view(out)))
+        *bindings_receipt_mut(out) = g_prime_need_receipt_active;
     return true;
 }
 
@@ -19688,25 +19915,25 @@ static bool prime_eval_stack_audit_bindings(
     const Bindings *bindings) {
     if (!bindings ||
         !prime_need_snapshot_owner_excludes_arena(
-            &bindings->prime_need,
+            bindings_need_view(bindings),
             g_prime_eval_stack_driver->arena) ||
         !prime_need_snapshot_owner_excludes_arena(
-            &bindings->prime_need, &g_eval_gc.survivor) ||
-        (prime_need_receipt_present(&bindings->prime_receipt) &&
-         (!bindings->prime_receipt.owner ||
-          bindings->prime_receipt.owner ==
+            bindings_need_view(bindings), &g_eval_gc.survivor) ||
+        (prime_need_receipt_present(bindings_receipt_view(bindings)) &&
+         (!bindings_receipt_view(bindings)->owner ||
+          bindings_receipt_view(bindings)->owner ==
               g_prime_eval_stack_driver->arena ||
-          bindings->prime_receipt.owner == &g_eval_gc.survivor)))
+          bindings_receipt_view(bindings)->owner == &g_eval_gc.survivor)))
         return false;
 #if CETTA_PROVENANCE_ASSERT
     return prime_need_arena_audit_snapshot(
-               eval_audit, &bindings->prime_need) &&
+               eval_audit, bindings_need_view(bindings)) &&
            prime_need_arena_audit_receipt(
-               eval_audit, &bindings->prime_receipt) &&
+               eval_audit, bindings_receipt_view(bindings)) &&
            prime_need_arena_audit_snapshot(
-               survivor_audit, &bindings->prime_need) &&
+               survivor_audit, bindings_need_view(bindings)) &&
            prime_need_arena_audit_receipt(
-               survivor_audit, &bindings->prime_receipt);
+               survivor_audit, bindings_receipt_view(bindings));
 #else
     (void)eval_audit;
     (void)survivor_audit;
@@ -20272,8 +20499,8 @@ static bool prime_eval_stack_schedule_force(
         prime_eval_stack_frame_free(frame);
         return true;
     }
-    evaluating_env.prime_need = frame->evaluating;
-    evaluating_env.prime_receipt = frame->producer_receipt;
+    *bindings_need_mut(&evaluating_env) = frame->evaluating;
+    *bindings_receipt_mut(&evaluating_env) = frame->producer_receipt;
     bool applied = false;
     Atom *payload = bindings_apply_body_exact_env(
         a, cell.origin, &evaluating_env, &applied);
@@ -20612,7 +20839,7 @@ static void prime_eval_stack_resume_force(
             continue;
         }
         PrimeNeedSnapshot branch =
-            frame->child.items[i].env.prime_need;
+            *bindings_need_view(&frame->child.items[i].env);
         if (!prime_need_snapshot_present(&branch))
             branch = frame->evaluating;
         PrimeNeedSnapshot cached;
@@ -20662,7 +20889,7 @@ static void prime_eval_stack_resume_force(
                              (unsigned long long)frame->thunk_id);
             continue;
         }
-        visible.prime_need = cached;
+        *bindings_need_mut(&visible) = cached;
         Bindings branch_env;
         if (!bindings_clone_merge(&branch_env, caller, &visible)) {
             PRIME_NEED_TRACE("[rforce %llu] drop: caller/visible merge failed\n",
@@ -20672,7 +20899,7 @@ static void prime_eval_stack_resume_force(
         }
         bindings_free(&visible);
         if (!prime_need_receipt_merge(
-                &branch_env.prime_receipt,
+                bindings_receipt_mut(&branch_env),
                 &frame->producer_receipt)) {
             PRIME_NEED_TRACE("[force %llu] drop: receipt merge failed\n",
                              (unsigned long long)frame->thunk_id);
@@ -20862,17 +21089,17 @@ tail_call: ;
      * logical environment.  Make that snapshot active before interpreting
      * the next form; otherwise a demanded thunk is looked up in the stale
      * pre-condition heap and gets evaluated again. */
-    if (prime_need_snapshot_present(&CURRENT_ENV->prime_need))
-        g_prime_need_active = CURRENT_ENV->prime_need;
+    if (prime_need_snapshot_present(bindings_need_view(CURRENT_ENV)))
+        g_prime_need_active = *bindings_need_view(CURRENT_ENV);
     else
         g_prime_need_active = need_guard.previous;
-    if (prime_need_receipt_present(&CURRENT_ENV->prime_receipt))
-        g_prime_need_receipt_active = CURRENT_ENV->prime_receipt;
+    if (prime_need_receipt_present(bindings_receipt_view(CURRENT_ENV)))
+        g_prime_need_receipt_active = *bindings_receipt_view(CURRENT_ENV);
     else
         g_prime_need_receipt_active = need_guard.previous_receipt;
     if (CURRENT_ENV->len > 0u || CURRENT_ENV->eq_len > 0u ||
-        prime_need_snapshot_present(&CURRENT_ENV->prime_need) ||
-        prime_need_receipt_present(&CURRENT_ENV->prime_receipt))
+        prime_need_snapshot_present(bindings_need_view(CURRENT_ENV)) ||
+        prime_need_receipt_present(bindings_receipt_view(CURRENT_ENV)))
         g_prime_need_logical_env = CURRENT_ENV;
     else
         g_prime_need_logical_env = need_guard.previous_logical_env;
@@ -24548,7 +24775,7 @@ prime_need_strict_argument_ready:
                         continue;
                     if (prime_need_effective_state(
                             &branch, cell, &base, &value)) {
-                        branch.prime_receipt = base;
+                        *bindings_receipt_mut(&branch) = base;
                         if (prime_need_record_state_read(
                                 a, &branch, cell, value))
                             outcome_set_add(os, value, &branch);
@@ -25318,9 +25545,9 @@ generic_dispatch:
             &dispatch_results)) {
             if (tail_next) {
                 if (tail_replaces_env &&
-                    (!prime_need_snapshot_merge(&tail_env.prime_need,
-                                                &CURRENT_ENV->prime_need) ||
-                     !prime_need_snapshot_merge(&tail_env.prime_need,
+                    (!prime_need_snapshot_merge(bindings_need_mut(&tail_env),
+                                                bindings_need_view(CURRENT_ENV)) ||
+                     !prime_need_snapshot_merge(bindings_need_mut(&tail_env),
                                                 &g_prime_need_active))) {
                     outcome_set_free(&dispatch_results);
                     return;
@@ -25539,7 +25766,7 @@ static void prime_ground_memo_commit(Space *s, Arena *a, GroundMemoState *state,
             (!atom_is_error(v) || prime_need_fault_is_completed(v));
         if (!admissible_value ||
             !prime_need_receipt_delta_is_pure(
-                &state->before, &os->items[i].env.prime_receipt))
+                &state->before, bindings_receipt_view(&os->items[i].env)))
             return; /* any inadmissible occurrence: do not cache the call */
         answers[answer_len++] = v;
     }
