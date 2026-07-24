@@ -654,6 +654,7 @@ MORK_QUERY_ROW_STREAM_ABI_TEST_BIN = runtime/test_mork_query_row_stream_abi-$(BU
 SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN = runtime/test_space_term_universe_membership-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_STORE_ABI_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).runtime-stats
 TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN = runtime/test_term_universe_backend_add_abi-$(BUILD_OBJ_TAG).runtime-stats
+LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN = runtime/test_let_branch_arena_reset_no_escape-$(BUILD_OBJ_TAG)
 PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN = runtime/test_pathmap_backend_primary_destructive_abi-$(BUILD_OBJ_TAG)
 PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN = runtime/test_pathmap_backend_primary_replace_abi-$(BUILD_OBJ_TAG)
 PATHMAP_TYPED_QUERY_ABI_TEST_BIN = runtime/test_pathmap_typed_query_abi-$(BUILD_OBJ_TAG)
@@ -768,6 +769,11 @@ PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/atp_agenda_library.metta \
 	tests/prime/practical/need_control_branch_discriminators.metta
 PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRACTICAL_TESTS)
+# Per-test wall-clock cap for the prime conformance/completion gates.  A clean
+# prime_02_completion_resources run is a few seconds; a pathological blow-up
+# (e.g. the O(n^3) reify-judge regression) must fail LOUD instead of grinding
+# for hours and wedging the whole verification sweep.
+PRIME_COMPLETION_TIMEOUT ?= 60
 PYTHON_TESTS = tests/test_py_ops_surface.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
 	tests/test_space_type.metta \
@@ -788,6 +794,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_pathmap_typed_query_surface.metta \
 	tests/test_match_chain_cross_space_pathmap_regression.metta \
 	tests/test_effect_append_batch_fastpath.metta \
+	tests/test_size_atom_collapse_cross_engine_regression.metta \
 	tests/test_space_batch_copy_surfaces.metta \
 	tests/test_rational_bridge_roundtrip_regression.metta \
 	tests/test_mork_fc_depth3_witness_regression.metta \
@@ -2239,6 +2246,14 @@ else
 	@echo "INFO: term universe backend-add ABI requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
+
+$(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
+$(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): tests/test_let_branch_arena_reset_no_escape.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_let_branch_arena_reset_no_escape.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(PARSER_STANDALONE_SRC) $(LDFLAGS)
+
+test-let-branch-arena-reset-no-escape: $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN)
+	@$(call cetta_exec,./$(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN))
 
 $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -5242,11 +5257,11 @@ test-prime-completion-mutation: $(BIN)
 	python3 scripts/mutate_prime_completion_gate.py src/prime_semantics.c "$$mutation_dir/prime_semantics.c" || exit 1; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/prime_semantics.c" -o "$$mutation_dir/prime_semantics.o" || exit 1; \
 	$(CC) $(filter-out src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) "$$mutation_dir/prime_semantics.o" -o "$$mutation_dir/cetta-forged-completion" $(LDFLAGS) || exit 1; \
-	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	baseline=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
 		echo "FAIL: Prime completion mutation baseline is not green"; exit 1; \
 	fi; \
-	mutant=$$("$$mutation_dir/cetta-forged-completion" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-forged-completion" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_delayed=$$(printf '%s\n' "$$baseline" | grep -F '(DelayedLow '); \
 	mutant_delayed=$$(printf '%s\n' "$$mutant" | grep -F '(DelayedLow '); \
 	if [ "$$baseline_delayed" != '[(DelayedLow Incomplete)]' ] || \
@@ -5288,11 +5303,11 @@ test-prime-variable-mutation: $(BIN)
 	$(CC) $(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
 		"$$mutation_dir/he_typing.o" "$$mutation_dir/prime_semantics.o" \
 		-o "$$mutation_dir/cetta-variable-unsound" $(LDFLAGS) || exit 1; \
-	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	baseline=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
 		echo "FAIL: Prime variable mutation baseline is not green"; exit 1; \
 	fi; \
-	mutant=$$("$$mutation_dir/cetta-variable-unsound" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-variable-unsound" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_probes=$$(printf '%s\n' "$$baseline" | sed -n '1,3p'); \
 	mutant_probes=$$(printf '%s\n' "$$mutant" | sed -n '1,3p'); \
 	if [ "$$baseline_probes" = "$$mutant_probes" ] || \
@@ -5407,11 +5422,11 @@ test-prime-applicability-capacity-mutation: $(BIN)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/eval.c" -o "$$mutation_dir/eval.o" || exit 1; \
 	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
 		"$$mutation_dir/eval.o" -o "$$mutation_dir/cetta-silent-applicability-cap" $(LDFLAGS) || exit 1; \
-	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	baseline=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
 		echo "FAIL: Prime applicability-capacity mutation baseline is not green"; exit 1; \
 	fi; \
-	mutant=$$("$$mutation_dir/cetta-silent-applicability-cap" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-silent-applicability-cap" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_cap=$$(printf '%s\n' "$$baseline" | grep -F '[(DynamicApplicability ' | head -1); \
 	mutant_cap=$$(printf '%s\n' "$$mutant" | grep -F '[(DynamicApplicability ' | head -1); \
 	if [ "$$baseline_cap" != '[(DynamicApplicability Established)]' ] || \
@@ -5428,11 +5443,11 @@ test-prime-type-capacity-mutation: $(BIN)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" -o "$$mutation_dir/he_typing.o" || exit 1; \
 	$(CC) $(filter-out src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
 		"$$mutation_dir/he_typing.o" -o "$$mutation_dir/cetta-fixed-type-frontier" $(LDFLAGS) || exit 1; \
-	baseline=$$($(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	baseline=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
 		echo "FAIL: Prime type-storage mutation baseline is not green"; exit 1; \
 	fi; \
-	mutant=$$("$$mutation_dir/cetta-fixed-type-frontier" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
+	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-fixed-type-frontier" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_types=$$(printf '%s\n' "$$baseline" | grep -F '[(DynamicTypeStorage ' | head -1); \
 	mutant_types=$$(printf '%s\n' "$$mutant" | grep -F '[(DynamicTypeStorage ' | head -1); \
 	if [ "$$baseline_types" != '[(DynamicTypeStorage Established)]' ] || \
@@ -5479,7 +5494,11 @@ test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime
 		if [ ! -f "$$exp" ]; then \
 			echo "FAIL: $$f (missing $$exp)"; fail=$$((fail + 1)); continue; \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		if [ $$? -eq 124 ]; then \
+			echo "FAIL: $$f (exceeded PRIME_COMPLETION_TIMEOUT=$(PRIME_COMPLETION_TIMEOUT)s)"; \
+			fail=$$((fail + 1)); continue; \
+		fi; \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; pass=$$((pass + 1)); \
 		else \
