@@ -289,7 +289,16 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP = 278,
     CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES = 279,
     CETTA_RUNTIME_COUNTER_MATCH_SMSET_ROWS = 280,
-    CETTA_RUNTIME_COUNTER_COUNT = 281
+    /* MAM loop-body view: a user-function call whose head has exactly one
+     * equation in a clean single-head bucket (the necessary condition for the
+     * deterministic-tail loop lane).  ELIGIBLE counts such calls; CALLS counts
+     * all equation-reduced user calls, so ELIGIBLE/CALLS = lane applicability. */
+    CETTA_RUNTIME_COUNTER_LOOP_VIEW_ELIGIBLE = 281,
+    CETTA_RUNTIME_COUNTER_LOOP_VIEW_CALLS = 282,
+    /* Discrimination-tree node allocations -- to size the stree memory against a
+     * measured node count before any selectivity-gated redesign. */
+    CETTA_RUNTIME_COUNTER_SUBST_NODE_NEW = 283,
+    CETTA_RUNTIME_COUNTER_COUNT = 284
 } CettaRuntimeCounter;
 
 typedef struct {

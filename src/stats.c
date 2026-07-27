@@ -294,6 +294,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "match-native-trie-lookup",
     "match-native-candidates",
     "match-smset-rows",
+    "loop-view-eligible",
+    "loop-view-calls",
+    "subst-node-new",
 };
 
 static int64_t clamp_counter(uint64_t value) {

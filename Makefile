@@ -711,8 +711,13 @@ SANITIZER_REPEATABLE := 1
 endif
 endif
 CETTA_EXEC_WRAPPER := ./scripts/cetta_exec.sh
+# Under sanitizer-repeatable mode the invocation carries a per-call env prefix
+# (CETTA_WRAPPED_BIN selects the binary, so it cannot be dropped in favour of the
+# global export -- variant test bins pass their own $1).  Lead with `env` so the
+# whole expansion is a plain command that `timeout`/`/usr/bin/time` wrappers can
+# exec directly; without it those wrappers try to exec "CETTA_...=1" as a program.
 define cetta_exec
-$(if $(filter 1,$(SANITIZER_REPEATABLE)),CETTA_SANITIZER_REPEATABLE=1 CETTA_WRAPPED_BIN=$1 $(CETTA_EXEC_WRAPPER),$1)
+$(if $(filter 1,$(SANITIZER_REPEATABLE)),env CETTA_SANITIZER_REPEATABLE=1 CETTA_WRAPPED_BIN=$1 $(CETTA_EXEC_WRAPPER),$1)
 endef
 CETTA_BIN_INVOKE = $(call cetta_exec,./$(BIN))
 ifeq ($(SANITIZER_REPEATABLE),1)

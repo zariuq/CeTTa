@@ -3111,12 +3111,15 @@ static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
         if (!bindings_effective_merge(&carried, &effective, outer_env,
                                       &src->env, false))
             return;
-        Bindings projected;
+        __attribute__((cleanup(bindings_free))) Bindings projected;
         bindings_init(&projected);
         if (effective) {
             bindings_prime_assign(&projected, effective);
         }
         outcome_set_add(os, applied, &projected);
+        /* outcome_set_add copies the env, so we own `projected`;
+         * cleanup(bindings_free) releases its materialized prime_ext on every
+         * exit (omitting it would leak one PrimeOccurrence per prime reduction). */
         if (effective == &carried)
             bindings_free(&carried);
         return;
@@ -6583,6 +6586,20 @@ query_equations_table_hit_single_tail(Space *s, Atom *query,
 static CettaCount query_equations_cached_visit(Space *s, Atom *query, Arena *a,
                                                QueryEvalVisitorCtx *query_eval) {
     CettaCount visited = 0;
+    /* MAM loop-body view measurement (safe, no behaviour change): count
+     * equation-reduced user calls, and how many go to a single-equation head --
+     * the necessary condition for the deterministic-tail loop lane.  The ratio
+     * ELIGIBLE/CALLS validates the lane's premise before the view is built. */
+    {
+        Atom *qh = (query && query->kind == ATOM_EXPR && query->expr.len > 0)
+                       ? query->expr.elems[0]
+                       : NULL;
+        if (qh && qh->kind == ATOM_SYMBOL) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_LOOP_VIEW_CALLS);
+            if (space_head_has_single_equation(s, qh->sym_id))
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_LOOP_VIEW_ELIGIBLE);
+        }
+    }
     __attribute__((cleanup(eval_query_episode_cleanup)))
     EvalQueryEpisode episode = {0};
     QueryEvalVisitorCtx episode_eval = *query_eval;
@@ -6936,6 +6953,41 @@ static bool query_visit_stream_single_tail_miss(Atom *result,
     return query_miss_single_tail_publish_current(stream, result, bindings, ref);
 }
 
+/* Revision-keyed loop-body view cache (doctrine-3: rules-as-data -> views over
+ * the store, invalidated by revision).  Maps (space, revision, head) to the
+ * eligible single linear equation (or NULL = known ineligible at this
+ * revision), so an eligible reduction resolves once and reuses the result.  A
+ * space mutation bumps the revision, so a stale entry is never served -- the
+ * planted mutation checks exactly that.  Small direct-mapped thread-local; the
+ * roman loop hits one slot repeatedly. */
+enum { LOOP_VIEW_CACHE_SLOTS = 16 };
+typedef struct {
+    const Space *space;
+    uint64_t revision;
+    SymbolId head;
+    Atom *equation;
+    bool valid;
+} LoopViewCacheSlot;
+static _Thread_local LoopViewCacheSlot g_loop_view_cache[LOOP_VIEW_CACHE_SLOTS];
+
+static Atom *loop_view_lookup_equation(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return NULL;
+    uint64_t rev = space_revision(s);
+    LoopViewCacheSlot *slot =
+        &g_loop_view_cache[(uint32_t)head % LOOP_VIEW_CACHE_SLOTS];
+    if (slot->valid && slot->space == s && slot->revision == rev &&
+        slot->head == head)
+        return slot->equation; /* fresh hit (NULL = cached ineligible) */
+    Atom *eq = space_single_linear_equation(s, head);
+    slot->space = s;
+    slot->revision = rev;
+    slot->head = head;
+    slot->equation = eq;
+    slot->valid = true;
+    return eq;
+}
+
 static QueryTableTailState
 query_equations_miss_single_tail_stream(Space *s, Atom *query,
                                         EvalQueryEpisode *episode,
@@ -6945,6 +6997,21 @@ query_equations_miss_single_tail_stream(Space *s, Atom *query,
                                         Atom **tail_next,
                                         Atom **tail_type,
                                         Bindings *tail_env) {
+    /* MAM loop-body view: resolve the eligible equation once via the
+     * revision-keyed cache; the same result drives the measurement counters and
+     * (when the view is enabled) the eq_idx-lookup skip below. */
+    Atom *view_eq = NULL;
+    {
+        Atom *qh = (query && query->kind == ATOM_EXPR && query->expr.len > 0)
+                       ? query->expr.elems[0]
+                       : NULL;
+        if (qh && qh->kind == ATOM_SYMBOL) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_LOOP_VIEW_CALLS);
+            view_eq = loop_view_lookup_equation(s, qh->sym_id);
+            if (view_eq)
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_LOOP_VIEW_ELIGIBLE);
+        }
+    }
     TableStore *table = eval_active_episode_table();
     TableQueryHandle cache_handle = {0};
     bool cache_started = false;
@@ -6967,9 +7034,14 @@ query_equations_miss_single_tail_stream(Space *s, Atom *query,
         stream.table_handle = &cache_handle;
     }
 
-    (void)query_equations_visit(s, query, query_arena,
-                                query_visit_stream_single_tail_miss,
-                                &stream);
+    if (view_eq && match_leaf_patch_view_enabled())
+        (void)query_equation_visit(view_eq, query, query_arena,
+                                   query_visit_stream_single_tail_miss,
+                                   &stream);
+    else
+        (void)query_equations_visit(s, query, query_arena,
+                                    query_visit_stream_single_tail_miss,
+                                    &stream);
 
     if (cache_started) {
         if (stream.table_ok) {
@@ -9946,23 +10018,44 @@ typedef struct {
     bool failed;
 } BatchAppendLetCtx;
 
-static bool batch_append_space_contains_atom(Space *target, Atom *compare_atom) {
+
+/* Sole owner of the add-atom-nodup membership contract.  Every add-atom-nodup
+   dispatch site (the inline grounded handler, the let-stream batch path, and the
+   forward chainer's match-result apply via the inline handler) routes here, so
+   dedup lives at one seam instead of being duplicated per path.  Tiers: backend
+   structural contains for pathmap/mork spaces -> exact-index for ground atoms ->
+   the O(1) alpha-aware canonical presence bitset for native non-overlay spaces
+   (overlay / non-native fall back to the O(N) alpha-aware scan).  The
+   exact-indexable guard skips the redundant canonical check that
+   space_contains_exact already settled for ground atoms. */
+static bool add_atom_nodup_is_present(Space *target, Atom *compare_atom) {
     bool found = false;
     bool backend_checked =
         space_match_backend_contains_atom_structural_direct(
             target, compare_atom, &found);
     if (!backend_checked)
         found = space_contains_exact(target, compare_atom);
-    if (!found && !backend_checked) {
-        bool alpha_fallback = atom_has_vars(compare_atom);
-        CettaCount logical_len = space_length64(target);
-        for (CettaIndex i = 0; i < logical_len && !found; i++) {
-            Atom *candidate = space_get_at64(target, i);
-            if (!candidate)
-                continue;
-            if (alpha_fallback ? atom_alpha_eq(candidate, compare_atom)
-                               : atom_eq(candidate, compare_atom)) {
-                found = true;
+    if (!found && !backend_checked &&
+        !space_atom_is_exact_indexable(compare_atom)) {
+        /* Non-ground dedup must be alpha-aware: local pathmap projection uses
+           synthetic stable variable spellings while the evaluator may still hold
+           the same theorem under source spellings.  Native non-overlay spaces
+           answer this in O(1) via the canonical presence bitset (dropping forward
+           chaining from O(N^2) to O(N)); overlay / non-native fall back to the
+           O(N) alpha-aware scan. */
+        bool canon_applicable = false;
+        found = space_contains_canonical(target, compare_atom, &canon_applicable);
+        if (!canon_applicable) {
+            bool alpha_fallback = atom_has_vars(compare_atom);
+            CettaCount logical_len = space_length64(target);
+            for (CettaIndex i = 0; i < logical_len && !found; i++) {
+                Atom *candidate = space_get_at64(target, i);
+                if (!candidate)
+                    continue;
+                if (alpha_fallback ? atom_alpha_eq(candidate, compare_atom)
+                                   : atom_eq(candidate, compare_atom)) {
+                    found = true;
+                }
             }
         }
     }
@@ -10028,8 +10121,7 @@ static bool batch_append_let_visit(Arena *a, Atom *atom,
         Atom *compare_atom =
             space_compare_atom(ctx->generic_target, ctx->a, instantiated);
         ok = compare_atom &&
-             (batch_append_space_contains_atom(ctx->generic_target,
-                                               compare_atom) ||
+             (add_atom_nodup_is_present(ctx->generic_target, compare_atom) ||
               space_admit_atom(ctx->generic_target,
                                eval_storage_arena(ctx->a),
                                instantiated));
@@ -12202,6 +12294,12 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
 #ifndef CETTA_PRIME_NEED_MUTATION_DYNAMIC_SCOPE
         bindings_free(&lexical_env);
 #endif
+        /* record_cell_observation above materializes empty.prime_ext (the
+         * receipt carried into the published outcome via the copy in
+         * outcome_set_add).  The two sibling callers (main forced loop,
+         * stack resume-force) free their branch_env right after the add;
+         * this cached-value path must free empty the same way. */
+        bindings_free(&empty);
         return;
     }
     if (cell.cache_state == PRIME_NEED_CACHE_EVALUATING) {
@@ -13660,7 +13758,15 @@ static void prime_need_eval_observe_origin(
                 preserve_bindings);
             continue;
         }
-        Bindings branch = producers.items[i].env;
+        /* branch owns a clone of the producer's bindings; cleanup(bindings_free)
+         * frees it on every exit.  record_origin_inspection materializes an
+         * occurrence, so exclusive ownership keeps that mutation local -- the
+         * shared item ext is never aliased or materialized here (the shape that
+         * would leak on a NULL-ext producer or double-free otherwise). */
+        __attribute__((cleanup(bindings_free))) Bindings branch;
+        bindings_init(&branch);
+        if (!bindings_clone(&branch, &producers.items[i].env))
+            continue;
         __attribute__((cleanup(prime_need_active_leave)))
         PrimeNeedActiveGuard guard = prime_need_active_enter(&branch);
         uint64_t thunk_id = 0u;
@@ -13753,7 +13859,10 @@ static void prime_need_eval_restrict(
                     preserve_bindings);
                 continue;
             }
-            Bindings branch = rights_values.items[ri].env;
+            __attribute__((cleanup(bindings_free))) Bindings branch;
+            bindings_init(&branch);
+            if (!bindings_clone(&branch, &rights_values.items[ri].env))
+                continue;
             __attribute__((cleanup(prime_need_active_leave)))
             PrimeNeedActiveGuard guard = prime_need_active_enter(&branch);
             if (!prime_need_is_promise(producer)) {
@@ -13841,7 +13950,10 @@ static void prime_need_eval_relation(
             Atom *right = outcome_atom_materialize(a, &rights.items[ri]);
             if (!right || atom_is_empty(right))
                 continue;
-            Bindings branch = rights.items[ri].env;
+            __attribute__((cleanup(bindings_free))) Bindings branch;
+            bindings_init(&branch);
+            if (!bindings_clone(&branch, &rights.items[ri].env))
+                continue;
             __attribute__((cleanup(prime_need_active_leave)))
             PrimeNeedActiveGuard guard = prime_need_active_enter(&branch);
             if (atom_is_error(left) || atom_is_error(right)) {
@@ -14279,7 +14391,10 @@ static void prime_need_eval_force(Space *s, Arena *a, Atom *form, int fuel,
                                              preserve_bindings);
             continue;
         }
-        Bindings branch = producers.items[i].env;
+        __attribute__((cleanup(bindings_free))) Bindings branch;
+        bindings_init(&branch);
+        if (!bindings_clone(&branch, &producers.items[i].env))
+            continue;
         __attribute__((cleanup(prime_need_active_leave)))
         PrimeNeedActiveGuard guard = prime_need_active_enter(&branch);
         if (prime_need_is_promise(producer)) {
@@ -14312,6 +14427,10 @@ static void prime_need_eval_force(Space *s, Arena *a, Atom *form, int fuel,
                     prime_need_owner(a), &base,
                     producer->expr.elems[1], &resampled))
                 continue;
+            /* branch owns a clone of the producer's bindings (cleanup frees it),
+             * so receipt_mut materializes on an exclusively-owned occurrence --
+             * never the shared item ext.  The fragile alias-then-materialize
+             * shape (NULL-ext leak / bare-free double-free) is gone. */
             *bindings_receipt_mut(&branch) = resampled;
             g_prime_need_receipt_active = resampled;
             eval_for_caller(s, a, NULL, producer->expr.elems[1], fuel,
@@ -14354,7 +14473,10 @@ static void prime_need_eval_canonical_app(Space *s, Arena *a, Atom *app,
             continue;
         }
         if (!prime_need_is_canonical_lam(value)) {
-            Bindings branch = functions.items[i].env;
+            __attribute__((cleanup(bindings_free))) Bindings branch;
+            bindings_init(&branch);
+            if (!bindings_clone(&branch, &functions.items[i].env))
+                continue;
             __attribute__((cleanup(prime_need_active_leave)))
             PrimeNeedActiveGuard guard = prime_need_active_enter(&branch);
             if (prime_need_known_non_function(s, a, value)) {
@@ -14752,6 +14874,13 @@ typedef struct {
     VarId var_id;
     SymbolId spelling;
     Atom *name_key;
+    /* Cache of the visible-var presentation atom (the projected-binding key).
+     * These keys are query-invariant, so building them once and reusing across
+     * the per-row projection loop removes ~len atom allocations per matched row
+     * (the measured match-chain projection churn).  Validated against the arena
+     * the cache was built in, so a differently-arena'd reuse rebuilds safely. */
+    Atom *presentation_cache;
+    Arena *presentation_arena;
 } MatchVisibleVarRef;
 
 typedef struct {
@@ -14814,6 +14943,8 @@ static bool match_visible_var_set_add(MatchVisibleVarSet *set, Atom *var) {
     set->items[set->len].var_id = var->var_id;
     set->items[set->len].spelling = var->sym_id;
     set->items[set->len].name_key = var->name_key;
+    set->items[set->len].presentation_cache = NULL;
+    set->items[set->len].presentation_arena = NULL;
     set->len++;
     return true;
 }
@@ -15019,9 +15150,18 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
             resolved->var_id == visible->items[i].var_id) {
             continue;
         }
-        Atom *visible_var = atom_var_with_presentation(
-            a, visible->items[i].spelling, visible->items[i].name_key,
-            visible->items[i].var_id);
+        /* The visible-var key is query-invariant; build it once and reuse the
+         * cached atom across matched rows (validated against this arena). */
+        MatchVisibleVarRef *vitem = (MatchVisibleVarRef *)&visible->items[i];
+        Atom *visible_var;
+        if (vitem->presentation_cache && vitem->presentation_arena == a) {
+            visible_var = vitem->presentation_cache;
+        } else {
+            visible_var = atom_var_with_presentation(
+                a, vitem->spelling, vitem->name_key, vitem->var_id);
+            vitem->presentation_cache = visible_var;
+            vitem->presentation_arena = a;
+        }
         if (!visible_var ||
             !bindings_add_var(projected, visible_var, resolved)) {
             bindings_free(projected);
@@ -15095,7 +15235,7 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
             return;
         if (effective)
             applied = bindings_apply_if_vars(effective, a, atom);
-        Bindings projected;
+        __attribute__((cleanup(bindings_free))) Bindings projected;
         bindings_init(&projected);
         if (effective) {
             bindings_prime_assign(&projected, effective);
@@ -15103,6 +15243,9 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
         if (effective == &merged)
             bindings_free(&merged);
         outcome_set_add(os, applied, &projected);
+        /* We own `projected` (outcome_set_add copies); cleanup(bindings_free)
+         * releases its materialized prime_ext to avoid a per-reduction
+         * PrimeOccurrence leak. */
         return;
     }
     if (!bindings_has_any_entries(outer_env)) {
@@ -16385,7 +16528,7 @@ typedef struct {
    ratified non-semantic). Depth bounded by MAX_CHAIN. */
 static void match_chain_dfs(MatchChainDfsCtx *ctx, uint32_t si, Bindings *cur) {
     if (si == ctx->nsteps) {
-        Bindings projected;
+        __attribute__((cleanup(bindings_free))) Bindings projected;
         if (!project_match_visible_bindings(ctx->a, ctx->visible, cur,
                                             &projected))
             return;
@@ -16394,7 +16537,6 @@ static void match_chain_dfs(MatchChainDfsCtx *ctx, uint32_t si, Bindings *cur) {
             ctx->s, ctx->a, ctx->fuel, ctx->os, ctx->snapshot,
             ctx->deferred_spaces, ctx->direct_scratch, &projected, ctx->body,
             ctx->query_spaces, ctx->nquery_spaces);
-        bindings_free(&projected);
         return;
     }
     Space *space = ctx->step_spaces[si];
@@ -16493,7 +16635,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             MatchResultSnapshot snapshot = {0};
             Space *query_spaces[] = { ms };
             for (CettaIndex bi = 0; bi < matches.len; bi++) {
-                Bindings projected;
+                __attribute__((cleanup(bindings_free))) Bindings projected;
                 if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                     &projected)) {
                     continue;
@@ -16503,13 +16645,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     s, a, fuel, os, &snapshot, &deferred_spaces,
                     &direct_scratch, &projected, template,
                     query_spaces, 1);
-                bindings_free(&projected);
             }
             match_result_snapshot_eval(s, a, &snapshot, fuel, os);
             match_result_snapshot_free(&snapshot);
         } else {
             for (CettaIndex bi = 0; bi < matches.len; bi++) {
-                Bindings projected;
+                __attribute__((cleanup(bindings_free))) Bindings projected;
                 if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                     &projected)) {
                     continue;
@@ -16518,7 +16659,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 Atom *result = bindings_apply_if_vars(&projected, a, template);
                 eval_for_caller(s, a, NULL, result, fuel, &projected,
                                 preserve_bindings, os);
-                bindings_free(&projected);
             }
         }
         binding_set_free(&matches);
@@ -16568,7 +16708,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     MatchResultSnapshot snapshot = {0};
                     Space *query_spaces[] = { ms };
                     for (CettaIndex bi = 0; bi < matches.len; bi++) {
-                        Bindings projected;
+                        __attribute__((cleanup(bindings_free))) Bindings projected;
                         if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                             &projected)) {
                             continue;
@@ -16578,13 +16718,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                             s, a, fuel, os, &snapshot, &deferred_spaces,
                             &direct_scratch, &projected, residual_body,
                             query_spaces, 1);
-                        bindings_free(&projected);
                     }
                     match_result_snapshot_eval(s, a, &snapshot, fuel, os);
                     match_result_snapshot_free(&snapshot);
                 } else {
                     for (CettaIndex bi = 0; bi < matches.len; bi++) {
-                        Bindings projected;
+                        __attribute__((cleanup(bindings_free))) Bindings projected;
                         if (!project_match_visible_bindings(a, &visible, &matches.items[bi],
                                                             &projected)) {
                             continue;
@@ -16593,7 +16732,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                         Atom *result = bindings_apply_if_vars(&projected, a, residual_body);
                         eval_for_caller(s, a, NULL, result, fuel, &projected,
                                         preserve_bindings, os);
-                        bindings_free(&projected);
                     }
                 }
                 binding_set_free(&matches);
@@ -16902,7 +17040,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     if (match_chain_ground_exact_probe(last->space, grounded,
                                                        &fp_hits)) {
                         for (CettaIndex k = 0; k < fp_hits; k++) {
-                            Bindings projected;
+                            __attribute__((cleanup(bindings_free))) Bindings projected;
                             if (!project_match_visible_bindings(
                                     a, &visible, &cur_binds[bi], &projected))
                                 break;
@@ -16912,7 +17050,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                 s, a, fuel, os, &snapshot, &deferred_spaces,
                                 &direct_scratch, &projected, body,
                                 query_spaces, nquery_spaces);
-                            bindings_free(&projected);
                             g_chain_progress++;
                         }
                         continue;
@@ -16959,7 +17096,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                 bindings_constraint_active_bytes(),
                                 merge_constraint_before,
                                 CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
-                            Bindings projected;
+                            __attribute__((cleanup(bindings_free))) Bindings projected;
                             size_t project_before = a ? a->live_bytes : 0;
                             if (!project_match_visible_bindings(a, &visible, &mb,
                                                                 &projected)) {
@@ -16977,7 +17114,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                 s, a, fuel, os, &snapshot, &deferred_spaces,
                                 &direct_scratch, &projected, body,
                                 query_spaces, nquery_spaces);
-                            bindings_free(&projected);
                             bindings_free(&mb);
                             g_chain_progress++;
                             if ((g_chain_progress % 100000) == 0) {
@@ -17007,7 +17143,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     if (match_chain_ground_exact_probe(last->space, grounded,
                                                        &fp_hits)) {
                         for (CettaIndex k = 0; k < fp_hits; k++) {
-                            Bindings projected;
+                            __attribute__((cleanup(bindings_free))) Bindings projected;
                             if (!project_match_visible_bindings(
                                     a, &visible, &cur_binds[bi], &projected))
                                 break;
@@ -17017,7 +17153,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                 bindings_apply_if_vars(&projected, a, body);
                             eval_for_caller(s, a, NULL, fp_result, fuel,
                                             &projected, preserve_bindings, os);
-                            bindings_free(&projected);
                             g_chain_progress++;
                         }
                         continue;
@@ -17064,7 +17199,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                                 bindings_constraint_active_bytes(),
                                 merge_constraint_before,
                                 CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
-                            Bindings projected;
+                            __attribute__((cleanup(bindings_free))) Bindings projected;
                             size_t project_before = a ? a->live_bytes : 0;
                             if (!project_match_visible_bindings(a, &visible, &mb,
                                                                 &projected)) {
@@ -17081,7 +17216,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                             Atom *result = bindings_apply_if_vars(&projected, a, body);
                             eval_for_caller(s, a, NULL, result, fuel, &projected,
                                             preserve_bindings, os);
-                            bindings_free(&projected);
                             bindings_free(&mb);
                             g_chain_progress++;
                             if ((g_chain_progress % 100000) == 0) {
@@ -17102,7 +17236,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 for (uint32_t qi = 0; qi < nsteps; qi++)
                     query_spaces[qi] = steps[qi].space;
                 for (uint32_t bi = 0; bi < ncur; bi++) {
-                    Bindings projected;
+                    __attribute__((cleanup(bindings_free))) Bindings projected;
                     size_t project_before = a ? a->live_bytes : 0;
                     if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
                                                         &projected)) {
@@ -17119,13 +17253,12 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                         s, a, fuel, os, &snapshot, &deferred_spaces,
                         &direct_scratch, &projected, body,
                         query_spaces, nquery_spaces);
-                    bindings_free(&projected);
                 }
                 match_result_snapshot_eval(s, a, &snapshot, fuel, os);
                 match_result_snapshot_free(&snapshot);
             } else {
                 for (uint32_t bi = 0; bi < ncur; bi++) {
-                    Bindings projected;
+                    __attribute__((cleanup(bindings_free))) Bindings projected;
                     size_t project_before = a ? a->live_bytes : 0;
                     if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
                                                         &projected)) {
@@ -17141,7 +17274,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     Atom *result = bindings_apply_if_vars(&projected, a, body);
                     eval_for_caller(s, a, NULL, result, fuel, &projected,
                                     preserve_bindings, os);
-                    bindings_free(&projected);
                 }
             }
         }
@@ -17437,16 +17569,14 @@ static bool try_count_mork_match_collapse(Space *s, Arena *a, Atom *match_atom,
 static bool count_projected_template(Arena *a, const MatchVisibleVarSet *visible,
                                      const Bindings *bindings, Atom *templ,
                                      Space *s, int fuel, uint64_t *count) {
-    Bindings projected;
+    __attribute__((cleanup(bindings_free))) Bindings projected;
     uint64_t units = 0;
     if (!project_match_visible_bindings(a, visible, bindings, &projected))
         return true;
     if (!count_template_units(s, a, templ, &projected, fuel, &units)) {
-        bindings_free(&projected);
         return false;
     }
     *count += units;
-    bindings_free(&projected);
     return true;
 }
 
@@ -24445,28 +24575,7 @@ prime_need_strict_argument_ready:
             return;
         }
         Atom *compare_atom = space_compare_atom(target, a, atom_to_add);
-        bool found = false;
-        bool backend_checked =
-            space_match_backend_contains_atom_structural_direct(
-                target, compare_atom, &found);
-        if (!backend_checked)
-            found = space_contains_exact(target, compare_atom);
-        if (!found && !backend_checked) {
-            /* Non-ground theorem dedup must be alpha-aware: local pathmap
-               projection uses synthetic stable variable spellings, while the
-               evaluator may still hold the same theorem under source spellings. */
-            bool alpha_fallback = atom_has_vars(compare_atom);
-            CettaCount logical_len = space_length64(target);
-            for (CettaIndex i = 0; i < logical_len && !found; i++) {
-                Atom *candidate = space_get_at64(target, i);
-                if (!candidate)
-                    continue;
-                if (alpha_fallback ? atom_alpha_eq(candidate, compare_atom)
-                                   : atom_eq(candidate, compare_atom)) {
-                    found = true;
-                }
-            }
-        }
+        bool found = add_atom_nodup_is_present(target, compare_atom);
         if (!found) {
             Arena *dst = eval_storage_arena(a);
             if (!space_admit_atom(target, dst, atom_to_add)) {

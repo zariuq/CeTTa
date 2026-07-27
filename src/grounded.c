@@ -242,13 +242,17 @@ bool is_grounded_op(SymbolId id) {
     const char *name = symbol_bytes(g_symbols, id);
     if (name && strncmp(name, "__cetta_lib_", 12) == 0)
         return true;
-    if (name && prime_semantics_is_op && eval_current_language_id &&
-        prime_semantics_is_op(name) &&
-        eval_current_language_id() == CETTA_LANGUAGE_PRIME)
+    /* Doctrine: guard the expensive name-op checks by their cheap
+     * language/profile condition FIRST so the strcmp chain is skipped when the
+     * active profile cannot use it (e.g. the whole prime-op set is dead weight
+     * under --lang he).  Reordering these && operands is behaviour-preserving. */
+    if (name && eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        prime_semantics_is_op && prime_semantics_is_op(name))
         return true;
-    if (name && he_typing_is_op && he_typing_is_op(name) &&
-        eval_current_profile_enables_dependent_telescope &&
-        eval_current_profile_enables_dependent_telescope())
+    if (name && eval_current_profile_enables_dependent_telescope &&
+        eval_current_profile_enables_dependent_telescope() &&
+        he_typing_is_op && he_typing_is_op(name))
         return true;
     if (id == g_builtin_syms.mork_add_atoms ||
         id == g_builtin_syms.mork_add_atom ||
