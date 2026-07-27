@@ -27,7 +27,19 @@ typedef struct {
     uint32_t reductions;
     char *error_buf;
     size_t error_buf_size;
+    /* Precomputed per-plan ASCII node-kind dispatch (0=none, else GSLT_DISP_*).
+     * Collapses the per-node codepoint comparisons to one table lookup on the
+     * common ASCII path; built once per plan and cached (see ascii_dispatch). */
+    const uint8_t *ascii_dispatch;
 } GSLTDirectStateV1;
+
+enum {
+    GSLT_DISP_NONE = 0,
+    GSLT_DISP_STRING,
+    GSLT_DISP_VAR,
+    GSLT_DISP_EXPR,
+    GSLT_DISP_WORD
+};
 
 static void gslt_direct_reader_v1_error(char *buf, size_t size,
                                         const char *format, ...) {
@@ -676,22 +688,39 @@ static AtomId gslt_direct_reader_v1_parse_atom(
     if (depth == 0u || state->cursor.pos >= state->cursor.input_len)
         return CETTA_ATOM_ID_NONE;
     if (state->cursor.input[state->cursor.pos] < UINT8_C(0x80)) {
-        codepoint = state->cursor.input[state->cursor.pos];
-        width = 1u;
-    } else if (!gslt_direct_reader_v1_peek(
-                   &state->cursor, &codepoint, &width))
+        /* ASCII fast path: a single indexed dispatch precomputed to preserve
+         * the exact branch order (string, variable, expression, word). */
+        switch (state->ascii_dispatch[state->cursor.input[state->cursor.pos]]) {
+        case GSLT_DISP_STRING:
+            result = gslt_direct_reader_v1_parse_string(state);
+            break;
+        case GSLT_DISP_VAR:
+            result = gslt_direct_reader_v1_parse_variable(state);
+            break;
+        case GSLT_DISP_EXPR:
+            result = gslt_direct_reader_v1_parse_expression(state, depth);
+            break;
+        case GSLT_DISP_WORD:
+            result = gslt_direct_reader_v1_parse_word(state);
+            break;
+        default:
+            result = CETTA_ATOM_ID_NONE;
+            break;
+        }
+    } else if (!gslt_direct_reader_v1_peek(&state->cursor, &codepoint, &width)) {
         return CETTA_ATOM_ID_NONE;
-    if (codepoint == state->plan->string_open)
+    } else if (codepoint == state->plan->string_open) {
         result = gslt_direct_reader_v1_parse_string(state);
-    else if (codepoint == state->plan->variable_marker)
+    } else if (codepoint == state->plan->variable_marker) {
         result = gslt_direct_reader_v1_parse_variable(state);
-    else if (codepoint == state->plan->expression_open)
+    } else if (codepoint == state->plan->expression_open) {
         result = gslt_direct_reader_v1_parse_expression(state, depth);
-    else if (gslt_direct_reader_v1_class_contains(
-                 state->plan->word_start, codepoint))
+    } else if (gslt_direct_reader_v1_class_contains(
+                   state->plan->word_start, codepoint)) {
         result = gslt_direct_reader_v1_parse_word(state);
-    else
+    } else {
         result = CETTA_ATOM_ID_NONE;
+    }
     if (result != CETTA_ATOM_ID_NONE) {
         state->tokens++;
         state->reductions++;
@@ -1195,7 +1224,45 @@ bool gslt_direct_reader_v1_plan_validate(
     return true;
 }
 
-static inline __attribute__((always_inline))
+/* Build (once per plan, thread-locally cached) the ASCII node-kind dispatch
+ * table: for each byte 0..255, which parse_atom branch it selects.  This turns
+ * the per-node chain of codepoint comparisons + word-class membership into a
+ * single indexed load on the common ASCII path, preserving the exact branch
+ * order (string_open, variable_marker, expression_open, then word_start). */
+static const uint8_t *gslt_direct_reader_v1_ascii_dispatch(
+    const GSLTDirectReaderV1Plan *plan) {
+    enum { GSLT_DISP_CACHE_SLOTS = 8 };
+    static _Thread_local const GSLTDirectReaderV1Plan
+        *gslt_disp_cache_keys[GSLT_DISP_CACHE_SLOTS];
+    static _Thread_local uint8_t
+        gslt_disp_cache_tables[GSLT_DISP_CACHE_SLOTS][256];
+    static _Thread_local unsigned gslt_disp_cache_next;
+    unsigned i;
+    unsigned slot;
+    uint8_t *table;
+    for (i = 0u; i < GSLT_DISP_CACHE_SLOTS; i++) {
+        if (gslt_disp_cache_keys[i] == plan)
+            return gslt_disp_cache_tables[i];
+    }
+    slot = gslt_disp_cache_next % GSLT_DISP_CACHE_SLOTS;
+    gslt_disp_cache_next++;
+    table = gslt_disp_cache_tables[slot];
+    for (i = 0u; i < 256u; i++) {
+        uint8_t kind = (uint8_t)GSLT_DISP_NONE;
+        if (i == plan->string_open)
+            kind = (uint8_t)GSLT_DISP_STRING;
+        else if (i == plan->variable_marker)
+            kind = (uint8_t)GSLT_DISP_VAR;
+        else if (i == plan->expression_open)
+            kind = (uint8_t)GSLT_DISP_EXPR;
+        else if (gslt_direct_reader_v1_class_contains(plan->word_start, i))
+            kind = (uint8_t)GSLT_DISP_WORD;
+        table[i] = kind;
+    }
+    gslt_disp_cache_keys[slot] = plan;
+    return table;
+}
+
 int gslt_direct_reader_v1_parse_bytes_ids_impl(
     const GSLTDirectReaderV1Plan *plan, const uint8_t *input,
     size_t input_len, const GSLTDirectAtomProjectionV1 *projection,
@@ -1230,6 +1297,7 @@ int gslt_direct_reader_v1_parse_bytes_ids_impl(
     state.error_buf = error_buf;
     state.error_buf_size = error_buf_size;
     state.projection = projection;
+    state.ascii_dispatch = gslt_direct_reader_v1_ascii_dispatch(plan);
     for (;;) {
         AtomId id;
         if (!gslt_direct_reader_v1_skip(&state))

@@ -1145,6 +1145,16 @@ Atom *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
         return NULL;
     if (b->len == 0 && !rewrite_var)
         return atom;
+    /* Ground-term sharing: a variable-free atom is canonical and immutable --
+     * no binding can rewrite it -- so return it shared instead of walking and
+     * deep-copying it once per result.  This is the same shared-return contract
+     * the b->len==0 case above already relies on (callers must treat the result
+     * as read-only); it only widens it to the (bindings present, atom ground)
+     * case, e.g. a constant match template applied under a nonempty binding.
+     * Only when no custom rewrite hook is installed (a hook may transform
+     * non-variable atoms). */
+    if (!rewrite_var && !atom_has_vars(atom))
+        return atom;
     uint32_t seen_cap = b->len ? b->len : 1;
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
     VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
@@ -2916,6 +2926,73 @@ bool match_atoms(Atom *left, Atom *right, Bindings *b) {
 
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb) {
     return match_decoded_atoms_worklist(left, right, NULL, bb, false);
+}
+
+/* Leaf-patch view: OFF by default (env CETTA_LEAF_PATCH_VIEW=1 opts in).  When
+ * on, an eligible reduction uses the positional bind below instead of the
+ * general matcher, so an OFF-vs-ON differential can prove byte-identity across
+ * the full suite before any default flip. */
+bool match_leaf_patch_view_enabled(void) {
+    static _Thread_local int cached = -1;
+    if (cached < 0) {
+        const char *v = getenv("CETTA_LEAF_PATCH_VIEW");
+        cached = (v && v[0] == '1') ? 1 : 0;
+    }
+    return cached == 1;
+}
+
+/* Positional leaf-patch match: a FLAT LINEAR pattern (lhs = head + distinct
+ * variable args, guaranteed linear by the eligibility guard) against a query
+ * (head + NON-variable args) reduces to the epoch matcher's right-var binding
+ * per position -- epoch_var_atom + bindings_add_var -- with no worklist.  This
+ * is licensed by LeafPatchViewKernel.matchP_complete_linear (positional read ==
+ * matcher on linear patterns).  Conservative: the whole shape is pre-checked
+ * BEFORE any binding, so returning false (caller falls back to the general
+ * matcher) never leaves a partial binding in b.  Anything outside the shape
+ * (nesting, a non-var pattern arg, a variable query arg, or a pre-bound epoched
+ * var) falls back. */
+bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
+                                         Arena *a, uint32_t epoch) {
+    if (!query || !lhs || !b || !a)
+        return false;
+    if (query->kind != ATOM_EXPR || lhs->kind != ATOM_EXPR)
+        return false;
+    if (lhs->expr.len == 0 || query->expr.len != lhs->expr.len)
+        return false;
+    Atom *lh = lhs->expr.elems[0];
+    Atom *qh = query->expr.elems[0];
+    if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
+        lh->sym_id != qh->sym_id)
+        return false;
+    /* Pre-check the whole shape AND linearity before binding anything, so a
+     * refusal never leaves a partial binding.  A repeated epoched var here means
+     * the pattern is non-linear (an equality constraint the positional bind
+     * cannot honour) -- refuse and let the general matcher enforce it. */
+    VarId seen[16];
+    uint32_t nseen = 0;
+    for (CettaExprIndex i = 1; i < lhs->expr.len; i++) {
+        Atom *pi = lhs->expr.elems[i];
+        Atom *qi = query->expr.elems[i];
+        if (!pi || !qi || pi->kind != ATOM_VAR || qi->kind == ATOM_VAR)
+            return false;
+        VarId eid = var_epoch_id(pi->var_id, epoch);
+        if (bindings_lookup_id(b, eid))
+            return false; /* epoched var already bound -> matcher dereferences */
+        for (uint32_t j = 0; j < nseen; j++)
+            if (seen[j] == eid)
+                return false; /* repeated variable -> non-linear -> refuse */
+        if (nseen >= (sizeof seen / sizeof seen[0]))
+            return false; /* arity beyond the small cap -> conservative refuse */
+        seen[nseen++] = eid;
+    }
+    for (CettaExprIndex i = 1; i < lhs->expr.len; i++) {
+        Atom *pi = lhs->expr.elems[i];
+        Atom *qi = query->expr.elems[i];
+        Atom *binding_var = epoch_var_atom(a, pi, epoch);
+        if (!binding_var || !bindings_add_var(b, binding_var, qi))
+            return false;
+    }
+    return true;
 }
 
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {

@@ -703,8 +703,25 @@ static bool atom_can_hashcons(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0;
 }
 
+/* Avalanche finalizer (MurmurHash3 fmix32) applied when the structural atom
+ * hash becomes an open-addressing slot index.  atom_hash concentrates a name
+ * family's entropy in the low bits, so atoms like (friend sam 0..N) collapse to
+ * a narrow band under `% size`; linear probing then walks one giant primary
+ * cluster and interning degrades to O(n) each / O(n^2) overall (observed as
+ * ~130M atom_eq calls for 20k facts).  Scattering the slot base restores O(1)
+ * amortized without touching the stored atoms (compared structurally by
+ * atom_eq) or atom_hash itself (so the tu_hash32==atom_hash contract holds). */
+static inline uint32_t hashcons_slot_hash(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
+
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
-    uint32_t h = atom_hash(atom) % hc->size;
+    uint32_t h = hashcons_slot_hash(atom_hash(atom)) % hc->size;
     for (uint32_t i = 0; i < hc->size; i++) {
         uint32_t idx = (h + i) % hc->size;
         if (!hc->table[idx]) {

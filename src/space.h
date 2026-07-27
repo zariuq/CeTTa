@@ -118,6 +118,10 @@ typedef struct {
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
     ExactAtomIndex exact_idx; /* exact stable-atom membership index */
+    uint8_t *id_present;      /* dense AtomId presence bitset: O(1) exact-contains, unclusterable */
+    uint64_t id_present_bits; /* capacity in bits; 0 = unallocated */
+    CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
+    bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
@@ -138,6 +142,10 @@ typedef struct Space {
             EqIndex eq_idx;
             TypeAnnIndex ty_idx;
             ExactAtomIndex exact_idx;
+            uint8_t *id_present;
+            uint64_t id_present_bits;
+            CettaIndex id_present_synced_len;
+            bool id_present_dirty;
             bool eq_idx_dirty;
             bool ty_idx_dirty;
             bool exact_idx_dirty;
@@ -231,6 +239,8 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out);
 
 bool space_contains_exact(Space *s, Atom *atom);
+/* O(1) alpha-aware membership; *out_applicable false for overlay/non-native. */
+bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
@@ -276,6 +286,13 @@ void query_results_free(QueryResults *qr);
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 bool space_equations_may_match_known_head(Space *s, SymbolId head);
+/* MAM loop-body view entry guard: head resolves to exactly one equation in a
+ * clean single-head bucket, no overlay base (necessary condition for the
+ * deterministic-tail loop lane; conservative, cheap). */
+bool space_head_has_single_equation(const Space *s, SymbolId head);
+/* Resolve that single linear equation (or NULL) -- shared by the guard and the
+ * revision-keyed view cache. */
+Atom *space_single_linear_equation(const Space *s, SymbolId head);
 
 /* ── Space Registry (named spaces) ─────────────────────────────────────── */
 

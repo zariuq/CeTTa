@@ -505,6 +505,7 @@ tests/test_sha256_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_simple_match_builder_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_singleton_visible_witness_overlap_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_singleton_visible_witness_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_size_atom_collapse_cross_engine_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_size_surface.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_sort_strings.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_space_batch_copy_optimizer_guards.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression

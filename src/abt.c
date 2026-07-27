@@ -1799,30 +1799,39 @@ typedef enum {
     ABT_OP_ALPHA_EQ,
 } AbtOpKind;
 
+/* Doctrine: hot paths compare interned SymbolIds, not bytes.  The eleven ABT
+ * operator names are fixed internal symbols; intern them once per symbol table
+ * and compare the query id against the cached ids (integer) instead of walking
+ * a chain of up to eleven per-call byte comparisons.  This is called millions
+ * of times during matching/copying (every symbol is checked for op-hood), so
+ * strcmp is confined to the one-time interning edge, off the hot path.  The
+ * cache is keyed by the symbol-table pointer so a new session (g_symbols
+ * rebound) re-interns; symbol_intern_cstr is idempotent and thread-safe, and
+ * SymbolIds are stable once assigned, so this is transparent. */
 static AbtOpKind abt_op_kind(SymbolId id) {
     if (id == SYMBOL_ID_NONE || !g_symbols) return ABT_OP_NONE;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_default_signatures"))
-        return ABT_OP_DEFAULT_SIGNATURES;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_signature_admitted"))
-        return ABT_OP_SIGNATURE_ADMITTED;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_shift"))
-        return ABT_OP_SHIFT;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_subst"))
-        return ABT_OP_SUBST;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_close"))
-        return ABT_OP_CLOSE;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_open"))
-        return ABT_OP_OPEN;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_bind"))
-        return ABT_OP_BIND;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_print"))
-        return ABT_OP_PRINT;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_parse"))
-        return ABT_OP_PARSE;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_scope_check"))
-        return ABT_OP_SCOPE_CHECK;
-    if (symbol_eq_cstr(g_symbols, id, "__cetta_abt_alpha_eq"))
-        return ABT_OP_ALPHA_EQ;
+    static _Thread_local const SymbolTable *cached_st = NULL;
+    static _Thread_local SymbolId op_ids[ABT_OP_ALPHA_EQ + 1];
+    if (cached_st != g_symbols) {
+        op_ids[ABT_OP_DEFAULT_SIGNATURES] =
+            symbol_intern_cstr(g_symbols, "__cetta_abt_default_signatures");
+        op_ids[ABT_OP_SIGNATURE_ADMITTED] =
+            symbol_intern_cstr(g_symbols, "__cetta_abt_signature_admitted");
+        op_ids[ABT_OP_SHIFT] = symbol_intern_cstr(g_symbols, "__cetta_abt_shift");
+        op_ids[ABT_OP_SUBST] = symbol_intern_cstr(g_symbols, "__cetta_abt_subst");
+        op_ids[ABT_OP_CLOSE] = symbol_intern_cstr(g_symbols, "__cetta_abt_close");
+        op_ids[ABT_OP_OPEN] = symbol_intern_cstr(g_symbols, "__cetta_abt_open");
+        op_ids[ABT_OP_BIND] = symbol_intern_cstr(g_symbols, "__cetta_abt_bind");
+        op_ids[ABT_OP_PRINT] = symbol_intern_cstr(g_symbols, "__cetta_abt_print");
+        op_ids[ABT_OP_PARSE] = symbol_intern_cstr(g_symbols, "__cetta_abt_parse");
+        op_ids[ABT_OP_SCOPE_CHECK] =
+            symbol_intern_cstr(g_symbols, "__cetta_abt_scope_check");
+        op_ids[ABT_OP_ALPHA_EQ] =
+            symbol_intern_cstr(g_symbols, "__cetta_abt_alpha_eq");
+        cached_st = g_symbols;
+    }
+    for (int k = ABT_OP_DEFAULT_SIGNATURES; k <= ABT_OP_ALPHA_EQ; k++)
+        if (id == op_ids[k]) return (AbtOpKind)k;
     return ABT_OP_NONE;
 }
 

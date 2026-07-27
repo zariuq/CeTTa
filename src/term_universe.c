@@ -1182,6 +1182,26 @@ static inline uint32_t term_universe_hash_mix(uint32_t h, uint32_t piece) {
     return ((h << 5) + h) ^ piece;
 }
 
+/* Avalanche finalizer (MurmurHash3 fmix32) applied ONLY when a stored 32-bit
+ * record hash is turned into an open-addressing slot index.  The incremental
+ * mix above leaves per-record entropy concentrated in the low bits, so the
+ * hashes of a family like (friend sam 0), (friend sam 1), ... collapse to a
+ * narrow band under `& mask`; linear probing then walks one giant primary
+ * cluster, degrading intern lookup/insert to O(n) each and the whole build to
+ * O(n^2).  Finalizing at index time scatters those keys across the table
+ * (O(1) amortized) without changing the stored hash32 (so the raw-hash equality
+ * pre-filter and the atom-module hash contract are untouched).  Every intern
+ * probe site MUST route its slot base through this one function or lookup and
+ * insert would disagree on where a key lives. */
+static inline uint32_t term_universe_intern_slot_hash(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
+
 static uint32_t term_universe_hash_symbol_id(SymbolId sym_id) {
     uint32_t h = 5381u;
     uint64_t sh = symbol_hash_value(g_symbols, sym_id);
@@ -1345,8 +1365,9 @@ static AtomId term_universe_lookup_record_id(const TermUniverse *universe,
         return CETTA_ATOM_ID_NONE;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LOOKUP);
     uint32_t h = hdr->hash32;
+    uint32_t hslot = term_universe_intern_slot_hash(h);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
-        size_t idx = ((size_t)h + probe) & universe->intern_mask;
+        size_t idx = ((size_t)hslot + probe) & universe->intern_mask;
         uint64_t slot = term_universe_load_slot_value(
             universe, universe->intern_slots, idx);
         if (slot == 0) {
@@ -2655,7 +2676,7 @@ static bool term_universe_intern_reserve(TermUniverse *universe,
                 continue;
             AtomId id = slot - 1;
             const CettaTermHdr *hdr = tu_hdr(universe, id);
-            uint32_t h = hdr ? hdr->hash32 : 0u;
+            uint32_t h = term_universe_intern_slot_hash(hdr ? hdr->hash32 : 0u);
             for (size_t probe = 0; probe < size; probe++) {
                 size_t idx = ((size_t)h + probe) & next_mask;
                 if (term_universe_load_slot_value(universe, next, idx) == 0) {
@@ -2872,8 +2893,9 @@ static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LOOKUP);
     TU_DIAG_INC((TermUniverse *)universe, legacy_hash_recompute_count);
     uint32_t h = atom_hash(src);
+    uint32_t hslot = term_universe_intern_slot_hash(h);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
-        size_t idx = ((size_t)h + probe) & universe->intern_mask;
+        size_t idx = ((size_t)hslot + probe) & universe->intern_mask;
         uint64_t slot = term_universe_load_slot_value(
             universe, universe->intern_slots, idx);
         if (slot == 0)
@@ -2919,7 +2941,7 @@ static bool term_universe_insert_stable_id(TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (!hdr)
         return false;
-    uint32_t h = hdr->hash32;
+    uint32_t h = term_universe_intern_slot_hash(hdr->hash32);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
         size_t idx = ((size_t)h + probe) & universe->intern_mask;
         uint64_t slot = term_universe_load_slot_value(

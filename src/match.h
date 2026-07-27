@@ -173,6 +173,13 @@ Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
+/* Leaf-patch view (env CETTA_LEAF_PATCH_VIEW=1, OFF by default). */
+bool match_leaf_patch_view_enabled(void);
+/* Positional bind for a flat linear pattern (lhs) vs a non-variable-arg query;
+ * self-sound (refuses non-linear / non-flat / var-query / pre-bound by falling
+ * back with no partial binding). Result == match_atoms_epoch on that shape. */
+bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
+                                         Arena *a, uint32_t epoch);
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
                                uint32_t epoch);
