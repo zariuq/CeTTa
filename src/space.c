@@ -1,3 +1,4 @@
+#include <time.h>
 #include "space.h"
 #include "grounded.h"
 #include "search_machine.h"
@@ -768,6 +769,92 @@ static void exact_index_free(ExactAtomIndex *idx) {
         exact_atom_bucket_free(&idx->buckets[i]);
 }
 
+/* Dense AtomId presence bitset -- doctrine-1 exact-membership at the store seam.
+   Interned AtomIds are sequential, so a grown bitset gives O(1) unclusterable
+   exact-contains, replacing the fixed-bucket structural walk on the hot path. */
+static bool id_present_contains(const SpaceNativeStorage *ns, AtomId id) {
+    uint64_t bit = (uint64_t)id;
+    return ns->id_present && bit < ns->id_present_bits &&
+           ((ns->id_present[bit >> 3] >> (bit & 7u)) & 1u);
+}
+
+static void id_present_set(SpaceNativeStorage *ns, AtomId id) {
+    uint64_t bit = (uint64_t)id;
+    if (bit >= ns->id_present_bits) {
+        uint64_t new_bits = ns->id_present_bits ? ns->id_present_bits : 4096u;
+        while (new_bits <= bit)
+            new_bits <<= 1;
+        uint8_t *grown =
+            (uint8_t *)cetta_realloc(ns->id_present, (size_t)(new_bits >> 3));
+        if (!grown)
+            return; /* OOM: leave sparse; contains falls back to the exact path */
+        memset(grown + (ns->id_present_bits >> 3), 0,
+               (size_t)((new_bits - ns->id_present_bits) >> 3));
+        ns->id_present = grown;
+        ns->id_present_bits = new_bits;
+    }
+    ns->id_present[bit >> 3] |= (uint8_t)(1u << (bit & 7u));
+}
+
+static void id_present_clear(SpaceNativeStorage *ns) {
+    if (ns->id_present)
+        memset(ns->id_present, 0, (size_t)(ns->id_present_bits >> 3));
+}
+
+static void id_present_free(SpaceNativeStorage *ns) {
+    free(ns->id_present);
+    ns->id_present = NULL;
+    ns->id_present_bits = 0;
+}
+
+/* Reusable per-thread scratch for canonicalization/interning fallback, reset
+   (not freed) per call so the hot dedup path pays no arena init/free churn. */
+static _Thread_local Arena g_canon_scratch;
+static _Thread_local bool g_canon_scratch_ready = false;
+static Arena *canon_scratch(void) {
+    if (!g_canon_scratch_ready) {
+        arena_init(&g_canon_scratch);
+        g_canon_scratch_ready = true;
+    }
+    return &g_canon_scratch;
+}
+
+/* Alpha-canonical AtomId of a STORED atom (maintenance).  Ground atoms are their
+   own canonical form (their exact id); non-ground atoms canonicalize their vars
+   to first-occurrence ordinals and intern that form, so every alpha-variant of a
+   theorem maps to one id.  The presence bitset then answers alpha-aware
+   containment as an O(1) id predicate. */
+static AtomId space_canonical_id_for_stored(Space *s, AtomId atom_id) {
+    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
+    if (!atom)
+        return CETTA_ATOM_ID_NONE;
+    if (!atom_has_vars(atom))
+        return atom_id;
+    /* store_atom_id canonicalizes its argument internally, so pass the raw atom. */
+    Arena *scratch = canon_scratch();
+    ArenaMark mark = arena_mark(scratch);
+    AtomId cid = term_universe_store_atom_id(s->native.universe, scratch, atom);
+    arena_reset(scratch, mark);
+    return cid;
+}
+
+/* Alpha-canonical AtomId of a QUERY atom (contains).  Find-only, so a query miss
+   stays a miss without growing the universe. */
+static AtomId space_canonical_id_for_query(Space *s, Atom *atom) {
+    if (!s || !atom || !s->native.universe)
+        return CETTA_ATOM_ID_NONE;
+    if (!atom_has_vars(atom))
+        return term_universe_lookup_atom_id(s->native.universe, atom);
+    Arena *scratch = canon_scratch();
+    ArenaMark mark = arena_mark(scratch);
+    Atom *canon = term_universe_canonicalize_atom(scratch, atom);
+    AtomId cid = canon
+        ? term_universe_lookup_atom_id(s->native.universe, canon)
+        : CETTA_ATOM_ID_NONE;
+    arena_reset(scratch, mark);
+    return cid;
+}
+
 static bool atom_has_variables(const Atom *atom) {
     if (!atom) return false;
     switch (atom->kind) {
@@ -1317,6 +1404,11 @@ void space_mark_derived_state_dirty(Space *s) {
     s->native.ty_idx_dirty = true;
     s->native.exact_idx_dirty = true;
     s->native.has_non_exact_atoms_dirty = true;
+    /* The presence bitset is add-monotone: incremental add paths keep it current
+       and do NOT route through here, so any caller of this helper (removal, bulk
+       replace, backend-direct store, external mutation, deferral start) may have
+       invalidated a bit -- flag a recompute-on-next-membership-query. */
+    s->native.id_present_dirty = true;
 }
 
 static void space_mark_indexes_dirty(Space *s) {
@@ -1519,6 +1611,10 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     eq_index_init(&s->native.eq_idx);
     ty_ann_index_init(&s->native.ty_idx);
     exact_index_init(&s->native.exact_idx);
+    s->native.id_present = NULL;
+    s->native.id_present_bits = 0;
+    s->native.id_present_synced_len = 0;
+    s->native.id_present_dirty = false;
     s->native.eq_idx_dirty = false;
     s->native.ty_idx_dirty = false;
     s->native.exact_idx_dirty = false;
@@ -1592,6 +1688,7 @@ void space_free(Space *s) {
     eq_index_free(&s->native.eq_idx);
     ty_ann_index_free(&s->native.ty_idx);
     exact_index_free(&s->native.exact_idx);
+    id_present_free(&s->native);
     space_match_backend_free(s);
     s->native.has_non_exact_atoms = false;
     s->native.has_non_exact_atoms_dirty = false;
@@ -1769,6 +1866,36 @@ static void ty_ann_index_rebuild(Space *s) {
     s->native.ty_idx_dirty = false;
 }
 
+/* Lazily bring the presence bitset up to date with membership.  id_present is a
+   projection of the stored atom ids keyed on ALPHA-canonical ids of EVERY atom
+   (ground and non-ground), giving add-atom-nodup dedup an O(1) alpha-aware id
+   predicate.  Maintenance is DEFERRED to query time (this function) rather than
+   done per-add, for two reasons: (1) pure file ingress never forces a lazy blob
+   decode -- the canonicalizing read only happens when membership is actually
+   queried; (2) a forward-chaining deferral window (which defers the exact-index
+   buckets) never triggers a full O(N) rebuild per contains.  A removal / bulk
+   mutation sets id_present_dirty -> clear + full resync; otherwise the bitset is
+   append-only and we sync just the [synced_len, len) suffix (O(1) amortized in a
+   chaining loop, so native add-atom-nodup stays O(N), not O(N^2)).  Uses the
+   logical atom-id accessor, so no linearization is required. */
+static void id_present_sync(Space *s) {
+    if (!s)
+        return;
+    if (s->native.id_present_dirty ||
+        s->native.id_present_synced_len > s->native.len) {
+        id_present_clear(&s->native);
+        s->native.id_present_synced_len = 0;
+        s->native.id_present_dirty = false;
+    }
+    for (CettaIndex i = s->native.id_present_synced_len; i < s->native.len; i++) {
+        AtomId cid =
+            space_canonical_id_for_stored(s, space_get_atom_id_at64(s, i));
+        if (cid != CETTA_ATOM_ID_NONE)
+            id_present_set(&s->native, cid);
+    }
+    s->native.id_present_synced_len = s->native.len;
+}
+
 static void exact_index_rebuild(Space *s) {
     space_linearize(s);
     exact_index_free(&s->native.exact_idx);
@@ -1780,6 +1907,10 @@ static void exact_index_rebuild(Space *s) {
         exact_atom_bucket_add(
             &s->native.exact_idx.buckets[exact_atom_hash_id(s, atom_id)], i);
     }
+    /* id_present is now decoupled from the bucket index -- it is synced lazily at
+       membership-query time (id_present_sync), so the bucket rebuild does not
+       touch it.  space_linearize preserves logical order, so id_present_synced_len
+       stays valid across a bucket rebuild. */
     s->native.exact_idx_dirty = false;
 }
 
@@ -1864,6 +1995,10 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         s->native.ty_idx_dirty = true;
         s->native.exact_idx_dirty = true;
         s->native.has_non_exact_atoms_dirty = true;
+        /* id_present is synced lazily at query time (append-only suffix via
+           id_present_synced_len), so a deferred add needs no per-add work here --
+           this is what keeps a forward-chaining loop O(1) per contains AND keeps
+           pure ingress free of lazy blob decodes. */
     } else {
         /* Index equations by head symbol */
         if (!s->native.eq_idx_dirty) {
@@ -1889,9 +2024,12 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
                     ty_ann_index_add(&s->native.ty_idx, subject, idx);
             }
         }
-        if (!s->native.exact_idx_dirty && atom_id_is_exact_indexable(s, atom_id))
+        if (!s->native.exact_idx_dirty && atom_id_is_exact_indexable(s, atom_id)) {
             exact_atom_bucket_add(
                 &s->native.exact_idx.buckets[exact_atom_hash_id(s, atom_id)], idx);
+        }
+        /* id_present is synced lazily at membership-query time (id_present_sync),
+           not per-add, so pure ingress never forces a canonicalizing blob decode. */
         if (!s->native.has_non_exact_atoms_dirty &&
             !atom_id_is_exact_indexable(s, atom_id))
             s->native.has_non_exact_atoms = true;
@@ -1935,6 +2073,7 @@ TermUniverseError space_term_universe_last_error_code(const Space *s) {
     TermUniverse *universe = s ? s->native.universe : NULL;
     return term_universe_last_error_code(universe);
 }
+
 
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
     if (!s || !atom)
@@ -3128,10 +3267,53 @@ uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
 }
 
 bool space_contains_exact(Space *s, Atom *atom) {
+    /* Doctrine-1 fast path: for a non-overlay native space an exact-indexable
+       atom's membership is an interned-id predicate over the dense presence
+       bitset -- O(1), unclusterable -- so add-atom-nodup dedup no longer walks a
+       fixed-bucket structural index for the FC-hot ground-theorem case.  Overlay
+       spaces, non-native backends, and var/non-indexable atoms fall through to
+       the exact-match path (id_present mirrors exact_idx, so this is equivalent
+       to n>0, only cheaper). */
+    if (s && atom && !space_has_overlay_base(s) &&
+        !space_engine_uses_pathmap(s->match_backend.kind) &&
+        atom_is_exact_indexable(atom)) {
+        /* Membership only needs the presence bitset, not the exact-index buckets,
+           so bring id_present up to date lazily (append-only suffix sync; full
+           resync only after a removal) -- never a full bucket rebuild inside a
+           deferral window. */
+        id_present_sync(s);
+        AtomId qid = s->native.universe
+            ? term_universe_lookup_atom_id(s->native.universe, atom)
+            : CETTA_ATOM_ID_NONE;
+        return qid != CETTA_ATOM_ID_NONE &&
+               id_present_contains(&s->native, qid);
+    }
     CettaIndex *matches = NULL;
     CettaIndex n = space_exact_match_indices64(s, atom, &matches);
     free(matches);
     return n > 0;
+}
+
+bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
+    /* Alpha-aware membership for a non-overlay native space -- O(1) via the
+       canonical presence bitset (keyed on first-occurrence-ordinal canonical
+       ids).  add-atom-nodup uses this so non-ground theorem dedup no longer
+       scans every atom.  *out_applicable is false for overlay / non-native
+       spaces, where the caller keeps the exact + alpha-scan path. */
+    if (out_applicable)
+        *out_applicable = false;
+    if (!s || !atom || space_has_overlay_base(s) ||
+        space_engine_uses_pathmap(s->match_backend.kind))
+        return false;
+    if (out_applicable)
+        *out_applicable = true;
+    /* Alpha-aware membership needs only the presence bitset.  Sync it lazily here
+       (append-only suffix; full resync only after a removal) so the forward-
+       chaining deferral window stays O(1) per contains instead of rebuilding the
+       exact-index buckets each time (the O(N^2) source). */
+    id_present_sync(s);
+    AtomId cid = space_canonical_id_for_query(s, atom);
+    return cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid);
 }
 
 bool space_contains_only_exact_atoms(Space *s) {
@@ -3971,7 +4153,15 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
     }
     bool emitted = false;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_EQ_DECODED);
-    if (match_atoms_epoch(query, lhs, &merged, a, epoch) &&
+    /* Leaf-patch view (OFF by default): for a flat linear pattern with
+     * non-variable query args, the positional bind reproduces the matcher's
+     * bindings without the worklist; it pre-checks and refuses anything else,
+     * falling back to the general matcher on clean state.  OFF-vs-ON is proven
+     * byte-identical before any default flip. */
+    bool leaf_matched = match_leaf_patch_view_enabled() &&
+                        match_atoms_epoch_positional_linear(query, lhs, &merged,
+                                                            a, epoch);
+    if ((leaf_matched || match_atoms_epoch(query, lhs, &merged, a, epoch)) &&
         !bindings_has_loop(&merged)) {
         Atom *result = bindings_apply_epoch(&merged, a, rhs, epoch);
         result = rewrite_query_visible_aliases(a, result, visible, &merged);
@@ -4144,6 +4334,72 @@ CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
     QueryResultSink sink;
     query_result_sink_init_visit(&sink, visitor, ctx);
     return query_equations_core(s, query, a, &sink);
+}
+
+/* MAM loop-body view entry guard -- the necessary (not yet sufficient)
+ * condition for the deterministic-tail loop lane: the head resolves to EXACTLY
+ * ONE equation in a clean single-head bucket, and the space has no overlay base
+ * to complicate revision/visibility.  Cheap: one hashed bucket read, no match.
+ * Conservative by construction -- any ambiguity (mixed bucket, overlay, zero or
+ * many equations) returns false and the general evaluator handles the call.
+ * Body-determinism (single-branch, no superpose tail) is verified later when
+ * the view is compiled; this predicate only gates measurement + view lookup. */
+/* Every ATOM_VAR in the pattern occurs at most once.  A repeated variable is
+ * an equality constraint (both occurrences must bind equal terms) that a naive
+ * positional leaf-patch cannot honour -- it reads the two leaves independently
+ * and would accept terms the real matcher rejects.  Patterns are tiny, so the
+ * O(vars^2) dedup is negligible; if a pattern somehow exceeds the small cap we
+ * conservatively report non-linear (refuse), never a false linear. */
+static bool pattern_vars_unique_rec(const Atom *a, VarId *seen, uint32_t *n,
+                                    uint32_t cap) {
+    if (!a)
+        return true;
+    if (a->kind == ATOM_VAR) {
+        for (uint32_t i = 0; i < *n; i++)
+            if (seen[i] == a->var_id)
+                return false; /* repeated variable -> non-linear */
+        if (*n >= cap)
+            return false; /* too many vars to verify -> conservative refuse */
+        seen[(*n)++] = a->var_id;
+        return true;
+    }
+    if (a->kind == ATOM_EXPR) {
+        for (CettaExprIndex i = 0; i < a->expr.len; i++)
+            if (!pattern_vars_unique_rec(a->expr.elems[i], seen, n, cap))
+                return false;
+    }
+    return true;
+}
+
+/* Resolve the single, linear equation a head is eligible for (or NULL).  Shared
+ * by the eligibility predicate and the revision-keyed view cache.  Cheap: one
+ * hashed bucket read + a tiny linearity walk; the cache calls it once per
+ * (head, revision), not per reduction. */
+Atom *space_single_linear_equation(const Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE || space_has_overlay_base(s))
+        return NULL;
+    const EqBucket *b = &s->native.eq_idx.buckets[symbol_hash(head)];
+    if (!(b->head == head && !b->mixed_heads && b->len == 1))
+        return NULL;
+    CettaIndex idx = b->atom_indices[0];
+    if (idx >= s->native.len)
+        return NULL;
+    Atom *equation = space_get_at64(s, idx);
+    Atom *lhs = NULL;
+    Atom *rhs = NULL;
+    if (!equation || !is_equation_atom(equation, &lhs, &rhs))
+        return NULL;
+    /* Linearity conjunct (Fable soundness): a repeated LHS variable is an
+     * equality constraint the positional leaf-patch cannot honour. */
+    VarId seen[64];
+    uint32_t nseen = 0;
+    if (!pattern_vars_unique_rec(lhs, seen, &nseen, 64u))
+        return NULL;
+    return equation;
+}
+
+bool space_head_has_single_equation(const Space *s, SymbolId head) {
+    return space_single_linear_equation(s, head) != NULL;
 }
 
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,

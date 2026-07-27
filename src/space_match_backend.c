@@ -190,6 +190,19 @@ static void native_insert_match_trie_entry(Space *s, CettaIndex atom_idx) {
 
 static void native_insert_stree_entry(Space *s, CettaIndex atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    /* Ground-term sharing (doctrine: inner loops speak IDs, not copies): build
+     * the discrimination tree directly from the interned atom_id, walking the
+     * universe's compact storage, instead of materialising a fresh decoded Atom
+     * per fact.  The tree only reads structure (it stores discrimination nodes,
+     * not the atom), so this is byte-for-byte the same tree.  Guarded to spaces
+     * without an overlay base, whose atoms would belong to a different universe
+     * than s->native.universe. */
+    if (s->overlay_base == NULL) {
+        AtomId atom_id = space_get_atom_id_at64(s, atom_idx);
+        if (atom_id != CETTA_ATOM_ID_NONE &&
+            stree_insert_id(st->stree, s->native.universe, atom_id, atom_idx))
+            return;
+    }
     Atom *atom = space_get_at64(s, atom_idx);
     if (atom)
         stree_insert(st->stree, atom, atom_idx);
@@ -304,22 +317,50 @@ static void subst_match_move(SubstMatch *dst, SubstMatch *src) {
     dst->exact = src->exact;
 }
 
+static inline bool subst_match_order_le(const SubstMatch *a,
+                                        const SubstMatch *b) {
+    if (a->atom_idx != b->atom_idx)
+        return a->atom_idx < b->atom_idx;
+    return a->epoch <= b->epoch;  /* ties keep left-run order (stable) */
+}
+
+/* Stable O(n log n) sort by (atom_idx, epoch) via bottom-up merge, using the
+ * ownership-transferring subst_match_move so Bindings resources are never
+ * duplicated or dropped.  Replaces an insertion sort that was O(n^2) whenever
+ * the discrimination-tree walk did not already emit atoms in index order --
+ * which stopped holding once high-fan-out int children became hash-indexed, and
+ * was never guaranteed for any match that visits variable branches. */
+static void subst_matchset_sort(SubstMatch *items, uint32_t len,
+                                SubstMatch *tmp) {
+    SubstMatch *src = items;
+    SubstMatch *dst = tmp;
+    for (uint32_t width = 1; width < len; width *= 2u) {
+        for (uint32_t i = 0; i < len; i += 2u * width) {
+            uint32_t mid = (i + width < len) ? (i + width) : len;
+            uint32_t end = (i + 2u * width < len) ? (i + 2u * width) : len;
+            uint32_t a = i, b = mid, w = i;
+            while (a < mid && b < end) {
+                if (subst_match_order_le(&src[a], &src[b]))
+                    subst_match_move(&dst[w++], &src[a++]);
+                else
+                    subst_match_move(&dst[w++], &src[b++]);
+            }
+            while (a < mid) subst_match_move(&dst[w++], &src[a++]);
+            while (b < end) subst_match_move(&dst[w++], &src[b++]);
+        }
+        SubstMatch *t = src; src = dst; dst = t;
+    }
+    if (src != items)
+        for (uint32_t i = 0; i < len; i++)
+            subst_match_move(&items[i], &src[i]);
+}
+
 static void subst_matchset_normalize(SubstMatchSet *out) {
     if (out->len <= 1)
         return;
-    for (uint32_t i = 1; i < out->len; i++) {
-        SubstMatch tmp;
-        subst_match_move(&tmp, &out->items[i]);
-        uint32_t j = i;
-        while (j > 0 &&
-               (out->items[j - 1].atom_idx > tmp.atom_idx ||
-                (out->items[j - 1].atom_idx == tmp.atom_idx &&
-                 out->items[j - 1].epoch > tmp.epoch))) {
-            subst_match_move(&out->items[j], &out->items[j - 1]);
-            j--;
-        }
-        subst_match_move(&out->items[j], &tmp);
-    }
+    SubstMatch *tmp = cetta_malloc(sizeof(SubstMatch) * out->len);
+    subst_matchset_sort(out->items, out->len, tmp);
+    free(tmp);
     uint32_t w = 1;
     for (uint32_t r = 1; r < out->len; r++) {
         if (!subst_match_same(&out->items[r], &out->items[r - 1])) {

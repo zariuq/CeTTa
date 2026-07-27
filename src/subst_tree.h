@@ -42,6 +42,19 @@ typedef struct {
     uint32_t count;         /* number of occupied slots */
 } SymHashTable;
 
+typedef struct {
+    int64_t val;
+    struct SubstNode *child;
+} IntHashEntry;
+
+typedef struct {
+    IntHashEntry *entries;  /* power-of-2 sized, child==NULL = empty slot
+                               (every int64 value is a valid key, so occupancy
+                               is tracked by the child pointer, not the key) */
+    uint32_t mask;          /* table_size - 1 (for & masking) */
+    uint32_t count;         /* number of occupied slots */
+} IntHashTable;
+
 typedef struct SubstNode {
     /* Symbol branches (SymbolId -> child) */
     SubstSymBranch *sym;
@@ -66,6 +79,8 @@ typedef struct SubstNode {
     /* Grounded int branches */
     struct { int64_t val; struct SubstNode *child; } *ints;
     uint32_t nints, cints;
+    IntHashTable int_ht;
+    bool int_hashed;
 
     /* Leaves: (space atom index, epoch for standardization apart) */
     struct { CettaIndex idx; uint32_t epoch; } *leaves;

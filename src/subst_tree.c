@@ -13,6 +13,7 @@ uint32_t stree_next_epoch(void) { return g_stree_epoch++; }
 /* ── SubstNode lifecycle ───────────────────────────────────────────────── */
 
 SubstNode *snode_new(void) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SUBST_NODE_NEW);
     SubstNode *n = cetta_malloc(sizeof(SubstNode));
     memset(n, 0, sizeof(SubstNode));
     return n;
@@ -34,8 +35,16 @@ void snode_free(SubstNode *n) {
     free(n->vars);
     for (uint32_t i = 0; i < n->nexpr; i++) snode_free(n->expr[i].child);
     free(n->expr);
-    for (uint32_t i = 0; i < n->nints; i++) snode_free(n->ints[i].child);
-    free(n->ints);
+    if (n->int_hashed) {
+        uint32_t cap = n->int_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++)
+            if (n->int_ht.entries[i].child)
+                snode_free(n->int_ht.entries[i].child);
+        free(n->int_ht.entries);
+    } else {
+        for (uint32_t i = 0; i < n->nints; i++) snode_free(n->ints[i].child);
+        free(n->ints);
+    }
     free(n->leaves);
     free(n);
 }
@@ -105,6 +114,78 @@ static void snode_sym_promote(SubstNode *n) {
     n->sym_hashed = true;
 }
 
+/* ── Int hash table helpers (mirror of the symbol table above) ─────────────
+ * The integer-child branch of a node fans out to one child per distinct int
+ * key.  A discrimination tree over a family like (friend sam 0..N) piles N
+ * distinct ints onto one node; a linear array scan there is O(n) per insert
+ * and O(n^2) to build.  Like symbols, promote to an open-addressing table
+ * once the fan-out crosses SNODE_HASH_THRESHOLD.  Occupancy is the child
+ * pointer (every int64 value is a valid key, so there is no reserved empty
+ * key); the multiplicative hash is a bijection mod 2^m, so sequential ints
+ * permute across slots without clustering. */
+
+static inline uint32_t int_hash(int64_t key) {
+    return (uint32_t)((uint64_t)key * 2654435761u);
+}
+
+static void int_ht_init(IntHashTable *ht, uint32_t min_cap) {
+    uint32_t cap = 32;
+    while (cap < min_cap * 2) cap *= 2;  /* load factor < 0.5 */
+    ht->entries = cetta_malloc(sizeof(IntHashEntry) * cap);
+    ht->mask = cap - 1;
+    ht->count = 0;
+    for (uint32_t i = 0; i < cap; i++)
+        ht->entries[i].child = NULL;
+}
+
+static SubstNode *int_ht_get(IntHashTable *ht, int64_t key) {
+    uint32_t idx = int_hash(key) & ht->mask;
+    for (;;) {
+        if (!ht->entries[idx].child)
+            return NULL;
+        if (ht->entries[idx].val == key)
+            return ht->entries[idx].child;
+        idx = (idx + 1) & ht->mask;
+    }
+}
+
+static void int_ht_put(IntHashTable *ht, int64_t key, SubstNode *child) {
+    /* Resize if load factor > 0.7 */
+    if (ht->count * 10 > (ht->mask + 1) * 7) {
+        uint32_t old_cap = ht->mask + 1;
+        IntHashEntry *old = ht->entries;
+        uint32_t new_cap = old_cap * 2;
+        ht->entries = cetta_malloc(sizeof(IntHashEntry) * new_cap);
+        ht->mask = new_cap - 1;
+        for (uint32_t i = 0; i < new_cap; i++)
+            ht->entries[i].child = NULL;
+        ht->count = 0;
+        for (uint32_t i = 0; i < old_cap; i++) {
+            if (old[i].child) {
+                int_ht_put(ht, old[i].val, old[i].child);
+            }
+        }
+        free(old);
+    }
+    uint32_t idx = int_hash(key) & ht->mask;
+    while (ht->entries[idx].child)
+        idx = (idx + 1) & ht->mask;
+    ht->entries[idx].val = key;
+    ht->entries[idx].child = child;
+    ht->count++;
+}
+
+static void snode_int_promote(SubstNode *n) {
+    uint32_t count = n->nints;
+    int_ht_init(&n->int_ht, count + 16);
+    for (uint32_t i = 0; i < count; i++)
+        int_ht_put(&n->int_ht, n->ints[i].val, n->ints[i].child);
+    free(n->ints);
+    n->ints = NULL;
+    n->cints = 0;
+    n->int_hashed = true;
+}
+
 /* ── Branch helpers ────────────────────────────────────────────────────── */
 
 static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
@@ -164,6 +245,14 @@ static SubstNode *snode_get_expr(SubstNode *n, CettaExprLen arity) {
 }
 
 static SubstNode *snode_get_int(SubstNode *n, int64_t val) {
+    if (n->int_hashed) {
+        SubstNode *existing = int_ht_get(&n->int_ht, val);
+        if (existing) return existing;
+        SubstNode *child = snode_new();
+        int_ht_put(&n->int_ht, val, child);
+        n->nints++;
+        return child;
+    }
     for (uint32_t i = 0; i < n->nints; i++)
         if (n->ints[i].val == val) return n->ints[i].child;
     if (n->nints >= n->cints) {
@@ -174,6 +263,8 @@ static SubstNode *snode_get_int(SubstNode *n, int64_t val) {
     n->ints[n->nints].val = val;
     n->ints[n->nints].child = child;
     n->nints++;
+    if (n->nints > SNODE_HASH_THRESHOLD)
+        snode_int_promote(n);
     return child;
 }
 
@@ -578,9 +669,17 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
             for (uint32_t i = 0; i < node->nvars; i++)
                 st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
                              bb, a, atoms, out);
-            for (uint32_t i = 0; i < node->nints; i++)
-                st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
-                             bb, a, atoms, out);
+            if (node->int_hashed) {
+                uint32_t cap = node->int_ht.mask + 1;
+                for (uint32_t i = 0; i < cap; i++)
+                    if (node->int_ht.entries[i].child)
+                        st_flat_walk(node->int_ht.entries[i].child, flat, nflat,
+                                     idx+1, bb, a, atoms, out);
+            } else {
+                for (uint32_t i = 0; i < node->nints; i++)
+                    st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
+                                 bb, a, atoms, out);
+            }
             /* Expression branches: skip arity MORE tokens after arity branch */
             for (uint32_t i = 0; i < node->nexpr; i++)
                 st_flat_skip(node->expr[i].child, node->expr[i].arity,
@@ -589,10 +688,16 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
         break;
 
     case FT_INT:
-        for (uint32_t i = 0; i < node->nints; i++)
-            if (node->ints[i].val == tok->ival)
-                st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
-                             bb, a, atoms, out);
+        if (node->int_hashed) {
+            SubstNode *match = int_ht_get(&node->int_ht, tok->ival);
+            if (match)
+                st_flat_walk(match, flat, nflat, idx+1, bb, a, atoms, out);
+        } else {
+            for (uint32_t i = 0; i < node->nints; i++)
+                if (node->ints[i].val == tok->ival)
+                    st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
+                                 bb, a, atoms, out);
+        }
         for (uint32_t i = 0; i < node->nvars; i++) {
             uint32_t mark = bindings_builder_save(bb);
             if (st_bind_indexed_var(
@@ -672,9 +777,17 @@ static void st_flat_skip(SubstNode *node, CettaIndex remaining,
     for (uint32_t i = 0; i < node->nvars; i++)
         st_flat_skip(node->vars[i].child, remaining - 1,
                      flat, nflat, resume_idx, bb, a, atoms, out);
-    for (uint32_t i = 0; i < node->nints; i++)
-        st_flat_skip(node->ints[i].child, remaining - 1,
-                     flat, nflat, resume_idx, bb, a, atoms, out);
+    if (node->int_hashed) {
+        uint32_t cap = node->int_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++)
+            if (node->int_ht.entries[i].child)
+                st_flat_skip(node->int_ht.entries[i].child, remaining - 1,
+                             flat, nflat, resume_idx, bb, a, atoms, out);
+    } else {
+        for (uint32_t i = 0; i < node->nints; i++)
+            st_flat_skip(node->ints[i].child, remaining - 1,
+                         flat, nflat, resume_idx, bb, a, atoms, out);
+    }
     for (uint32_t i = 0; i < node->nexpr; i++)
         st_flat_skip(node->expr[i].child, remaining - 1 + node->expr[i].arity,
                      flat, nflat, resume_idx, bb, a, atoms, out);
