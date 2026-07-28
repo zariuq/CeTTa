@@ -33,11 +33,16 @@ typedef struct {
     SymbolSlot *slots;
     uint32_t slot_cap;
     uint32_t slot_used;
+    uint64_t instance_id;
 
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
     pthread_mutex_t write_mutex;
 } SymbolTable;
+
+static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
+    return st ? st->instance_id : 0u;
+}
 
 #define CETTA_BUILTIN_SYMBOLS(X) \
     X(empty, "Empty") \
@@ -93,6 +98,17 @@ typedef struct {
     X(abt_pattern_var_v1, "ABTPatternVarV1") \
     X(abt_let_scope_v1, "ABTLetScopeV1") \
     X(abt_let_v1, "ABTLetV1") \
+    X(abt_default_signatures, "__cetta_abt_default_signatures") \
+    X(abt_signature_admitted, "__cetta_abt_signature_admitted") \
+    X(abt_shift, "__cetta_abt_shift") \
+    X(abt_subst, "__cetta_abt_subst") \
+    X(abt_close, "__cetta_abt_close") \
+    X(abt_open, "__cetta_abt_open") \
+    X(abt_bind, "__cetta_abt_bind") \
+    X(abt_print, "__cetta_abt_print") \
+    X(abt_parse, "__cetta_abt_parse") \
+    X(abt_scope_check, "__cetta_abt_scope_check") \
+    X(abt_alpha_eq, "__cetta_abt_alpha_eq") \
     X(collect, "collect") \
     X(fold, "fold") \
     X(fold_by_key, "fold-by-key") \

@@ -219,6 +219,15 @@ uint64_t term_universe_atom_id_capacity(const TermUniverse *universe);
 bool term_universe_migrate_store_format(TermUniverse *universe,
                                         TermUniverseStoreFormat format);
 Atom *term_universe_canonicalize_atom(Arena *dst, Atom *src);
+/* True exactly when structural identity is stable enough for find-or-intern
+ * lookup. Mutable spaces/state, foreign values, captures, and Prime runtime
+ * capabilities deliberately fall outside this fragment. */
+bool term_universe_atom_is_stable(Atom *atom);
+/* Key-only alpha canonicalization: every variable is renamed by
+ * first-occurrence ordinal and its presentation is erased.  Unlike
+ * term_universe_canonicalize_atom, this is not a presentation-preserving
+ * epoch cleanup and must not be used to materialize user-visible terms. */
+Atom *term_universe_alpha_canonicalize_atom(Arena *dst, Atom *src);
 AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
                                    Atom *src);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);

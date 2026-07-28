@@ -99,6 +99,7 @@ static void prime_need_observe_top_answer(
  * is table-relative because CLI probes can install a fresh SymbolTable. */
 typedef struct {
     const SymbolTable *table;
+    uint64_t table_instance_id;
     SymbolId app;
     SymbolId lam;
     SymbolId delay;
@@ -138,9 +139,14 @@ typedef struct {
 static __thread PrimeNeedSymbolIds g_prime_need_symbol_ids = {0};
 
 static const PrimeNeedSymbolIds *prime_need_symbols(void) {
-    if (g_prime_need_symbol_ids.table == g_symbols)
+    uint64_t table_instance_id = symbol_table_instance_id(g_symbols);
+    if (g_prime_need_symbol_ids.table == g_symbols &&
+        g_prime_need_symbol_ids.table_instance_id == table_instance_id)
         return &g_prime_need_symbol_ids;
-    PrimeNeedSymbolIds ids = {.table = g_symbols};
+    PrimeNeedSymbolIds ids = {
+        .table = g_symbols,
+        .table_instance_id = table_instance_id,
+    };
     if (g_symbols) {
         ids.app = symbol_intern_cstr(g_symbols, "App");
         ids.lam = symbol_intern_cstr(g_symbols, "Lam");
@@ -5177,19 +5183,23 @@ static Atom *bindings_apply_body_exact_env(Arena *a, Atom *body,
    compatibility profile. */
 static __thread AbtSignature g_prime_runtime_abt_signature;
 static __thread const SymbolTable *g_prime_runtime_abt_symbols = NULL;
+static __thread uint64_t g_prime_runtime_abt_symbols_instance_id = 0u;
 static __thread bool g_prime_runtime_abt_signature_ready = false;
 
 static void prime_runtime_abt_signature_reset(void) {
     if (g_prime_runtime_abt_signature_ready)
         abt_signature_free(&g_prime_runtime_abt_signature);
     g_prime_runtime_abt_symbols = NULL;
+    g_prime_runtime_abt_symbols_instance_id = 0u;
     g_prime_runtime_abt_signature_ready = false;
 }
 
 static const AbtSignature *prime_runtime_abt_signature(Arena *arena) {
     if (!arena || !g_symbols) return NULL;
     if (g_prime_runtime_abt_signature_ready &&
-        g_prime_runtime_abt_symbols == g_symbols)
+        g_prime_runtime_abt_symbols == g_symbols &&
+        g_prime_runtime_abt_symbols_instance_id ==
+            symbol_table_instance_id(g_symbols))
         return &g_prime_runtime_abt_signature;
 
     prime_runtime_abt_signature_reset();
@@ -5215,6 +5225,8 @@ static const AbtSignature *prime_runtime_abt_signature(Arena *arena) {
         return NULL;
     }
     g_prime_runtime_abt_symbols = g_symbols;
+    g_prime_runtime_abt_symbols_instance_id =
+        symbol_table_instance_id(g_symbols);
     g_prime_runtime_abt_signature_ready = true;
     return &g_prime_runtime_abt_signature;
 }
@@ -6963,6 +6975,7 @@ static bool query_visit_stream_single_tail_miss(Atom *result,
 enum { LOOP_VIEW_CACHE_SLOTS = 16 };
 typedef struct {
     const Space *space;
+    uint64_t instance_id;
     uint64_t revision;
     SymbolId head;
     Atom *equation;
@@ -6973,14 +6986,17 @@ static _Thread_local LoopViewCacheSlot g_loop_view_cache[LOOP_VIEW_CACHE_SLOTS];
 static Atom *loop_view_lookup_equation(Space *s, SymbolId head) {
     if (!s || head == SYMBOL_ID_NONE)
         return NULL;
+    uint64_t instance_id = space_instance_id(s);
     uint64_t rev = space_revision(s);
     LoopViewCacheSlot *slot =
         &g_loop_view_cache[(uint32_t)head % LOOP_VIEW_CACHE_SLOTS];
-    if (slot->valid && slot->space == s && slot->revision == rev &&
+    if (slot->valid && slot->space == s &&
+        slot->instance_id == instance_id && slot->revision == rev &&
         slot->head == head)
         return slot->equation; /* fresh hit (NULL = cached ineligible) */
     Atom *eq = space_single_linear_equation(s, head);
     slot->space = s;
+    slot->instance_id = instance_id;
     slot->revision = rev;
     slot->head = head;
     slot->equation = eq;
@@ -7035,9 +7051,9 @@ query_equations_miss_single_tail_stream(Space *s, Atom *query,
     }
 
     if (view_eq && match_leaf_patch_view_enabled())
-        (void)query_equation_visit(view_eq, query, query_arena,
-                                   query_visit_stream_single_tail_miss,
-                                   &stream);
+        (void)query_equations_visit_singleton(
+            view_eq, query, query_arena,
+            query_visit_stream_single_tail_miss, &stream);
     else
         (void)query_equations_visit(s, query, query_arena,
                                     query_visit_stream_single_tail_miss,
@@ -10024,8 +10040,9 @@ typedef struct {
    forward chainer's match-result apply via the inline handler) routes here, so
    dedup lives at one seam instead of being duplicated per path.  Tiers: backend
    structural contains for pathmap/mork spaces -> exact-index for ground atoms ->
-   the O(1) alpha-aware canonical presence bitset for native non-overlay spaces
-   (overlay / non-native fall back to the O(N) alpha-aware scan).  The
+   the O(1)-amortized alpha-aware canonical presence bitset for native spaces
+   (including native overlays; non-native backends fall back to the O(N)
+   alpha-aware scan).  The
    exact-indexable guard skips the redundant canonical check that
    space_contains_exact already settled for ground atoms. */
 static bool add_atom_nodup_is_present(Space *target, Atom *compare_atom) {
@@ -10039,10 +10056,10 @@ static bool add_atom_nodup_is_present(Space *target, Atom *compare_atom) {
         !space_atom_is_exact_indexable(compare_atom)) {
         /* Non-ground dedup must be alpha-aware: local pathmap projection uses
            synthetic stable variable spellings while the evaluator may still hold
-           the same theorem under source spellings.  Native non-overlay spaces
-           answer this in O(1) via the canonical presence bitset (dropping forward
-           chaining from O(N^2) to O(N)); overlay / non-native fall back to the
-           O(N) alpha-aware scan. */
+           the same theorem under source spellings. Native spaces, including
+           overlays, answer this via the canonical presence bitset (dropping
+           forward chaining from O(N^2) to O(N)); non-native backends fall back
+           to the O(N) alpha-aware scan. */
         bool canon_applicable = false;
         found = space_contains_canonical(target, compare_atom, &canon_applicable);
         if (!canon_applicable) {
@@ -10719,6 +10736,7 @@ static bool bind_domain_binder_builder(BindingsBuilder *bb, Atom *domain,
 
 typedef struct {
     Space *space;
+    uint64_t instance_id;
     uint64_t revision;
     CettaLanguageId language_id;
     uint32_t profile_id;
@@ -10916,20 +10934,24 @@ static bool profiled_type_cache_make_key(Space *s, Atom *atom,
     uint32_t profile_id = UINT32_MAX;
     if (session && session->profile)
         profile_id = (uint32_t)session->profile->id;
+    uint64_t instance_id = space_instance_id(s);
+    uint64_t revision = space_revision(s);
+    bool dependent_telescope_enabled = eval_dependent_telescope_enabled();
     uint32_t atom_h = atom_hash(atom);
     uint32_t h = 2166136261u;
-    h = profiled_type_cache_mix_u64(h, (uint64_t)(uintptr_t)s);
-    h = profiled_type_cache_mix_u64(h, space_revision(s));
+    h = profiled_type_cache_mix_u64(h, instance_id);
+    h = profiled_type_cache_mix_u64(h, revision);
     h = profiled_type_cache_mix_u32(h, session ? (uint32_t)session->language_id : 0u);
     h = profiled_type_cache_mix_u32(h, profile_id);
-    h = profiled_type_cache_mix_u32(h, eval_dependent_telescope_enabled() ? 1u : 0u);
+    h = profiled_type_cache_mix_u32(h, dependent_telescope_enabled ? 1u : 0u);
     h = profiled_type_cache_mix_u32(h, atom_h);
     *out = (ProfiledTypeCacheKey){
         .space = s,
-        .revision = space_revision(s),
+        .instance_id = instance_id,
+        .revision = revision,
         .language_id = session ? session->language_id : CETTA_LANGUAGE_HE,
         .profile_id = profile_id,
-        .dependent_telescope_enabled = eval_dependent_telescope_enabled(),
+        .dependent_telescope_enabled = dependent_telescope_enabled,
         .atom_hash = atom_h,
         .hash = h,
     };
@@ -10939,6 +10961,7 @@ static bool profiled_type_cache_make_key(Space *s, Atom *atom,
 static bool profiled_type_cache_key_matches(const ProfiledTypeCacheKey *lhs,
                                             const ProfiledTypeCacheKey *rhs) {
     return lhs->space == rhs->space &&
+           lhs->instance_id == rhs->instance_id &&
            lhs->revision == rhs->revision &&
            lhs->language_id == rhs->language_id &&
            lhs->profile_id == rhs->profile_id &&
@@ -15105,7 +15128,7 @@ static Atom *rewrite_match_visible_aliases(Arena *a, Atom *atom,
 }
 
 static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
-                                           const MatchVisibleVarSet *visible,
+                                           MatchVisibleVarSet *visible,
                                            const Bindings *full,
                                            Bindings *projected) {
     bindings_init(projected);
@@ -15152,7 +15175,7 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
         }
         /* The visible-var key is query-invariant; build it once and reuse the
          * cached atom across matched rows (validated against this arena). */
-        MatchVisibleVarRef *vitem = (MatchVisibleVarRef *)&visible->items[i];
+        MatchVisibleVarRef *vitem = &visible->items[i];
         Atom *visible_var;
         if (vitem->presentation_cache && vitem->presentation_arena == a) {
             visible_var = vitem->presentation_cache;
@@ -15209,6 +15232,7 @@ static bool bindings_project_answer_ref_env(Arena *a,
                                             const CettaVarMap *goal_instantiation,
                                             const Bindings *full,
                                             Bindings *projected) {
+    bindings_init(projected);
     MatchVisibleVarSet visible;
     match_visible_var_set_init(&visible);
     bool ok = collect_goal_instantiation_visible_vars(goal_instantiation,
@@ -15506,6 +15530,7 @@ static Arena *match_result_direct_eval_scratch_arena(
 #define JOINFP_MAX_HEADS 32
 typedef struct {
     const Space *space;
+    uint64_t instance_id;
     uint64_t revision;
     bool valid;
     bool overflow;            /* too many distinct heads: never definitive */
@@ -15520,10 +15545,14 @@ static bool joinfp_ground_miss_definitive(Space *space, Atom *grounded) {
         grounded->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
     SymbolId probe_head = grounded->expr.elems[0]->sym_id;
-    uint32_t slot = (uint32_t)(((uintptr_t)space >> 4) % JOINFP_CACHE_SLOTS);
+    uint64_t instance_id = space_instance_id(space);
+    uint32_t slot = (uint32_t)(instance_id % JOINFP_CACHE_SLOTS);
     JoinFpNonexactCache *c = &g_joinfp_cache[slot];
-    if (!c->valid || c->space != space || c->revision != space->revision) {
+    if (!c->valid || c->space != space ||
+        c->instance_id != instance_id ||
+        c->revision != space->revision) {
         c->space = space;
+        c->instance_id = instance_id;
         c->revision = space->revision;
         c->valid = true;
         c->overflow = false;
@@ -17566,7 +17595,7 @@ static bool try_count_mork_match_collapse(Space *s, Arena *a, Atom *match_atom,
     return true;
 }
 
-static bool count_projected_template(Arena *a, const MatchVisibleVarSet *visible,
+static bool count_projected_template(Arena *a, MatchVisibleVarSet *visible,
                                      const Bindings *bindings, Atom *templ,
                                      Space *s, int fuel, uint64_t *count) {
     __attribute__((cleanup(bindings_free))) Bindings projected;
@@ -17582,7 +17611,7 @@ static bool count_projected_template(Arena *a, const MatchVisibleVarSet *visible
 
 typedef struct {
     Arena *arena;
-    const MatchVisibleVarSet *visible;
+    MatchVisibleVarSet *visible;
     Atom *templ;
     Space *space;
     int fuel;

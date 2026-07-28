@@ -2126,7 +2126,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 109 109 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 110 110 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -6411,7 +6411,7 @@ test-he-compiled-reader-v1: $(HE_COMPILED_READER_TEST_BIN) $(BIN)
 	@result=$$(./$(HE_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(HECompiledReaderV1Summary 44 44 0 routed-text 1 routed-file 1)')" -ne 1 ]; then \
+		grep -Fxc '(HECompiledReaderV1Summary 47 47 0 routed-text 1 routed-file 1)')" -ne 1 ]; then \
 		echo "FAIL: compiled HE reader exact integration summary absent or duplicated"; \
 		exit 1; \
 	fi; \

@@ -1220,6 +1220,50 @@ static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
     stree_bucket_free(&bucket);
 }
 
+static void test_subst_tree_adversarial_int_fanout(Arena *scratch) {
+    enum { KEY_COUNT = 64 };
+    SubstBucket bucket;
+    int64_t keys[KEY_COUNT];
+
+    stree_bucket_init(&bucket);
+    for (uint32_t i = 0; i < KEY_COUNT; i++) {
+        int64_t lane = (int64_t)i - (KEY_COUNT / 2);
+        keys[i] = lane * (INT64_C(1) << 32);
+        stree_bucket_insert(&bucket, atom_int(scratch, keys[i]), i);
+    }
+    assert(bucket.root != NULL);
+    assert(bucket.root->int_hashed);
+    assert(bucket.root->int_ht.count == KEY_COUNT);
+
+    /* The old low-32-bit hash placed every one of these keys in one 64-entry
+       probe run.  Full-width avalanche must keep the deterministic witness
+       well below the adaptive-promotion threshold. */
+    uint32_t cap = bucket.root->int_ht.mask + 1u;
+    uint32_t run = 0;
+    uint32_t max_run = 0;
+    for (uint32_t i = 0; i < cap; i++) {
+        if (bucket.root->int_ht.entries[i].child) {
+            run++;
+            if (run > max_run)
+                max_run = run;
+        } else {
+            run = 0;
+        }
+    }
+    assert(max_run < SNODE_HASH_THRESHOLD);
+
+    for (uint32_t i = 0; i < KEY_COUNT; i++) {
+        SubstMatchSet matches;
+        smset_init(&matches);
+        stree_query_bucket(&bucket, scratch, atom_int(scratch, keys[i]),
+                           NULL, &matches);
+        assert(matches.len == 1);
+        assert(matches.items[0].atom_idx == i);
+        smset_free(&matches);
+    }
+    stree_bucket_free(&bucket);
+}
+
 static void test_parser_direct_add_boundary(TermUniverse *universe, Arena *scratch) {
     const char *stable_text = "(pair alpha 17) \"hello\" (ns.foo beta)";
     const char *var_text = "(pair $x $x)";
@@ -2030,6 +2074,73 @@ static void test_space_clone_direct_id_boundary(TermUniverse *universe, Arena *s
     space_free(&source);
 }
 
+static void test_subst_match_normalize_compacted_duplicate_runs(Arena *scratch) {
+    SubstMatchSet matches;
+    Bindings a;
+    Bindings b;
+    Atom *a_var = atom_var_with_id(scratch, "normalize-a", 91001u);
+    Atom *b_var = atom_var_with_id(scratch, "normalize-b", 91002u);
+
+    bindings_init(&a);
+    bindings_init(&b);
+    assert(bindings_add_var(&a, a_var, atom_int(scratch, 1)));
+    assert(bindings_add_var(&b, b_var, atom_int(scratch, 2)));
+
+    smset_init(&matches);
+    matches.items = cetta_malloc(sizeof(*matches.items) * 4u);
+    matches.cap = 4u;
+    matches.len = 4u;
+    for (CettaIndex i = 0; i < matches.len; i++) {
+        const Bindings *source = i < 2u ? &a : &b;
+        matches.items[i].atom_idx = i < 2u ? 10u : 20u;
+        matches.items[i].epoch = i < 2u ? 101u : 202u;
+        matches.items[i].exact = false;
+        assert(bindings_clone(&matches.items[i].bindings, source));
+    }
+
+    space_match_backend_diag_normalize_subst_matches(&matches);
+    assert(matches.len == 2u);
+    assert(matches.items[0].atom_idx == 10u);
+    assert(matches.items[1].atom_idx == 20u);
+    assert(bindings_eq(&matches.items[0].bindings, &a));
+    assert(bindings_eq(&matches.items[1].bindings, &b));
+
+    smset_free(&matches);
+    bindings_free(&b);
+    bindings_free(&a);
+}
+
+static void test_leaf_patch_refusal_is_transactional(Arena *scratch) {
+    const uint32_t epoch = 73u;
+    Atom *x = atom_var_with_id(scratch, "leaf-x", 92001u);
+    Atom *y = atom_var_with_id(scratch, "leaf-y", 92002u);
+    Atom *epoch_y =
+        atom_var_like(scratch, y, var_epoch_id(y->var_id, epoch));
+    Atom *lhs = expr3(scratch, sym(scratch, "leaf-f"), x, y);
+    Atom *query = expr3(scratch, sym(scratch, "leaf-f"),
+                        atom_int(scratch, 1), atom_int(scratch, 2));
+    Bindings base;
+
+    bindings_init(&base);
+    /* Keep an unresolved structural equality which permits x := 1 but rejects
+       y := 2.  The fast path must not leak the successful first binding into
+       the general-matcher fallback when the second binding is rejected. */
+    assert(bindings_add_constraint(
+        &base,
+        expr2(scratch, sym(scratch, "leaf-wrap"), epoch_y),
+        expr2(scratch, sym(scratch, "leaf-wrap"), atom_int(scratch, 99))));
+    assert(base.len == 0u);
+    assert(base.eq_len == 1u);
+
+    assert(!match_atoms_epoch_positional_linear(
+        query, lhs, &base, scratch, epoch));
+    assert(base.len == 0u);
+    assert(base.eq_len == 1u);
+    assert(bindings_lookup_id(&base, var_epoch_id(x->var_id, epoch)) == NULL);
+
+    bindings_free(&base);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -2049,6 +2160,7 @@ int main(void) {
     test_imported_chunk_switchback_regression(&universe, &scratch);
     test_byte_backed_rematch_delay(&universe, &scratch);
     test_subst_tree_live_branch_builder_witness(&scratch);
+    test_subst_tree_adversarial_int_fanout(&scratch);
     test_parser_direct_add_boundary(&universe, &scratch);
     test_bridge_structural_import_boundary(&universe, &scratch);
     test_pathmap_no_universe_import_boundary();
@@ -2068,6 +2180,8 @@ int main(void) {
     test_space_to_space_bridge_unavailable_falls_back(&universe, &scratch);
     test_space_to_space_bridge_attempt_failure_is_error(&universe);
     test_space_clone_direct_id_boundary(&universe, &scratch);
+    test_subst_match_normalize_compacted_duplicate_runs(&scratch);
+    test_leaf_patch_refusal_is_transactional(&scratch);
 
     term_universe_free(&universe);
     reset_bridge_capture();

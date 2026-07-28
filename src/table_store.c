@@ -17,6 +17,7 @@ typedef struct {
 struct TableStoreEntry {
     Arena arena;
     Space *space;
+    uint64_t space_instance_id;
     uint64_t revision;
     Atom *goal_key;
     uint32_t goal_hash;
@@ -110,6 +111,7 @@ static bool table_stored_answers_push_move(TableStoredAnswers *answers,
 static void table_store_entry_init(TableStoreEntry *entry) {
     arena_init(&entry->arena);
     entry->space = NULL;
+    entry->space_instance_id = 0;
     entry->revision = 0;
     entry->goal_key = NULL;
     entry->goal_hash = 0;
@@ -120,6 +122,7 @@ static void table_store_entry_free(TableStoreEntry *entry) {
     table_stored_answers_free(&entry->results);
     arena_free(&entry->arena);
     entry->space = NULL;
+    entry->space_instance_id = 0;
     entry->revision = 0;
     entry->goal_key = NULL;
     entry->goal_hash = 0;
@@ -143,6 +146,7 @@ static TableStoreMatch table_store_find_match(TableStore *store,
     TableStoreMatch match = {0};
     if (!store)
         return match;
+    uint64_t instance_id = space_instance_id(space);
     for (uint32_t i = 0; i < store->len; i++) {
         TableStoreEntry *entry = &store->entries[i];
         if (!entry->goal_key)
@@ -151,7 +155,8 @@ static TableStoreMatch table_store_find_match(TableStore *store,
             continue;
         if (!atom_eq(entry->goal_key, goal_key))
             continue;
-        if (entry->revision != revision) {
+        if (entry->space_instance_id != instance_id ||
+            entry->revision != revision) {
             match.stale = true;
             if (!match.reusable) {
                 match.reusable = entry;
@@ -417,6 +422,7 @@ bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
     }
 
     state->staged.space = space;
+    state->staged.space_instance_id = space_instance_id(space);
     state->staged.revision = revision;
     CettaVarMap goal_instantiation;
     cetta_var_map_init(&goal_instantiation);

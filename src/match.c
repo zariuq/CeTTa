@@ -2947,10 +2947,10 @@ bool match_leaf_patch_view_enabled(void) {
  * per position -- epoch_var_atom + bindings_add_var -- with no worklist.  This
  * is licensed by LeafPatchViewKernel.matchP_complete_linear (positional read ==
  * matcher on linear patterns).  Conservative: the whole shape is pre-checked
- * BEFORE any binding, so returning false (caller falls back to the general
- * matcher) never leaves a partial binding in b.  Anything outside the shape
- * (nesting, a non-var pattern arg, a variable query arg, or a pre-bound epoched
- * var) falls back. */
+ * before any binding, and the bindings are built transactionally, so returning
+ * false (caller falls back to the general matcher) never leaves a partial
+ * binding in b.  Anything outside the shape (nesting, a non-var pattern arg, a
+ * variable query arg, or a pre-bound epoched var) falls back. */
 bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
                                          Arena *a, uint32_t epoch) {
     if (!query || !lhs || !b || !a)
@@ -2985,13 +2985,19 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
             return false; /* arity beyond the small cap -> conservative refuse */
         seen[nseen++] = eid;
     }
+    Bindings trial;
+    if (!bindings_clone(&trial, b))
+        return false;
     for (CettaExprIndex i = 1; i < lhs->expr.len; i++) {
         Atom *pi = lhs->expr.elems[i];
         Atom *qi = query->expr.elems[i];
         Atom *binding_var = epoch_var_atom(a, pi, epoch);
-        if (!binding_var || !bindings_add_var(b, binding_var, qi))
+        if (!binding_var || !bindings_add_var(&trial, binding_var, qi)) {
+            bindings_free(&trial);
             return false;
+        }
     }
+    bindings_replace(b, &trial);
     return true;
 }
 

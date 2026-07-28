@@ -155,6 +155,10 @@ typedef struct Space {
         };
     };
     SpaceKind kind;
+    /* Process-local lifetime identity.  A revision identifies a state only
+       within one Space lifetime; instance_id prevents pointer reuse from
+       reviving cached state from a freed Space at the same address. */
+    uint64_t instance_id;
     uint64_t revision;
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
@@ -202,6 +206,9 @@ bool space_length_u32_checked(const Space *s, uint32_t *out_len);
 static inline uint64_t space_revision(const Space *s) {
     return s ? s->revision : 0;
 }
+static inline uint64_t space_instance_id(const Space *s) {
+    return s ? s->instance_id : 0;
+}
 
 /* A process-global monotonic counter bumped on every space revision bump.
  * It is a sound over-approximation of "no consulted space changed": if this
@@ -211,13 +218,13 @@ static inline uint64_t space_revision(const Space *s) {
  * read only by opt-in memoization and changes no existing behaviour. */
 uint64_t space_global_mutation_epoch(void);
 
-/* An in-process read token for one live Space revision.  The Space must
-   outlive the token; this is deliberately not a persistent or serializable
-   identity.  Keeping the owning Space and revision beside a logical index
-   prevents an equation occurrence from being mistaken for an AtomId or for
-   an occurrence admitted by a later mutation. */
+/* An in-process read token for one live Space revision.  The token carries a
+   process-local lifetime identity as well as the address and revision, so a
+   freed-and-reinitialized Space at the same address cannot revive it.  This is
+   deliberately not a persistent or serializable identity. */
 typedef struct {
     const Space *space;
+    uint64_t instance_id;
     uint64_t revision;
 } SpaceReadToken;
 
@@ -239,7 +246,8 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out);
 
 bool space_contains_exact(Space *s, Atom *atom);
-/* O(1) alpha-aware membership; *out_applicable false for overlay/non-native. */
+/* O(1)-amortized alpha-aware membership over native spaces, including native
+   overlays; *out_applicable is false for non-native backends. */
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
@@ -278,6 +286,13 @@ CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
    substitution, but performs no candidate selection. */
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx);
+/* Execute a complete logical equation query whose candidate selection has
+   already proved that `equation` is the only candidate.  Unlike the
+   lower-level per-candidate primitive above, this preserves the ordinary
+   query/candidate runtime accounting. */
+CettaCount query_equations_visit_singleton(
+    Atom *equation, Atom *query, Arena *a,
+    QueryResultVisitor visitor, void *ctx);
 CettaCount query_results_visit(const QueryResults *qr,
                                QueryResultVisitor visitor, void *ctx);
 void query_results_free(QueryResults *qr);
@@ -289,10 +304,10 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head);
 /* MAM loop-body view entry guard: head resolves to exactly one equation in a
  * clean single-head bucket, no overlay base (necessary condition for the
  * deterministic-tail loop lane; conservative, cheap). */
-bool space_head_has_single_equation(const Space *s, SymbolId head);
+bool space_head_has_single_equation(Space *s, SymbolId head);
 /* Resolve that single linear equation (or NULL) -- shared by the guard and the
  * revision-keyed view cache. */
-Atom *space_single_linear_equation(const Space *s, SymbolId head);
+Atom *space_single_linear_equation(Space *s, SymbolId head);
 
 /* ── Space Registry (named spaces) ─────────────────────────────────────── */
 
