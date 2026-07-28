@@ -27,10 +27,10 @@ typedef struct {
     uint32_t reductions;
     char *error_buf;
     size_t error_buf_size;
-    /* Precomputed per-plan ASCII node-kind dispatch (0=none, else GSLT_DISP_*).
-     * Collapses the per-node codepoint comparisons to one table lookup on the
-     * common ASCII path; built once per plan and cached (see ascii_dispatch). */
-    const uint8_t *ascii_dispatch;
+    /* Per-parse ASCII node-kind dispatch (0=none, else GSLT_DISP_*).
+     * Keeping it in the parse state preserves the one-load hot path without
+     * assuming that a caller-owned plan pointer has process-lifetime identity. */
+    uint8_t ascii_dispatch[256];
 } GSLTDirectStateV1;
 
 enum {
@@ -1224,29 +1224,13 @@ bool gslt_direct_reader_v1_plan_validate(
     return true;
 }
 
-/* Build (once per plan, thread-locally cached) the ASCII node-kind dispatch
- * table: for each byte 0..255, which parse_atom branch it selects.  This turns
- * the per-node chain of codepoint comparisons + word-class membership into a
+/* Build the ASCII node-kind dispatch table for one parse.  This turns the
+ * per-node chain of codepoint comparisons + word-class membership into a
  * single indexed load on the common ASCII path, preserving the exact branch
  * order (string_open, variable_marker, expression_open, then word_start). */
-static const uint8_t *gslt_direct_reader_v1_ascii_dispatch(
-    const GSLTDirectReaderV1Plan *plan) {
-    enum { GSLT_DISP_CACHE_SLOTS = 8 };
-    static _Thread_local const GSLTDirectReaderV1Plan
-        *gslt_disp_cache_keys[GSLT_DISP_CACHE_SLOTS];
-    static _Thread_local uint8_t
-        gslt_disp_cache_tables[GSLT_DISP_CACHE_SLOTS][256];
-    static _Thread_local unsigned gslt_disp_cache_next;
+static void gslt_direct_reader_v1_build_ascii_dispatch(
+    const GSLTDirectReaderV1Plan *plan, uint8_t table[256]) {
     unsigned i;
-    unsigned slot;
-    uint8_t *table;
-    for (i = 0u; i < GSLT_DISP_CACHE_SLOTS; i++) {
-        if (gslt_disp_cache_keys[i] == plan)
-            return gslt_disp_cache_tables[i];
-    }
-    slot = gslt_disp_cache_next % GSLT_DISP_CACHE_SLOTS;
-    gslt_disp_cache_next++;
-    table = gslt_disp_cache_tables[slot];
     for (i = 0u; i < 256u; i++) {
         uint8_t kind = (uint8_t)GSLT_DISP_NONE;
         if (i == plan->string_open)
@@ -1259,8 +1243,6 @@ static const uint8_t *gslt_direct_reader_v1_ascii_dispatch(
             kind = (uint8_t)GSLT_DISP_WORD;
         table[i] = kind;
     }
-    gslt_disp_cache_keys[slot] = plan;
-    return table;
 }
 
 int gslt_direct_reader_v1_parse_bytes_ids_impl(
@@ -1297,7 +1279,8 @@ int gslt_direct_reader_v1_parse_bytes_ids_impl(
     state.error_buf = error_buf;
     state.error_buf_size = error_buf_size;
     state.projection = projection;
-    state.ascii_dispatch = gslt_direct_reader_v1_ascii_dispatch(plan);
+    gslt_direct_reader_v1_build_ascii_dispatch(
+        plan, state.ascii_dispatch);
     for (;;) {
         AtomId id;
         if (!gslt_direct_reader_v1_skip(&state))

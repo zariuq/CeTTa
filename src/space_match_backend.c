@@ -287,7 +287,17 @@ static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
                                 bool exact) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_SMSET_ROWS);
     if (out->len >= out->cap) {
+        if (out->cap > UINT64_MAX / 2u) {
+            fputs("CeTTa: substitution match-set capacity exhausted\n",
+                  stderr);
+            abort();
+        }
         CettaIndex next_cap = out->cap ? out->cap * 2 : 8;
+        if (next_cap > SIZE_MAX / sizeof(SubstMatch)) {
+            fputs("CeTTa: substitution match-set capacity exhausted\n",
+                  stderr);
+            abort();
+        }
         if (out->items == out->inline_items) {
             SubstMatch *next =
                 cetta_malloc(sizeof(SubstMatch) * (size_t)next_cap);
@@ -330,15 +340,17 @@ static inline bool subst_match_order_le(const SubstMatch *a,
  * the discrimination-tree walk did not already emit atoms in index order --
  * which stopped holding once high-fan-out int children became hash-indexed, and
  * was never guaranteed for any match that visits variable branches. */
-static void subst_matchset_sort(SubstMatch *items, uint32_t len,
+static void subst_matchset_sort(SubstMatch *items, CettaIndex len,
                                 SubstMatch *tmp) {
     SubstMatch *src = items;
     SubstMatch *dst = tmp;
-    for (uint32_t width = 1; width < len; width *= 2u) {
-        for (uint32_t i = 0; i < len; i += 2u * width) {
-            uint32_t mid = (i + width < len) ? (i + width) : len;
-            uint32_t end = (i + 2u * width < len) ? (i + 2u * width) : len;
-            uint32_t a = i, b = mid, w = i;
+    for (CettaIndex width = 1; width < len;) {
+        for (CettaIndex i = 0; i < len;) {
+            CettaIndex left_len = len - i < width ? len - i : width;
+            CettaIndex mid = i + left_len;
+            CettaIndex right_len = len - mid < width ? len - mid : width;
+            CettaIndex end = mid + right_len;
+            CettaIndex a = i, b = mid, w = i;
             while (a < mid && b < end) {
                 if (subst_match_order_le(&src[a], &src[b]))
                     subst_match_move(&dst[w++], &src[a++]);
@@ -347,23 +359,36 @@ static void subst_matchset_sort(SubstMatch *items, uint32_t len,
             }
             while (a < mid) subst_match_move(&dst[w++], &src[a++]);
             while (b < end) subst_match_move(&dst[w++], &src[b++]);
+            i = end;
         }
         SubstMatch *t = src; src = dst; dst = t;
+        if (width > len / 2u)
+            break;
+        width *= 2u;
     }
     if (src != items)
-        for (uint32_t i = 0; i < len; i++)
+        for (CettaIndex i = 0; i < len; i++)
             subst_match_move(&items[i], &src[i]);
 }
 
 static void subst_matchset_normalize(SubstMatchSet *out) {
     if (out->len <= 1)
         return;
-    SubstMatch *tmp = cetta_malloc(sizeof(SubstMatch) * out->len);
+    if (out->len > SIZE_MAX / sizeof(SubstMatch)) {
+        fputs("CeTTa: substitution match-set capacity exhausted\n", stderr);
+        abort();
+    }
+    SubstMatch *tmp =
+        cetta_malloc(sizeof(SubstMatch) * (size_t)out->len);
     subst_matchset_sort(out->items, out->len, tmp);
     free(tmp);
-    uint32_t w = 1;
-    for (uint32_t r = 1; r < out->len; r++) {
-        if (!subst_match_same(&out->items[r], &out->items[r - 1])) {
+    CettaIndex w = 1;
+    for (CettaIndex r = 1; r < out->len; r++) {
+        /* Compare with the last RETAINED row, not the previous source row.
+         * Once an earlier duplicate has been removed, moving a later unique
+         * row left empties its source Bindings; r-1 is then no longer a valid
+         * representative for the next duplicate run. */
+        if (!subst_match_same(&out->items[r], &out->items[w - 1u])) {
             if (w != r)
                 subst_match_move(&out->items[w], &out->items[r]);
             w++;
@@ -372,6 +397,11 @@ static void subst_matchset_normalize(SubstMatchSet *out) {
         }
     }
     out->len = w;
+}
+
+void space_match_backend_diag_normalize_subst_matches(SubstMatchSet *matches) {
+    if (matches)
+        subst_matchset_normalize(matches);
 }
 
 static void native_rebuild_match_trie(Space *s) {

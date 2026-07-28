@@ -61,6 +61,7 @@ struct PeTTaDocumentPipelineV1Prepared {
     bool lexical_shadow_enabled;
     uint32_t build_count;
     SymbolTable *owner_symbols;
+    uint64_t owner_symbols_instance_id;
     PPGuardScalarExecV1Limits scalar_limits;
     PPGuardedLexExecV1Limits lexical_limits;
     PPABIV1Wire splitter_wire;
@@ -1017,11 +1018,15 @@ static bool run_core(const char *splitter_abi_path,
         lexical_shadow_enabled = lexical_nfa_path != NULL;
         state->lexical_shadow_enabled = lexical_shadow_enabled;
         state->owner_symbols = g_symbols;
+        state->owner_symbols_instance_id =
+            symbol_table_instance_id(g_symbols);
         state->scalar_limits = *scalar_limits;
         if (lexical_shadow_enabled)
             state->lexical_limits = *lexical_limits;
     } else {
-        if (!state->ready || state->owner_symbols != g_symbols) {
+        if (!state->ready || state->owner_symbols != g_symbols ||
+            state->owner_symbols_instance_id !=
+                symbol_table_instance_id(g_symbols)) {
             (void)snprintf(
                 error, sizeof(error),
                 "prepared document pipeline has the wrong atom runtime");

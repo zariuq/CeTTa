@@ -57,7 +57,19 @@ static inline uint32_t sym_hash(SymbolId key) {
 
 static void sym_ht_init(SymHashTable *ht, uint32_t min_cap) {
     uint32_t cap = 32;
-    while (cap < min_cap * 2) cap *= 2;  /* load factor < 0.5 */
+    if (min_cap > UINT32_MAX / 2u) {
+        fputs("CeTTa: symbol substitution index capacity exhausted\n", stderr);
+        abort();
+    }
+    uint32_t target = min_cap * 2u;
+    while (cap < target) {
+        if (cap > UINT32_MAX / 2u) {
+            fputs("CeTTa: symbol substitution index capacity exhausted\n",
+                  stderr);
+            abort();
+        }
+        cap *= 2u;
+    }
     ht->entries = cetta_malloc(sizeof(SymHashEntry) * cap);
     ht->mask = cap - 1;
     ht->count = 0;
@@ -78,9 +90,15 @@ static SubstNode *sym_ht_get(SymHashTable *ht, SymbolId key) {
 
 static void sym_ht_put(SymHashTable *ht, SymbolId key, SubstNode *child) {
     /* Resize if load factor > 0.7 */
-    if (ht->count * 10 > (ht->mask + 1) * 7) {
+    if ((uint64_t)ht->count * 10u >
+        (uint64_t)(ht->mask + 1u) * 7u) {
         uint32_t old_cap = ht->mask + 1;
         SymHashEntry *old = ht->entries;
+        if (old_cap > UINT32_MAX / 2u) {
+            fputs("CeTTa: symbol substitution index capacity exhausted\n",
+                  stderr);
+            abort();
+        }
         uint32_t new_cap = old_cap * 2;
         ht->entries = cetta_malloc(sizeof(SymHashEntry) * new_cap);
         ht->mask = new_cap - 1;
@@ -95,8 +113,13 @@ static void sym_ht_put(SymHashTable *ht, SymbolId key, SubstNode *child) {
         free(old);
     }
     uint32_t idx = sym_hash(key) & ht->mask;
-    while (ht->entries[idx].key != SYMBOL_ID_NONE)
+    while (ht->entries[idx].key != SYMBOL_ID_NONE) {
+        if (ht->entries[idx].key == key) {
+            ht->entries[idx].child = child;
+            return;
+        }
         idx = (idx + 1) & ht->mask;
+    }
     ht->entries[idx].key = key;
     ht->entries[idx].child = child;
     ht->count++;
@@ -121,16 +144,37 @@ static void snode_sym_promote(SubstNode *n) {
  * and O(n^2) to build.  Like symbols, promote to an open-addressing table
  * once the fan-out crosses SNODE_HASH_THRESHOLD.  Occupancy is the child
  * pointer (every int64 value is a valid key, so there is no reserved empty
- * key); the multiplicative hash is a bijection mod 2^m, so sequential ints
- * permute across slots without clustering. */
+ * key); the full-width finalizer spreads both sequential and high-bit-varying
+ * integers before the low mask bits choose a slot. */
 
 static inline uint32_t int_hash(int64_t key) {
-    return (uint32_t)((uint64_t)key * 2654435761u);
+    /* Fold a full-width SplitMix64 finalizer.  Truncating the old
+       multiplicative hash discarded the high 32 bits entirely, so keys
+       separated by 2^32 formed one linear-probe cluster. */
+    uint64_t x = (uint64_t)key;
+    x ^= x >> 30;
+    x *= UINT64_C(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    x *= UINT64_C(0x94d049bb133111eb);
+    x ^= x >> 31;
+    return (uint32_t)(x ^ (x >> 32));
 }
 
 static void int_ht_init(IntHashTable *ht, uint32_t min_cap) {
     uint32_t cap = 32;
-    while (cap < min_cap * 2) cap *= 2;  /* load factor < 0.5 */
+    if (min_cap > UINT32_MAX / 2u) {
+        fputs("CeTTa: integer substitution index capacity exhausted\n", stderr);
+        abort();
+    }
+    uint32_t target = min_cap * 2u;
+    while (cap < target) {
+        if (cap > UINT32_MAX / 2u) {
+            fputs("CeTTa: integer substitution index capacity exhausted\n",
+                  stderr);
+            abort();
+        }
+        cap *= 2u;
+    }
     ht->entries = cetta_malloc(sizeof(IntHashEntry) * cap);
     ht->mask = cap - 1;
     ht->count = 0;
@@ -151,9 +195,15 @@ static SubstNode *int_ht_get(IntHashTable *ht, int64_t key) {
 
 static void int_ht_put(IntHashTable *ht, int64_t key, SubstNode *child) {
     /* Resize if load factor > 0.7 */
-    if (ht->count * 10 > (ht->mask + 1) * 7) {
+    if ((uint64_t)ht->count * 10u >
+        (uint64_t)(ht->mask + 1u) * 7u) {
         uint32_t old_cap = ht->mask + 1;
         IntHashEntry *old = ht->entries;
+        if (old_cap > UINT32_MAX / 2u) {
+            fputs("CeTTa: integer substitution index capacity exhausted\n",
+                  stderr);
+            abort();
+        }
         uint32_t new_cap = old_cap * 2;
         ht->entries = cetta_malloc(sizeof(IntHashEntry) * new_cap);
         ht->mask = new_cap - 1;
@@ -168,8 +218,13 @@ static void int_ht_put(IntHashTable *ht, int64_t key, SubstNode *child) {
         free(old);
     }
     uint32_t idx = int_hash(key) & ht->mask;
-    while (ht->entries[idx].child)
+    while (ht->entries[idx].child) {
+        if (ht->entries[idx].val == key) {
+            ht->entries[idx].child = child;
+            return;
+        }
         idx = (idx + 1) & ht->mask;
+    }
     ht->entries[idx].val = key;
     ht->entries[idx].child = child;
     ht->count++;

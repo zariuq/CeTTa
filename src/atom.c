@@ -827,6 +827,7 @@ VarInternTable *g_var_intern = NULL;
 
 typedef struct {
     const SymbolTable *table;
+    uint64_t instance_id;
     const char *literal;
     SymbolId id;
 } SymbolLiteralCacheEntry;
@@ -960,13 +961,16 @@ static SymbolId symbol_cached_literal(const char *name) {
     uint32_t idx = (uint32_t)(key % SYMBOL_LITERAL_CACHE_SIZE);
     SymbolLiteralCacheEntry *entry = &g_symbol_literal_cache[idx];
 
-    if (entry->table == g_symbols && entry->literal == name &&
+    if (entry->table == g_symbols &&
+        entry->instance_id == symbol_table_instance_id(g_symbols) &&
+        entry->literal == name &&
         entry->id != SYMBOL_ID_NONE) {
         return entry->id;
     }
 
     SymbolId id = symbol_intern_cstr(g_symbols, name);
     entry->table = g_symbols;
+    entry->instance_id = symbol_table_instance_id(g_symbols);
     entry->literal = name;
     entry->id = id;
     return id;
