@@ -5,6 +5,7 @@
 #include "stats.h"
 #include <assert.h>
 #include <inttypes.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -17,6 +18,18 @@ static _Thread_local uint64_t
 static _Thread_local uint64_t
     g_space_match_backend_contextual_query_slot_limit_override = 0;
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
+static _Atomic uint64_t g_space_next_instance_id = 1u;
+static _Atomic uint64_t g_space_global_mutation_epoch = 0u;
+
+static uint64_t space_fresh_instance_id(void) {
+    uint64_t id = atomic_fetch_add_explicit(
+        &g_space_next_instance_id, 1u, memory_order_relaxed);
+    if (id == 0u || id == UINT64_MAX) {
+        fputs("CeTTa: exhausted process-local Space identities\n", stderr);
+        abort();
+    }
+    return id;
+}
 
 static uint64_t space_match_backend_atom_id_materialization_limit(void) {
     return (uint64_t)(SIZE_MAX / sizeof(AtomId));
@@ -778,22 +791,30 @@ static bool id_present_contains(const SpaceNativeStorage *ns, AtomId id) {
            ((ns->id_present[bit >> 3] >> (bit & 7u)) & 1u);
 }
 
-static void id_present_set(SpaceNativeStorage *ns, AtomId id) {
+static bool id_present_set(SpaceNativeStorage *ns, AtomId id) {
     uint64_t bit = (uint64_t)id;
     if (bit >= ns->id_present_bits) {
         uint64_t new_bits = ns->id_present_bits ? ns->id_present_bits : 4096u;
-        while (new_bits <= bit)
+        while (new_bits <= bit) {
+            if (new_bits > UINT64_MAX / 2u)
+                return false;
             new_bits <<= 1;
+        }
+        uint64_t new_bytes = new_bits >> 3;
+        uint64_t old_bytes = ns->id_present_bits >> 3;
+        if (new_bytes > SIZE_MAX)
+            return false;
         uint8_t *grown =
-            (uint8_t *)cetta_realloc(ns->id_present, (size_t)(new_bits >> 3));
+            (uint8_t *)cetta_realloc(ns->id_present, (size_t)new_bytes);
         if (!grown)
-            return; /* OOM: leave sparse; contains falls back to the exact path */
-        memset(grown + (ns->id_present_bits >> 3), 0,
-               (size_t)((new_bits - ns->id_present_bits) >> 3));
+            return false;
+        memset(grown + (size_t)old_bytes, 0,
+               (size_t)(new_bytes - old_bytes));
         ns->id_present = grown;
         ns->id_present_bits = new_bits;
     }
     ns->id_present[bit >> 3] |= (uint8_t)(1u << (bit & 7u));
+    return true;
 }
 
 static void id_present_clear(SpaceNativeStorage *ns) {
@@ -830,10 +851,13 @@ static AtomId space_canonical_id_for_stored(Space *s, AtomId atom_id) {
         return CETTA_ATOM_ID_NONE;
     if (!atom_has_vars(atom))
         return atom_id;
-    /* store_atom_id canonicalizes its argument internally, so pass the raw atom. */
     Arena *scratch = canon_scratch();
     ArenaMark mark = arena_mark(scratch);
-    AtomId cid = term_universe_store_atom_id(s->native.universe, scratch, atom);
+    Atom *canonical =
+        term_universe_alpha_canonicalize_atom(scratch, atom);
+    AtomId cid = canonical
+        ? term_universe_store_atom_id(s->native.universe, scratch, canonical)
+        : CETTA_ATOM_ID_NONE;
     arena_reset(scratch, mark);
     return cid;
 }
@@ -847,7 +871,7 @@ static AtomId space_canonical_id_for_query(Space *s, Atom *atom) {
         return term_universe_lookup_atom_id(s->native.universe, atom);
     Arena *scratch = canon_scratch();
     ArenaMark mark = arena_mark(scratch);
-    Atom *canon = term_universe_canonicalize_atom(scratch, atom);
+    Atom *canon = term_universe_alpha_canonicalize_atom(scratch, atom);
     AtomId cid = canon
         ? term_universe_lookup_atom_id(s->native.universe, canon)
         : CETTA_ATOM_ID_NONE;
@@ -1159,6 +1183,7 @@ static bool space_has_overlay_base(const Space *s) {
 }
 
 static void space_mark_indexes_dirty(Space *s);
+static void space_bump_revision(Space *s);
 
 static CettaCount space_local_length64(const Space *s) {
     return s ? (CettaCount)space_match_backend_logical_len64(s) : 0;
@@ -1172,67 +1197,80 @@ static Atom *space_local_get_at64(const Space *s, CettaIndex idx) {
     return s ? space_match_backend_get_at64(s, idx) : NULL;
 }
 
+static CettaIndex space_overlay_removed_lower_bound(const Space *s,
+                                                    CettaIndex idx) {
+    CettaIndex lo = 0;
+    CettaIndex hi = space_has_overlay_base(s)
+        ? s->overlay_removed_base_len : 0;
+    while (lo < hi) {
+        CettaIndex mid = lo + (hi - lo) / 2u;
+        if (s->overlay_removed_base_indices[mid] < idx)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+static CettaIndex space_overlay_removed_upper_bound(const Space *s,
+                                                    CettaIndex idx) {
+    CettaIndex lo = 0;
+    CettaIndex hi = space_has_overlay_base(s)
+        ? s->overlay_removed_base_len : 0;
+    while (lo < hi) {
+        CettaIndex mid = lo + (hi - lo) / 2u;
+        if (s->overlay_removed_base_indices[mid] <= idx)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
 static bool space_overlay_base_index_removed(const Space *s, CettaIndex idx) {
     if (!space_has_overlay_base(s))
         return false;
-    for (CettaIndex i = 0; i < s->overlay_removed_base_len; i++) {
-        if (s->overlay_removed_base_indices[i] == idx)
-            return true;
-    }
-    return false;
-}
-
-static void space_overlay_drop_removed_at_slot(Space *s, CettaIndex slot) {
-    if (!space_has_overlay_base(s) || slot >= s->overlay_removed_base_len)
-        return;
-    if (slot + 1u < s->overlay_removed_base_len) {
-        memmove(&s->overlay_removed_base_indices[slot],
-                &s->overlay_removed_base_indices[slot + 1u],
-                (size_t)(s->overlay_removed_base_len - slot - 1u) *
-                    sizeof(CettaIndex));
-    }
-    s->overlay_removed_base_len--;
+    CettaIndex slot = space_overlay_removed_lower_bound(s, idx);
+    return slot < s->overlay_removed_base_len &&
+           s->overlay_removed_base_indices[slot] == idx;
 }
 
 static void space_overlay_clear_removed_at_or_after(Space *s, CettaIndex limit) {
     if (!space_has_overlay_base(s))
         return;
-    for (CettaIndex i = 0; i < s->overlay_removed_base_len;) {
-        if (s->overlay_removed_base_indices[i] >= limit) {
-            space_overlay_drop_removed_at_slot(s, i);
-            continue;
-        }
-        i++;
-    }
+    s->overlay_removed_base_len =
+        space_overlay_removed_lower_bound(s, limit);
 }
 
 static void space_overlay_trim_base_tail(Space *s) {
     if (!space_has_overlay_base(s))
         return;
-    while (s->overlay_base_visible_len > 0) {
+    while (s->overlay_base_visible_len > 0 &&
+           s->overlay_removed_base_len > 0) {
         CettaIndex tail = s->overlay_base_visible_len - 1u;
-        bool removed = false;
-        for (CettaIndex i = 0; i < s->overlay_removed_base_len; i++) {
-            if (s->overlay_removed_base_indices[i] == tail) {
-                space_overlay_drop_removed_at_slot(s, i);
-                s->overlay_base_visible_len = tail;
-                removed = true;
-                break;
-            }
-        }
-        if (!removed)
+        CettaIndex last = s->overlay_removed_base_len - 1u;
+        if (s->overlay_removed_base_indices[last] != tail)
             break;
+        s->overlay_removed_base_len = last;
+        s->overlay_base_visible_len = tail;
     }
 }
 
 static bool space_overlay_mark_base_removed(Space *s, CettaIndex idx) {
     if (!space_has_overlay_base(s) || idx >= s->overlay_base_visible_len)
         return false;
-    if (space_overlay_base_index_removed(s, idx))
+    CettaIndex slot = space_overlay_removed_lower_bound(s, idx);
+    if (slot < s->overlay_removed_base_len &&
+        s->overlay_removed_base_indices[slot] == idx) {
         return true;
+    }
     if (s->overlay_removed_base_len == s->overlay_removed_base_cap) {
+        if (s->overlay_removed_base_cap > UINT64_MAX / 2u)
+            return false;
         CettaIndex next_cap =
             s->overlay_removed_base_cap ? s->overlay_removed_base_cap * 2u : 8u;
+        if (next_cap > SIZE_MAX / sizeof(CettaIndex))
+            return false;
         CettaIndex *next = cetta_realloc(
             s->overlay_removed_base_indices, sizeof(CettaIndex) * (size_t)next_cap);
         if (!next)
@@ -1240,39 +1278,54 @@ static bool space_overlay_mark_base_removed(Space *s, CettaIndex idx) {
         s->overlay_removed_base_indices = next;
         s->overlay_removed_base_cap = next_cap;
     }
-    s->overlay_removed_base_indices[s->overlay_removed_base_len++] = idx;
+    if (slot < s->overlay_removed_base_len) {
+        memmove(&s->overlay_removed_base_indices[slot + 1u],
+                &s->overlay_removed_base_indices[slot],
+                (size_t)(s->overlay_removed_base_len - slot) *
+                    sizeof(CettaIndex));
+    }
+    s->overlay_removed_base_indices[slot] = idx;
+    s->overlay_removed_base_len++;
     if (idx + 1u == s->overlay_base_visible_len)
         space_overlay_trim_base_tail(s);
+    space_mark_indexes_dirty(s);
     return true;
 }
 
 static CettaCount space_overlay_visible_base_count(const Space *s) {
-    CettaCount visible = 0;
     if (!space_has_overlay_base(s))
         return 0;
-    for (CettaIndex i = 0; i < s->overlay_base_visible_len; i++) {
-        if (!space_overlay_base_index_removed(s, i))
-            visible++;
-    }
-    return visible;
+    return s->overlay_base_visible_len - s->overlay_removed_base_len;
 }
 
 static bool space_overlay_visible_base_raw_index(const Space *s,
                                                  CettaCount visible_index,
                                                  CettaIndex *out_raw) {
-    CettaCount seen = 0;
     if (!space_has_overlay_base(s) || !out_raw)
         return false;
-    for (CettaIndex i = 0; i < s->overlay_base_visible_len; i++) {
-        if (space_overlay_base_index_removed(s, i))
-            continue;
-        if (seen == visible_index) {
-            *out_raw = i;
-            return true;
-        }
-        seen++;
+    CettaCount visible_count = space_overlay_visible_base_count(s);
+    if (visible_index >= visible_count)
+        return false;
+    CettaCount target = visible_index + 1u;
+    CettaIndex lo = 0;
+    CettaIndex hi = s->overlay_base_visible_len;
+    while (lo < hi) {
+        CettaIndex mid = lo + (hi - lo) / 2u;
+        CettaIndex removed_through =
+            space_overlay_removed_upper_bound(s, mid);
+        CettaCount visible_through =
+            (CettaCount)(mid + 1u - removed_through);
+        if (visible_through >= target)
+            hi = mid;
+        else
+            lo = mid + 1u;
     }
-    return false;
+    if (lo >= s->overlay_base_visible_len ||
+        space_overlay_base_index_removed(s, lo)) {
+        return false;
+    }
+    *out_raw = lo;
+    return true;
 }
 
 static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
@@ -1299,8 +1352,7 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    s->revision++;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+    space_bump_revision(s);
     return true;
 }
 
@@ -1398,15 +1450,22 @@ bool space_is_hash(const Space *s) {
     return s && s->kind == SPACE_KIND_HASH;
 }
 
-void space_mark_derived_state_dirty(Space *s) {
-    if (!s) return;
+static void space_mark_secondary_indexes_dirty(Space *s) {
+    if (!s)
+        return;
     s->native.eq_idx_dirty = true;
     s->native.ty_idx_dirty = true;
     s->native.exact_idx_dirty = true;
     s->native.has_non_exact_atoms_dirty = true;
+}
+
+void space_mark_derived_state_dirty(Space *s) {
+    if (!s)
+        return;
+    space_mark_secondary_indexes_dirty(s);
     /* The presence bitset is add-monotone: incremental add paths keep it current
        and do NOT route through here, so any caller of this helper (removal, bulk
-       replace, backend-direct store, external mutation, deferral start) may have
+       replace, backend-direct store, external mutation) may have
        invalidated a bit -- flag a recompute-on-next-membership-query. */
     s->native.id_present_dirty = true;
 }
@@ -1426,8 +1485,6 @@ void space_discard_native_logical_view(Space *s) {
     s->native.has_non_exact_atoms = false;
     space_mark_derived_state_dirty(s);
 }
-
-static void space_bump_revision(Space *s);
 
 static bool space_store_via_backend_primary(Space *s, AtomId atom_id, Atom *atom) {
     bool keep_pathmap_exact_metadata;
@@ -1575,7 +1632,10 @@ void space_begin_secondary_index_deferral(Space *s) {
     if (!s)
         return;
     s->native.secondary_index_deferral_depth++;
-    space_mark_indexes_dirty(s);
+    /* Deferral postpones only the query-oriented secondary indexes.  It does
+       not mutate membership, so invalidating the alpha-presence projection
+       here would turn every deferral window into an unnecessary full rescan. */
+    space_mark_secondary_indexes_dirty(s);
 }
 
 void space_end_secondary_index_deferral(Space *s) {
@@ -1639,22 +1699,35 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
     dst->overlay_removed_base_indices = src->overlay_removed_base_indices;
     dst->overlay_removed_base_len = src->overlay_removed_base_len;
     dst->overlay_removed_base_cap = src->overlay_removed_base_cap;
+    dst->payload_owner_epoch = src->payload_owner_epoch;
+    dst->payload_export_owner_epoch = src->payload_export_owner_epoch;
 }
 
 static void space_reset_moved_from(Space *s) {
     if (!s)
         return;
     s->kind = SPACE_KIND_ATOM;
+    /* Moving the payload ends the old source lifetime.  Re-establish every
+       invariant of an empty live Space so callers may safely reuse or free it:
+       a fresh identity prevents stale read tokens from reviving, and the
+       universe observer keeps AtomId storage width synchronized. */
+    s->instance_id = space_fresh_instance_id();
     s->revision = 0;
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
+    space_attach_to_universe(s, s->native.universe);
+    s->payload_owner_epoch = 0;
+    s->payload_export_owner_epoch = 0;
 }
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
 void space_init_with_universe(Space *s, TermUniverse *universe) {
+    if (!s)
+        return;
     s->kind = SPACE_KIND_ATOM;
     space_native_storage_init_empty(s, universe);
+    s->instance_id = space_fresh_instance_id();
     s->revision = 0;
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
@@ -1676,6 +1749,8 @@ void space_init(Space *s) {
 }
 
 void space_free(Space *s) {
+    if (!s)
+        return;
     space_detach_from_universe(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
@@ -1684,6 +1759,7 @@ void space_free(Space *s) {
     s->native.len = 0;
     s->native.cap = 0;
     s->native.universe = space_default_universe();
+    s->instance_id = 0;
     s->revision = 0;
     eq_index_free(&s->native.eq_idx);
     ty_ann_index_free(&s->native.ty_idx);
@@ -1718,12 +1794,15 @@ static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
 SpaceReadToken space_read_token(const Space *s) {
     return (SpaceReadToken){
         .space = s,
+        .instance_id = space_instance_id(s),
         .revision = space_revision(s),
     };
 }
 
 bool space_read_token_is_current(SpaceReadToken token) {
-    return token.space && token.revision == space_revision(token.space);
+    return token.space && token.instance_id != 0u &&
+           token.instance_id == space_instance_id(token.space) &&
+           token.revision == space_revision(token.space);
 }
 
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
@@ -1877,23 +1956,40 @@ static void ty_ann_index_rebuild(Space *s) {
    mutation sets id_present_dirty -> clear + full resync; otherwise the bitset is
    append-only and we sync just the [synced_len, len) suffix (O(1) amortized in a
    chaining loop, so native add-atom-nodup stays O(N), not O(N^2)).  Uses the
-   logical atom-id accessor, so no linearization is required. */
-static void id_present_sync(Space *s) {
+   logical atom-id accessor, so no linearization is required.  Failure leaves
+   the projection dirty and forces callers onto the exact/alpha scan; an
+   incomplete accelerator must never create a false negative. */
+static bool id_present_sync(Space *s) {
     if (!s)
-        return;
+        return false;
+    CettaCount logical_len = space_length64(s);
     if (s->native.id_present_dirty ||
-        s->native.id_present_synced_len > s->native.len) {
+        s->native.id_present_synced_len > logical_len) {
         id_present_clear(&s->native);
         s->native.id_present_synced_len = 0;
-        s->native.id_present_dirty = false;
     }
-    for (CettaIndex i = s->native.id_present_synced_len; i < s->native.len; i++) {
-        AtomId cid =
-            space_canonical_id_for_stored(s, space_get_atom_id_at64(s, i));
-        if (cid != CETTA_ATOM_ID_NONE)
-            id_present_set(&s->native, cid);
+    for (CettaIndex i = s->native.id_present_synced_len;
+         i < logical_len; i++) {
+        AtomId stored_id = space_get_atom_id_at64(s, i);
+        Atom *stored =
+            term_universe_get_atom(s->native.universe, stored_id);
+        /* Pointer-backed runtime values do not have lawful structural intern
+           keys.  Leave them to the exact/alpha scan; stable queries can still
+           use the projection built from the remaining rows. */
+        if (stored && !term_universe_atom_is_stable(stored))
+            continue;
+        AtomId cid = space_canonical_id_for_stored(s, stored_id);
+        if (cid == CETTA_ATOM_ID_NONE ||
+            !id_present_set(&s->native, cid)) {
+            id_present_clear(&s->native);
+            s->native.id_present_synced_len = 0;
+            s->native.id_present_dirty = true;
+            return false;
+        }
     }
-    s->native.id_present_synced_len = s->native.len;
+    s->native.id_present_synced_len = logical_len;
+    s->native.id_present_dirty = false;
+    return true;
 }
 
 static void exact_index_rebuild(Space *s) {
@@ -1927,17 +2023,25 @@ static void recompute_has_non_exact_atoms(Space *s) {
     s->native.has_non_exact_atoms_dirty = false;
 }
 
-static uint64_t g_space_global_mutation_epoch = 0u;
-
 uint64_t space_global_mutation_epoch(void) {
-    return g_space_global_mutation_epoch;
+    return atomic_load_explicit(&g_space_global_mutation_epoch,
+                                memory_order_relaxed);
 }
 
 static void space_bump_revision(Space *s) {
     if (!s)
         return;
+    if (s->revision == UINT64_MAX) {
+        fputs("CeTTa: exhausted Space revision counter\n", stderr);
+        abort();
+    }
     s->revision++;
-    g_space_global_mutation_epoch++;
+    uint64_t prior = atomic_fetch_add_explicit(
+        &g_space_global_mutation_epoch, 1u, memory_order_relaxed);
+    if (prior == UINT64_MAX) {
+        fputs("CeTTa: exhausted global Space mutation epoch\n", stderr);
+        abort();
+    }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
 }
 
@@ -2154,14 +2258,16 @@ Space *space_heap_clone_shallow(Space *src) {
 void space_replace_contents(Space *dst, Space *src) {
     if (!dst || !src || dst == src)
         return;
-    uint64_t old_revision = dst ? dst->revision : 0;
-    uint64_t src_revision = src ? src->revision : 0;
+    uint64_t dst_instance_id = dst->instance_id;
+    uint64_t old_revision = dst->revision;
+    uint64_t src_revision = src->revision;
     space_free(dst);
     space_move_storage_and_backend(dst, src);
     space_detach_from_universe(src);
     space_attach_to_universe(dst, dst->native.universe);
-    dst->revision = (old_revision > src_revision ? old_revision : src_revision) + 1;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+    dst->instance_id = dst_instance_id;
+    dst->revision = old_revision > src_revision ? old_revision : src_revision;
+    space_bump_revision(dst);
     space_reset_moved_from(src);
 }
 
@@ -2771,8 +2877,9 @@ bool space_remove(Space *s, Atom *atom) {
         return false;
     if (space_has_overlay_base(s)) {
         CettaCount base_visible = space_overlay_visible_base_count(s);
-        CettaIndex alpha_raw = 0;
+        CettaIndex alpha_index = 0;
         CettaCount alpha_count = 0;
+        bool alpha_in_base = false;
         for (CettaCount i = 0; i < base_visible; i++) {
             CettaIndex raw = 0;
             Atom *candidate = NULL;
@@ -2798,30 +2905,28 @@ bool space_remove(Space *s, Atom *atom) {
                 continue;
             candidate = space_get_at64(s->overlay_base, raw);
             if (candidate && atom_alpha_eq(candidate, atom)) {
-                alpha_raw = raw;
+                alpha_index = raw;
+                alpha_in_base = true;
                 alpha_count++;
             }
         }
         for (CettaIndex i = 0; i < space_local_length64(s); i++) {
             Atom *candidate = space_local_get_at64(s, i);
             if (candidate && atom_alpha_eq(candidate, atom)) {
-                alpha_raw = i + (CettaIndex)base_visible;
+                alpha_index = i;
+                alpha_in_base = false;
                 alpha_count++;
             }
         }
         if (alpha_count != 1u)
             return false;
-        if (alpha_raw < (CettaIndex)base_visible) {
-            CettaIndex raw = 0;
-            if (!space_overlay_visible_base_raw_index(s, alpha_raw, &raw) ||
-                !space_overlay_mark_base_removed(s, raw)) {
+        if (alpha_in_base) {
+            if (!space_overlay_mark_base_removed(s, alpha_index))
                 return false;
-            }
             space_bump_revision(s);
             return true;
         }
-        return space_overlay_remove_local_raw_index(
-            s, alpha_raw - (CettaIndex)base_visible);
+        return space_overlay_remove_local_raw_index(s, alpha_index);
     }
     if (s->native.universe && atom) {
         AtomId atom_id = term_universe_lookup_atom_id(s->native.universe, atom);
@@ -3267,26 +3372,27 @@ uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
 }
 
 bool space_contains_exact(Space *s, Atom *atom) {
-    /* Doctrine-1 fast path: for a non-overlay native space an exact-indexable
+    /* Doctrine-1 fast path: for a native space an exact-indexable
        atom's membership is an interned-id predicate over the dense presence
        bitset -- O(1), unclusterable -- so add-atom-nodup dedup no longer walks a
-       fixed-bucket structural index for the FC-hot ground-theorem case.  Overlay
-       spaces, non-native backends, and var/non-indexable atoms fall through to
+       fixed-bucket structural index for the FC-hot ground-theorem case.  Native
+       overlays use the same logical-view projection.  Non-native backends and
+       var/non-indexable atoms fall through to
        the exact-match path (id_present mirrors exact_idx, so this is equivalent
        to n>0, only cheaper). */
-    if (s && atom && !space_has_overlay_base(s) &&
-        !space_engine_uses_pathmap(s->match_backend.kind) &&
+    if (s && atom && !space_engine_uses_pathmap(s->match_backend.kind) &&
         atom_is_exact_indexable(atom)) {
         /* Membership only needs the presence bitset, not the exact-index buckets,
            so bring id_present up to date lazily (append-only suffix sync; full
            resync only after a removal) -- never a full bucket rebuild inside a
            deferral window. */
-        id_present_sync(s);
-        AtomId qid = s->native.universe
-            ? term_universe_lookup_atom_id(s->native.universe, atom)
-            : CETTA_ATOM_ID_NONE;
-        return qid != CETTA_ATOM_ID_NONE &&
-               id_present_contains(&s->native, qid);
+        if (id_present_sync(s)) {
+            AtomId qid = s->native.universe
+                ? term_universe_lookup_atom_id(s->native.universe, atom)
+                : CETTA_ATOM_ID_NONE;
+            return qid != CETTA_ATOM_ID_NONE &&
+                   id_present_contains(&s->native, qid);
+        }
     }
     CettaIndex *matches = NULL;
     CettaIndex n = space_exact_match_indices64(s, atom, &matches);
@@ -3295,23 +3401,25 @@ bool space_contains_exact(Space *s, Atom *atom) {
 }
 
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
-    /* Alpha-aware membership for a non-overlay native space -- O(1) via the
+    /* Alpha-aware membership for a native space -- O(1) amortized via the
        canonical presence bitset (keyed on first-occurrence-ordinal canonical
-       ids).  add-atom-nodup uses this so non-ground theorem dedup no longer
-       scans every atom.  *out_applicable is false for overlay / non-native
-       spaces, where the caller keeps the exact + alpha-scan path. */
+       ids). Native overlays project their logical view through the same index.
+       add-atom-nodup uses this so non-ground theorem dedup no longer scans
+       every atom. *out_applicable is false for non-native backends, where the
+       caller keeps the exact + alpha-scan path. */
     if (out_applicable)
         *out_applicable = false;
-    if (!s || !atom || space_has_overlay_base(s) ||
-        space_engine_uses_pathmap(s->match_backend.kind))
+    if (!s || !atom || space_engine_uses_pathmap(s->match_backend.kind) ||
+        !term_universe_atom_is_stable(atom))
         return false;
-    if (out_applicable)
-        *out_applicable = true;
     /* Alpha-aware membership needs only the presence bitset.  Sync it lazily here
        (append-only suffix; full resync only after a removal) so the forward-
        chaining deferral window stays O(1) per contains instead of rebuilding the
        exact-index buckets each time (the O(N^2) source). */
-    id_present_sync(s);
+    if (!id_present_sync(s))
+        return false;
+    if (out_applicable)
+        *out_applicable = true;
     AtomId cid = space_canonical_id_for_query(s, atom);
     return cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid);
 }
@@ -4375,8 +4483,17 @@ static bool pattern_vars_unique_rec(const Atom *a, VarId *seen, uint32_t *n,
  * by the eligibility predicate and the revision-keyed view cache.  Cheap: one
  * hashed bucket read + a tiny linearity walk; the cache calls it once per
  * (head, revision), not per reduction. */
-Atom *space_single_linear_equation(const Space *s, SymbolId head) {
+Atom *space_single_linear_equation(Space *s, SymbolId head) {
     if (!s || head == SYMBOL_ID_NONE || space_has_overlay_base(s))
+        return NULL;
+    ensure_eq_index(s);
+    if (s->native.eq_idx_dirty)
+        return NULL;
+    /* The general equation query also visits the wildcard-head bucket after
+     * the known-head bucket.  A named singleton is therefore not a singleton
+     * reduction while any wildcard equation is visible: selecting only the
+     * named equation would drop a valid branch. */
+    if (s->native.eq_idx.wildcard.len != 0u)
         return NULL;
     const EqBucket *b = &s->native.eq_idx.buckets[symbol_hash(head)];
     if (!(b->head == head && !b->mixed_heads && b->len == 1))
@@ -4389,7 +4506,7 @@ Atom *space_single_linear_equation(const Space *s, SymbolId head) {
     Atom *rhs = NULL;
     if (!equation || !is_equation_atom(equation, &lhs, &rhs))
         return NULL;
-    /* Linearity conjunct (Fable soundness): a repeated LHS variable is an
+    /* Linearity is required: a repeated LHS variable is an
      * equality constraint the positional leaf-patch cannot honour. */
     VarId seen[64];
     uint32_t nseen = 0;
@@ -4398,7 +4515,7 @@ Atom *space_single_linear_equation(const Space *s, SymbolId head) {
     return equation;
 }
 
-bool space_head_has_single_equation(const Space *s, SymbolId head) {
+bool space_head_has_single_equation(Space *s, SymbolId head) {
     return space_single_linear_equation(s, head) != NULL;
 }
 
@@ -4422,6 +4539,18 @@ CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
         lhs, rhs, query, &visible, a, fresh_var_suffix(), NULL, &sink);
     query_visible_var_set_free(&visible);
     return sink.emitted;
+}
+
+CettaCount query_equations_visit_singleton(
+    Atom *equation, Atom *query, Arena *a,
+    QueryResultVisitor visitor, void *ctx) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
+    if (!equation || !query || !a || !visitor)
+        return 0;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES);
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES);
+    return query_equation_visit(equation, query, a, visitor, ctx);
 }
 
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {

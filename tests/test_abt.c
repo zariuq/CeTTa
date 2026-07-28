@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 109,
+    ABT_EXPECTED_CHECKS = 110,
 };
 
 static unsigned failures = 0;
@@ -747,6 +747,23 @@ static void test_deep_and_cyclic_inputs(Arena *arena,
           "open rejects a cyclic replacement");
 }
 
+static void test_grounded_dispatch_symbol_table_lifetime(
+        SymbolTable *symbols, Arena *arena) {
+    arena_init(arena);
+    symbol_table_init(symbols);
+    (void)symbol_intern_cstr(symbols, "__lifetime_offset");
+    symbol_table_init_builtins(symbols, &g_builtin_syms);
+    g_symbols = symbols;
+
+    Atom *head = atom_symbol(arena, "__cetta_abt_default_signatures");
+    Atom *capability = atom_symbol(arena, "AbtDefaultsV1");
+    Atom *args[] = {capability};
+    Atom *expected = abt_default_signature_set(arena);
+    Atom *actual = abt_grounded_dispatch(arena, head, args, 1u);
+    CHECK(actual && expected && atom_eq(actual, expected),
+          "grounded dispatch survives same-address symbol-table reuse");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -770,6 +787,11 @@ int main(void) {
     test_deep_and_cyclic_inputs(&arena, &signature);
 
     abt_signature_free(&signature);
+    arena_free(&arena);
+    symbol_table_free(&symbols);
+    g_symbols = NULL;
+
+    test_grounded_dispatch_symbol_table_lifetime(&symbols, &arena);
     arena_free(&arena);
     symbol_table_free(&symbols);
     g_symbols = NULL;

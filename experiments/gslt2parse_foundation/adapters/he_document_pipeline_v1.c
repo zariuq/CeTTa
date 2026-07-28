@@ -20,6 +20,7 @@ struct HEDocumentPipelineV1Prepared {
     uint32_t build_count;
     uint32_t atom_projection_depth_limit;
     SymbolTable *owner_symbols;
+    uint64_t owner_symbols_instance_id;
     PPGuardedLexExecV1Limits limits;
     PPABIV1Wire wire;
     PPABIV1Pack pack;
@@ -198,6 +199,8 @@ bool he_document_pipeline_v1_prepare(
         he_pipeline_v1_state_release(prepared);
     he_pipeline_v1_state_init(prepared);
     prepared->owner_symbols = g_symbols;
+    prepared->owner_symbols_instance_id =
+        symbol_table_instance_id(g_symbols);
     prepared->limits = *limits;
     prepared->atom_projection_depth_limit = atom_projection_depth_limit;
 
@@ -418,7 +421,10 @@ static bool he_pipeline_v1_parse_mode(
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     if (!prepared || !prepared->ready ||
-        prepared->owner_symbols != g_symbols || !out ||
+        prepared->owner_symbols != g_symbols ||
+        prepared->owner_symbols_instance_id !=
+            symbol_table_instance_id(g_symbols) ||
+        !out ||
         observation > PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE ||
         input_len > UINT32_MAX || (input_len > 0u && !input)) {
         he_pipeline_v1_set_error(error_buf, error_buf_size,

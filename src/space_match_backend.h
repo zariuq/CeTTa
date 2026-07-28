@@ -186,6 +186,9 @@ void space_match_backend_diag_set_packet_materialization_limit_override(
 void space_match_backend_diag_set_contextual_query_slot_limit_override(
     uint64_t limit);
 void space_match_backend_diag_reset(void);
+/* Diagnostic entry for adversarial ownership/compaction tests.  Production
+   queries call the same normalizer internally. */
+void space_match_backend_diag_normalize_subst_matches(SubstMatchSet *matches);
 bool space_match_backend_u32_bound_checked(uint64_t value,
                                            SpaceMatchBackendError error,
                                            uint32_t *out_value);

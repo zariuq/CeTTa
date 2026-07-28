@@ -11,6 +11,7 @@
 
 SymbolTable *g_symbols = NULL;
 BuiltinSyms g_builtin_syms;
+static _Atomic uint64_t g_symbol_table_instance_counter = 1u;
 
 static void symbol_oom(size_t size) {
     fprintf(stderr, "fatal: out of memory allocating %zu bytes\n", size);
@@ -99,6 +100,12 @@ static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
 
 void symbol_table_init(SymbolTable *st) {
     if (!st) return;
+    st->instance_id = atomic_fetch_add_explicit(
+        &g_symbol_table_instance_counter, 1u, memory_order_relaxed);
+    if (st->instance_id == 0u) {
+        fprintf(stderr, "fatal: symbol table instance id space exhausted\n");
+        abort();
+    }
     st->slots = NULL;
     st->slot_cap = 0;
     st->slot_used = 0;
@@ -133,6 +140,7 @@ void symbol_table_free(SymbolTable *st) {
     pthread_mutex_destroy(&st->write_mutex);
     st->entry_chunks = NULL;
     st->slots = NULL;
+    st->instance_id = 0u;
     atomic_store_explicit(&st->entry_len, 0, memory_order_relaxed);
     st->slot_cap = 0;
     st->slot_used = 0;

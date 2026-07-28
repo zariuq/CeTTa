@@ -399,12 +399,41 @@ int main(void) {
                                       g_builtin_syms.equals),
                        source_lhs, atom_true(&equation_scratch));
         space_add(&equation_space, source_equation);
+        assert(space_single_linear_equation(&equation_space, source_head) ==
+               space_get_at64(&equation_space, 0));
         assert(space_equations_may_match_known_head(&equation_space,
                                                     source_head));
         assert(!space_equations_may_match_known_head(&equation_space,
                                                      colliding_head));
         assert(!space_equations_may_match_known_head(&equation_space,
                                                      absent_colliding_head));
+
+        space_begin_secondary_index_deferral(&equation_space);
+        Atom *second_source_equation =
+            atom_expr3(&equation_scratch,
+                       atom_symbol_id(&equation_scratch,
+                                      g_builtin_syms.equals),
+                       source_lhs, atom_false(&equation_scratch));
+        space_add(&equation_space, second_source_equation);
+        assert(space_single_linear_equation(&equation_space, source_head) ==
+               NULL);
+        space_end_secondary_index_deferral(&equation_space);
+        assert(space_remove(&equation_space, second_source_equation));
+        assert(space_single_linear_equation(&equation_space, source_head) ==
+               space_get_at64(&equation_space, 0));
+
+        Atom *wildcard_equation =
+            atom_expr3(&equation_scratch,
+                       atom_symbol_id(&equation_scratch,
+                                      g_builtin_syms.equals),
+                       atom_var_with_id(&equation_scratch, "wildcard", 1),
+                       atom_true(&equation_scratch));
+        space_add(&equation_space, wildcard_equation);
+        assert(space_single_linear_equation(&equation_space, source_head) ==
+               NULL);
+        assert(space_remove(&equation_space, wildcard_equation));
+        assert(space_single_linear_equation(&equation_space, source_head) ==
+               space_get_at64(&equation_space, 0));
 
         Atom *colliding_lhs_elems[1] = {
             atom_symbol_id(&equation_scratch, colliding_head),
@@ -423,12 +452,7 @@ int main(void) {
         assert(!space_equations_may_match_known_head(&equation_space,
                                                      absent_colliding_head));
 
-        space_add(&equation_space,
-                  atom_expr3(&equation_scratch,
-                             atom_symbol_id(&equation_scratch,
-                                            g_builtin_syms.equals),
-                             atom_var_with_id(&equation_scratch, "wildcard", 1),
-                             atom_true(&equation_scratch)));
+        space_add(&equation_space, wildcard_equation);
         assert(space_equations_may_match_known_head(&equation_space,
                                                     absent_colliding_head));
 
@@ -438,6 +462,8 @@ int main(void) {
         space_add(&occurrence_space, source_equation);
         assert(space_length64(&occurrence_space) == 2);
         SpaceReadToken occurrence_read = space_read_token(&occurrence_space);
+        uint64_t occurrence_instance =
+            space_instance_id(&occurrence_space);
         assert(space_read_token_is_current(occurrence_read));
         SpaceEquationOccurrence first_occurrence;
         SpaceEquationOccurrence second_occurrence;
@@ -482,6 +508,10 @@ int main(void) {
         assert(!space_equation_occurrence_resolve(out_of_range_id,
                                                   &first_occurrence));
         space_free(&occurrence_space);
+        space_init_with_universe(&occurrence_space, &equation_universe);
+        assert(space_instance_id(&occurrence_space) != occurrence_instance);
+        assert(!space_read_token_is_current(current_read));
+        space_free(&occurrence_space);
 
         space_free(&equation_space);
         term_universe_free(&equation_universe);
@@ -502,6 +532,151 @@ int main(void) {
 
     SymbolId pair_sym = symbol_intern_cstr(g_symbols, "pair");
     SymbolId box_sym = symbol_intern_cstr(g_symbols, "box");
+
+    {
+        Arena alpha_persistent;
+        Arena alpha_scratch_a;
+        Arena alpha_scratch_b;
+        Arena alpha_scratch_c;
+        TermUniverse alpha_universe;
+        Space alpha_space;
+        SymbolId rel_sym = symbol_intern_cstr(g_symbols, "alpha-key-rel");
+
+        arena_init(&alpha_persistent);
+        arena_init(&alpha_scratch_a);
+        arena_init(&alpha_scratch_b);
+        arena_init(&alpha_scratch_c);
+        term_universe_init(&alpha_universe);
+        term_universe_set_persistent_arena(&alpha_universe,
+                                           &alpha_persistent);
+        Atom *stored_elems[4] = {
+            atom_symbol_id(&alpha_scratch_a, rel_sym),
+            atom_var_with_id(&alpha_scratch_a, "x", 101u),
+            atom_var_with_id(&alpha_scratch_a, "y", 102u),
+            atom_var_with_id(&alpha_scratch_a, "x", 101u),
+        };
+        Atom *variant_elems[4] = {
+            atom_symbol_id(&alpha_scratch_b, rel_sym),
+            atom_var_with_id(&alpha_scratch_b, "a",
+                             var_epoch_id(201u, 17u)),
+            atom_var_with_id(&alpha_scratch_b, "b",
+                             var_epoch_id(202u, 17u)),
+            atom_var_with_id(&alpha_scratch_b, "a",
+                             var_epoch_id(201u, 17u)),
+        };
+        Atom *different_partition_elems[4] = {
+            atom_symbol_id(&alpha_scratch_c, rel_sym),
+            atom_var_with_id(&alpha_scratch_c, "a",
+                             var_epoch_id(301u, 29u)),
+            atom_var_with_id(&alpha_scratch_c, "b",
+                             var_epoch_id(302u, 29u)),
+            atom_var_with_id(&alpha_scratch_c, "b",
+                             var_epoch_id(302u, 29u)),
+        };
+        Atom *stored = atom_expr(&alpha_scratch_a, stored_elems, 4u);
+        Atom *variant = atom_expr(&alpha_scratch_b, variant_elems, 4u);
+        Atom *different_partition =
+            atom_expr(&alpha_scratch_c, different_partition_elems, 4u);
+        bool applicable = false;
+
+        space_init_with_universe(&alpha_space, &alpha_universe);
+        space_add(&alpha_space, stored);
+        assert(space_contains_canonical(&alpha_space, variant, &applicable));
+        assert(applicable);
+        assert(!space_contains_canonical(&alpha_space, different_partition,
+                                         &applicable));
+        assert(applicable);
+        assert(!alpha_space.native.id_present_dirty);
+        space_begin_secondary_index_deferral(&alpha_space);
+        assert(!alpha_space.native.id_present_dirty);
+        space_add(&alpha_space, different_partition);
+        assert(space_contains_canonical(&alpha_space, different_partition,
+                                        &applicable));
+        assert(applicable);
+        space_end_secondary_index_deferral(&alpha_space);
+        assert(space_remove(&alpha_space, variant));
+        assert(!space_contains_canonical(&alpha_space, stored, &applicable));
+        assert(applicable);
+        assert(space_contains_canonical(&alpha_space, different_partition,
+                                        &applicable));
+        assert(applicable);
+
+        Space alpha_overlay;
+        space_init_overlay(&alpha_overlay, &alpha_space);
+        assert(space_contains_canonical(&alpha_overlay,
+                                        different_partition, &applicable));
+        assert(applicable);
+        assert(space_remove(&alpha_overlay, different_partition));
+        assert(!space_contains_canonical(&alpha_overlay,
+                                         different_partition, &applicable));
+        assert(applicable);
+        assert(space_contains_canonical(&alpha_space,
+                                        different_partition, &applicable));
+        space_add(&alpha_overlay, different_partition);
+        assert(space_contains_canonical(&alpha_overlay,
+                                        different_partition, &applicable));
+        space_free(&alpha_overlay);
+
+        /* A hidden base row creates a gap between overlay-logical and base-raw
+         * indices.  Unique-alpha removal must retain which index domain the
+         * match came from; otherwise raw index 1 is reinterpreted as visible
+         * index 1 and the following row is removed instead. */
+        Space alpha_hole_base;
+        Space alpha_hole_overlay;
+        Atom *hole = atom_symbol(
+            &alpha_scratch_a, "alpha-overlay-hidden-prefix");
+        space_init_with_universe(&alpha_hole_base, &alpha_universe);
+        space_add(&alpha_hole_base, hole);
+        space_add(&alpha_hole_base, stored);
+        space_add(&alpha_hole_base, different_partition);
+        space_init_overlay(&alpha_hole_overlay, &alpha_hole_base);
+        assert(space_remove(&alpha_hole_overlay, hole));
+        assert(space_remove(&alpha_hole_overlay, variant));
+        assert(!space_contains_canonical(&alpha_hole_overlay, stored,
+                                         &applicable));
+        assert(applicable);
+        assert(space_contains_canonical(&alpha_hole_overlay,
+                                        different_partition, &applicable));
+        assert(applicable);
+        space_free(&alpha_hole_overlay);
+        space_free(&alpha_hole_base);
+
+        /* Mutable grounded payloads have pointer-backed, not structural,
+           TermUniverse identity.  The canonical accelerator must decline this
+           fragment so the alpha-scan oracle remains authoritative. */
+        Space mutable_payload;
+        Space unstable_alpha_space;
+        space_init_with_universe(&mutable_payload, &alpha_universe);
+        space_init_with_universe(&unstable_alpha_space, &alpha_universe);
+        Atom *unstable_stored =
+            atom_expr3(&alpha_scratch_a,
+                       atom_symbol_id(&alpha_scratch_a, rel_sym),
+                       atom_var_with_id(&alpha_scratch_a, "u", 401u),
+                       atom_space(&alpha_scratch_a, &mutable_payload));
+        Atom *unstable_variant =
+            atom_expr3(&alpha_scratch_b,
+                       atom_symbol_id(&alpha_scratch_b, rel_sym),
+                       atom_var_with_id(&alpha_scratch_b, "v",
+                                        var_epoch_id(501u, 31u)),
+                       atom_space(&alpha_scratch_b, &mutable_payload));
+        assert(atom_alpha_eq(unstable_stored, unstable_variant));
+        space_add(&unstable_alpha_space, unstable_stored);
+        applicable = true;
+        assert(!space_contains_canonical(&unstable_alpha_space,
+                                         unstable_variant, &applicable));
+        assert(!applicable);
+        assert(space_remove(&unstable_alpha_space, unstable_variant));
+        assert(space_length64(&unstable_alpha_space) == 0u);
+        space_free(&unstable_alpha_space);
+        space_free(&mutable_payload);
+
+        space_free(&alpha_space);
+        term_universe_free(&alpha_universe);
+        arena_free(&alpha_scratch_c);
+        arena_free(&alpha_scratch_b);
+        arena_free(&alpha_scratch_a);
+        arena_free(&alpha_persistent);
+    }
 
     Atom *pair_a = make_pair(&scratch_a, pair_sym, 1, 2);
     Atom *pair_b = make_pair(&scratch_b, pair_sym, 1, 2);
@@ -638,6 +813,82 @@ int main(void) {
         term_universe_free(&wide_universe);
         arena_free(&wide_scratch);
         arena_free(&wide_persistent);
+    }
+
+    {
+        enum { OVERLAY_BASE_COUNT = 512, OVERLAY_REMOVE_COUNT = 171 };
+        Space overlay_base;
+        Space overlay;
+        AtomId ids[OVERLAY_BASE_COUNT];
+        bool removed[OVERLAY_BASE_COUNT] = {false};
+
+        space_init_with_universe(&overlay_base, &universe);
+        for (uint32_t i = 0; i < OVERLAY_BASE_COUNT; i++) {
+            Atom *value = atom_int(&scratch_d, 10000 + (int64_t)i);
+            ids[i] = term_universe_store_atom_id(&universe, NULL, value);
+            assert(ids[i] != CETTA_ATOM_ID_NONE);
+            space_add_atom_id(&overlay_base, ids[i]);
+        }
+        space_init_overlay(&overlay, &overlay_base);
+        uint64_t epoch_before = space_global_mutation_epoch();
+        for (uint32_t i = 0; i < OVERLAY_REMOVE_COUNT; i++) {
+            uint32_t raw = (i * 73u) % OVERLAY_BASE_COUNT;
+            removed[raw] = true;
+            assert(space_remove_atom_id(&overlay, ids[raw]));
+        }
+        assert(space_global_mutation_epoch() >=
+               epoch_before + OVERLAY_REMOVE_COUNT);
+        assert(space_length64(&overlay) ==
+               OVERLAY_BASE_COUNT - OVERLAY_REMOVE_COUNT);
+        assert(overlay.overlay_removed_base_len <= OVERLAY_REMOVE_COUNT);
+        assert(overlay.overlay_base_visible_len -
+                   overlay.overlay_removed_base_len ==
+               space_length64(&overlay));
+        for (CettaIndex i = 1; i < overlay.overlay_removed_base_len; i++) {
+            assert(overlay.overlay_removed_base_indices[i - 1u] <
+                   overlay.overlay_removed_base_indices[i]);
+        }
+        CettaIndex logical = 0;
+        for (uint32_t raw = 0; raw < OVERLAY_BASE_COUNT; raw++) {
+            if (removed[raw])
+                continue;
+            assert(space_get_atom_id_at64(&overlay, logical) == ids[raw]);
+            logical++;
+        }
+        assert(logical == space_length64(&overlay));
+        space_free(&overlay);
+        space_free(&overlay_base);
+    }
+
+    {
+        Space replace_target;
+        Space replace_source;
+        space_init_with_universe(&replace_target, &universe);
+        space_init_with_universe(&replace_source, &universe);
+        space_add(&replace_target, atom_int(&scratch_d, 20001));
+        space_add(&replace_source, atom_int(&scratch_d, 20002));
+        uint64_t target_instance = space_instance_id(&replace_target);
+        uint64_t source_instance = space_instance_id(&replace_source);
+        SpaceReadToken before_replace = space_read_token(&replace_target);
+        SpaceReadToken source_before_replace = space_read_token(&replace_source);
+        uint64_t epoch_before = space_global_mutation_epoch();
+        space_replace_contents(&replace_target, &replace_source);
+        assert(space_instance_id(&replace_target) == target_instance);
+        assert(!space_read_token_is_current(before_replace));
+        assert(space_instance_id(&replace_source) != 0u);
+        assert(space_instance_id(&replace_source) != source_instance);
+        assert(!space_read_token_is_current(source_before_replace));
+        assert(space_global_mutation_epoch() == epoch_before + 1u);
+        assert(space_length64(&replace_target) == 1u);
+        assert(space_get_at64(&replace_target, 0)->ground.ival == 20002);
+        /* The moved-from source is a complete empty Space, not a half-valid
+           shell: it has a fresh lifetime and may be reused normally. */
+        assert(space_length64(&replace_source) == 0u);
+        space_add(&replace_source, atom_int(&scratch_d, 20003));
+        assert(space_length64(&replace_source) == 1u);
+        assert(space_get_at64(&replace_source, 0)->ground.ival == 20003);
+        space_free(&replace_source);
+        space_free(&replace_target);
     }
 
     space_free(&right);

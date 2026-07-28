@@ -77,6 +77,31 @@ static int routed_parse_file(void *context, const char *filename,
         error_buf, error_buf_size);
 }
 
+static bool host_projection_begin_form(void *context) {
+    return parser_host_projection_v1_begin_form(context);
+}
+
+static AtomId host_projection_word(void *context, const uint8_t *bytes,
+                                   size_t len) {
+    return parser_host_projection_v1_word_bytes(context, bytes, len);
+}
+
+static AtomId host_projection_variable(void *context, const uint8_t *bytes,
+                                       size_t len) {
+    return parser_host_projection_v1_variable_bytes(context, bytes, len);
+}
+
+static AtomId host_projection_string(void *context, const uint8_t *bytes,
+                                     size_t len) {
+    return parser_host_projection_v1_string_bytes(context, bytes, len);
+}
+
+static AtomId host_projection_expression(void *context,
+                                         const AtomId *children,
+                                         size_t len) {
+    return parser_host_projection_v1_expression(context, children, len);
+}
+
 int main(void) {
     static const char document[] =
         "#foo ($x $x) \"A\\n\\u{03bb}\" 2/4";
@@ -258,6 +283,44 @@ int main(void) {
     host_projection = parser_host_projection_v1_new(&universe);
     expect(&counts, host_projection != NULL,
            "compiled readers can bind one host-projection context");
+    {
+        GSLTDirectAtomProjectionV1 projection = {
+            .context = host_projection,
+            .begin_form = host_projection_begin_form,
+            .word_bytes = host_projection_word,
+            .variable_bytes = host_projection_variable,
+            .string_bytes = host_projection_string,
+            .expression = host_projection_expression,
+        };
+        GSLTDirectReaderV1Plan mutable_plan = he_reader_direct_v1_plan;
+        GSLTDirectReaderV1Receipt direct_receipt;
+
+        atom_len = gslt_direct_reader_v1_parse_bytes_ids(
+            &mutable_plan, (const uint8_t *)"\"x\"", 3u, &projection,
+            &ids, &direct_receipt, error, sizeof(error));
+        expect(&counts,
+               atom_len == 1 && ids &&
+                   tu_kind(&universe, ids[0]) == ATOM_GROUNDED &&
+                   tu_ground_kind(&universe, ids[0]) == GV_STRING,
+               "direct reader derives ASCII dispatch from a caller-owned plan");
+        free(ids);
+        ids = NULL;
+
+        /* Reuse the exact plan address with different delimiters.  A
+           pointer-keyed dispatch cache misclassifies this second parse. */
+        mutable_plan.string_open = (uint32_t)'\'';
+        mutable_plan.string_close = (uint32_t)'\'';
+        atom_len = gslt_direct_reader_v1_parse_bytes_ids(
+            &mutable_plan, (const uint8_t *)"'x'", 3u, &projection,
+            &ids, &direct_receipt, error, sizeof(error));
+        expect(&counts,
+               atom_len == 1 && ids &&
+                   tu_kind(&universe, ids[0]) == ATOM_GROUNDED &&
+                   tu_ground_kind(&universe, ids[0]) == GV_STRING,
+               "direct reader does not reuse dispatch across plan mutation");
+        free(ids);
+        ids = NULL;
+    }
     expect(&counts,
            parser_host_projection_v1_begin_form(host_projection),
            "host projection starts an explicit top-level variable scope");
@@ -492,6 +555,27 @@ int main(void) {
 
     parser_clear_document_ids_backend(&route);
     parser_host_projection_v1_free(host_projection);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    symbol_table_free(&symbols);
+
+    /* Reuse the exact SymbolTable address with shifted ids.  A prepared reader
+       belongs to one table lifetime, not merely one pointer value. */
+    symbol_table_init(&symbols);
+    (void)symbol_intern_cstr(&symbols, "__reader_lifetime_offset");
+    symbol_table_init_builtins(&symbols, &g_builtin_syms);
+    g_symbols = &symbols;
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent,
+                           CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    atom_len = he_compiled_reader_v1_parse_text_ids(
+        reader, "#foo", &universe, &ids, &receipt,
+        error, sizeof(error));
+    expect(&counts, atom_len < 0 && !ids,
+           "prepared reader rejects same-address symbol-table reuse");
+
     he_compiled_reader_v1_free(reader);
     term_universe_free(&universe);
     arena_free(&persistent);

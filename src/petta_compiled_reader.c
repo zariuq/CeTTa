@@ -27,6 +27,7 @@ typedef struct {
 struct PeTTaCompiledReaderV1 {
     bool ready;
     SymbolTable *owner_symbols;
+    uint64_t owner_symbols_instance_id;
 };
 
 static void petta_compiled_reader_v1_set_error(
@@ -277,6 +278,7 @@ bool petta_compiled_reader_v1_prepare(
         return false;
     }
     reader->owner_symbols = g_symbols;
+    reader->owner_symbols_instance_id = symbol_table_instance_id(g_symbols);
     reader->ready = true;
     return true;
 }
@@ -297,6 +299,8 @@ int petta_compiled_reader_v1_parse_bytes_ids(
     if (receipt)
         memset(receipt, 0, sizeof(*receipt));
     if (!reader || !reader->ready || reader->owner_symbols != g_symbols ||
+        reader->owner_symbols_instance_id !=
+            symbol_table_instance_id(g_symbols) ||
         !universe || !out_ids || input_len > UINT32_MAX ||
         (input_len > 0u && !input)) {
         petta_compiled_reader_v1_set_error(

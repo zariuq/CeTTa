@@ -468,7 +468,7 @@ done:
     return found;
 }
 
-static bool term_universe_atom_is_stable(Atom *atom) {
+bool term_universe_atom_is_stable(Atom *atom) {
     Atom **stack = NULL;
     uint32_t len = 0;
     uint32_t cap = 0;
@@ -863,6 +863,19 @@ static Atom *term_universe_create_canonical_var(Arena *dst, Atom *src_var,
     return atom_var_like(dst, src_var, canonical_id);
 }
 
+static Atom *term_universe_create_alpha_key_var(Arena *dst, Atom *src_var,
+                                                uint32_t ordinal, void *ctx) {
+    (void)src_var;
+    (void)ctx;
+    VarId canonical_id = (VarId)ordinal;
+    if (canonical_id == VAR_ID_NONE)
+        canonical_id = 1u;
+    /* Alpha keys intentionally erase both symbol and structural name-key
+       presentation.  Only the equality partition induced by repeated VarIds
+       belongs in the key. */
+    return atom_var_with_spelling(dst, SYMBOL_ID_NONE, canonical_id);
+}
+
 static Atom *term_universe_rewrite_epochless_var(Arena *dst, Atom *src_var,
                                                  void *ctx) {
     TermUniverseCanonicalizeCtx *canon = ctx;
@@ -870,6 +883,15 @@ static Atom *term_universe_rewrite_epochless_var(Arena *dst, Atom *src_var,
         return NULL;
     return cetta_var_map_get_or_add(canon->src_to_canonical, dst, src_var,
                                     term_universe_create_canonical_var, NULL);
+}
+
+static Atom *term_universe_rewrite_alpha_key_var(Arena *dst, Atom *src_var,
+                                                 void *ctx) {
+    TermUniverseCanonicalizeCtx *canon = ctx;
+    if (!canon || !canon->src_to_canonical)
+        return NULL;
+    return cetta_var_map_get_or_add(canon->src_to_canonical, dst, src_var,
+                                    term_universe_create_alpha_key_var, NULL);
 }
 
 Atom *term_universe_canonicalize_atom(Arena *dst, Atom *src) {
@@ -884,6 +906,22 @@ Atom *term_universe_canonicalize_atom(Arena *dst, Atom *src) {
         cetta_atom_rewrite_vars(dst, src,
                                 term_universe_rewrite_epochless_var,
                                 &canon, true);
+    cetta_var_map_free(&src_to_canonical);
+    return canonical;
+}
+
+Atom *term_universe_alpha_canonicalize_atom(Arena *dst, Atom *src) {
+    if (!dst || !src)
+        return NULL;
+    if (!atom_has_vars(src))
+        return atom_deep_copy(dst, src);
+    CettaVarMap src_to_canonical;
+    cetta_var_map_init(&src_to_canonical);
+    TermUniverseCanonicalizeCtx key_ctx = {
+        .src_to_canonical = &src_to_canonical,
+    };
+    Atom *canonical = cetta_atom_rewrite_vars(
+        dst, src, term_universe_rewrite_alpha_key_var, &key_ctx, true);
     cetta_var_map_free(&src_to_canonical);
     return canonical;
 }
