@@ -29,6 +29,8 @@ typedef struct {
     uint64_t legacy_top_down_stable_admissions;
     uint64_t direct_lookup_hits;
     uint64_t direct_lookup_misses;
+    uint64_t direct_lookup_probes;
+    uint64_t direct_lookup_max_probe;
     uint64_t lazy_decode_count;
     uint64_t legacy_hash_recompute_count;
     uint64_t store_format_migrations;

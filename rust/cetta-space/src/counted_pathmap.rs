@@ -10,9 +10,9 @@ use crate::{
 use mork::space::Space;
 #[cfg(test)]
 use mork_expr::serialize;
-use mork_expr::{apply, Expr, ExprZipper};
+use mork_expr::{Expr, ExprZipper, apply};
 #[cfg(feature = "pathmap-space")]
-use mork_expr::{byte_item, unify, ExprEnv, Tag};
+use mork_expr::{ExprEnv, Tag, byte_item, unify};
 use pathmap::zipper::{
     Zipper, ZipperAbsolutePath, ZipperCreation, ZipperIteration, ZipperMoving, ZipperWriting,
 };
@@ -670,6 +670,21 @@ fn append_multi_ref_counted_multiplicities_packet(
         append_u32_be(out, *count);
     }
     Ok(())
+}
+
+#[cfg(feature = "pathmap-space")]
+pub(crate) fn encode_counted_multi_ref_row(
+    factor_counts: &[u32],
+    bindings: &[(u8, Vec<u8>)],
+) -> Result<Vec<u8>, String> {
+    let mut row = Vec::new();
+    append_multi_ref_counted_multiplicities_packet(&mut row, factor_counts)?;
+    let signature = bindings
+        .iter()
+        .map(|(slot, value)| (*slot, 0u8, true, value.clone()))
+        .collect::<Vec<_>>();
+    append_query_only_binding_signature_packet(&mut row, &signature)?;
+    Ok(row)
 }
 
 fn append_expr_row_packet(out: &mut Vec<u8>, expr_bytes: &[u8]) -> Result<(), String> {
@@ -1347,7 +1362,10 @@ mod tests {
             .expect_err("max-count insert should fail");
 
         assert!(err.contains("multiplicity overflow"));
-        assert_eq!(cached_logical_size, u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY));
+        assert_eq!(
+            cached_logical_size,
+            u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY)
+        );
         assert_eq!(
             counted_exact_entry(&space, &atom)
                 .unwrap()
@@ -1377,7 +1395,10 @@ mod tests {
             .expect_err("batch containing max-count insert should fail");
 
         assert!(err.contains("multiplicity overflow"));
-        assert_eq!(cached_logical_size, u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY));
+        assert_eq!(
+            cached_logical_size,
+            u64::from(COUNTED_PATHMAP_MAX_MULTIPLICITY)
+        );
         assert!(
             counted_exact_entry(&space, &other).unwrap().is_none(),
             "preflight failure must not partially add earlier batch rows"
@@ -1654,12 +1675,16 @@ mod tests {
         assert_ne!(decoded.get(&2).unwrap().2, decoded.get(&3).unwrap().2);
 
         let a1_bytes = &decoded.get(&1).unwrap().2;
-        assert!(a1_bytes
-            .windows(2)
-            .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 0].as_slice()));
-        assert!(a1_bytes
-            .windows(2)
-            .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 1].as_slice()));
+        assert!(
+            a1_bytes
+                .windows(2)
+                .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 0].as_slice())
+        );
+        assert!(
+            a1_bytes
+                .windows(2)
+                .any(|w| w == [BRIDGE_VALUE_TAG_VARREF, 1].as_slice())
+        );
     }
 
     #[test]

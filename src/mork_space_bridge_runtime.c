@@ -120,6 +120,10 @@ extern CettaMorkStatus mork_space_clear(CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_add_sexpr(CettaMorkSpaceHandle *space,
                                             const uint8_t *text,
                                             size_t len);
+extern CettaMorkBuffer mork_space_normalize_expr_packet(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *packet,
+    size_t len);
 extern CettaMorkStatus mork_space_add_expr_bytes(CettaMorkSpaceHandle *space,
                                                  const uint8_t *expr_bytes,
                                                  size_t len);
@@ -166,6 +170,9 @@ extern CettaMorkBuffer mork_space_dump_contextual_exact_rows(CettaMorkSpaceHandl
 extern CettaMorkStatus mork_space_join_into(CettaMorkSpaceHandle *dst,
                                             const CettaMorkSpaceHandle *src);
 extern CettaMorkSpaceHandle *mork_space_clone(const CettaMorkSpaceHandle *space);
+extern CettaMorkSpaceHandle *mork_space_monotone_delta(
+    const CettaMorkSpaceHandle *later,
+    const CettaMorkSpaceHandle *earlier) __attribute__((weak));
 extern CettaMorkSpaceHandle *mork_space_join(const CettaMorkSpaceHandle *lhs,
                                              const CettaMorkSpaceHandle *rhs);
 extern CettaMorkStatus mork_space_meet_into(CettaMorkSpaceHandle *dst,
@@ -330,6 +337,25 @@ extern CettaMorkQueryCursorHandle *mork_query_cursor_new_multi_ref_v3(
     CettaMorkSpaceHandle *space,
     const uint8_t *pattern,
     size_t len) __attribute__((weak));
+extern CettaMorkQueryCursorHandle *mork_query_cursor_new_indexed_multi_ref_v4(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern,
+    size_t len) __attribute__((weak));
+extern CettaMorkQueryCursorHandle *
+mork_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+    CettaMorkSpaceHandle *known,
+    CettaMorkSpaceHandle *old,
+    CettaMorkSpaceHandle *delta,
+    const uint8_t *pattern,
+    size_t len) __attribute__((weak));
+extern CettaMorkStatus mork_space_indexed_query_stat(
+    const CettaMorkSpaceHandle *space,
+    uint32_t stat) __attribute__((weak));
+extern CettaMorkStatus mork_query_cursor_indexed_stat(
+    const CettaMorkQueryCursorHandle *cursor,
+    uint32_t stat) __attribute__((weak));
+extern CettaMorkStatus mork_query_cursor_count_remaining(
+    CettaMorkQueryCursorHandle *cursor) __attribute__((weak));
 extern void mork_query_cursor_free(CettaMorkQueryCursorHandle *cursor)
     __attribute__((weak));
 extern CettaMorkBuffer mork_query_cursor_next(CettaMorkQueryCursorHandle *cursor,
@@ -462,6 +488,29 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                     mork_space_add_sexpr(space, text, len),
                                     out_added,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_normalize_expr_packet(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *packet,
+    size_t len,
+    uint8_t **out_expr_bytes,
+    size_t *out_expr_len) {
+    uint64_t rows = 0;
+    if (!out_expr_bytes || !out_expr_len) {
+        bridge_set_error("missing output for normalized MORK expression packet");
+        return false;
+    }
+    *out_expr_bytes = NULL;
+    *out_expr_len = 0;
+    if (!space || !packet) {
+        bridge_set_error("cannot normalize a null MORK expression packet");
+        return false;
+    }
+    return bridge_take_buffer(
+        "mork_space_normalize_expr_packet failed: ",
+        mork_space_normalize_expr_packet(space, packet, len),
+        out_expr_bytes, out_expr_len, &rows, bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
@@ -733,6 +782,24 @@ CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
     if (!clone)
         bridge_set_error("mork_space_clone returned null");
     return clone;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_monotone_delta(
+    const CettaMorkSpaceHandle *later,
+    const CettaMorkSpaceHandle *earlier) {
+    CettaMorkSpaceHandle *delta;
+    if (!later || !earlier) {
+        bridge_set_error("cannot derive a monotone delta from null MORK bridge spaces");
+        return NULL;
+    }
+    if (!mork_space_monotone_delta) {
+        bridge_set_error("mork_space_monotone_delta is unavailable in the linked MORK bridge");
+        return NULL;
+    }
+    delta = mork_space_monotone_delta(later, earlier);
+    if (!delta)
+        bridge_set_error("spaces do not have an additive counted-snapshot lineage");
+    return delta;
 }
 
 bool cetta_mork_bridge_space_meet_into(CettaMorkSpaceHandle *dst,
@@ -1931,6 +1998,108 @@ bool cetta_mork_bridge_query_cursor_new_multi_ref_v3(
     return true;
 }
 
+bool cetta_mork_bridge_query_cursor_new_indexed_multi_ref_v4(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    if (out_cursor)
+        *out_cursor = NULL;
+    if (!space || !out_cursor) {
+        bridge_set_error("cannot create indexed query cursor for null MORK bridge space");
+        return false;
+    }
+    if (!mork_query_cursor_new_indexed_multi_ref_v4) {
+        bridge_set_error("mork_query_cursor_new_indexed_multi_ref_v4 is unavailable in the linked MORK bridge");
+        return false;
+    }
+    *out_cursor = mork_query_cursor_new_indexed_multi_ref_v4(space, pattern, len);
+    if (!*out_cursor) {
+        bridge_set_error("indexed query cursor declined this query shape");
+        return false;
+    }
+    return true;
+}
+
+bool cetta_mork_bridge_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+    CettaMorkSpaceHandle *known,
+    CettaMorkSpaceHandle *old,
+    CettaMorkSpaceHandle *delta,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    if (out_cursor)
+        *out_cursor = NULL;
+    if (!known || !old || !delta || !out_cursor) {
+        bridge_set_error("cannot create semi-naive query cursor for null MORK bridge state");
+        return false;
+    }
+    if (!mork_query_cursor_new_indexed_semi_naive_multi_ref_v4) {
+        bridge_set_error("semi-naive indexed query cursors are unavailable in the linked MORK bridge");
+        return false;
+    }
+    *out_cursor = mork_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+        known, old, delta, pattern, len);
+    if (!*out_cursor) {
+        bridge_set_error("semi-naive indexed query cursor declined this query shape");
+        return false;
+    }
+    return true;
+}
+
+bool cetta_mork_bridge_space_indexed_query_stat(
+    const CettaMorkSpaceHandle *space,
+    CettaMorkIndexedSpaceStat stat,
+    uint64_t *out_value) {
+    if (!space) {
+        bridge_set_error("cannot read indexed query statistics from null MORK bridge space");
+        return false;
+    }
+    if (!mork_space_indexed_query_stat) {
+        bridge_set_error("mork_space_indexed_query_stat is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_indexed_query_stat failed: ",
+        mork_space_indexed_query_stat(space, (uint32_t)stat), out_value,
+        bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_query_cursor_indexed_stat(
+    const CettaMorkQueryCursorHandle *cursor,
+    CettaMorkIndexedCursorStat stat,
+    uint64_t *out_value) {
+    if (!cursor) {
+        bridge_set_error("cannot read indexed query statistics from null MORK query cursor");
+        return false;
+    }
+    if (!mork_query_cursor_indexed_stat) {
+        bridge_set_error("mork_query_cursor_indexed_stat is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_query_cursor_indexed_stat failed: ",
+        mork_query_cursor_indexed_stat(cursor, (uint32_t)stat), out_value,
+        bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_query_cursor_count_remaining(
+    CettaMorkQueryCursorHandle *cursor,
+    uint64_t *out_count) {
+    if (!cursor) {
+        bridge_set_error("cannot aggregate null MORK query cursor");
+        return false;
+    }
+    if (!mork_query_cursor_count_remaining) {
+        bridge_set_error("mork_query_cursor_count_remaining is unavailable in the linked MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_query_cursor_count_remaining failed: ",
+        mork_query_cursor_count_remaining(cursor), out_count,
+        bridge_free_bytes);
+}
+
 void cetta_mork_bridge_query_cursor_free(CettaMorkQueryCursorHandle *cursor) {
     if (cursor && mork_query_cursor_free)
         mork_query_cursor_free(cursor);
@@ -2006,6 +2175,10 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_add_sexpr)(CettaMorkSpaceHandle *space,
                                        const uint8_t *text,
                                        size_t len);
+    CettaMorkBuffer (*space_normalize_expr_packet)(
+        CettaMorkSpaceHandle *space,
+        const uint8_t *packet,
+        size_t len);
     CettaMorkStatus (*space_add_expr_bytes)(CettaMorkSpaceHandle *space,
                                             const uint8_t *expr_bytes,
                                             size_t len);
@@ -2049,6 +2222,9 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_join_into)(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
     CettaMorkSpaceHandle *(*space_clone)(const CettaMorkSpaceHandle *space);
+    CettaMorkSpaceHandle *(*space_monotone_delta)(
+        const CettaMorkSpaceHandle *later,
+        const CettaMorkSpaceHandle *earlier);
     CettaMorkSpaceHandle *(*space_join)(const CettaMorkSpaceHandle *lhs,
                                         const CettaMorkSpaceHandle *rhs);
     CettaMorkStatus (*space_meet_into)(CettaMorkSpaceHandle *dst,
@@ -2191,6 +2367,24 @@ typedef struct CettaMorkBridgeApi {
         CettaMorkSpaceHandle *space,
         const uint8_t *pattern,
         size_t len);
+    CettaMorkQueryCursorHandle *(*query_cursor_new_indexed_multi_ref_v4)(
+        CettaMorkSpaceHandle *space,
+        const uint8_t *pattern,
+        size_t len);
+    CettaMorkQueryCursorHandle *(*query_cursor_new_indexed_semi_naive_multi_ref_v4)(
+        CettaMorkSpaceHandle *known,
+        CettaMorkSpaceHandle *old,
+        CettaMorkSpaceHandle *delta,
+        const uint8_t *pattern,
+        size_t len);
+    CettaMorkStatus (*space_indexed_query_stat)(
+        const CettaMorkSpaceHandle *space,
+        uint32_t stat);
+    CettaMorkStatus (*query_cursor_indexed_stat)(
+        const CettaMorkQueryCursorHandle *cursor,
+        uint32_t stat);
+    CettaMorkStatus (*query_cursor_count_remaining)(
+        CettaMorkQueryCursorHandle *cursor);
     void (*query_cursor_free)(CettaMorkQueryCursorHandle *cursor);
     CettaMorkBuffer (*query_cursor_next)(CettaMorkQueryCursorHandle *cursor,
                                          uint64_t max_rows,
@@ -2366,6 +2560,9 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.space_dump_contextual_exact_rows,
         "mork_space_dump_contextual_exact_rows");
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_normalize_expr_packet,
+        "mork_space_normalize_expr_packet");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_add_expr_bytes,
         "mork_space_add_expr_bytes");
     bridge_resolve_symbol_optional(
@@ -2395,6 +2592,9 @@ static bool bridge_load_api(void) {
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_clone,
         "mork_space_clone");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_monotone_delta,
+        "mork_space_monotone_delta");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_join,
         "mork_space_join");
@@ -2651,6 +2851,21 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.query_cursor_new_multi_ref_v3,
         "mork_query_cursor_new_multi_ref_v3");
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.query_cursor_new_indexed_multi_ref_v4,
+        "mork_query_cursor_new_indexed_multi_ref_v4");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.query_cursor_new_indexed_semi_naive_multi_ref_v4,
+        "mork_query_cursor_new_indexed_semi_naive_multi_ref_v4");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_indexed_query_stat,
+        "mork_space_indexed_query_stat");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.query_cursor_indexed_stat,
+        "mork_query_cursor_indexed_stat");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.query_cursor_count_remaining,
+        "mork_query_cursor_count_remaining");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.query_cursor_free,
         "mork_query_cursor_free");
     bridge_resolve_symbol_optional(
@@ -2752,6 +2967,33 @@ bool cetta_mork_bridge_space_add_sexpr(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_add_sexpr(space, text, len),
                                     out_added,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_normalize_expr_packet(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *packet,
+    size_t len,
+    uint8_t **out_expr_bytes,
+    size_t *out_expr_len) {
+    uint64_t rows = 0;
+    if (!out_expr_bytes || !out_expr_len) {
+        bridge_set_error("missing output for normalized MORK expression packet");
+        return false;
+    }
+    *out_expr_bytes = NULL;
+    *out_expr_len = 0;
+    if (!space || !packet || !bridge_load_api()) {
+        bridge_set_error("cannot normalize a null or unavailable MORK expression packet");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_normalize_expr_packet) {
+        bridge_set_error("mork_space_normalize_expr_packet is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_buffer(
+        "mork_space_normalize_expr_packet failed: ",
+        g_mork_bridge_api.space_normalize_expr_packet(space, packet, len),
+        out_expr_bytes, out_expr_len, &rows, bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
@@ -3058,6 +3300,24 @@ CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
     if (!clone)
         bridge_set_error("mork_space_clone returned null");
     return clone;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_monotone_delta(
+    const CettaMorkSpaceHandle *later,
+    const CettaMorkSpaceHandle *earlier) {
+    CettaMorkSpaceHandle *delta;
+    if (!later || !earlier || !bridge_load_api()) {
+        bridge_set_error("cannot derive a monotone delta from null or unavailable MORK bridge spaces");
+        return NULL;
+    }
+    if (!g_mork_bridge_api.space_monotone_delta) {
+        bridge_set_error("mork_space_monotone_delta is unavailable in the loaded MORK bridge");
+        return NULL;
+    }
+    delta = g_mork_bridge_api.space_monotone_delta(later, earlier);
+    if (!delta)
+        bridge_set_error("spaces do not have an additive counted-snapshot lineage");
+    return delta;
 }
 
 bool cetta_mork_bridge_space_meet_into(CettaMorkSpaceHandle *dst,
@@ -4568,6 +4828,110 @@ bool cetta_mork_bridge_query_cursor_new_multi_ref_v3(
         return false;
     }
     return true;
+}
+
+bool cetta_mork_bridge_query_cursor_new_indexed_multi_ref_v4(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    if (out_cursor)
+        *out_cursor = NULL;
+    if (!space || !out_cursor || !bridge_load_api()) {
+        bridge_set_error("cannot create indexed query cursor for null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.query_cursor_new_indexed_multi_ref_v4) {
+        bridge_set_error("mork_query_cursor_new_indexed_multi_ref_v4 is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    *out_cursor =
+        g_mork_bridge_api.query_cursor_new_indexed_multi_ref_v4(space, pattern, len);
+    if (!*out_cursor) {
+        bridge_set_error("indexed query cursor declined this query shape");
+        return false;
+    }
+    return true;
+}
+
+bool cetta_mork_bridge_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+    CettaMorkSpaceHandle *known,
+    CettaMorkSpaceHandle *old,
+    CettaMorkSpaceHandle *delta,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    if (out_cursor)
+        *out_cursor = NULL;
+    if (!known || !old || !delta || !out_cursor || !bridge_load_api()) {
+        bridge_set_error("cannot create semi-naive query cursor for null or unavailable MORK bridge state");
+        return false;
+    }
+    if (!g_mork_bridge_api.query_cursor_new_indexed_semi_naive_multi_ref_v4) {
+        bridge_set_error("semi-naive indexed query cursors are unavailable in the loaded MORK bridge");
+        return false;
+    }
+    *out_cursor =
+        g_mork_bridge_api.query_cursor_new_indexed_semi_naive_multi_ref_v4(
+            known, old, delta, pattern, len);
+    if (!*out_cursor) {
+        bridge_set_error("semi-naive indexed query cursor declined this query shape");
+        return false;
+    }
+    return true;
+}
+
+bool cetta_mork_bridge_space_indexed_query_stat(
+    const CettaMorkSpaceHandle *space,
+    CettaMorkIndexedSpaceStat stat,
+    uint64_t *out_value) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot read indexed query statistics from null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_indexed_query_stat) {
+        bridge_set_error("mork_space_indexed_query_stat is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_indexed_query_stat failed: ",
+        g_mork_bridge_api.space_indexed_query_stat(space, (uint32_t)stat),
+        out_value, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_query_cursor_indexed_stat(
+    const CettaMorkQueryCursorHandle *cursor,
+    CettaMorkIndexedCursorStat stat,
+    uint64_t *out_value) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot read indexed query statistics from null or unavailable MORK query cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.query_cursor_indexed_stat) {
+        bridge_set_error("mork_query_cursor_indexed_stat is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_query_cursor_indexed_stat failed: ",
+        g_mork_bridge_api.query_cursor_indexed_stat(cursor, (uint32_t)stat),
+        out_value, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_query_cursor_count_remaining(
+    CettaMorkQueryCursorHandle *cursor,
+    uint64_t *out_count) {
+    if (!cursor || !bridge_load_api()) {
+        bridge_set_error("cannot aggregate null or unavailable MORK query cursor");
+        return false;
+    }
+    if (!g_mork_bridge_api.query_cursor_count_remaining) {
+        bridge_set_error("mork_query_cursor_count_remaining is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_query_cursor_count_remaining failed: ",
+        g_mork_bridge_api.query_cursor_count_remaining(cursor),
+        out_count, bridge_free_bytes);
 }
 
 void cetta_mork_bridge_query_cursor_free(CettaMorkQueryCursorHandle *cursor) {

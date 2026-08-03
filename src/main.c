@@ -3,6 +3,7 @@
 #include "parser.h"
 #include "he_compiled_reader.h"
 #include "petta_compiled_reader.h"
+#include "lib_prolog.h"
 #include "prime_compiled_reader.h"
 #include "space.h"
 #include "eval.h"
@@ -613,6 +614,9 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
         }
         case GV_PRIME_CONTEXT:
             return atom_deep_copy(dst, src);
+        case GV_INTERNAL_TAG:
+            return atom_internal_tag(
+                dst, (CettaInternalTag)src->ground.ival);
         case GV_STATE: {
             StateCell *src_cell = (StateCell *)src->ground.ptr;
             StateCell *dst_cell = arena_alloc(dst, sizeof(StateCell));
@@ -871,6 +875,19 @@ static void write_results(FILE *out, ResultSet *rs,
         visible.len = visible_len;
         visible.cap = visible_len;
         rs = &visible;
+    }
+
+    /*
+     * PeTTa's runnable driver exposes the answer stream one result per line.
+     * The surrounding result vector is CeTTa's host API container, not part
+     * of PeTTa syntax, so do not print the HE-style square-bracket envelope.
+     */
+    if (language_id == CETTA_LANGUAGE_PETTA) {
+        for (uint32_t index = 0u; index < rs->len; index++) {
+            atom_print_petta(rs->items[index], out);
+            fputc('\n', out);
+        }
+        goto done;
     }
 
     if (g_count_only) {
@@ -1614,7 +1631,8 @@ typedef struct {
     void (*document_reader_free)(void *context);
 } CettaMainCleanup;
 
-static void cetta_main_cleanup_registry_spaces(Registry *registry, Space *root_space) {
+static void cetta_main_cleanup_registry_spaces(
+    Registry *registry, Space *root_space, PettaProgram *petta_program) {
     if (!registry || !root_space) return;
     for (uint32_t ri = 0; ri < registry->len; ri++) {
         Atom *val = registry->entries[ri].value;
@@ -1622,6 +1640,22 @@ static void cetta_main_cleanup_registry_spaces(Registry *registry, Space *root_s
         if (val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE) {
             Space *sp = (Space *)val->ground.ptr;
             if (sp != root_space) {
+                bool already_freed = false;
+                for (uint32_t previous = 0; previous < ri; previous++) {
+                    Atom *prior = registry->entries[previous].value;
+                    if (prior &&
+                        prior->kind == ATOM_GROUNDED &&
+                        prior->ground.gkind == GV_SPACE &&
+                        (Space *)prior->ground.ptr == sp) {
+                        already_freed = true;
+                        break;
+                    }
+                }
+                if (already_freed)
+                    continue;
+                if (petta_program)
+                    petta_program_forget_space(
+                        petta_program, sp);
                 space_free(sp);
             }
         }
@@ -1658,7 +1692,11 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
 
     if (cleanup->registry_initialized) {
         if (cleanup->space_initialized) {
-            cetta_main_cleanup_registry_spaces(cleanup->registry, cleanup->space);
+            cetta_main_cleanup_registry_spaces(
+                cleanup->registry, cleanup->space,
+                cleanup->libraries_initialized
+                    ? cleanup->libraries->petta_program
+                    : NULL);
             eval_cleanup_owned_new_spaces(cleanup->registry, cleanup->space);
         } else {
             eval_cleanup_owned_new_spaces(NULL, NULL);
@@ -1673,6 +1711,7 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cetta_library_context_free(cleanup->libraries);
         cleanup->libraries_initialized = false;
     }
+    cetta_lib_prolog_global_shutdown();
     cetta_foreign_global_shutdown();
     eval_profiled_type_cache_free_for_current_thread();
 
@@ -1711,6 +1750,67 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         hashcons_free(cleanup->hashcons_table);
         cleanup->hashcons_initialized = false;
     }
+}
+
+static bool main_document_exec_at(
+    const TermUniverse *universe, const AtomId *atom_ids,
+    int atom_count, int index, AtomId *payload, int *width) {
+    if (payload)
+        *payload = CETTA_ATOM_ID_NONE;
+    if (width)
+        *width = 0;
+    if (!universe || !atom_ids || index < 0 ||
+        index >= atom_count) {
+        return false;
+    }
+    if (atom_id_is_symbol_id(
+            universe, atom_ids[index], g_builtin_syms.bang) &&
+        index + 1 < atom_count) {
+        if (payload)
+            *payload = atom_ids[index + 1];
+        if (width)
+            *width = 2;
+        return true;
+    }
+    AtomId expanded_payload = CETTA_ATOM_ID_NONE;
+    if (parser_universal_name_syntax_enabled() &&
+        parser_syn_exec_payload_id(
+            universe, atom_ids[index], &expanded_payload)) {
+        if (payload)
+            *payload = expanded_payload;
+        if (width)
+            *width = 1;
+        return true;
+    }
+    return false;
+}
+
+static bool main_petta_load_declaration_block(
+    PettaProgram *program, Space *space,
+    const TermUniverse *universe, const AtomId *atom_ids,
+    int atom_count) {
+    PettaDeclarationBlock *block =
+        petta_program_declaration_block_new(
+            program, universe, atom_ids, atom_count);
+    if (!block)
+        return false;
+    bool ok = true;
+    for (int index = 0; ok && index < atom_count; index++) {
+        Atom *source =
+            term_universe_get_atom(universe, atom_ids[index]);
+        const PettaPlanNode *plan =
+            petta_program_declaration_block_plan_at(
+                block, index);
+        if (!source || !plan) {
+            ok = false;
+            break;
+        }
+        space_add_atom_id(space, atom_ids[index]);
+        ok = petta_program_note_add(
+            program, space, source, plan);
+    }
+    petta_program_declaration_block_free(block);
+    return ok;
 }
 
 int main(int argc, char **argv) {
@@ -2451,11 +2551,58 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Load precompiled stdlib equations into the space */
-    stdlib_load(&space, &arena);
+    /*
+     * PeTTa owns its library equations.  Loading HE's definitions into
+     * &self changes clause choice, specialization, and reflection even when
+     * individual helpers look similar.  The fallback is diagnostic only;
+     * shared native primitives remain available through the evaluator.
+     */
+    if (lang->id == CETTA_LANGUAGE_PETTA) {
+        const char *he_fallback =
+            getenv("CETTA_PETTA_HE_STDLIB_FALLBACK");
+        if (he_fallback && he_fallback[0] != '\0' &&
+            strcmp(he_fallback, "0") != 0) {
+            stdlib_load_petta_shared_subset(&space, &arena);
+        }
+    } else
+        stdlib_load(&space, &arena);
 
     /* Add grounded op type declarations (HE stdlib implicit types) */
-    main_add_builtin_type_decls(&space, &arena, lang->id, profile);
+    if (lang->id != CETTA_LANGUAGE_PETTA)
+        main_add_builtin_type_decls(&space, &arena, lang->id, profile);
+
+    /*
+     * Upstream PeTTa's parse pass registers every top-level equation head
+     * before the execution pass begins.  Record only those authored
+     * declarations here; executable payloads can add heads later through the
+     * ordinary dynamic-definition seam.
+     */
+    if (lang->id == CETTA_LANGUAGE_PETTA) {
+        int declaration_index = 0;
+        while (declaration_index < n) {
+            int declaration_exec_width = 0;
+            if (main_document_exec_at(
+                    &libraries.term_universe, atom_ids, n,
+                    declaration_index, NULL,
+                    &declaration_exec_width)) {
+                declaration_index += declaration_exec_width;
+                continue;
+            }
+            Atom *declaration = term_universe_get_atom(
+                &libraries.term_universe,
+                atom_ids[declaration_index]);
+            if (petta_program_is_equation(declaration) &&
+                !petta_program_predeclare_equation(
+                    libraries.petta_program, declaration)) {
+                fprintf(
+                    stderr,
+                    "error: could not predeclare PeTTa equation head\n");
+                rc = 1;
+                goto cleanup;
+            }
+            declaration_index++;
+        }
+    }
 
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
     if (compile_mode) {
@@ -2470,17 +2617,42 @@ int main(int argc, char **argv) {
                    MeTTa/HE persistent ingress born-canonical. */
                 space_add(&space, at);
             }
-        } else {
-            for (int pi = 0; pi < n; pi++) {
-                if (atom_id_is_symbol_id(&libraries.term_universe, atom_ids[pi],
-                                         g_builtin_syms.bang)) {
-                    pi++;
+        } else if (lang->id == CETTA_LANGUAGE_PETTA) {
+            int pi = 0;
+            while (pi < n) {
+                int exec_width = 0;
+                if (main_document_exec_at(
+                        &libraries.term_universe, atom_ids,
+                        n, pi, NULL, &exec_width)) {
+                    pi += exec_width;
                     continue;
                 }
-                AtomId exec_payload = CETTA_ATOM_ID_NONE;
-                if (parser_universal_name_syntax_enabled() &&
-                    parser_syn_exec_payload_id(&libraries.term_universe,
-                                               atom_ids[pi], &exec_payload)) {
+                int block_end = pi + 1;
+                while (block_end < n &&
+                       !main_document_exec_at(
+                           &libraries.term_universe, atom_ids,
+                           n, block_end, NULL, NULL)) {
+                    block_end++;
+                }
+                if (!main_petta_load_declaration_block(
+                        libraries.petta_program, &space,
+                        &libraries.term_universe, atom_ids + pi,
+                        block_end - pi)) {
+                    fprintf(
+                        stderr,
+                        "error: could not compile PeTTa declaration block\n");
+                    rc = 1;
+                    goto cleanup;
+                }
+                pi = block_end;
+            }
+        } else {
+            for (int pi = 0; pi < n; pi++) {
+                int exec_width = 0;
+                if (main_document_exec_at(
+                        &libraries.term_universe, atom_ids,
+                        n, pi, NULL, &exec_width)) {
+                    pi += exec_width - 1;
                     continue;
                 }
                 space_add_atom_id(&space, atom_ids[pi]);
@@ -2510,6 +2682,13 @@ int main(int argc, char **argv) {
                 ResultSet rs;
                 result_set_init(&rs);
                 eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
+                if (cetta_eval_session_process_exit_requested(
+                        &libraries.session)) {
+                    rc = cetta_eval_session_process_exit_code(
+                        &libraries.session);
+                    result_set_free(&rs);
+                    goto cleanup;
+                }
                 write_results(output_spool, &rs, lang->id, profile);
                 if (fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
@@ -2539,18 +2718,28 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        AtomId at_id = atom_ids[i];
-
         /* ! prefix and (syn:exec form) are the same source directive. */
-        bool compact_exec = atom_id_is_symbol_id(
-            &libraries.term_universe, at_id, g_builtin_syms.bang);
-        AtomId expanded_payload = CETTA_ATOM_ID_NONE;
-        bool expanded_exec = parser_universal_name_syntax_enabled() &&
-            parser_syn_exec_payload_id(&libraries.term_universe, at_id,
-                                       &expanded_payload);
-        if ((compact_exec && i + 1 < n) || expanded_exec) {
-            AtomId payload_id = expanded_exec
-                ? expanded_payload : atom_ids[i + 1];
+        AtomId payload_id = CETTA_ATOM_ID_NONE;
+        int exec_width = 0;
+        if (main_document_exec_at(
+                &libraries.term_universe, atom_ids, n, i,
+                &payload_id, &exec_width)) {
+            const PettaPlanNode *source_plan = NULL;
+            if (lang->id == CETTA_LANGUAGE_PETTA) {
+                Atom *source = term_universe_get_atom(
+                    &libraries.term_universe, payload_id);
+                source_plan = source
+                    ? petta_program_plan_current(
+                          libraries.petta_program, source)
+                    : NULL;
+                if (!source_plan) {
+                    fprintf(
+                        stderr,
+                        "error: could not compile PeTTa occurrence plan\n");
+                    rc = 1;
+                    goto cleanup;
+                }
+            }
             Atom *expr = term_universe_copy_atom(&libraries.term_universe, &arena,
                                                  payload_id);
             ResultSet rs;
@@ -2578,8 +2767,26 @@ int main(int argc, char **argv) {
                         detailed.steps_spent);
             } else {
                 result_set_init(&rs);
-                eval_top_with_registry(
-                    &space, &eval_arena, &arena, &registry, expr, &rs);
+                if (lang->id == CETTA_LANGUAGE_PETTA) {
+                    eval_top_with_registry_petta_plan(
+                        &space, &eval_arena, &arena, &registry,
+                        expr, source_plan, &rs);
+                } else {
+                    eval_top_with_registry(
+                        &space, &eval_arena, &arena, &registry,
+                        expr, &rs);
+                }
+            }
+            if (cetta_eval_session_process_exit_requested(
+                    &libraries.session)) {
+                rc = cetta_eval_session_process_exit_code(
+                    &libraries.session);
+                if (emit_prime_need_trace)
+                    eval_outcome_free(&detailed);
+                else
+                    result_set_free(&rs);
+                prime_need_trace_printer_free(&trace);
+                goto cleanup;
             }
             write_results(output_spool, results, lang->id, profile);
             if (fflush(output_spool) != 0) {
@@ -2611,11 +2818,33 @@ int main(int argc, char **argv) {
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
             if (stop_after_error) break;
-            i += expanded_exec ? 1 : 2;
+            i += exec_width;
             continue;
         }
 
-        space_add_atom_id(&space, at_id);
+        if (lang->id == CETTA_LANGUAGE_PETTA) {
+            int block_end = i + 1;
+            while (block_end < n &&
+                   !main_document_exec_at(
+                       &libraries.term_universe, atom_ids,
+                       n, block_end, NULL, NULL)) {
+                block_end++;
+            }
+            if (!main_petta_load_declaration_block(
+                    libraries.petta_program, &space,
+                    &libraries.term_universe, atom_ids + i,
+                    block_end - i)) {
+                fprintf(
+                    stderr,
+                    "error: could not compile PeTTa declaration block\n");
+                rc = 1;
+                goto cleanup;
+            }
+            i = block_end;
+            continue;
+        }
+
+        space_add_atom_id(&space, atom_ids[i]);
         i++;
     }
 

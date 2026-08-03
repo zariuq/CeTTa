@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "cetta_stdlib.h"
 #include "parser.h"
+#include "petta_semantics.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -295,6 +296,10 @@ void stdlib_load(Space *s, Arena *a) {
     (void)s; (void)a;
 }
 
+void stdlib_load_petta_shared_subset(Space *s, Arena *a) {
+    (void)s; (void)a;
+}
+
 #else /* !CETTA_NO_STDLIB */
 
 #include "stdlib_blob.h"
@@ -462,9 +467,29 @@ static Atom *deserialize_atom_scoped(BlobReader *r, Arena *a,
     }
 }
 
-static bool stdlib_load_blob_internal(Space *s, Arena *a,
-                                      const unsigned char *blob,
-                                      uint32_t blob_len) {
+static bool stdlib_atom_id_is_type_annotation(
+    const TermUniverse *universe, AtomId atom_id) {
+    AtomId head;
+    return universe && atom_id != CETTA_ATOM_ID_NONE &&
+           tu_kind(universe, atom_id) == ATOM_EXPR &&
+           tu_arity(universe, atom_id) == 3u &&
+           (head = tu_child(universe, atom_id, 0u)) !=
+               CETTA_ATOM_ID_NONE &&
+           tu_kind(universe, head) == ATOM_SYMBOL &&
+           tu_sym(universe, head) == g_builtin_syms.colon;
+}
+
+static bool stdlib_atom_is_type_annotation(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR &&
+           atom->expr.len == 3u &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom->expr.elems[0]->sym_id == g_builtin_syms.colon;
+}
+
+static bool stdlib_load_blob_internal(
+    Space *s, Arena *a, const unsigned char *blob,
+    uint32_t blob_len, bool include_type_annotations,
+    bool lower_petta_control) {
     if (!blob || blob_len < 12)
         return false;
 
@@ -497,7 +522,7 @@ static bool stdlib_load_blob_internal(Space *s, Arena *a,
 
     /* Atoms */
     uint16_t num_atoms = rd_u16(&r);
-    if (s && s->native.universe) {
+    if (!lower_petta_control && s && s->native.universe) {
         BlobReader direct = r;
         bool direct_ok = true;
         AtomId *atom_ids = cetta_malloc(sizeof(AtomId) * num_atoms);
@@ -513,8 +538,14 @@ static bool stdlib_load_blob_internal(Space *s, Arena *a,
             }
         }
         if (direct_ok) {
-            for (uint16_t i = 0; i < num_atoms; i++)
+            for (uint16_t i = 0; i < num_atoms; i++) {
+                if (!include_type_annotations &&
+                    stdlib_atom_id_is_type_annotation(
+                        s->native.universe, atom_ids[i])) {
+                    continue;
+                }
                 space_add_atom_id(s, atom_ids[i]);
+            }
             free(atom_ids);
             return true;
         }
@@ -525,6 +556,12 @@ static bool stdlib_load_blob_internal(Space *s, Arena *a,
         blob_var_scope_init(&scope);
         Atom *atom = deserialize_atom_scoped(&r, a, &scope);
         blob_var_scope_free(&scope);
+        if (!include_type_annotations &&
+            stdlib_atom_is_type_annotation(atom)) {
+            continue;
+        }
+        if (lower_petta_control)
+            atom = petta_semantics_lower_shared_atom(a, atom);
         if (!space_admit_atom(s, a, atom))
             space_add(s, atom);
     }
@@ -532,13 +569,20 @@ static bool stdlib_load_blob_internal(Space *s, Arena *a,
 }
 
 void stdlib_load(Space *s, Arena *a) {
-    (void)stdlib_load_blob_internal(s, a, STDLIB_BLOB, STDLIB_BLOB_LEN);
+    (void)stdlib_load_blob_internal(
+        s, a, STDLIB_BLOB, STDLIB_BLOB_LEN, true, false);
+}
+
+void stdlib_load_petta_shared_subset(Space *s, Arena *a) {
+    (void)stdlib_load_blob_internal(
+        s, a, STDLIB_BLOB, STDLIB_BLOB_LEN, false, true);
 }
 
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
 bool stdlib_load_blob_bytes(Space *s, Arena *a, const unsigned char *data,
                             uint32_t len) {
-    return stdlib_load_blob_internal(s, a, data, len);
+    return stdlib_load_blob_internal(
+        s, a, data, len, true, false);
 }
 #endif
 

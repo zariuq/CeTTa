@@ -456,6 +456,71 @@ int main(void) {
         assert(space_equations_may_match_known_head(&equation_space,
                                                     absent_colliding_head));
 
+        Atom *second_source_after_wildcard =
+            atom_expr3(&equation_scratch,
+                       atom_symbol_id(&equation_scratch,
+                                      g_builtin_syms.equals),
+                       source_lhs, atom_false(&equation_scratch));
+        space_add(&equation_space, second_source_after_wildcard);
+
+        SpaceEquationCursor source_cursor;
+        SpaceEquationOccurrenceId cursor_id;
+        assert(space_equation_cursor_init(
+            &equation_space, source_head, &source_cursor));
+        assert(space_equation_cursor_next(&source_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_ITEM);
+        assert(cursor_id.logical_index == 0u);
+        assert(space_equation_cursor_next(&source_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_ITEM);
+        assert(cursor_id.logical_index == 2u);
+        assert(space_equation_cursor_next(&source_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_ITEM);
+        assert(cursor_id.logical_index == 3u);
+        assert(space_equation_cursor_next(&source_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_END);
+
+        SpaceEquationCursor collision_cursor;
+        assert(space_equation_cursor_init(
+            &equation_space, colliding_head, &collision_cursor));
+        assert(space_equation_cursor_next(&collision_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_ITEM);
+        assert(cursor_id.logical_index == 1u);
+        assert(space_equation_cursor_next(&collision_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_ITEM);
+        assert(cursor_id.logical_index == 2u);
+        assert(space_equation_cursor_next(&collision_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_END);
+
+        SpaceEquationCursor invalidated_cursor;
+        assert(space_equation_cursor_init(
+            &equation_space, source_head, &invalidated_cursor));
+        space_add(&equation_space,
+                  atom_symbol(&equation_scratch, "cursor-mutation"));
+        assert(space_equation_cursor_next(
+                   &invalidated_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_INVALIDATED);
+
+        Space overlay_cursor_space;
+        space_init_overlay(&overlay_cursor_space, &equation_space);
+        space_add(&overlay_cursor_space, source_equation);
+        SpaceEquationCursor overlay_cursor;
+        assert(space_equation_cursor_init(
+            &overlay_cursor_space, source_head, &overlay_cursor));
+        CettaIndex previous_index = 0u;
+        uint32_t overlay_matches = 0u;
+        SpaceEquationCursorStep overlay_step;
+        while ((overlay_step = space_equation_cursor_next(
+                    &overlay_cursor, &cursor_id)) ==
+               SPACE_EQUATION_CURSOR_ITEM) {
+            if (overlay_matches > 0u)
+                assert(cursor_id.logical_index > previous_index);
+            previous_index = cursor_id.logical_index;
+            overlay_matches++;
+        }
+        assert(overlay_step == SPACE_EQUATION_CURSOR_END);
+        assert(overlay_matches == 4u);
+        space_free(&overlay_cursor_space);
+
         Space occurrence_space;
         space_init_with_universe(&occurrence_space, &equation_universe);
         space_add(&occurrence_space, source_equation);

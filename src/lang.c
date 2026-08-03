@@ -28,7 +28,7 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
     {CETTA_LANGUAGE_PETTA, "petta", "petta", true,
      "WIP compiled PeTTa reader with shared-subset CeTTa execution",
-     CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK},
+     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY},
     {CETTA_LANGUAGE_AMBIENT, "ambient", "ambient", false,
      "Planned port from mettail-rust inventory",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},

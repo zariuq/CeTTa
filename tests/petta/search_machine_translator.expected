@@ -1,0 +1,12 @@
+is (cons 7 ()), should (cons 7 ()). ✅ 
+is (7), should (7). ✅ 
+is (8), should (8). ✅ 
+is (cons 9 ()), should (cons 9 ()). ✅ 
+true
+true
+true
+true
+true
+true
+true
+true

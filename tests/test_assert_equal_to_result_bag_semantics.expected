@@ -1,0 +1,2 @@
+[()]
+[(Error (assertEqualToResultMsg (superpose (same same)) (same)) "multiplicity mismatch")]

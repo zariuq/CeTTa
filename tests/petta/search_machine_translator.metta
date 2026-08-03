@@ -1,0 +1,11 @@
+(= (generated $x)
+   (quote (cons $x ())))
+
+!(test (generated 7) (quote (cons 7 ())))
+!(add-translator-rule! generated)
+!(test (generated 7) (7))
+!(add-translator-rule! generated)
+!(test (generated 8) (8))
+!(remove-translator-rule! generated)
+!(test (generated 9) (quote (cons 9 ())))
+!(remove-translator-rule! generated)

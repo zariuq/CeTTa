@@ -1,0 +1,8 @@
+is A, should A. ✅ 
+is (R A (S B C)), should (R A (S B C)). ✅ 
+is (* 2 21), should (* 2 21). ✅ 
+is "42", should "42". ✅ 
+true
+true
+true
+true

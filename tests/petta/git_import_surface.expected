@@ -1,0 +1,3 @@
+(git-import! "not-run")
+true
+(Error (git-import!) IncorrectNumberOfArguments)

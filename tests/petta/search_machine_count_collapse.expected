@@ -1,0 +1,8 @@
+3
+3
+3
+0
+(pair 3 3)
+(pair 3 (a a b))
+3
+((counted-dynamic-left count-dynamic-marker) (counted-dynamic-left count-dynamic-marker) (counted-dynamic-right count-dynamic-marker))

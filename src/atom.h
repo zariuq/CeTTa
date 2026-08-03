@@ -57,14 +57,42 @@ typedef enum {
     GV_FOREIGN,
     GV_RATIONAL,
     GV_PRIME_NEED_CAPABILITY,
-    GV_PRIME_CONTEXT
+    GV_PRIME_CONTEXT,
+    GV_INTERNAL_TAG
 } GroundedKind;
+
+typedef enum {
+    CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND = 1,
+    CETTA_INTERNAL_TAG_PETTA_COUNTED_COLLECTION = 2,
+} CettaInternalTag;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
 #define ATOM_FLAG_HASH_VALID 0x02u
 #define ATOM_FLAG_HAS_REGISTRY_REFS 0x04u
 #define ATOM_FLAG_HASH_STABLE 0x08u
 #define ATOM_FLAG_HASHCONS_ELIGIBLE 0x10u
+#define ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR 0x20u
+/*
+ * Every Atom child reachable through this node is either globally owned or
+ * carries the same nonzero arena_id as this node.  This is a compositional
+ * proof for generational-copy fast paths; shallow arena ownership alone is
+ * not a transitive-lifetime guarantee.
+ */
+#define ATOM_FLAG_ARENA_CLOSED 0x40u
+
+/*
+ * VariantShape reserves this VarId prefix for its runtime-private slots.
+ * Keeping the namespace test beside VarId lets immutable atoms summarize the
+ * property compositionally instead of rescanning an arbitrarily deep value at
+ * every Bindings boundary.
+ */
+#define CETTA_VARIANT_PRIVATE_SLOT_MASK UINT64_C(0xFFFFFFFF00000000)
+#define CETTA_VARIANT_PRIVATE_SLOT_TAG UINT64_C(0xFFFFA11A00000000)
+
+static inline bool atom_var_id_is_private_variant(VarId id) {
+    return (id & CETTA_VARIANT_PRIVATE_SLOT_MASK) ==
+           CETTA_VARIANT_PRIVATE_SLOT_TAG;
+}
 
 /* ── Atom ───────────────────────────────────────────────────────────────── */
 
@@ -74,6 +102,13 @@ struct Atom {
     uint32_t flags;
     VarId var_id;            /* ATOM_VAR only */
     SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
+    /*
+     * Allocation identity, not part of atom equality or hashing.  Arena
+     * identities make ownership tests for known Atom pointers O(1), avoiding
+     * a scan of every arena block during graph evacuation.  Zero denotes an
+     * atom not owned by an Arena (for example a hash-consed global).
+     */
+    uint32_t arena_id;
     Atom *name_key;          /* ATOM_VAR structural spelling, otherwise NULL */
     uint32_t hash_cache;     /* lazily memoized structural hash */
     union {
@@ -127,6 +162,13 @@ typedef struct {
     uint32_t block_count;
     uint32_t spare_block_count;
     CettaArenaRuntimeKind runtime_kind;
+    uint32_t identity;
+    /*
+     * Monotone allocation epoch.  Arena identity survives mark/reset, while
+     * reset_epoch changes whenever a reset can invalidate pointers allocated
+     * after a mark.  Derived pointer caches must key on both.
+     */
+    uint64_t reset_epoch;
     ArenaFinalizer *finalizers;
 } Arena;
 
@@ -151,6 +193,7 @@ void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
 bool  arena_owns_ptr(const Arena *a, const void *ptr);
+bool  arena_owns_atom(const Arena *a, const Atom *atom);
 char *cetta_bigint_canonicalize_owned(const char *text);
 bool  cetta_bigint_text_fits_i64(const char *text, int64_t *out);
 int   cetta_bigint_compare_cstr(const char *lhs, const char *rhs);
@@ -165,6 +208,9 @@ int   cetta_format_float(char *buf, size_t size, double value);
 struct HashConsTable {
     Atom **table;
     uint32_t size, used;
+    uint64_t lookup_count;
+    uint64_t lookup_probes;
+    uint64_t maximum_lookup_probe;
 };
 
 void hashcons_init(HashConsTable *hc);
@@ -312,6 +358,13 @@ enum {
 Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
+Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
+Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
+bool atom_petta_prolog_compound_body(Atom *atom, Atom **body);
+bool atom_prolog_compound_body(Atom *atom, Atom **body);
+Atom *atom_petta_counted_collection(Arena *a, int64_t count);
+bool atom_petta_counted_collection_count(
+    Atom *atom, int64_t *count);
 Atom *atom_prime_need_capability(Arena *a, uint64_t session_id,
                                  uint64_t thunk_id, uint64_t authority_id);
 Atom *atom_prime_need_capability_with_rights(
@@ -372,6 +425,10 @@ bool atom_eq(Atom *a, Atom *b);
 /* ── Printing ───────────────────────────────────────────────────────────── */
 
 void atom_print(Atom *a, FILE *out);
+/* PeTTa's observable writer follows its SWI oracle: in particular it uses
+   shortest round-tripping floats and does not double literal backslashes in
+   string payloads. */
+void atom_print_petta(Atom *a, FILE *out);
 /* Print into arena-allocated string */
 char *atom_to_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string(Arena *a, Atom *atom);
@@ -381,7 +438,8 @@ char *atom_to_parseable_string(Arena *a, Atom *atom);
 Atom *atom_deep_copy(Arena *dst, Atom *src);
 /* A multi-root copy episode.  Every call shares one source-pointer forwarding
    table, so pointer-DAG sharing is preserved across separately named roots.
-   A root already owned by the destination is returned unchanged. */
+   A destination-owned root is reused only when its compositional arena-closure
+   flag proves that the full Atom-child graph is already safe. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
 Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src);
 void atom_deep_copy_session_free(AtomDeepCopySession *session);
@@ -396,6 +454,11 @@ static inline bool atom_has_vars(const Atom *atom) {
 
 static inline bool atom_has_registry_refs(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HAS_REGISTRY_REFS) != 0;
+}
+
+static inline bool atom_has_private_variant_vars(const Atom *atom) {
+    return atom &&
+           (atom->flags & ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR) != 0;
 }
 
 static inline bool cetta_expr_len_fits_u32(CettaExprLen len) {

@@ -245,6 +245,33 @@ bool space_read_token_is_current(SpaceReadToken token);
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out);
 
+/*
+ * Revision-pinned, declaration-order cursor over equations whose left-hand
+ * side may match a known call head.  Native spaces merge the exact-head and
+ * wildcard index streams by logical occurrence index, preserving duplicate
+ * clauses and source order without scanning unrelated heads.  Overlay spaces
+ * use the complete logical view as the correctness fallback.
+ */
+typedef struct {
+    SpaceReadToken read;
+    SymbolId head;
+    CettaIndex exact_position;
+    CettaIndex wildcard_position;
+    CettaIndex overlay_position;
+    bool overlay;
+} SpaceEquationCursor;
+
+typedef enum {
+    SPACE_EQUATION_CURSOR_END = 0,
+    SPACE_EQUATION_CURSOR_ITEM,
+    SPACE_EQUATION_CURSOR_INVALIDATED,
+} SpaceEquationCursorStep;
+
+bool space_equation_cursor_init(Space *s, SymbolId head,
+                                SpaceEquationCursor *cursor);
+SpaceEquationCursorStep space_equation_cursor_next(
+    SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out);
+
 bool space_contains_exact(Space *s, Atom *atom);
 /* O(1)-amortized alpha-aware membership over native spaces, including native
    overlays; *out_applicable is false for non-native backends. */
@@ -301,6 +328,13 @@ void query_results_free(QueryResults *qr);
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 bool space_equations_may_match_known_head(Space *s, SymbolId head);
+/* Exact explicit-head arities admitted by (= (head ...) rhs) equations.
+ * Wildcard/expression-headed rules are excluded: they do not register a
+ * named PeTTa callable. */
+bool space_equation_head_arity_bounds(
+    Space *s, SymbolId head, CettaExprLen *minimum,
+    CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity);
 /* MAM loop-body view entry guard: head resolves to exactly one equation in a
  * clean single-head bucket, no overlay base (necessary condition for the
  * deterministic-tail loop lane; conservative, cheap). */
@@ -359,6 +393,19 @@ bool space_remove_atom_id(Space *s, AtomId atom_id);
    Caller must free(*out). Returns count. */
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
+/*
+ * Try an exact multiplicity-preserving COUNT without constructing bindings
+ * or result atoms.  The admitted fragment is backend-defined but must be a
+ * semantic subset of ordinary matching; false means "use the oracle path."
+ */
+bool space_match_count_flat_linear64(Space *s, Arena *scratch,
+                                     Atom *pattern, uint64_t *count,
+                                     CettaIndex *examined);
+bool space_match_count_conjunction64(Space *s, Arena *scratch,
+                                     Atom **patterns,
+                                     CettaExprLen npatterns,
+                                     const Bindings *seed,
+                                     uint64_t *count);
 
 /* ── Substitution Tree Query ────────────────────────────────────────────── */
 
@@ -384,6 +431,15 @@ Atom *normalize_type_expr_head(Arena *a, Atom *ty);
 
 uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
+
+/*
+ * Return only explicit `(: subject type)` declarations, in logical space
+ * order.  The returned pointer array is caller-owned; its atoms live in the
+ * supplied arena and are freshened per occurrence.
+ */
+uint32_t space_get_declared_types(
+    Space *s, Arena *a, Atom *subject, Atom ***out_types);
+
 /* Optional logical-step budget for callers that must distinguish a complete
    type set from a prefix.  Ordinary HE inference keeps using the unbudgeted
    API above; Prime threads one instance through the complete inference tree. */

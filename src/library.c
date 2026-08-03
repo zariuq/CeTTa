@@ -31,7 +31,9 @@ enum {
     CETTA_LIBRARY_LTS = 1u << 3,
     CETTA_LIBRARY_MORK = 1u << 4,
     CETTA_LIBRARY_RHO = 1u << 5,
-    CETTA_LIBRARY_RHOMETTA = 1u << 6
+    CETTA_LIBRARY_RHOMETTA = 1u << 6,
+    CETTA_LIBRARY_PETTA_IMPORT = 1u << 7,
+    CETTA_LIBRARY_LIB_PROLOG = 1u << 8
 };
 
 typedef struct {
@@ -47,6 +49,8 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"mork", CETTA_LIBRARY_MORK},
     {"rho", CETTA_LIBRARY_RHO},
     {"rhometta", CETTA_LIBRARY_RHOMETTA},
+    {"lib_import", CETTA_LIBRARY_PETTA_IMPORT},
+    {"lib_prolog", CETTA_LIBRARY_LIB_PROLOG},
 };
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
@@ -327,6 +331,19 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     memset(ctx->native_handles, 0, sizeof(ctx->native_handles));
     ctx->native_handle_len = 0;
     ctx->native_handle_next_id = 1;
+    ctx->petta_translator_rules = NULL;
+    ctx->petta_translator_rule_len = 0u;
+    ctx->petta_translator_rule_cap = 0u;
+    ctx->petta_translator_symbol_table_instance =
+        symbol_table_instance_id(g_symbols);
+    ctx->petta_tabled_relations = NULL;
+    ctx->petta_tabled_relation_len = 0u;
+    ctx->petta_tabled_relation_cap = 0u;
+    ctx->petta_tabled_symbol_table_instance =
+        symbol_table_instance_id(g_symbols);
+    ctx->petta_program = language_id == CETTA_LANGUAGE_PETTA
+        ? petta_program_new() : NULL;
+    ctx->lib_prolog = cetta_lib_prolog_runtime_new();
     ctx->foreign_runtime = cetta_foreign_runtime_new();
 }
 
@@ -335,6 +352,9 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
         Space *space = ctx->loaded_modules[i].space;
         if (!space) continue;
+        if (ctx->petta_program)
+            petta_program_forget_space(
+                ctx->petta_program, space);
         space_free(space);
         free(space);
         ctx->loaded_modules[i].space = NULL;
@@ -342,14 +362,225 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->loaded_module_len = 0;
     term_universe_free(&ctx->term_universe);
     cetta_native_handle_cleanup_all(ctx);
+    free(ctx->petta_translator_rules);
+    ctx->petta_translator_rules = NULL;
+    ctx->petta_translator_rule_len = 0u;
+    ctx->petta_translator_rule_cap = 0u;
+    ctx->petta_translator_symbol_table_instance = 0u;
+    free(ctx->petta_tabled_relations);
+    ctx->petta_tabled_relations = NULL;
+    ctx->petta_tabled_relation_len = 0u;
+    ctx->petta_tabled_relation_cap = 0u;
+    ctx->petta_tabled_symbol_table_instance = 0u;
+    petta_program_free(ctx->petta_program);
+    ctx->petta_program = NULL;
+    cetta_lib_prolog_runtime_free(ctx->lib_prolog);
+    ctx->lib_prolog = NULL;
     if (ctx->foreign_runtime) {
         cetta_foreign_runtime_free(ctx->foreign_runtime);
         ctx->foreign_runtime = NULL;
     }
 }
 
+static void cetta_library_petta_translator_rule_sync(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (ctx->petta_translator_symbol_table_instance == instance)
+        return;
+    ctx->petta_translator_rule_len = 0u;
+    ctx->petta_translator_symbol_table_instance = instance;
+}
+
+static uint32_t cetta_library_petta_translator_rule_lower_bound(
+    const CettaLibraryContext *ctx, SymbolId head) {
+    uint32_t low = 0u;
+    uint32_t high = ctx ? ctx->petta_translator_rule_len : 0u;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (ctx->petta_translator_rules[middle] < head)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+bool cetta_library_petta_translator_rule_contains(
+    CettaLibraryContext *ctx, SymbolId head) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_translator_rule_sync(ctx);
+    uint32_t index =
+        cetta_library_petta_translator_rule_lower_bound(ctx, head);
+    return index < ctx->petta_translator_rule_len &&
+           ctx->petta_translator_rules[index] == head;
+}
+
+bool cetta_library_petta_translator_rule_set(
+    CettaLibraryContext *ctx, SymbolId head, bool enabled) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_translator_rule_sync(ctx);
+    uint32_t index =
+        cetta_library_petta_translator_rule_lower_bound(ctx, head);
+    bool present =
+        index < ctx->petta_translator_rule_len &&
+        ctx->petta_translator_rules[index] == head;
+    if (present == enabled)
+        return true;
+    if (!enabled) {
+        memmove(
+            ctx->petta_translator_rules + index,
+            ctx->petta_translator_rules + index + 1u,
+            sizeof(*ctx->petta_translator_rules) *
+                (size_t)(ctx->petta_translator_rule_len - index - 1u));
+        ctx->petta_translator_rule_len--;
+        return true;
+    }
+    if (ctx->petta_translator_rule_len ==
+        ctx->petta_translator_rule_cap) {
+        uint32_t next = ctx->petta_translator_rule_cap
+            ? ctx->petta_translator_rule_cap * 2u : 8u;
+        if (next <= ctx->petta_translator_rule_cap ||
+            (size_t)next >
+                SIZE_MAX / sizeof(*ctx->petta_translator_rules)) {
+            return false;
+        }
+        ctx->petta_translator_rules = cetta_realloc(
+            ctx->petta_translator_rules,
+            sizeof(*ctx->petta_translator_rules) * (size_t)next);
+        ctx->petta_translator_rule_cap = next;
+    }
+    memmove(
+        ctx->petta_translator_rules + index + 1u,
+        ctx->petta_translator_rules + index,
+        sizeof(*ctx->petta_translator_rules) *
+            (size_t)(ctx->petta_translator_rule_len - index));
+    ctx->petta_translator_rules[index] = head;
+    ctx->petta_translator_rule_len++;
+    return true;
+}
+
+static void cetta_library_petta_tabled_relation_sync(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (ctx->petta_tabled_symbol_table_instance == instance)
+        return;
+    ctx->petta_tabled_relation_len = 0u;
+    ctx->petta_tabled_symbol_table_instance = instance;
+}
+
+static int cetta_library_petta_relation_key_compare(
+    CettaPettaRelationKey left, CettaPettaRelationKey right) {
+    if (left.head != right.head)
+        return left.head < right.head ? -1 : 1;
+    if (left.arity != right.arity)
+        return left.arity < right.arity ? -1 : 1;
+    return 0;
+}
+
+static uint32_t cetta_library_petta_tabled_relation_lower_bound(
+    const CettaLibraryContext *ctx, CettaPettaRelationKey key) {
+    uint32_t low = 0u;
+    uint32_t high = ctx ? ctx->petta_tabled_relation_len : 0u;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (cetta_library_petta_relation_key_compare(
+                ctx->petta_tabled_relations[middle], key) < 0) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
+bool cetta_library_petta_tabled_relation_contains(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_tabled_relation_sync(ctx);
+    CettaPettaRelationKey key = {
+        .head = head,
+        .arity = arity,
+    };
+    uint32_t index =
+        cetta_library_petta_tabled_relation_lower_bound(ctx, key);
+    return index < ctx->petta_tabled_relation_len &&
+           cetta_library_petta_relation_key_compare(
+               ctx->petta_tabled_relations[index], key) == 0;
+}
+
+bool cetta_library_petta_tabled_relation_set(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
+    bool enabled) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_tabled_relation_sync(ctx);
+    CettaPettaRelationKey key = {
+        .head = head,
+        .arity = arity,
+    };
+    uint32_t index =
+        cetta_library_petta_tabled_relation_lower_bound(ctx, key);
+    bool present =
+        index < ctx->petta_tabled_relation_len &&
+        cetta_library_petta_relation_key_compare(
+            ctx->petta_tabled_relations[index], key) == 0;
+    if (present == enabled)
+        return true;
+    if (!enabled) {
+        memmove(
+            ctx->petta_tabled_relations + index,
+            ctx->petta_tabled_relations + index + 1u,
+            sizeof(*ctx->petta_tabled_relations) *
+                (size_t)(ctx->petta_tabled_relation_len - index - 1u));
+        ctx->petta_tabled_relation_len--;
+        return true;
+    }
+    if (ctx->petta_tabled_relation_len ==
+        ctx->petta_tabled_relation_cap) {
+        uint32_t next = ctx->petta_tabled_relation_cap
+            ? ctx->petta_tabled_relation_cap * 2u : 8u;
+        if (next <= ctx->petta_tabled_relation_cap ||
+            (size_t)next >
+                SIZE_MAX / sizeof(*ctx->petta_tabled_relations)) {
+            return false;
+        }
+        ctx->petta_tabled_relations = cetta_realloc(
+            ctx->petta_tabled_relations,
+            sizeof(*ctx->petta_tabled_relations) * (size_t)next);
+        ctx->petta_tabled_relation_cap = next;
+    }
+    memmove(
+        ctx->petta_tabled_relations + index + 1u,
+        ctx->petta_tabled_relations + index,
+        sizeof(*ctx->petta_tabled_relations) *
+            (size_t)(ctx->petta_tabled_relation_len - index));
+    ctx->petta_tabled_relations[index] = key;
+    ctx->petta_tabled_relation_len++;
+    return true;
+}
+
+static void copy_parent_dir(char *dst, size_t dst_sz, const char *path);
+
+static bool library_root_has_lib_dir(const char *root) {
+    char path[PATH_MAX];
+    struct stat st;
+
+    if (!root || !*root) return false;
+    int n = snprintf(path, sizeof(path), "%s/lib", root);
+    return n > 0 && (size_t)n < sizeof(path) &&
+           stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0) {
     char resolved[PATH_MAX];
+    char parent[PATH_MAX];
     char *slash;
 
     ctx->root_dir[0] = '\0';
@@ -359,6 +590,13 @@ void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *a
     if (!slash) return;
     *slash = '\0';
     snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", resolved);
+    if (!library_root_has_lib_dir(ctx->root_dir)) {
+        copy_parent_dir(parent, sizeof(parent), ctx->root_dir);
+        if (strcmp(parent, ctx->root_dir) != 0 &&
+            library_root_has_lib_dir(parent)) {
+            snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", parent);
+        }
+    }
 }
 
 static void copy_parent_dir(char *dst, size_t dst_sz, const char *path) {
@@ -424,9 +662,17 @@ static const char *cetta_library_relative_base_dir(CettaLibraryContext *ctx) {
         return ".";
     }
     if (cetta_eval_session_relative_module_policy(&ctx->session) ==
-            CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY &&
-        ctx->working_dir[0] != '\0') {
-        return ctx->working_dir;
+            CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY) {
+        /*
+         * Upstream PeTTa calls this its working directory, but initializes
+         * it to the directory of the top-level source file.  It remains
+         * fixed while nested imports run.  Prefer the corresponding script
+         * root here; the process cwd is only the inline/source-less fallback.
+         */
+        if (ctx->script_dir[0] != '\0')
+            return ctx->script_dir;
+        if (ctx->working_dir[0] != '\0')
+            return ctx->working_dir;
     }
     return cetta_library_current_dir(ctx);
 }
@@ -542,8 +788,13 @@ static void rollback_loaded_modules(CettaLibraryContext *ctx, uint32_t rollback_
     while (ctx->loaded_module_len > rollback_len) {
         ctx->loaded_module_len--;
         if (ctx->loaded_modules[ctx->loaded_module_len].space) {
-            space_free(ctx->loaded_modules[ctx->loaded_module_len].space);
-            free(ctx->loaded_modules[ctx->loaded_module_len].space);
+            Space *space =
+                ctx->loaded_modules[ctx->loaded_module_len].space;
+            if (ctx->petta_program)
+                petta_program_forget_space(
+                    ctx->petta_program, space);
+            space_free(space);
+            free(space);
             ctx->loaded_modules[ctx->loaded_module_len].space = NULL;
         }
         ctx->loaded_modules[ctx->loaded_module_len].display_name[0] = '\0';
@@ -805,7 +1056,11 @@ static bool git_module_name_from_url(const char *url, char *out, size_t out_sz) 
         trimmed[len - 4] = '\0';
     }
 
-    const char *base = strrchr(trimmed, '/');
+    const char *slash = strrchr(trimmed, '/');
+    const char *colon = strrchr(trimmed, ':');
+    const char *base = slash;
+    if (colon && (!base || colon > base))
+        base = colon;
     const char *name = base ? base + 1 : trimmed;
     return module_name_make_legal(name, out, out_sz);
 }
@@ -926,6 +1181,85 @@ static bool run_git_clone(const char *url, const char *dst,
         return false;
     }
     if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to clone repository");
+    return false;
+}
+
+static bool run_petta_build_command(const char *repo_path,
+                                    const char *build_command,
+                                    char *errbuf, size_t errbuf_sz) {
+    int pipefd[2];
+    pid_t pid;
+
+    if (!build_command || !*build_command)
+        return true;
+    if (pipe(pipefd) != 0) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz,
+                     "git-import! failed to create build pipe");
+        return false;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz,
+                     "git-import! failed to spawn build");
+        return false;
+    }
+    if (pid == 0) {
+        if (chdir(repo_path) != 0)
+            _exit(126);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        char *const argv[] = {
+            "sh", (char *)build_command, NULL
+        };
+        execvp("sh", argv);
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    if (errbuf_sz > 0)
+        errbuf[0] = '\0';
+    size_t used = 0u;
+    ssize_t got;
+    while ((got = read(
+                pipefd[0], errbuf + used,
+                errbuf_sz > used + 1u
+                    ? errbuf_sz - used - 1u : 0u)) > 0) {
+        used += (size_t)got;
+        if (errbuf_sz <= used + 1u)
+            break;
+    }
+    close(pipefd[0]);
+    if (errbuf_sz > 0)
+        errbuf[used] = '\0';
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz,
+                     "git-import! failed to wait for build");
+        return false;
+    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        return true;
+    if (errbuf_sz > 0) {
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 126) {
+            snprintf(errbuf, errbuf_sz,
+                     "git-import! build directory unavailable");
+        } else if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+            snprintf(errbuf, errbuf_sz,
+                     "git-import! shell executable not found");
+        } else {
+            snprintf(errbuf, errbuf_sz,
+                     "git-import! build step failed");
+        }
+    }
     return false;
 }
 
@@ -1308,6 +1642,20 @@ static bool resolve_relative_module_candidate_for_language(
                                                     reason, reason_sz);
     }
 
+    /*
+     * PeTTa's importer tries the path as written before resolving it against
+     * the top-level source directory.  This lets a repository-root command
+     * import `lib/foo` while a source-relative import such as `../lib/foo`
+     * remains available as the fallback.
+     */
+    if (ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
+        cetta_eval_session_relative_module_policy(&ctx->session) ==
+            CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY &&
+        resolve_module_candidate_with_format(
+            path, out, out_sz, format_out, reason, reason_sz)) {
+        return true;
+    }
+
     snprintf(base_dir, sizeof(base_dir), "%s", cetta_library_relative_base_dir(ctx));
     while (true) {
         int n = snprintf(candidate, sizeof(candidate), "%s/%s", base_dir, path);
@@ -1464,7 +1812,17 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
         return true;
     }
     case CETTA_MODULE_SPEC_MODULE_NAME: {
-        if (cetta_module_policy_allows(&ctx->session.module_policy,
+        /*
+         * Plain PeTTa imports are source-relative.  Package lookup is an
+         * explicit, separate surface: `(library member)`.  Searching CeTTa's
+         * stdlib or registered mounts for a bare PeTTa name would turn an
+         * upstream failed import into a different program and can duplicate
+         * every clause when the same file was also imported by path.
+         */
+        bool plain_petta_import =
+            ctx->session.language_id == CETTA_LANGUAGE_PETTA;
+        if (!plain_petta_import &&
+            cetta_module_policy_allows(&ctx->session.module_policy,
                                          CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
             const CettaModuleMount *mount = cetta_library_find_module_mount(ctx, spec->path_or_member);
             if (mount) {
@@ -1477,7 +1835,8 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
                 break;
             }
         }
-        if (cetta_module_policy_allows(&ctx->session.module_policy,
+        if (!plain_petta_import &&
+            cetta_module_policy_allows(&ctx->session.module_policy,
                                          CETTA_MODULE_PROVIDER_STDLIB) &&
             build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate))) {
             plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
@@ -2094,6 +2453,63 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
         return system_monotonic_ns(a, head, args, nargs);
     }
     return NULL;
+}
+
+static Atom *library_prolog_extension_absent(Arena *a) {
+    Atom *extension =
+        atom_symbol(a, "prolog:extension");
+    Atom *absent = atom_symbol(a, "absent");
+    return extension && absent
+        ? atom_expr2(a, extension, absent)
+        : NULL;
+}
+
+static Atom *library_prolog_query_failed(
+    Arena *a, Atom *goal) {
+    Atom *failed =
+        atom_symbol(a, "prolog:query-failed");
+    return failed && goal
+        ? atom_expr2(a, failed, goal)
+        : NULL;
+}
+
+static Atom *cetta_library_dispatch_lib_prolog(
+    CettaLibraryContext *ctx, Arena *a,
+    Atom *head, Atom **args, uint32_t nargs) {
+    if (!ctx || !a || !head ||
+        head->kind != ATOM_SYMBOL) {
+        return NULL;
+    }
+    SymbolId head_id = head->sym_id;
+    if (head_id == g_builtin_syms.lib_prolog_available) {
+        if (!system_zero_arg_ok(args, nargs)) {
+            return library_signature_error(
+                a, head, args, nargs,
+                "expected: (prolog:available?)");
+        }
+        return cetta_lib_prolog_runtime_available(
+                   ctx->lib_prolog)
+            ? atom_true(a) : atom_false(a);
+    }
+    if (head_id != g_builtin_syms.lib_prolog_query)
+        return NULL;
+    if (nargs != 2u) {
+        return library_signature_error(
+            a, head, args, nargs,
+            "expected: (prolog:query Goal Projection)");
+    }
+    Atom *answers = NULL;
+    CettaLibPrologQueryStatus status =
+        cetta_lib_prolog_query(
+            ctx->lib_prolog, a, args[0], args[1],
+            &answers);
+    if (status == CETTA_LIB_PROLOG_QUERY_UNAVAILABLE) {
+        return library_prolog_extension_absent(a);
+    }
+    if (status != CETTA_LIB_PROLOG_QUERY_OK) {
+        return library_prolog_query_failed(a, args[0]);
+    }
+    return answers;
 }
 
 static Atom *lts_rho_transitions_call_expr(Arena *a, Atom **args, uint32_t nargs) {
@@ -5809,6 +6225,220 @@ static Atom *result_set_first_error(Arena *dst, ResultSet *rs) {
     return NULL;
 }
 
+typedef enum {
+    CETTA_PETTA_DOCUMENT_OK = 0,
+    CETTA_PETTA_DOCUMENT_PLAN_FAILED,
+    CETTA_PETTA_DOCUMENT_COPY_FAILED,
+    CETTA_PETTA_DOCUMENT_EVAL_FAILED,
+    CETTA_PETTA_DOCUMENT_CAPACITY,
+} CettaPettaDocumentFailure;
+
+/*
+ * Execute an already parsed PeTTa document.  The first pass makes equation
+ * arities visible to every source plan; the second pass preserves source
+ * order for declarations, effects, and runnable answer bags.  File imports
+ * and process_metta_string deliberately share this one semantic path.
+ */
+static bool cetta_library_petta_execute_document_ids(
+    CettaLibraryContext *ctx, Space *work_space,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, AtomId *atom_ids, int atom_count,
+    ResultSet *runnable_results,
+    CettaPettaDocumentFailure *failure_out,
+    Atom **detail_out) {
+    if (failure_out)
+        *failure_out = CETTA_PETTA_DOCUMENT_OK;
+    if (detail_out)
+        *detail_out = NULL;
+    if (!ctx || !work_space || !work_space->native.universe ||
+        !eval_arena || atom_count < 0 ||
+        (atom_count > 0 && !atom_ids)) {
+        if (failure_out)
+            *failure_out = CETTA_PETTA_DOCUMENT_COPY_FAILED;
+        return false;
+    }
+
+    if (ctx->petta_program) {
+        for (int declaration_index = 0;
+             declaration_index < atom_count;
+             declaration_index++) {
+            AtomId declaration_id = atom_ids[declaration_index];
+            if (tu_kind(work_space->native.universe, declaration_id) ==
+                    ATOM_SYMBOL &&
+                tu_sym(work_space->native.universe, declaration_id) ==
+                    g_builtin_syms.bang &&
+                declaration_index + 1 < atom_count) {
+                declaration_index++;
+                continue;
+            }
+            Atom *declaration = term_universe_get_atom(
+                work_space->native.universe, declaration_id);
+            if (petta_program_is_equation(declaration) &&
+                !petta_program_predeclare_equation(
+                    ctx->petta_program, declaration)) {
+                if (failure_out)
+                    *failure_out =
+                        CETTA_PETTA_DOCUMENT_PLAN_FAILED;
+                return false;
+            }
+        }
+    }
+
+    int index = 0;
+    while (index < atom_count) {
+        AtomId atom_id = atom_ids[index];
+        if (tu_kind(work_space->native.universe, atom_id) ==
+                ATOM_SYMBOL &&
+            tu_sym(work_space->native.universe, atom_id) ==
+                g_builtin_syms.bang &&
+            index + 1 < atom_count) {
+            ResultSet results;
+            result_set_init(&results);
+            const PettaPlanNode *source_plan = NULL;
+            if (ctx->petta_program) {
+                Atom *source = term_universe_get_atom(
+                    work_space->native.universe,
+                    atom_ids[index + 1]);
+                source_plan = source
+                    ? petta_program_plan_current(
+                          ctx->petta_program, source)
+                    : NULL;
+                if (!source_plan) {
+                    result_set_free(&results);
+                    if (failure_out)
+                        *failure_out =
+                            CETTA_PETTA_DOCUMENT_PLAN_FAILED;
+                    return false;
+                }
+            }
+            Atom *eval_form = term_universe_copy_atom(
+                work_space->native.universe,
+                persistent_arena ? persistent_arena : eval_arena,
+                atom_ids[index + 1]);
+            if (!eval_form) {
+                result_set_free(&results);
+                if (failure_out)
+                    *failure_out =
+                        CETTA_PETTA_DOCUMENT_COPY_FAILED;
+                return false;
+            }
+            if (ctx->petta_program) {
+                eval_top_with_registry_petta_plan(
+                    work_space, eval_arena,
+                    persistent_arena, registry,
+                    eval_form, source_plan, &results);
+            } else {
+                eval_top_with_registry(
+                    work_space, eval_arena,
+                    persistent_arena, registry,
+                    eval_form, &results);
+            }
+
+            Atom *first_error =
+                result_set_first_error(eval_arena, &results);
+            bool has_error =
+                first_error != NULL ||
+                result_set_has_error(&results);
+            if (!has_error && runnable_results) {
+                for (CettaCount result_index = 0u;
+                     result_index < results.len;
+                     result_index++) {
+                    CettaCount previous_len =
+                        runnable_results->len;
+                    result_set_add(
+                        runnable_results,
+                        results.items[result_index]);
+                    if (runnable_results->len !=
+                            previous_len + 1u) {
+                        result_set_free(&results);
+                        eval_release_temporary_spaces();
+                        if (failure_out)
+                            *failure_out =
+                                CETTA_PETTA_DOCUMENT_CAPACITY;
+                        return false;
+                    }
+                }
+            }
+            result_set_free(&results);
+            eval_release_temporary_spaces();
+            if (has_error) {
+                if (failure_out)
+                    *failure_out =
+                        CETTA_PETTA_DOCUMENT_EVAL_FAILED;
+                if (detail_out)
+                    *detail_out = first_error;
+                return false;
+            }
+            index += 2;
+            continue;
+        }
+
+        int block_end = index + 1;
+        while (block_end < atom_count) {
+            AtomId candidate = atom_ids[block_end];
+            if (tu_kind(
+                    work_space->native.universe,
+                    candidate) == ATOM_SYMBOL &&
+                tu_sym(
+                    work_space->native.universe,
+                    candidate) == g_builtin_syms.bang &&
+                block_end + 1 < atom_count) {
+                break;
+            }
+            block_end++;
+        }
+        PettaDeclarationBlock *block = NULL;
+        if (ctx->petta_program) {
+            block = petta_program_declaration_block_new(
+                ctx->petta_program,
+                work_space->native.universe,
+                atom_ids + index, block_end - index);
+            if (!block) {
+                if (failure_out)
+                    *failure_out =
+                        CETTA_PETTA_DOCUMENT_PLAN_FAILED;
+                return false;
+            }
+        }
+        for (int block_index = index;
+             block_index < block_end;
+             block_index++) {
+            AtomId block_atom_id = atom_ids[block_index];
+            Atom *source = NULL;
+            const PettaPlanNode *source_plan = NULL;
+            if (block) {
+                source = term_universe_get_atom(
+                    work_space->native.universe,
+                    block_atom_id);
+                source_plan =
+                    petta_program_declaration_block_plan_at(
+                        block, block_index - index);
+                if (!source || !source_plan) {
+                    petta_program_declaration_block_free(block);
+                    if (failure_out)
+                        *failure_out =
+                            CETTA_PETTA_DOCUMENT_PLAN_FAILED;
+                    return false;
+                }
+            }
+            space_add_atom_id(work_space, block_atom_id);
+            if (block &&
+                !petta_program_note_add(
+                    ctx->petta_program, work_space,
+                    source, source_plan)) {
+                petta_program_declaration_block_free(block);
+                if (failure_out)
+                    *failure_out =
+                        CETTA_PETTA_DOCUMENT_PLAN_FAILED;
+                return false;
+            }
+        }
+        petta_program_declaration_block_free(block);
+        index = block_end;
+    }
+    return true;
+}
+
 static Atom *module_reason(CettaLibraryContext *ctx, Arena *a,
                            const char *tag, const char *path) {
     char display[PATH_MAX];
@@ -5827,6 +6457,81 @@ static Atom *module_reason_with_detail(CettaLibraryContext *ctx, Arena *a,
         atom_string(a, cetta_library_display_path(ctx, path, display, sizeof(display))),
         detail
     }, 3);
+}
+
+bool cetta_library_petta_process_text(
+    CettaLibraryContext *ctx, Space *space,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, const char *text,
+    Atom **result_out, Atom **error_out) {
+    if (result_out)
+        *result_out = NULL;
+    if (error_out)
+        *error_out = NULL;
+    if (!ctx || !space || !eval_arena || !text ||
+        !result_out || !error_out) {
+        if (error_out)
+            *error_out = atom_symbol(
+                eval_arena, "PettaProcessTextInvalidArgument");
+        return false;
+    }
+
+    AtomId *atom_ids = NULL;
+    char diagnostic[512];
+    int atom_count = parse_metta_text_ids_diagnostic(
+        text, space->native.universe, &atom_ids,
+        diagnostic, sizeof(diagnostic));
+    if (atom_count < 0) {
+        const char *message = diagnostic[0] != '\0'
+            ? diagnostic : "invalid PeTTa source";
+        *error_out = atom_expr2(
+            eval_arena,
+            atom_symbol(
+                eval_arena, "PettaProcessTextParseFailed"),
+            atom_string(eval_arena, message));
+        free(atom_ids);
+        return false;
+    }
+
+    ResultSet runnable_results;
+    result_set_init(&runnable_results);
+    CettaPettaDocumentFailure failure =
+        CETTA_PETTA_DOCUMENT_OK;
+    Atom *detail = NULL;
+    bool ok = cetta_library_petta_execute_document_ids(
+        ctx, space, eval_arena, persistent_arena,
+        registry, atom_ids, atom_count,
+        &runnable_results, &failure, &detail);
+    free(atom_ids);
+    if (!ok) {
+        if (failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED &&
+            detail) {
+            *error_out = detail;
+        } else {
+            const char *tag =
+                failure == CETTA_PETTA_DOCUMENT_PLAN_FAILED
+                    ? "PettaProcessTextPlanFailed"
+                    : failure == CETTA_PETTA_DOCUMENT_COPY_FAILED
+                        ? "PettaProcessTextCopyFailed"
+                        : failure == CETTA_PETTA_DOCUMENT_CAPACITY
+                            ? "PettaProcessTextCapacity"
+                            : "PettaProcessTextEvaluationFailed";
+            *error_out = atom_symbol(eval_arena, tag);
+        }
+        result_set_free(&runnable_results);
+        return false;
+    }
+
+    *result_out = atom_expr(
+        eval_arena, runnable_results.items,
+        runnable_results.len);
+    result_set_free(&runnable_results);
+    if (!*result_out) {
+        *error_out = atom_symbol(
+            eval_arena, "PettaProcessTextCapacity");
+        return false;
+    }
+    return true;
 }
 
 static bool load_act_dump_text_into_space(CettaLibraryContext *ctx,
@@ -6206,40 +6911,27 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
         } else {
-            for (int i = 0; i < n; i++) {
-                AtomId at_id = atom_ids[i];
-                if (tu_kind(work_space->native.universe, at_id) == ATOM_SYMBOL &&
-                    tu_sym(work_space->native.universe, at_id) == g_builtin_syms.bang &&
-                    i + 1 < n) {
-                    ResultSet rs;
-                    result_set_init(&rs);
-                    Atom *eval_form = term_universe_copy_atom(
-                        work_space->native.universe,
-                        persistent_arena ? persistent_arena : eval_arena,
-                        atom_ids[i + 1]);
-                    if (!eval_form) {
-                        result_set_free(&rs);
-                        ok = false;
-                        *error_out = module_reason(ctx, eval_arena,
-                                                   "ModuleParseFailed", path);
-                        break;
-                    }
-                    eval_top_with_registry(work_space, eval_arena, persistent_arena, registry,
-                                           eval_form, &rs);
-                    Atom *first_error = result_set_first_error(eval_arena, &rs);
-                    bool stop_after_error = first_error != NULL || result_set_has_error(&rs);
-                    result_set_free(&rs);
-                    eval_release_temporary_spaces();
-                    if (stop_after_error) {
-                        *error_out = first_error ? first_error :
-                            module_reason(ctx, eval_arena, "ModuleInitError", path);
-                        ok = false;
-                        break;
-                    }
-                    i++;
-                    continue;
+            CettaPettaDocumentFailure failure =
+                CETTA_PETTA_DOCUMENT_OK;
+            Atom *detail = NULL;
+            ok = cetta_library_petta_execute_document_ids(
+                ctx, work_space, eval_arena,
+                persistent_arena, registry,
+                atom_ids, n, NULL, &failure, &detail);
+            if (!ok) {
+                if (failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED &&
+                    detail) {
+                    *error_out = detail;
+                } else {
+                    const char *tag =
+                        failure == CETTA_PETTA_DOCUMENT_COPY_FAILED
+                            ? "ModuleParseFailed"
+                            : failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED
+                                ? "ModuleInitError"
+                                : "ModuleCompilePlanFailed";
+                    *error_out =
+                        module_reason(ctx, eval_arena, tag, path);
                 }
-                space_add_atom_id(work_space, at_id);
             }
         }
     }
@@ -6271,7 +6963,19 @@ static bool load_module_file_transactional(CettaLibraryContext *ctx, const char 
                                            int fuel, Atom **error_out) {
     uint32_t imported_len_before = ctx->imported_file_len;
     Space *work_space = space_heap_clone_shallow(target);
+    if (work_space && ctx->petta_program &&
+        !petta_program_clone_space(
+            ctx->petta_program, target, work_space)) {
+        space_free(work_space);
+        free(work_space);
+        *error_out = atom_symbol(
+            eval_arena, "PeTTaProgramCloneFailed");
+        return false;
+    }
     if (!cetta_library_push_import_alias(ctx, work_space, target)) {
+        if (ctx->petta_program)
+            petta_program_forget_space(
+                ctx->petta_program, work_space);
         space_free(work_space);
         free(work_space);
         *error_out = atom_symbol(eval_arena, "too many nested import transactions");
@@ -6284,12 +6988,30 @@ static bool load_module_file_transactional(CettaLibraryContext *ctx, const char 
 
     if (!ok) {
         rollback_imported_files(ctx, imported_len_before);
+        if (ctx->petta_program)
+            petta_program_forget_space(
+                ctx->petta_program, work_space);
         space_free(work_space);
         free(work_space);
         return false;
     }
 
+    if (ctx->petta_program &&
+        !petta_program_replace_space(
+            ctx->petta_program, target, work_space)) {
+        rollback_imported_files(ctx, imported_len_before);
+        petta_program_forget_space(
+            ctx->petta_program, work_space);
+        space_free(work_space);
+        free(work_space);
+        *error_out = atom_symbol(
+            eval_arena, "PeTTaProgramCommitFailed");
+        return false;
+    }
     space_replace_contents(target, work_space);
+    if (ctx->petta_program)
+        petta_program_forget_space(
+            ctx->petta_program, work_space);
     space_free(work_space);
     free(work_space);
     return true;
@@ -6946,6 +7668,180 @@ bool cetta_library_register_git_module(CettaLibraryContext *ctx, const char *url
                                eval_arena, error_out);
 }
 
+bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
+                                    const char *git_path,
+                                    const char *build_command,
+                                    const char *base_directory,
+                                    Arena *eval_arena,
+                                    Atom **error_out) {
+    char module_name[CETTA_MAX_MODULE_NAMESPACE];
+    char base_candidate[PATH_MAX];
+    char base_resolved[PATH_MAX];
+    char local_path[PATH_MAX];
+    char temporary_path[PATH_MAX];
+    char clone_error[256];
+    char build_error[256];
+    struct stat st;
+    bool created_repository = false;
+
+    if (!ctx || !eval_arena || !error_out)
+        return false;
+    if (!cetta_module_policy_allows(
+            &ctx->session.module_policy,
+            CETTA_MODULE_PROVIDER_GIT) ||
+        !cetta_module_policy_allows(
+            &ctx->session.module_policy,
+            CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
+        *error_out = atom_symbol(
+            eval_arena, "git import provider disabled");
+        return false;
+    }
+    if (!git_path || !*git_path ||
+        !base_directory || !*base_directory ||
+        !git_module_name_from_url(
+            git_path, module_name, sizeof(module_name))) {
+        *error_out = atom_symbol(
+            eval_arena, "invalid git-import! arguments");
+        return false;
+    }
+
+    int n = base_directory[0] == '/'
+        ? snprintf(base_candidate, sizeof(base_candidate),
+                   "%s", base_directory)
+        : snprintf(base_candidate, sizeof(base_candidate),
+                   "%s/%s",
+                   ctx->working_dir[0] ? ctx->working_dir : ".",
+                   base_directory);
+    if (!(n > 0 && (size_t)n < sizeof(base_candidate))) {
+        *error_out = atom_symbol(
+            eval_arena, "git-import! base path too long");
+        return false;
+    }
+
+    if (stat(base_candidate, &st) != 0) {
+        if (errno != ENOENT) {
+            *error_out = atom_symbol(
+                eval_arena, "git-import! base path unavailable");
+            return false;
+        }
+        printf("What %s\n", base_directory);
+        fflush(stdout);
+        if (!ensure_directory_path(base_candidate)) {
+            *error_out = atom_symbol(
+                eval_arena, "git-import! cannot create base directory");
+            return false;
+        }
+    } else if (!S_ISDIR(st.st_mode)) {
+        *error_out = atom_symbol(
+            eval_arena, "git-import! base path is not a directory");
+        return false;
+    }
+    if (!realpath(base_candidate, base_resolved)) {
+        *error_out = atom_symbol(
+            eval_arena, "git-import! cannot resolve base directory");
+        return false;
+    }
+    if (!path_join2(
+            local_path, sizeof(local_path),
+            base_resolved, module_name)) {
+        *error_out = atom_symbol(
+            eval_arena, "git-import! repository path too long");
+        return false;
+    }
+
+    if (stat(local_path, &st) == 0) {
+        if (!S_ISDIR(st.st_mode)) {
+            *error_out = atom_symbol(
+                eval_arena,
+                "git-import! repository path is not a directory");
+            return false;
+        }
+    } else {
+        if (errno != ENOENT) {
+            *error_out = atom_symbol(
+                eval_arena, "git-import! repository path unavailable");
+            return false;
+        }
+        n = snprintf(
+            temporary_path, sizeof(temporary_path),
+            "%s/.%s.tmp.XXXXXX", base_resolved, module_name);
+        if (!(n > 0 && (size_t)n < sizeof(temporary_path)) ||
+            !mkdtemp(temporary_path)) {
+            *error_out = atom_symbol(
+                eval_arena, "git-import! temporary path unavailable");
+            return false;
+        }
+        printf("Cloning %s into %s/%s\n",
+               git_path, base_directory, module_name);
+        fflush(stdout);
+        if (!run_git_clone(
+                git_path, temporary_path,
+                clone_error, sizeof(clone_error))) {
+            (void)remove_tree_recursive(temporary_path);
+            *error_out = atom_symbol(
+                eval_arena,
+                clone_error[0]
+                    ? clone_error
+                    : "git-import! clone failed");
+            return false;
+        }
+        if (rename(temporary_path, local_path) != 0) {
+            if (stat(local_path, &st) != 0 ||
+                !S_ISDIR(st.st_mode)) {
+                (void)remove_tree_recursive(temporary_path);
+                *error_out = atom_symbol(
+                    eval_arena,
+                    "git-import! repository publication failed");
+                return false;
+            }
+            (void)remove_tree_recursive(temporary_path);
+        } else {
+            created_repository = true;
+        }
+
+        if (build_command && *build_command) {
+            printf("Running build: %s in %s/%s\n",
+                   build_command, base_directory, module_name);
+            fflush(stdout);
+            if (!run_petta_build_command(
+                    local_path, build_command,
+                    build_error, sizeof(build_error))) {
+                if (created_repository)
+                    (void)remove_tree_recursive(local_path);
+                *error_out = atom_symbol(
+                    eval_arena,
+                    build_error[0]
+                        ? build_error
+                        : "git-import! build failed");
+                return false;
+            }
+        }
+    }
+
+    char canonical_path[PATH_MAX];
+    if (!realpath(local_path, canonical_path)) {
+        *error_out = atom_symbol(
+            eval_arena, "git-import! repository root unavailable");
+        return false;
+    }
+    return upsert_module_mount(
+        ctx, module_name, canonical_path,
+        CETTA_MODULE_PROVIDER_GIT_REMOTE,
+        CETTA_MODULE_LOCATOR_GIT_URL,
+        git_path,
+        CETTA_REMOTE_REVISION_DEFAULT_BRANCH_ONLY,
+        "",
+        CETTA_PROFILE_MASK_ALL,
+        eval_arena, error_out);
+}
+
+bool cetta_library_petta_git_import_enabled(
+    const CettaLibraryContext *ctx) {
+    return ctx &&
+           ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
+           (ctx->active_mask & CETTA_LIBRARY_PETTA_IMPORT) != 0u;
+}
+
 bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
@@ -6976,6 +7872,211 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                registry, fuel, error_out);
 }
 
+static bool library_member_name_is_safe(const char *member) {
+    if (!member || !*member || strcmp(member, ".") == 0 ||
+        strcmp(member, "..") == 0) {
+        return false;
+    }
+    for (const unsigned char *p = (const unsigned char *)member; *p; p++) {
+        if (!(isalnum(*p) || *p == '_' || *p == '-' || *p == '.'))
+            return false;
+    }
+    return strstr(member, "..") == NULL;
+}
+
+static bool resolve_library_member_candidate(
+    CettaLibraryContext *ctx, const char *member,
+    char *canonical_path, size_t canonical_path_size,
+    CettaModuleFormat *format) {
+    char directory[PATH_MAX];
+    char candidate[PATH_MAX];
+    char reason[160];
+
+    if (!ctx || !library_member_name_is_safe(member) ||
+        !cetta_module_policy_allows(
+            &ctx->session.module_policy,
+            CETTA_MODULE_PROVIDER_RELATIVE_FILES)) {
+        return false;
+    }
+    /*
+     * PeTTa's package import operation adds a library root at runtime.
+     * Search the most recently registered roots first, matching the
+     * shadowing behavior of an explicit package-path stack.
+     */
+    for (uint32_t index = ctx->module_mount_len;
+         index > 0u; index--) {
+        const CettaModuleMount *mount =
+            &ctx->module_mounts[index - 1u];
+        if (!module_mount_visible(ctx, mount))
+            continue;
+        if (path_join2(
+                candidate, sizeof(candidate),
+                mount->root_path, member) &&
+            resolve_module_candidate_with_format(
+                candidate, canonical_path, canonical_path_size,
+                format, reason, sizeof(reason))) {
+            return true;
+        }
+        char library_dir[PATH_MAX];
+        if (path_join2(
+                library_dir, sizeof(library_dir),
+                mount->root_path, "lib") &&
+            path_join2(
+                candidate, sizeof(candidate),
+                library_dir, member) &&
+            resolve_module_candidate_with_format(
+                candidate, canonical_path, canonical_path_size,
+                format, reason, sizeof(reason))) {
+            return true;
+        }
+    }
+
+    if (snprintf(
+            directory, sizeof(directory), "%s",
+            cetta_library_relative_base_dir(ctx)) >=
+        (int)sizeof(directory)) {
+        return false;
+    }
+
+    for (uint32_t depth = 0u;
+         depth < CETTA_MAX_IMPORT_DIR_DEPTH; depth++) {
+        if (path_join2(candidate, sizeof(candidate), directory, member) &&
+            resolve_module_candidate_with_format(
+                candidate, canonical_path, canonical_path_size,
+                format, reason, sizeof(reason))) {
+            return true;
+        }
+
+        char library_dir[PATH_MAX];
+        if (path_join2(
+                library_dir, sizeof(library_dir), directory, "lib") &&
+            path_join2(
+                candidate, sizeof(candidate), library_dir, member) &&
+            resolve_module_candidate_with_format(
+                candidate, canonical_path, canonical_path_size,
+                format, reason, sizeof(reason))) {
+            return true;
+        }
+
+        char parent[PATH_MAX];
+        if (!cetta_text_path_parent_dir(
+                parent, sizeof(parent), directory) ||
+            strcmp(parent, directory) == 0) {
+            break;
+        }
+        if (snprintf(directory, sizeof(directory), "%s", parent) >=
+            (int)sizeof(directory)) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool cetta_library_petta_resolve_library_member(
+    CettaLibraryContext *ctx, const char *member,
+    char *canonical_path, size_t canonical_path_size) {
+    CettaModuleFormat format = {
+        .kind = CETTA_MODULE_FORMAT_METTA,
+        .foreign_backend = CETTA_FOREIGN_BACKEND_NONE,
+    };
+    if (canonical_path && canonical_path_size > 0u)
+        canonical_path[0] = '\0';
+    return canonical_path && canonical_path_size > 0u &&
+           resolve_library_member_candidate(
+               ctx, member, canonical_path,
+               canonical_path_size, &format);
+}
+
+bool cetta_library_petta_resolve_library_file(
+    CettaLibraryContext *ctx, const char *root,
+    const char *member, char *canonical_path,
+    size_t canonical_path_size) {
+    char candidate[PATH_MAX];
+    char resolved[PATH_MAX];
+    const CettaModuleMount *mount;
+
+    if (canonical_path && canonical_path_size > 0u)
+        canonical_path[0] = '\0';
+    if (!ctx || !root || !module_name_is_legal(root) ||
+        !library_member_name_is_safe(member) ||
+        !canonical_path || canonical_path_size == 0u ||
+        !cetta_module_policy_allows(
+            &ctx->session.module_policy,
+            CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
+        return false;
+    }
+    mount = cetta_library_find_module_mount(ctx, root);
+    if (!mount || !module_mount_visible(ctx, mount) ||
+        !path_join2(
+            candidate, sizeof(candidate),
+            mount->root_path, member) ||
+        access(candidate, R_OK) != 0 ||
+        !realpath(candidate, resolved) ||
+        strlen(resolved) >= canonical_path_size) {
+        return false;
+    }
+    memcpy(canonical_path, resolved, strlen(resolved) + 1u);
+    return true;
+}
+
+bool cetta_library_import_library_member(
+    CettaLibraryContext *ctx, const char *member,
+    Space *space, bool target_is_fresh,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, int fuel, Atom **error_out) {
+    if (!ctx || !space || !eval_arena || !persistent_arena ||
+        !registry || !error_out) {
+        return false;
+    }
+    if (!library_member_name_is_safe(member)) {
+        *error_out = atom_symbol(
+            eval_arena, "illegal library member name");
+        return false;
+    }
+    /*
+     * Native PeTTa compatibility libraries are capability providers, not
+     * evaluator delegation.  Prefer them over an installation's Prolog
+     * wrapper of the same name.
+     */
+    if (ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
+        strcmp(member, "lib_import") == 0) {
+        return cetta_library_import(
+            ctx, member, space, eval_arena,
+            persistent_arena, registry, fuel, error_out);
+    }
+
+    CettaImportPlan plan;
+    memset(&plan, 0, sizeof(plan));
+    plan.spec.kind = CETTA_MODULE_SPEC_RELATIVE_FILE;
+    snprintf(plan.spec.raw_spec, sizeof(plan.spec.raw_spec), "%s", member);
+    snprintf(plan.spec.path_or_member,
+             sizeof(plan.spec.path_or_member), "%s", member);
+    plan.logical_target_space = logical_import_space(ctx, space);
+    plan.execution_target_space = space;
+    plan.target_is_fresh = target_is_fresh;
+    plan.transactional =
+        ctx->session.module_policy.transactional_imports &&
+        !target_is_fresh;
+    plan.provider_kind = CETTA_MODULE_PROVIDER_RELATIVE_FILE;
+
+    if (resolve_library_member_candidate(
+            ctx, member, plan.canonical_path,
+            sizeof(plan.canonical_path), &plan.format)) {
+        return execute_import_plan(
+            ctx, &plan, eval_arena, persistent_arena,
+            registry, fuel, error_out);
+    }
+
+    /*
+     * Builtin and CeTTa-local libraries retain the ordinary module resolver
+     * as a fallback.  The PeTTa descriptor search above only adds the
+     * source-tree library roots; it does not replace registered providers.
+     */
+    return cetta_library_import_module(
+        ctx, member, space, target_is_fresh,
+        eval_arena, persistent_arena, registry, fuel, error_out);
+}
+
 Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
                                     Arena *a,
                                     Atom *head, Atom **args, uint32_t nargs) {
@@ -6990,6 +8091,11 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
     }
     if (ctx->active_mask & CETTA_LIBRARY_SYSTEM) {
         Atom *result = cetta_library_dispatch_system(ctx, a, head, args, nargs);
+        if (result) return result;
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_LIB_PROLOG) {
+        Atom *result = cetta_library_dispatch_lib_prolog(
+            ctx, a, head, args, nargs);
         if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_LTS) {

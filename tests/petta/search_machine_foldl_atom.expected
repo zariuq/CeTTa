@@ -1,0 +1,14 @@
+is (a b c), should (a b c). ✅ 
+is (a b c), should (a b c). ✅ 
+is (seed a b), should (seed a b). ✅ 
+is (seed value), should (seed value). ✅ 
+is ((a b) (a b) (a b) (a b)), should ((a b) (a b) (a b) (a b)). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+true
+true
+true
+true
+true
+true
+true

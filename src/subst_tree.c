@@ -599,6 +599,7 @@ static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
         for (uint32_t bi = 0; bi < tagged.len; bi++) {
             tagged.entries[bi].var_id = var_epoch_id(tagged.entries[bi].var_id, epoch);
         }
+        bindings_invalidate_after_key_rewrite(&tagged);
         if (!bindings_has_loop(&tagged))
             smset_push_move(out, node->leaves[li].idx, epoch, &tagged);
         bindings_free(&tagged);

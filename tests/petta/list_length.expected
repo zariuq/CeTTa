@@ -1,0 +1,6 @@
+is 3, should 3. ✅ 
+is 0, should 0. ✅ 
+is (1 2), should (1 2). ✅ 
+true
+true
+true

@@ -85,6 +85,11 @@ typedef struct {
     CettaIndex projected_len;
     uint8_t projected_atom_id_width_bits;
     bool projection_valid;
+    /* True exactly when the native AtomId array is a current derived view of
+       the backend-primary bridge.  This is independent of projection_valid:
+       the decoded projection packet may be discarded after the native view
+       has been refreshed. */
+    bool native_shadow_synced;
 } ImportedBridgeState;
 
 typedef struct {
@@ -125,6 +130,22 @@ typedef struct SpaceMatchBackendOps {
     void (*note_add)(Space *s, AtomId atom_id, Atom *atom, CettaIndex atom_idx);
     void (*note_remove)(Space *s);
     CettaIndex (*candidates)(Space *s, Atom *pattern, CettaIndex **out);
+    /*
+     * Exact COUNT pushdown for a flat linear pattern over ground stored
+     * atoms.  Returning false declines the fragment without changing state;
+     * callers then use the ordinary matcher.  `examined` reports semantic
+     * candidate work, while `count` preserves occurrence multiplicity.
+     */
+    bool (*count_flat_linear)(Space *s, Arena *scratch, Atom *pattern,
+                              uint64_t *count, CettaIndex *examined);
+    /*
+     * Exact bag COUNT for a conjunction, consuming a backend-native pull
+     * traversal without reconstructing binding rows.  False declines to the
+     * ordinary conjunction evaluator.
+     */
+    bool (*count_conjunction)(Space *s, Arena *scratch,
+                              Atom **patterns, CettaExprLen npatterns,
+                              const Bindings *seed, uint64_t *count);
     void (*query)(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
     void (*query_conjunction)(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                               const Bindings *seed, BindingSet *out);
@@ -226,6 +247,10 @@ bool space_match_backend_step(Space *s, Arena *persistent_arena,
 bool space_match_backend_is_attached_compiled(const Space *s);
 bool space_match_backend_bridge_space(Space *s,
                                       CettaMorkSpaceHandle **out_bridge);
+/* Clone a backend-primary snapshot without projecting its logical rows through
+ * the native atom-id sequence. Returns false when the backend has no exact
+ * persistent snapshot operation, so callers may use the generic clone path. */
+bool space_match_backend_snapshot_clone(Space *dst, Space *src);
 bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
                                               Atom *atom);
 bool space_match_backend_store_atom_direct(Space *s, Atom *atom);
@@ -299,6 +324,30 @@ bool space_match_backend_mork_query_conjunction_direct(
     CettaExprLen npatterns,
     const Bindings *seed,
     BindingSet *out);
+/*
+ * Evaluate only the tuples newly enabled between an immutable PathMap
+ * snapshot (`old`) and its additive descendant (`known`). The implementation
+ * uses the disjoint first-delta partition and streams each exact bag row to
+ * the visitor. False means that the snapshot lineage or query shape is not
+ * admitted; callers retain their ordinary fixed-point evaluator as fallback.
+ */
+bool space_match_backend_visit_conjunction_semi_naive(
+    Space *known,
+    Space *old,
+    Arena *a,
+    Atom **patterns,
+    CettaExprLen npatterns,
+    const Bindings *seed,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx);
+bool space_match_backend_count_conjunction_semi_naive(
+    Space *known,
+    Space *old,
+    Arena *a,
+    Atom **patterns,
+    CettaExprLen npatterns,
+    const Bindings *seed,
+    uint64_t *out_count);
 void space_match_backend_print_inventory(FILE *out);
 
 /* Seeded single-atom matching for streamed conjunctive match (native

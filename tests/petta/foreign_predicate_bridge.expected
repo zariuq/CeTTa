@@ -1,0 +1,24 @@
+true
+(1 2 3)
+true
+true
+42
+(fixture_handle 7)
+(Predicate (fixture_handle 7))
+(fixture_handle 7)
+true
+true
+true
+(fixture_handle 7)
+(fixture_handle 7)
+(fixture_handle 7)
+compound
+list
+true
+true
+true
+world
+true
+true
+42
+(cetta_unknown_foreign 1)

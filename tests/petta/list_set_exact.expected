@@ -1,0 +1,14 @@
+is (b a c), should (b a c). ✅ 
+is (b c), should (b c). ✅ 
+is (a b c), should (a b c). ✅ 
+is (1 3), should (1 3). ✅ 
+is true, should true. ✅ 
+is true, should true. ✅ 
+is true, should true. ✅ 
+true
+true
+true
+true
+true
+true
+true

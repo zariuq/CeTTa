@@ -1,0 +1,4 @@
+(5)
+10
+()
+(Error (process_metta_string "(broken") (PettaProcessTextParseFailed "compiled PeTTa document has an unclosed expression"))
