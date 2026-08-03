@@ -239,6 +239,9 @@
    (prime-judge &self (Convert (+ 1 1) 2) 100))
 
 ; A resource ledger is attached to explicitly bounded judgments.
+; Type-annotation lookup buckets are keyed by spelling-stable symbol hashes,
+; so these observations do not depend on which other language interned its
+; symbols first.
 !(stable-prime-ledger
    (prime-ledger (prime-judge &self (Check Z Nat) 1000)))
 ; PrimeDef is a structured package. Its nucleus and each added semantic

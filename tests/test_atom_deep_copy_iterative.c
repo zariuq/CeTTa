@@ -88,6 +88,52 @@ int main(void) {
     assert(atom_deep_copy_session_copy(session, left_copy) == left_copy);
     atom_deep_copy_session_free(session);
 
+    /*
+     * A young expression may point into an immutable older generation.
+     * Promotion must copy the young parent while retaining the old child
+     * exactly; structural equality alone would not catch repeated copying.
+     */
+    Arena nursery;
+    arena_init(&nursery);
+    Atom *old_child = atom_expr2(
+        &destination, atom_symbol(&destination, "old"),
+        atom_int(&destination, 17));
+    Atom *young_parent = atom_expr2(
+        &nursery, atom_symbol(&nursery, "young"), old_child);
+    Atom *young_child = atom_expr2(
+        &nursery, atom_symbol(&nursery, "temporary"),
+        atom_int(&nursery, 23));
+    Atom *mixed_parent = atom_expr2(
+        &destination, atom_symbol(&destination, "mixed"), young_child);
+    assert(arena_owns_atom(&destination, old_child));
+    assert(!arena_owns_atom(&nursery, old_child));
+    assert(arena_owns_atom(&destination, mixed_parent));
+    assert(!arena_owns_atom(&destination, young_child));
+    session = atom_deep_copy_session_new(&destination);
+    assert(session != NULL);
+    Atom *promoted_parent =
+        atom_deep_copy_session_copy(session, young_parent);
+    Atom *closed_mixed_parent =
+        atom_deep_copy_session_copy(session, mixed_parent);
+    assert(promoted_parent != NULL);
+    assert(promoted_parent != young_parent);
+    assert(promoted_parent->expr.elems[1] == old_child);
+    /*
+     * Shallow ownership is not closure: a destination-owned wrapper around a
+     * nursery child must be traversed and repaired before the nursery dies.
+     */
+    assert(closed_mixed_parent != NULL);
+    assert(closed_mixed_parent != mixed_parent);
+    assert(closed_mixed_parent->expr.elems[1] != young_child);
+    assert(arena_owns_atom(
+        &destination, closed_mixed_parent->expr.elems[1]));
+    assert(atom_eq(closed_mixed_parent, mixed_parent));
+    atom_deep_copy_session_free(session);
+    arena_free(&nursery);
+    assert(atom_is_symbol(
+        closed_mixed_parent->expr.elems[1]->expr.elems[0],
+        "temporary"));
+
     arena_free(&destination);
     arena_free(&source);
     symbol_table_free(&symbols);

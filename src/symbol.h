@@ -123,6 +123,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(context_space, "context-space") \
     X(call_native, "call-native") \
     X(git_module_bang, "git-module!") \
+    X(git_import_bang, "git-import!") \
     X(register_module_bang, "register-module!") \
     X(import_bang, "import!") \
     X(include, "include") \
@@ -203,6 +204,8 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(op_xor, "xor") \
     /* ── Grounded I/O and formatting ── */ \
     X(println_bang, "println!") \
+    X(readln_bang, "readln!") \
+    X(flush_output_bang, "flush-output!") \
     X(trace_bang, "trace!") \
     X(format_args, "format-args") \
     X(repr, "repr") \
@@ -266,6 +269,8 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
+    X(lib_prolog_available, "__cetta_lib_prolog_available") \
+    X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
     X(lib_fs_read_text, "__cetta_lib_fs_read_text") \
     X(lib_fs_write_text, "__cetta_lib_fs_write_text") \
@@ -401,8 +406,10 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_mm2_context_step, "__cetta_lib_mm2_context_step") \
     X(lib_mm2_context_size, "__cetta_lib_mm2_context_size") \
     X(lib_mm2_context_atoms, "__cetta_lib_mm2_context_atoms") \
-    /* ── Native handle ── */ \
-    X(native_handle, "NativeHandle")
+    /* ── Native handle; final member of the builtin-surface ID interval ── */ \
+    X(native_handle, "NativeHandle") \
+    /* Shared control syntax has an interned identity but is not a value. */ \
+    X(if_text, "if")
 
 typedef struct {
 #define CETTA_BUILTIN_SYMBOL_FIELD(field, text) SymbolId field;

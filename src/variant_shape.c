@@ -26,11 +26,8 @@ static const char *variant_shape_slot_name_or_default(const CettaVariantShapeOpt
  * This tag is a practical reservation rather than a theorem about all VarIds;
  * the eventual opaque instance layer will make the separation stronger.
  */
-static const VarId kVariantPrivateSlotMask = 0xFFFFFFFF00000000ULL;
-static const VarId kVariantPrivateSlotTag = 0xFFFFA11A00000000ULL;
-
 VarId variant_shape_slot_id(uint32_t ordinal) {
-    return kVariantPrivateSlotTag | (VarId)ordinal;
+    return CETTA_VARIANT_PRIVATE_SLOT_TAG | (VarId)ordinal;
 }
 
 uint32_t variant_shape_slot_ordinal(VarId id) {
@@ -38,7 +35,7 @@ uint32_t variant_shape_slot_ordinal(VarId id) {
 }
 
 bool variant_private_var_id(VarId id) {
-    return (id & kVariantPrivateSlotMask) == kVariantPrivateSlotTag;
+    return atom_var_id_is_private_variant(id);
 }
 
 void variant_shape_init(VariantShape *shape) {
@@ -200,6 +197,8 @@ bool variant_shape_canonicalize_bindings(Arena *dst, const Bindings *src,
         }
         out->entries[out->len - 1].legacy_name_fallback =
             src->entries[i].legacy_name_fallback;
+        if (src->entries[i].legacy_name_fallback)
+            out->legacy_fallback_count++;
     }
     for (uint32_t i = 0; i < src->eq_len; i++) {
         Atom *lhs = variant_shape_canonicalize_atom(dst, src->constraints[i].lhs,
@@ -251,6 +250,8 @@ bool variant_shape_materialize_bindings(Arena *dst, const Bindings *src,
         }
         out->entries[out->len - 1].legacy_name_fallback =
             src->entries[i].legacy_name_fallback;
+        if (src->entries[i].legacy_name_fallback)
+            out->legacy_fallback_count++;
     }
     for (uint32_t i = 0; i < src->eq_len; i++) {
         Atom *lhs = variant_shape_materialize_atom(dst, src->constraints[i].lhs,

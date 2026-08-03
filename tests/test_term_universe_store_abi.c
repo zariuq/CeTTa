@@ -932,6 +932,146 @@ static void test_atom_deep_copy_preserves_pointer_dag(void) {
     arena_free(&src_arena);
 }
 
+static void test_structural_slot_hash_collision_family(void) {
+    Arena persistent;
+    TermUniverse universe;
+    arena_init(&persistent);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    AtomId m = tu_intern_symbol(
+        &universe, symbol_intern_cstr(g_symbols, "M"));
+    AtomId w = tu_intern_symbol(
+        &universe, symbol_intern_cstr(g_symbols, "W"));
+    AtomId c = tu_intern_symbol(
+        &universe, symbol_intern_cstr(g_symbols, "C"));
+    AtomId num = tu_intern_symbol(
+        &universe, symbol_intern_cstr(g_symbols, "num"));
+    AtomId z = tu_intern_symbol(
+        &universe, symbol_intern_cstr(g_symbols, "Z"));
+    assert(m != CETTA_ATOM_ID_NONE);
+    assert(w != CETTA_ATOM_ID_NONE);
+    assert(c != CETTA_ATOM_ID_NONE);
+    assert(num != CETTA_ATOM_ID_NONE);
+    assert(z != CETTA_ATOM_ID_NONE);
+
+    AtomId *frontier = malloc(sizeof(*frontier));
+    assert(frontier != NULL);
+    frontier[0] = z;
+    size_t frontier_len = 1u;
+    reset_term_universe_witnesses(&universe);
+
+    for (unsigned depth = 0; depth < 10u; depth++) {
+        AtomId *next = malloc(sizeof(*next) * frontier_len * 2u);
+        assert(next != NULL);
+        for (size_t i = 0; i < frontier_len; i++) {
+            AtomId m_children[2] = {m, frontier[i]};
+            AtomId w_children[2] = {w, frontier[i]};
+            AtomId c_children[2] = {c, frontier[i]};
+            AtomId m_term = tu_expr_from_ids(
+                &universe, m_children, 2u);
+            AtomId w_term = tu_expr_from_ids(
+                &universe, w_children, 2u);
+            AtomId c_term = tu_expr_from_ids(
+                &universe, c_children, 2u);
+            assert(m_term != CETTA_ATOM_ID_NONE);
+            assert(w_term != CETTA_ATOM_ID_NONE);
+            assert(c_term != CETTA_ATOM_ID_NONE);
+
+            AtomId num_m_children[2] = {num, m_term};
+            AtomId num_w_children[2] = {num, w_term};
+            AtomId num_c_children[2] = {num, c_term};
+            assert(tu_expr_from_ids(
+                       &universe, num_m_children, 2u) !=
+                   CETTA_ATOM_ID_NONE);
+            assert(tu_expr_from_ids(
+                       &universe, num_w_children, 2u) !=
+                   CETTA_ATOM_ID_NONE);
+            assert(tu_expr_from_ids(
+                       &universe, num_c_children, 2u) !=
+                   CETTA_ATOM_ID_NONE);
+            next[2u * i] = m_term;
+            next[2u * i + 1u] = w_term;
+        }
+        free(frontier);
+        frontier = next;
+        frontier_len *= 2u;
+    }
+
+    AtomId duplicate_children[2] = {m, z};
+    AtomId duplicate_a = tu_expr_from_ids(
+        &universe, duplicate_children, 2u);
+    AtomId duplicate_b = tu_expr_from_ids(
+        &universe, duplicate_children, 2u);
+    assert(duplicate_a != CETTA_ATOM_ID_NONE);
+    assert(duplicate_a == duplicate_b);
+
+    CettaTermUniverseDiagnostics diag =
+        snapshot_term_universe_witnesses(&universe);
+    uint64_t lookups =
+        diag.direct_lookup_hits + diag.direct_lookup_misses;
+    assert(lookups > 6000u);
+    assert(diag.direct_lookup_probes <= lookups * 8u);
+    assert(diag.direct_lookup_max_probe <= 64u);
+
+    free(frontier);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
+static void test_hashcons_structural_slot_collision_family(void) {
+    Arena arena;
+    HashConsTable hashcons;
+    arena_init(&arena);
+    hashcons_init(&hashcons);
+    g_hashcons = &hashcons;
+    arena_set_hashcons(&arena, &hashcons);
+
+    Atom *m = atom_symbol(&arena, "M");
+    Atom *w = atom_symbol(&arena, "W");
+    Atom *c = atom_symbol(&arena, "C");
+    Atom *num = atom_symbol(&arena, "num");
+    Atom *z = atom_symbol(&arena, "Z");
+    assert(m && w && c && num && z);
+
+    Atom **frontier = malloc(sizeof(*frontier));
+    assert(frontier != NULL);
+    frontier[0] = z;
+    size_t frontier_len = 1u;
+
+    for (unsigned depth = 0; depth < 10u; depth++) {
+        Atom **next = malloc(sizeof(*next) * frontier_len * 2u);
+        assert(next != NULL);
+        for (size_t i = 0; i < frontier_len; i++) {
+            Atom *m_term = atom_expr2(&arena, m, frontier[i]);
+            Atom *w_term = atom_expr2(&arena, w, frontier[i]);
+            Atom *c_term = atom_expr2(&arena, c, frontier[i]);
+            assert(m_term && w_term && c_term);
+            assert(atom_expr2(&arena, num, m_term));
+            assert(atom_expr2(&arena, num, w_term));
+            assert(atom_expr2(&arena, num, c_term));
+            next[2u * i] = m_term;
+            next[2u * i + 1u] = w_term;
+        }
+        free(frontier);
+        frontier = next;
+        frontier_len *= 2u;
+    }
+
+    Atom *duplicate_a = atom_expr2(&arena, m, z);
+    Atom *duplicate_b = atom_expr2(&arena, m, z);
+    assert(duplicate_a == duplicate_b);
+    assert(hashcons.lookup_count > 6000u);
+    assert(hashcons.lookup_probes <= hashcons.lookup_count * 8u);
+    assert(hashcons.maximum_lookup_probe <= 64u);
+
+    free(frontier);
+    arena_set_hashcons(&arena, NULL);
+    g_hashcons = NULL;
+    hashcons_free(&hashcons);
+    arena_free(&arena);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -954,6 +1094,8 @@ int main(void) {
     test_file_ingress_workload_witness();
     test_query_results_capacity_failure_is_loud();
     test_atom_deep_copy_preserves_pointer_dag();
+    test_structural_slot_hash_collision_family();
+    test_hashcons_structural_slot_collision_family();
     arena_init(&persistent);
     arena_init(&scratch);
     term_universe_init(&universe);

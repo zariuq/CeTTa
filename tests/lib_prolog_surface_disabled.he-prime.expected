@@ -1,0 +1,4 @@
+[(prolog:query (quote true) (quote absent))]
+[()]
+[False]
+[(prolog:extension absent)]

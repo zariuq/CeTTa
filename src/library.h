@@ -5,6 +5,9 @@
 #include "foreign.h"
 #include "mork_space_bridge_runtime.h"
 #include "native_handle.h"
+#include "lib_prolog.h"
+#include "petta_program.h"
+#include "petta_libpl.h"
 #include "session.h"
 #include "space.h"
 #include <stdbool.h>
@@ -26,6 +29,11 @@ typedef struct {
     Space *space;
     bool loading;
 } CettaLoadedModule;
+
+typedef struct {
+    SymbolId head;
+    CettaExprLen arity;
+} CettaPettaRelationKey;
 
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
@@ -56,6 +64,16 @@ typedef struct CettaLibraryContext {
     CettaNativeHandleSlot native_handles[CETTA_MAX_NATIVE_HANDLES];
     uint32_t native_handle_len;
     uint64_t native_handle_next_id;
+    SymbolId *petta_translator_rules;
+    uint32_t petta_translator_rule_len;
+    uint32_t petta_translator_rule_cap;
+    uint64_t petta_translator_symbol_table_instance;
+    CettaPettaRelationKey *petta_tabled_relations;
+    uint32_t petta_tabled_relation_len;
+    uint32_t petta_tabled_relation_cap;
+    uint64_t petta_tabled_symbol_table_instance;
+    PettaProgram *petta_program;
+    CettaLibPrologRuntime *lib_prolog;
     CettaForeignRuntime *foreign_runtime;
 } CettaLibraryContext;
 
@@ -86,12 +104,36 @@ bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
                                    Arena *eval_arena, Atom **error_out);
 bool cetta_library_register_git_module(CettaLibraryContext *ctx, const char *url,
                                        Arena *eval_arena, Atom **error_out);
+bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
+                                    const char *git_path,
+                                    const char *build_command,
+                                    const char *base_directory,
+                                    Arena *eval_arena,
+                                    Atom **error_out);
+bool cetta_library_petta_git_import_enabled(
+    const CettaLibraryContext *ctx);
 
 bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
                                  Arena *persistent_arena, Registry *registry,
                                  int fuel, Atom **error_out);
+bool cetta_library_import_library_member(
+    CettaLibraryContext *ctx, const char *member,
+    Space *space, bool target_is_fresh,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, int fuel, Atom **error_out);
+/*
+ * Resolve a PeTTa `(library Member)` value through the same package mounts
+ * and ancestor search used by descriptor imports, without loading it.
+ */
+bool cetta_library_petta_resolve_library_member(
+    CettaLibraryContext *ctx, const char *member,
+    char *canonical_path, size_t canonical_path_size);
+bool cetta_library_petta_resolve_library_file(
+    CettaLibraryContext *ctx, const char *root,
+    const char *member, char *canonical_path,
+    size_t canonical_path_size);
 bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
                                   Space *space, Arena *eval_arena,
                                   Arena *persistent_arena, Registry *registry,
@@ -112,6 +154,20 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
 bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
                                                Atom *space_arg,
                                                CettaMorkSpaceHandle **bridge_out);
+bool cetta_library_petta_translator_rule_contains(
+    CettaLibraryContext *ctx, SymbolId head);
+bool cetta_library_petta_translator_rule_set(
+    CettaLibraryContext *ctx, SymbolId head, bool enabled);
+bool cetta_library_petta_tabled_relation_contains(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
+bool cetta_library_petta_tabled_relation_set(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
+    bool enabled);
+bool cetta_library_petta_process_text(
+    CettaLibraryContext *ctx, Space *space,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, const char *text,
+    Atom **result_out, Atom **error_out);
 bool cetta_library_pack_mork_expr_batch(Arena *scratch, Atom **items,
                                         uint32_t item_count,
                                         uint8_t **packet_out,

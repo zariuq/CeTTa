@@ -115,10 +115,16 @@ static AtomId petta_projection_token_bytes(
     if (!context || !context->form_active || !context->universe ||
         len == 0u || (len > 0u && !bytes))
         return CETTA_ATOM_ID_NONE;
-    if (len == 4u && memcmp(bytes, "True", 4u) == 0)
-        return tu_intern_bool(context->universe, true);
-    if (len == 5u && memcmp(bytes, "False", 5u) == 0)
-        return tu_intern_bool(context->universe, false);
+    if (len == 4u && memcmp(bytes, "True", 4u) == 0) {
+        return tu_intern_symbol(
+            context->universe,
+            symbol_intern_cstr(g_symbols, "true"));
+    }
+    if (len == 5u && memcmp(bytes, "False", 5u) == 0) {
+        return tu_intern_symbol(
+            context->universe,
+            symbol_intern_cstr(g_symbols, "false"));
+    }
     if (!memchr(bytes, '\0', len) &&
         petta_ascii_number_shape(bytes, len, &floating)) {
         char *text = petta_projection_cstr(bytes, len);

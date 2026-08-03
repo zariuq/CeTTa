@@ -18,10 +18,12 @@
 
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
 use cetta_space::{
-    bridge_expr_env_text, bridge_expr_text, bridge_parse_expr_chunk, bridge_parse_single_expr,
-    counted_contains_expr, counted_entries, counted_exact_entry, counted_expr_row_packet,
-    counted_factor_candidates, counted_insert_expr_batch_cached, counted_insert_expr_cached,
-    counted_insert_expr_count_cached, counted_query_only_packet_rows,
+    FlatCountedCursorStats, FlatCountedIndexStats, FlatCountedQueryAdmission,
+    FlatCountedQueryCursor, FlatCountedQueryIndex, FlatSemiNaiveQueryCursor, bridge_expr_env_text,
+    bridge_expr_packet_to_bytes, bridge_expr_text, bridge_parse_expr_chunk,
+    bridge_parse_single_expr, counted_contains_expr, counted_entries, counted_exact_entry,
+    counted_expr_row_packet, counted_factor_candidates, counted_insert_expr_batch_cached,
+    counted_insert_expr_cached, counted_insert_expr_count_cached, counted_query_only_packet_rows,
     counted_query_rows_detailed_packet_rows, counted_remove_expr_batch_cached,
     counted_remove_one_expr_cached, counted_sexpr_text, counted_sync_cached_logical_size,
     counted_unique_size, stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes,
@@ -37,6 +39,7 @@ use pathmap::zipper::{
 use std::collections::{BTreeMap, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{self, slice_from_raw_parts_mut};
+use std::sync::{Arc, Mutex};
 
 #[repr(C)]
 pub struct MorkSpace {
@@ -78,6 +81,23 @@ struct BridgeSpace {
     storage_mode: BridgeStorageMode,
     counted_logical_size: u64,
     exact_contexts: HashMap<Vec<u8>, BTreeMap<Vec<u8>, u32>>,
+    flat_query_index: Arc<FlatCountedQueryIndex>,
+    query_replay_cache: Arc<Mutex<QueryReplayCache>>,
+    query_revision: u64,
+    counted_version: Arc<CountedVersion>,
+}
+
+#[derive(Clone)]
+struct CountedMutation {
+    expr_bytes: Vec<u8>,
+    delta: i64,
+}
+
+struct CountedVersion {
+    parent: Option<Arc<CountedVersion>>,
+    changes: Vec<CountedMutation>,
+    monotone: bool,
+    depth: u64,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -98,6 +118,7 @@ struct BridgeContext {
     program_chunks: Vec<Vec<u8>>,
 }
 
+#[derive(Copy, Clone)]
 enum BridgeQueryCursorKind {
     QueryOnlyV2,
     MultiRefV3 { factor_count: u32 },
@@ -105,8 +126,55 @@ enum BridgeQueryCursorKind {
 
 struct BridgeQueryCursor {
     kind: BridgeQueryCursorKind,
+    source: BridgeQueryCursorSource,
+    pending_row: Option<Vec<u8>>,
+    indexed_setup_stats: Option<FlatCountedIndexStats>,
+    indexed_query_revision: u64,
+    replay_hit: bool,
+    replay_capture: Option<QueryReplayCapture>,
+}
+
+enum BridgeQueryCursorSource {
+    Materialized {
+        rows: Vec<Vec<u8>>,
+        next_row: usize,
+    },
+    Flat(FlatCountedQueryCursor),
+    SemiNaive(FlatSemiNaiveQueryCursor),
+    Replay {
+        rows: Arc<Vec<Vec<u8>>>,
+        next_row: usize,
+        stats: FlatCountedCursorStats,
+    },
+}
+
+fn counted_version_root() -> Arc<CountedVersion> {
+    Arc::new(CountedVersion {
+        parent: None,
+        changes: Vec::new(),
+        monotone: true,
+        depth: 0,
+    })
+}
+
+const QUERY_REPLAY_MAX_ENTRIES: usize = 64;
+const QUERY_REPLAY_MAX_ROWS: usize = 4096;
+const QUERY_REPLAY_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Default)]
+struct QueryReplayCache {
+    entries: BTreeMap<(u64, Vec<u8>), Arc<Vec<Vec<u8>>>>,
+    completions: u64,
+    hits: u64,
+    rows_stored: u64,
+}
+
+struct QueryReplayCapture {
+    cache: Arc<Mutex<QueryReplayCache>>,
+    key: (u64, Vec<u8>),
     rows: Vec<Vec<u8>>,
-    next_row: usize,
+    bytes: usize,
+    eligible: bool,
 }
 
 struct BridgeCursor {
@@ -140,10 +208,11 @@ const QUERY_ONLY_V2_VERSION: u16 = 5;
 const QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
 const QUERY_ONLY_V2_FLAG_WIDE_TOKENS: u16 = 1 << 4;
-const CONTEXTUAL_ROWS_WIRE_VERSION: u16 = 5;
+const CONTEXTUAL_ROWS_WIRE_VERSION: u16 = 6;
 const CONTEXTUAL_EXACT_ROWS_FLAGS: u16 = 0;
 const OPEN_VAR_REF_EXACT: u8 = 0;
 const OPEN_VAR_REF_QUERY_SLOT: u8 = 1;
+const OPEN_VAR_REF_MATCHED_EXACT: u8 = 2;
 const CONTEXTUAL_QUERY_ROWS_FLAGS: u16 = 0;
 const BRIDGE_EXPR_TAG_ARITY: u8 = 0x00;
 const BRIDGE_EXPR_TAG_SYMBOL: u8 = 0x01;
@@ -154,6 +223,31 @@ const MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const MULTI_REF_V3_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
 const MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES: u16 = 1 << 3;
 const MULTI_REF_V3_FLAG_WIDE_TOKENS: u16 = 1 << 4;
+const INDEXED_SPACE_STAT_QUERY_REVISION: u32 = 0;
+const INDEXED_SPACE_STAT_CATALOG_BUILT: u32 = 1;
+const INDEXED_SPACE_STAT_CATALOG_BUILDS: u32 = 2;
+const INDEXED_SPACE_STAT_CATALOG_ROWS_SCANNED: u32 = 3;
+const INDEXED_SPACE_STAT_ACCESS_PATH_BUILDS: u32 = 4;
+const INDEXED_SPACE_STAT_ACCESS_PATH_ROWS_INDEXED: u32 = 5;
+const INDEXED_SPACE_STAT_INCREMENTAL_UPDATES: u32 = 6;
+const INDEXED_SPACE_STAT_PLAN_BUILDS: u32 = 7;
+const INDEXED_SPACE_STAT_PLAN_CACHE_HITS: u32 = 8;
+const INDEXED_SPACE_STAT_REPLAY_COMPLETIONS: u32 = 9;
+const INDEXED_SPACE_STAT_REPLAY_HITS: u32 = 10;
+const INDEXED_SPACE_STAT_REPLAY_ROWS_STORED: u32 = 11;
+const INDEXED_CURSOR_STAT_QUERY_REVISION: u32 = 0;
+const INDEXED_CURSOR_STAT_CATALOG_BUILDS: u32 = 1;
+const INDEXED_CURSOR_STAT_CATALOG_ROWS_SCANNED: u32 = 2;
+const INDEXED_CURSOR_STAT_ACCESS_PATH_BUILDS: u32 = 3;
+const INDEXED_CURSOR_STAT_ACCESS_PATH_ROWS_INDEXED: u32 = 4;
+const INDEXED_CURSOR_STAT_PLAN_BUILDS: u32 = 5;
+const INDEXED_CURSOR_STAT_PLAN_CACHE_HITS: u32 = 6;
+const INDEXED_CURSOR_STAT_TRIE_SEEKS: u32 = 7;
+const INDEXED_CURSOR_STAT_TRIE_DESCENTS: u32 = 8;
+const INDEXED_CURSOR_STAT_ROWS_EMITTED: u32 = 9;
+const INDEXED_CURSOR_STAT_MAX_FRAME_CELLS: u32 = 10;
+const INDEXED_CURSOR_STAT_ROWS_AGGREGATED: u32 = 11;
+const INDEXED_CURSOR_STAT_REPLAY_HIT: u32 = 12;
 #[repr(i32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MorkStatusCode {
@@ -466,6 +560,19 @@ unsafe fn bridge_query_cursor_mut<'a>(
     Ok(unsafe { &mut *(cursor as *mut BridgeQueryCursor) })
 }
 
+/// Reinterprets an opaque `MorkQueryCursor` handle as the bridge-owned query stream.
+unsafe fn bridge_query_cursor_ref<'a>(
+    cursor: *const MorkQueryCursor,
+) -> Result<&'a BridgeQueryCursor, MorkStatus> {
+    if cursor.is_null() {
+        return Err(MorkStatus::err(
+            MorkStatusCode::Null,
+            b"null MorkQueryCursor".to_vec(),
+        ));
+    }
+    Ok(unsafe { &*(cursor as *const BridgeQueryCursor) })
+}
+
 /// Reinterprets an opaque `MorkProductCursor` handle as the bridge-owned stitched product cursor.
 ///
 /// # Safety
@@ -611,6 +718,10 @@ fn bridge_space_from_parts(
         storage_mode,
         counted_logical_size,
         exact_contexts: HashMap::new(),
+        flat_query_index: Arc::new(FlatCountedQueryIndex::default()),
+        query_replay_cache: Arc::new(Mutex::new(QueryReplayCache::default())),
+        query_revision: 0,
+        counted_version: counted_version_root(),
     });
     Ok(Box::into_raw(bridge_space) as *mut MorkSpace)
 }
@@ -638,6 +749,10 @@ fn bridge_space_clone_owned(source: &BridgeSpace) -> BridgeSpace {
         storage_mode: source.storage_mode,
         counted_logical_size: source.counted_logical_size,
         exact_contexts: source.exact_contexts.clone(),
+        flat_query_index: source.flat_query_index.clone(),
+        query_replay_cache: source.query_replay_cache.clone(),
+        query_revision: source.query_revision,
+        counted_version: source.counted_version.clone(),
     }
 }
 
@@ -646,8 +761,146 @@ fn clone_bridge_space(source: &BridgeSpace) -> *mut MorkSpace {
     Box::into_raw(bridge_space) as *mut MorkSpace
 }
 
+fn bridge_monotone_delta_space(
+    later: &BridgeSpace,
+    earlier: &BridgeSpace,
+) -> Result<BridgeSpace, String> {
+    if !bridge_uses_counted_storage(later) || !bridge_uses_counted_storage(earlier) {
+        return Err("monotone delta requires two counted PathMap spaces".to_string());
+    }
+    if later.counted_version.depth < earlier.counted_version.depth {
+        return Err("monotone delta source does not descend from the baseline".to_string());
+    }
+
+    let mut accumulated = BTreeMap::<Vec<u8>, u64>::new();
+    let mut version = later.counted_version.clone();
+    while !Arc::ptr_eq(&version, &earlier.counted_version) {
+        if !version.monotone {
+            return Err("monotone delta crosses a removal, reset, or opaque mutation".to_string());
+        }
+        for change in &version.changes {
+            if change.delta <= 0 {
+                return Err("monotone delta encountered a non-additive change".to_string());
+            }
+            let delta = u64::try_from(change.delta)
+                .map_err(|_| "monotone delta change exceeds u64".to_string())?;
+            let count = accumulated.entry(change.expr_bytes.clone()).or_insert(0);
+            *count = count
+                .checked_add(delta)
+                .ok_or_else(|| "monotone delta multiplicity exceeds u64".to_string())?;
+        }
+        version = version.parent.clone().ok_or_else(|| {
+            "monotone delta source does not descend from the baseline".to_string()
+        })?;
+    }
+
+    let mut delta = BridgeSpace {
+        inner: Space::new(),
+        storage_mode: BridgeStorageMode::CountedPathmap,
+        counted_logical_size: 0,
+        exact_contexts: HashMap::new(),
+        flat_query_index: Arc::new(FlatCountedQueryIndex::default()),
+        query_replay_cache: Arc::new(Mutex::new(QueryReplayCache::default())),
+        query_revision: 0,
+        counted_version: counted_version_root(),
+    };
+    for (expr_bytes, count) in accumulated {
+        let count = u32::try_from(count).map_err(|_| {
+            "monotone delta multiplicity exceeds counted PathMap capacity".to_string()
+        })?;
+        counted_insert_expr_count_cached(
+            &mut delta.inner,
+            &expr_bytes,
+            count,
+            &mut delta.counted_logical_size,
+        )?;
+    }
+    Ok(delta)
+}
+
 fn bridge_uses_counted_storage(bridge: &BridgeSpace) -> bool {
     bridge.storage_mode == BridgeStorageMode::CountedPathmap
+}
+
+fn bridge_advance_counted_version(
+    bridge: &mut BridgeSpace,
+    changes: Vec<CountedMutation>,
+    monotone: bool,
+) {
+    if let Some(current) = Arc::get_mut(&mut bridge.counted_version) {
+        current.monotone &= monotone;
+        current.changes.extend(changes);
+        return;
+    }
+    bridge.counted_version = Arc::new(CountedVersion {
+        parent: Some(bridge.counted_version.clone()),
+        changes,
+        monotone,
+        depth: bridge.counted_version.depth.saturating_add(1),
+    });
+}
+
+fn bridge_reset_flat_query_index(bridge: &mut BridgeSpace) {
+    bridge.flat_query_index = Arc::new(FlatCountedQueryIndex::default());
+    if let Ok(mut replay) = bridge.query_replay_cache.lock() {
+        replay.entries.clear();
+    }
+    bridge.query_revision = bridge.query_revision.wrapping_add(1);
+    if bridge_uses_counted_storage(bridge) {
+        bridge_advance_counted_version(bridge, Vec::new(), false);
+    }
+}
+
+fn bridge_note_counted_changes(bridge: &mut BridgeSpace, changes: Vec<CountedMutation>) {
+    if !bridge_uses_counted_storage(bridge) || changes.is_empty() {
+        return;
+    }
+    let monotone = changes.iter().all(|change| change.delta > 0);
+    let changed_exprs = changes
+        .iter()
+        .map(|change| change.expr_bytes.clone())
+        .collect::<Vec<_>>();
+    bridge_advance_counted_version(bridge, changes, monotone);
+    bridge.query_revision = bridge.query_revision.wrapping_add(1);
+    if let Ok(mut replay) = bridge.query_replay_cache.lock() {
+        replay.entries.clear();
+    }
+    if !bridge.flat_query_index.is_catalog_built() {
+        return;
+    }
+    let update =
+        Arc::make_mut(&mut bridge.flat_query_index).observe_exprs(&bridge.inner, changed_exprs);
+    if update.is_err() {
+        bridge.flat_query_index = Arc::new(FlatCountedQueryIndex::default());
+    }
+}
+
+fn counted_changes<I, B>(exprs: I, sign: i64) -> Result<Vec<CountedMutation>, String>
+where
+    I: IntoIterator<Item = B>,
+    B: AsRef<[u8]>,
+{
+    let mut counts = BTreeMap::<Vec<u8>, u32>::new();
+    for expr in exprs {
+        let count = counts.entry(expr.as_ref().to_vec()).or_insert(0);
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| "counted mutation multiplicity exceeds u32".to_string())?;
+    }
+    Ok(counts
+        .into_iter()
+        .map(|(expr_bytes, count)| CountedMutation {
+            expr_bytes,
+            delta: sign * i64::from(count),
+        })
+        .collect())
+}
+
+fn counted_single_change(expr: &[u8], delta: i64) -> Vec<CountedMutation> {
+    vec![CountedMutation {
+        expr_bytes: expr.to_vec(),
+        delta,
+    }]
 }
 
 fn bridge_sync_counted_logical_size(bridge: &mut BridgeSpace) -> Result<(), String> {
@@ -694,6 +947,7 @@ fn bridge_space_structural_algebra(
 
     dst.exact_contexts.clear();
     bridge_sync_counted_logical_size(dst)?;
+    bridge_reset_flat_query_index(dst);
     Ok(status)
 }
 
@@ -884,6 +1138,7 @@ fn bridge_space_add_logical_rows_from(
         dst.exact_contexts.clear();
     }
 
+    bridge_reset_flat_query_index(dst);
     Ok(added)
 }
 
@@ -1066,6 +1321,10 @@ fn bridge_space_load_act_replacement(
         storage_mode,
         counted_logical_size: 0,
         exact_contexts: HashMap::new(),
+        flat_query_index: Arc::new(FlatCountedQueryIndex::default()),
+        query_replay_cache: Arc::new(Mutex::new(QueryReplayCache::default())),
+        query_revision: 0,
+        counted_version: counted_version_root(),
     };
     let sidecar_path = act_copy_sidecar_path(path);
 
@@ -1651,12 +1910,16 @@ fn append_query_slot_context_entry(out: &mut Vec<u8>, value_slot: u16, query_slo
 }
 
 #[cfg(feature = "pathmap-space")]
-fn append_exact_context_entry_remapped(
+fn append_matched_exact_context_entry_remapped(
     out: &mut Vec<u8>,
     target_slot: u16,
+    source_env: u8,
     exact_context: &[u8],
     source_slot: u16,
 ) -> Result<(), String> {
+    if source_env == 0 {
+        return Err("matched exact context requires a non-query source environment".to_string());
+    }
     let mut offset = 0usize;
     let entry_count = read_u32_be_at(exact_context, &mut offset)?;
     for _ in 0..entry_count {
@@ -1684,7 +1947,9 @@ fn append_exact_context_entry_remapped(
         offset += spelling_len;
         if slot == source_slot {
             append_u16_be(out, target_slot);
-            out.push(OPEN_VAR_REF_EXACT);
+            out.push(OPEN_VAR_REF_MATCHED_EXACT);
+            out.push(0);
+            out.push(source_env);
             out.push(0);
             out.extend_from_slice(var_id_bytes);
             append_u32_be(out, spelling_len as u32);
@@ -1793,9 +2058,10 @@ fn build_contextual_query_value_context(
         let exact_context = entry.exact_context.as_deref().ok_or_else(|| {
             "contextual query rows need exact context for matched variable value".to_string()
         })?;
-        append_exact_context_entry_remapped(
+        append_matched_exact_context_entry_remapped(
             &mut context,
             u16::from(value_slot),
+            source_env,
             exact_context,
             u16::from(source_slot),
         )?;
@@ -2125,8 +2391,7 @@ fn query_bindings_query_only_v2_rows(
                     Some(next) => next,
                     None => {
                         error = Some(
-                            "query-only v2 packet row count exceeds u64 packet limit"
-                                .to_string(),
+                            "query-only v2 packet row count exceeds u64 packet limit".to_string(),
                         );
                         return false;
                     }
@@ -2193,8 +2458,7 @@ fn query_bindings_multi_ref_v3_packet(
     space: &mut BridgeSpace,
     pattern: &[u8],
 ) -> Result<(Vec<u8>, u64), String> {
-    let (factor_count, row_count, pending_rows) =
-        query_bindings_multi_ref_v3_rows(space, pattern)?;
+    let (factor_count, row_count, pending_rows) = query_bindings_multi_ref_v3_rows(space, pattern)?;
     let mut packet = Vec::new();
 
     append_multi_ref_v3_header(
@@ -2429,6 +2693,60 @@ fn query_cursor_packet_would_exceed(packet_len: usize, row_len: usize, max_bytes
             .unwrap_or(true)
 }
 
+fn query_replay_lookup(
+    cache: &Arc<Mutex<QueryReplayCache>>,
+    key: &(u64, Vec<u8>),
+) -> Option<Arc<Vec<Vec<u8>>>> {
+    let mut replay = cache.lock().ok()?;
+    let rows = replay.entries.get(key)?.clone();
+    replay.hits = replay.hits.saturating_add(1);
+    Some(rows)
+}
+
+fn query_cursor_capture_row(cursor: &mut BridgeQueryCursor, row: &[u8]) {
+    let Some(capture) = cursor.replay_capture.as_mut() else {
+        return;
+    };
+    if !capture.eligible {
+        return;
+    }
+    let Some(next_bytes) = capture.bytes.checked_add(row.len()) else {
+        capture.eligible = false;
+        capture.rows.clear();
+        return;
+    };
+    if capture.rows.len() >= QUERY_REPLAY_MAX_ROWS || next_bytes > QUERY_REPLAY_MAX_BYTES {
+        capture.eligible = false;
+        capture.rows.clear();
+        return;
+    }
+    capture.bytes = next_bytes;
+    capture.rows.push(row.to_vec());
+}
+
+fn query_cursor_publish_completed_replay(cursor: &mut BridgeQueryCursor) {
+    let Some(capture) = cursor.replay_capture.take() else {
+        return;
+    };
+    if !capture.eligible {
+        return;
+    }
+    let row_count = capture.rows.len() as u64;
+    let Ok(mut replay) = capture.cache.lock() else {
+        return;
+    };
+    if replay.entries.len() >= QUERY_REPLAY_MAX_ENTRIES
+        && !replay.entries.contains_key(&capture.key)
+    {
+        if let Some(oldest_key) = replay.entries.keys().next().cloned() {
+            replay.entries.remove(&oldest_key);
+        }
+    }
+    replay.entries.insert(capture.key, Arc::new(capture.rows));
+    replay.completions = replay.completions.saturating_add(1);
+    replay.rows_stored = replay.rows_stored.saturating_add(row_count);
+}
+
 fn query_cursor_next_packet(
     cursor: &mut BridgeQueryCursor,
     max_rows: u64,
@@ -2440,10 +2758,6 @@ fn query_cursor_next_packet(
     if max_bytes == 0 {
         return Err("query-row batch max_bytes must be positive".to_string());
     }
-    if cursor.next_row >= cursor.rows.len() {
-        return Ok((Vec::new(), 0));
-    }
-
     let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
     let header_len = match cursor.kind {
         BridgeQueryCursorKind::QueryOnlyV2 => 16usize,
@@ -2453,22 +2767,67 @@ fn query_cursor_next_packet(
         return Err("query-row batch max_bytes is smaller than the packet header".to_string());
     }
 
-    let mut selected = 0usize;
+    let mut selected_rows = Vec::<Vec<u8>>::new();
     let mut packet_len = header_len;
-    while cursor.next_row + selected < cursor.rows.len() &&
-          selected < usize::try_from(max_rows).unwrap_or(usize::MAX) {
-        let row = &cursor.rows[cursor.next_row + selected];
+    while selected_rows.len() < usize::try_from(max_rows).unwrap_or(usize::MAX) {
+        let mut capture_fresh_row = false;
+        let row = if let Some(row) = cursor.pending_row.take() {
+            Some(row)
+        } else {
+            match &mut cursor.source {
+                BridgeQueryCursorSource::Materialized { rows, next_row } => {
+                    if *next_row >= rows.len() {
+                        None
+                    } else {
+                        let row = rows[*next_row].clone();
+                        *next_row += 1;
+                        Some(row)
+                    }
+                }
+                BridgeQueryCursorSource::Flat(flat) => {
+                    let row = flat.next_packet_row()?;
+                    capture_fresh_row = row.is_some();
+                    row
+                }
+                BridgeQueryCursorSource::SemiNaive(semi_naive) => semi_naive.next_packet_row()?,
+                BridgeQueryCursorSource::Replay {
+                    rows,
+                    next_row,
+                    stats,
+                } => {
+                    if *next_row >= rows.len() {
+                        None
+                    } else {
+                        let row = rows[*next_row].clone();
+                        *next_row += 1;
+                        stats.rows_emitted = stats.rows_emitted.saturating_add(1);
+                        Some(row)
+                    }
+                }
+            }
+        };
+        let Some(row) = row else {
+            query_cursor_publish_completed_replay(cursor);
+            break;
+        };
+        if capture_fresh_row {
+            query_cursor_capture_row(cursor, &row);
+        }
         if query_cursor_packet_would_exceed(packet_len, row.len(), max_bytes) {
-            if selected == 0 {
+            cursor.pending_row = Some(row);
+            if selected_rows.is_empty() {
                 return Err("query-row batch row exceeds max_bytes".to_string());
             }
             break;
         }
         packet_len += row.len();
-        selected += 1;
+        selected_rows.push(row);
     }
 
-    let row_count = checked_packet_count(selected, "query-row cursor batch row count")?;
+    if selected_rows.is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+    let row_count = checked_packet_count(selected_rows.len(), "query-row cursor batch row count")?;
     let mut packet = Vec::with_capacity(packet_len);
     match cursor.kind {
         BridgeQueryCursorKind::QueryOnlyV2 => {
@@ -2486,10 +2845,9 @@ fn query_cursor_next_packet(
             );
         }
     }
-    for row in &cursor.rows[cursor.next_row..cursor.next_row + selected] {
-        packet.extend_from_slice(row);
+    for row in selected_rows {
+        packet.extend_from_slice(&row);
     }
-    cursor.next_row += selected;
     Ok((packet, row_count))
 }
 
@@ -2638,6 +2996,10 @@ pub extern "C" fn mork_space_new() -> *mut MorkSpace {
             storage_mode: BridgeStorageMode::RawExprs,
             counted_logical_size: 0,
             exact_contexts: HashMap::new(),
+            flat_query_index: Arc::new(FlatCountedQueryIndex::default()),
+            query_replay_cache: Arc::new(Mutex::new(QueryReplayCache::default())),
+            query_revision: 0,
+            counted_version: counted_version_root(),
         });
         Box::into_raw(bridge) as *mut MorkSpace
     })
@@ -2652,6 +3014,10 @@ pub extern "C" fn mork_space_new_pathmap() -> *mut MorkSpace {
             storage_mode: BridgeStorageMode::CountedPathmap,
             counted_logical_size: 0,
             exact_contexts: HashMap::new(),
+            flat_query_index: Arc::new(FlatCountedQueryIndex::default()),
+            query_replay_cache: Arc::new(Mutex::new(QueryReplayCache::default())),
+            query_revision: 0,
+            counted_version: counted_version_root(),
         });
         Box::into_raw(bridge) as *mut MorkSpace
     })
@@ -2679,6 +3045,7 @@ pub extern "C" fn mork_space_clear(space: *mut MorkSpace) -> MorkStatus {
         bridge.inner = Space::new();
         bridge.counted_logical_size = 0;
         bridge.exact_contexts.clear();
+        bridge_reset_flat_query_index(bridge);
         MorkStatus::ok(0)
     })
 }
@@ -2702,14 +3069,25 @@ pub extern "C" fn mork_space_add_text(
         let bytes = std::slice::from_raw_parts(text, len);
         if bridge_uses_counted_storage(bridge) {
             match parse_expr_chunk(&mut bridge.inner, bytes) {
-                Ok(exprs) => match counted_insert_expr_batch_cached(
-                    &mut bridge.inner,
-                    &exprs,
-                    &mut bridge.counted_logical_size,
-                ) {
-                    Ok(added) => MorkStatus::ok(added),
-                    Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
-                },
+                Ok(exprs) => {
+                    let changes = match counted_changes(&exprs, 1) {
+                        Ok(changes) => changes,
+                        Err(err) => {
+                            return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+                        }
+                    };
+                    match counted_insert_expr_batch_cached(
+                        &mut bridge.inner,
+                        &exprs,
+                        &mut bridge.counted_logical_size,
+                    ) {
+                        Ok(added) => {
+                            bridge_note_counted_changes(bridge, changes);
+                            MorkStatus::ok(added)
+                        }
+                        Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+                    }
+                }
                 Err(err) => MorkStatus::err(MorkStatusCode::Parse, err.into_bytes()),
             }
         } else {
@@ -2733,6 +3111,43 @@ pub extern "C" fn mork_space_add_sexpr(
     len: usize,
 ) -> MorkStatus {
     mork_space_add_text(space, text, len)
+}
+
+/// Converts one length-delimited, symbol-table-independent expression packet
+/// into the compact expression bytes owned by this space. Long symbols are
+/// interned in the target space during normalization.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_normalize_expr_packet(
+    space: *mut MorkSpace,
+    packet: *const u8,
+    len: usize,
+) -> MorkBuffer {
+    with_catch_buffer(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(err) => {
+                return MorkBuffer::err(
+                    MorkStatusCode::Null,
+                    if err.message.is_null() {
+                        b"null MorkSpace".to_vec()
+                    } else {
+                        Vec::from_raw_parts(err.message, err.message_len, err.message_len)
+                    },
+                );
+            }
+        };
+        if packet.is_null() {
+            return MorkBuffer::err(
+                MorkStatusCode::Null,
+                b"null bridge expr packet".to_vec(),
+            );
+        }
+        let packet = std::slice::from_raw_parts(packet, len);
+        match bridge_expr_packet_to_bytes(&bridge.inner, packet) {
+            Ok(expr_bytes) => MorkBuffer::ok(expr_bytes, 1),
+            Err(err) => MorkBuffer::err(MorkStatusCode::Parse, err.into_bytes()),
+        }
+    })
 }
 
 /// Adds one already-encoded stable bridge expression without going through UTF-8 parsing.
@@ -2760,7 +3175,10 @@ pub extern "C" fn mork_space_add_expr_bytes(
                 expr_bytes,
                 &mut bridge.counted_logical_size,
             ) {
-                Ok(_) => MorkStatus::ok(1),
+                Ok(_) => {
+                    bridge_note_counted_changes(bridge, counted_single_change(expr_bytes, 1));
+                    MorkStatus::ok(1)
+                }
                 Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
             }
         } else {
@@ -2833,6 +3251,7 @@ pub extern "C" fn mork_space_add_contextual_exact_expr_bytes(
                 ) {
                     return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
                 }
+                bridge_note_counted_changes(bridge, counted_single_change(expr_bytes, 1));
                 MorkStatus::ok(1)
             }
             Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
@@ -2868,12 +3287,21 @@ pub extern "C" fn mork_space_add_expr_bytes_batch(
             return MorkStatus::ok(0);
         }
         if bridge_uses_counted_storage(bridge) {
+            let changes = match counted_changes(&exprs, 1) {
+                Ok(changes) => changes,
+                Err(err) => {
+                    return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+                }
+            };
             match counted_insert_expr_batch_cached(
                 &mut bridge.inner,
                 &exprs,
                 &mut bridge.counted_logical_size,
             ) {
-                Ok(added) => MorkStatus::ok(added),
+                Ok(added) => {
+                    bridge_note_counted_changes(bridge, changes);
+                    MorkStatus::ok(added)
+                }
                 Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
             }
         } else {
@@ -2924,6 +3352,14 @@ pub extern "C" fn mork_space_remove_text(
                         };
                         *requested = (*requested).min(current);
                     }
+                    let changes = removed_per_expr
+                        .iter()
+                        .filter(|(_, removed)| **removed != 0)
+                        .map(|(expr_bytes, removed)| CountedMutation {
+                            expr_bytes: expr_bytes.clone(),
+                            delta: -i64::from(*removed),
+                        })
+                        .collect::<Vec<_>>();
                     match counted_remove_expr_batch_cached(
                         &mut bridge.inner,
                         &exprs,
@@ -2938,6 +3374,7 @@ pub extern "C" fn mork_space_remove_text(
                                     );
                                 }
                             }
+                            bridge_note_counted_changes(bridge, changes);
                             MorkStatus::ok(removed)
                         }
                         Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
@@ -2996,6 +3433,7 @@ pub extern "C" fn mork_space_remove_expr_bytes(
             ) {
                 Ok(Some(_)) => {
                     decrement_any_exact_context_count(&mut bridge.exact_contexts, expr_bytes);
+                    bridge_note_counted_changes(bridge, counted_single_change(expr_bytes, -1));
                     MorkStatus::ok(1)
                 }
                 Ok(None) => MorkStatus::ok(0),
@@ -3071,6 +3509,7 @@ pub extern "C" fn mork_space_remove_contextual_exact_expr_bytes(
                         b"contextual exact context disappeared during remove".to_vec(),
                     );
                 }
+                bridge_note_counted_changes(bridge, counted_single_change(expr_bytes, -1));
                 MorkStatus::ok(1)
             }
             Ok(None) => MorkStatus::err(
@@ -3308,6 +3747,30 @@ pub extern "C" fn mork_space_clone(space: *const MorkSpace) -> *mut MorkSpace {
             Err(_) => return ptr::null_mut(),
         };
         clone_bridge_space(bridge)
+    })
+}
+
+/// Returns the exact positive counted delta between an earlier snapshot and a
+/// descendant, or null when the lineage includes removal, reset, or an opaque
+/// bulk mutation.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_monotone_delta(
+    later: *const MorkSpace,
+    earlier: *const MorkSpace,
+) -> *mut MorkSpace {
+    with_catch(|| unsafe {
+        let later = match bridge_space_ref(later) {
+            Ok(space) => space,
+            Err(_) => return ptr::null_mut(),
+        };
+        let earlier = match bridge_space_ref(earlier) {
+            Ok(space) => space,
+            Err(_) => return ptr::null_mut(),
+        };
+        match bridge_monotone_delta_space(later, earlier) {
+            Ok(delta) => Box::into_raw(Box::new(delta)) as *mut MorkSpace,
+            Err(_) => ptr::null_mut(),
+        }
     })
 }
 
@@ -3844,9 +4307,7 @@ fn bridge_cursor_next_raw_expr_rows(
             let mut found = false;
             while rz.to_next_val() {
                 let origin = rz.origin_path();
-                if origin != resume_from.as_slice()
-                    && !origin.starts_with(resume_from.as_slice())
-                {
+                if origin != resume_from.as_slice() && !origin.starts_with(resume_from.as_slice()) {
                     found = true;
                     break;
                 }
@@ -4993,8 +5454,12 @@ pub extern "C" fn mork_query_cursor_new_query_only_v2(
         };
         let cursor = Box::new(BridgeQueryCursor {
             kind: BridgeQueryCursorKind::QueryOnlyV2,
-            rows,
-            next_row: 0,
+            source: BridgeQueryCursorSource::Materialized { rows, next_row: 0 },
+            pending_row: None,
+            indexed_setup_stats: None,
+            indexed_query_revision: 0,
+            replay_hit: false,
+            replay_capture: None,
         });
         Box::into_raw(cursor) as *mut MorkQueryCursor
     })
@@ -5023,10 +5488,456 @@ pub extern "C" fn mork_query_cursor_new_multi_ref_v3(
             };
         let cursor = Box::new(BridgeQueryCursor {
             kind: BridgeQueryCursorKind::MultiRefV3 { factor_count },
-            rows,
-            next_row: 0,
+            source: BridgeQueryCursorSource::Materialized { rows, next_row: 0 },
+            pending_row: None,
+            indexed_setup_stats: None,
+            indexed_query_revision: 0,
+            replay_hit: false,
+            replay_capture: None,
         });
         Box::into_raw(cursor) as *mut MorkQueryCursor
+    })
+}
+
+/// Creates a genuinely pull-based counted-PathMap cursor for the admitted flat
+/// relational fragment. A null result means that the exact general-query path
+/// must be used; it is not a query failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_query_cursor_new_indexed_multi_ref_v4(
+    space: *mut MorkSpace,
+    pattern: *const u8,
+    len: usize,
+) -> *mut MorkQueryCursor {
+    with_catch(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(_) => return ptr::null_mut(),
+        };
+        if !bridge_uses_counted_storage(bridge) || pattern.is_null() {
+            return ptr::null_mut();
+        }
+        let pattern = std::slice::from_raw_parts(pattern, len);
+        let normalized = match normalize_query_text(pattern) {
+            Ok(normalized) => normalized,
+            Err(_) => return ptr::null_mut(),
+        };
+        let pattern_bytes = match parse_single_expr(&mut bridge.inner, &normalized) {
+            Ok(pattern) => pattern,
+            Err(_) => return ptr::null_mut(),
+        };
+        let before = bridge.flat_query_index.stats().clone();
+        let admission = match Arc::make_mut(&mut bridge.flat_query_index)
+            .prepare(&bridge.inner, &pattern_bytes)
+        {
+            Ok(admission) => admission,
+            Err(_) => {
+                bridge.flat_query_index = Arc::new(FlatCountedQueryIndex::default());
+                return ptr::null_mut();
+            }
+        };
+        let (key, factor_count) = match admission {
+            FlatCountedQueryAdmission::Prepared { key, factor_count } => (key, factor_count),
+            FlatCountedQueryAdmission::Unsupported { .. } => return ptr::null_mut(),
+        };
+        let replay_key = (bridge.query_revision, key.clone());
+        let replay_rows = query_replay_lookup(&bridge.query_replay_cache, &replay_key);
+        let (source, replay_hit, replay_capture) = if let Some(rows) = replay_rows {
+            (
+                BridgeQueryCursorSource::Replay {
+                    rows,
+                    next_row: 0,
+                    stats: FlatCountedCursorStats::default(),
+                },
+                true,
+                None,
+            )
+        } else {
+            let flat = match FlatCountedQueryCursor::new(bridge.flat_query_index.clone(), &key) {
+                Ok(cursor) => cursor,
+                Err(_) => return ptr::null_mut(),
+            };
+            (
+                BridgeQueryCursorSource::Flat(flat),
+                false,
+                Some(QueryReplayCapture {
+                    cache: bridge.query_replay_cache.clone(),
+                    key: replay_key,
+                    rows: Vec::new(),
+                    bytes: 0,
+                    eligible: true,
+                }),
+            )
+        };
+        let after = bridge.flat_query_index.stats();
+        let indexed_setup_stats = FlatCountedIndexStats {
+            catalog_builds: after.catalog_builds.saturating_sub(before.catalog_builds),
+            catalog_rows_scanned: after
+                .catalog_rows_scanned
+                .saturating_sub(before.catalog_rows_scanned),
+            access_path_builds: after
+                .access_path_builds
+                .saturating_sub(before.access_path_builds),
+            access_path_rows_indexed: after
+                .access_path_rows_indexed
+                .saturating_sub(before.access_path_rows_indexed),
+            incremental_updates: after
+                .incremental_updates
+                .saturating_sub(before.incremental_updates),
+            plan_builds: after.plan_builds.saturating_sub(before.plan_builds),
+            plan_cache_hits: after.plan_cache_hits.saturating_sub(before.plan_cache_hits),
+        };
+        let cursor = Box::new(BridgeQueryCursor {
+            kind: BridgeQueryCursorKind::MultiRefV3 { factor_count },
+            source,
+            pending_row: None,
+            indexed_setup_stats: Some(indexed_setup_stats),
+            indexed_query_revision: bridge.query_revision,
+            replay_hit,
+            replay_capture,
+        });
+        Box::into_raw(cursor) as *mut MorkQueryCursor
+    })
+}
+
+fn flat_index_stats_delta(
+    after: &FlatCountedIndexStats,
+    before: &FlatCountedIndexStats,
+) -> FlatCountedIndexStats {
+    FlatCountedIndexStats {
+        catalog_builds: after.catalog_builds.saturating_sub(before.catalog_builds),
+        catalog_rows_scanned: after
+            .catalog_rows_scanned
+            .saturating_sub(before.catalog_rows_scanned),
+        access_path_builds: after
+            .access_path_builds
+            .saturating_sub(before.access_path_builds),
+        access_path_rows_indexed: after
+            .access_path_rows_indexed
+            .saturating_sub(before.access_path_rows_indexed),
+        incremental_updates: after
+            .incremental_updates
+            .saturating_sub(before.incremental_updates),
+        plan_builds: after.plan_builds.saturating_sub(before.plan_builds),
+        plan_cache_hits: after.plan_cache_hits.saturating_sub(before.plan_cache_hits),
+    }
+}
+
+fn flat_index_stats_add(lhs: &mut FlatCountedIndexStats, rhs: &FlatCountedIndexStats) {
+    lhs.catalog_builds = lhs.catalog_builds.saturating_add(rhs.catalog_builds);
+    lhs.catalog_rows_scanned = lhs
+        .catalog_rows_scanned
+        .saturating_add(rhs.catalog_rows_scanned);
+    lhs.access_path_builds = lhs
+        .access_path_builds
+        .saturating_add(rhs.access_path_builds);
+    lhs.access_path_rows_indexed = lhs
+        .access_path_rows_indexed
+        .saturating_add(rhs.access_path_rows_indexed);
+    lhs.incremental_updates = lhs
+        .incremental_updates
+        .saturating_add(rhs.incremental_updates);
+    lhs.plan_builds = lhs.plan_builds.saturating_add(rhs.plan_builds);
+    lhs.plan_cache_hits = lhs.plan_cache_hits.saturating_add(rhs.plan_cache_hits);
+}
+
+/// Creates a pull cursor over the exact semi-naive first-delta partition.
+///
+/// For pivot `i`, factors before `i` read the old snapshot, factor `i` reads
+/// the positive delta, and later factors read the current known space. The
+/// variants are disjoint by construction, preserving bag multiplicity.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+    known: *mut MorkSpace,
+    old: *mut MorkSpace,
+    delta: *mut MorkSpace,
+    pattern: *const u8,
+    len: usize,
+) -> *mut MorkQueryCursor {
+    with_catch(|| unsafe {
+        if known.is_null()
+            || old.is_null()
+            || delta.is_null()
+            || pattern.is_null()
+            || known == old
+            || known == delta
+            || old == delta
+        {
+            return ptr::null_mut();
+        }
+        let known = match bridge_space_mut(known) {
+            Ok(space) => space,
+            Err(_) => return ptr::null_mut(),
+        };
+        let old = match bridge_space_mut(old) {
+            Ok(space) => space,
+            Err(_) => return ptr::null_mut(),
+        };
+        let delta = match bridge_space_mut(delta) {
+            Ok(space) => space,
+            Err(_) => return ptr::null_mut(),
+        };
+        if !bridge_uses_counted_storage(known)
+            || !bridge_uses_counted_storage(old)
+            || !bridge_uses_counted_storage(delta)
+        {
+            return ptr::null_mut();
+        }
+
+        let pattern = std::slice::from_raw_parts(pattern, len);
+        let normalized = match normalize_query_text(pattern) {
+            Ok(normalized) => normalized,
+            Err(_) => return ptr::null_mut(),
+        };
+        let pattern_bytes = match parse_single_expr(&mut known.inner, &normalized) {
+            Ok(pattern) => pattern,
+            Err(_) => return ptr::null_mut(),
+        };
+
+        let known_before = known.flat_query_index.stats().clone();
+        let old_before = old.flat_query_index.stats().clone();
+        let delta_before = delta.flat_query_index.stats().clone();
+        let admission = match Arc::make_mut(&mut known.flat_query_index)
+            .prepare(&known.inner, &pattern_bytes)
+        {
+            Ok(admission) => admission,
+            Err(_) => {
+                known.flat_query_index = Arc::new(FlatCountedQueryIndex::default());
+                return ptr::null_mut();
+            }
+        };
+        let (key, factor_count) = match admission {
+            FlatCountedQueryAdmission::Prepared { key, factor_count } => (key, factor_count),
+            FlatCountedQueryAdmission::Unsupported { .. } => return ptr::null_mut(),
+        };
+        let known_index = known.flat_query_index.clone();
+        let semi_naive = match FlatSemiNaiveQueryCursor::new(
+            known_index,
+            &old.inner,
+            &mut old.flat_query_index,
+            &delta.inner,
+            &mut delta.flat_query_index,
+            &key,
+        ) {
+            Ok(cursor) => cursor,
+            Err(_) => return ptr::null_mut(),
+        };
+
+        let mut setup = flat_index_stats_delta(known.flat_query_index.stats(), &known_before);
+        flat_index_stats_add(
+            &mut setup,
+            &flat_index_stats_delta(old.flat_query_index.stats(), &old_before),
+        );
+        flat_index_stats_add(
+            &mut setup,
+            &flat_index_stats_delta(delta.flat_query_index.stats(), &delta_before),
+        );
+        let cursor = Box::new(BridgeQueryCursor {
+            kind: BridgeQueryCursorKind::MultiRefV3 { factor_count },
+            source: BridgeQueryCursorSource::SemiNaive(semi_naive),
+            pending_row: None,
+            indexed_setup_stats: Some(setup),
+            indexed_query_revision: known.query_revision,
+            replay_hit: false,
+            replay_capture: None,
+        });
+        Box::into_raw(cursor) as *mut MorkQueryCursor
+    })
+}
+
+/// Returns one cumulative counted-index statistic for complexity gates.
+///
+/// Statistic ids are the `MORK_INDEXED_SPACE_STAT_*` constants in the C
+/// header. Unknown ids fail instead of silently returning zero.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_indexed_query_stat(space: *const MorkSpace, stat: u32) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_ref(space) {
+            Ok(space) => space,
+            Err(err) => return err,
+        };
+        if !bridge_uses_counted_storage(bridge) {
+            return MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"indexed query statistics require counted PathMap storage".to_vec(),
+            );
+        }
+        let stats = bridge.flat_query_index.stats();
+        let replay = match bridge.query_replay_cache.lock() {
+            Ok(replay) => replay,
+            Err(_) => {
+                return MorkStatus::err(
+                    MorkStatusCode::Internal,
+                    b"indexed query replay cache lock is poisoned".to_vec(),
+                );
+            }
+        };
+        let value = match stat {
+            INDEXED_SPACE_STAT_QUERY_REVISION => bridge.query_revision,
+            INDEXED_SPACE_STAT_CATALOG_BUILT => {
+                u64::from(bridge.flat_query_index.is_catalog_built())
+            }
+            INDEXED_SPACE_STAT_CATALOG_BUILDS => stats.catalog_builds,
+            INDEXED_SPACE_STAT_CATALOG_ROWS_SCANNED => stats.catalog_rows_scanned,
+            INDEXED_SPACE_STAT_ACCESS_PATH_BUILDS => stats.access_path_builds,
+            INDEXED_SPACE_STAT_ACCESS_PATH_ROWS_INDEXED => stats.access_path_rows_indexed,
+            INDEXED_SPACE_STAT_INCREMENTAL_UPDATES => stats.incremental_updates,
+            INDEXED_SPACE_STAT_PLAN_BUILDS => stats.plan_builds,
+            INDEXED_SPACE_STAT_PLAN_CACHE_HITS => stats.plan_cache_hits,
+            INDEXED_SPACE_STAT_REPLAY_COMPLETIONS => replay.completions,
+            INDEXED_SPACE_STAT_REPLAY_HITS => replay.hits,
+            INDEXED_SPACE_STAT_REPLAY_ROWS_STORED => replay.rows_stored,
+            _ => {
+                return MorkStatus::err(
+                    MorkStatusCode::Internal,
+                    format!("unknown indexed space statistic {stat}").into_bytes(),
+                );
+            }
+        };
+        MorkStatus::ok(value)
+    })
+}
+
+/// Returns one per-query setup or traversal statistic from an indexed cursor.
+///
+/// Statistic ids are the `MORK_INDEXED_CURSOR_STAT_*` constants in the C
+/// header. Materialized oracle cursors reject this call.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_query_cursor_indexed_stat(
+    cursor: *const MorkQueryCursor,
+    stat: u32,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let cursor = match bridge_query_cursor_ref(cursor) {
+            Ok(cursor) => cursor,
+            Err(err) => return err,
+        };
+        let traversal = match &cursor.source {
+            BridgeQueryCursorSource::Flat(flat) => flat.stats(),
+            BridgeQueryCursorSource::SemiNaive(semi_naive) => semi_naive.stats(),
+            BridgeQueryCursorSource::Replay { stats, .. } => stats,
+            BridgeQueryCursorSource::Materialized { .. } => {
+                return MorkStatus::err(
+                    MorkStatusCode::Internal,
+                    b"indexed query statistics require an indexed cursor".to_vec(),
+                );
+            }
+        };
+        let setup = cursor
+            .indexed_setup_stats
+            .as_ref()
+            .expect("indexed cursor must retain its setup statistics");
+        let value = match stat {
+            INDEXED_CURSOR_STAT_QUERY_REVISION => cursor.indexed_query_revision,
+            INDEXED_CURSOR_STAT_CATALOG_BUILDS => setup.catalog_builds,
+            INDEXED_CURSOR_STAT_CATALOG_ROWS_SCANNED => setup.catalog_rows_scanned,
+            INDEXED_CURSOR_STAT_ACCESS_PATH_BUILDS => setup.access_path_builds,
+            INDEXED_CURSOR_STAT_ACCESS_PATH_ROWS_INDEXED => setup.access_path_rows_indexed,
+            INDEXED_CURSOR_STAT_PLAN_BUILDS => setup.plan_builds,
+            INDEXED_CURSOR_STAT_PLAN_CACHE_HITS => setup.plan_cache_hits,
+            INDEXED_CURSOR_STAT_TRIE_SEEKS => traversal.trie_seeks,
+            INDEXED_CURSOR_STAT_TRIE_DESCENTS => traversal.trie_descents,
+            INDEXED_CURSOR_STAT_ROWS_EMITTED => traversal.rows_emitted,
+            INDEXED_CURSOR_STAT_MAX_FRAME_CELLS => {
+                u64::try_from(traversal.max_frame_cells).unwrap_or(u64::MAX)
+            }
+            INDEXED_CURSOR_STAT_ROWS_AGGREGATED => traversal.rows_aggregated,
+            INDEXED_CURSOR_STAT_REPLAY_HIT => u64::from(cursor.replay_hit),
+            _ => {
+                return MorkStatus::err(
+                    MorkStatusCode::Internal,
+                    format!("unknown indexed cursor statistic {stat}").into_bytes(),
+                );
+            }
+        };
+        MorkStatus::ok(value)
+    })
+}
+
+/// Consumes the remaining rows of an indexed cursor and returns their exact
+/// bag count without reconstructing binding or expression rows.
+fn encoded_multi_ref_row_multiplicity(row: &[u8], factor_count: u32) -> Result<u64, String> {
+    let factor_count = usize::try_from(factor_count)
+        .map_err(|_| "indexed query factor count exceeds usize".to_string())?;
+    let prefix_len = factor_count
+        .checked_mul(4)
+        .ok_or_else(|| "indexed query factor-count prefix overflows usize".to_string())?;
+    if row.len() < prefix_len {
+        return Err("replayed indexed query row lacks factor multiplicities".to_string());
+    }
+    let mut product = 1u64;
+    for chunk in row[..prefix_len].chunks_exact(4) {
+        let count = u32::from_be_bytes(chunk.try_into().expect("four-byte chunk"));
+        if count == 0 {
+            return Err("replayed indexed query row has zero multiplicity".to_string());
+        }
+        product = product.checked_mul(u64::from(count)).ok_or_else(|| {
+            "replayed indexed query multiplicity exceeds u64 aggregate capacity".to_string()
+        })?;
+    }
+    Ok(product)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_query_cursor_count_remaining(cursor: *mut MorkQueryCursor) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let cursor = match bridge_query_cursor_mut(cursor) {
+            Ok(cursor) => cursor,
+            Err(err) => return err,
+        };
+        if cursor.pending_row.is_some() {
+            return MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"cannot aggregate an indexed cursor with a pending encoded row".to_vec(),
+            );
+        }
+        let factor_count = match cursor.kind {
+            BridgeQueryCursorKind::MultiRefV3 { factor_count } => factor_count,
+            BridgeQueryCursorKind::QueryOnlyV2 => {
+                return MorkStatus::err(
+                    MorkStatusCode::Internal,
+                    b"COUNT pushdown requires a multi-factor indexed cursor".to_vec(),
+                );
+            }
+        };
+        let count = match &mut cursor.source {
+            BridgeQueryCursorSource::Flat(flat) => flat.count_remaining(),
+            BridgeQueryCursorSource::SemiNaive(semi_naive) => semi_naive.count_remaining(),
+            BridgeQueryCursorSource::Replay {
+                rows,
+                next_row,
+                stats,
+            } => {
+                let mut total = 0u64;
+                for row in rows.iter().skip(*next_row) {
+                    let multiplicity = match encoded_multi_ref_row_multiplicity(row, factor_count) {
+                        Ok(multiplicity) => multiplicity,
+                        Err(err) => {
+                            return MorkStatus::err(MorkStatusCode::Internal, err.into_bytes());
+                        }
+                    };
+                    total = match total.checked_add(multiplicity) {
+                        Some(total) => total,
+                        None => {
+                            return MorkStatus::err(
+                                MorkStatusCode::Internal,
+                                b"replayed indexed query count exceeds u64 aggregate capacity"
+                                    .to_vec(),
+                            );
+                        }
+                    };
+                    stats.rows_aggregated = stats.rows_aggregated.saturating_add(1);
+                }
+                *next_row = rows.len();
+                Ok(total)
+            }
+            BridgeQueryCursorSource::Materialized { .. } => {
+                Err("COUNT pushdown requires an indexed cursor".to_string())
+            }
+        };
+        match count {
+            Ok(count) => MorkStatus::ok(count),
+            Err(err) => MorkStatus::err(MorkStatusCode::Internal, err.into_bytes()),
+        }
     })
 }
 
@@ -5721,6 +6632,42 @@ mod tests {
     }
 
     #[test]
+    fn normalized_expr_packet_roundtrips_long_symbols_through_counted_storage() {
+        let _guard = test_guard();
+        let raw = mork_space_new_pathmap();
+        assert!(!raw.is_null());
+
+        let long_symbol = vec![b'x'; 256];
+        let mut packet = vec![BRIDGE_EXPR_TAG_ARITY];
+        packet.extend_from_slice(&2u32.to_be_bytes());
+        packet.push(BRIDGE_EXPR_TAG_SYMBOL);
+        packet.extend_from_slice(&3u32.to_be_bytes());
+        packet.extend_from_slice(b"doc");
+        packet.push(BRIDGE_EXPR_TAG_SYMBOL);
+        packet.extend_from_slice(&(long_symbol.len() as u32).to_be_bytes());
+        packet.extend_from_slice(&long_symbol);
+
+        let normalized =
+            mork_space_normalize_expr_packet(raw, packet.as_ptr(), packet.len());
+        assert!(buffer_ok(&normalized));
+        let added = mork_space_add_expr_bytes(raw, normalized.data, normalized.len);
+        assert!(status_ok(&added));
+        mork_bytes_free(normalized.data, normalized.len);
+
+        let dumped = mork_space_dump_expr_rows(raw);
+        assert!(buffer_ok(&dumped));
+        assert_eq!(dumped.count, 1);
+        let bytes = unsafe { std::slice::from_raw_parts(dumped.data, dumped.len) };
+        assert_eq!(
+            u32::from_be_bytes(bytes[0..4].try_into().unwrap()) as usize,
+            packet.len()
+        );
+        assert_eq!(&bytes[4..], packet.as_slice());
+        mork_bytes_free(dumped.data, dumped.len);
+        mork_space_free(raw);
+    }
+
+    #[test]
     fn expr_bytes_batch_mutation_matches_individual_adds() {
         let _guard = test_guard();
         let raw = mork_space_new();
@@ -5827,28 +6774,16 @@ mod tests {
                 | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES
                 | QUERY_ONLY_V2_FLAG_WIDE_TOKENS
         );
-        assert_eq!(
-            read_u64_be(data, 8),
-            1
-        );
-        assert_eq!(
-            read_u32_be(data, 16),
-            0
-        );
-        assert_eq!(
-            read_u32_be(data, 20),
-            1
-        );
+        assert_eq!(read_u64_be(data, 8), 1);
+        assert_eq!(read_u32_be(data, 16), 0);
+        assert_eq!(read_u32_be(data, 20), 1);
         assert_eq!(read_u16_be(data, 24), 0);
         assert_eq!(data[26], 1);
         assert_eq!(data[27], 1);
         let expr_len = read_u32_be(data, 28) as usize;
         assert_eq!(expr_len, 6);
         assert_eq!(data[32], 0x01);
-        assert_eq!(
-            read_u32_be(data, 33),
-            1
-        );
+        assert_eq!(read_u32_be(data, 33), 1);
         assert_eq!(data[37], b'b');
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(raw);
@@ -5877,10 +6812,7 @@ mod tests {
         let expr_len = read_u32_be(data, 28) as usize;
         assert_eq!(expr_len, 80);
         assert_eq!(data[32], 0x01);
-        assert_eq!(
-            read_u32_be(data, 33),
-            75
-        );
+        assert_eq!(read_u32_be(data, 33), 75);
         assert_eq!(data[37], b'"');
         assert_eq!(data[111], b'"');
         mork_bytes_free(packet.data, packet.len);
@@ -5912,18 +6844,9 @@ mod tests {
             u16::from_be_bytes([data[4], data[5]]),
             QUERY_ONLY_V2_VERSION
         );
-        assert_eq!(
-            read_u64_be(data, 8),
-            1
-        );
-        assert_eq!(
-            read_u32_be(data, 16),
-            0
-        );
-        assert_eq!(
-            read_u32_be(data, 20),
-            0
-        );
+        assert_eq!(read_u64_be(data, 8), 1);
+        assert_eq!(read_u32_be(data, 16), 0);
+        assert_eq!(read_u32_be(data, 20), 0);
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(raw);
     }
@@ -6187,10 +7110,7 @@ mod tests {
                 | QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES
                 | QUERY_ONLY_V2_FLAG_WIDE_TOKENS
         );
-        assert_eq!(
-            read_u64_be(data, 8),
-            1
-        );
+        assert_eq!(read_u64_be(data, 8), 1);
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(counted);
     }
@@ -6234,10 +7154,7 @@ mod tests {
             u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
             2
         );
-        assert_eq!(
-            read_u64_be(data, 12),
-            1
-        );
+        assert_eq!(read_u64_be(data, 12), 1);
         assert_eq!(
             u32::from_be_bytes([data[20], data[21], data[22], data[23]]),
             2
@@ -6295,6 +7212,446 @@ mod tests {
 
     #[cfg(feature = "pathmap-space")]
     #[test]
+    fn indexed_multi_ref_v4_is_pull_based_and_incrementally_maintained() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        for fact in [b"(edge a b)".as_slice(), b"(edge b c)", b"(edge b d)"] {
+            let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+            assert!(status_ok(&add));
+        }
+        let query = b"(, (edge $x $y) (edge $y $z))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let catalog_builds =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_CATALOG_BUILDS);
+        assert!(status_ok(&catalog_builds));
+        assert_eq!(catalog_builds.value, 1);
+        let catalog_rows =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_CATALOG_ROWS_SCANNED);
+        assert!(status_ok(&catalog_rows));
+        assert_eq!(catalog_rows.value, 3);
+        let plan_builds = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_PLAN_BUILDS);
+        assert!(status_ok(&plan_builds));
+        assert_eq!(plan_builds.value, 1);
+        let cursor_view = unsafe { bridge_query_cursor_mut(cursor).unwrap() };
+        assert!(matches!(
+            cursor_view.source,
+            BridgeQueryCursorSource::Flat(_)
+        ));
+
+        let too_small = mork_query_cursor_next(cursor, 1, 21);
+        assert_eq!(too_small.code, MorkStatusCode::Internal as i32);
+        mork_bytes_free(too_small.message, too_small.message_len);
+
+        let first = mork_query_cursor_next(cursor, 1, 4096);
+        assert!(buffer_ok(&first));
+        assert_eq!(first.count, 1);
+        let first_data = unsafe { std::slice::from_raw_parts(first.data, first.len) };
+        assert_eq!(read_u64_be(first_data, 12), 1);
+        mork_bytes_free(first.data, first.len);
+
+        let second = mork_query_cursor_next(cursor, 1, 4096);
+        assert!(buffer_ok(&second));
+        assert_eq!(second.count, 1);
+        mork_bytes_free(second.data, second.len);
+
+        let exhausted = mork_query_cursor_next(cursor, 1, 4096);
+        assert!(buffer_ok(&exhausted));
+        assert_eq!(exhausted.count, 0);
+        assert_eq!(exhausted.len, 0);
+        let emitted = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_EMITTED);
+        assert!(status_ok(&emitted));
+        assert_eq!(emitted.value, 2);
+        let frame_cells =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_MAX_FRAME_CELLS);
+        assert!(status_ok(&frame_cells));
+        assert!(frame_cells.value > 0);
+        mork_query_cursor_free(cursor);
+
+        let builds_before =
+            mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_ACCESS_PATH_BUILDS);
+        assert!(status_ok(&builds_before));
+        let catalog_builds =
+            mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_CATALOG_BUILDS);
+        assert!(status_ok(&catalog_builds));
+        assert_eq!(catalog_builds.value, 1);
+        let catalog_rows =
+            mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_CATALOG_ROWS_SCANNED);
+        assert!(status_ok(&catalog_rows));
+        assert_eq!(catalog_rows.value, 3);
+
+        let warm = mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!warm.is_null());
+        let warm_builds = mork_query_cursor_indexed_stat(warm, INDEXED_CURSOR_STAT_CATALOG_BUILDS);
+        assert!(status_ok(&warm_builds));
+        assert_eq!(warm_builds.value, 0);
+        let warm_paths =
+            mork_query_cursor_indexed_stat(warm, INDEXED_CURSOR_STAT_ACCESS_PATH_BUILDS);
+        assert!(status_ok(&warm_paths));
+        assert_eq!(warm_paths.value, 0);
+        let warm_plan_hits =
+            mork_query_cursor_indexed_stat(warm, INDEXED_CURSOR_STAT_PLAN_CACHE_HITS);
+        assert!(status_ok(&warm_plan_hits));
+        assert_eq!(warm_plan_hits.value, 1);
+        let replay_hit = mork_query_cursor_indexed_stat(warm, INDEXED_CURSOR_STAT_REPLAY_HIT);
+        assert!(status_ok(&replay_hit));
+        assert_eq!(replay_hit.value, 1);
+        let replayed = mork_query_cursor_next(warm, 16, 4096);
+        assert!(buffer_ok(&replayed));
+        assert_eq!(replayed.count, 2);
+        mork_bytes_free(replayed.data, replayed.len);
+        let replay_eof = mork_query_cursor_next(warm, 16, 4096);
+        assert!(buffer_ok(&replay_eof));
+        assert_eq!(replay_eof.count, 0);
+        mork_query_cursor_free(warm);
+        let replay_completions =
+            mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_REPLAY_COMPLETIONS);
+        assert!(status_ok(&replay_completions));
+        assert_eq!(replay_completions.value, 1);
+        let replay_hits = mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_REPLAY_HITS);
+        assert!(status_ok(&replay_hits));
+        assert_eq!(replay_hits.value, 1);
+        let replay_rows =
+            mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_REPLAY_ROWS_STORED);
+        assert!(status_ok(&replay_rows));
+        assert_eq!(replay_rows.value, 2);
+
+        let new_fact = b"(edge d e)";
+        let add = mork_space_add_sexpr(counted, new_fact.as_ptr(), new_fact.len());
+        assert!(status_ok(&add));
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let replay_hit = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_REPLAY_HIT);
+        assert!(status_ok(&replay_hit));
+        assert_eq!(
+            replay_hit.value, 0,
+            "a store mutation must invalidate completed query replay"
+        );
+        let builds_after =
+            mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_ACCESS_PATH_BUILDS);
+        assert!(status_ok(&builds_after));
+        assert_eq!(builds_after.value, builds_before.value);
+        let updates =
+            mork_space_indexed_query_stat(counted, INDEXED_SPACE_STAT_INCREMENTAL_UPDATES);
+        assert!(status_ok(&updates));
+        assert_eq!(updates.value, 1);
+        mork_query_cursor_free(cursor);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_multi_ref_v4_time_to_first_row_does_not_materialize_the_join() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        const FACTS_PER_RELATION: usize = 512;
+        for idx in 0..FACTS_PER_RELATION {
+            let left = format!("(left l{idx:04} k{idx:04})");
+            let right = format!("(right k{idx:04} r{idx:04})");
+            for fact in [left.as_bytes(), right.as_bytes()] {
+                let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+                assert!(status_ok(&add));
+            }
+        }
+
+        let query = b"(, (left $x $k) (right $k $y))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let cursor_view = unsafe { bridge_query_cursor_ref(cursor).unwrap() };
+        assert!(matches!(
+            cursor_view.source,
+            BridgeQueryCursorSource::Flat(_)
+        ));
+
+        let first = mork_query_cursor_next(cursor, 1, 4096);
+        assert!(buffer_ok(&first));
+        assert_eq!(first.count, 1);
+        mork_bytes_free(first.data, first.len);
+
+        let emitted = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_EMITTED);
+        assert!(status_ok(&emitted));
+        assert_eq!(
+            emitted.value,
+            1,
+            "requesting one row must not compute the other {} results",
+            FACTS_PER_RELATION - 1
+        );
+        let seeks = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_TRIE_SEEKS);
+        assert!(status_ok(&seeks));
+        assert!(
+            seeks.value < 64,
+            "time-to-first-row work must be bounded by index depth, not result cardinality"
+        );
+        let frames = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_MAX_FRAME_CELLS);
+        assert!(status_ok(&frames));
+        assert!(
+            frames.value <= 6,
+            "cursor continuation must retain bounded join state"
+        );
+
+        let second = mork_query_cursor_next(cursor, 1, 4096);
+        assert!(buffer_ok(&second));
+        assert_eq!(second.count, 1);
+        mork_bytes_free(second.data, second.len);
+        let emitted = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_EMITTED);
+        assert!(status_ok(&emitted));
+        assert_eq!(
+            emitted.value, 2,
+            "the cursor must resume after the first row"
+        );
+
+        mork_query_cursor_free(cursor);
+        let retry =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!retry.is_null());
+        let replay_hit = mork_query_cursor_indexed_stat(retry, INDEXED_CURSOR_STAT_REPLAY_HIT);
+        assert!(status_ok(&replay_hit));
+        assert_eq!(
+            replay_hit.value, 0,
+            "an abandoned cursor must not publish an incomplete replay"
+        );
+        mork_query_cursor_free(retry);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_multi_ref_v4_count_pushdown_skips_binding_reconstruction() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        for _ in 0..2 {
+            let fact = b"(left a k)";
+            let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+            assert!(status_ok(&add));
+        }
+        for _ in 0..3 {
+            let fact = b"(right k b)";
+            let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+            assert!(status_ok(&add));
+        }
+        let unmatched = b"(right other c)";
+        let add = mork_space_add_sexpr(counted, unmatched.as_ptr(), unmatched.len());
+        assert!(status_ok(&add));
+
+        let query = b"(, (left $x $k) (right $k $y))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let count = mork_query_cursor_count_remaining(cursor);
+        assert!(status_ok(&count));
+        assert_eq!(count.value, 6);
+
+        let emitted = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_EMITTED);
+        assert!(status_ok(&emitted));
+        assert_eq!(emitted.value, 0);
+        let aggregated =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_AGGREGATED);
+        assert!(status_ok(&aggregated));
+        assert_eq!(aggregated.value, 1);
+        let exhausted = mork_query_cursor_count_remaining(cursor);
+        assert!(status_ok(&exhausted));
+        assert_eq!(exhausted.value, 0);
+
+        mork_query_cursor_free(cursor);
+
+        let materialized = mork_query_cursor_new_multi_ref_v3(counted, query.as_ptr(), query.len());
+        assert!(!materialized.is_null());
+        let denied = mork_query_cursor_count_remaining(materialized);
+        assert_eq!(denied.code, MorkStatusCode::Internal as i32);
+        mork_bytes_free(denied.message, denied.message_len);
+        mork_query_cursor_free(materialized);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn counted_snapshot_delta_is_exact_and_rejects_non_monotone_lineage() {
+        let _guard = test_guard();
+        let known = mork_space_new_pathmap();
+        assert!(!known.is_null());
+        let edge_ab = b"(edge a b)";
+        let edge_bc = b"(edge b c)";
+        let edge_cd = b"(edge c d)";
+        let add = mork_space_add_sexpr(known, edge_ab.as_ptr(), edge_ab.len());
+        assert!(status_ok(&add));
+
+        let old = mork_space_clone(known);
+        assert!(!old.is_null());
+        for _ in 0..2 {
+            let add = mork_space_add_sexpr(known, edge_bc.as_ptr(), edge_bc.len());
+            assert!(status_ok(&add));
+        }
+        let delta = mork_space_monotone_delta(known, old);
+        assert!(!delta.is_null());
+        let delta_size = mork_space_size(delta);
+        assert!(status_ok(&delta_size));
+        assert_eq!(delta_size.value, 2);
+        let delta_dump = mork_space_dump(delta);
+        assert!(buffer_ok(&delta_dump));
+        let delta_text = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                delta_dump.data,
+                delta_dump.len,
+            ))
+        };
+        assert_eq!(delta_text.matches("(edge b c)").count(), 2);
+        assert!(!delta_text.contains("(edge a b)"));
+        mork_bytes_free(delta_dump.data, delta_dump.len);
+        let old_size = mork_space_size(old);
+        assert!(status_ok(&old_size));
+        assert_eq!(
+            old_size.value, 1,
+            "the baseline snapshot must remain immutable"
+        );
+
+        let before_removal = mork_space_clone(known);
+        assert!(!before_removal.is_null());
+        let removed = mork_space_remove_sexpr(known, edge_ab.as_ptr(), edge_ab.len());
+        assert!(status_ok(&removed));
+        assert_eq!(removed.value, 1);
+        assert!(
+            mork_space_monotone_delta(known, before_removal).is_null(),
+            "a removal must make the descendant ineligible for monotone delta"
+        );
+
+        let after_removal = mork_space_clone(known);
+        assert!(!after_removal.is_null());
+        let add = mork_space_add_sexpr(known, edge_cd.as_ptr(), edge_cd.len());
+        assert!(status_ok(&add));
+        let post_removal_delta = mork_space_monotone_delta(known, after_removal);
+        assert!(
+            !post_removal_delta.is_null(),
+            "a snapshot taken after a removal starts a new admissible lineage"
+        );
+        let post_size = mork_space_size(post_removal_delta);
+        assert!(status_ok(&post_size));
+        assert_eq!(post_size.value, 1);
+
+        let unrelated = mork_space_new_pathmap();
+        assert!(!unrelated.is_null());
+        assert!(mork_space_monotone_delta(known, unrelated).is_null());
+
+        mork_space_free(unrelated);
+        mork_space_free(post_removal_delta);
+        mork_space_free(after_removal);
+        mork_space_free(before_removal);
+        mork_space_free(delta);
+        mork_space_free(old);
+        mork_space_free(known);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_semi_naive_cursor_partitions_first_delta_and_counts_without_rows() {
+        let _guard = test_guard();
+        let known = mork_space_new_pathmap();
+        assert!(!known.is_null());
+        let old = mork_space_clone(known);
+        assert!(!old.is_null());
+        for fact in [b"(edge a b)".as_slice(), b"(edge b c)"] {
+            let add = mork_space_add_sexpr(known, fact.as_ptr(), fact.len());
+            assert!(status_ok(&add));
+        }
+        let delta = mork_space_monotone_delta(known, old);
+        assert!(!delta.is_null());
+        let query = b"(, (edge $x $y) (edge $y $z))";
+        let cursor = mork_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+            known,
+            old,
+            delta,
+            query.as_ptr(),
+            query.len(),
+        );
+        assert!(!cursor.is_null());
+        let count = mork_query_cursor_count_remaining(cursor);
+        assert!(status_ok(&count));
+        assert_eq!(
+            count.value, 1,
+            "a tuple with both factors in delta belongs only to its first-delta variant"
+        );
+        let emitted = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_EMITTED);
+        let aggregated =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_AGGREGATED);
+        assert!(status_ok(&emitted));
+        assert!(status_ok(&aggregated));
+        assert_eq!(emitted.value, 0);
+        assert_eq!(aggregated.value, 1);
+
+        mork_query_cursor_free(cursor);
+        mork_space_free(delta);
+        mork_space_free(old);
+        mork_space_free(known);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_multi_ref_v4_snapshot_excludes_later_mutations() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        for fact in [b"(edge a b)".as_slice(), b"(edge b c)"] {
+            let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+            assert!(status_ok(&add));
+        }
+        let query = b"(, (edge $x $y) (edge $y $z))";
+        let old_cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!old_cursor.is_null());
+
+        let later = b"(edge b d)";
+        let add = mork_space_add_sexpr(counted, later.as_ptr(), later.len());
+        assert!(status_ok(&add));
+        let new_cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!new_cursor.is_null());
+
+        let old_rows = mork_query_cursor_next(old_cursor, 16, 4096);
+        assert!(buffer_ok(&old_rows));
+        assert_eq!(old_rows.count, 1);
+        let new_rows = mork_query_cursor_next(new_cursor, 16, 4096);
+        assert!(buffer_ok(&new_rows));
+        assert_eq!(new_rows.count, 2);
+
+        mork_bytes_free(old_rows.data, old_rows.len);
+        mork_bytes_free(new_rows.data, new_rows.len);
+        mork_query_cursor_free(old_cursor);
+        mork_query_cursor_free(new_cursor);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_multi_ref_v4_declines_shapes_requiring_general_unification() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let fact = b"(typed f (arrow a b))";
+        let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+        assert!(status_ok(&add));
+        let nested = b"(, (typed $f (arrow $a $b)))";
+
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, nested.as_ptr(), nested.len());
+        assert!(cursor.is_null());
+        let oracle = mork_query_cursor_new_multi_ref_v3(counted, nested.as_ptr(), nested.len());
+        assert!(!oracle.is_null());
+        let rows = mork_query_cursor_next(oracle, 16, 4096);
+        assert!(buffer_ok(&rows));
+        assert_eq!(rows.count, 1);
+
+        mork_bytes_free(rows.data, rows.len);
+        mork_query_cursor_free(oracle);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
     fn multi_ref_v3_packet_reports_typed_annotation_bindings() {
         let _guard = test_guard();
         let counted = mork_space_new_pathmap();
@@ -6325,10 +7682,7 @@ mod tests {
             u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
             1
         );
-        assert_eq!(
-            read_u64_be(data, 12),
-            1
-        );
+        assert_eq!(read_u64_be(data, 12), 1);
         assert_eq!(
             u32::from_be_bytes([data[20], data[21], data[22], data[23]]),
             1
@@ -6385,10 +7739,7 @@ mod tests {
             u16::from_be_bytes([data[6], data[7]]),
             CONTEXTUAL_QUERY_ROWS_FLAGS
         );
-        assert_eq!(
-            read_u64_be(data, 8),
-            1
-        );
+        assert_eq!(read_u64_be(data, 8), 1);
         assert_eq!(
             u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
             1
@@ -6469,7 +7820,7 @@ mod tests {
 
     #[cfg(feature = "pathmap-space")]
     #[test]
-    fn contextual_query_value_context_uses_exact_stored_refs() {
+    fn contextual_query_value_context_uses_factor_scoped_stored_refs() {
         let _guard = test_guard();
         let counted = mork_space_new_pathmap();
         assert!(!counted.is_null());
@@ -6504,20 +7855,22 @@ mod tests {
         assert_eq!(read_u32_be(data, 20), 0);
         assert_eq!(read_u32_be(data, 24), 1);
         assert_eq!(read_u16_be(data, 28), 0);
-        assert_eq!(data[30], OPEN_VAR_REF_EXACT);
+        assert_eq!(data[30], OPEN_VAR_REF_MATCHED_EXACT);
         assert_eq!(data[31], 0);
+        assert_eq!(data[32], 1);
+        assert_eq!(data[33], 0);
         assert_eq!(
-            u64::from_be_bytes(data[32..40].try_into().unwrap()),
+            u64::from_be_bytes(data[34..42].try_into().unwrap()),
             stored_var_id
         );
-        assert_eq!(read_u32_be(data, 40), spelling.len() as u32);
-        assert_eq!(&data[44..50], spelling);
-        assert_eq!(read_u32_be(data, 50), 1);
-        assert_eq!(read_u16_be(data, 54), 0);
-        assert_eq!(read_u32_be(data, 56), 0);
-        assert_eq!(read_u32_be(data, 60), 0);
-        assert_eq!(read_u32_be(data, 64), 1);
-        assert_eq!(data[68], BRIDGE_EXPR_TAG_NEWVAR);
+        assert_eq!(read_u32_be(data, 42), spelling.len() as u32);
+        assert_eq!(&data[46..52], spelling);
+        assert_eq!(read_u32_be(data, 52), 1);
+        assert_eq!(read_u16_be(data, 56), 0);
+        assert_eq!(read_u32_be(data, 58), 0);
+        assert_eq!(read_u32_be(data, 62), 0);
+        assert_eq!(read_u32_be(data, 66), 1);
+        assert_eq!(data[70], BRIDGE_EXPR_TAG_NEWVAR);
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(counted);
     }
@@ -6853,6 +8206,10 @@ mod tests {
             storage_mode: BridgeStorageMode::CountedPathmap,
             counted_logical_size: 0,
             exact_contexts: HashMap::new(),
+            flat_query_index: Arc::new(FlatCountedQueryIndex::default()),
+            query_replay_cache: Arc::new(Mutex::new(QueryReplayCache::default())),
+            query_revision: 0,
+            counted_version: counted_version_root(),
         });
         let expr = parse_single_expr(&mut bridge.inner, b"(million row)").unwrap();
         counted_insert_expr_count_cached(

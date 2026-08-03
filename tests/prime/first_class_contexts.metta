@@ -34,6 +34,7 @@
    (ctx:view $ctx 1))
 !(get-state &ctx:counter)
 !(ctx:view (ctx:bind ctx:empty x 1) 0)
+!(ctx:view (ctx:bind ctx:empty x 1) 1)
 
 ; The view is data, not another mutable or raw-spine context.
 !(ctx:bind (ctx:view (ctx:bind ctx:empty x 1) 1) y 2)

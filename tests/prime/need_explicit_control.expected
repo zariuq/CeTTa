@@ -2,6 +2,8 @@
 [(resample (+ 1 2))]
 [A, B]
 [caught]
+[(Box 3)]
+[(Box 5)]
 [(Pair A A), (Pair B B)]
 [(Pair A A), (Pair A B), (Pair B A), (Pair B B)]
 [()]
