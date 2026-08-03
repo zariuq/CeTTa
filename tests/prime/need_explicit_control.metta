@@ -7,6 +7,11 @@
 !(force (delay (superpose (A B))))
 !(if-error (== 1 "bad") caught no-error)
 
+; A chosen branch is fully observed at the command boundary, while the
+; unchosen branch remains suspended.
+!(if True (Box (+ 1 2)) (+ "boom" 1))
+!(if False (+ "boom" 1) (Box (+ 2 3)))
+
 ; A single promise memoizes the chosen value in each branch.
 !(let $p (delay (superpose (A B)))
    (Pair (force $p) (force $p)))

@@ -83,6 +83,7 @@ typedef struct EvalOutcome {
 
 typedef void (*CettaPrimeNeedAnswerObserver)(
     Atom *answer, const PrimeNeedReceipt *receipt, void *context);
+struct PettaPlanNode;
 
 void eval_outcome_init(EvalOutcome *outcome);
 void eval_outcome_free(EvalOutcome *outcome);
@@ -94,6 +95,9 @@ uint64_t eval_current_c_stack_budget_bytes(void);
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
+void eval_top_with_registry_petta_plan(
+    Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
+    const struct PettaPlanNode *plan, ResultSet *rs);
 void eval_top_with_registry_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     EvalOutcome *outcome, CettaPrimeNeedAnswerObserver observer,

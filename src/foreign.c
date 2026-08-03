@@ -195,13 +195,23 @@ static const char *PYTHON_BOOTSTRAP =
 "    return _mark_register_function(RegisterType.TOKEN, args, kwargs)\n"
 "\n"
 "def _cetta_load_module(unique_name, path):\n"
-"    if path.endswith('__init__.py'):\n"
-"        spec = importlib.util.spec_from_file_location(unique_name, path, submodule_search_locations=[os.path.dirname(path)])\n"
+"    path = os.path.realpath(path)\n"
+"    is_package = path.endswith('__init__.py')\n"
+"    if is_package:\n"
+"        package_dir = os.path.dirname(path)\n"
+"        public_name = os.path.basename(package_dir)\n"
+"        import_root = os.path.dirname(package_dir)\n"
+"        spec = importlib.util.spec_from_file_location(unique_name, path, submodule_search_locations=[package_dir])\n"
 "    else:\n"
+"        public_name = os.path.splitext(os.path.basename(path))[0]\n"
+"        import_root = os.path.dirname(path)\n"
 "        spec = importlib.util.spec_from_file_location(unique_name, path)\n"
+"    if import_root and import_root not in sys.path:\n"
+"        sys.path.append(import_root)\n"
 "    module = importlib.util.module_from_spec(spec)\n"
 "    sys.modules[unique_name] = module\n"
 "    spec.loader.exec_module(module)\n"
+"    sys.modules.setdefault(public_name, module)\n"
 "    return module\n"
 "\n"
 "def _cetta_eval_literal(text):\n"
@@ -793,7 +803,19 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
     }
     if (PyUnicode_Check(obj)) {
         const char *text = PyUnicode_AsUTF8(obj);
-        result_set_add(rs, atom_string(a, text ? text : ""));
+        /*
+         * SWI Janus maps a Python str returned by PeTTa's py-call to a
+         * Prolog atom.  Preserve that language boundary: repr and sread can
+         * still distinguish it from an authored MeTTa string.  HE keeps its
+         * established grounded-string conversion.
+         */
+        bool petta_text =
+            eval_current_language_id &&
+            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+        result_set_add(
+            rs, petta_text
+                ? atom_symbol(a, text ? text : "")
+                : atom_string(a, text ? text : ""));
         return true;
     }
 
@@ -882,7 +904,217 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
         const char *name = atom_name_cstr(atom);
         return name ? PyUnicode_FromString(name) : NULL;
     }
+    if (atom->kind == ATOM_EXPR &&
+        eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        typedef struct {
+            Atom *expression;
+            PyObject *list;
+            CettaExprIndex next;
+        } PythonListFrame;
+        PyObject *root = PyList_New(
+            (Py_ssize_t)atom->expr.len);
+        if (!root)
+            return NULL;
+        PythonListFrame *frames = NULL;
+        size_t frame_len = 0u;
+        size_t frame_cap = 0u;
+#define PYTHON_LIST_PUSH(expression_value, list_value) do { \
+    if (frame_len == frame_cap) { \
+        size_t next_cap = frame_cap ? frame_cap * 2u : 32u; \
+        if (next_cap <= frame_cap || \
+            next_cap > SIZE_MAX / sizeof(*frames)) { \
+            PyErr_NoMemory(); \
+            Py_DECREF(root); \
+            free(frames); \
+            return NULL; \
+        } \
+        frames = cetta_realloc( \
+            frames, next_cap * sizeof(*frames)); \
+        frame_cap = next_cap; \
+    } \
+    frames[frame_len++] = (PythonListFrame){ \
+        .expression = (expression_value), \
+        .list = (list_value), \
+        .next = 0u, \
+    }; \
+} while (0)
+        PYTHON_LIST_PUSH(atom, root);
+        while (frame_len > 0u) {
+            PythonListFrame *frame =
+                &frames[frame_len - 1u];
+            if (frame->next >=
+                frame->expression->expr.len) {
+                frame_len--;
+                continue;
+            }
+            CettaExprIndex index = frame->next++;
+            Atom *child =
+                frame->expression->expr.elems[index];
+            if (child && child->kind == ATOM_EXPR) {
+                PyObject *nested = PyList_New(
+                    (Py_ssize_t)child->expr.len);
+                if (!nested) {
+                    Py_DECREF(root);
+                    free(frames);
+                    return NULL;
+                }
+                PyList_SET_ITEM(
+                    frame->list, (Py_ssize_t)index, nested);
+                PYTHON_LIST_PUSH(child, nested);
+                continue;
+            }
+            PyObject *item =
+                python_from_atom(a, child, unwrap);
+            if (!item) {
+                Py_DECREF(root);
+                free(frames);
+                return NULL;
+            }
+            PyList_SET_ITEM(
+                frame->list, (Py_ssize_t)index, item);
+        }
+        free(frames);
+#undef PYTHON_LIST_PUSH
+        return root;
+    }
     return python_wrap_atom(atom, a);
+}
+
+typedef struct {
+    PyObject *sequence;
+    Py_ssize_t length;
+    Py_ssize_t next;
+    Atom **elements;
+    Atom **target;
+    bool owns_sequence;
+} PythonPettaSequenceFrame;
+
+static bool python_emit_petta_value(
+    CettaForeignRuntime *rt, Arena *a, PyObject *obj,
+    ResultSet *rs, Atom **error_out) {
+    if (!PyList_Check(obj) && !PyTuple_Check(obj))
+        return python_emit_single(rt, a, obj, rs, error_out);
+
+    PythonPettaSequenceFrame *frames = NULL;
+    size_t frame_len = 0u;
+    size_t frame_cap = 0u;
+    Atom *root = NULL;
+#define PYTHON_SEQUENCE_PUSH(sequence_value, target_value, owned_value) do { \
+    Py_ssize_t sequence_len = PySequence_Size(sequence_value); \
+    if (sequence_len < 0 || \
+        (uint64_t)sequence_len > (uint64_t)UINT32_MAX) { \
+        if (error_out && !*error_out) \
+            *error_out = python_error_atom( \
+                a, "python sequence conversion failed"); \
+        if (owned_value) \
+            Py_DECREF(sequence_value); \
+        goto sequence_failure; \
+    } \
+    if (frame_len == frame_cap) { \
+        size_t next_cap = frame_cap ? frame_cap * 2u : 32u; \
+        if (next_cap <= frame_cap || \
+            next_cap > SIZE_MAX / sizeof(*frames)) { \
+            if (error_out && !*error_out) \
+                *error_out = foreign_error_atom( \
+                    a, "python sequence nesting is too large"); \
+            if (owned_value) \
+                Py_DECREF(sequence_value); \
+            goto sequence_failure; \
+        } \
+        frames = cetta_realloc( \
+            frames, next_cap * sizeof(*frames)); \
+        frame_cap = next_cap; \
+    } \
+    Atom **sequence_elements = sequence_len > 0 \
+        ? arena_alloc( \
+              a, sizeof(*sequence_elements) * \
+                     (size_t)sequence_len) \
+        : NULL; \
+    if (sequence_len > 0 && !sequence_elements) { \
+        if (error_out && !*error_out) \
+            *error_out = foreign_error_atom( \
+                a, "python sequence atom allocation failed"); \
+        if (owned_value) \
+            Py_DECREF(sequence_value); \
+        goto sequence_failure; \
+    } \
+    frames[frame_len++] = (PythonPettaSequenceFrame){ \
+        .sequence = (sequence_value), \
+        .length = sequence_len, \
+        .next = 0, \
+        .elements = sequence_elements, \
+        .target = (target_value), \
+        .owns_sequence = (owned_value), \
+    }; \
+} while (0)
+
+    PYTHON_SEQUENCE_PUSH(obj, &root, false);
+    while (frame_len > 0u) {
+        PythonPettaSequenceFrame *frame =
+            &frames[frame_len - 1u];
+        if (frame->next >= frame->length) {
+            Atom *value = atom_expr(
+                a, frame->elements,
+                (CettaExprLen)frame->length);
+            if (!value) {
+                if (error_out && !*error_out)
+                    *error_out = foreign_error_atom(
+                        a, "python sequence atom allocation failed");
+                goto sequence_failure;
+            }
+            *frame->target = value;
+            if (frame->owns_sequence)
+                Py_DECREF(frame->sequence);
+            frame_len--;
+            continue;
+        }
+
+        Py_ssize_t index = frame->next++;
+        PyObject *item =
+            PySequence_GetItem(frame->sequence, index);
+        if (!item) {
+            if (error_out && !*error_out)
+                *error_out = python_error_atom(
+                    a, "python sequence item conversion failed");
+            goto sequence_failure;
+        }
+        Atom **target = &frame->elements[index];
+        if (PyList_Check(item) || PyTuple_Check(item)) {
+            PYTHON_SEQUENCE_PUSH(item, target, true);
+            continue;
+        }
+
+        ResultSet scalar;
+        result_set_init(&scalar);
+        bool ok =
+            python_emit_single(rt, a, item, &scalar, error_out);
+        Py_DECREF(item);
+        if (!ok || scalar.len != 1u) {
+            result_set_free(&scalar);
+            if (error_out && !*error_out)
+                *error_out = foreign_error_atom(
+                    a, "python sequence item is not a value");
+            goto sequence_failure;
+        }
+        *target = scalar.items[0];
+        result_set_free(&scalar);
+    }
+    free(frames);
+#undef PYTHON_SEQUENCE_PUSH
+    result_set_add(rs, root);
+    return true;
+
+sequence_failure:
+    while (frame_len > 0u) {
+        PythonPettaSequenceFrame *frame =
+            &frames[--frame_len];
+        if (frame->owns_sequence)
+            Py_DECREF(frame->sequence);
+    }
+    free(frames);
+#undef PYTHON_SEQUENCE_PUSH
+    return false;
 }
 
 static bool parse_optional_unwrap(Atom **args, uint32_t nargs,
@@ -1000,7 +1232,14 @@ static bool python_call_object(CettaForeignRuntime *rt, Space *space, Arena *a,
         if (error_out) *error_out = python_error_atom(a, "python callable failed");
         return false;
     }
-    bool ok = python_emit_many(rt, a, result, rs, error_out);
+    bool petta_result =
+        eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+    bool ok = petta_result
+        ? python_emit_petta_value(
+              rt, a, result, rs, error_out)
+        : python_emit_many(
+              rt, a, result, rs, error_out);
     Py_DECREF(result);
     return ok;
 }
@@ -1358,6 +1597,55 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
             return atom_error(a, call_expr, atom_symbol(a, "ArityTooLarge"));
         }
         uint32_t call_nargs = (uint32_t)(call_expr->expr.len - 1);
+
+        const char *call_head_name =
+            call_head->kind == ATOM_SYMBOL
+                ? atom_name_cstr(call_head) : NULL;
+        if (eval_current_language_id &&
+            eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+            call_head_name && call_head_name[0] == '.') {
+            if (call_head_name[1] == '\0' || call_nargs < 1u) {
+                return atom_error(
+                    a, call_expr,
+                    atom_symbol(a, "IncorrectNumberOfArguments"));
+            }
+            PyObject *base =
+                python_from_atom(a, call_args[0], true);
+            if (!base)
+                return python_error_atom(
+                    a, "py-call method receiver conversion failed");
+            PyObject *method = PyObject_GetAttrString(
+                base, call_head_name + 1u);
+            Py_DECREF(base);
+            if (!method)
+                return python_error_atom(
+                    a, "py-call method resolution failed");
+            if (!PyCallable_Check(method)) {
+                Py_DECREF(method);
+                return foreign_error_atom(
+                    a, "py-call method is not callable");
+            }
+            ResultSet method_results;
+            result_set_init(&method_results);
+            Atom *method_error = NULL;
+            bool called = python_call_object(
+                rt, space, a, method, true,
+                call_args + 1u, call_nargs - 1u,
+                &method_results, &method_error);
+            Py_DECREF(method);
+            if (!called) {
+                result_set_free(&method_results);
+                return method_error
+                    ? method_error
+                    : python_error_atom(
+                          a, "py-call method failed");
+            }
+            Atom *method_result =
+                result_set_collapse_for_native(
+                    a, &method_results);
+            result_set_free(&method_results);
+            return method_result;
+        }
 
         Atom *callable_atom = NULL;
         ResultSet tmp;

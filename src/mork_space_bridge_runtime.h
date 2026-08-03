@@ -13,6 +13,37 @@ typedef struct CettaMorkQueryCursorHandle CettaMorkQueryCursorHandle;
 typedef struct CettaMorkProductCursorHandle CettaMorkProductCursorHandle;
 typedef struct CettaMorkOverlayCursorHandle CettaMorkOverlayCursorHandle;
 
+typedef enum {
+    CETTA_MORK_INDEXED_SPACE_STAT_QUERY_REVISION = 0,
+    CETTA_MORK_INDEXED_SPACE_STAT_CATALOG_BUILT = 1,
+    CETTA_MORK_INDEXED_SPACE_STAT_CATALOG_BUILDS = 2,
+    CETTA_MORK_INDEXED_SPACE_STAT_CATALOG_ROWS_SCANNED = 3,
+    CETTA_MORK_INDEXED_SPACE_STAT_ACCESS_PATH_BUILDS = 4,
+    CETTA_MORK_INDEXED_SPACE_STAT_ACCESS_PATH_ROWS_INDEXED = 5,
+    CETTA_MORK_INDEXED_SPACE_STAT_INCREMENTAL_UPDATES = 6,
+    CETTA_MORK_INDEXED_SPACE_STAT_PLAN_BUILDS = 7,
+    CETTA_MORK_INDEXED_SPACE_STAT_PLAN_CACHE_HITS = 8,
+    CETTA_MORK_INDEXED_SPACE_STAT_REPLAY_COMPLETIONS = 9,
+    CETTA_MORK_INDEXED_SPACE_STAT_REPLAY_HITS = 10,
+    CETTA_MORK_INDEXED_SPACE_STAT_REPLAY_ROWS_STORED = 11
+} CettaMorkIndexedSpaceStat;
+
+typedef enum {
+    CETTA_MORK_INDEXED_CURSOR_STAT_QUERY_REVISION = 0,
+    CETTA_MORK_INDEXED_CURSOR_STAT_CATALOG_BUILDS = 1,
+    CETTA_MORK_INDEXED_CURSOR_STAT_CATALOG_ROWS_SCANNED = 2,
+    CETTA_MORK_INDEXED_CURSOR_STAT_ACCESS_PATH_BUILDS = 3,
+    CETTA_MORK_INDEXED_CURSOR_STAT_ACCESS_PATH_ROWS_INDEXED = 4,
+    CETTA_MORK_INDEXED_CURSOR_STAT_PLAN_BUILDS = 5,
+    CETTA_MORK_INDEXED_CURSOR_STAT_PLAN_CACHE_HITS = 6,
+    CETTA_MORK_INDEXED_CURSOR_STAT_TRIE_SEEKS = 7,
+    CETTA_MORK_INDEXED_CURSOR_STAT_TRIE_DESCENTS = 8,
+    CETTA_MORK_INDEXED_CURSOR_STAT_ROWS_EMITTED = 9,
+    CETTA_MORK_INDEXED_CURSOR_STAT_MAX_FRAME_CELLS = 10,
+    CETTA_MORK_INDEXED_CURSOR_STAT_ROWS_AGGREGATED = 11,
+    CETTA_MORK_INDEXED_CURSOR_STAT_REPLAY_HIT = 12
+} CettaMorkIndexedCursorStat;
+
 /*
 Current MM2 bridge mirror:
 
@@ -57,6 +88,12 @@ bool cetta_mork_bridge_space_clear(CettaMorkSpaceHandle *space);
 bool cetta_mork_bridge_space_add_text(CettaMorkSpaceHandle *space,
                                       const char *text,
                                       uint64_t *out_added);
+bool cetta_mork_bridge_space_normalize_expr_packet(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *packet,
+    size_t len,
+    uint8_t **out_expr_bytes,
+    size_t *out_expr_len);
 bool cetta_mork_bridge_space_add_expr_bytes(CettaMorkSpaceHandle *space,
                                             const uint8_t *expr_bytes,
                                             size_t len,
@@ -127,6 +164,9 @@ CettaMorkSpaceHandle *cetta_mork_bridge_space_join(
     const CettaMorkSpaceHandle *rhs);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_clone(
     const CettaMorkSpaceHandle *space);
+CettaMorkSpaceHandle *cetta_mork_bridge_space_monotone_delta(
+    const CettaMorkSpaceHandle *later,
+    const CettaMorkSpaceHandle *earlier);
 bool cetta_mork_bridge_space_meet_into(CettaMorkSpaceHandle *dst,
                                        const CettaMorkSpaceHandle *src);
 CettaMorkSpaceHandle *cetta_mork_bridge_space_meet(
@@ -393,6 +433,29 @@ bool cetta_mork_bridge_query_cursor_new_multi_ref_v3(
     const uint8_t *pattern,
     size_t len,
     CettaMorkQueryCursorHandle **out_cursor);
+bool cetta_mork_bridge_query_cursor_new_indexed_multi_ref_v4(
+    CettaMorkSpaceHandle *space,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor);
+bool cetta_mork_bridge_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+    CettaMorkSpaceHandle *known,
+    CettaMorkSpaceHandle *old,
+    CettaMorkSpaceHandle *delta,
+    const uint8_t *pattern,
+    size_t len,
+    CettaMorkQueryCursorHandle **out_cursor);
+bool cetta_mork_bridge_space_indexed_query_stat(
+    const CettaMorkSpaceHandle *space,
+    CettaMorkIndexedSpaceStat stat,
+    uint64_t *out_value);
+bool cetta_mork_bridge_query_cursor_indexed_stat(
+    const CettaMorkQueryCursorHandle *cursor,
+    CettaMorkIndexedCursorStat stat,
+    uint64_t *out_value);
+bool cetta_mork_bridge_query_cursor_count_remaining(
+    CettaMorkQueryCursorHandle *cursor,
+    uint64_t *out_count);
 void cetta_mork_bridge_query_cursor_free(CettaMorkQueryCursorHandle *cursor);
 bool cetta_mork_bridge_query_cursor_next(CettaMorkQueryCursorHandle *cursor,
                                          uint64_t max_rows,

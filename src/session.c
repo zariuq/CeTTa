@@ -590,6 +590,32 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
     return cetta_eval_option_store(&session->options, key, kind, repr, int_value);
 }
 
+void cetta_eval_session_clear_process_exit(CettaEvalSession *session) {
+    if (!session)
+        return;
+    session->process_control.exit_requested = false;
+    session->process_control.exit_code = 0;
+}
+
+void cetta_eval_session_request_process_exit(CettaEvalSession *session,
+                                             int exit_code) {
+    if (!session || session->process_control.exit_requested)
+        return;
+    session->process_control.exit_requested = true;
+    session->process_control.exit_code = exit_code;
+}
+
+bool cetta_eval_session_process_exit_requested(
+    const CettaEvalSession *session) {
+    return session && session->process_control.exit_requested;
+}
+
+int cetta_eval_session_process_exit_code(const CettaEvalSession *session) {
+    return session && session->process_control.exit_requested
+        ? session->process_control.exit_code
+        : 0;
+}
+
 void cetta_eval_session_init(CettaEvalSession *session,
                              CettaLanguageId language_id,
                              const CettaProfile *profile) {
@@ -600,6 +626,7 @@ void cetta_eval_session_init(CettaEvalSession *session,
     cetta_module_policy_init_for_language_profile(
         &session->module_policy, session->language_id, session->profile);
     cetta_evaluator_options_init(&session->options);
+    cetta_eval_session_clear_process_exit(session);
 }
 
 void cetta_eval_session_init_he_compat(CettaEvalSession *session) {

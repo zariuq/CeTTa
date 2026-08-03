@@ -195,10 +195,16 @@ typedef struct {
 } CettaEvaluatorOptions;
 
 typedef struct {
+    bool exit_requested;
+    int exit_code;
+} CettaProcessControl;
+
+typedef struct {
     CettaLanguageId language_id;
     const CettaProfile *profile;
     CettaModulePolicy module_policy;
     CettaEvaluatorOptions options;
+    CettaProcessControl process_control;
 } CettaEvalSession;
 
 typedef struct {
@@ -276,6 +282,12 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
                                                CettaEvalOptionValueKind kind,
                                                const char *repr,
                                                int64_t int_value);
+void cetta_eval_session_clear_process_exit(CettaEvalSession *session);
+void cetta_eval_session_request_process_exit(CettaEvalSession *session,
+                                             int exit_code);
+bool cetta_eval_session_process_exit_requested(
+    const CettaEvalSession *session);
+int cetta_eval_session_process_exit_code(const CettaEvalSession *session);
 void cetta_eval_session_init(CettaEvalSession *session,
                              CettaLanguageId language_id,
                              const CettaProfile *profile);

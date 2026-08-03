@@ -9,11 +9,12 @@
 
 enum {
     CTBR_MAGIC = 0x43544252u,
-    CTBR_VERSION = 5u,
+    CTBR_VERSION = 6u,
     CTBR_EXACT_ROWS_FLAGS = 0u,
     CTBR_QUERY_ROWS_FLAGS = 0u,
     CTBR_OPEN_REF_EXACT = 0u,
     CTBR_OPEN_REF_QUERY_SLOT = 1u,
+    CTBR_OPEN_REF_MATCHED_EXACT = 2u,
     BRIDGE_EXPR_TAG_ARITY = 0x00u,
     BRIDGE_EXPR_TAG_NEWVAR = 0x02u,
 };
@@ -425,7 +426,9 @@ static void test_contextual_query_rows_open_exact_value_refs(void) {
     assert(read_u32_be(packet, off) == 0); off += 4;
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u16_be(packet, off) == 0); off += 2;
-    assert(packet[off++] == CTBR_OPEN_REF_EXACT);
+    assert(packet[off++] == CTBR_OPEN_REF_MATCHED_EXACT);
+    assert(packet[off++] == 0);
+    assert(packet[off++] == 1);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x9ABCu); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
@@ -502,7 +505,9 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
     assert(read_u32_be(packet, off) == 0); off += 4;
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u16_be(packet, off) == 0); off += 2;
-    assert(packet[off++] == CTBR_OPEN_REF_EXACT);
+    assert(packet[off++] == CTBR_OPEN_REF_MATCHED_EXACT);
+    assert(packet[off++] == 0);
+    assert(packet[off++] == 1);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x1111u); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
@@ -512,7 +517,9 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u32_be(packet, off) == 1); off += 4;
     assert(read_u16_be(packet, off) == 0); off += 2;
-    assert(packet[off++] == CTBR_OPEN_REF_EXACT);
+    assert(packet[off++] == CTBR_OPEN_REF_MATCHED_EXACT);
+    assert(packet[off++] == 0);
+    assert(packet[off++] == 1);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x2222u); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
@@ -606,6 +613,17 @@ static void test_contextual_query_rows_emit_query_slot_refs(void) {
                     uint32_t spelling_len = 0;
                     assert(off + 12 <= len);
                     /* var_id */
+                    (void)read_u64_be(packet, off);
+                    off += 8;
+                    spelling_len = read_u32_be(packet, off);
+                    off += 4;
+                    assert(off + spelling_len <= len);
+                    off += spelling_len;
+                } else if (kind == CTBR_OPEN_REF_MATCHED_EXACT) {
+                    uint32_t spelling_len = 0;
+                    assert(off + 14 <= len);
+                    assert(packet[off++] != 0);
+                    assert(packet[off++] == 0);
                     (void)read_u64_be(packet, off);
                     off += 8;
                     spelling_len = read_u32_be(packet, off);

@@ -109,6 +109,7 @@ tests/test_alpha_equiv.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_alpha_equiv_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_arithmetic.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_assert.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_assert_equal_to_result_bag_semantics.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bad_type_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_basic_eval.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_bigint_arithmetic_regression.metta	he	metta	he-extended	main	native	test	golden	-
@@ -425,7 +426,10 @@ tests/test_pathmap_counted_space_surface.metta	he	metta	he-extended	pathmap	path
 tests/test_pathmap_direct_store_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_pathmap_fc_depth3_count_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_imported_bridge_v2.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
+tests/test_pathmap_indexed_query_work.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_match_copy_var_identity_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pathmap_program_shadow_sync_work.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pathmap_stored_variable_exact_query_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_typed_query_surface.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pln_portable_minmax_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pow_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-

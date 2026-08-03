@@ -1,5 +1,5 @@
 use mork::space::Space;
-use mork_expr::{item_byte, maybe_byte_item, Expr, ExprEnv, ExprZipper, Tag};
+use mork_expr::{Expr, ExprEnv, ExprZipper, Tag, item_byte, maybe_byte_item};
 use mork_frontend::bytestring_parser::{Context, Parser, ParserError};
 use mork_interning::WritePermit;
 use std::cell::RefCell;
@@ -7,20 +7,28 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 mod counted_pathmap;
+#[cfg(feature = "pathmap-space")]
+mod counted_query_index;
 
 pub use counted_pathmap::{
-    counted_contains_expr, counted_entries, counted_exact_entry, counted_expr_row_packet,
-    counted_factor_candidates, counted_insert_expr, counted_insert_expr_batch,
-    counted_insert_expr_batch_cached, counted_insert_expr_cached, counted_insert_expr_count_cached,
-    counted_logical_size, counted_query_only_packet_rows, counted_query_rows_detailed,
+    CountedDetailedPacketRows, CountedDetailedRow, CountedEntry, counted_contains_expr,
+    counted_entries, counted_exact_entry, counted_expr_row_packet, counted_factor_candidates,
+    counted_insert_expr, counted_insert_expr_batch, counted_insert_expr_batch_cached,
+    counted_insert_expr_cached, counted_insert_expr_count_cached, counted_logical_size,
+    counted_query_only_packet_rows, counted_query_rows_detailed,
     counted_query_rows_detailed_packet_rows, counted_remove_expr_batch,
     counted_remove_expr_batch_cached, counted_remove_one_expr, counted_remove_one_expr_cached,
     counted_sexpr_text, counted_sync_cached_logical_size, counted_unique_size,
-    CountedDetailedPacketRows, CountedDetailedRow, CountedEntry,
 };
 
 #[cfg(test)]
 pub use counted_pathmap::CountedQueryRow;
+
+#[cfg(feature = "pathmap-space")]
+pub use counted_query_index::{
+    FlatCountedCursorStats, FlatCountedIndexStats, FlatCountedQueryAdmission,
+    FlatCountedQueryCursor, FlatCountedQueryIndex, FlatSemiNaiveQueryCursor,
+};
 
 struct BridgeExprParser<'a> {
     small_buf: [u8; 64],
@@ -245,6 +253,122 @@ fn append_u32_be(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_be_bytes());
 }
 
+fn read_bridge_packet_u32(input: &[u8], offset: &mut usize) -> Result<u32, String> {
+    if input.len().saturating_sub(*offset) < 4 {
+        return Err("bridge expr packet truncated while reading u32".to_string());
+    }
+    let value = u32::from_be_bytes([
+        input[*offset],
+        input[*offset + 1],
+        input[*offset + 2],
+        input[*offset + 3],
+    ]);
+    *offset += 4;
+    Ok(value)
+}
+
+/// Normalize the length-delimited bridge expression wire format into the
+/// compact expression representation owned by `space`.
+///
+/// Symbols longer than the compact format's 63-byte inline limit are interned
+/// in the target space and represented by their eight-byte symbol handle.
+/// The input remains independent of any particular MORK symbol table.
+pub fn bridge_expr_packet_to_bytes(space: &Space, input: &[u8]) -> Result<Vec<u8>, String> {
+    if input.is_empty() {
+        return Err("bridge expr packet must not be empty".to_string());
+    }
+    let write_permit = space
+        .sm
+        .try_aquire_permission()
+        .map_err(|_| "failed to acquire bridge symbol-table write permission".to_string())?;
+    let mut offset = 0usize;
+    let mut pending = 1usize;
+    let mut introduced_vars = 0usize;
+    let mut compact = Vec::with_capacity(input.len());
+
+    while pending > 0 {
+        let Some(tag) = input.get(offset).copied() else {
+            return Err("bridge expr packet truncated while reading tag".to_string());
+        };
+        offset += 1;
+        pending -= 1;
+
+        match tag {
+            BRIDGE_VALUE_TAG_ARITY => {
+                let arity = read_bridge_packet_u32(input, &mut offset)?;
+                if arity >= 64 {
+                    return Err(format!(
+                        "bridge expr packet arity must be at most 63, got {arity}"
+                    ));
+                }
+                compact.push(item_byte(Tag::Arity(arity as u8)));
+                pending = pending
+                    .checked_add(arity as usize)
+                    .ok_or_else(|| "bridge expr packet arity overflow".to_string())?;
+            }
+            BRIDGE_VALUE_TAG_SYMBOL => {
+                let symbol_len =
+                    usize::try_from(read_bridge_packet_u32(input, &mut offset)?)
+                        .map_err(|_| "bridge expr packet symbol length overflow".to_string())?;
+                if symbol_len == 0 {
+                    return Err("bridge expr packet symbols must not be empty".to_string());
+                }
+                let symbol_end = offset
+                    .checked_add(symbol_len)
+                    .ok_or_else(|| "bridge expr packet symbol length overflow".to_string())?;
+                let symbol = input
+                    .get(offset..symbol_end)
+                    .ok_or_else(|| {
+                        "bridge expr packet truncated while reading symbol bytes".to_string()
+                    })?;
+                offset = symbol_end;
+                if symbol_len < 64 {
+                    compact.push(item_byte(Tag::SymbolSize(symbol_len as u8)));
+                    compact.extend_from_slice(symbol);
+                } else {
+                    let handle = write_permit.get_sym_or_insert(symbol);
+                    compact.push(item_byte(Tag::SymbolSize(handle.len() as u8)));
+                    compact.extend_from_slice(&handle);
+                }
+            }
+            BRIDGE_VALUE_TAG_NEWVAR => {
+                if introduced_vars >= 64 {
+                    return Err(
+                        "bridge expr packet supports at most 64 distinct variables".to_string()
+                    );
+                }
+                compact.push(item_byte(Tag::NewVar));
+                introduced_vars += 1;
+            }
+            BRIDGE_VALUE_TAG_VARREF => {
+                let Some(index) = input.get(offset).copied() else {
+                    return Err(
+                        "bridge expr packet truncated while reading variable reference".to_string()
+                    );
+                };
+                offset += 1;
+                if index as usize >= introduced_vars {
+                    return Err(format!(
+                        "bridge expr packet references variable slot {index} before introduction"
+                    ));
+                }
+                compact.push(item_byte(Tag::VarRef(index)));
+            }
+            other => {
+                return Err(format!(
+                    "bridge expr packet contains invalid tag 0x{other:02x}"
+                ));
+            }
+        }
+    }
+
+    if offset != input.len() {
+        return Err("bridge expr packet contains trailing data".to_string());
+    }
+    validate_expr_bytes(&compact)?;
+    Ok(compact)
+}
+
 pub fn stable_bridge_expr_bytes(space: &Space, expr: Expr) -> Result<Vec<u8>, String> {
     let sym_table = space.sym_table();
     let mut encoded = Vec::new();
@@ -348,11 +472,7 @@ pub fn bridge_expr_text(space: &Space, expr: Expr) -> Result<Vec<u8>, String> {
             }
         },
         |index, is_new| {
-            if is_new {
-                "$"
-            } else {
-                bridge_ref_name(index)
-            }
+            if is_new { "$" } else { bridge_ref_name(index) }
         },
     );
     if let Some(err) = error.into_inner() {
@@ -407,4 +527,39 @@ pub fn render_bridge_expr_text(expr_bytes: &[u8], value_env: u8) -> Result<Strin
         },
     );
     String::from_utf8(out).map_err(|err| format!("bridge expr text was not utf8: {err}"))
+}
+
+#[cfg(test)]
+mod bridge_packet_tests {
+    use super::*;
+
+    fn push_symbol(packet: &mut Vec<u8>, symbol: &[u8]) {
+        packet.push(BRIDGE_VALUE_TAG_SYMBOL);
+        packet.extend_from_slice(&(symbol.len() as u32).to_be_bytes());
+        packet.extend_from_slice(symbol);
+    }
+
+    #[test]
+    fn length_delimited_packet_interns_and_roundtrips_long_symbols() {
+        let space = Space::new();
+        let long = vec![b'x'; 256];
+        let mut packet = vec![BRIDGE_VALUE_TAG_ARITY];
+        packet.extend_from_slice(&2u32.to_be_bytes());
+        push_symbol(&mut packet, b"doc");
+        push_symbol(&mut packet, &long);
+
+        let compact = bridge_expr_packet_to_bytes(&space, &packet).unwrap();
+        let expr = Expr {
+            ptr: compact.as_ptr().cast_mut(),
+        };
+        assert_eq!(stable_bridge_expr_packet_bytes(&space, expr).unwrap(), packet);
+    }
+
+    #[test]
+    fn length_delimited_packet_rejects_unintroduced_variable_references() {
+        let space = Space::new();
+        let packet = [BRIDGE_VALUE_TAG_VARREF, 0];
+        let err = bridge_expr_packet_to_bytes(&space, &packet).unwrap_err();
+        assert!(err.contains("before introduction"));
+    }
 }

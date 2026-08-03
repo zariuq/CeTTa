@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "parser.h"
 #include "space.h"
@@ -190,6 +191,53 @@ bool cetta_mm2_atom_id_to_contextual_bridge_expr_bytes(Arena *a,
         *out_context_len = 0;
     return cetta_mm2_atom_id_to_bridge_expr_bytes(
         a, universe, atom_id, out_expr_bytes, out_expr_len, out_error);
+}
+
+bool cetta_mm2_atom_to_bridge_expr_packet(Arena *a, Atom *atom,
+                                          uint8_t **out_packet,
+                                          size_t *out_len,
+                                          const char **out_error) {
+    return cetta_mm2_atom_to_bridge_expr_bytes(
+        a, atom, out_packet, out_len, out_error);
+}
+
+bool cetta_mm2_atom_to_contextual_bridge_expr_packet(
+    Arena *a, Atom *atom, uint8_t **out_packet, size_t *out_packet_len,
+    uint8_t **out_context_bytes, size_t *out_context_len,
+    const char **out_error) {
+    return cetta_mm2_atom_to_contextual_bridge_expr_bytes(
+        a, atom, out_packet, out_packet_len,
+        out_context_bytes, out_context_len, out_error);
+}
+
+bool cetta_mm2_atom_id_to_bridge_expr_packet(
+    Arena *a, const TermUniverse *universe, AtomId atom_id,
+    uint8_t **out_packet, size_t *out_len, const char **out_error) {
+    return cetta_mm2_atom_id_to_bridge_expr_bytes(
+        a, universe, atom_id, out_packet, out_len, out_error);
+}
+
+bool cetta_mm2_atom_id_to_contextual_bridge_expr_packet(
+    Arena *a, const TermUniverse *universe, AtomId atom_id,
+    uint8_t **out_packet, size_t *out_packet_len,
+    uint8_t **out_context_bytes, size_t *out_context_len,
+    const char **out_error) {
+    return cetta_mm2_atom_id_to_contextual_bridge_expr_bytes(
+        a, universe, atom_id, out_packet, out_packet_len,
+        out_context_bytes, out_context_len, out_error);
+}
+
+bool cetta_mork_bridge_space_normalize_expr_packet(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t len,
+    uint8_t **out_expr_bytes, size_t *out_expr_len) {
+    (void)space;
+    (void)packet;
+    (void)len;
+    if (out_expr_bytes)
+        *out_expr_bytes = NULL;
+    if (out_expr_len)
+        *out_expr_len = 0;
+    return false;
 }
 
 bool cetta_mork_bridge_space_add_text(CettaMorkSpaceHandle *space,
@@ -683,6 +731,57 @@ bool cetta_mork_bridge_query_cursor_new_multi_ref_v3(
     if (out_cursor)
         *out_cursor = NULL;
     return false;
+}
+
+bool cetta_mork_bridge_query_cursor_new_indexed_multi_ref_v4(
+    CettaMorkSpaceHandle *space, const uint8_t *pattern, size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    (void)space;
+    (void)pattern;
+    (void)len;
+    if (out_cursor)
+        *out_cursor = NULL;
+    return false;
+}
+
+bool cetta_mork_bridge_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+    CettaMorkSpaceHandle *known, CettaMorkSpaceHandle *old,
+    CettaMorkSpaceHandle *delta, const uint8_t *pattern, size_t len,
+    CettaMorkQueryCursorHandle **out_cursor) {
+    (void)known;
+    (void)old;
+    (void)delta;
+    (void)pattern;
+    (void)len;
+    if (out_cursor)
+        *out_cursor = NULL;
+    return false;
+}
+
+bool cetta_mork_bridge_query_cursor_indexed_stat(
+    const CettaMorkQueryCursorHandle *cursor,
+    CettaMorkIndexedCursorStat stat, uint64_t *out_value) {
+    (void)cursor;
+    (void)stat;
+    if (out_value)
+        *out_value = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_query_cursor_count_remaining(
+    CettaMorkQueryCursorHandle *cursor, uint64_t *out_count) {
+    (void)cursor;
+    if (out_count)
+        *out_count = 0;
+    return false;
+}
+
+CettaMorkSpaceHandle *cetta_mork_bridge_space_monotone_delta(
+    const CettaMorkSpaceHandle *later,
+    const CettaMorkSpaceHandle *earlier) {
+    (void)later;
+    (void)earlier;
+    return NULL;
 }
 
 void cetta_mork_bridge_query_cursor_free(CettaMorkQueryCursorHandle *cursor) {

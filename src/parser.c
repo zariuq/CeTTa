@@ -1383,6 +1383,7 @@ static bool parser_render_grounded(FILE *out, Atom *atom) {
     case GV_FOREIGN:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
+    case GV_INTERNAL_TAG:
         return false;
     }
     return false;

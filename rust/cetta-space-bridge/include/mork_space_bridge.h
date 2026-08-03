@@ -89,10 +89,19 @@ For human inspection, use mork_space_query_debug().
 
 MorkSpace *mork_space_new(void);
 void mork_space_free(MorkSpace *space);
+MorkSpace *mork_space_clone(const MorkSpace *space);
+MorkSpace *mork_space_monotone_delta(const MorkSpace *later,
+                                     const MorkSpace *earlier);
 
 MorkStatus mork_space_clear(MorkSpace *space);
 MorkStatus mork_space_add_text(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_remove_text(MorkSpace *space, const uint8_t *text, size_t len);
+/* Normalizes the length-delimited expression packet used by bridge result
+   rows into this space's compact expression encoding. Long symbols are
+   interned in the target space. */
+MorkBuffer mork_space_normalize_expr_packet(MorkSpace *space,
+                                            const uint8_t *packet,
+                                            size_t len);
 MorkStatus mork_space_add_expr_bytes(MorkSpace *space,
                                       const uint8_t *expr_bytes,
                                       size_t len);
@@ -152,10 +161,10 @@ MorkBuffer mork_cursor_next_expr_rows(MorkCursor *cursor,
                                       uint64_t max_bytes);
 
 /*
-Contextual exact-row bridge packet (wire version 5):
+Contextual exact-row bridge packet (wire version 6):
 
   u32 magic_be      // 0x43544252 = "CTBR"
-  u16 version_be    // 5
+  u16 version_be    // 6
   u16 flags_be      // 0 for exact-row packets
   u64 rows_be       // number of row specs, not expanded logical rows
   u32 contexts_be
@@ -164,7 +173,7 @@ Contextual exact-row bridge packet (wire version 5):
     u32 entry_count_be
     repeated entries:
       u16 slot_be
-      u8  ref_kind       // 0 = exact VarId/spelling, 1 = query-slot ref
+      u8  ref_kind       // 0 = exact VarId/spelling
       u8  reserved
       ... ref payload ...
   repeated rows:
@@ -261,6 +270,52 @@ MorkBuffer mork_space_query_bindings_multi_ref_v3(MorkSpace *space,
 MorkQueryCursor *mork_query_cursor_new_multi_ref_v3(MorkSpace *space,
                                                    const uint8_t *pattern,
                                                    size_t len);
+MorkQueryCursor *mork_query_cursor_new_indexed_multi_ref_v4(MorkSpace *space,
+                                                            const uint8_t *pattern,
+                                                            size_t len);
+MorkQueryCursor *mork_query_cursor_new_indexed_semi_naive_multi_ref_v4(
+    MorkSpace *known,
+    MorkSpace *old,
+    MorkSpace *delta,
+    const uint8_t *pattern,
+    size_t len);
+
+typedef enum {
+    MORK_INDEXED_SPACE_STAT_QUERY_REVISION = 0,
+    MORK_INDEXED_SPACE_STAT_CATALOG_BUILT = 1,
+    MORK_INDEXED_SPACE_STAT_CATALOG_BUILDS = 2,
+    MORK_INDEXED_SPACE_STAT_CATALOG_ROWS_SCANNED = 3,
+    MORK_INDEXED_SPACE_STAT_ACCESS_PATH_BUILDS = 4,
+    MORK_INDEXED_SPACE_STAT_ACCESS_PATH_ROWS_INDEXED = 5,
+    MORK_INDEXED_SPACE_STAT_INCREMENTAL_UPDATES = 6,
+    MORK_INDEXED_SPACE_STAT_PLAN_BUILDS = 7,
+    MORK_INDEXED_SPACE_STAT_PLAN_CACHE_HITS = 8,
+    MORK_INDEXED_SPACE_STAT_REPLAY_COMPLETIONS = 9,
+    MORK_INDEXED_SPACE_STAT_REPLAY_HITS = 10,
+    MORK_INDEXED_SPACE_STAT_REPLAY_ROWS_STORED = 11
+} MorkIndexedSpaceStat;
+
+typedef enum {
+    MORK_INDEXED_CURSOR_STAT_QUERY_REVISION = 0,
+    MORK_INDEXED_CURSOR_STAT_CATALOG_BUILDS = 1,
+    MORK_INDEXED_CURSOR_STAT_CATALOG_ROWS_SCANNED = 2,
+    MORK_INDEXED_CURSOR_STAT_ACCESS_PATH_BUILDS = 3,
+    MORK_INDEXED_CURSOR_STAT_ACCESS_PATH_ROWS_INDEXED = 4,
+    MORK_INDEXED_CURSOR_STAT_PLAN_BUILDS = 5,
+    MORK_INDEXED_CURSOR_STAT_PLAN_CACHE_HITS = 6,
+    MORK_INDEXED_CURSOR_STAT_TRIE_SEEKS = 7,
+    MORK_INDEXED_CURSOR_STAT_TRIE_DESCENTS = 8,
+    MORK_INDEXED_CURSOR_STAT_ROWS_EMITTED = 9,
+    MORK_INDEXED_CURSOR_STAT_MAX_FRAME_CELLS = 10,
+    MORK_INDEXED_CURSOR_STAT_ROWS_AGGREGATED = 11,
+    MORK_INDEXED_CURSOR_STAT_REPLAY_HIT = 12
+} MorkIndexedCursorStat;
+
+MorkStatus mork_space_indexed_query_stat(const MorkSpace *space,
+                                         uint32_t stat);
+MorkStatus mork_query_cursor_indexed_stat(const MorkQueryCursor *cursor,
+                                          uint32_t stat);
+MorkStatus mork_query_cursor_count_remaining(MorkQueryCursor *cursor);
 void mork_query_cursor_free(MorkQueryCursor *cursor);
 MorkBuffer mork_query_cursor_next(MorkQueryCursor *cursor,
                                   uint64_t max_rows,
@@ -278,7 +333,7 @@ Packet format for mork_space_query_contextual_rows():
     u32 entry_count_be
     repeated entries:
       u16 slot_be
-      u8  ref_kind       // 0 = exact VarId/spelling, 1 = query-slot ref
+      u8  ref_kind       // 0 = exact, 1 = query slot, 2 = matched exact
       u8  reserved
       if ref_kind == 0:
         u64 var_id_be
@@ -286,6 +341,12 @@ Packet format for mork_space_query_contextual_rows():
         u8  spelling_bytes[spelling_len]
       if ref_kind == 1:
         u16 query_slot_be
+      if ref_kind == 2:
+        u8  source_factor_env
+        u8  reserved
+        u64 source_var_id_be
+        u32 spelling_len_be
+        u8  spelling_bytes[spelling_len]
   repeated rows:
     u32 binding_count_be
     repeated bindings:
@@ -295,9 +356,10 @@ Packet format for mork_space_query_contextual_rows():
       u32 expr_len_be
       u8  expr_bytes[expr_len]
 
-This is the origin-aware query sibling of contextual exact rows. Values are
-opened with either exact stored identities or references back to the query
-variable context owned by CeTTa.
+This is the origin-aware query sibling of contextual exact rows. Query
+variables refer back to CeTTa's query context. Stored variables carry their
+factor occurrence and source identity so the consumer can standardize each
+matched fact apart while preserving co-reference within that occurrence.
 */
 MorkBuffer mork_space_query_contextual_rows(MorkSpace *space,
                                             const uint8_t *pattern,

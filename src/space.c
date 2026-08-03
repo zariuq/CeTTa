@@ -591,7 +591,20 @@ static void eq_bucket_free(EqBucket *b) {
 }
 
 static uint32_t symbol_hash(SymbolId id) {
-    uint32_t mixed = (uint32_t)((uint64_t)id * 2654435761u);
+    /*
+     * Bucket placement must be a function of the symbol, not of when it was
+     * interned.  Otherwise loading an unrelated language first renumbers
+     * SymbolIds and changes equation/type-index collision work in every other
+     * language.  The symbol table already records a spelling-stable 64-bit
+     * hash; avalanche its folded value only at the bucket boundary.
+     */
+    uint64_t stable = symbol_hash_value(g_symbols, id);
+    uint32_t mixed = (uint32_t)stable ^ (uint32_t)(stable >> 32);
+    mixed ^= mixed >> 16;
+    mixed *= 0x85ebca6bu;
+    mixed ^= mixed >> 13;
+    mixed *= 0xc2b2ae35u;
+    mixed ^= mixed >> 16;
     return mixed % EQ_INDEX_BUCKETS;
 }
 
@@ -917,6 +930,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
+        case GV_INTERNAL_TAG:
             return false;
         }
         return false;
@@ -960,6 +974,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
+        case GV_INTERNAL_TAG:
             return false;
         }
         return false;
@@ -1827,6 +1842,113 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
     return true;
 }
 
+static bool space_equation_cursor_index_matches(
+    const SpaceEquationCursor *cursor, CettaIndex logical_index,
+    bool wildcard) {
+    if (!cursor || !cursor->read.space ||
+        logical_index >= space_length64(cursor->read.space)) {
+        return false;
+    }
+    Atom *equation = space_get_at64(cursor->read.space, logical_index);
+    Atom *lhs = NULL;
+    Atom *rhs = NULL;
+    if (!equation || !is_equation_atom(equation, &lhs, &rhs))
+        return false;
+    SymbolId lhs_head = eq_head_symbol(lhs);
+    return wildcard
+        ? lhs_head == SYMBOL_ID_NONE
+        : lhs_head == cursor->head;
+}
+
+static bool space_equation_cursor_peek_bucket(
+    SpaceEquationCursor *cursor, const EqBucket *bucket,
+    CettaIndex *position, bool wildcard, CettaIndex *logical_index) {
+    if (!cursor || !bucket || !position || !logical_index)
+        return false;
+    while (*position < bucket->len) {
+        CettaIndex candidate = bucket->atom_indices[*position];
+        if (space_equation_cursor_index_matches(
+                cursor, candidate, wildcard)) {
+            *logical_index = candidate;
+            return true;
+        }
+        (*position)++;
+    }
+    return false;
+}
+
+bool space_equation_cursor_init(Space *s, SymbolId head,
+                                SpaceEquationCursor *cursor) {
+    if (cursor)
+        memset(cursor, 0, sizeof(*cursor));
+    if (!s || !cursor || head == SYMBOL_ID_NONE)
+        return false;
+    if (!space_has_overlay_base(s))
+        ensure_eq_index(s);
+    cursor->read = space_read_token(s);
+    cursor->head = head;
+    cursor->overlay = space_has_overlay_base(s);
+    return space_read_token_is_current(cursor->read);
+}
+
+SpaceEquationCursorStep space_equation_cursor_next(
+    SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!cursor || !out || !space_read_token_is_current(cursor->read))
+        return SPACE_EQUATION_CURSOR_INVALIDATED;
+
+    Space *s = (Space *)cursor->read.space;
+    if (cursor->overlay) {
+        CettaCount logical_len = space_length64(s);
+        while (cursor->overlay_position < logical_len) {
+            CettaIndex logical_index = cursor->overlay_position++;
+            Atom *equation = space_get_at64(s, logical_index);
+            Atom *lhs = NULL;
+            Atom *rhs = NULL;
+            if (!equation || !is_equation_atom(equation, &lhs, &rhs))
+                continue;
+            SymbolId lhs_head = eq_head_symbol(lhs);
+            if (lhs_head != SYMBOL_ID_NONE && lhs_head != cursor->head)
+                continue;
+            out->read = cursor->read;
+            out->logical_index = logical_index;
+            return SPACE_EQUATION_CURSOR_ITEM;
+        }
+        return SPACE_EQUATION_CURSOR_END;
+    }
+
+    EqBucket *exact =
+        &s->native.eq_idx.buckets[symbol_hash(cursor->head)];
+    EqBucket *wildcard = &s->native.eq_idx.wildcard;
+    CettaIndex exact_index = 0u;
+    CettaIndex wildcard_index = 0u;
+    bool has_exact = space_equation_cursor_peek_bucket(
+        cursor, exact, &cursor->exact_position, false, &exact_index);
+    bool has_wildcard = space_equation_cursor_peek_bucket(
+        cursor, wildcard, &cursor->wildcard_position, true,
+        &wildcard_index);
+    if (!has_exact && !has_wildcard)
+        return SPACE_EQUATION_CURSOR_END;
+
+    CettaIndex logical_index;
+    if (has_exact && (!has_wildcard || exact_index < wildcard_index)) {
+        logical_index = exact_index;
+        cursor->exact_position++;
+    } else if (has_wildcard &&
+               (!has_exact || wildcard_index < exact_index)) {
+        logical_index = wildcard_index;
+        cursor->wildcard_position++;
+    } else {
+        logical_index = exact_index;
+        cursor->exact_position++;
+        cursor->wildcard_position++;
+    }
+    out->read = cursor->read;
+    out->logical_index = logical_index;
+    return SPACE_EQUATION_CURSOR_ITEM;
+}
+
 static bool space_equation_child_ids_at_id(const Space *s, AtomId atom_id,
                                            AtomId *lhs_id_out, AtomId *rhs_id_out) {
     if (!s || !s->native.universe || atom_id == CETTA_ATOM_ID_NONE)
@@ -2543,12 +2665,7 @@ static Atom *bindings_apply_without_self_id(Bindings *full, Arena *a,
     for (uint32_t i = 0; i < reduced.len; i++) {
         if (reduced.entries[i].var_id != skip_id)
             continue;
-        for (uint32_t j = i + 1; j < reduced.len; j++)
-            reduced.entries[j - 1] = reduced.entries[j];
-        reduced.len--;
-        reduced.lookup_cache_count = 0;
-        reduced.lookup_cache_next = 0;
-        removed = true;
+        removed = bindings_remove_entry_at(&reduced, i);
         break;
     }
     Atom *resolved = removed ? bindings_apply_if_vars(&reduced, a, value)
@@ -3596,6 +3713,8 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         return atom_symbol(a, "PrimeNeedCapability");
     case GV_PRIME_CONTEXT:
         return atom_symbol(a, "context");
+    case GV_INTERNAL_TAG:
+        return atom_undefined_type(a);
     }
     return atom_undefined_type(a);
 }
@@ -3697,6 +3816,16 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     }
     *out_types = types;
     return count;
+}
+
+uint32_t space_get_declared_types(
+    Space *s, Arena *a, Atom *subject, Atom ***out_types) {
+    if (!out_types)
+        return 0u;
+    *out_types = NULL;
+    if (!s || !a || !subject)
+        return 0u;
+    return get_annotated_types(s, a, subject, out_types, NULL);
 }
 
 static bool tuple_type_part_keep(Atom *type, bool is_head) {
@@ -4612,4 +4741,62 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
         }
     }
     return false;
+}
+
+static void space_equation_note_head_arity(
+    Atom *equation, SymbolId head, CettaExprLen query_arity,
+    bool *found, CettaExprLen *minimum, CettaExprLen *maximum,
+    bool *has_exact) {
+    Atom *lhs = NULL;
+    Atom *rhs = NULL;
+    if (!equation || !is_equation_atom(equation, &lhs, &rhs) ||
+        !lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
+        eq_head_symbol(lhs) != head)
+        return;
+    CettaExprLen arity = lhs->expr.len - 1u;
+    if (!*found || arity < *minimum)
+        *minimum = arity;
+    if (!*found || arity > *maximum)
+        *maximum = arity;
+    *found = true;
+    *has_exact = *has_exact || arity == query_arity;
+}
+
+bool space_equation_head_arity_bounds(
+    Space *s, SymbolId head, CettaExprLen *minimum,
+    CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity) {
+    if (minimum)
+        *minimum = 0u;
+    if (maximum)
+        *maximum = 0u;
+    if (has_exact)
+        *has_exact = false;
+    if (!s || head == SYMBOL_ID_NONE || !minimum || !maximum ||
+        !has_exact)
+        return false;
+
+    bool found = false;
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex index = 0u; index < logical_len; index++) {
+            space_equation_note_head_arity(
+                space_get_at64(s, index), head, query_arity,
+                &found, minimum, maximum, has_exact);
+        }
+        return found;
+    }
+
+    ensure_eq_index(s);
+    EqBucket *bucket =
+        &s->native.eq_idx.buckets[symbol_hash(head)];
+    for (CettaIndex index = 0u; index < bucket->len; index++) {
+        CettaIndex logical_index = bucket->atom_indices[index];
+        if (logical_index >= s->native.len)
+            continue;
+        space_equation_note_head_arity(
+            space_get_at64(s, logical_index), head, query_arity,
+            &found, minimum, maximum, has_exact);
+    }
+    return found;
 }

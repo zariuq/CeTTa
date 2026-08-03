@@ -33,9 +33,10 @@ ENABLE_PIC ?= 0
 CETTA_PROVENANCE_ASSERT ?= 0
 RHOCOST_COMMIT_AUDIT ?= 0
 ENABLE_PRIME_RECEIPT_PRIMARY_INDEX ?= 0
-ENABLE_PRIME_NEED_HEAP_INDEX ?= 0
+ENABLE_PRIME_NEED_HEAP_INDEX ?= 1
 ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 0
+ENABLE_LIB_PROLOG ?= auto
 PRIME_NEED_ALGEBRA_CHECKS := 87
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
@@ -96,6 +97,9 @@ $(error ENABLE_PRIME_NEED_CLOSURE_CAPTURE must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_PRIME_EVAL_STACK),0 1),$(ENABLE_PRIME_EVAL_STACK))
 $(error ENABLE_PRIME_EVAL_STACK must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_LIB_PROLOG),0 1 auto),$(ENABLE_LIB_PROLOG))
+$(error ENABLE_LIB_PROLOG must be 0, 1, or auto)
 endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
@@ -232,6 +236,27 @@ PY_CFLAGS =
 PY_LDFLAGS =
 PY_RPATH =
 PYTHON_SRC = src/foreign_stub.c
+LIB_PROLOG_PKG_AVAILABLE := $(shell pkg-config --exists swipl 2>/dev/null && printf '%s' 1 || printf '%s' 0)
+LIB_PROLOG_ENABLED := 0
+ifeq ($(ENABLE_LIB_PROLOG),auto)
+LIB_PROLOG_ENABLED := $(LIB_PROLOG_PKG_AVAILABLE)
+else
+LIB_PROLOG_ENABLED := $(ENABLE_LIB_PROLOG)
+endif
+ifeq ($(LIB_PROLOG_ENABLED),1)
+ifneq ($(LIB_PROLOG_PKG_AVAILABLE),1)
+$(error ENABLE_LIB_PROLOG=1 requires the swipl pkg-config package)
+endif
+LIB_PROLOG_CFLAGS := $(shell pkg-config --cflags swipl)
+LIB_PROLOG_LDFLAGS := $(shell pkg-config --libs swipl)
+LIB_PROLOG_RPATH := -Wl,-rpath,$(shell pkg-config --variable=libdir swipl)
+LIB_PROLOG_SRC := src/petta_libpl.c
+else
+LIB_PROLOG_CFLAGS :=
+LIB_PROLOG_LDFLAGS :=
+LIB_PROLOG_RPATH :=
+LIB_PROLOG_SRC := src/petta_libpl_stub.c
+endif
 ifeq ($(ENABLE_GMP),1)
 GMP_CFLAGS ?= $(shell pkg-config --cflags gmp 2>/dev/null)
 GMP_LDFLAGS ?= $(shell pkg-config --libs gmp 2>/dev/null || printf '%s' -lgmp)
@@ -281,6 +306,9 @@ endif
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-eval-stack
 endif
+ifeq ($(LIB_PROLOG_ENABLED),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).lib-prolog
+endif
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
 GSLT2PARSE_SHARED_ASAN_ENV =
 GSLT2PARSE_SHARED_ASAN_ARGS =
@@ -328,10 +356,10 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(PY_LDFLAGS) $(PY_RPATH)
 ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
@@ -354,7 +382,7 @@ COMPILED_READER_RUNTIME_SRC = \
 	$(HE_COMPILED_READER_RUNTIME_SRC) \
 	$(PETTA_COMPILED_READER_RUNTIME_SRC) \
 	$(PRIME_COMPILED_READER_RUNTIME_SRC)
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c src/petta_specializer.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -379,6 +407,10 @@ PETTA_COMPILED_READER_TEST_SRC = tests/support/test_petta_compiled_reader_v1.c
 PETTA_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_petta_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PETTA_COMPILED_READER_TEST_BIN = runtime/test_petta_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PETTA_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
+PETTA_SEARCH_MACHINE_TEST_SRC = tests/support/test_petta_search_machine.c
+PETTA_SEARCH_MACHINE_TEST_OBJ = runtime/bootstrap/test_petta_search_machine.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PETTA_SEARCH_MACHINE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PRIME_COMPILED_READER_TEST_SRC = tests/support/test_prime_compiled_reader_v1.c
 PRIME_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_prime_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PRIME_COMPILED_READER_TEST_BIN = runtime/test_prime_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -622,6 +654,7 @@ GSLT2PARSE_AUX_OBJ = \
 	$(REGULAR_SPAN_DFA_V1_STREAM_OBJ)
 STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
 VARIANT_SHAPE_TEST_BIN = runtime/test_variant_shape_roundtrip-$(BUILD_OBJ_TAG)
+BINDINGS_LOOKUP_INDEX_TEST_BIN = runtime/test_bindings_lookup_index-$(BUILD_OBJ_TAG)
 ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
 ABT_TEST_BIN = runtime/test_abt-$(BUILD_OBJ_TAG)
 ABT_MM2_BOUNDARY_TEST_BIN = runtime/test_abt_mm2_boundary-$(BUILD_OBJ_TAG)
@@ -641,7 +674,7 @@ REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
-GROUNDED_STANDALONE_SRC = src/grounded.c src/abt.c src/atom_blob.c
+GROUNDED_STANDALONE_SRC = src/grounded.c src/petta_semantics.c src/abt.c src/atom_blob.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) $(ABT_DEFAULT_SIGNATURES_BLOB)
 PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # Bindings owns a PrimeNeedSnapshot even in non-Prime harnesses, so every
@@ -658,6 +691,7 @@ LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN = runtime/test_let_branch_arena_reset_
 PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN = runtime/test_pathmap_backend_primary_destructive_abi-$(BUILD_OBJ_TAG)
 PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN = runtime/test_pathmap_backend_primary_replace_abi-$(BUILD_OBJ_TAG)
 PATHMAP_TYPED_QUERY_ABI_TEST_BIN = runtime/test_pathmap_typed_query_abi-$(BUILD_OBJ_TAG)
+PATHMAP_SEMI_NAIVE_ABI_TEST_BIN = runtime/test_pathmap_semi_naive_abi-$(BUILD_OBJ_TAG)
 LIB_PARSE_INFERENCE_BENCH_BIN = runtime/bench_lib_parse_inference_native-$(BUILD_OBJ_TAG)
 GSLT2PARSE_SCHEMA_V1_NATIVE_DIR = experiments/gslt2parse_foundation/native
 GSLT2PARSE_SCHEMA_V1_NATIVE_BIN = runtime/test_finite_horn_gslt_v1-$(BUILD_OBJ_TAG)
@@ -668,6 +702,10 @@ GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_term_projection_v
 GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN = runtime/parser_term_projection_v1_stream-$(BUILD_OBJ_TAG)
 GSLT2PARSE_ATOM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_atom_projection_v1-$(BUILD_OBJ_TAG)
 GSLT2PARSE_PETTA_ROOT ?=
+PETTA_ORACLE_ROOT ?= $(GSLT2PARSE_PETTA_ROOT)
+PETTA_CORPUS_MANIFEST = tests/petta/corpus/manifest.json
+PETTA_CORPUS_RESULTS ?= runtime/petta-corpus-differential
+PETTA_CORPUS_TIMEOUT ?= 30
 GSLT2PARSE_HE_ROOT ?=
 GSLT2PARSE_HE_GENERATED_C_OUTPUT ?=
 GSLT2PARSE_HE_CURSOR_GENERATED_C = src/generated/he_reader_cursor_v1.generated.c
@@ -723,6 +761,12 @@ CETTA_BIN_INVOKE = $(call cetta_exec,./$(BIN))
 ifeq ($(SANITIZER_REPEATABLE),1)
 export CETTA_SANITIZER_REPEATABLE := 1
 export CETTA_WRAPPED_BIN := $(abspath $(BIN))
+ifneq ($(filter address,$(SANITIZER_WORDS)),)
+# A few integration recipes invoke the selected binary directly rather than
+# through cetta_exec.sh.  Give those calls the same repeatable-ASan policy as
+# the wrapper; leak qualification remains a separate, process-lifetime gate.
+export ASAN_OPTIONS := $(if $(strip $(ASAN_OPTIONS)),$(ASAN_OPTIONS),detect_leaks=0)
+endif
 CETTA_SCRIPT_RUN_ENV = CETTA_SANITIZER_REPEATABLE=1 CETTA_BIN="$(abspath $(CETTA_EXEC_WRAPPER))" CETTA_WRAPPED_BIN="$(abspath $(BIN))"
 CETTA_SCRIPT_BIN = $(abspath $(CETTA_EXEC_WRAPPER))
 else
@@ -792,10 +836,13 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_mork_act_roundtrip.metta \
 	tests/test_pathmap_counted_space_surface.metta \
 	tests/test_pathmap_contextual_var_projection_remove.metta \
+	tests/test_pathmap_indexed_query_work.metta \
 	tests/test_space_batch_copy_optimizer_guards.metta \
 	tests/test_pathmap_backend_primary_growth_regression.metta \
 	tests/test_pathmap_fc_depth3_count_regression.metta \
 	tests/test_pathmap_match_copy_var_identity_regression.metta \
+	tests/test_pathmap_program_shadow_sync_work.metta \
+	tests/test_pathmap_stored_variable_exact_query_regression.metta \
 	tests/test_pathmap_typed_query_surface.metta \
 	tests/test_match_chain_cross_space_pathmap_regression.metta \
 	tests/test_effect_append_batch_fastpath.metta \
@@ -1207,6 +1254,20 @@ $(VARIANT_SHAPE_TEST_BIN): tests/test_variant_shape_roundtrip.c src/symbol.c src
 test-variant-shape-roundtrip: $(VARIANT_SHAPE_TEST_BIN)
 	@$(call cetta_exec,./$(VARIANT_SHAPE_TEST_BIN))
 
+$(BINDINGS_LOOKUP_INDEX_TEST_BIN): tests/test_bindings_lookup_index.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_bindings_lookup_index.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
+	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
+	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
+	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
+	expected='(BindingsLookupIndexSummary 28 28 0)'; \
+	printf '%s\n' "$$enabled"; \
+	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
+		test "$$audited" = "$$expected"
+.PHONY: test-bindings-lookup-index
+
 $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c $(LDFLAGS)
@@ -1279,6 +1340,16 @@ test-prime-need-closure-capture-stats: $(BIN)
 	fi
 	@CETTA_BIN="$(abspath $(BIN))" \
 		./scripts/test_prime_need_capture_stats.sh
+
+test-prime-need-heap-index-stats: $(BIN)
+	@if [ "$(ENABLE_PRIME_NEED_HEAP_INDEX)" != 1 ] || \
+	    [ "$(ENABLE_RUNTIME_STATS)" != 1 ]; then \
+		echo "FAIL: enable the Prime Need-heap index and runtime stats for this gate"; \
+		exit 1; \
+	fi
+	@CETTA_BIN="$(abspath $(BIN))" \
+		./scripts/test_prime_need_heap_stats.sh
+.PHONY: test-prime-need-heap-index-stats
 
 test-prime-eval-stack: $(BIN)
 	@if [ "$(ENABLE_PRIME_EVAL_STACK)" != 1 ]; then \
@@ -2296,6 +2367,20 @@ else
 	$(call reexec_pathmap_bridge_or_skip,pathmap typed query ABI,$@)
 endif
 
+$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN): CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
+$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN): tests/test_pathmap_semi_naive_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_semi_naive_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+
+.PHONY: test-pathmap-semi-naive-abi
+test-pathmap-semi-naive-abi:
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN)
+	@$(call cetta_exec,./$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN))
+else
+	$(call reexec_pathmap_bridge_or_skip,pathmap semi-naive ABI,$@)
+endif
+
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
@@ -2303,6 +2388,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_TEST_OBJ:.o=.d) \
 	$(PETTA_COMPILED_READER_TEST_OBJ:.o=.d) \
+	$(PETTA_SEARCH_MACHINE_TEST_OBJ:.o=.d) \
 	$(PRIME_COMPILED_READER_TEST_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_BENCH_OBJ:.o=.d) \
 	$(PRIME_DELAYED_AMBIGUITY_TEST_OBJ:.o=.d) \
@@ -2329,6 +2415,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
@@ -2351,6 +2438,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
@@ -2362,7 +2450,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	touch "$@"
 
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
+	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -2469,6 +2557,17 @@ $(PETTA_COMPILED_READER_TEST_BIN): $(PETTA_COMPILED_READER_TEST_OBJ) $(PETTA_COM
 	mv "$$tmp_out" $@
 
 $(PETTA_COMPILED_READER_TEST_OBJ): $(PETTA_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PETTA_SEARCH_MACHINE_TEST_BIN): $(PETTA_SEARCH_MACHINE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-search-machine.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PETTA_SEARCH_MACHINE_TEST_OBJ): $(PETTA_SEARCH_MACHINE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -3246,7 +3345,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -4996,6 +5095,8 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-rhocalc-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-closed-stream-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-eval-gc-survivor-reset
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-need-heap-index-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-libpl-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-metta-suite
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
 		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-lane-body; \
@@ -5034,6 +5135,125 @@ else
 	@echo "INFO: runtime-stats MeTTa suite requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
+
+test-lib-prolog-runtime-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@for lang in he prime; do \
+		idle_stats=$$(mktemp runtime/lib-prolog-$$lang-idle.XXXXXX); \
+		query_out=$$(mktemp runtime/lib-prolog-$$lang-query.XXXXXX); \
+		query_stats=$$(mktemp runtime/lib-prolog-$$lang-stats.XXXXXX); \
+		trap 'rm -f "$$idle_stats" "$$query_out" "$$query_stats"' \
+			EXIT INT TERM; \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang "$$lang" \
+			-e '!(+ 1 2)' >/dev/null 2>"$$idle_stats"; \
+		idle_claim=$$(awk '$$1 == "runtime-counter" && \
+			$$2 == "lib-prolog-engine-claim" { print $$3 }' \
+			"$$idle_stats"); \
+		idle_release=$$(awk '$$1 == "runtime-counter" && \
+			$$2 == "lib-prolog-engine-release" { print $$3 }' \
+			"$$idle_stats"); \
+		idle_prepare=$$(awk '$$1 == "runtime-counter" && \
+			$$2 == "lib-prolog-prepare" { print $$3 }' \
+			"$$idle_stats"); \
+		if [ "$$idle_claim" -ne 0 ] || [ "$$idle_release" -ne 0 ] || \
+			[ "$$idle_prepare" -ne 0 ]; then \
+			echo "FAIL: $$lang prepared Prolog without a query"; \
+			exit 1; \
+		fi; \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang "$$lang" \
+			tests/lib_prolog_surface.metta \
+			>"$$query_out" 2>"$$query_stats"; \
+		diff -u tests/lib_prolog_surface.he-prime.expected "$$query_out"; \
+		query_claim=$$(awk '$$1 == "runtime-counter" && \
+			$$2 == "lib-prolog-engine-claim" { print $$3 }' \
+			"$$query_stats"); \
+		query_release=$$(awk '$$1 == "runtime-counter" && \
+			$$2 == "lib-prolog-engine-release" { print $$3 }' \
+			"$$query_stats"); \
+		query_prepare=$$(awk '$$1 == "runtime-counter" && \
+			$$2 == "lib-prolog-prepare" { print $$3 }' \
+			"$$query_stats"); \
+		if [ -z "$$query_prepare" ] || [ "$$query_prepare" -le 0 ] || \
+			[ "$$query_claim" -ne "$$query_release" ]; then \
+			echo "FAIL: $$lang Prolog lifecycle was not lazy and balanced"; \
+			exit 1; \
+		fi; \
+		rm -f "$$idle_stats" "$$query_out" "$$query_stats"; \
+		trap - EXIT INT TERM; \
+	done; \
+	echo "PASS: HE and Prime prepare Prolog lazily with balanced worker claims"
+else
+	@echo "SKIP: shared lib_prolog runtime stats (adapter disabled)"
+endif
+else
+	@echo "INFO: shared lib_prolog runtime stats require ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+.PHONY: test-lib-prolog-runtime-stats
+
+test-petta-libpl-runtime-stats: test-lib-prolog-runtime-stats $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@native_out=$$(mktemp runtime/petta-libpl-negative.XXXXXX); \
+	native_stats=$$(mktemp runtime/petta-libpl-negative-stats.XXXXXX); \
+	foreign_out=$$(mktemp runtime/petta-libpl-worker.XXXXXX); \
+	foreign_stats=$$(mktemp runtime/petta-libpl-worker-stats.XXXXXX); \
+	trap 'rm -f "$$native_out" "$$native_stats" "$$foreign_out" "$$foreign_stats"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --lang petta \
+		tests/petta/libpl_negative_admission_hyperpose.metta \
+		>"$$native_out" 2>"$$native_stats"; \
+	if ! diff -u tests/petta/libpl_negative_admission_hyperpose.expected \
+			"$$native_out"; then \
+		echo "FAIL: PeTTa native-head libpl admission result"; \
+		exit 1; \
+	fi; \
+	negative=$$(awk '$$1 == "runtime-counter" && \
+		$$2 == "petta-libpl-admission-negative" { print $$3 }' \
+		"$$native_stats"); \
+	claim=$$(awk '$$1 == "runtime-counter" && \
+		$$2 == "lib-prolog-engine-claim" { print $$3 }' \
+		"$$native_stats"); \
+	release=$$(awk '$$1 == "runtime-counter" && \
+		$$2 == "lib-prolog-engine-release" { print $$3 }' \
+		"$$native_stats"); \
+	if [ -z "$$negative" ] || [ "$$negative" -le 1000 ] || \
+			[ "$$claim" -ne 0 ] || [ "$$release" -ne 0 ]; then \
+		echo "FAIL: native heads crossed the optional Prolog boundary"; \
+		echo "negative=$$negative claim=$$claim release=$$release"; \
+		exit 1; \
+	fi; \
+	CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --lang petta --num-threads 2 \
+		tests/petta/foreign_predicate_hyperpose.metta \
+		>"$$foreign_out" 2>"$$foreign_stats"; \
+	if ! diff -u tests/petta/foreign_predicate_hyperpose.expected \
+			"$$foreign_out"; then \
+		echo "FAIL: PeTTa libpl worker result under runtime stats"; \
+		exit 1; \
+	fi; \
+	claim=$$(awk '$$1 == "runtime-counter" && \
+		$$2 == "lib-prolog-engine-claim" { print $$3 }' \
+		"$$foreign_stats"); \
+	release=$$(awk '$$1 == "runtime-counter" && \
+		$$2 == "lib-prolog-engine-release" { print $$3 }' \
+		"$$foreign_stats"); \
+	if [ -z "$$claim" ] || [ "$$claim" -le 0 ] || \
+			[ "$$claim" -ne "$$release" ]; then \
+		echo "FAIL: libpl worker engine claims were not balanced"; \
+		echo "claim=$$claim release=$$release"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PeTTa libpl negative admission and pooled worker engine"
+else
+	@echo "SKIP: PeTTa libpl runtime stats (adapter disabled)"
+endif
+else
+	@echo "INFO: PeTTa libpl runtime stats require ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+.PHONY: test-petta-libpl-runtime-stats
 
 perf-list:
 	@./scripts/run_witness.sh --list
@@ -6447,14 +6667,14 @@ test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(
 		exit 1; \
 	fi; \
 	text_result=$$(./$(BIN) --lang petta -e '!(+ 1 2)' 2>&1); \
-	if [ "$$text_result" != '[3]' ]; then \
+	if [ "$$text_result" != '3' ]; then \
 		echo "FAIL: --lang petta text path did not use the compiled reader"; \
 		printf '%s\n' "$$text_result"; \
 		exit 1; \
 	fi; \
 	file_result=$$(./$(BIN) --lang petta \
 		tests/support/petta_compiled_reader_cli.metta 2>&1); \
-	if [ "$$file_result" != '[5]' ]; then \
+	if [ "$$file_result" != '5' ]; then \
 		echo "FAIL: --lang petta file path did not use the compiled reader"; \
 		printf '%s\n' "$$file_result"; \
 		exit 1; \
@@ -6483,7 +6703,911 @@ test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(
 		echo "FAIL: PeTTa/HE profile boundary diagnostic changed"; \
 		exit 1; \
 	fi; \
-	echo "PASS: --lang petta owns compiled text/file parsing and remains distinct from HE and Prime"
+		echo "PASS: --lang petta owns compiled text/file parsing and remains distinct from HE and Prime"
+
+.PHONY: test-petta-capability-ledger
+test-petta-capability-ledger: $(BIN)
+	@PYTHONDONTWRITEBYTECODE=1 \
+		python3 tests/petta/test_capability_ledger.py \
+			--cetta ./$(BIN)
+
+.PHONY: test-petta-search-machine
+test-lib-prolog: $(BIN)
+	@he_actual=$$(mktemp runtime/lib-prolog-he.XXXXXX); \
+	prime_actual=$$(mktemp runtime/lib-prolog-prime.XXXXXX); \
+	petta_actual=$$(mktemp runtime/lib-prolog-petta.XXXXXX); \
+	trap 'rm -f "$$he_actual" "$$prime_actual" "$$petta_actual"' \
+		EXIT INT TERM; \
+	if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		input=tests/lib_prolog_surface.metta; \
+		he_prime_expected=tests/lib_prolog_surface.he-prime.expected; \
+		petta_expected=tests/lib_prolog_surface.petta.expected; \
+	else \
+		input=tests/lib_prolog_surface_disabled.metta; \
+		he_prime_expected=tests/lib_prolog_surface_disabled.he-prime.expected; \
+		petta_expected=tests/lib_prolog_surface_disabled.petta.expected; \
+	fi; \
+	./$(BIN) --lang he "$$input" > "$$he_actual"; \
+	./$(BIN) --lang prime "$$input" > "$$prime_actual"; \
+	./$(BIN) --lang petta "$$input" > "$$petta_actual"; \
+	diff -u "$$he_prime_expected" "$$he_actual"; \
+	diff -u "$$he_prime_expected" "$$prime_actual"; \
+	diff -u "$$petta_expected" "$$petta_actual"; \
+	echo "PASS: shared lib_prolog surface in HE, Prime, and PeTTa"
+.PHONY: test-lib-prolog
+
+test-petta-libpl: $(BIN)
+	@actual=$$(mktemp runtime/petta-libpl.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/foreign_predicate_bridge.metta > "$$actual"; \
+	if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		expected=tests/petta/foreign_predicate_bridge.expected; \
+	else \
+		expected=tests/petta/foreign_predicate_bridge.disabled.expected; \
+	fi; \
+	if ! diff -u "$$expected" "$$actual"; then \
+		echo "FAIL: optional PeTTa libpl boundary"; \
+		exit 1; \
+	fi; \
+	if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			--num-threads 2 \
+			tests/petta/foreign_predicate_hyperpose.metta \
+			> "$$actual"; \
+		if ! diff -u tests/petta/foreign_predicate_hyperpose.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa pooled libpl worker boundary"; \
+			exit 1; \
+		fi; \
+	fi; \
+	echo "PASS: optional PeTTa libpl boundary"
+.PHONY: test-petta-libpl
+
+test-petta-process-text: $(BIN)
+	@actual=$$(mktemp runtime/petta-process-text.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/process_metta_string.metta > "$$actual"; \
+	if ! diff -u tests/petta/process_metta_string.expected "$$actual"; then \
+		echo "FAIL: native PeTTa process_metta_string"; \
+		exit 1; \
+	fi; \
+	echo "PASS: native PeTTa process_metta_string"
+.PHONY: test-petta-process-text
+
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-capability-ledger
+	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
+	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta -e '!(+ 1 2)' \
+		2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$machine_stats" | \
+			grep -q '^PETTA_MACHINE_STATS '; then \
+		echo "FAIL: --lang petta did not select its search machine by default"; \
+		exit 1; \
+	fi; \
+	legacy_stats=$$(CETTA_PETTA_SEARCH_MACHINE=0 \
+		CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta -e '!(+ 1 2)' \
+		2>&1 >/dev/null); \
+	if printf '%s\n' "$$legacy_stats" | \
+			grep -q '^PETTA_MACHINE_STATS '; then \
+		echo "FAIL: explicit PeTTa legacy-oracle selection was ignored"; \
+		exit 1; \
+	fi
+	@result=$$(printf 'q\n' | CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --lang petta \
+		tests/petta/interactive_readln.metta 2>&1); \
+	expected=$$(printf 'q\ntrue'); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa scripted readln! value"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		-e '!(flush-output!)' 2>&1); \
+	if [ "$$result" != "true" ]; then \
+		echo "FAIL: native PeTTa zero-argument effect root"; \
+		diff <(printf 'true\n') \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		-e '!(< 0 inf)' -e '!(> 0 -inf)' 2>&1); \
+	expected=$$(printf 'true\ntrue'); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa SWI infinite arithmetic bounds"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/python_bridge.metta 2>&1); \
+	expected=$$(printf 'true\n42'); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa source-relative Python namespace"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		-e '!(py-call (cetta_missing_python_module.answer))' 2>&1); \
+	if [[ "$$result" != \
+			"py-call head resolution failed: No module named 'cetta_missing_python_module'" ]]; then \
+		echo "FAIL: native PeTTa missing Python namespace result"; \
+		printf '%s\n' "$$result"; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/recursive_relational_search.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_recursive.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine recursive relational search"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/equation_head_pattern.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_equation_head.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine relational cons head"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_structural_quote_head.metta 2>&1); \
+	expected=$$(cat \
+		tests/petta/search_machine_structural_quote_head.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa structural quote in equation head"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/inverse_relation.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_inverse.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine inverse append relation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_constructor_guided.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_constructor_guided.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa constructor-guided inverse search"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_occurs_check.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_occurs_check.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine acyclic unification"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_foldl.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_foldl.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa element-first relational foldl"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_atom_observers.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_atom_observers.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa pure atom observers"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_observer_callability.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_observer_callability.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa observers preserve callable failure"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		-e '!(car-atom ())' 2>&1); \
+	if [ -n "$$result" ]; then \
+		echo "FAIL: native PeTTa car-atom negative case"; \
+		printf '%s\n' "$$result"; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		-e '!(cdr-atom atom)' 2>&1); \
+	if [ -n "$$result" ]; then \
+		echo "FAIL: native PeTTa cdr-atom negative case"; \
+		printf '%s\n' "$$result"; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_sread.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_sread.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa relational sread"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/committed_choice.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_committed.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine committed choice"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/dynamic_definition_dispatch.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_dynamic.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine dynamic definition dispatch"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_dynamic_negative.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_dynamic_negative.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine call arity guard"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/type_directed_demand.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_type_demand.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine type-directed demand"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_type_demand_negative.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_type_demand_negative.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine type-declaration bag and arity"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_type_relation.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_type_relation.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa strict and extensible get-type relation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_catch_cons.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_catch_cons.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa catch and open-cons equality"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_relational_boolean_lists.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_relational_boolean_lists.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa Boolean relations and open-list search"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/list_set_exact.metta 2>&1); \
+	expected=$$(cat tests/petta/list_set_exact.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa exact-identity list set operations"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/higher_order_specialization.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_higher_order.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine higher-order specialization"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_returned_callable.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_returned_callable.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: nullary relation returning an applied callable"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_relational_head_collapse.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_relational_head_collapse.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: relational equation head under nested collapse"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_higher_order_negative.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_higher_order_negative.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine higher-order false branch"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_specializer_provenance.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_specializer_provenance.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa specialization pattern provenance"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_specializer_invalidation.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_specializer_invalidation.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa specialization revision invalidation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_specializer_route_cache.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_specializer_route_cache.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa specialization route cache"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	oracle=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_SPECIALIZER_ROUTE_CACHE=0 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_specializer_route_cache.metta 2>&1); \
+	if [ "$$result" != "$$oracle" ]; then \
+		echo "FAIL: PeTTa specialization route cache differs from oracle"; \
+		diff <(printf '%s\n' "$$oracle") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	specializer_plan_out=$$(mktemp runtime/petta-specializer-plan.out.XXXXXX); \
+	specializer_plan_stats=$$(mktemp runtime/petta-specializer-plan.stats.XXXXXX); \
+	gc_scaling_out=$$(mktemp runtime/petta-gc-scaling.out.XXXXXX); \
+	gc_scaling_stats=$$(mktemp runtime/petta-gc-scaling.stats.XXXXXX); \
+	trap 'rm -f "$$specializer_plan_out" "$$specializer_plan_stats" "$$gc_scaling_out" "$$gc_scaling_stats"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_specializer_plan.metta \
+		>"$$specializer_plan_out" 2>"$$specializer_plan_stats"; \
+	if ! diff -u tests/petta/search_machine_specializer_plan.expected \
+			"$$specializer_plan_out"; then \
+		echo "FAIL: specialized clauses preserve occurrence plans"; \
+		exit 1; \
+	fi; \
+	mapfile -t specializer_plan_steps < <( \
+		sed -n 's/.*transitions=\([0-9][0-9]*\).*/\1/p' \
+			"$$specializer_plan_stats"); \
+	mapfile -t specializer_plan_heap < <( \
+		sed -n 's/.*max_heap_live_bytes=\([0-9][0-9]*\).*/\1/p' \
+			"$$specializer_plan_stats"); \
+	if [ "$${#specializer_plan_steps[@]}" -ne 3 ] || \
+	   [ "$${specializer_plan_steps[0]}" -le 0 ] || \
+	   [ "$${specializer_plan_steps[1]}" -gt \
+			"$$((3 * $${specializer_plan_steps[0]}))" ]; then \
+		echo "FAIL: specialized recursive list work is not linear"; \
+		cat "$$specializer_plan_stats"; \
+		exit 1; \
+	fi; \
+	if [ "$${#specializer_plan_heap[@]}" -ne 3 ] || \
+	   [ "$${specializer_plan_heap[0]}" -le 0 ] || \
+	   [ "$${specializer_plan_heap[1]}" -gt \
+			"$$((3 * $${specializer_plan_heap[0]}))" ]; then \
+		echo "FAIL: specialized recursive list heap is not linear"; \
+		cat "$$specializer_plan_stats"; \
+		exit 1; \
+	fi; \
+	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_gc_scaling.metta \
+		>"$$gc_scaling_out" 2>"$$gc_scaling_stats"; \
+	if ! diff -u tests/petta/search_machine_gc_scaling.expected \
+			"$$gc_scaling_out"; then \
+		echo "FAIL: generational collection changed exact list answers"; \
+		exit 1; \
+	fi; \
+	mapfile -t gc_steps < <( \
+		sed -n 's/.*transitions=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	mapfile -t gc_roots < <( \
+		sed -n 's/.*heap_goal_roots_scanned=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	mapfile -t gc_promoted < <( \
+		sed -n 's/.*heap_bytes_promoted=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	mapfile -t gc_heap < <( \
+		sed -n 's/.*max_heap_live_bytes=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	mapfile -t gc_major < <( \
+		sed -n 's/.*heap_major_collections=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	mapfile -t gc_continuation_copies < <( \
+		sed -n 's/.*choice_continuation_items_copied=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	if [ "$${#gc_steps[@]}" -ne 3 ] || \
+	   [ "$${#gc_roots[@]}" -ne 3 ] || \
+	   [ "$${#gc_promoted[@]}" -ne 3 ] || \
+	   [ "$${#gc_heap[@]}" -ne 3 ] || \
+	   [ "$${#gc_major[@]}" -ne 3 ] || \
+	   [ "$${#gc_continuation_copies[@]}" -ne 3 ] || \
+	   [ "$${gc_steps[0]}" -le 0 ] || \
+	   [ "$${gc_roots[0]}" -le 0 ] || \
+	   [ "$${gc_promoted[0]}" -le 0 ] || \
+	   [ "$${gc_heap[0]}" -le 0 ] || \
+	   [ "$${gc_major[1]}" -le 0 ] || \
+	   [ "$${gc_major[2]}" -le 0 ] || \
+	   [ "$${gc_continuation_copies[0]}" -ne 0 ] || \
+	   [ "$${gc_continuation_copies[1]}" -ne 0 ] || \
+	   [ "$${gc_continuation_copies[2]}" -ne 0 ] || \
+	   [ "$${gc_steps[1]}" -gt "$$((3 * $${gc_steps[0]}))" ] || \
+	   [ "$${gc_steps[2]}" -gt "$$((3 * $${gc_steps[1]}))" ] || \
+	   [ "$${gc_roots[1]}" -gt "$$((3 * $${gc_roots[0]}))" ] || \
+	   [ "$${gc_roots[2]}" -gt "$$((3 * $${gc_roots[1]}))" ] || \
+	   [ "$${gc_promoted[1]}" -gt "$$((3 * $${gc_promoted[0]}))" ] || \
+	   [ "$${gc_promoted[2]}" -gt "$$((3 * $${gc_promoted[1]}))" ] || \
+	   [ "$${gc_heap[1]}" -gt "$$((3 * $${gc_heap[0]}))" ] || \
+	   [ "$${gc_heap[2]}" -gt "$$((3 * $${gc_heap[1]}))" ]; then \
+		echo "FAIL: PeTTa generational collection work or memory is not linear"; \
+		cat "$$gc_scaling_stats"; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_pair_selectors.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_pair_selectors.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa relational pair selectors"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_if.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_if.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa conditional control"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_assert.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_assert.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa assertion continuation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_exact_relation_precedence.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_exact_relation_precedence.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: exact PeTTa relation versus host fallback precedence"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_eval_role.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_eval_role.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: PeTTa value provenance and explicit forcing"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_temporal_compile.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_temporal_compile.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: PeTTa source-ordered occurrence compilation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_import_forward.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_import_forward.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: PeTTa imported forward relation predeclaration"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_observable_print.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_observable_print.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: PeTTa observable string and float rendering"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	status=0; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_assert_failure.metta \
+		>runtime/test-petta-machine-assert-failure.out 2>&1 || status=$$?; \
+	if [ "$$status" -ne 1 ]; then \
+		echo "FAIL: native PeTTa failed assertion exit (got $$status)"; \
+		exit 1; \
+	fi; \
+	if ! cmp -s tests/petta/search_machine_assert_failure.expected \
+			runtime/test-petta-machine-assert-failure.out; then \
+		echo "FAIL: native PeTTa failed assertion diagnostic"; \
+		diff -u tests/petta/search_machine_assert_failure.expected \
+			runtime/test-petta-machine-assert-failure.out | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/world_refined_space_control.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_world_refined.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine world-refined space control"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_world_refined_negative.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_world_refined_negative.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine empty-case fallback"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_logical_update.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_logical_update.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa logical-update view"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_conjunctive_match.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_conjunctive_match.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa conjunctive match fallback"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_collapse.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_collapse.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa delimited collapse"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_nested_length.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_nested_length.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa nested relational length"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_count_collapse.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_count_collapse.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa counted collapse bag fold"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	count_stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_count_collapse.metta \
+		2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$count_stats" | \
+			grep -Eq 'count_aggregate_let_fusions=[1-9][0-9]*'; then \
+		echo "FAIL: source-planned PeTTa let/count fusion did not fire"; \
+		exit 1; \
+	fi; \
+	oracle_result=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_LET_COUNT_FUSION=0 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_count_collapse.metta 2>&1); \
+	if [ "$$oracle_result" != "$$expected" ]; then \
+		echo "FAIL: PeTTa let/count fusion OFF oracle differs"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$oracle_result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_transaction.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_transaction.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine transactional commit/once/nesting"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/unsupported/transaction_rollback.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_transaction_rollback.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine transactional rollback"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_mutex_transaction.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_mutex_transaction.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine mutex and transactional effects"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_inert.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_inert.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine inert-head congruence"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_map_atom.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_map_atom.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine map-atom relation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_foldl_atom.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_foldl_atom.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine foldl-atom relation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_filter_atom.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_filter_atom.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine filter-atom relation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_translator.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_translator.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa translator registration and generated-code execution"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_translate_predicate.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_translate_predicate.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa predicate bridge and inert extension boundary"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_space_predicate.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_space_predicate.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa translated space predicates"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_ground.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_tabled_ground.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa ground SLG tables, SCC completion, and answer bags"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	table_stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_ground.metta \
+		2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$table_stats" | \
+			grep -Eq 'table_lookups=[1-9][0-9]*'; then \
+		echo "FAIL: pure PeTTa table declaration was not admitted"; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_effect_boundary.metta 2>&1); \
+	expected=$$(cat \
+		tests/petta/search_machine_tabled_effect_boundary.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: effectful PeTTa table fallback or revision cache"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	effect_table_stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_effect_boundary.metta \
+		2>&1 >/dev/null); \
+	if [ "$$(printf '%s\n' "$$effect_table_stats" | \
+			grep -Ec 'table_lookups=[1-9][0-9]*')" -ne 1 ]; then \
+		echo "FAIL: effectful relation entered the PeTTa table"; \
+		printf '%s\n' "$$effect_table_stats"; \
+		exit 1; \
+	fi; \
+	for stem in library_descriptor translator_rule tabled_call \
+			intensional_provenance; do \
+		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/unsupported/$$stem.metta 2>&1); \
+		expected=$$(cat tests/petta/unsupported/$$stem.expected); \
+		if [ "$$result" != "$$expected" ]; then \
+			echo "FAIL: closed PeTTa capability witness $$stem"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$result") | head -40; \
+			exit 1; \
+		fi; \
+	done; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_tail_prime.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_tail_prime.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa deterministic-tail heap reclamation"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_hyperpose.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_hyperpose.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa machine hyperpose answer bag"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: native PeTTa machine evaluator integration"
+
+.PHONY: test-petta-semantics
+test-petta-semantics: $(BIN)
+	@for stem in relational_control term_order numeric_semantics alpha_unique named_state implicit_space stream_ops list_length parse_data metatype_intrinsics type_failure_is_empty println_string library_descriptor library_descriptor_unsafe git_import_surface; do \
+		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/$$stem.metta 2>&1); \
+		expected=$$(cat tests/petta/$$stem.expected); \
+		if [ "$$result" != "$$expected" ]; then \
+			echo "FAIL: PeTTa semantic discriminator $$stem"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$result") | head -40; \
+			exit 1; \
+		fi; \
+	done; \
+	status=0; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta tests/petta/test_failure_exit.metta \
+		>runtime/test-petta-failure-exit.out 2>&1 || status=$$?; \
+	if [ "$$status" -ne 1 ]; then \
+		echo "FAIL: PeTTa failed test must request process exit 1 (got $$status)"; \
+		exit 1; \
+	fi; \
+	if ! cmp -s tests/petta/test_failure_exit.expected \
+			runtime/test-petta-failure-exit.out; then \
+		echo "FAIL: PeTTa failed test diagnostics/control"; \
+		diff -u tests/petta/test_failure_exit.expected \
+			runtime/test-petta-failure-exit.out | head -40; \
+			exit 1; \
+	fi; \
+	status=0; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta tests/petta/assert_failure_exit.metta \
+		>runtime/test-petta-assert-failure-exit.out 2>&1 || status=$$?; \
+	if [ "$$status" -ne 1 ]; then \
+		echo "FAIL: PeTTa failed assertion must request process exit 1 (got $$status)"; \
+		exit 1; \
+	fi; \
+	if ! cmp -s tests/petta/assert_failure_exit.expected \
+			runtime/test-petta-assert-failure-exit.out; then \
+		echo "FAIL: PeTTa failed assertion diagnostics/control"; \
+		diff -u tests/petta/assert_failure_exit.expected \
+			runtime/test-petta-assert-failure-exit.out | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: PeTTa relational control, stream bags, list length, parse-as-data, implicit spaces, shared sequencing, named state, alpha uniqueness, metatype and typed-failure policy, library descriptors, and stable term order"
+
+.PHONY: test-petta-corpus-manifest-unit probe-petta-corpus-manifest test-petta-corpus-manifest probe-petta-corpus-differential test-petta-corpus-differential
+test-petta-corpus-manifest-unit:
+	@PYTHONDONTWRITEBYTECODE=1 \
+		python3 tests/petta/test_corpus_manifest.py
+
+probe-petta-corpus-manifest: test-petta-corpus-manifest-unit
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
+		exit 1; \
+	fi
+	@PYTHONDONTWRITEBYTECODE=1 \
+		python3 scripts/petta_corpus_manifest.py verify \
+		--petta-dir "$(PETTA_ORACLE_ROOT)" \
+		--manifest "$(PETTA_CORPUS_MANIFEST)"
+
+test-petta-corpus-manifest: test-petta-corpus-manifest-unit
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
+		exit 1; \
+	fi
+	@PYTHONDONTWRITEBYTECODE=1 \
+		python3 scripts/petta_corpus_manifest.py verify \
+		--petta-dir "$(PETTA_ORACLE_ROOT)" \
+		--manifest "$(PETTA_CORPUS_MANIFEST)" \
+		--require-complete
+
+probe-petta-corpus-differential: $(BIN) probe-petta-corpus-manifest
+	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
+		python3 scripts/petta_corpus_manifest.py compare \
+		--petta-dir "$(PETTA_ORACLE_ROOT)" \
+		--manifest "$(PETTA_CORPUS_MANIFEST)" \
+		--cetta "./$(BIN)" \
+		--out "$(PETTA_CORPUS_RESULTS)" \
+		--timeout "$(PETTA_CORPUS_TIMEOUT)"
+
+test-petta-corpus-differential: $(BIN) test-petta-corpus-manifest
+	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
+		python3 scripts/petta_corpus_manifest.py compare \
+		--petta-dir "$(PETTA_ORACLE_ROOT)" \
+		--manifest "$(PETTA_CORPUS_MANIFEST)" \
+		--cetta "./$(BIN)" \
+		--out "$(PETTA_CORPUS_RESULTS)" \
+		--timeout "$(PETTA_CORPUS_TIMEOUT)" \
+		--require-complete \
+		--require-match
 
 .PHONY: test-prime-compiled-reader-v1
 test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 test-gslt-prefix-reader-compiler-v1 $(PRIME_COMPILED_READER_TEST_BIN) $(BIN)
@@ -6810,6 +7934,7 @@ test-pathmap-lane-body: $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-query-row-stream-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-long-string-regression
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-match-chain
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-semi-naive-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lib-pathmap
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-duplicate-multiplicity-backends
 
@@ -6862,6 +7987,8 @@ endif
 
 test-pathmap-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-indexed-query-work
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-program-shadow-sync-work
 	@expected=$$(cat tests/test_pathmap_direct_store_runtime_stats.expected); \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pathmap_direct_store_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
@@ -6874,6 +8001,84 @@ test-pathmap-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-bridge-v2
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-conjunction-init
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-match-chain-v3
+
+test-pathmap-indexed-query-work: $(BIN)
+	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --profile he-extended --lang he \
+		tests/test_pathmap_indexed_query_work.metta 2>&1); \
+	oracle_result=$$(CETTA_PATHMAP_QUERY_INDEX=0 $(CETTA_BIN_INVOKE) \
+		--profile he-extended --lang he \
+		tests/test_pathmap_indexed_query_work.metta 2>&1); \
+	expected=$$(cat tests/test_pathmap_indexed_query_work.expected); \
+	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
+	oracle_actual=$$(printf '%s\n' "$$oracle_result" | grep '^\[' || true); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: counted PathMap indexed query answers"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	if [ "$$oracle_actual" != "$$expected" ]; then \
+		echo "FAIL: counted PathMap unindexed oracle answers"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$oracle_actual") | head -20; \
+		exit 1; \
+	fi; \
+	if [ "$$actual" != "$$oracle_actual" ]; then \
+		echo "FAIL: counted PathMap indexed/unindexed differential"; \
+		diff <(printf '%s\n' "$$oracle_actual") <(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	stat() { \
+		printf '%s\n' "$$result" | awk -v key="$$1" \
+			'$$1 == "runtime-counter" && $$2 == key { print $$3; found=1 } END { if (!found) exit 1 }'; \
+	}; \
+	assert_eq() { \
+		value=$$(stat "$$1") || exit 1; \
+		if [ "$$value" != "$$2" ]; then \
+			echo "FAIL: $$1 expected $$2, got $$value"; \
+			exit 1; \
+		fi; \
+	}; \
+	assert_eq pathmap-indexed-query 6; \
+	assert_eq pathmap-indexed-catalog-build 1; \
+	assert_eq pathmap-indexed-catalog-row-scan 6; \
+	assert_eq pathmap-indexed-access-path-build 3; \
+	assert_eq pathmap-indexed-access-path-row 8; \
+	assert_eq pathmap-indexed-plan-build 3; \
+	assert_eq pathmap-indexed-plan-cache-hit 3; \
+	assert_eq pathmap-indexed-row-emit 8; \
+	assert_eq pathmap-indexed-row-aggregate 4; \
+	assert_eq pathmap-indexed-count-pushdown 2; \
+	assert_eq pathmap-indexed-replay-hit 3; \
+	seeks=$$(stat pathmap-indexed-trie-seek) || exit 1; \
+	frames=$$(stat pathmap-indexed-frame-cell-peak) || exit 1; \
+	if [ "$$seeks" -gt 40 ] || [ "$$frames" -gt 4 ]; then \
+		echo "FAIL: indexed query work bound (seeks=$$seeks, frame-cells=$$frames)"; \
+		exit 1; \
+	fi; \
+	echo "PASS: counted PathMap indexed pull query (oracle differential/cold/warm/multiplicity/work bounds)"
+
+test-pathmap-program-shadow-sync-work: $(BIN)
+	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --profile he-extended --space-engine pathmap \
+		--lang he tests/test_pathmap_program_shadow_sync_work.metta 2>&1); \
+	expected=$$(cat tests/test_pathmap_program_shadow_sync_work.expected); \
+	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: PathMap program-shadow answers"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	stat() { \
+		printf '%s\n' "$$result" | awk -v key="$$1" \
+			'$$1 == "runtime-counter" && $$2 == key { print $$3; found=1 } END { if (!found) exit 1 }'; \
+	}; \
+	refreshes=$$(stat pathmap-shadow-refresh) || exit 1; \
+	materializations=$$(stat pathmap-materialize-native) || exit 1; \
+	if [ "$$refreshes" -gt 3 ] || [ "$$materializations" -gt 3 ]; then \
+		echo "FAIL: PathMap program shadow rebuilt per answer (refreshes=$$refreshes, materializations=$$materializations)"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PathMap backend-primary native shadow is refreshed at most once per revision"
 
 test-mm2-mork-program-space: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)

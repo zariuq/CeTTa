@@ -20,6 +20,8 @@ typedef struct {
     Atom *rhs;
 } BindingConstraint;
 
+typedef struct BindingsLookupIndex BindingsLookupIndex;
+
 typedef struct {
     Binding *entries;
     uint32_t len;
@@ -31,6 +33,28 @@ typedef struct {
     uint32_t lookup_cache_indices[4];
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
+    /*
+     * Derived count of entries that participate in the legacy spelling-keyed
+     * lookup relation.  Modern VarId-only environments keep this at zero, so
+     * a failed identity lookup never scans the whole environment merely to
+     * prove that no spelling fallback exists.
+     */
+    uint32_t legacy_fallback_count;
+    uint32_t private_entry_count;
+    uint32_t private_constraint_count;
+    /*
+     * Derived certificate for the substitution graph in `entries`.
+     * Zero means unknown, one means proved acyclic, and two means a cycle was
+     * witnessed.  The entries remain authoritative; the full checker handles
+     * unknown state.
+     */
+    uint8_t cycle_state;
+    /*
+     * Derived VarId -> newest-entry accelerator.  `entries` remains the
+     * semantic authority: clones may share this immutable index, while the
+     * first append or rollback detaches it copy-on-write.
+     */
+    BindingsLookupIndex *lookup_index;
     /* Prime per-occurrence state -- the Need world (orthogonal to logical
      * substitutions) plus causal support/branch-local effects -- lives behind
      * this lazily-materialized pointer.  It is NULL for pure-HE evaluation, so
@@ -50,8 +74,10 @@ typedef struct {
 typedef struct {
     uint32_t len;
     uint32_t eq_len;
-    uint8_t lookup_cache_count;
-    uint8_t lookup_cache_next;
+    uint8_t cycle_state;
+    uint32_t legacy_fallback_count;
+    uint32_t private_entry_count;
+    uint32_t private_constraint_count;
     PrimeNeedSnapshot prime_need;
     PrimeNeedReceipt prime_receipt;
 } BindingsBuilderTrailEntry;
@@ -61,6 +87,12 @@ typedef struct {
     BindingsBuilderTrailEntry *trail;
     uint32_t trail_len;
     uint32_t trail_cap;
+    /*
+     * Monotone count of successful logical writes performed by this builder.
+     * Rollback restores logical state but deliberately does not erase work
+     * already performed; collectors use this as a scheduling clock.
+     */
+    uint64_t growth_count;
 } BindingsBuilder;
 
 typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
@@ -69,14 +101,31 @@ void      bindings_init(Bindings *b);
 void      bindings_free(Bindings *b);
 bool      bindings_clone(Bindings *dst, const Bindings *src);
 bool      bindings_copy(Bindings *dst, const Bindings *src);
+/*
+ * Retain exactly the logical environment reachable from `roots`.
+ *
+ * Reachability follows binding values transitively and retains every
+ * constraint connected to that closure.  Legacy spelling-fallback bindings
+ * are retained conservatively because their lookup key is not a VarId.
+ * Prime's orthogonal occurrence state is copied unchanged.
+ */
+bool      bindings_project_reachable(const Bindings *src,
+                                     Atom *const *roots,
+                                     size_t root_count,
+                                     Bindings *dst);
 bool      bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst);
 bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
                                                    Arena *dst);
+bool      bindings_promote_logical_atoms_with_session(
+              Bindings *bindings, AtomDeepCopySession *session);
 size_t    bindings_entry_active_bytes(void);
 size_t    bindings_constraint_active_bytes(void);
 void      bindings_thread_cache_free(void);
 void      bindings_move(Bindings *dst, Bindings *src);
 void      bindings_replace(Bindings *dst, Bindings *src);
+bool      bindings_remove_entry_at(Bindings *bindings, uint32_t index);
+/* Call after rewriting binding keys outside the Bindings API. */
+void      bindings_invalidate_after_key_rewrite(Bindings *bindings);
 
 /* Prime per-occurrence (prime_ext) views.  Reads are valid even when the
  * occurrence is absent -- they return a shared zero-initialized singleton,
@@ -133,6 +182,19 @@ void      bindings_builder_free(BindingsBuilder *bb);
 uint32_t  bindings_builder_save(const BindingsBuilder *bb);
 void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);
 void      bindings_builder_commit(BindingsBuilder *bb);
+/*
+ * Retain only bindings reachable from `roots` while preserving every live
+ * rollback state named by `checkpoint_marks`.
+ *
+ * Marks are rewritten in place to address the compacted trail.  The operation
+ * is transactional: on failure neither the builder nor the mark array changes.
+ * Logical entries and constraints remain in their original relative order.
+ */
+bool      bindings_builder_compact_reachable(
+              BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+              uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint64_t *discarded_logical_items,
+              uint64_t *discarded_trail_entries);
 bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
                                         SymbolId spelling, Atom *val);
 bool      bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var,

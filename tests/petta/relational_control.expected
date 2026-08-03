@@ -1,0 +1,25 @@
+is ((relational-effect 9)), should ((relational-effect 9)). ✅ 
+is (), should (). ✅ 
+let-positive
+chain-positive
+5
+hit
+hit
+hit
+(2 3 4)
+Bool
+false
+false
+true
+true
+(1 (2 3))
+(1 2 (3))
+(4 (5))
+(head 1 a)
+(head 2 b)
+(1 (2 3))
+true
+true
+true
+true
+(chain a b c)

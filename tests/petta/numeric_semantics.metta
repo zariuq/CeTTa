@@ -1,0 +1,15 @@
+; PeTTa inherits SWI arithmetic: a non-negative integral power of an exact
+; integer remains exact, while a negative exponent produces a float.
+!(pow-math 2 3)
+!(pow-math -2 3)
+!(pow-math 2 -1)
+!(pow-math 12345678901234567890 2)
+!(trunc-math -5.6)
+!(ceil-math -5.2)
+!(floor-math -5.8)
+!(round-math 4.5)
+!(round-math -4.5)
+!(min-atom (2 6 7 4 9 3))
+!(max-atom (2 6 7 4 9 3))
+!(min-atom (1 1.0))
+!(max-atom (1.0 1))

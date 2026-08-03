@@ -68,4 +68,25 @@ bool cetta_mm2_atom_id_to_contextual_bridge_expr_bytes(Arena *a,
                                                        size_t *out_context_len,
                                                        const char **out_error);
 
+/* Length-delimited bridge packets preserve symbols of arbitrary byte length.
+   The target MORK space normalizes these packets into its local compact
+   expression representation, interning long symbols in that space's symbol
+   table. */
+bool cetta_mm2_atom_to_bridge_expr_packet(Arena *a, Atom *atom,
+                                          uint8_t **out_packet,
+                                          size_t *out_len,
+                                          const char **out_error);
+bool cetta_mm2_atom_to_contextual_bridge_expr_packet(
+    Arena *a, Atom *atom, uint8_t **out_packet, size_t *out_packet_len,
+    uint8_t **out_context_bytes, size_t *out_context_len,
+    const char **out_error);
+bool cetta_mm2_atom_id_to_bridge_expr_packet(
+    Arena *a, const TermUniverse *universe, AtomId atom_id,
+    uint8_t **out_packet, size_t *out_len, const char **out_error);
+bool cetta_mm2_atom_id_to_contextual_bridge_expr_packet(
+    Arena *a, const TermUniverse *universe, AtomId atom_id,
+    uint8_t **out_packet, size_t *out_packet_len,
+    uint8_t **out_context_bytes, size_t *out_context_len,
+    const char **out_error);
+
 #endif /* CETTA_MM2_LOWER_H */

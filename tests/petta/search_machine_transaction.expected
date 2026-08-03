@@ -1,0 +1,13 @@
+true
+(true true)
+((counter 2))
+true
+true
+true
+((item b))
+true
+((counter 2) (nested yes))
+true
+true
+committed
+rolled-back

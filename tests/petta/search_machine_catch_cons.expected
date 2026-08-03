@@ -1,0 +1,16 @@
+is false, should false. ✅ 
+is true, should true. ✅ 
+is true, should true. ✅ 
+is 1, should 1. ✅ 
+is (x y a b), should (x y a b). ✅ 
+is 3, should 3. ✅ 
+is 42, should 42. ✅ 
+is Error, should Error. ✅ 
+true
+true
+true
+true
+true
+true
+true
+true

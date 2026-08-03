@@ -45,6 +45,22 @@ struct PrimeNeedHeapIndexNode {
     const PrimeNeedHeapIndexNode *children[];
 };
 
+static bool prime_need_heap_index_enabled(void) {
+    static _Atomic int enabled = -1;
+    int cached = atomic_load_explicit(&enabled, memory_order_relaxed);
+    if (cached >= 0)
+        return cached != 0;
+    const char *setting = getenv("CETTA_PRIME_NEED_HEAP_INDEX");
+    int selected =
+        !(setting && setting[0] == '0' && setting[1] == '\0');
+    int expected = -1;
+    if (!atomic_compare_exchange_strong_explicit(
+            &enabled, &expected, selected,
+            memory_order_relaxed, memory_order_relaxed))
+        selected = expected;
+    return selected != 0;
+}
+
 static size_t prime_need_popcount16(uint16_t bits) {
     size_t count = 0u;
     while (bits != 0u) {
@@ -601,7 +617,7 @@ bool prime_need_snapshot_is_ancestor(const PrimeNeedSnapshot *ancestor,
         return false;
     const PrimeNeedFrame *at_depth = NULL;
 #if CETTA_PRIME_NEED_HEAP_INDEX
-    if (descendant->lineage_index) {
+    if (prime_need_heap_index_enabled() && descendant->lineage_index) {
         size_t steps = 0u;
         at_depth = prime_need_heap_index_lookup(
             descendant->lineage_index, ancestor->top->depth, &steps);
@@ -696,18 +712,20 @@ static bool prime_need_snapshot_push(Arena *owner,
 #if CETTA_PRIME_NEED_HEAP_INDEX
     out->heap_index = NULL;
     out->lineage_index = NULL;
-    if (!base->top || base->heap_index) {
-        const PrimeNeedHeapIndexNode *index = NULL;
-        if (prime_need_heap_index_insert_at(
-                owner, base->heap_index, thunk_id, 0u, frame, &index))
-            out->heap_index = index;
-    }
-    if (!base->top || base->lineage_index) {
-        const PrimeNeedHeapIndexNode *index = NULL;
-        if (prime_need_heap_index_insert_at(
-                owner, base->lineage_index, frame->depth, 0u,
-                frame, &index))
-            out->lineage_index = index;
+    if (prime_need_heap_index_enabled()) {
+        if (!base->top || base->heap_index) {
+            const PrimeNeedHeapIndexNode *index = NULL;
+            if (prime_need_heap_index_insert_at(
+                    owner, base->heap_index, thunk_id, 0u, frame, &index))
+                out->heap_index = index;
+        }
+        if (!base->top || base->lineage_index) {
+            const PrimeNeedHeapIndexNode *index = NULL;
+            if (prime_need_heap_index_insert_at(
+                    owner, base->lineage_index, frame->depth, 0u,
+                    frame, &index))
+                out->lineage_index = index;
+        }
     }
 #endif
     return true;
@@ -740,7 +758,7 @@ bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_QUERY);
 #if CETTA_PRIME_NEED_HEAP_INDEX
-    if (snapshot->heap_index) {
+    if (prime_need_heap_index_enabled() && snapshot->heap_index) {
         size_t steps = 0u;
         const PrimeNeedFrame *frame = prime_need_heap_index_lookup(
             snapshot->heap_index, thunk_id, &steps);
