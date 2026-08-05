@@ -117,6 +117,35 @@ int main(void) {
               legacy_result->ground.ival == 6000,
           "legacy serialized bindings retain spelling-keyed fallback");
 
+    BindingsBuilder legacy_branch;
+    CHECK(bindings_builder_init(&legacy_branch, &legacy),
+          "legacy rollback branch clones its derived lookup state");
+    uint32_t legacy_mark = bindings_builder_save(&legacy_branch);
+    VarId legacy_dead_id = test_id(6002u);
+    uint32_t legacy_marks[1] = {legacy_mark};
+    bool legacy_compact_rollback =
+        bindings_builder_add_id_fresh(
+            &legacy_branch, legacy_dead_id, SYMBOL_ID_NONE,
+            atom_int(&arena, 6002)) &&
+        legacy_branch.current.legacy_fallback_count == 1u &&
+        bindings_builder_compact_reachable(
+            &legacy_branch, NULL, 0u, legacy_marks, 1u,
+            NULL, NULL) &&
+        legacy_marks[0] == 0u;
+    bindings_builder_rollback(&legacy_branch, legacy_marks[0]);
+    legacy_result = bindings_apply(
+        &legacy_branch.current, &arena, legacy_probe);
+    legacy_compact_rollback = legacy_compact_rollback &&
+        legacy_branch.current.legacy_fallback_count == 1u &&
+        bindings_lookup_id(
+            &legacy_branch.current, legacy_dead_id) == NULL &&
+        legacy_result && legacy_result->kind == ATOM_GROUNDED &&
+        legacy_result->ground.gkind == GV_INT &&
+        legacy_result->ground.ival == 6000;
+    CHECK(legacy_compact_rollback,
+          "compacted rollback rebuilds nonzero legacy metadata exactly");
+    bindings_builder_free(&legacy_branch);
+
     VarId late_id = test_id(1000u);
     CHECK(bindings_lookup_id(&base, late_id) == NULL,
           "a genuinely absent variable remains absent");
@@ -162,6 +191,9 @@ int main(void) {
         bindings_lookup_id(&branch.current, branch_a) == NULL &&
         bindings_lookup_id(&branch.current, branch_b) == NULL &&
         binding_is_int(&branch.current, late_id, 1000) &&
+        branch.current.legacy_fallback_count == 0u &&
+        branch.current.private_entry_count == 0u &&
+        branch.current.private_constraint_count == 0u &&
         branch.growth_count == growth_after_first + 1u;
     CHECK(branch_added && duplicate_no_growth && branch_visible &&
               inner_rolled_back && root_rolled_back,
@@ -344,6 +376,24 @@ int main(void) {
               nested_private) &&
               bindings_contains_private_variant_slots(&private_value),
           "nested private values update derived metadata");
+    BindingsBuilder private_value_branch;
+    CHECK(bindings_builder_init(
+              &private_value_branch, &private_value),
+          "private-entry rollback branch clones derived metadata");
+    uint32_t private_value_mark =
+        bindings_builder_save(&private_value_branch);
+    bool private_value_rollback =
+        bindings_builder_add_id_fresh(
+            &private_value_branch, test_id(4101u), SYMBOL_ID_NONE,
+            atom_int(&arena, 4101));
+    bindings_builder_rollback(
+        &private_value_branch, private_value_mark);
+    CHECK(private_value_rollback &&
+              private_value_branch.current.private_entry_count == 1u &&
+              bindings_contains_private_variant_slots(
+                  &private_value_branch.current),
+          "rollback rebuilds nonzero private-entry metadata exactly");
+    bindings_builder_free(&private_value_branch);
     CHECK(bindings_remove_entry_at(&private_value, 0u) &&
               !bindings_contains_private_variant_slots(&private_value),
           "entry removal decrements private-slot metadata");
@@ -360,6 +410,25 @@ int main(void) {
               &private_constraint, left_constraint, right_constraint) &&
               bindings_contains_private_variant_slots(&private_constraint),
           "private variables inside constraints update derived metadata");
+    BindingsBuilder private_constraint_branch;
+    CHECK(bindings_builder_init(
+              &private_constraint_branch, &private_constraint),
+          "private-constraint rollback branch clones derived metadata");
+    uint32_t private_constraint_mark =
+        bindings_builder_save(&private_constraint_branch);
+    bool private_constraint_rollback =
+        bindings_builder_add_id_fresh(
+            &private_constraint_branch, test_id(4200u), SYMBOL_ID_NONE,
+            atom_int(&arena, 4200));
+    bindings_builder_rollback(
+        &private_constraint_branch, private_constraint_mark);
+    CHECK(private_constraint_rollback &&
+              private_constraint_branch.current.private_constraint_count ==
+                  1u &&
+              bindings_contains_private_variant_slots(
+                  &private_constraint_branch.current),
+          "rollback rebuilds nonzero private-constraint metadata exactly");
+    bindings_builder_free(&private_constraint_branch);
     bindings_free(&private_constraint);
 
     Arena promoted_arena;

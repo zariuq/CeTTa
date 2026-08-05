@@ -37,8 +37,9 @@ run_sum_probe() {
 
     CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
     "$BIN" --emit-runtime-stats --lang prime \
-        -e '(= (mam:sum $n) (if (< $n 1) 0 (+ 1 (mam:sum (- $n 1)))))' \
-        -e "!(mam:sum ${n})" >"$stdout_file" 2>"$stats_file"
+        -e '(= (mam:sum $n) (if (< $n 1) 0 (+ (superpose (1)) (mam:sum (- $n 1)))))' \
+        -e "!(mam:sum (force (delay ${n})))" \
+        >"$stdout_file" 2>"$stats_file"
 
     if [[ $(<"$stdout_file") != "[${n}]" ]]; then
         echo "FAIL: sum(${n}) changed under the explicit Prime stack" >&2
@@ -46,7 +47,7 @@ run_sum_probe() {
         exit 1
     fi
 
-    local roots pushes bind_tasks call_tasks normalize_tasks work
+    local roots pushes bind_tasks call_tasks normalize_tasks poisoned_tasks work
     local strict_frames if_frames force_frames finish_frames
     local heap_peak c_stack_peak trip_eval trip_bind trip_typed
     local gc_frame_safe_points gc_evacuated_bytes gc_fresh_budget_peak
@@ -57,6 +58,7 @@ run_sum_probe() {
     bind_tasks=$(counter "$stats_file" prime-eval-stack-task-bind)
     call_tasks=$(counter "$stats_file" prime-eval-stack-task-call)
     normalize_tasks=$(counter "$stats_file" prime-eval-stack-task-normalize)
+    poisoned_tasks=$(counter "$stats_file" prime-eval-stack-poisoned-task)
     strict_frames=$(counter "$stats_file" prime-eval-stack-frame-strict)
     if_frames=$(counter "$stats_file" prime-eval-stack-frame-if)
     force_frames=$(counter "$stats_file" prime-eval-stack-frame-force)
@@ -96,6 +98,10 @@ run_sum_probe() {
     if ((strict_frames == 0 || if_frames == 0 || force_frames == 0 ||
         finish_frames == 0)); then
         echo "FAIL: sum(${n}) did not exercise every admitted frame kind" >&2
+        exit 1
+    fi
+    if ((poisoned_tasks != 0)); then
+        echo "FAIL: sum(${n}) entered a recursive poisoned task" >&2
         exit 1
     fi
     if ((work < n || work > 20 * n + 16)); then
@@ -140,6 +146,67 @@ if ((evacuated_800 > 3 * evacuated_400 + 1048576 ||
     exit 1
 fi
 
+observation_stdout="$probe_dir/observation.stdout"
+observation_stats="$probe_dir/observation.stats"
+CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
+"$BIN" --emit-runtime-stats --lang prime --count-only \
+    "$ROOT/tests/prime/prepared_pure_observation_stack.metta" \
+    >"$observation_stdout" 2>"$observation_stats"
+if [[ $(<"$observation_stdout") != 1 ]]; then
+    echo "FAIL: deep Prime structural observation changed its result count" >&2
+    cat "$observation_stdout" >&2
+    exit 1
+fi
+observation_tasks=$(counter "$observation_stats" prime-eval-stack-task-normalize)
+observation_poisoned=$(counter "$observation_stats" prime-eval-stack-poisoned-task)
+observation_heap_peak=$(counter "$observation_stats" prime-eval-stack-frame-depth-peak)
+observation_c_stack_peak=$(counter "$observation_stats" eval-c-stack-guard-depth-peak)
+observation_gc=$(counter "$observation_stats" prime-eval-stack-gc-frame-safe-point)
+observation_evacuated=$(counter "$observation_stats" prime-eval-stack-gc-evacuated-bytes)
+if ((observation_tasks < 10000 || observation_poisoned != 0 ||
+    observation_heap_peak < 10000 || observation_c_stack_peak > 8 ||
+    observation_gc == 0 || observation_evacuated == 0)); then
+    echo "FAIL: deep Prime observation did not remain on generated-rooted heap frames" >&2
+    exit 1
+fi
+
+non_tail_stdout="$probe_dir/non-tail.stdout"
+non_tail_stats="$probe_dir/non-tail.stats"
+CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
+"$BIN" --emit-runtime-stats --lang prime --count-only \
+    "$ROOT/tests/prime/non_tail_symbolic_observation_stack.metta" \
+    >"$non_tail_stdout" 2>"$non_tail_stats"
+if [[ $(<"$non_tail_stdout") != 1 ]]; then
+    echo "FAIL: non-tail Prime observation changed its result count" >&2
+    cat "$non_tail_stdout" >&2
+    exit 1
+fi
+non_tail_admissions=$(counter "$non_tail_stats" prepared-pure-call-admission)
+non_tail_commits=$(counter "$non_tail_stats" prepared-pure-call-commit)
+non_tail_declines=$(counter "$non_tail_stats" prepared-pure-call-decline)
+non_tail_cache_hits=$(
+    counter "$non_tail_stats" prepared-pure-call-program-cache-hit
+)
+non_tail_cache_stores=$(
+    counter "$non_tail_stats" prepared-pure-call-program-cache-store
+)
+non_tail_normalize=$(counter "$non_tail_stats" prime-eval-stack-task-normalize)
+non_tail_poisoned=$(counter "$non_tail_stats" prime-eval-stack-poisoned-task)
+non_tail_heap_peak=$(counter "$non_tail_stats" prime-eval-stack-frame-depth-peak)
+non_tail_c_stack_peak=$(counter "$non_tail_stats" eval-c-stack-guard-depth-peak)
+if ((non_tail_admissions < 10001 ||
+    non_tail_commits != non_tail_admissions || non_tail_declines != 0 ||
+    non_tail_cache_hits < 10000 || non_tail_cache_stores != 1 ||
+    non_tail_normalize < 20001 || non_tail_poisoned != 0 ||
+    non_tail_heap_peak < 30000 || non_tail_c_stack_peak > 8)); then
+    echo "FAIL: non-tail Prime observation escaped cached heap machinery" >&2
+    printf '%s\n' \
+        "admission=$non_tail_admissions commit=$non_tail_commits decline=$non_tail_declines" \
+        "cache-hit=$non_tail_cache_hits cache-store=$non_tail_cache_stores" \
+        "normalize=$non_tail_normalize heap=$non_tail_heap_peak c-stack=$non_tail_c_stack_peak poisoned=$non_tail_poisoned" >&2
+    exit 1
+fi
+
 he_stdout="$probe_dir/he.stdout"
 he_stats="$probe_dir/he.stats"
 "$BIN" --emit-runtime-stats --lang he --profile he-extended \
@@ -174,4 +241,4 @@ for name in \
 done
 
 printf '%s\n' \
-    "PrimeEvalStackStatsSummary PASS work=${work_400}/${work_800}/${work_1600} HE=isolated"
+    "PrimeEvalStackStatsSummary PASS work=${work_400}/${work_800}/${work_1600} non-tail-cache=${non_tail_cache_hits} HE=isolated"

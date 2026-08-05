@@ -11,6 +11,10 @@ typedef uint32_t SymbolId;
 
 #define SYMBOL_ID_NONE ((SymbolId)0)
 
+enum {
+    CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP = 1u << 0,
+};
+
 typedef struct {
     const char *bytes;
     uint32_t len;
@@ -78,6 +82,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(atp_saturation, "atp-saturation") \
     X(solver_oracle, "solver-oracle") \
     X(comma, ",") \
+    X(pipe, "|") \
     X(match, "match") \
     X(superpose, "superpose") \
     X(hyperpose, "hyperpose") \
@@ -120,6 +125,8 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(eval, "eval") \
     X(foldl_atom_in_space, "foldl-atom-in-space") \
     X(new_space, "new-space") \
+    X(space_union, "space-union") \
+    X(space_intersection, "space-intersection") \
     X(context_space, "context-space") \
     X(call_native, "call-native") \
     X(git_module_bang, "git-module!") \
@@ -411,6 +418,93 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     /* Shared control syntax has an interned identity but is not a value. */ \
     X(if_text, "if")
 
+/* Builtins whose grounded-operation capability is independent of language
+   and profile.  symbol_table_init_builtins compiles this declaration into
+   SymbolEntry flags, so evaluator dispatch reads one capability bit instead
+   of reclassifying an interned opcode by name. */
+#define CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(X) \
+    X(abt_default_signatures) \
+    X(abt_signature_admitted) \
+    X(abt_shift) \
+    X(abt_subst) \
+    X(abt_close) \
+    X(abt_open) \
+    X(abt_bind) \
+    X(abt_print) \
+    X(abt_parse) \
+    X(abt_scope_check) \
+    X(abt_alpha_eq) \
+    X(mork_add_atoms) \
+    X(mork_add_atom) \
+    X(mork_remove_atom) \
+    X(add_atom) \
+    X(remove_atom) \
+    X(op_plus) \
+    X(op_minus) \
+    X(op_mul) \
+    X(op_div) \
+    X(op_floor_div) \
+    X(op_mod) \
+    X(op_lt) \
+    X(op_gt) \
+    X(op_le) \
+    X(op_ge) \
+    X(op_eq) \
+    X(numeric_eq) \
+    X(alpha_eq) \
+    X(if_equal) \
+    X(sealed_text) \
+    X(minimal_foldl_atom) \
+    X(minimal_foldl_llist) \
+    X(minimal_space_contains_exact) \
+    X(minimal_space_revision) \
+    X(collapse_add_next) \
+    X(foldl_atom_in_space) \
+    X(op_and) \
+    X(op_or) \
+    X(op_not) \
+    X(op_xor) \
+    X(println_bang) \
+    X(readln_bang) \
+    X(flush_output_bang) \
+    X(trace_bang) \
+    X(format_args) \
+    X(repr) \
+    X(sha256) \
+    X(parse) \
+    X(parse_first) \
+    X(py_atom) \
+    X(py_dot) \
+    X(py_call) \
+    X(sort_strings) \
+    X(print_alternatives_bang) \
+    X(unique_atom) \
+    X(intersection_atom) \
+    X(subtraction_atom) \
+    X(max_atom) \
+    X(min_atom) \
+    X(pow_math) \
+    X(sqrt_math) \
+    X(abs_math) \
+    X(log_math) \
+    X(trunc_math) \
+    X(ceil_math) \
+    X(floor_math) \
+    X(round_math) \
+    X(sin_math) \
+    X(asin_math) \
+    X(cos_math) \
+    X(acos_math) \
+    X(tan_math) \
+    X(atan_math) \
+    X(isnan_math) \
+    X(isinf_math) \
+    X(size) \
+    X(size_atom) \
+    X(index_atom) \
+    X(range_atom) \
+    X(repeat_atom)
+
 typedef struct {
 #define CETTA_BUILTIN_SYMBOL_FIELD(field, text) SymbolId field;
     CETTA_BUILTIN_SYMBOLS(CETTA_BUILTIN_SYMBOL_FIELD)
@@ -432,6 +526,7 @@ SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
 const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
+uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
 
 #endif /* CETTA_SYMBOL_H */

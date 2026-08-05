@@ -145,3 +145,15 @@
 !(bind! &pathmap-counted-from-structural (new-space pathmap))
 !(add-atoms &pathmap-counted-from-structural (mork:get-atoms &mork-structural-dup))
 !(assertEqualToResult (size &pathmap-counted-from-structural) (1))
+
+; A PathMap-to-PathMap space/tuple transfer preserves counted occurrences.
+; Its physical route has a separate runtime-stats regression.
+!(bind! &pathmap-transfer-source (new-space pathmap))
+!(add-atoms &pathmap-transfer-source
+   ((transfer duplicate) (transfer duplicate) (transfer distinct)))
+!(bind! &pathmap-transfer-target (new-space pathmap))
+!(add-atoms &pathmap-transfer-target (get-atoms &pathmap-transfer-source))
+!(assertEqualToResult (size &pathmap-transfer-target) (3))
+!(assertEqualToResult
+  (size (collapse (match &pathmap-transfer-target (transfer duplicate) $x)))
+  (2))

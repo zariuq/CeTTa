@@ -1,0 +1,10 @@
+; Battery 3: naive reverse — the Prolog LIPS classic; quadratic append,
+; pure symbolic list rewriting.  Constructor-disjoint.
+(= (app Nil $ys) $ys)
+(= (app (Cons $x $xs) $ys) (Cons $x (app $xs $ys)))
+(= (nrev Nil) Nil)
+(= (nrev (Cons $x $xs)) (app (nrev $xs) (Cons $x Nil)))
+(= (len $l) (if (== $l Nil) 0
+   (let (Cons $h $t) $l (+ 1 (len $t)))))
+(= (upto $n) (if (== $n 0) Nil (Cons $n (upto (- $n 1)))))
+!(len (nrev (upto @N@)))

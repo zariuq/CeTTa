@@ -31,12 +31,30 @@ typedef struct {
     const PettaPlanNode *rhs_plan;
 } PettaClauseCandidate;
 
+/*
+ * Physical work performed while reconciling the declaration-ordered PeTTa
+ * catalog with the live Space occurrence stream.  These are diagnostic
+ * counters only: the live Space remains semantic authority.
+ */
+typedef struct {
+    uint64_t snapshots;
+    uint64_t live_occurrences_scanned;
+    uint64_t declaration_records_examined;
+    uint64_t structural_equality_checks;
+    uint64_t alpha_equality_checks;
+    uint64_t candidates_emitted;
+} PettaClauseSnapshotStats;
+
 typedef struct PettaProgram PettaProgram;
 typedef struct PettaDeclarationBlock PettaDeclarationBlock;
 
 PettaProgram *petta_program_new(void);
 void petta_program_free(PettaProgram *program);
 bool petta_program_is_equation(Atom *atom);
+
+/* True when PeTTa's relational machine, rather than an ordinary user
+ * equation or inert constructor, owns the head's execution semantics. */
+bool petta_program_head_is_intrinsic(SymbolId head);
 
 /*
  * PeTTa parses a document before executing its directives.  Registering the
@@ -106,6 +124,11 @@ void petta_program_forget_space(
 bool petta_program_clause_snapshot(
     PettaProgram *program, Space *space, SymbolId head,
     PettaClauseCandidate **candidates, size_t *candidate_count);
+
+bool petta_program_clause_snapshot_profiled(
+    PettaProgram *program, Space *space, SymbolId head,
+    PettaClauseCandidate **candidates, size_t *candidate_count,
+    PettaClauseSnapshotStats *stats);
 
 /*
  * Prove that every currently reachable clause body for a named relation is

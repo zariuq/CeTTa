@@ -237,91 +237,32 @@ static bool find_unused_alpha_equal_atom(Atom **elems, bool *used,
 }
 
 bool is_grounded_op(SymbolId id) {
-    if (id == SYMBOL_ID_NONE) return false;
-    if (abt_is_op(id)) return true;
-    /* Check __cetta_lib_ prefix via string lookup */
-    const char *name = symbol_bytes(g_symbols, id);
+    /* Compiled operators are opcodes: dispatch their interned IDs before
+       consulting any extensible name-based registry. */
+    if ((symbol_flags(g_symbols, id) &
+         CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP) != 0u)
+        return true;
+
+    /* Check __cetta_lib_ prefix via string lookup only for non-static IDs. */
+    const char *name = id == SYMBOL_ID_NONE
+        ? NULL : symbol_bytes(g_symbols, id);
     if (name && strncmp(name, "__cetta_lib_", 12) == 0)
         return true;
-    /* Doctrine: guard the expensive name-op checks by their cheap
-     * language/profile condition FIRST so the strcmp chain is skipped when the
-     * active profile cannot use it (e.g. the whole prime-op set is dead weight
-     * under --lang he).  Reordering these && operands is behaviour-preserving. */
-    if (name && eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+    /* Guard the expensive name-op checks by their cheap language/profile
+       condition so inactive dialect registries remain off the shared path. */
+    const CettaLanguageId language_id = eval_current_language_id
+        ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+    if (name && language_id == CETTA_LANGUAGE_PRIME &&
         prime_semantics_is_op && prime_semantics_is_op(name))
         return true;
-    if (eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+    if (language_id == CETTA_LANGUAGE_PETTA &&
         petta_semantics_form(id) == PETTA_FORM_REPRA)
         return true;
     if (name && eval_current_profile_enables_dependent_telescope &&
         eval_current_profile_enables_dependent_telescope() &&
         he_typing_is_op && he_typing_is_op(name))
         return true;
-    if (id == g_builtin_syms.mork_add_atoms ||
-        id == g_builtin_syms.mork_add_atom ||
-        id == g_builtin_syms.mork_remove_atom)
-        return true;
-    if (id == g_builtin_syms.add_atom ||
-        id == g_builtin_syms.remove_atom)
-        return true;
-    return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
-           id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
-           id == g_builtin_syms.op_floor_div || id == g_builtin_syms.op_mod ||
-           id == g_builtin_syms.op_lt ||
-           id == g_builtin_syms.op_gt || id == g_builtin_syms.op_le ||
-           id == g_builtin_syms.op_ge || id == g_builtin_syms.op_eq ||
-           id == g_builtin_syms.numeric_eq ||
-           id == g_builtin_syms.alpha_eq ||
-           id == g_builtin_syms.if_equal ||
-           id == g_builtin_syms.sealed_text ||
-           id == g_builtin_syms.minimal_foldl_atom ||
-           id == g_builtin_syms.minimal_foldl_llist ||
-           id == g_builtin_syms.minimal_space_contains_exact ||
-           id == g_builtin_syms.minimal_space_revision ||
-           id == g_builtin_syms.collapse_add_next ||
-           id == g_builtin_syms.foldl_atom_in_space ||
-           id == g_builtin_syms.op_and || id == g_builtin_syms.op_or ||
-           id == g_builtin_syms.op_not || id == g_builtin_syms.op_xor ||
-           id == g_builtin_syms.println_bang ||
-           id == g_builtin_syms.readln_bang ||
-           id == g_builtin_syms.flush_output_bang ||
-           id == g_builtin_syms.trace_bang ||
-           id == g_builtin_syms.format_args ||
-           id == g_builtin_syms.repr ||
-           id == g_builtin_syms.sha256 ||
-           id == g_builtin_syms.parse ||
-           id == g_builtin_syms.parse_first ||
-           id == g_builtin_syms.py_atom ||
-           id == g_builtin_syms.py_dot ||
-           id == g_builtin_syms.py_call ||
-           id == g_builtin_syms.sort_strings ||
-           id == g_builtin_syms.print_alternatives_bang ||
-           id == g_builtin_syms.unique_atom ||
-           id == g_builtin_syms.intersection_atom ||
-           id == g_builtin_syms.subtraction_atom ||
-           id == g_builtin_syms.max_atom ||
-           id == g_builtin_syms.min_atom ||
-           id == g_builtin_syms.pow_math ||
-           id == g_builtin_syms.sqrt_math ||
-           id == g_builtin_syms.abs_math ||
-           id == g_builtin_syms.log_math ||
-           id == g_builtin_syms.trunc_math ||
-           id == g_builtin_syms.ceil_math ||
-           id == g_builtin_syms.floor_math ||
-           id == g_builtin_syms.round_math ||
-           id == g_builtin_syms.sin_math ||
-           id == g_builtin_syms.asin_math ||
-           id == g_builtin_syms.cos_math ||
-           id == g_builtin_syms.acos_math ||
-           id == g_builtin_syms.tan_math ||
-           id == g_builtin_syms.atan_math ||
-           id == g_builtin_syms.isnan_math ||
-           id == g_builtin_syms.isinf_math ||
-           id == g_builtin_syms.size ||
-           id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom ||
-           id == g_builtin_syms.range_atom || id == g_builtin_syms.repeat_atom;
+    return false;
 }
 
 /* Deliberately absent from the type-pure capability: space mutation
@@ -484,6 +425,38 @@ static bool num_arg_to_mpz(const NumArg *arg, mpz_t out) {
 
 static Atom *atom_from_mpz(Arena *a, const mpz_t value) {
     return atom_bigint_from_mpz(a, value);
+}
+
+typedef struct {
+    mpz_t storage;
+    mpz_srcptr value;
+    bool owns_storage;
+} IntegerMpzView;
+
+static bool integer_mpz_view_init(const NumArg *arg, IntegerMpzView *view) {
+    if (!arg || !view || arg->is_float || arg->is_rational)
+        return false;
+    view->value = NULL;
+    view->owns_storage = false;
+    if (arg->is_bigint) {
+        view->value = atom_bigint_mpz_view(arg->bigint);
+        return view->value != NULL;
+    }
+    mpz_init(view->storage);
+    view->owns_storage = true;
+    uint64_t magnitude = arg->ival < 0
+        ? (uint64_t)(-(arg->ival + 1)) + 1u
+        : (uint64_t)arg->ival;
+    mpz_import(view->storage, 1, -1, sizeof(magnitude), 0, 0, &magnitude);
+    if (arg->ival < 0)
+        mpz_neg(view->storage, view->storage);
+    view->value = view->storage;
+    return true;
+}
+
+static void integer_mpz_view_clear(IntegerMpzView *view) {
+    if (view && view->owns_storage)
+        mpz_clear(view->storage);
 }
 
 static Atom *atom_from_integral_double(Arena *a, double value) {
@@ -758,52 +731,58 @@ static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
         return result;
     }
 
-    mpz_t ai, bi, ri;
-    mpz_inits(ai, bi, ri, NULL);
-    bool ok = num_arg_to_mpz(na, ai) && num_arg_to_mpz(nb, bi);
+    IntegerMpzView ai = {0};
+    IntegerMpzView bi = {0};
+    mpz_t ri;
+    mpz_init(ri);
+    bool ok = integer_mpz_view_init(na, &ai) &&
+              integer_mpz_view_init(nb, &bi);
     if (!ok) {
-        mpz_clears(ai, bi, ri, NULL);
+        integer_mpz_view_clear(&ai);
+        integer_mpz_view_clear(&bi);
+        mpz_clear(ri);
         return NULL;
     }
 
     Atom *result = NULL;
     if (head_id == g_builtin_syms.op_plus) {
-        mpz_add(ri, ai, bi);
-        result = atom_from_mpz(a, ri);
+        mpz_add(ri, ai.value, bi.value);
+        result = atom_bigint_take_mpz(a, ri);
     } else if (head_id == g_builtin_syms.op_minus) {
-        mpz_sub(ri, ai, bi);
-        result = atom_from_mpz(a, ri);
+        mpz_sub(ri, ai.value, bi.value);
+        result = atom_bigint_take_mpz(a, ri);
     } else if (head_id == g_builtin_syms.op_mul) {
-        mpz_mul(ri, ai, bi);
-        result = atom_from_mpz(a, ri);
+        mpz_mul(ri, ai.value, bi.value);
+        result = atom_bigint_take_mpz(a, ri);
     } else if (head_id == g_builtin_syms.op_div) {
-        if (mpz_sgn(bi) == 0) {
+        if (mpz_sgn(bi.value) == 0) {
             result = grounded_division_by_zero(a, head, args, nargs);
         } else if (rust_compat) {
-            mpz_tdiv_q(ri, ai, bi);
-            result = atom_from_mpz(a, ri);
-        } else if (mpz_divisible_p(ai, bi)) {
-            mpz_tdiv_q(ri, ai, bi);
-            result = atom_from_mpz(a, ri);
+            mpz_tdiv_q(ri, ai.value, bi.value);
+            result = atom_bigint_take_mpz(a, ri);
+        } else if (mpz_divisible_p(ai.value, bi.value)) {
+            mpz_tdiv_q(ri, ai.value, bi.value);
+            result = atom_bigint_take_mpz(a, ri);
         } else {
-            result = atom_float(a, mpz_get_d(ai) / mpz_get_d(bi));
+            result = atom_float(
+                a, mpz_get_d(ai.value) / mpz_get_d(bi.value));
         }
     } else if (head_id == g_builtin_syms.op_floor_div) {
-        if (mpz_sgn(bi) == 0) {
+        if (mpz_sgn(bi.value) == 0) {
             result = grounded_division_by_zero(a, head, args, nargs);
         } else {
-            mpz_fdiv_q(ri, ai, bi);
-            result = atom_from_mpz(a, ri);
+            mpz_fdiv_q(ri, ai.value, bi.value);
+            result = atom_bigint_take_mpz(a, ri);
         }
     } else if (head_id == g_builtin_syms.op_mod) {
-        if (mpz_sgn(bi) == 0) {
+        if (mpz_sgn(bi.value) == 0) {
             result = grounded_division_by_zero(a, head, args, nargs);
         } else {
-            mpz_tdiv_r(ri, ai, bi);
-            result = atom_from_mpz(a, ri);
+            mpz_tdiv_r(ri, ai.value, bi.value);
+            result = atom_bigint_take_mpz(a, ri);
         }
     } else {
-        int cmp = mpz_cmp(ai, bi);
+        int cmp = mpz_cmp(ai.value, bi.value);
         if (head_id == g_builtin_syms.op_lt)
             result = cmp < 0 ? atom_true(a) : atom_false(a);
         else if (head_id == g_builtin_syms.op_gt)
@@ -813,7 +792,9 @@ static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
         else if (head_id == g_builtin_syms.op_ge)
             result = cmp >= 0 ? atom_true(a) : atom_false(a);
     }
-    mpz_clears(ai, bi, ri, NULL);
+    integer_mpz_view_clear(&ai);
+    integer_mpz_view_clear(&bi);
+    mpz_clear(ri);
     return result;
 }
 #else
@@ -1630,7 +1611,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
-                return atom_bigint(a, atom_bigint_cstr(args[0]));
+                return atom_bigint_copy(a, args[0]);
 #if CETTA_BUILD_WITH_GMP
             if (input.is_rational)
                 return atom_from_rational_integer_part(a, &input,
@@ -1645,7 +1626,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
-                return atom_bigint(a, atom_bigint_cstr(args[0]));
+                return atom_bigint_copy(a, args[0]);
 #if CETTA_BUILD_WITH_GMP
             if (input.is_rational)
                 return atom_from_rational_integer_part(a, &input,
@@ -1660,7 +1641,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
-                return atom_bigint(a, atom_bigint_cstr(args[0]));
+                return atom_bigint_copy(a, args[0]);
 #if CETTA_BUILD_WITH_GMP
             if (input.is_rational)
                 return atom_from_rational_integer_part(a, &input,
@@ -1675,7 +1656,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT)
                 return atom_int(a, args[0]->ground.ival);
             if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_BIGINT)
-                return atom_bigint(a, atom_bigint_cstr(args[0]));
+                return atom_bigint_copy(a, args[0]);
 #if CETTA_BUILD_WITH_GMP
             if (input.is_rational)
                 return atom_from_rational_round(a, &input);

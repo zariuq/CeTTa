@@ -145,6 +145,8 @@ extern CettaMorkStatus mork_space_remove_sexpr(CettaMorkSpaceHandle *space,
 extern CettaMorkStatus mork_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                     const uint8_t *expr_bytes,
                                                     size_t len);
+extern CettaMorkStatus mork_space_remove_expr_bytes_batch(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t len);
 extern CettaMorkStatus mork_space_remove_contextual_exact_expr_bytes(
     CettaMorkSpaceHandle *space,
     const uint8_t *expr_bytes,
@@ -427,6 +429,14 @@ bool cetta_mork_bridge_is_available(void) {
     return true;
 }
 
+bool cetta_mork_bridge_supports_expr_bytes_batch_add(void) {
+    return true;
+}
+
+bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void) {
+    return true;
+}
+
 const char *cetta_mork_bridge_last_error(void) {
     if (!g_mork_bridge_error[0])
         return "no MORK bridge error";
@@ -624,6 +634,24 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     mork_space_remove_expr_bytes(space, expr_bytes, len),
                                     out_removed,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_remove_expr_bytes_batch(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t len,
+    uint64_t *out_removed) {
+    if (!space) {
+        bridge_set_error("cannot remove expr byte batch from null MORK bridge space");
+        return false;
+    }
+    if (!packet && len != 0) {
+        bridge_set_error("cannot remove non-empty null expr byte batch from MORK bridge space");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_remove_expr_bytes_batch failed: ",
+        mork_space_remove_expr_bytes_batch(space, packet, len),
+        out_removed,
+        bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
@@ -2199,6 +2227,9 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_remove_expr_bytes)(CettaMorkSpaceHandle *space,
                                                const uint8_t *expr_bytes,
                                                size_t len);
+    CettaMorkStatus (*space_remove_expr_bytes_batch)(CettaMorkSpaceHandle *space,
+                                                     const uint8_t *packet,
+                                                     size_t len);
     CettaMorkStatus (*space_remove_contextual_exact_expr_bytes)(
         CettaMorkSpaceHandle *space,
         const uint8_t *expr_bytes,
@@ -2578,6 +2609,9 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.space_remove_expr_bytes,
         "mork_space_remove_expr_bytes");
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_remove_expr_bytes_batch,
+        "mork_space_remove_expr_bytes_batch");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_remove_contextual_exact_expr_bytes,
         "mork_space_remove_contextual_exact_expr_bytes");
     bridge_resolve_symbol_optional(
@@ -2901,6 +2935,16 @@ bool cetta_mork_bridge_is_available(void) {
     return bridge_load_api();
 }
 
+bool cetta_mork_bridge_supports_expr_bytes_batch_add(void) {
+    return bridge_load_api() &&
+           g_mork_bridge_api.space_add_expr_bytes_batch != NULL;
+}
+
+bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void) {
+    return bridge_load_api() &&
+           g_mork_bridge_api.space_remove_expr_bytes_batch != NULL;
+}
+
 const char *cetta_mork_bridge_last_error(void) {
     if (!g_mork_bridge_error[0])
         return "no MORK bridge error";
@@ -3120,6 +3164,28 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_remove_expr_bytes(space, expr_bytes, len),
                                     out_removed,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_remove_expr_bytes_batch(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t len,
+    uint64_t *out_removed) {
+    if (!space || !bridge_load_api()) {
+        bridge_set_error("cannot remove expr byte batch from null or unavailable MORK bridge space");
+        return false;
+    }
+    if (!packet && len != 0) {
+        bridge_set_error("cannot remove non-empty null expr byte batch from MORK bridge space");
+        return false;
+    }
+    if (!g_mork_bridge_api.space_remove_expr_bytes_batch) {
+        bridge_set_error("mork_space_remove_expr_bytes_batch is unavailable in the loaded MORK bridge");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_remove_expr_bytes_batch failed: ",
+        g_mork_bridge_api.space_remove_expr_bytes_batch(space, packet, len),
+        out_removed,
+        bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(

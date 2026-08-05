@@ -58,6 +58,17 @@ static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
     .rust_he_compat_semantics = false,
 };
 
+static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
+    .id = CETTA_PROFILE_PETTA_EXTENDED,
+    .language_id = CETTA_LANGUAGE_PETTA,
+    .name = "extended",
+    .note = "PeTTa semantics plus labeled shared CeTTa extensions.",
+    .he_compatible_surface = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = false,
+    .rust_he_compat_semantics = false,
+};
+
 static const CettaProfile CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE = {
     .id = CETTA_PROFILE_RHOCALC_STRICT_CORE,
     .language_id = CETTA_LANGUAGE_RHOCALC,
@@ -231,8 +242,13 @@ const CettaProfile *cetta_profile_prime_default(void) {
     return &CETTA_PROFILE_PRIME_DEFAULT_VALUE;
 }
 
+const CettaProfile *cetta_profile_petta_extended(void) {
+    return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
+}
+
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
     return language_id == CETTA_LANGUAGE_HE ||
+           language_id == CETTA_LANGUAGE_PETTA ||
            language_id == CETTA_LANGUAGE_RHOCALC;
 }
 
@@ -270,6 +286,13 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
             return &CETTA_PROFILE_RHOCALC_COST_VALUE;
         }
     }
+    if (language_id == CETTA_LANGUAGE_PETTA) {
+        if (cetta_profile_name_matches(
+                name, &CETTA_PROFILE_PETTA_EXTENDED_VALUE) ||
+            strcmp(name, "petta-extended") == 0) {
+            return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
+        }
+    }
     return NULL;
 }
 
@@ -288,6 +311,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
         return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:
+    case CETTA_PROFILE_PETTA_EXTENDED:
         return CETTA_PROFILE_MASK_ALL;
     }
     return 0;
@@ -333,6 +357,12 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_RHOCALC_COST_VALUE.name,
                 CETTA_PROFILE_RHOCALC_COST_VALUE.note);
+        return;
+    }
+    if (language_id == CETTA_LANGUAGE_PETTA) {
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_PETTA_EXTENDED_VALUE.name,
+                CETTA_PROFILE_PETTA_EXTENDED_VALUE.note);
     }
 }
 

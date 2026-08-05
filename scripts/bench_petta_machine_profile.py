@@ -1,0 +1,386 @@
+#!/usr/bin/env python3
+"""Profile native PeTTa machine work after exact oracle validation."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import statistics
+import subprocess
+import sys
+import time
+from typing import Any
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+import petta_corpus_manifest as corpus  # noqa: E402
+
+
+DEFAULT_WORKLOADS = (
+    "holbenchmark.metta",
+    "hyperpose_primes.metta",
+    "fib.metta",
+    "matespacefast.metta",
+    "scale.metta",
+)
+STATS_PREFIX = "PETTA_MACHINE_STATS "
+
+
+def parse_stats_line(line: str) -> dict[str, int]:
+    if not line.startswith(STATS_PREFIX):
+        raise ValueError("not a PeTTa machine statistics line")
+    fields: dict[str, int] = {}
+    for item in line[len(STATS_PREFIX):].split():
+        key, separator, value = item.partition("=")
+        if not separator or not key or not value:
+            raise ValueError(f"malformed statistics field: {item!r}")
+        fields[key] = int(value)
+    return fields
+
+
+def extract_stats(stderr: str) -> tuple[list[dict[str, int]], str]:
+    invocations: list[dict[str, int]] = []
+    ordinary: list[str] = []
+    for line in stderr.splitlines(keepends=True):
+        payload = line[:-1] if line.endswith("\n") else line
+        if payload.startswith(STATS_PREFIX):
+            invocations.append(parse_stats_line(payload))
+        else:
+            ordinary.append(line)
+    return invocations, "".join(ordinary)
+
+
+def aggregate_invocations(
+    invocations: list[dict[str, int]],
+) -> dict[str, int | float]:
+    if not invocations:
+        raise RuntimeError("run emitted no PETTA_MACHINE_STATS records")
+    aggregate: dict[str, int | float] = {
+        "invocations": len(invocations),
+    }
+    ttfa: list[int] = []
+    first_answer_transitions: list[int] = []
+    for invocation in invocations:
+        for key, value in invocation.items():
+            if key == "time_to_first_answer_ns":
+                ttfa.append(value)
+            elif key == "first_answer_transition":
+                first_answer_transitions.append(value)
+            elif key.startswith("max_"):
+                aggregate[key] = max(int(aggregate.get(key, 0)), value)
+            else:
+                aggregate[key] = int(aggregate.get(key, 0)) + value
+    aggregate["ttfa_ns_median"] = statistics.median(ttfa)
+    aggregate["ttfa_ns_max"] = max(ttfa)
+    aggregate["first_answer_transition_median"] = statistics.median(
+        first_answer_transitions
+    )
+    aggregate["first_answer_transition_max"] = max(
+        first_answer_transitions
+    )
+    return aggregate
+
+
+def median_runs(runs: list[dict[str, Any]]) -> dict[str, int | float]:
+    keys = sorted(
+        set().union(*(run["aggregate"].keys() for run in runs))
+    )
+    medians: dict[str, int | float] = {
+        "process_elapsed_ns": statistics.median(
+            run["process_elapsed_ns"] for run in runs
+        ),
+    }
+    for key in keys:
+        values = [run["aggregate"].get(key, 0) for run in runs]
+        medians[key] = statistics.median(values)
+    return medians
+
+
+def run_workload(
+    cetta: Path,
+    petta_dir: Path,
+    entry: dict[str, Any],
+    timeout_seconds: float,
+    candidate_environment: dict[str, str],
+) -> dict[str, Any]:
+    source = petta_dir / entry["source"]
+    if corpus.sha256_file(source) != entry["source_sha256"]:
+        raise RuntimeError(f"{entry['name']}: source differs from manifest")
+    environment = os.environ.copy()
+    for key in tuple(environment):
+        if key.startswith("CETTA_PETTA_") or key == (
+            "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO"
+        ):
+            del environment[key]
+    environment.update(candidate_environment)
+    started_ns = time.monotonic_ns()
+    exit_code, stdout, stderr, timed_out, output_limit = (
+        corpus.run_bounded_process(
+            [str(cetta), "--lang", "petta", str(source)],
+            cetta.parent,
+            environment,
+            None,
+            timeout_seconds,
+        )
+    )
+    process_elapsed_ns = time.monotonic_ns() - started_ns
+    if timed_out:
+        raise RuntimeError(f"{entry['name']}: timed out")
+    if output_limit:
+        raise RuntimeError(f"{entry['name']}: exceeded output limit")
+    invocations, ordinary_stderr = extract_stats(stderr)
+    normalized_stdout = corpus.normalize_cetta_stdout(
+        stdout, petta_dir, (cetta.parent,)
+    )
+    normalized_stderr = corpus.normalize_oracle_stderr(
+        ordinary_stderr, petta_dir, (cetta.parent,)
+    )
+    oracle = entry["oracle"]
+    exact = (
+        exit_code == oracle["exit"]
+        and normalized_stdout == oracle["stdout"]
+        and normalized_stderr == oracle["stderr"]
+    )
+    if not exact:
+        raise RuntimeError(
+            f"{entry['name']}: oracle mismatch "
+            f"(exit {exit_code!r} != {oracle['exit']!r}, "
+            f"stdout_equal={normalized_stdout == oracle['stdout']}, "
+            f"stderr_equal={normalized_stderr == oracle['stderr']})"
+        )
+    return {
+        "exact": True,
+        "process_elapsed_ns": process_elapsed_ns,
+        "invocation_stats": invocations,
+        "aggregate": aggregate_invocations(invocations),
+    }
+
+
+def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
+    columns = (
+        "workload",
+        "runs",
+        "process_seconds",
+        "machine_seconds",
+        "invocations",
+        "transitions",
+        "clause_snapshot_calls",
+        "clause_snapshot_equality_checks",
+        "clause_candidates",
+        "clause_match_allocated_bytes",
+        "unification_calls",
+        "unification_binding_writes",
+        "binding_apply_rewrites",
+        "binding_apply_allocated_bytes",
+        "atom_freshen_allocated_bytes",
+        "specializer_prepare_calls",
+        "specializer_prepare_filtered",
+        "specializer_prepare_relevance_bounded",
+        "specializer_prepare_rewritten",
+        "specializer_prepare_unchanged",
+        "specializer_prepare_elapsed_ns",
+        "heap_bytes_reclaimed",
+        "ttfa_ms_max",
+        "max_goal_depth",
+        "max_choice_depth",
+        "max_binding_entries",
+    )
+    rows = ["\t".join(columns)]
+    for name, result in results.items():
+        median = result["median"]
+        values: dict[str, str | int | float] = {
+            "workload": name,
+            "runs": len(result["runs"]),
+            "process_seconds": (
+                float(median["process_elapsed_ns"]) / 1e9
+            ),
+            "machine_seconds": (
+                float(median.get("active_elapsed_ns", 0)) / 1e9
+            ),
+            "ttfa_ms_max": float(median.get("ttfa_ns_max", 0)) / 1e6,
+        }
+        for column in columns:
+            if column not in values:
+                values[column] = median.get(column, 0)
+        rows.append(
+            "\t".join(
+                f"{values[column]:.6f}"
+                if isinstance(values[column], float)
+                else str(values[column])
+                for column in columns
+            )
+        )
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cetta", type=Path, required=True)
+    parser.add_argument("--petta-dir", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--workload", action="append", dest="workloads"
+    )
+    parser.add_argument(
+        "--specializer-relevance-filter",
+        choices=("0", "1"),
+        default="0",
+    )
+    parser.add_argument(
+        "--specializer-route-cache",
+        choices=("0", "1"),
+        default="1",
+    )
+    parser.add_argument(
+        "--term-universe-source-id-memo",
+        choices=("0", "1"),
+        default="0",
+    )
+    parser.add_argument(
+        "--paired-baseline",
+        action="store_true",
+        help=(
+            "interleave each candidate run with the all-contenders-off "
+            "reference on the same binary"
+        ),
+    )
+    args = parser.parse_args()
+    if args.runs < 1:
+        parser.error("--runs must be positive")
+
+    cetta = args.cetta.resolve()
+    petta_dir = args.petta_dir.resolve()
+    manifest_path = args.manifest.resolve()
+    corpus.verify_manifest(petta_dir, manifest_path, True)
+    manifest = corpus.load_manifest(manifest_path)
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+    workloads = tuple(args.workloads or DEFAULT_WORKLOADS)
+    unknown = sorted(set(workloads) - set(entries))
+    if unknown:
+        raise RuntimeError("unknown workloads: " + ", ".join(unknown))
+
+    candidate_environment = {
+        "CETTA_PETTA_SEARCH_MACHINE": "1",
+        "CETTA_PETTA_MACHINE_STATS": "1",
+        "CETTA_PETTA_SPECIALIZER_RELEVANCE_FILTER": (
+            args.specializer_relevance_filter
+        ),
+        "CETTA_PETTA_SPECIALIZER_ROUTE_CACHE": (
+            args.specializer_route_cache
+        ),
+        "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": (
+            args.term_universe_source_id_memo
+        ),
+    }
+    baseline_environment = {
+        "CETTA_PETTA_SEARCH_MACHINE": "1",
+        "CETTA_PETTA_MACHINE_STATS": "1",
+        "CETTA_PETTA_SPECIALIZER_RELEVANCE_FILTER": "0",
+        "CETTA_PETTA_SPECIALIZER_ROUTE_CACHE": (
+            args.specializer_route_cache
+        ),
+        "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": "0",
+    }
+
+    results: dict[str, Any] = {}
+    baseline_results: dict[str, Any] = {}
+    for name in workloads:
+        print(f"[profile] {name}", flush=True)
+        runs: list[dict[str, Any]] = []
+        baseline_runs: list[dict[str, Any]] = []
+        for index in range(args.runs):
+            legs = [("candidate", candidate_environment)]
+            if args.paired_baseline:
+                legs = [
+                    ("baseline", baseline_environment),
+                    ("candidate", candidate_environment),
+                ]
+                if index % 2 == 1:
+                    legs.reverse()
+            for label, environment in legs:
+                run = run_workload(
+                    cetta,
+                    petta_dir,
+                    entries[name],
+                    args.timeout,
+                    environment,
+                )
+                if label == "candidate":
+                    runs.append(run)
+                else:
+                    baseline_runs.append(run)
+                print(
+                    f"  {label} {index + 1}/{args.runs}: exact, "
+                    f"machine="
+                    f"{run['aggregate']['active_elapsed_ns'] / 1e9:.3f}s",
+                    flush=True,
+                )
+        results[name] = {
+            "runs": runs,
+            "median": median_runs(runs),
+        }
+        if args.paired_baseline:
+            baseline_results[name] = {
+                "runs": baseline_runs,
+                "median": median_runs(baseline_runs),
+            }
+
+    revision = subprocess.run(
+        ["git", "-C", str(cetta.parent), "rev-parse", "HEAD"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    candidate_diff = subprocess.run(
+        ["git", "-C", str(cetta.parent), "diff", "--binary"],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    document = {
+        "schema": (
+            "cetta-petta-machine-profile-v3-paired"
+            if args.paired_baseline
+            else "cetta-petta-machine-profile-v2"
+        ),
+        "cetta_revision": revision,
+        "candidate_diff_sha256": corpus.sha256_bytes(candidate_diff),
+        "cetta_binary_sha256": corpus.sha256_file(cetta),
+        "petta_revision": manifest["petta_revision"],
+        "runs_per_workload": args.runs,
+        "candidate_environment": candidate_environment,
+        "measurement": (
+            "CLOCK_MONOTONIC time accumulated inside petta_machine_next; "
+            "process elapsed time retained separately"
+        ),
+        "results": results,
+    }
+    if args.paired_baseline:
+        document["baseline_environment"] = baseline_environment
+        document["baseline_results"] = baseline_results
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(
+        json.dumps(document, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    write_summary_tsv(args.out.with_suffix(".tsv"), results)
+    if args.paired_baseline:
+        baseline_tsv = args.out.with_name(
+            args.out.stem + ".baseline.tsv"
+        )
+        write_summary_tsv(baseline_tsv, baseline_results)
+    legs_per_workload = 2 if args.paired_baseline else 1
+    print(
+        f"PASS: {len(results)} workloads exact across {args.runs} runs "
+        f"and {legs_per_workload} leg(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

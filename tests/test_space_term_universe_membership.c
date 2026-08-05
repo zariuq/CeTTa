@@ -147,6 +147,17 @@ bool space_match_backend_store_atom_direct(Space *s, Atom *atom) {
     return false;
 }
 
+SpaceBackendBatchResult space_match_backend_store_atom_ids_batch_direct(
+    Space *s, const AtomId *atom_ids, CettaCount atom_count,
+    uint64_t *out_added) {
+    (void)s;
+    (void)atom_ids;
+    (void)atom_count;
+    if (out_added)
+        *out_added = 0;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
+}
+
 bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id) {
     (void)s;
     (void)atom_id;
@@ -157,6 +168,17 @@ bool space_match_backend_remove_atom_direct(Space *s, Atom *atom) {
     (void)s;
     (void)atom;
     return false;
+}
+
+SpaceBackendBatchResult space_match_backend_remove_atom_ids_batch_direct(
+    Space *s, const AtomId *atom_ids, CettaCount atom_count,
+    uint64_t *out_removed) {
+    (void)s;
+    (void)atom_ids;
+    (void)atom_count;
+    if (out_removed)
+        *out_removed = 0;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
 }
 
 bool space_match_backend_truncate_direct(Space *s, uint32_t new_len) {
@@ -577,6 +599,445 @@ int main(void) {
         assert(space_instance_id(&occurrence_space) != occurrence_instance);
         assert(!space_read_token_is_current(current_read));
         space_free(&occurrence_space);
+
+        {
+            Space prepared_space;
+            space_init_with_universe(&prepared_space, &equation_universe);
+            SymbolId prepared_head =
+                symbol_intern_cstr(g_symbols, "prepared-equation-head");
+            SymbolId result_head =
+                symbol_intern_cstr(g_symbols, "prepared-equation-result");
+            Atom *x = atom_var_with_id(&equation_scratch, "x", 7001u);
+            Atom *y = atom_var_with_id(&equation_scratch, "y", 7002u);
+            Atom *lhs_elems[3] = {
+                atom_symbol_id(&equation_scratch, prepared_head), x, y,
+            };
+            Atom *rhs_elems[4] = {
+                atom_symbol_id(&equation_scratch, result_head), x, x, y,
+            };
+            Atom *prepared_equation = atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
+                atom_expr(&equation_scratch, lhs_elems, 3u),
+                atom_expr(&equation_scratch, rhs_elems, 4u));
+            space_add(&prepared_space, prepared_equation);
+
+            SpacePreparedEquation plan;
+            assert(space_prepare_single_equation(
+                &prepared_space, prepared_head, &plan));
+            assert(plan.arity == 2u);
+            assert(cetta_gslt_prepared_equation_plan_admitted(
+                plan.evidence));
+
+            /* Aliased arguments and a register used twice on the RHS retain
+             * one immutable value identity; no ownership is duplicated. */
+            Atom *shared = atom_int(&equation_scratch, 73);
+            Atom *call_elems[3] = {
+                atom_symbol_id(&equation_scratch, prepared_head),
+                shared, shared,
+            };
+            Atom *instantiated =
+                space_prepared_equation_instantiate_ground(
+                    &plan,
+                    atom_expr(&equation_scratch, call_elems, 3u),
+                    &equation_scratch);
+            assert(instantiated && instantiated->kind == ATOM_EXPR);
+            assert(instantiated->expr.len == 4u);
+            assert(instantiated->expr.elems[1] == shared);
+            assert(instantiated->expr.elems[2] == shared);
+            assert(instantiated->expr.elems[3] == shared);
+
+            /* A non-ground call stays on the general matcher path. */
+            Atom *variable_call_elems[3] = {
+                atom_symbol_id(&equation_scratch, prepared_head),
+                atom_var_with_id(&equation_scratch, "query", 8001u),
+                shared,
+            };
+            assert(!space_prepared_equation_instantiate_ground(
+                &plan,
+                atom_expr(&equation_scratch, variable_call_elems, 3u),
+                &equation_scratch));
+
+            /* The read token is part of admission: adding a second equation
+             * invalidates the compiled singleton before its next use. */
+            Atom *second_equation = atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
+                atom_expr(&equation_scratch, lhs_elems, 3u),
+                atom_false(&equation_scratch));
+            space_add(&prepared_space, second_equation);
+            assert(!space_prepared_equation_instantiate_ground(
+                &plan,
+                atom_expr(&equation_scratch, call_elems, 3u),
+                &equation_scratch));
+            assert(!space_prepare_single_equation(
+                &prepared_space, prepared_head, &plan));
+            space_free(&prepared_space);
+        }
+
+        {
+            /* The generated register instruction uses simultaneous slot
+             * assignment: aliases in the call and repeated RHS register use
+             * cannot observe an already-overwritten accumulator. */
+            Space register_space;
+            space_init_with_universe(&register_space, &equation_universe);
+            SymbolId loop_head =
+                symbol_intern_cstr(g_symbols, "prepared-register-loop");
+            Atom *n = atom_var_with_id(&equation_scratch, "n", 7101u);
+            Atom *a = atom_var_with_id(&equation_scratch, "a", 7102u);
+            Atom *b = atom_var_with_id(&equation_scratch, "b", 7103u);
+            Atom *zero = atom_int(&equation_scratch, 0);
+            Atom *one = atom_int(&equation_scratch, 1);
+            Atom *guard_elems[3] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.op_eq),
+                n, zero,
+            };
+            Atom *minus_elems[3] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.op_minus),
+                n, one,
+            };
+            Atom *plus_elems[3] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.op_plus),
+                a, b,
+            };
+            Atom *tail_elems[4] = {
+                atom_symbol_id(&equation_scratch, loop_head),
+                atom_expr(&equation_scratch, minus_elems, 3u),
+                b,
+                atom_expr(&equation_scratch, plus_elems, 3u),
+            };
+            Atom *body_elems[4] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.if_text),
+                atom_expr(&equation_scratch, guard_elems, 3u),
+                a,
+                atom_expr(&equation_scratch, tail_elems, 4u),
+            };
+            Atom *lhs_elems[4] = {
+                atom_symbol_id(&equation_scratch, loop_head), n, a, b,
+            };
+            Atom *equation = atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
+                atom_expr(&equation_scratch, lhs_elems, 4u),
+                atom_expr(&equation_scratch, body_elems, 4u));
+            space_add(&register_space, equation);
+
+            SpacePreparedEquation plan;
+            assert(space_prepare_single_equation(
+                &register_space, loop_head, &plan));
+            uint32_t runtime_evidence =
+                plan.evidence | CETTA_GSLT_EVIDENCE_GROUND_CALL;
+            assert(cetta_gslt_prepared_register_step_admitted(
+                runtime_evidence));
+
+            Atom *call_elems[4] = {
+                atom_symbol_id(&equation_scratch, loop_head),
+                atom_int(&equation_scratch, 10), zero, one,
+            };
+            Atom *result = NULL;
+            assert(space_prepared_equation_run_register_loop(
+                       &plan,
+                       atom_expr(&equation_scratch, call_elems, 4u),
+                       &equation_scratch, 64u, &result) ==
+                   SPACE_PREPARED_REGISTER_VALUE);
+            assert(result && result->kind == ATOM_GROUNDED &&
+                   result->ground.gkind == GV_INT &&
+                   result->ground.ival == 55);
+
+            Atom *shared = atom_int(&equation_scratch, 7);
+            Atom *alias_elems[4] = {
+                atom_symbol_id(&equation_scratch, loop_head),
+                one, shared, shared,
+            };
+            result = NULL;
+            assert(space_prepared_equation_run_register_loop(
+                       &plan,
+                       atom_expr(&equation_scratch, alias_elems, 4u),
+                       &equation_scratch, 8u, &result) ==
+                   SPACE_PREPARED_REGISTER_VALUE);
+            assert(result && result->kind == ATOM_GROUNDED &&
+                   result->ground.gkind == GV_INT &&
+                   result->ground.ival == 7);
+
+            Atom *open_elems[4] = {
+                atom_symbol_id(&equation_scratch, loop_head),
+                atom_symbol(&equation_scratch, "not-an-integer"),
+                zero, one,
+            };
+            result = NULL;
+            assert(space_prepared_equation_run_register_loop(
+                       &plan,
+                       atom_expr(&equation_scratch, open_elems, 4u),
+                       &equation_scratch, 8u, &result) ==
+                   SPACE_PREPARED_REGISTER_NOT_APPLICABLE);
+
+            result = NULL;
+            assert(space_prepared_equation_run_register_loop(
+                       &plan,
+                       atom_expr(&equation_scratch, call_elems, 4u),
+                       &equation_scratch, 1u, &result) ==
+                   SPACE_PREPARED_REGISTER_TAIL_CALL);
+            assert(result && result->kind == ATOM_EXPR &&
+                   result->expr.len == 4u);
+            space_add(&register_space, atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
+                atom_expr(&equation_scratch, lhs_elems, 4u),
+                atom_false(&equation_scratch)));
+            Atom *stale_result = NULL;
+            assert(space_prepared_equation_run_register_loop(
+                       &plan, result, &equation_scratch, 8u,
+                       &stale_result) ==
+                   SPACE_PREPARED_REGISTER_NOT_APPLICABLE);
+            assert(stale_result == NULL);
+            space_free(&register_space);
+        }
+
+        {
+            /* A generated pure-register program with two recursive calls is
+             * evaluated by explicit machine frames, not the native C stack. */
+            Space recursive_space;
+            space_init_with_universe(&recursive_space, &equation_universe);
+            SymbolId recursive_head =
+                symbol_intern_cstr(g_symbols, "prepared-register-recursive-fib");
+            Atom *n = atom_var_with_id(
+                &equation_scratch, "recursive-n", 7201u);
+            Atom *zero = atom_int(&equation_scratch, 0);
+            Atom *one = atom_int(&equation_scratch, 1);
+            Atom *two = atom_int(&equation_scratch, 2);
+            Atom *guard_elems[3] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.op_lt),
+                n, two,
+            };
+            Atom *minus_one_elems[3] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.op_minus),
+                n, one,
+            };
+            Atom *minus_two_elems[3] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.op_minus),
+                n, two,
+            };
+            Atom *left_call_elems[2] = {
+                atom_symbol_id(&equation_scratch, recursive_head),
+                atom_expr(&equation_scratch, minus_one_elems, 3u),
+            };
+            Atom *right_call_elems[2] = {
+                atom_symbol_id(&equation_scratch, recursive_head),
+                atom_expr(&equation_scratch, minus_two_elems, 3u),
+            };
+            Atom *sum_elems[3] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.op_plus),
+                atom_expr(&equation_scratch, left_call_elems, 2u),
+                atom_expr(&equation_scratch, right_call_elems, 2u),
+            };
+            Atom *body_elems[4] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.if_text),
+                atom_expr(&equation_scratch, guard_elems, 3u),
+                n,
+                atom_expr(&equation_scratch, sum_elems, 3u),
+            };
+            Atom *lhs_elems[2] = {
+                atom_symbol_id(&equation_scratch, recursive_head), n,
+            };
+            Atom *equation = atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
+                atom_expr(&equation_scratch, lhs_elems, 2u),
+                atom_expr(&equation_scratch, body_elems, 4u));
+            space_add(&recursive_space, equation);
+
+            SpacePreparedEquation plan;
+            assert(space_prepare_single_equation(
+                &recursive_space, recursive_head, &plan));
+            assert(cetta_gslt_prepared_register_recursion_admitted(
+                plan.evidence | CETTA_GSLT_EVIDENCE_GROUND_CALL));
+
+            Atom *call_elems[2] = {
+                atom_symbol_id(&equation_scratch, recursive_head),
+                atom_int(&equation_scratch, 10),
+            };
+            Atom *call = atom_expr(
+                &equation_scratch, call_elems, 2u);
+            Atom *result = NULL;
+            assert(space_prepared_equation_run_register_recursion(
+                       &plan, call, &equation_scratch, 512u, &result) ==
+                   SPACE_PREPARED_REGISTER_VALUE);
+            assert(result && result->kind == ATOM_GROUNDED &&
+                   result->ground.gkind == GV_INT &&
+                   result->ground.ival == 55);
+
+            Atom *noninteger_elems[2] = {
+                atom_symbol_id(&equation_scratch, recursive_head),
+                atom_symbol(&equation_scratch, "not-an-integer"),
+            };
+            result = NULL;
+            assert(space_prepared_equation_run_register_recursion(
+                       &plan,
+                       atom_expr(&equation_scratch, noninteger_elems, 2u),
+                       &equation_scratch, 512u, &result) ==
+                   SPACE_PREPARED_REGISTER_NOT_APPLICABLE);
+            assert(result == NULL);
+
+            result = NULL;
+            assert(space_prepared_equation_run_register_recursion(
+                       &plan, call, &equation_scratch, 1u, &result) ==
+                   SPACE_PREPARED_REGISTER_NOT_APPLICABLE);
+            assert(result == NULL);
+
+            space_add(&recursive_space, atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
+                atom_expr(&equation_scratch, lhs_elems, 2u), zero));
+            result = NULL;
+            assert(space_prepared_equation_run_register_recursion(
+                       &plan, call, &equation_scratch, 512u, &result) ==
+                   SPACE_PREPARED_REGISTER_NOT_APPLICABLE);
+            assert(result == NULL);
+            space_free(&recursive_space);
+        }
+
+        {
+            /* An existential RHS variable is not a positional register and
+             * must never be captured by the direct continuation. */
+            Space existential_space;
+            space_init_with_universe(&existential_space,
+                                     &equation_universe);
+            SymbolId head =
+                symbol_intern_cstr(g_symbols, "prepared-existential-head");
+            Atom *lhs_var =
+                atom_var_with_id(&equation_scratch, "lhs", 9001u);
+            Atom *rhs_var =
+                atom_var_with_id(&equation_scratch, "rhs", 9002u);
+            Atom *lhs_elems[2] = {
+                atom_symbol_id(&equation_scratch, head), lhs_var,
+            };
+            space_add(
+                &existential_space,
+                atom_expr3(
+                    &equation_scratch,
+                    atom_symbol_id(&equation_scratch,
+                                   g_builtin_syms.equals),
+                    atom_expr(&equation_scratch, lhs_elems, 2u), rhs_var));
+            SpacePreparedEquation rejected;
+            assert(!space_prepare_single_equation(
+                &existential_space, head, &rejected));
+            space_free(&existential_space);
+        }
+
+        {
+            /* User-defined relational effects are the least fixed point over
+             * equation dependencies, not merely a scan for builtin heads in
+             * the outer template. */
+            Space effect_space;
+            space_init_with_universe(&effect_space, &equation_universe);
+            SymbolId leaf =
+                symbol_intern_cstr(g_symbols, "effect-lfp-leaf");
+            SymbolId middle =
+                symbol_intern_cstr(g_symbols, "effect-lfp-middle");
+            SymbolId root =
+                symbol_intern_cstr(g_symbols, "effect-lfp-root");
+            SymbolId pure_left =
+                symbol_intern_cstr(g_symbols, "effect-lfp-pure-left");
+            SymbolId pure_right =
+                symbol_intern_cstr(g_symbols, "effect-lfp-pure-right");
+            SymbolId higher =
+                symbol_intern_cstr(g_symbols, "effect-lfp-higher");
+            SymbolId mutable_leaf =
+                symbol_intern_cstr(g_symbols, "effect-lfp-mutable-leaf");
+            SymbolId mutable_root =
+                symbol_intern_cstr(g_symbols, "effect-lfp-mutable-root");
+            SymbolId inert =
+                symbol_intern_cstr(g_symbols, "effect-lfp-inert-value");
+            Atom *x = atom_var_with_id(
+                &equation_scratch, "effect-x", 9101u);
+            Atom *function = atom_var_with_id(
+                &equation_scratch, "effect-function", 9102u);
+
+#define EFFECT_CALL1(head_id, argument) \
+    atom_expr2(&equation_scratch, \
+               atom_symbol_id(&equation_scratch, (head_id)), (argument))
+#define EFFECT_EQUATION1(head_id, argument, body) \
+    atom_expr3(&equation_scratch, \
+               atom_symbol_id(&equation_scratch, g_builtin_syms.equals), \
+               EFFECT_CALL1((head_id), (argument)), (body))
+
+            Atom *match_body_elems[4] = {
+                atom_symbol_id(&equation_scratch, g_builtin_syms.match),
+                atom_symbol_id(&equation_scratch, g_builtin_syms.self),
+                x,
+                x,
+            };
+            Atom *match_body = atom_expr(
+                &equation_scratch, match_body_elems, 4u);
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(leaf, x, match_body));
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(middle, x,
+                                       EFFECT_CALL1(leaf, x)));
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(root, x,
+                                       EFFECT_CALL1(middle, x)));
+            assert(space_query_effect_for_head(
+                       &effect_space, leaf, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+            assert(space_query_effect_for_head(
+                       &effect_space, middle, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+            assert(space_query_effect_for_head(
+                       &effect_space, root, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+
+            /* A recursive component with no relational seed remains the
+             * least element rather than becoming effectful merely for being
+             * recursive. */
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(pure_left, x,
+                                       EFFECT_CALL1(pure_right, x)));
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(pure_right, x,
+                                       EFFECT_CALL1(pure_left, x)));
+            assert(space_query_effect_for_head(
+                       &effect_space, pure_left, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
+            assert(space_query_effect_for_head(
+                       &effect_space, pure_right, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
+
+            /* Variable/higher-order heads fail closed. */
+            Atom *higher_body_elems[2] = {function, x};
+            Atom *higher_body = atom_expr(
+                &equation_scratch, higher_body_elems, 2u);
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(higher, function, higher_body));
+            assert(space_query_effect_for_head(
+                       &effect_space, higher, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD);
+
+            /* A symbol with no equation is inert at this exact revision. */
+            assert(space_query_effect_for_head(
+                       &effect_space, inert, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL);
+
+            /* Mutation must invalidate the transitive cached answer. */
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(mutable_leaf, x,
+                                       EFFECT_CALL1(inert, x)));
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(mutable_root, x,
+                                       EFFECT_CALL1(mutable_leaf, x)));
+            assert(space_query_effect_for_head(
+                       &effect_space, mutable_root, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(mutable_leaf, x, match_body));
+            assert(space_query_effect_for_head(
+                       &effect_space, mutable_root, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+
+#undef EFFECT_EQUATION1
+#undef EFFECT_CALL1
+            space_free(&effect_space);
+        }
 
         space_free(&equation_space);
         term_universe_free(&equation_universe);

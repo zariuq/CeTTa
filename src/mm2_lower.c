@@ -1018,6 +1018,78 @@ bool cetta_mm2_atom_id_to_bridge_expr_bytes(Arena *a,
         out_bytes, out_len, NULL, NULL, out_error);
 }
 
+bool cetta_mm2_atom_ids_to_bridge_expr_bytes_batch(
+    Arena *a, const TermUniverse *universe, const AtomId *atom_ids,
+    CettaCount atom_count, uint8_t **out_packet, size_t *out_packet_len,
+    const char **out_error) {
+    BridgeExprBuf packet;
+    Mm2LowerSyms syms;
+
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_packet_len)
+        *out_packet_len = 0;
+    if (out_error)
+        *out_error = NULL;
+    if (!a || !universe || (!atom_ids && atom_count != 0) ||
+        !out_packet || !out_packet_len) {
+        if (out_error)
+            *out_error = "invalid MORK bridge batch arguments";
+        return false;
+    }
+
+    syms = mm2_lower_syms();
+    bridge_expr_buf_init(&packet);
+    for (CettaCount i = 0; i < atom_count; i++) {
+        BridgeVarMap vars = {0};
+        size_t length_offset;
+        size_t expr_offset;
+        size_t expr_len;
+        const char *encode_error = NULL;
+
+        if (atom_ids[i] == CETTA_ATOM_ID_NONE ||
+            tu_has_vars(universe, atom_ids[i])) {
+            free(packet.data);
+            if (out_error)
+                *out_error = "MORK bridge batch item encoding failed";
+            return false;
+        }
+        if (!bridge_expr_buf_reserve(&packet, sizeof(uint32_t))) {
+            free(packet.data);
+            if (out_error)
+                *out_error = "MORK bridge batch packet exceeds addressable size";
+            return false;
+        }
+        length_offset = packet.len;
+        packet.len += sizeof(uint32_t);
+        expr_offset = packet.len;
+        if (!bridge_encode_atom_id_rec(
+                a, universe, atom_ids[i], &vars, &packet, &syms,
+                BRIDGE_EXPR_WIRE_COMPACT, &encode_error)) {
+            free(packet.data);
+            if (out_error)
+                *out_error = encode_error ? encode_error
+                                          : "MORK bridge batch item encoding failed";
+            return false;
+        }
+        expr_len = packet.len - expr_offset;
+        if (expr_len > UINT32_MAX) {
+            free(packet.data);
+            if (out_error)
+                *out_error = "MORK bridge batch packet exceeds addressable size";
+            return false;
+        }
+        packet.data[length_offset] = (uint8_t)(expr_len >> 24);
+        packet.data[length_offset + 1] = (uint8_t)(expr_len >> 16);
+        packet.data[length_offset + 2] = (uint8_t)(expr_len >> 8);
+        packet.data[length_offset + 3] = (uint8_t)expr_len;
+    }
+
+    *out_packet = packet.data;
+    *out_packet_len = packet.len;
+    return true;
+}
+
 bool cetta_mm2_atom_id_to_contextual_bridge_expr_bytes(
     Arena *a, const TermUniverse *universe, AtomId atom_id,
     uint8_t **out_expr_bytes, size_t *out_expr_len,

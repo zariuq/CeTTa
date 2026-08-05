@@ -69,6 +69,10 @@ typedef struct {
 } TermUniverseStoreFormatObserverEntry;
 
 struct TermUniverse {
+    /* Process-local identity plus a storage generation make derived pointer
+       accelerators unable to revive AtomIds after object reuse or reset. */
+    uint64_t instance_id;
+    uint64_t storage_epoch;
     Arena *persistent_arena;
     uint8_t *blob_pool;
     size_t blob_len, blob_cap;
@@ -232,6 +236,13 @@ bool term_universe_atom_is_stable(Atom *atom);
 Atom *term_universe_alpha_canonicalize_atom(Arena *dst, Atom *src);
 AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
                                    Atom *src);
+/* Optional accelerator for a source term owned by one resettable arena.
+ * The ordinary store path remains authoritative; cached entries are valid
+ * only for the exact universe generation and arena reset epoch. */
+AtomId term_universe_store_atom_id_from_source_arena(
+    TermUniverse *universe, Arena *fallback, const Arena *source_arena,
+    Atom *src);
+bool term_universe_source_id_memo_enabled(void);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
 bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
                               Atom *src);

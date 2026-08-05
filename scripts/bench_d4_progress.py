@@ -18,8 +18,13 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent.parent
-CHAIN_RE = re.compile(rb"\[chain\]\s+([0-9]+)k results")
+CHAIN_RE = re.compile(rb"\[chain\]\s+([0-9]+)(k?) results")
 COUNT_RE = re.compile(rb"^[0-9]+$")
+
+
+def chain_result_count(match: re.Match[bytes]) -> int:
+    count = int(match.group(1))
+    return count * 1000 if match.group(2) == b"k" else count
 
 
 def comma_list(value: str) -> tuple[str, ...]:
@@ -134,7 +139,7 @@ def run_backend(
                         checkpoints.append(
                             {
                                 "elapsed_seconds": time.monotonic() - started,
-                                "results": int(match.group(1)) * 1000,
+                                "results": chain_result_count(match),
                             }
                         )
                 break
@@ -155,7 +160,7 @@ def run_backend(
                         checkpoints.append(
                             {
                                 "elapsed_seconds": time.monotonic() - started,
-                                "results": int(match.group(1)) * 1000,
+                                "results": chain_result_count(match),
                             }
                         )
     finally:

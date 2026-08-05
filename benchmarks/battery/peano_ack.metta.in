@@ -1,0 +1,10 @@
+; Battery 2: Peano-Ackermann — pure symbolic churn, no arithmetic fast path
+; in ANY engine.  Constructor-disjoint clauses; the inner call's big symbolic
+; result is held across the outer recursion.
+(= (pack Z $n) (S $n))
+(= (pack (S $m) Z) (pack $m (S Z)))
+(= (pack (S $m) (S $n)) (pack $m (pack (S $m) $n)))
+(= (p2i Z) 0)
+(= (p2i (S $x)) (+ 1 (p2i $x)))
+(= (i2p $n) (if (== $n 0) Z (S (i2p (- $n 1)))))
+!(p2i (pack (i2p @M@) (i2p @N@)))

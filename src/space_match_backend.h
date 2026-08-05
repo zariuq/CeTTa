@@ -18,6 +18,16 @@ typedef enum {
     SPACE_ENGINE_MORK = 3,
 } SpaceEngine;
 
+/* A batch accelerator is never the mutation authority.  UNSUPPORTED asks the
+   Space layer to replay the same ordered occurrences through the singular
+   oracle; ERROR reports a transactional failure after which no occurrence may
+   have become visible; APPLIED publishes the batch as one backend revision. */
+typedef enum {
+    SPACE_BACKEND_BATCH_UNSUPPORTED = 0,
+    SPACE_BACKEND_BATCH_APPLIED = 1,
+    SPACE_BACKEND_BATCH_ERROR = 2,
+} SpaceBackendBatchResult;
+
 static inline bool space_engine_uses_pathmap(SpaceEngine engine) {
     return engine == SPACE_ENGINE_PATHMAP || engine == SPACE_ENGINE_MORK;
 }
@@ -118,8 +128,14 @@ typedef struct SpaceMatchBackendOps {
        native shadow first just because `Space` historically started there. */
     bool (*store_atom_direct)(Space *s, Atom *atom);
     bool (*store_atom_id_direct)(Space *s, AtomId atom_id, Atom *atom);
+    SpaceBackendBatchResult (*store_atom_ids_batch_direct)(
+        Space *s, const AtomId *atom_ids, CettaCount atom_count,
+        uint64_t *out_added);
     bool (*remove_atom_id_direct)(Space *s, AtomId atom_id);
     bool (*remove_atom_direct)(Space *s, Atom *atom);
+    SpaceBackendBatchResult (*remove_atom_ids_batch_direct)(
+        Space *s, const AtomId *atom_ids, CettaCount atom_count,
+        uint64_t *out_removed);
     bool (*truncate_direct)(Space *s, uint64_t new_len);
     uint64_t (*logical_len)(const Space *s);
     AtomId (*get_atom_id_at)(const Space *s, uint64_t idx);
@@ -161,6 +177,29 @@ typedef struct {
 
 typedef bool (*CettaMorkBindingsVisitor)(const Bindings *bindings, void *ctx);
 typedef bool (*CettaMorkAtomVisitor)(Atom *atom, void *ctx);
+
+/* Interpretation of streamed-row-disposition after transport decoding.
+   CONTINUE covers both a contributed row and an additive-zero cyclic row;
+   STOP is deliberate consumer cancellation; FAULT is malformed transport. */
+typedef enum {
+    SPACE_MATCH_DECODED_ROW_CONTINUE = 0,
+    SPACE_MATCH_DECODED_ROW_STOP = 1,
+    SPACE_MATCH_DECODED_ROW_FAULT = 2,
+} SpaceMatchDecodedRowVisitResult;
+
+SpaceMatchDecodedRowVisitResult space_match_backend_visit_decoded_row(
+    bool decoded, Bindings *row, CettaMorkBindingsVisitor visitor, void *ctx);
+
+/* Result of a backend pull visitor.  DECLINED is the only state in which the
+   caller may replay through the semantic oracle: no cursor was admitted and
+   no row was observed.  TERMINATED means that a cursor was admitted but
+   traversal did not complete (either the visitor stopped or the backend
+   failed), so replay could duplicate an observed prefix. */
+typedef enum {
+    SPACE_MATCH_PULL_VISIT_DECLINED = 0,
+    SPACE_MATCH_PULL_VISIT_COMPLETE = 1,
+    SPACE_MATCH_PULL_VISIT_TERMINATED = 2,
+} SpaceMatchPullVisitResult;
 
 typedef enum {
     SPACE_BRIDGE_IMPORT_ERROR = 0,
@@ -254,8 +293,14 @@ bool space_match_backend_snapshot_clone(Space *dst, Space *src);
 bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
                                               Atom *atom);
 bool space_match_backend_store_atom_direct(Space *s, Atom *atom);
+SpaceBackendBatchResult space_match_backend_store_atom_ids_batch_direct(
+    Space *s, const AtomId *atom_ids, CettaCount atom_count,
+    uint64_t *out_added);
 bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id);
 bool space_match_backend_remove_atom_direct(Space *s, Atom *atom);
+SpaceBackendBatchResult space_match_backend_remove_atom_ids_batch_direct(
+    Space *s, const AtomId *atom_ids, CettaCount atom_count,
+    uint64_t *out_removed);
 bool space_match_backend_truncate_direct(Space *s, uint32_t new_len);
 /* Main backend source/sink transfer seam.
    Positive example: a resolved PathMap/MORK endpoint pair moving logical rows
@@ -297,6 +342,15 @@ bool space_match_backend_mork_visit_atoms_direct(
     Arena *scratch,
     CettaMorkAtomVisitor visitor,
     void *ctx);
+/* Exact ground PathMap atom pull.  The current expression-row cursor does not
+   carry the opening context required to preserve stored variable identity, so
+   variable-bearing spaces decline to the materializing oracle. */
+bool space_match_backend_can_try_visit_atoms_direct(Space *s);
+SpaceMatchPullVisitResult space_match_backend_try_visit_atoms_direct(
+    Space *s,
+    Arena *scratch,
+    CettaMorkAtomVisitor visitor,
+    void *ctx);
 bool space_match_backend_mork_visit_bindings_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,
@@ -307,6 +361,28 @@ bool space_match_backend_visit_bindings_direct(
     Space *s,
     Arena *a,
     Atom *query,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx);
+/* Syntactic preflight for observation-fused consumers.  The Rust index makes
+   the authoritative, relation-sensitive admission decision when traversal is
+   attempted; a declined attempt remains safe to run through the oracle. */
+bool space_match_backend_can_try_visit_bindings_indexed(
+    const Space *s,
+    const Atom *query);
+SpaceMatchPullVisitResult
+space_match_backend_try_visit_bindings_indexed(
+    Space *s,
+    Arena *a,
+    Atom *query,
+    CettaMorkBindingsVisitor visitor,
+    void *ctx);
+SpaceMatchPullVisitResult
+space_match_backend_try_visit_conjunction_indexed(
+    Space *s,
+    Arena *a,
+    Atom **patterns,
+    CettaExprLen npatterns,
+    const Bindings *seed,
     CettaMorkBindingsVisitor visitor,
     void *ctx);
 bool space_match_backend_mork_visit_conjunction_direct(

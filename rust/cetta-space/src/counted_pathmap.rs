@@ -48,6 +48,23 @@ pub struct CountedDetailedPacketRows {
     pub rows: Vec<Vec<u8>>,
 }
 
+#[cfg(feature = "pathmap-space")]
+#[derive(Debug, Clone, Copy)]
+struct CountedGeneralFactorEnv {
+    namespace: u8,
+    variable_offset: u8,
+    byte_offset: u32,
+}
+
+#[cfg(feature = "pathmap-space")]
+pub struct CountedGeneralQueryCursor {
+    pattern_expr_bytes: Vec<u8>,
+    factor_envs: Vec<CountedGeneralFactorEnv>,
+    candidate_lists: Vec<Vec<CountedEntry>>,
+    indices: Vec<usize>,
+    exhausted: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct DecodedCountedKey<'a> {
     atom_expr_bytes: &'a [u8],
@@ -999,48 +1016,104 @@ pub fn counted_query_rows_detailed(
 }
 
 #[cfg(feature = "pathmap-space")]
-fn accumulate_counted_query_packet_rows(
-    space: &Space,
-    factors: &[ExprEnv],
-    candidate_lists: &[Vec<CountedEntry>],
-    depth: usize,
-    chosen: &mut Vec<usize>,
-    rows: &mut Vec<Vec<u8>>,
-) -> Result<(), String> {
-    if depth == factors.len() {
-        let mut stack = Vec::with_capacity(factors.len());
-        let mut factor_counts = Vec::with_capacity(factors.len());
-        for (factor_idx, factor) in factors.iter().enumerate() {
-            let chosen_entry = &candidate_lists[factor_idx][chosen[factor_idx]];
-            let atom_expr = Expr {
-                ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
-            };
-            stack.push((*factor, ExprEnv::new((factor_idx + 1) as u8, atom_expr)));
-            factor_counts.push(chosen_entry.count);
+impl CountedGeneralQueryCursor {
+    pub fn new(space: &Space, pattern_expr_bytes: &[u8]) -> Result<Self, String> {
+        validate_expr_bytes(pattern_expr_bytes)?;
+        let pattern_expr_bytes = pattern_expr_bytes.to_vec();
+        let pattern_expr = Expr {
+            ptr: pattern_expr_bytes.as_ptr().cast_mut(),
+        };
+        let factor_count = pattern_expr
+            .arity()
+            .ok_or_else(|| "counted multi-ref cursor expected a wrapped query".to_string())?
+            .checked_sub(1)
+            .ok_or_else(|| "counted multi-ref cursor expected a wrapped query".to_string())?;
+        if factor_count == 0 {
+            return Err("counted multi-ref cursor requires at least one query factor".to_string());
         }
-        if let Ok(bindings) = unify(stack) {
-            let signature = query_binding_signature_packet(space, &bindings)?;
-            let mut row = Vec::new();
-            append_multi_ref_counted_multiplicities_packet(&mut row, &factor_counts)
-                .and_then(|()| append_query_only_binding_signature_packet(&mut row, &signature))?;
-            rows.push(row);
+
+        let mut pat_args = Vec::with_capacity((factor_count as usize) + 1);
+        ExprEnv::new(0, pattern_expr).args(&mut pat_args);
+        let factors = &pat_args[1..];
+        let mut factor_envs = Vec::with_capacity(factors.len());
+        let mut candidate_lists = Vec::with_capacity(factors.len());
+        for factor in factors {
+            let factor_expr = factor.subsexpr();
+            candidate_lists.push(counted_factor_candidates(space, factor_expr)?);
+            factor_envs.push(CountedGeneralFactorEnv {
+                namespace: factor.n,
+                variable_offset: factor.v,
+                byte_offset: factor.offset,
+            });
         }
-        return Ok(());
+        let exhausted = candidate_lists.iter().any(Vec::is_empty);
+        Ok(Self {
+            indices: vec![0; factor_envs.len()],
+            pattern_expr_bytes,
+            factor_envs,
+            candidate_lists,
+            exhausted,
+        })
     }
 
-    for idx in 0..candidate_lists[depth].len() {
-        chosen.push(idx);
-        accumulate_counted_query_packet_rows(
-            space,
-            factors,
-            candidate_lists,
-            depth + 1,
-            chosen,
-            rows,
-        )?;
-        chosen.pop();
+    pub fn factor_count(&self) -> u32 {
+        self.factor_envs.len() as u32
     }
-    Ok(())
+
+    fn advance(&mut self) {
+        for factor_idx in (0..self.indices.len()).rev() {
+            self.indices[factor_idx] += 1;
+            if self.indices[factor_idx] < self.candidate_lists[factor_idx].len() {
+                return;
+            }
+            self.indices[factor_idx] = 0;
+        }
+        self.exhausted = true;
+    }
+
+    pub fn next_packet_row(&mut self, space: &Space) -> Result<Option<Vec<u8>>, String> {
+        while !self.exhausted {
+            let pattern_expr = Expr {
+                ptr: self.pattern_expr_bytes.as_ptr().cast_mut(),
+            };
+            let mut stack = Vec::with_capacity(self.factor_envs.len());
+            let mut factor_counts = Vec::with_capacity(self.factor_envs.len());
+            for factor_idx in 0..self.factor_envs.len() {
+                let factor = self.factor_envs[factor_idx];
+                let factor_expr_env = ExprEnv {
+                    n: factor.namespace,
+                    v: factor.variable_offset,
+                    offset: factor.byte_offset,
+                    base: pattern_expr,
+                };
+                let chosen_entry = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
+                let atom_expr = Expr {
+                    ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
+                };
+                stack.push((
+                    factor_expr_env,
+                    ExprEnv::new((factor_idx + 1) as u8, atom_expr),
+                ));
+                factor_counts.push(chosen_entry.count);
+            }
+
+            let row = if let Ok(bindings) = unify(stack) {
+                let signature = query_binding_signature_packet(space, &bindings)?;
+                let mut row = Vec::new();
+                append_multi_ref_counted_multiplicities_packet(&mut row, &factor_counts).and_then(
+                    |()| append_query_only_binding_signature_packet(&mut row, &signature),
+                )?;
+                Some(row)
+            } else {
+                None
+            };
+            self.advance();
+            if row.is_some() {
+                return Ok(row);
+            }
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(feature = "pathmap-space")]
@@ -1048,50 +1121,14 @@ pub fn counted_query_rows_detailed_packet_rows(
     space: &Space,
     pattern_expr_bytes: &[u8],
 ) -> Result<CountedDetailedPacketRows, String> {
-    validate_expr_bytes(pattern_expr_bytes)?;
-    let pattern_expr = Expr {
-        ptr: pattern_expr_bytes.as_ptr().cast_mut(),
-    };
-    let factor_count = pattern_expr
-        .arity()
-        .ok_or_else(|| "counted multi-ref packet expected a wrapped query".to_string())?
-        .checked_sub(1)
-        .ok_or_else(|| "counted multi-ref packet expected a wrapped query".to_string())?;
-    if factor_count == 0 {
-        return Err("counted multi-ref packet requires at least one query factor".to_string());
-    }
-
-    let mut pat_args = Vec::with_capacity((factor_count as usize) + 1);
-    ExprEnv::new(0, pattern_expr).args(&mut pat_args);
-    let factors = &pat_args[1..];
-
-    let mut candidate_lists = Vec::with_capacity(factors.len());
-    for factor in factors {
-        let candidates = counted_factor_candidates(space, factor.subsexpr())?;
-        if candidates.is_empty() {
-            return Ok(CountedDetailedPacketRows {
-                factor_count: factor_count as u32,
-                rows: Vec::new(),
-            });
-        }
-        candidate_lists.push(candidates);
-    }
-
+    let mut cursor = CountedGeneralQueryCursor::new(space, pattern_expr_bytes)?;
+    let factor_count = cursor.factor_count();
     let mut rows = Vec::new();
-    let mut chosen = Vec::with_capacity(factors.len());
-    accumulate_counted_query_packet_rows(
-        space,
-        factors,
-        &candidate_lists,
-        0,
-        &mut chosen,
-        &mut rows,
-    )?;
+    while let Some(row) = cursor.next_packet_row(space)? {
+        rows.push(row);
+    }
 
-    Ok(CountedDetailedPacketRows {
-        factor_count: factor_count as u32,
-        rows,
-    })
+    Ok(CountedDetailedPacketRows { factor_count, rows })
 }
 
 #[cfg(test)]
@@ -1582,6 +1619,43 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
+    }
+
+    #[test]
+    fn counted_general_cursor_pulls_exact_factor_counts_without_a_result_frontier() {
+        let mut space = Space::new();
+        let edge_ab = parse_expr(&mut space, "(edge a b)");
+        let edge_bc = parse_expr(&mut space, "(edge b c)");
+        counted_insert_expr(&mut space, &edge_ab).unwrap();
+        counted_insert_expr(&mut space, &edge_ab).unwrap();
+        counted_insert_expr(&mut space, &edge_bc).unwrap();
+        counted_insert_expr(&mut space, &edge_bc).unwrap();
+        counted_insert_expr(&mut space, &edge_bc).unwrap();
+
+        let query = normalize_query_text(b"(edge $x $y) (edge $y $z)").unwrap();
+        let query_expr = parse_single_expr(&mut space, &query).unwrap();
+        let mut cursor = CountedGeneralQueryCursor::new(&space, &query_expr).unwrap();
+
+        assert_eq!(cursor.factor_count(), 2);
+        let row = cursor.next_packet_row(&space).unwrap().unwrap();
+        assert_eq!(u32::from_be_bytes(row[0..4].try_into().unwrap()), 2);
+        assert_eq!(u32::from_be_bytes(row[4..8].try_into().unwrap()), 3);
+        assert!(cursor.next_packet_row(&space).unwrap().is_none());
+    }
+
+    #[test]
+    fn counted_general_cursor_rejects_a_nonmatching_join() {
+        let mut space = Space::new();
+        let edge_ab = parse_expr(&mut space, "(edge a b)");
+        let edge_cd = parse_expr(&mut space, "(edge c d)");
+        counted_insert_expr(&mut space, &edge_ab).unwrap();
+        counted_insert_expr(&mut space, &edge_cd).unwrap();
+
+        let query = normalize_query_text(b"(edge $x $y) (edge $y $z)").unwrap();
+        let query_expr = parse_single_expr(&mut space, &query).unwrap();
+        let mut cursor = CountedGeneralQueryCursor::new(&space, &query_expr).unwrap();
+
+        assert!(cursor.next_packet_row(&space).unwrap().is_none());
     }
 
     #[test]
