@@ -147,6 +147,16 @@ bool space_match_backend_store_atom_direct(Space *s, Atom *atom) {
     (void)atom;
     return false;
 }
+SpaceBackendBatchResult space_match_backend_store_atom_ids_batch_direct(
+    Space *s, const AtomId *atom_ids, CettaCount atom_count,
+    uint64_t *out_added) {
+    (void)s;
+    (void)atom_ids;
+    (void)atom_count;
+    if (out_added)
+        *out_added = 0;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
+}
 bool space_match_backend_remove_atom_id_direct(Space *s, AtomId atom_id) {
     (void)s;
     (void)atom_id;
@@ -156,6 +166,16 @@ bool space_match_backend_remove_atom_direct(Space *s, Atom *atom) {
     (void)s;
     (void)atom;
     return false;
+}
+SpaceBackendBatchResult space_match_backend_remove_atom_ids_batch_direct(
+    Space *s, const AtomId *atom_ids, CettaCount atom_count,
+    uint64_t *out_removed) {
+    (void)s;
+    (void)atom_ids;
+    (void)atom_count;
+    if (out_removed)
+        *out_removed = 0;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
 }
 bool space_match_backend_truncate_direct(Space *s, uint32_t new_len) {
     (void)s;

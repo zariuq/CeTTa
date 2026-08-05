@@ -3628,45 +3628,31 @@ static bool rhocalc_collect_successor_set(Arena *arena, Atom *proc,
  * rho:val/rho:quote wrapper (conservative).  And free rho:drop(quote P) is
  * inert in this strict core (it only unquotes under matched-COMM substitution,
  * see semanticCommSubst), so excluding drop in continuations is sufficient. */
-static bool rho_proc_is_quiet(Atom *proc) {
+static bool rho_atom_is_active_process(const Atom *atom, void *context) {
     RhoView view;
-    if (!proc)
-        return true;
-    if (proc->kind != ATOM_EXPR)
-        return true;
-    view = rho_view(proc);
-    if (view.kind == RHO_SEND || view.kind == RHO_RECV ||
-        view.kind == RHO_DROP) {
+    (void)context;
+    if (!atom || atom->kind != ATOM_EXPR)
         return false;
-    }
-    for (CettaExprIndex i = 0; i < proc->expr.len; i++) {
-        if (!rho_proc_is_quiet(proc->expr.elems[i]))
-            return false;
-    }
-    return true;
+    view = rho_view((Atom *)atom);
+    if (view.kind == RHO_SEND || view.kind == RHO_RECV ||
+        view.kind == RHO_DROP)
+        return true;
+    return false;
+}
+
+static bool rho_proc_is_quiet(Atom *proc) {
+    return !atom_tree_any(proc, rho_atom_is_active_process, NULL);
 }
 
 /* C3 support: a grounded value is identity-bearing (not freely copyable) when
  * it carries pointer identity -- a space, state cell, capture, or foreign
- * handle.  Mirrors hyperpose_atom_is_thread_local_resource (eval.c). */
-static bool rho_gkind_is_identity(GroundedKind k) {
-    return k == GV_SPACE || k == GV_STATE || k == GV_CAPTURE || k == GV_FOREIGN;
-}
+ * handle.  The leaf set and its compositional summary are generated from the
+ * resource-lifetime presentation and shared with the evaluator. */
 
 /* Post-result copy-stability: does this result tree carry any identity-bearing
  * grounded value (which the macro would duplicate across product children)? */
 static bool rho_atom_has_identity_grounded(Atom *atom) {
-    if (!atom)
-        return false;
-    if (atom->kind == ATOM_GROUNDED)
-        return rho_gkind_is_identity(atom->ground.gkind);
-    if (atom->kind != ATOM_EXPR)
-        return false;
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-        if (rho_atom_has_identity_grounded(atom->expr.elems[i]))
-            return true;
-    }
-    return false;
+    return atom_has_identity_grounded(atom);
 }
 
 typedef enum {

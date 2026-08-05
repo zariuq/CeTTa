@@ -62,6 +62,8 @@ Primary CeTTa bridge surface:
 - cetta_mork_bridge_space_add_expr_bytes_batch() accepts a packed sequence of
   length-prefixed stable bridge expr-byte spans so bulk mutation stays on the
   same low ABI as singular mutation
+- cetta_mork_bridge_space_remove_expr_bytes_batch() consumes the same packet
+  and preserves counted one-occurrence removal semantics in one transaction
 - cetta_mork_bridge_space_unique_size() reports unique structural support
 - query results cross back as binding/debug packets, not mirrored row ids
 
@@ -76,6 +78,8 @@ slot provenance.
 */
 
 bool cetta_mork_bridge_is_available(void);
+bool cetta_mork_bridge_supports_expr_bytes_batch_add(void);
+bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void);
 const char *cetta_mork_bridge_last_error(void);
 
 CettaMorkSpaceHandle *cetta_mork_bridge_space_new(void);
@@ -123,6 +127,9 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                const uint8_t *expr_bytes,
                                                size_t len,
                                                uint64_t *out_removed);
+bool cetta_mork_bridge_space_remove_expr_bytes_batch(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t len,
+    uint64_t *out_removed);
 bool cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
     CettaMorkSpaceHandle *space,
     const uint8_t *expr_bytes,

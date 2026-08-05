@@ -1,0 +1,10 @@
+; Linear Fibonacci forces the call-by-need update path without the
+; exponential algorithmic work of the naïve benchmark.
+; @N@ is replaced by the benchmark driver.
+
+(= (mam:linear-fib $n $a $b)
+   (if (== $n 0)
+       $a
+       (mam:linear-fib (- $n 1) $b (+ $a $b))))
+
+!(mam:linear-fib @N@ 0 1)

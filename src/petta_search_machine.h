@@ -18,6 +18,12 @@ typedef enum {
     PETTA_MACHINE_HOST_NONE = 0,
     PETTA_MACHINE_HOST_STRICT_APPLICATION,
     PETTA_MACHINE_HOST_READY_APPLICATION,
+    /*
+     * The host explicitly supersedes a machine-native form for a selected
+     * semantic profile.  Unlike ordinary READY_APPLICATION, this mode is
+     * consulted before the machine's direct-form dispatch.
+     */
+    PETTA_MACHINE_HOST_READY_OVERRIDE,
     PETTA_MACHINE_HOST_STRICT_RELATIONAL_EXTENSION,
     /*
      * The shared host owns the intrinsic cases, while explicit PeTTa
@@ -27,8 +33,16 @@ typedef enum {
     PETTA_MACHINE_HOST_READY_RELATIONAL_EXTENSION,
 } PettaMachineHostMode;
 
+typedef enum {
+    PETTA_MACHINE_FOLD_NOT_APPLICABLE = 0,
+    PETTA_MACHINE_FOLD_VALUE,
+    PETTA_MACHINE_FOLD_INTERRUPTED,
+} PettaMachineFoldResult;
+
 typedef struct {
     void *context;
+    /* Wall-clock sampling is opt-in so normal evaluation pays no clock cost. */
+    bool measure_stats;
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
@@ -43,6 +57,14 @@ typedef struct {
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes);
+    /* A generated determinate-fold program may own a lexical fold without
+     * constructing one goal and accumulator variable per input item. */
+    PettaMachineFoldResult (*foldl_single_result)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *initial,
+        Atom *accumulator_binder, Atom *item_binder,
+        Atom *step_expression, const Bindings *environment,
+        Atom **result_out);
     /*
      * Named-state arguments have already been evaluated by the PeTTa
      * machine.  The host owns only registry lookup/mutation; it must not
@@ -65,7 +87,8 @@ typedef struct {
     bool (*clause_snapshot)(
         void *context, Space *space, SymbolId head,
         PettaClauseCandidate **candidates,
-        size_t *candidate_count);
+        size_t *candidate_count,
+        PettaClauseSnapshotStats *stats);
     bool (*translator_rule_contains)(
         void *context, SymbolId head);
     bool (*translator_rule_set)(
@@ -140,9 +163,41 @@ void petta_machine_destroy(PettaMachine *machine);
  */
 typedef struct {
     uint64_t transitions;
+    uint64_t solve_goal_transitions;
+    uint64_t call_goal_transitions;
+    uint64_t unify_goal_transitions;
+    uint64_t collection_goal_transitions;
+    uint64_t control_goal_transitions;
+    uint64_t host_goal_transitions;
+    uint64_t other_goal_transitions;
+    uint64_t clause_snapshot_calls;
+    uint64_t clause_snapshot_live_occurrences;
+    uint64_t clause_snapshot_records_examined;
+    uint64_t clause_snapshot_equality_checks;
+    uint64_t clause_snapshot_alpha_checks;
+    uint64_t clause_snapshot_candidates;
     uint64_t clause_candidates;
     uint64_t clause_candidates_shape_pruned;
+    uint64_t clause_match_attempts;
+    uint64_t clause_match_allocated_bytes;
     uint64_t match_candidates;
+    uint64_t unification_calls;
+    uint64_t unification_failures;
+    uint64_t unification_binding_writes;
+    uint64_t unification_allocated_bytes;
+    uint64_t binding_apply_calls;
+    uint64_t binding_apply_rewrites;
+    uint64_t binding_apply_allocated_bytes;
+    uint64_t atom_copy_calls;
+    uint64_t atom_copy_allocated_bytes;
+    uint64_t atom_freshen_calls;
+    uint64_t atom_freshen_allocated_bytes;
+    uint64_t specializer_prepare_calls;
+    uint64_t specializer_prepare_filtered;
+    uint64_t specializer_prepare_relevance_bounded;
+    uint64_t specializer_prepare_rewritten;
+    uint64_t specializer_prepare_unchanged;
+    uint64_t specializer_prepare_elapsed_ns;
     uint64_t choice_resumes;
     uint64_t choice_continuation_snapshots;
     uint64_t choice_continuation_items_copied;
@@ -183,6 +238,9 @@ typedef struct {
     size_t maximum_heap_live_bytes;
     size_t maximum_binding_entries;
     size_t maximum_host_environment_entries_forwarded;
+    uint64_t active_elapsed_ns;
+    uint64_t time_to_first_answer_ns;
+    uint64_t first_answer_transition;
 } PettaMachineStats;
 
 bool petta_machine_stats(

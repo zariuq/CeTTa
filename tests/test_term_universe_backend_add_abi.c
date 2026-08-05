@@ -109,6 +109,14 @@ bool cetta_mork_bridge_is_available(void) {
     return false;
 }
 
+bool cetta_mork_bridge_supports_expr_bytes_batch_add(void) {
+    return false;
+}
+
+bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void) {
+    return false;
+}
+
 const char *cetta_mork_bridge_last_error(void) {
     return "bridge stubs disabled in unit test";
 }
@@ -174,6 +182,23 @@ bool cetta_mm2_atom_id_to_bridge_expr_bytes(Arena *a,
         *out_len = 0;
     if (out_error)
         *out_error = "bridge expr-byte encoder stub disabled in unit test";
+    return false;
+}
+
+bool cetta_mm2_atom_ids_to_bridge_expr_bytes_batch(
+    Arena *a, const TermUniverse *universe, const AtomId *atom_ids,
+    CettaCount atom_count, uint8_t **out_packet, size_t *out_packet_len,
+    const char **out_error) {
+    (void)a;
+    (void)universe;
+    (void)atom_ids;
+    (void)atom_count;
+    if (out_packet)
+        *out_packet = NULL;
+    if (out_packet_len)
+        *out_packet_len = 0;
+    if (out_error)
+        *out_error = "bridge batch encoder stub disabled in unit test";
     return false;
 }
 
@@ -466,6 +491,17 @@ bool cetta_mork_bridge_space_remove_expr_bytes(CettaMorkSpaceHandle *space,
                                                uint64_t *out_removed) {
     (void)space;
     (void)expr_bytes;
+    (void)len;
+    if (out_removed)
+        *out_removed = 0;
+    return false;
+}
+
+bool cetta_mork_bridge_space_remove_expr_bytes_batch(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t len,
+    uint64_t *out_removed) {
+    (void)space;
+    (void)packet;
     (void)len;
     if (out_removed)
         *out_removed = 0;

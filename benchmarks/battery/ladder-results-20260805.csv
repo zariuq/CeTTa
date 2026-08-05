@@ -1,0 +1,127 @@
+system,program,n,status,seconds,rss_kb,answer
+cetta-he-ext,ack-m3,3,ok,0.11,,[61]
+cetta-he-ext,ack-m3,5,ok,0.11,,[253]
+cetta-he-ext,ack-m3,7,ok,0.10,,[1021]
+cetta-he-ext,ack-m3,8,ok,0.40,,[2045]
+cetta-he-ext,ack-m3,9,ok,1.51,,[4093]
+cetta-he-ext,ack-m3,10,ok,6.01,,[8189]
+cetta-he-ext,ack-m3,11,timeout,25.03,,25.03
+cetta-prime,ack-m3,3,ok,0.11,,[61]
+cetta-prime,ack-m3,5,ok,0.11,,[253]
+cetta-prime,ack-m3,7,ok,0.10,,[1021]
+cetta-prime,ack-m3,8,ok,0.51,,[2045]
+cetta-prime,ack-m3,9,ok,1.51,,[4093]
+cetta-prime,ack-m3,10,ok,6.11,,[8189]
+cetta-prime,ack-m3,11,ok,24.52,,[16381]
+cetta-prime,ack-m3,12,timeout,25.03,,25.03
+cetta-petta,ack-m3,3,ok,0.11,,61
+cetta-petta,ack-m3,5,ok,0.11,,253
+cetta-petta,ack-m3,7,ok,0.11,,1021
+cetta-petta,ack-m3,8,ok,0.41,,2045
+cetta-petta,ack-m3,9,ok,1.61,,4093
+cetta-petta,ack-m3,10,ok,6.71,,8189
+cetta-petta,ack-m3,11,timeout,25.03,,25.03
+swi-petta,ack-m3,3,ok,0.10,,61
+swi-petta,ack-m3,5,ok,0.11,,253
+swi-petta,ack-m3,7,ok,0.21,,1021
+swi-petta,ack-m3,8,ok,0.41,,2045
+swi-petta,ack-m3,9,ok,1.51,,4093
+swi-petta,ack-m3,10,ok,5.91,,8189
+swi-petta,ack-m3,11,ok,22.42,,16381
+swi-petta,ack-m3,12,timeout,25.02,,25.02
+cetta-he-ext,peano_ack-m2,100,ok,0.31,,[203]
+cetta-he-ext,peano_ack-m2,300,stack,0.81,,0.81
+cetta-prime,peano_ack-m2,100,error134,12.11,,12.11
+cetta-petta,peano_ack-m2,100,ok,0.21,,203
+cetta-petta,peano_ack-m2,300,ok,1.21,,603
+cetta-petta,peano_ack-m2,1000,ok,12.71,,2003
+cetta-petta,peano_ack-m2,3000,error134,22.63,,22.63
+swi-petta,peano_ack-m2,100,ok,0.11,,203
+swi-petta,peano_ack-m2,300,ok,0.21,,603
+swi-petta,peano_ack-m2,1000,ok,0.61,,2003
+swi-petta,peano_ack-m2,3000,ok,3.61,,6003
+swi-petta,peano_ack-m2,10000,error2,6.51,,6.51
+cetta-he-ext,peano_ack-m3,2,ok,0.11,,[29]
+cetta-he-ext,peano_ack-m3,3,ok,0.11,,[61]
+cetta-he-ext,peano_ack-m3,4,ok,0.11,,[125]
+cetta-he-ext,peano_ack-m3,5,ok,0.51,,[253]
+cetta-he-ext,peano_ack-m3,6,stack,2.11,,2.11
+cetta-prime,peano_ack-m3,2,error134,11.99,,11.99
+cetta-petta,peano_ack-m3,2,ok,0.11,,29
+cetta-petta,peano_ack-m3,3,ok,0.11,,61
+cetta-petta,peano_ack-m3,4,ok,0.11,,125
+cetta-petta,peano_ack-m3,5,ok,0.31,,253
+cetta-petta,peano_ack-m3,6,ok,1.01,,509
+swi-petta,peano_ack-m3,2,ok,0.11,,29
+swi-petta,peano_ack-m3,3,ok,0.11,,61
+swi-petta,peano_ack-m3,4,ok,0.10,,125
+swi-petta,peano_ack-m3,5,ok,0.11,,253
+swi-petta,peano_ack-m3,6,ok,0.10,,509
+cetta-he-ext,nrev,100,ok,0.10,,[100]
+cetta-he-ext,nrev,300,ok,0.71,,[300]
+cetta-he-ext,nrev,1000,stack,0.11,,0.11
+cetta-prime,nrev,100,ok,0.21,,[100]
+cetta-prime,nrev,300,ok,4.21,,[300]
+cetta-prime,nrev,1000,stack,0.11,,0.11
+cetta-petta,nrev,100,ok,0.11,,100
+cetta-petta,nrev,300,ok,0.31,,300
+cetta-petta,nrev,1000,ok,2.61,,1000
+cetta-petta,nrev,3000,timeout,25.24,,25.24
+swi-petta,nrev,100,ok,0.11,,100
+swi-petta,nrev,300,ok,0.10,,300
+swi-petta,nrev,1000,ok,0.11,,1000
+swi-petta,nrev,3000,ok,0.31,,3000
+swi-petta,nrev,10000,ok,2.41,,10000
+swi-petta,nrev,30000,ok,22.22,,30000
+swi-petta,nrev,100000,timeout,25.03,,25.03
+cetta-he-ext,deriv,2,ok,0.11,,[51]
+cetta-he-ext,deriv,4,ok,0.11,,[387]
+cetta-he-ext,deriv,6,ok,0.10,,[3171]
+cetta-he-ext,deriv,8,ok,0.41,,[27267]
+cetta-he-ext,deriv,10,ok,3.21,,[240291]
+cetta-he-ext,deriv,12,timeout,25.29,,25.29
+cetta-prime,deriv,2,ok,0.11,,[51]
+cetta-prime,deriv,4,ok,0.11,,[387]
+cetta-prime,deriv,6,ok,0.11,,[3171]
+cetta-prime,deriv,8,ok,1.21,,[27267]
+cetta-prime,deriv,10,timeout,25.07,,25.07
+cetta-petta,deriv,2,ok,0.11,,51
+cetta-petta,deriv,4,ok,0.11,,387
+cetta-petta,deriv,6,ok,0.10,,3171
+cetta-petta,deriv,8,ok,0.61,,27267
+cetta-petta,deriv,10,ok,15.42,,240291
+cetta-petta,deriv,12,timeout,25.06,,25.06
+swi-petta,deriv,2,ok,0.11,,51
+swi-petta,deriv,4,ok,0.11,,387
+swi-petta,deriv,6,ok,0.11,,3171
+swi-petta,deriv,8,ok,0.11,,27267
+swi-petta,deriv,10,ok,0.21,,240291
+swi-petta,deriv,12,ok,0.81,,2142147
+swi-petta,deriv,14,ok,5.81,,19197411
+cetta-he-ext,queens,5,ok,0.11,,[(Cons 2 (Cons 4 (Cons 1 (Cons 3 (Cons 5
+cetta-he-ext,queens,6,ok,0.11,,[(Cons 2 (Cons 4 (Cons 6 (Cons 1 (Cons 3
+cetta-he-ext,queens,7,ok,0.51,,[(Cons 2 (Cons 4 (Cons 6 (Cons 1 (Cons 3
+cetta-he-ext,queens,8,ok,1.61,,[(Cons 5 (Cons 7 (Cons 2 (Cons 6 (Cons 3
+cetta-he-ext,queens,9,ok,7.42,,[(Cons 5 (Cons 3 (Cons 1 (Cons 6 (Cons 8
+cetta-he-ext,queens,10,error134,17.92,,17.92
+cetta-prime,queens,5,ok,0.11,,[(Cons 2 (Cons 4 (Cons 1 (Cons 3 (Cons 5
+cetta-prime,queens,6,ok,0.21,,[(Cons 2 (Cons 4 (Cons 6 (Cons 1 (Cons 3
+cetta-prime,queens,7,ok,0.61,,[(Cons 2 (Cons 4 (Cons 6 (Cons 1 (Cons 3
+cetta-prime,queens,8,ok,2.71,,[(Cons 5 (Cons 7 (Cons 2 (Cons 6 (Cons 3
+cetta-prime,queens,9,ok,12.62,,[(Cons 5 (Cons 3 (Cons 1 (Cons 6 (Cons 8
+cetta-prime,queens,10,error134,17.32,,17.32
+cetta-petta,queens,5,ok,0.11,,(Cons 4 (Cons 2 (Cons 5 (Cons 3 (Cons 1
+cetta-petta,queens,6,ok,0.11,,(Cons 5 (Cons 3 (Cons 1 (Cons 6 (Cons 4
+cetta-petta,queens,7,ok,0.21,,(Cons 6 (Cons 4 (Cons 2 (Cons 7 (Cons 5
+cetta-petta,queens,8,ok,0.71,,(Cons 4 (Cons 2 (Cons 7 (Cons 3 (Cons 6
+cetta-petta,queens,9,ok,2.21,,(Cons 5 (Cons 7 (Cons 9 (Cons 4 (Cons 2
+cetta-petta,queens,10,ok,16.53,,(Cons 7 (Cons 4 (Cons 2 (Cons 9 (Cons 5
+cetta-petta,queens,11,timeout,25.05,,25.05
+swi-petta,queens,5,ok,0.11,,(Cons 4 (Cons 2 (Cons 5 (Cons 3 (Cons 1
+swi-petta,queens,6,ok,0.11,,(Cons 5 (Cons 3 (Cons 1 (Cons 6 (Cons 4
+swi-petta,queens,7,ok,0.11,,(Cons 6 (Cons 4 (Cons 2 (Cons 7 (Cons 5
+swi-petta,queens,8,ok,0.21,,(Cons 4 (Cons 2 (Cons 7 (Cons 3 (Cons 6
+swi-petta,queens,9,ok,0.31,,(Cons 5 (Cons 7 (Cons 9 (Cons 4 (Cons 2
+swi-petta,queens,10,ok,0.71,,(Cons 7 (Cons 4 (Cons 2 (Cons 9 (Cons 5
+swi-petta,queens,11,ok,3.11,,(Cons 10 (Cons 8 (Cons 6 (Cons 4 (Cons 2
+DONE

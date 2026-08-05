@@ -7,6 +7,17 @@
 
 enum { COPY_DEPTH = 100000 };
 
+typedef struct {
+    Atom *from;
+    Atom *to;
+} TestCopyResolution;
+
+static Atom *resolve_test_atom(void *context, Atom *src) {
+    TestCopyResolution *resolution = context;
+    return resolution && src == resolution->from
+        ? resolution->to : src;
+}
+
 static Atom *make_deep_shared_list(Arena *arena, Atom *payload) {
     Atom *list = atom_symbol(arena, "Nil");
 
@@ -34,6 +45,22 @@ static void check_deep_shared_list(Atom *list) {
     assert(count == COPY_DEPTH);
 }
 
+static void check_deep_print(Atom *list, bool petta) {
+    FILE *stream = tmpfile();
+    assert(stream != NULL);
+    if (petta)
+        atom_print_petta(list, stream);
+    else
+        atom_print(list, stream);
+    long length = ftell(stream);
+    assert(length > (long)COPY_DEPTH);
+    rewind(stream);
+    assert(fgetc(stream) == '(');
+    assert(fseek(stream, -1L, SEEK_END) == 0);
+    assert(fgetc(stream) == ')');
+    fclose(stream);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena source;
@@ -57,6 +84,8 @@ int main(void) {
     assert(copy != NULL);
     assert(copy != list);
     check_deep_shared_list(copy);
+    check_deep_print(copy, false);
+    check_deep_print(copy, true);
 
     Atom *shared = atom_expr2(
         &source, atom_symbol(&source, "shared"),
@@ -76,7 +105,12 @@ int main(void) {
     AtomDeepCopySession *session =
         atom_deep_copy_session_new(&destination);
     assert(session != NULL);
+    assert(atom_deep_copy_session_forwarded(session, left) == NULL);
+    assert(atom_deep_copy_session_forwarded(session, shared) == NULL);
     Atom *left_copy = atom_deep_copy_session_copy(session, left);
+    assert(atom_deep_copy_session_forwarded(session, left) == left_copy);
+    assert(atom_deep_copy_session_forwarded(session, shared) ==
+           left_copy->expr.elems[1]);
     Atom *right_copy = atom_deep_copy_session_copy(session, right);
     Atom *equal_left_copy =
         atom_deep_copy_session_copy(session, equal_left);
@@ -86,6 +120,30 @@ int main(void) {
     assert(left_copy->expr.elems[1] == right_copy->expr.elems[1]);
     assert(equal_left_copy != equal_right_copy);
     assert(atom_deep_copy_session_copy(session, left_copy) == left_copy);
+    atom_deep_copy_session_free(session);
+
+    Atom *suspension = atom_expr2(
+        &source, atom_symbol(&source, "suspended"),
+        atom_int(&source, 13));
+    Atom *resolved = atom_expr2(
+        &source, atom_symbol(&source, "resolved"),
+        atom_int(&source, 21));
+    Atom *wrapped = atom_expr2(
+        &source, atom_symbol(&source, "wrapped"), suspension);
+    TestCopyResolution resolution = {
+        .from = suspension,
+        .to = resolved,
+    };
+    session = atom_deep_copy_session_new(&destination);
+    assert(session != NULL);
+    atom_deep_copy_session_set_resolver(
+        session, resolve_test_atom, &resolution);
+    Atom *wrapped_copy = atom_deep_copy_session_copy(session, wrapped);
+    assert(wrapped_copy != NULL);
+    assert(atom_eq(wrapped_copy->expr.elems[1], resolved));
+    assert(atom_deep_copy_session_forwarded(session, suspension) == NULL);
+    assert(atom_deep_copy_session_forwarded(session, resolved) ==
+           wrapped_copy->expr.elems[1]);
     atom_deep_copy_session_free(session);
 
     /*
@@ -138,6 +196,6 @@ int main(void) {
     arena_free(&source);
     symbol_table_free(&symbols);
     g_symbols = NULL;
-    puts("PASS: iterative and multi-root atom deep copy");
+    puts("PASS: iterative atom copy, printing, and multi-root closure");
     return 0;
 }

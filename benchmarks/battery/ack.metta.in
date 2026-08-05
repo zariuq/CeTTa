@@ -1,0 +1,7 @@
+; Battery 1: Ackermann, native integers — stack/call-discipline probe.
+; Single guarded clause: no overlap, portable across all lanes.
+(= (ack $m $n)
+   (if (== $m 0) (+ $n 1)
+       (if (== $n 0) (ack (- $m 1) 1)
+           (ack (- $m 1) (ack $m (- $n 1))))))
+!(ack @M@ @N@)

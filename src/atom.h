@@ -79,6 +79,11 @@ typedef enum {
  * not a transitive-lifetime guarantee.
  */
 #define ATOM_FLAG_ARENA_CLOSED 0x40u
+/* Compositional resource facts, generated at leaves and inherited by every
+ * expression.  These make admission and copy-stability tests O(1), independent
+ * of semantic term depth. */
+#define ATOM_FLAG_HAS_IDENTITY_GROUNDED 0x80u
+#define ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE 0x100u
 
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
@@ -157,6 +162,10 @@ typedef struct {
     ArenaBlock *spare;
     HashConsTable *hashcons;
     size_t live_bytes;
+    /* Heap storage owned by arena finalizers (for example GMP limbs).  This
+     * is kept separate from block occupancy so mark/reset can account for
+     * allocation pressure without corrupting the block allocator's math. */
+    size_t external_bytes;
     size_t reserved_bytes;
     size_t spare_bytes;
     uint32_t block_count;
@@ -165,8 +174,8 @@ typedef struct {
     uint32_t identity;
     /*
      * Monotone allocation epoch.  Arena identity survives mark/reset, while
-     * reset_epoch changes whenever a reset can invalidate pointers allocated
-     * after a mark.  Derived pointer caches must key on both.
+     * reset_epoch changes whenever reset or free invalidates owned pointers.
+     * Derived pointer caches must key on both.
      */
     uint64_t reset_epoch;
     ArenaFinalizer *finalizers;
@@ -176,6 +185,7 @@ typedef struct {
     ArenaBlock *head;
     size_t used;
     size_t live_bytes;
+    size_t external_bytes;
     size_t reserved_bytes;
     uint32_t block_count;
     ArenaFinalizer *finalizers;
@@ -188,6 +198,9 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+size_t arena_accounted_live_bytes(const Arena *a);
+size_t arena_mark_accounted_live_bytes(ArenaMark mark);
+void  arena_account_external_bytes(Arena *a, size_t size);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
@@ -260,9 +273,12 @@ Atom *atom_var_like(Arena *a, Atom *source, VarId id);
 Atom *atom_int(Arena *a, int64_t val);
 Atom *atom_bigint(Arena *a, const char *val);
 const char *atom_bigint_cstr(const Atom *atom);
+Atom *atom_bigint_copy(Arena *a, const Atom *atom);
 #if CETTA_BUILD_WITH_GMP
 bool  atom_bigint_get_mpz(const Atom *atom, mpz_t out);
+mpz_srcptr atom_bigint_mpz_view(const Atom *atom);
 Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value);
+Atom *atom_bigint_take_mpz(Arena *a, mpz_t value);
 #endif
 Atom *atom_rational(Arena *a, const char *val);
 const char *atom_rational_cstr(const Atom *atom);
@@ -417,6 +433,21 @@ bool atom_is_expr(Atom *a);
 bool atom_is_symbol_id(Atom *a, SymbolId id);
 const char *atom_name_cstr(Atom *a);
 SymbolId atom_head_symbol_id(Atom *a);
+static inline bool atom_has_identity_grounded(const Atom *atom) {
+    return atom &&
+           (atom->flags & ATOM_FLAG_HAS_IDENTITY_GROUNDED) != 0u;
+}
+static inline bool atom_has_thread_local_resource(const Atom *atom) {
+    return atom &&
+           (atom->flags & ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE) != 0u;
+}
+
+/* Stack-safe structural traversal for semantic predicates which cannot be
+ * summarized in Atom flags.  The predicate is applied to every visited node
+ * and traversal stops at its first true result. */
+typedef bool (*AtomTreePredicate)(const Atom *atom, void *context);
+bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
+                   void *context);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
@@ -436,12 +467,24 @@ char *atom_to_parseable_string(Arena *a, Atom *atom);
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
+typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
 /* A multi-root copy episode.  Every call shares one source-pointer forwarding
    table, so pointer-DAG sharing is preserved across separately named roots.
    A destination-owned root is reused only when its compositional arena-closure
-   flag proves that the full Atom-child graph is already safe. */
+   flag proves that the full Atom-child graph is already safe.  An optional
+   resolver, installed before copying, redirects every encountered node before
+   traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+void atom_deep_copy_session_set_resolver(
+    AtomDeepCopySession *session, AtomDeepCopyResolver resolver,
+    void *context);
 Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src);
+/* Return the destination image already established for `src` in this copy
+   episode, or NULL without copying it.  Ephemeron traversal uses this query
+   to discover keys reached from strong roots before conditionally tracing
+   their values. */
+Atom *atom_deep_copy_session_forwarded(
+    const AtomDeepCopySession *session, const Atom *src);
 void atom_deep_copy_session_free(AtomDeepCopySession *session);
 /* Deep-copy with structural sharing for immutable atoms, also preserving source
    pointer sharing within one copy episode.

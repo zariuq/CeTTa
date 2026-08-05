@@ -56,6 +56,19 @@ static SymbolEntry *symbol_table_entry_mut(SymbolTable *st, SymbolId id) {
     return &chunk[id & SYMBOL_ENTRY_CHUNK_MASK];
 }
 
+static void symbol_table_add_flags(SymbolTable *st, SymbolId id,
+                                   uint32_t flags) {
+    if (!st || id == SYMBOL_ID_NONE || flags == 0u)
+        return;
+    uint32_t entry_len = atomic_load_explicit(
+        &st->entry_len, memory_order_relaxed);
+    if (id >= entry_len)
+        return;
+    SymbolEntry *entry = symbol_table_entry_mut(st, id);
+    if (entry)
+        entry->flags |= flags;
+}
+
 static void symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
     uint32_t chunk_index = id >> SYMBOL_ENTRY_CHUNK_BITS;
     if (chunk_index >= SYMBOL_ENTRY_CHUNK_COUNT) {
@@ -235,6 +248,17 @@ uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
     return entry ? entry->hash : (uint64_t)id;
 }
 
+uint32_t symbol_flags(const SymbolTable *st, SymbolId id) {
+    if (!st || id == SYMBOL_ID_NONE)
+        return 0u;
+    uint32_t entry_len = atomic_load_explicit(
+        &st->entry_len, memory_order_acquire);
+    if (id >= entry_len)
+        return 0u;
+    const SymbolEntry *entry = symbol_table_entry_ref(st, id);
+    return entry ? entry->flags : 0u;
+}
+
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {
     if (!text || !st || id == SYMBOL_ID_NONE) return false;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
@@ -249,4 +273,21 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 #define CETTA_INIT_BUILTIN(field, text) builtins->field = symbol_intern_cstr(st, text);
     CETTA_BUILTIN_SYMBOLS(CETTA_INIT_BUILTIN)
 #undef CETTA_INIT_BUILTIN
+
+#define CETTA_MARK_STATIC_GROUNDED(field) \
+    symbol_table_add_flags( \
+        st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP);
+    CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(CETTA_MARK_STATIC_GROUNDED)
+#undef CETTA_MARK_STATIC_GROUNDED
+
+    /* The library ABI reserves this prefix for native grounded operators.
+       Mark builtins eagerly; later dynamically interned ABI names retain the
+       name-based fallback in is_grounded_op. */
+#define CETTA_MARK_LIBRARY_GROUNDED(field, text) do { \
+    if (strncmp((text), "__cetta_lib_", 12u) == 0) \
+        symbol_table_add_flags( \
+            st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP); \
+} while (0);
+    CETTA_BUILTIN_SYMBOLS(CETTA_MARK_LIBRARY_GROUNDED)
+#undef CETTA_MARK_LIBRARY_GROUNDED
 }

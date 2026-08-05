@@ -121,11 +121,26 @@ typedef struct {
 typedef struct {
     bool eligible;
     bool productive;
+    bool filtered;
+    bool relevance_bounded;
     SymbolId specialized;
 } PettaSpecializationAnalysis;
 
 static _Thread_local PettaSpecializationRecords
     g_petta_specializations = {0};
+
+enum { PETTA_RELEVANCE_BOUNDED_CACHE_SLOTS = 64 };
+
+typedef struct {
+    Space *space;
+    uint64_t space_instance;
+    SymbolId source;
+    bool used;
+} PettaRelevanceBoundedCacheSlot;
+
+static _Thread_local PettaRelevanceBoundedCacheSlot
+    g_petta_relevance_bounded_cache[
+        PETTA_RELEVANCE_BOUNDED_CACHE_SLOTS];
 
 static bool petta_atom_vector_push(
     PettaAtomVector *vector, Atom *atom);
@@ -151,6 +166,65 @@ static bool petta_specializer_route_cache_enabled(void) {
            (strcmp(value, "0") != 0 &&
             strcmp(value, "false") != 0 &&
             strcmp(value, "off") != 0);
+}
+
+static bool petta_specializer_relevance_filter_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv(
+            "CETTA_PETTA_SPECIALIZER_RELEVANCE_FILTER");
+        enabled = value && value[0] == '1' ? 1 : 0;
+    }
+    return enabled == 1;
+}
+
+static size_t petta_relevance_bounded_cache_index(
+    Space *space, uint64_t instance, SymbolId source) {
+    uint64_t mixed =
+        ((uint64_t)(uintptr_t)space >> 4u) ^
+        (instance * UINT64_C(0x9e3779b97f4a7c15)) ^
+        ((uint64_t)source * UINT64_C(0xbf58476d1ce4e5b9));
+    mixed ^= mixed >> 30u;
+    mixed *= UINT64_C(0xbf58476d1ce4e5b9);
+    mixed ^= mixed >> 27u;
+    return (size_t)mixed &
+           (PETTA_RELEVANCE_BOUNDED_CACHE_SLOTS - 1u);
+}
+
+static bool petta_relevance_filter_is_bounded_out(
+    Space *space, SymbolId source) {
+    if (!space || source == SYMBOL_ID_NONE)
+        return false;
+    uint64_t instance = space_instance_id(space);
+    PettaRelevanceBoundedCacheSlot *slot =
+        &g_petta_relevance_bounded_cache[
+            petta_relevance_bounded_cache_index(
+                space, instance, source)];
+    return slot->used && slot->space == space &&
+           slot->space_instance == instance &&
+           slot->source == source;
+}
+
+static void petta_relevance_filter_mark_bounded_out(
+    Space *space, SymbolId source) {
+    if (!space || source == SYMBOL_ID_NONE)
+        return;
+    uint64_t instance = space_instance_id(space);
+    PettaRelevanceBoundedCacheSlot *slot =
+        &g_petta_relevance_bounded_cache[
+            petta_relevance_bounded_cache_index(
+                space, instance, source)];
+    *slot = (PettaRelevanceBoundedCacheSlot){
+        .space = space,
+        .space_instance = instance,
+        .source = source,
+        .used = true,
+    };
+}
+
+static void petta_relevance_filter_clear_bounded_cache(void) {
+    memset(g_petta_relevance_bounded_cache, 0,
+           sizeof(g_petta_relevance_bounded_cache));
 }
 
 static void petta_specializer_trace_atom(
@@ -772,6 +846,88 @@ static Atom *petta_specializable_value(
     return petta_semantics_partial_value(
         arena, atom->expr.elems[0],
         atom->expr.elems + 1u, supplied);
+}
+
+/*
+ * Source matching can bind a source-pattern variable only to a subtree of a
+ * ready call.  The cons-constraint exception constructs an internal open-cons
+ * spine, which is not a specializable value.  Therefore a call whose argument
+ * forest contains no callable symbol, canonical partial, or under-application
+ * cannot produce a specialization selector.
+ *
+ * This is a bounded accelerator, never an authority: an oversized frontier
+ * or any shape we cannot classify takes the original analysis.  A deep unary
+ * forest is bounded separately by a node budget; after that budget is reached
+ * the relation uses the source matcher directly until a semantic
+ * equation/type mutation clears the derived decision.
+ * The outer call head is deliberately excluded because source equations pin
+ * it to the selected relation head; nested expression heads remain visible
+ * because a nested source variable may bind them.
+ */
+typedef enum {
+    PETTA_RELEVANCE_NO = 0,
+    PETTA_RELEVANCE_YES,
+    PETTA_RELEVANCE_NODE_BUDGET,
+} PettaRelevanceResult;
+
+static PettaRelevanceResult
+petta_call_may_supply_specializable_value(
+    PettaSpecializerContext *context, Atom *call) {
+    enum {
+        PETTA_RELEVANCE_STACK_CAPACITY = 128,
+        PETTA_RELEVANCE_NODE_LIMIT = 16,
+    };
+    Atom *stack[PETTA_RELEVANCE_STACK_CAPACITY];
+    size_t length = 0u;
+    size_t visited = 0u;
+    if (!context || !call || call->kind != ATOM_EXPR ||
+        call->expr.len == 0u) {
+        return PETTA_RELEVANCE_YES;
+    }
+    if ((size_t)(call->expr.len - 1u) >
+        PETTA_RELEVANCE_STACK_CAPACITY) {
+        return PETTA_RELEVANCE_YES;
+    }
+    for (CettaExprIndex index = 1u;
+         index < call->expr.len; index++) {
+        stack[length++] = call->expr.elems[index];
+    }
+
+    while (length > 0u) {
+        if (visited++ >= PETTA_RELEVANCE_NODE_LIMIT)
+            return PETTA_RELEVANCE_NODE_BUDGET;
+        Atom *atom = stack[--length];
+        if (!atom)
+            return PETTA_RELEVANCE_YES;
+        if (atom->kind == ATOM_SYMBOL &&
+            petta_symbol_is_callable(
+                context->space, &context->scratch,
+                atom->sym_id)) {
+            return PETTA_RELEVANCE_YES;
+        }
+        if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+            continue;
+        if (petta_semantics_partial_view(atom, NULL, NULL))
+            return PETTA_RELEVANCE_YES;
+        Atom *head = atom->expr.elems[0];
+        if (head && head->kind == ATOM_SYMBOL) {
+            CettaExprLen supplied = atom->expr.len - 1u;
+            PeTTaNamedArity arity = petta_semantics_named_arity(
+                context->space, &context->scratch,
+                head, supplied);
+            if (arity.known && !arity.exact && arity.larger)
+                return PETTA_RELEVANCE_YES;
+        }
+        if ((size_t)atom->expr.len >
+            PETTA_RELEVANCE_STACK_CAPACITY - length) {
+            return PETTA_RELEVANCE_YES;
+        }
+        for (CettaExprIndex index = 0u;
+             index < atom->expr.len; index++) {
+            stack[length++] = atom->expr.elems[index];
+        }
+    }
+    return PETTA_RELEVANCE_NO;
 }
 
 static bool petta_collect_source_equations(
@@ -1474,6 +1630,25 @@ static bool petta_specializer_analyze_call(
         analysis->specialized = routed->specialized;
         return true;
     }
+    if (petta_specializer_relevance_filter_enabled()) {
+        if (petta_relevance_filter_is_bounded_out(
+                context->space, source)) {
+            analysis->relevance_bounded = true;
+        } else {
+            PettaRelevanceResult relevance =
+                petta_call_may_supply_specializable_value(
+                    context, call);
+            if (relevance == PETTA_RELEVANCE_NO) {
+                analysis->filtered = true;
+                return true;
+            }
+            if (relevance == PETTA_RELEVANCE_NODE_BUDGET) {
+                petta_relevance_filter_mark_bounded_out(
+                    context->space, source);
+                analysis->relevance_bounded = true;
+            }
+        }
+    }
     if (petta_visiting_contains(context, source))
         return true;
     if (context->depth >= 128u ||
@@ -1689,8 +1864,12 @@ PettaSpecializeResult petta_specializer_prepare_call(
     }
     if (context.invalidated)
         return PETTA_SPECIALIZE_INVALIDATED;
-    return analysis.productive
-        ? PETTA_SPECIALIZE_REWRITTEN
+    if (analysis.productive)
+        return PETTA_SPECIALIZE_REWRITTEN;
+    if (analysis.filtered)
+        return PETTA_SPECIALIZE_UNCHANGED_FILTERED;
+    return analysis.relevance_bounded
+        ? PETTA_SPECIALIZE_UNCHANGED_RELEVANCE_BOUNDED
         : PETTA_SPECIALIZE_UNCHANGED;
 }
 
@@ -1749,9 +1928,17 @@ static void petta_remove_record_at(size_t index) {
 
 void petta_specializer_note_mutation(
     Space *space, Atom *atom) {
+    space_execution_analysis_note_mutation(space);
     SymbolId source = petta_mutated_source_head(atom);
     if (!space || source == SYMBOL_ID_NONE)
         return;
+    /*
+     * The bounded-out cache depends on which nested symbols are callable.
+     * Any equation or type mutation can change that fact for calls of an
+     * unrelated outer head, so clear the small derived cache wholesale.
+     * Ordinary data additions never reach this point.
+     */
+    petta_relevance_filter_clear_bounded_cache();
     uint64_t instance = space_instance_id(space);
     PettaSymbolVector invalid_heads = {0};
     bool invalidate_all =
@@ -1936,4 +2123,5 @@ void petta_specializer_reset_thread(void) {
     memset(
         &g_petta_specializations, 0,
         sizeof(g_petta_specializations));
+    petta_relevance_filter_clear_bounded_cache();
 }

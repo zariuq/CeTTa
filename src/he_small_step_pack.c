@@ -124,6 +124,39 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
         .live = true,
     },
     {
+        /* Extended full-evaluator metadata: comma in a space position folds
+         * the pointwise bag meet.  It is not a coarse one-step gate. */
+        .name = "HES_SpaceMeet",
+        .rule_id = CETTA_HES_RULE_SPACE_MEET,
+        .profiles = "he-extended prime petta-extended",
+        .provenance =
+            "Lean:Mettapedia.GSLT.Dynamics.SpaceQueryAlgebra.sMeet_assoc",
+        .claim = "bag-tested-adequate",
+        .live = false,
+    },
+    {
+        /* Extended full-evaluator metadata: pipe in a space position folds
+         * pointwise additive union. */
+        .name = "HES_SpaceAdditiveUnion",
+        .rule_id = CETTA_HES_RULE_SPACE_ADDITIVE_UNION,
+        .profiles = "he-extended prime petta-extended",
+        .provenance =
+            "Lean:Mettapedia.GSLT.Dynamics.SpaceQueryAlgebra.weightedAnswers_union",
+        .claim = "bag-tested-adequate",
+        .live = false,
+    },
+    {
+        /* Extended full-evaluator metadata: two-argument sourced match is
+         * the seed-threaded conjunction fold across named spaces. */
+        .name = "HES_SourcedConjunctionMatch",
+        .rule_id = CETTA_HES_RULE_SOURCED_CONJUNCTION_MATCH,
+        .profiles = "he-extended prime petta-extended",
+        .provenance =
+            "Lean:Mettapedia.GSLT.Dynamics.SpaceQueryAlgebra.foldConj_eq_meet",
+        .claim = "bag-tested-adequate",
+        .live = false,
+    },
+    {
         .name = "HES_QuoteQuiescent",
         .rule_id = CETTA_HES_RULE_QUOTE_QUIESCENT,
         .profiles = "he he-extended",

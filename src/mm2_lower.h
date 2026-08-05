@@ -56,6 +56,19 @@ bool cetta_mm2_atom_id_to_bridge_expr_bytes(Arena *a,
                                             size_t *out_len,
                                             const char **out_error);
 
+/* Pack canonical, ground AtomIds as a sequence of compact bridge expressions:
+
+     repeated { u32 expr_len_be; u8 expr_bytes[expr_len] }
+
+   This is the low-level transaction payload consumed by counted PathMap batch
+   mutation.  It intentionally declines terms that need target-local packet
+   normalization (for example, over-wide symbols) so the caller can preserve
+   semantics through the established singular packet path. */
+bool cetta_mm2_atom_ids_to_bridge_expr_bytes_batch(
+    Arena *a, const TermUniverse *universe, const AtomId *atom_ids,
+    CettaCount atom_count, uint8_t **out_packet, size_t *out_packet_len,
+    const char **out_error);
+
 /* Encode one stored canonical term as structural bridge expr bytes plus an
    exact opening context. The context maps each local bridge variable slot back
    to the canonical CeTTa VarId/spelling carried by the term universe. */

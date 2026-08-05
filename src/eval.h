@@ -115,6 +115,11 @@ CettaLanguageId eval_current_language_id(void) __attribute__((weak));
    allocated and must be freed by the caller; atoms live in `a`. */
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                       Atom ***out_types);
+/* The same profile-aware judgment without publishing the subject or result in
+   the persistent memo.  Use for nursery-owned machine values whose identities
+   are intentionally shorter-lived than the evaluation episode. */
+uint32_t eval_get_atom_types_profiled_transient(
+    Space *s, Arena *a, Atom *atom, Atom ***out_types);
 uint32_t eval_get_atom_types_profiled_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget);

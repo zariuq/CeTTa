@@ -35,3 +35,22 @@
     (: pair ax-2 ax-3))))
 
 !(fs-add-to-ss-nodup &rb &ss)
+
+; The streamed fallback must preserve exact occurrence multiplicity while
+; rejecting a structurally valid but unmatched join.
+!(bind! &dup (new-space))
+!(add-atom &dup (edge a b))
+!(add-atom &dup (edge a b))
+!(add-atom &dup (edge b c))
+!(assertEqualToResult
+  (collapse
+    (match &dup (edge $x $y)
+      (match &dup (edge $y $z)
+        (path $x $y $z))))
+  (((path a b c) (path a b c))))
+!(assertEqualToResult
+  (collapse
+    (match &dup (edge c $y)
+      (match &dup (edge $y $z)
+        (path c $y $z))))
+  (()))

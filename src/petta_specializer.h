@@ -7,6 +7,20 @@
 
 typedef enum {
     PETTA_SPECIALIZE_UNCHANGED = 0,
+    /*
+     * A proved necessary-condition filter established that this ready call
+     * cannot supply any higher-order value to the source matcher.  This is
+     * observably the unchanged case; the distinct result exists only so the
+     * machine can attribute avoided specialization work.
+     */
+    PETTA_SPECIALIZE_UNCHANGED_FILTERED,
+    /*
+     * The bounded relevance precheck reached its node budget (or a prior
+     * call of the same relation did), so the authoritative source matcher
+     * handled the call.  The answer is still the ordinary unchanged case;
+     * the distinct result exposes that the accelerator stayed bounded.
+     */
+    PETTA_SPECIALIZE_UNCHANGED_RELEVANCE_BOUNDED,
     PETTA_SPECIALIZE_REWRITTEN,
     PETTA_SPECIALIZE_INVALIDATED,
     PETTA_SPECIALIZE_CAPACITY,

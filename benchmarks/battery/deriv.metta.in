@@ -1,0 +1,12 @@
+; Battery 4: iterated symbolic differentiation (Gabriel-class) — clause-rich
+; constructor rewriting; term tsize explodes with nesting depth.
+(= (d (Num $c) $v) (Num 0))
+(= (d (Var $u) $v) (if (== $u $v) (Num 1) (Num 0)))
+(= (d (Add $a $b) $v) (Add (d $a $v) (d $b $v)))
+(= (d (Mul $a $b) $v) (Add (Mul (d $a $v) $b) (Mul $a (d $b $v))))
+(= (tsize (Num $c)) 1)
+(= (tsize (Var $u)) 1)
+(= (tsize (Add $a $b)) (+ 1 (+ (tsize $a) (tsize $b))))
+(= (tsize (Mul $a $b)) (+ 1 (+ (tsize $a) (tsize $b))))
+(= (dn $e $k) (if (== $k 0) $e (dn (d $e x) (- $k 1))))
+!(tsize (dn (Mul (Add (Var x) (Num 1)) (Mul (Var x) (Var x))) @N@))

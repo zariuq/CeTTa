@@ -23,7 +23,7 @@
 ; theorems land.
 !(assertEqual
   (lts:he:step-rules)
-  (step-rules HE small-step "fnv1a64:12eec5b655a75904"
+  (step-rules HE small-step "fnv1a64:b38899af8133fc21"
     (schema 2)
     (rules (HES_GroundedDispatch rule-sound)
            (HES_LeftmostExprCongruence rule-sound-on-fragment)
@@ -35,6 +35,9 @@
            (HES_Case bag-tested-adequate)
            (HES_Switch bag-tested-adequate)
            (HES_SwitchMinimal bag-tested-adequate)
+           (HES_SpaceMeet bag-tested-adequate)
+           (HES_SpaceAdditiveUnion bag-tested-adequate)
+           (HES_SourcedConjunctionMatch bag-tested-adequate)
            (HES_QuoteQuiescent bag-tested-adequate)
            (HES_ReturnQuiescent bag-tested-adequate)
            (HES_EmptyQuiescent bag-tested-adequate)

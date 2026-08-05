@@ -593,7 +593,7 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
         case GV_STRING:
             return atom_string(dst, src->ground.sval);
         case GV_BIGINT:
-            return atom_bigint(dst, atom_bigint_cstr(src));
+            return atom_bigint_copy(dst, src);
         case GV_RATIONAL:
             return atom_rational(dst, atom_rational_cstr(src));
         case GV_SPACE:
@@ -1191,6 +1191,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|he-extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta --lang prime <file.metta>\n", out);
+    fputs("       cetta --lang petta --profile extended <file.metta>\n", out);
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
@@ -2647,15 +2648,31 @@ int main(int argc, char **argv) {
                 pi = block_end;
             }
         } else {
-            for (int pi = 0; pi < n; pi++) {
+            int pi = 0;
+            while (pi < n) {
                 int exec_width = 0;
                 if (main_document_exec_at(
                         &libraries.term_universe, atom_ids,
                         n, pi, NULL, &exec_width)) {
-                    pi += exec_width - 1;
+                    pi += exec_width;
                     continue;
                 }
-                space_add_atom_id(&space, atom_ids[pi]);
+                int block_end = pi + 1;
+                while (block_end < n &&
+                       !main_document_exec_at(
+                           &libraries.term_universe, atom_ids,
+                           n, block_end, NULL, NULL)) {
+                    block_end++;
+                }
+                if (!space_add_atom_ids_batch(
+                        &space, atom_ids + pi,
+                        (CettaCount)(block_end - pi))) {
+                    fprintf(stderr,
+                            "error: could not load declaration block\n");
+                    rc = 1;
+                    goto cleanup;
+                }
+                pi = block_end;
             }
         }
         compile_space_to_llvm(&space, &arena, stdout);
@@ -2844,8 +2861,21 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        space_add_atom_id(&space, atom_ids[i]);
-        i++;
+        int block_end = i + 1;
+        while (block_end < n &&
+               !main_document_exec_at(
+                   &libraries.term_universe, atom_ids,
+                   n, block_end, NULL, NULL)) {
+            block_end++;
+        }
+        if (!space_add_atom_ids_batch(
+                &space, atom_ids + i,
+                (CettaCount)(block_end - i))) {
+            fprintf(stderr, "error: could not load declaration block\n");
+            rc = 1;
+            goto cleanup;
+        }
+        i = block_end;
     }
 
     if (fseek(output_spool, 0, SEEK_SET) != 0) {

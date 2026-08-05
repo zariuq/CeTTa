@@ -30,6 +30,7 @@ INVENTORY_PATTERNS = (
     "tests/spec_*.metta",
     "tests/he_*.metta",
     "tests/gc/test_*.metta",
+    "tests/generated/semiring_query_laws.metta",
     "tests/prime/conformance/*.metta",
     "tests/prime/practical/*.metta",
 )
