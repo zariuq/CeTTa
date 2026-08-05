@@ -1949,6 +1949,339 @@ SpaceEquationCursorStep space_equation_cursor_next(
     return SPACE_EQUATION_CURSOR_ITEM;
 }
 
+/* ── Revision-pinned execution-contract analysis ──────────────────────── */
+
+#define SPACE_EFFECT_CACHE_SLOTS 64u
+
+typedef struct {
+    SpaceReadToken read;
+    SymbolId head;
+    CettaGsltQueryEffect effect;
+    bool defined;
+    bool valid;
+} SpaceEffectCacheEntry;
+
+static _Thread_local SpaceEffectCacheEntry
+    g_space_effect_cache[SPACE_EFFECT_CACHE_SLOTS];
+
+typedef struct {
+    SymbolId head;
+    SymbolId *dependencies;
+    size_t dependency_len;
+    size_t dependency_cap;
+    CettaGsltQueryEffect base_effect;
+    CettaGsltQueryEffect effect;
+    bool defined;
+    bool scanned;
+} SpaceEffectNode;
+
+typedef struct {
+    Space *space;
+    SpaceReadToken read;
+    SpaceEffectNode *nodes;
+    size_t len;
+    size_t cap;
+    bool failed;
+} SpaceEffectGraph;
+
+static CettaGsltQueryEffect space_generated_query_head_effect(
+    SymbolId head) {
+#define SPACE_QUERY_EFFECT_HEAD(field, effect) \
+    if (head == g_builtin_syms.field) return (effect);
+    CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(SPACE_QUERY_EFFECT_HEAD)
+#undef SPACE_QUERY_EFFECT_HEAD
+    return CETTA_GSLT_QUERY_EFFECT_PURE;
+}
+
+static size_t space_effect_cache_slot(const Space *space, SymbolId head) {
+    uint64_t key = space_instance_id(space) ^
+        ((uint64_t)head * UINT64_C(11400714819323198485));
+    return (size_t)(key & (SPACE_EFFECT_CACHE_SLOTS - 1u));
+}
+
+void space_execution_analysis_note_mutation(Space *space) {
+    if (!space)
+        return;
+    uint64_t instance = space_instance_id(space);
+    for (size_t i = 0u; i < SPACE_EFFECT_CACHE_SLOTS; i++) {
+        SpaceEffectCacheEntry *entry = &g_space_effect_cache[i];
+        if (entry->valid && entry->read.space == space &&
+            entry->read.instance_id == instance) {
+            memset(entry, 0, sizeof(*entry));
+        }
+    }
+}
+
+static bool space_effect_graph_reserve(SpaceEffectGraph *graph,
+                                       size_t need) {
+    if (need <= graph->cap)
+        return true;
+    size_t next = graph->cap ? graph->cap * 2u : 8u;
+    while (next < need) {
+        if (next > SIZE_MAX / 2u)
+            return false;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / sizeof(*graph->nodes))
+        return false;
+    SpaceEffectNode *nodes = realloc(
+        graph->nodes, sizeof(*nodes) * next);
+    if (!nodes)
+        return false;
+    memset(nodes + graph->cap, 0,
+           sizeof(*nodes) * (next - graph->cap));
+    graph->nodes = nodes;
+    graph->cap = next;
+    return true;
+}
+
+static bool space_effect_graph_find_or_add(
+    SpaceEffectGraph *graph, SymbolId head, size_t *out_index) {
+    for (size_t i = 0u; i < graph->len; i++) {
+        if (graph->nodes[i].head == head) {
+            *out_index = i;
+            return true;
+        }
+    }
+    if (!space_effect_graph_reserve(graph, graph->len + 1u))
+        return false;
+    size_t index = graph->len++;
+    graph->nodes[index].head = head;
+    graph->nodes[index].base_effect = CETTA_GSLT_QUERY_EFFECT_PURE;
+    graph->nodes[index].effect = CETTA_GSLT_QUERY_EFFECT_PURE;
+    *out_index = index;
+    return true;
+}
+
+static bool space_effect_node_add_dependency(
+    SpaceEffectGraph *graph, size_t node_index, SymbolId dependency) {
+    size_t dependency_index = 0u;
+    if (!space_effect_graph_find_or_add(
+            graph, dependency, &dependency_index)) {
+        return false;
+    }
+    SpaceEffectNode *node = &graph->nodes[node_index];
+    for (size_t i = 0u; i < node->dependency_len; i++)
+        if (node->dependencies[i] == dependency)
+            return true;
+    if (node->dependency_len == node->dependency_cap) {
+        size_t next = node->dependency_cap
+            ? node->dependency_cap * 2u : 4u;
+        if (next > SIZE_MAX / sizeof(*node->dependencies))
+            return false;
+        SymbolId *dependencies = realloc(
+            node->dependencies, sizeof(*dependencies) * next);
+        if (!dependencies)
+            return false;
+        node->dependencies = dependencies;
+        node->dependency_cap = next;
+    }
+    node->dependencies[node->dependency_len++] =
+        graph->nodes[dependency_index].head;
+    return true;
+}
+
+static bool space_effect_scan_rhs(
+    SpaceEffectGraph *graph, size_t node_index, Atom *root) {
+    Atom *inline_stack[32];
+    Atom **stack = inline_stack;
+    size_t len = 0u;
+    size_t cap = sizeof(inline_stack) / sizeof(inline_stack[0]);
+
+    if (!root)
+        return false;
+    stack[len++] = root;
+    while (len > 0u) {
+        Atom *current = stack[--len];
+        if (!current || current->kind != ATOM_EXPR ||
+            current->expr.len == 0u) {
+            continue;
+        }
+        Atom *head = current->expr.elems[0];
+        if (!head || head->kind != ATOM_SYMBOL) {
+            graph->nodes[node_index].base_effect =
+                CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
+        } else {
+            CettaGsltQueryEffect direct =
+                space_generated_query_head_effect(head->sym_id);
+            graph->nodes[node_index].base_effect =
+                cetta_gslt_query_effect_join(
+                    graph->nodes[node_index].base_effect, direct);
+            if (direct == CETTA_GSLT_QUERY_EFFECT_PURE &&
+                !is_grounded_op(head->sym_id) &&
+                space_equations_may_match_known_head(
+                    graph->space, head->sym_id) &&
+                !space_effect_node_add_dependency(
+                    graph, node_index, head->sym_id)) {
+                if (stack != inline_stack)
+                    free(stack);
+                return false;
+            }
+        }
+        for (CettaExprIndex i = 1u; i < current->expr.len; i++) {
+            Atom *child = current->expr.elems[i];
+            if (!child || child->kind != ATOM_EXPR)
+                continue;
+            if (len == cap) {
+                if (cap > SIZE_MAX / 2u ||
+                    cap * 2u > SIZE_MAX / sizeof(*stack)) {
+                    if (stack != inline_stack)
+                        free(stack);
+                    return false;
+                }
+                size_t next_cap = cap * 2u;
+                Atom **next = stack == inline_stack
+                    ? malloc(sizeof(*next) * next_cap)
+                    : realloc(stack, sizeof(*next) * next_cap);
+                if (!next) {
+                    if (stack != inline_stack)
+                        free(stack);
+                    return false;
+                }
+                if (stack == inline_stack)
+                    memcpy(next, inline_stack, sizeof(*next) * len);
+                stack = next;
+                cap = next_cap;
+            }
+            stack[len++] = child;
+        }
+    }
+    if (stack != inline_stack)
+        free(stack);
+    return true;
+}
+
+static bool space_effect_scan_node(
+    SpaceEffectGraph *graph, size_t node_index) {
+    SymbolId head = graph->nodes[node_index].head;
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(graph->space, head, &cursor))
+        return false;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step =
+            space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            break;
+        if (step != SPACE_EQUATION_CURSOR_ITEM)
+            return false;
+        SpaceEquationOccurrence occurrence;
+        if (!space_equation_occurrence_resolve(id, &occurrence))
+            return false;
+        graph->nodes[node_index].defined = true;
+        if (!space_effect_scan_rhs(
+                graph, node_index, occurrence.rhs)) {
+            return false;
+        }
+    }
+    graph->nodes[node_index].scanned = true;
+    return space_read_token_is_current(graph->read);
+}
+
+static void space_effect_graph_free(SpaceEffectGraph *graph) {
+    if (!graph)
+        return;
+    for (size_t i = 0u; i < graph->len; i++)
+        free(graph->nodes[i].dependencies);
+    free(graph->nodes);
+    memset(graph, 0, sizeof(*graph));
+}
+
+static bool space_effect_graph_solve(SpaceEffectGraph *graph) {
+    for (size_t scan = 0u; scan < graph->len; scan++) {
+        if (!space_effect_scan_node(graph, scan))
+            return false;
+    }
+    bool changed;
+    do {
+        changed = false;
+        for (size_t i = 0u; i < graph->len; i++) {
+            CettaGsltQueryEffect effect = graph->nodes[i].base_effect;
+            for (size_t di = 0u;
+                 di < graph->nodes[i].dependency_len; di++) {
+                SymbolId dependency = graph->nodes[i].dependencies[di];
+                for (size_t ni = 0u; ni < graph->len; ni++) {
+                    if (graph->nodes[ni].head == dependency) {
+                        effect = cetta_gslt_query_effect_join(
+                            effect, graph->nodes[ni].effect);
+                        break;
+                    }
+                }
+            }
+            if (effect != graph->nodes[i].effect) {
+                graph->nodes[i].effect = effect;
+                changed = true;
+            }
+        }
+    } while (changed);
+    return space_read_token_is_current(graph->read);
+}
+
+CettaGsltQueryEffect space_query_effect_for_head(
+    Space *space, SymbolId head, bool *out_defined) {
+    if (out_defined)
+        *out_defined = false;
+    if (!space || head == SYMBOL_ID_NONE)
+        return CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
+
+    CettaGsltQueryEffect direct =
+        space_generated_query_head_effect(head);
+    if (direct != CETTA_GSLT_QUERY_EFFECT_PURE) {
+        if (out_defined)
+            *out_defined = true;
+        return direct;
+    }
+    if (is_grounded_op(head))
+        return CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL;
+
+    size_t slot_index = space_effect_cache_slot(space, head);
+    SpaceEffectCacheEntry *slot =
+        &g_space_effect_cache[slot_index];
+    if (slot->valid && slot->head == head &&
+        space_read_token_is_current(slot->read)) {
+        if (out_defined)
+            *out_defined = slot->defined;
+        return slot->effect;
+    }
+    if (!space_equations_may_match_known_head(space, head)) {
+        slot->read = space_read_token(space);
+        slot->head = head;
+        slot->effect = CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL;
+        slot->defined = false;
+        slot->valid = true;
+        return slot->effect;
+    }
+
+    SpaceEffectGraph graph = {
+        .space = space,
+        .read = space_read_token(space),
+    };
+    size_t root_index = 0u;
+    if (!space_effect_graph_find_or_add(&graph, head, &root_index) ||
+        !space_effect_graph_solve(&graph)) {
+        space_effect_graph_free(&graph);
+        return CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
+    }
+
+    CettaGsltQueryEffect result = graph.nodes[root_index].effect;
+    bool defined = graph.nodes[root_index].defined;
+    for (size_t i = 0u; i < graph.len; i++) {
+        size_t cache_index = space_effect_cache_slot(
+            space, graph.nodes[i].head);
+        SpaceEffectCacheEntry *entry =
+            &g_space_effect_cache[cache_index];
+        entry->read = graph.read;
+        entry->head = graph.nodes[i].head;
+        entry->effect = graph.nodes[i].effect;
+        entry->defined = graph.nodes[i].defined;
+        entry->valid = true;
+    }
+    if (out_defined)
+        *out_defined = defined;
+    space_effect_graph_free(&graph);
+    return result;
+}
+
 static bool space_equation_child_ids_at_id(const Space *s, AtomId atom_id,
                                            AtomId *lhs_id_out, AtomId *rhs_id_out) {
     if (!s || !s->native.universe || atom_id == CETTA_ATOM_ID_NONE)
@@ -2153,6 +2486,7 @@ uint64_t space_global_mutation_epoch(void) {
 static void space_bump_revision(Space *s) {
     if (!s)
         return;
+    space_execution_analysis_note_mutation(s);
     if (s->revision == UINT64_MAX) {
         fputs("CeTTa: exhausted Space revision counter\n", stderr);
         abort();
@@ -2276,6 +2610,60 @@ void space_add_atom_id(Space *s, AtomId atom_id) {
     space_add_stored_id(s, atom_id, NULL);
 }
 
+bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
+                              CettaCount atom_count) {
+    uint64_t added = 0;
+    bool keep_pathmap_exact_metadata;
+    bool had_non_exact_atom;
+    bool batch_has_non_exact_atom = false;
+    SpaceBackendBatchResult batch_result;
+
+    if (!s || (!atom_ids && atom_count != 0))
+        return false;
+    if (atom_count == 0)
+        return true;
+
+    keep_pathmap_exact_metadata =
+        !space_has_overlay_base(s) &&
+        s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        !s->native.has_non_exact_atoms_dirty;
+    had_non_exact_atom =
+        keep_pathmap_exact_metadata && s->native.has_non_exact_atoms;
+    if (keep_pathmap_exact_metadata) {
+        for (CettaCount i = 0; i < atom_count; i++) {
+            if (!atom_id_is_exact_indexable(s, atom_ids[i])) {
+                batch_has_non_exact_atom = true;
+                break;
+            }
+        }
+    }
+
+    batch_result = space_has_overlay_base(s)
+        ? SPACE_BACKEND_BATCH_UNSUPPORTED
+        : space_match_backend_store_atom_ids_batch_direct(
+              s, atom_ids, atom_count, &added);
+    if (batch_result == SPACE_BACKEND_BATCH_ERROR)
+        return false;
+    if (batch_result == SPACE_BACKEND_BATCH_APPLIED) {
+        if (added != (uint64_t)atom_count)
+            return false;
+        space_mark_indexes_dirty(s);
+        if (keep_pathmap_exact_metadata) {
+            s->native.has_non_exact_atoms =
+                had_non_exact_atom || batch_has_non_exact_atom;
+            s->native.has_non_exact_atoms_dirty = false;
+        }
+        space_bump_revision(s);
+        return true;
+    }
+
+    /* Oracle replay keeps ordered multiplicity and overlay behavior for every
+       fragment the backend declines, including variables and wide symbols. */
+    for (CettaCount i = 0; i < atom_count; i++)
+        space_add_atom_id(s, atom_ids[i]);
+    return space_term_universe_last_error_code(s) == TERM_UNIVERSE_ERROR_NONE;
+}
+
 void space_add(Space *s, Atom *atom) {
     AtomId atom_id = CETTA_ATOM_ID_NONE;
     if (space_store_atom_via_backend_primary(s, atom))
@@ -2301,7 +2689,8 @@ TermUniverseError space_term_universe_last_error_code(const Space *s) {
 }
 
 
-bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
+static bool space_admit_atom_impl(Space *s, Arena *fallback,
+                                  const Arena *source_arena, Atom *atom) {
     if (!s || !atom)
         return false;
 
@@ -2309,8 +2698,11 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
         return true;
 
     if (space_tracks_atom_ids(s)) {
-        AtomId atom_id =
-            term_universe_store_atom_id(s->native.universe, fallback, atom);
+        AtomId atom_id = source_arena
+            ? term_universe_store_atom_id_from_source_arena(
+                  s->native.universe, fallback, source_arena, atom)
+            : term_universe_store_atom_id(
+                  s->native.universe, fallback, atom);
         if (atom_id != CETTA_ATOM_ID_NONE) {
             if (space_store_via_backend_primary(s, atom_id, atom))
                 return true;
@@ -2336,6 +2728,17 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
     CettaIndex len_before = s->native.len;
     space_add(s, stored);
     return s->native.len == len_before + 1;
+}
+
+bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
+    return space_admit_atom_impl(s, fallback, NULL, atom);
+}
+
+bool space_admit_atom_from_source_arena(
+    Space *s, Arena *fallback, const Arena *source_arena, Atom *atom) {
+    if (!term_universe_source_id_memo_enabled())
+        return space_admit_atom_impl(s, fallback, NULL, atom);
+    return space_admit_atom_impl(s, fallback, source_arena, atom);
 }
 
 Space *space_heap_clone_shallow(Space *src) {
@@ -3184,6 +3587,44 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
         return true;
     }
     return false;
+}
+
+bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
+                                 CettaCount atom_count,
+                                 CettaCount *out_removed) {
+    uint64_t removed = 0;
+    SpaceBackendBatchResult batch_result;
+
+    if (out_removed)
+        *out_removed = 0;
+    if (!s || (!atom_ids && atom_count != 0))
+        return false;
+    if (atom_count == 0)
+        return true;
+
+    batch_result = space_has_overlay_base(s)
+        ? SPACE_BACKEND_BATCH_UNSUPPORTED
+        : space_match_backend_remove_atom_ids_batch_direct(
+              s, atom_ids, atom_count, &removed);
+    if (batch_result == SPACE_BACKEND_BATCH_ERROR)
+        return false;
+    if (batch_result == SPACE_BACKEND_BATCH_APPLIED) {
+        if (removed != 0) {
+            space_mark_indexes_dirty(s);
+            space_bump_revision(s);
+        }
+        if (out_removed)
+            *out_removed = (CettaCount)removed;
+        return true;
+    }
+
+    for (CettaCount i = 0; i < atom_count; i++) {
+        if (space_remove_atom_id(s, atom_ids[i]))
+            removed++;
+    }
+    if (out_removed)
+        *out_removed = (CettaCount)removed;
+    return true;
 }
 
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx) {
@@ -4612,7 +5053,10 @@ static bool pattern_vars_unique_rec(const Atom *a, VarId *seen, uint32_t *n,
  * by the eligibility predicate and the revision-keyed view cache.  Cheap: one
  * hashed bucket read + a tiny linearity walk; the cache calls it once per
  * (head, revision), not per reduction. */
-Atom *space_single_linear_equation(Space *s, SymbolId head) {
+static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
+                                             CettaIndex *logical_index) {
+    if (logical_index)
+        *logical_index = 0u;
     if (!s || head == SYMBOL_ID_NONE || space_has_overlay_base(s))
         return NULL;
     ensure_eq_index(s);
@@ -4641,11 +5085,1330 @@ Atom *space_single_linear_equation(Space *s, SymbolId head) {
     uint32_t nseen = 0;
     if (!pattern_vars_unique_rec(lhs, seen, &nseen, 64u))
         return NULL;
+    if (logical_index)
+        *logical_index = idx;
     return equation;
+}
+
+Atom *space_single_linear_equation(Space *s, SymbolId head) {
+    return space_single_linear_equation_at(s, head, NULL);
 }
 
 bool space_head_has_single_equation(Space *s, SymbolId head) {
     return space_single_linear_equation(s, head) != NULL;
+}
+
+static bool prepared_rhs_is_range_restricted(
+    const Atom *atom, const SpacePreparedEquation *plan) {
+    if (!atom || !plan)
+        return false;
+    if (!atom_has_vars(atom))
+        return true;
+    if (atom->kind == ATOM_VAR) {
+        for (CettaExprIndex i = 0u; i < plan->arity; i++)
+            if (plan->registers[i] == atom->var_id)
+                return true;
+        return false;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+        if (!prepared_rhs_is_range_restricted(atom->expr.elems[i], plan))
+            return false;
+    return true;
+}
+
+static bool prepared_register_head_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltRegisterResultKind *kind_out,
+    CettaGsltRegisterInstruction *instruction_out) {
+#define PREPARED_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \
+    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
+        if (kind_out) \
+            *kind_out = (result_kind); \
+        if (instruction_out) \
+            *instruction_out = (instruction); \
+        return true; \
+    }
+    CETTA_GSLT_REGISTER_HEAD_ROWS(PREPARED_REGISTER_HEAD)
+#undef PREPARED_REGISTER_HEAD
+    return false;
+}
+
+static bool prepared_register_head_kind(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltRegisterResultKind *kind_out) {
+    return prepared_register_head_program(
+        head, arity, kind_out, NULL);
+}
+
+static bool prepared_register_is_register(
+    const SpacePreparedEquation *plan, const Atom *atom) {
+    if (!plan || !atom || atom->kind != ATOM_VAR)
+        return false;
+    for (CettaExprIndex i = 0u; i < plan->arity; i++)
+        if (plan->registers[i] == atom->var_id)
+            return true;
+    return false;
+}
+
+static bool prepared_register_template_kind(
+    const SpacePreparedEquation *plan, const Atom *atom, uint32_t depth,
+    CettaGsltRegisterResultKind *kind_out) {
+    if (!plan || !atom || !kind_out || depth > 64u)
+        return false;
+    if (prepared_register_is_register(plan, atom) ||
+        (atom->kind == ATOM_GROUNDED &&
+         (atom->ground.gkind == GV_INT ||
+          atom->ground.gkind == GV_BIGINT))) {
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return false;
+    Atom *head = atom->expr.elems[0];
+    if (!head || head->kind != ATOM_SYMBOL ||
+        !prepared_register_head_kind(
+            head->sym_id, atom->expr.len - 1u, kind_out)) {
+        return false;
+    }
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+        CettaGsltRegisterResultKind child_kind;
+        if (!prepared_register_template_kind(
+                plan, atom->expr.elems[i], depth + 1u, &child_kind) ||
+            child_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool prepared_register_exact_integer(const Atom *atom);
+
+/* The recursive register fragment is an exact, pure expression grammar:
+ * input registers and exact integer literals; generated register heads;
+ * lazy `if`; and calls back to the same revision-pinned singleton equation.
+ * The native evaluator below consumes precisely this proof bit and no wider
+ * syntax. */
+static bool prepared_register_recursive_template_kind(
+    const SpacePreparedEquation *plan, const Atom *atom, uint32_t depth,
+    CettaGsltRegisterResultKind *kind_out, bool *saw_self_call) {
+    if (!plan || !atom || !kind_out || !saw_self_call || depth > 64u)
+        return false;
+    if (prepared_register_is_register(plan, atom) ||
+        prepared_register_exact_integer(atom)) {
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
+        !atom->expr.elems[0] ||
+        atom->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    SymbolId head = atom->expr.elems[0]->sym_id;
+    CettaExprLen nargs = atom->expr.len - 1u;
+    if (head == g_builtin_syms.if_text) {
+        if (nargs != 3u)
+            return false;
+        CettaGsltRegisterResultKind condition_kind;
+        CettaGsltRegisterResultKind true_kind;
+        CettaGsltRegisterResultKind false_kind;
+        if (!prepared_register_recursive_template_kind(
+                plan, atom->expr.elems[1], depth + 1u,
+                &condition_kind, saw_self_call) ||
+            condition_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
+            !prepared_register_recursive_template_kind(
+                plan, atom->expr.elems[2], depth + 1u,
+                &true_kind, saw_self_call) ||
+            !prepared_register_recursive_template_kind(
+                plan, atom->expr.elems[3], depth + 1u,
+                &false_kind, saw_self_call) ||
+            true_kind != false_kind ||
+            true_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+            return false;
+        }
+        *kind_out = true_kind;
+        return true;
+    }
+    if (head == plan->head) {
+        if (nargs != plan->arity)
+            return false;
+        for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+            CettaGsltRegisterResultKind argument_kind;
+            if (!prepared_register_recursive_template_kind(
+                    plan, atom->expr.elems[i], depth + 1u,
+                    &argument_kind, saw_self_call) ||
+                argument_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+                return false;
+            }
+        }
+        *saw_self_call = true;
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        return true;
+    }
+    CettaGsltRegisterResultKind result_kind;
+    if (!prepared_register_head_kind(head, nargs, &result_kind))
+        return false;
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+        CettaGsltRegisterResultKind argument_kind;
+        if (!prepared_register_recursive_template_kind(
+                plan, atom->expr.elems[i], depth + 1u,
+                &argument_kind, saw_self_call) ||
+            argument_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+            return false;
+        }
+    }
+    *kind_out = result_kind;
+    return true;
+}
+
+static bool prepared_register_tail_shape(
+    const SpacePreparedEquation *plan, Atom *atom) {
+    if (!plan || !atom || atom->kind != ATOM_EXPR ||
+        atom->expr.len != plan->arity + 1u ||
+        !atom_is_symbol_id(atom->expr.elems[0], plan->head)) {
+        return false;
+    }
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+        CettaGsltRegisterResultKind kind;
+        if (!prepared_register_template_kind(
+                plan, atom->expr.elems[i], 0u, &kind) ||
+            kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool prepared_register_compile_guarded_step(
+    SpacePreparedEquation *plan) {
+    if (!plan || !plan->rhs || plan->rhs->kind != ATOM_EXPR ||
+        plan->rhs->expr.len != 4u ||
+        !atom_is_symbol_id(plan->rhs->expr.elems[0],
+                           g_builtin_syms.if_text)) {
+        return false;
+    }
+    Atom *guard = plan->rhs->expr.elems[1];
+    Atom *when_true = plan->rhs->expr.elems[2];
+    Atom *when_false = plan->rhs->expr.elems[3];
+    CettaGsltRegisterResultKind guard_kind;
+    if (!prepared_register_template_kind(
+            plan, guard, 0u, &guard_kind) ||
+        guard_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN) {
+        return false;
+    }
+    bool true_is_tail = prepared_register_tail_shape(plan, when_true);
+    bool false_is_tail = prepared_register_tail_shape(plan, when_false);
+    if (true_is_tail == false_is_tail)
+        return false;
+    Atom *base = true_is_tail ? when_false : when_true;
+    CettaGsltRegisterResultKind base_kind;
+    if (!prepared_register_template_kind(
+            plan, base, 0u, &base_kind) ||
+        base_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+        return false;
+    }
+    plan->register_guard = guard;
+    plan->register_base = base;
+    plan->register_tail = true_is_tail ? when_true : when_false;
+    plan->register_base_when_true = !true_is_tail;
+    plan->evidence |= CETTA_GSLT_EVIDENCE_REGISTER_GUARD |
+                      CETTA_GSLT_EVIDENCE_REGISTER_BASE |
+                      CETTA_GSLT_EVIDENCE_REGISTER_TAIL;
+    return true;
+}
+
+/* A declared arrow signature at the call arity hands the head to the
+ * typed-demand discipline; the prepared ground-call lane may not evaluate
+ * arguments whose declared parameter types keep them syntax. */
+bool space_head_has_arrow_signature(Space *s, SymbolId head,
+                                    CettaExprLen arity) {
+    CettaCount logical_len = space_length64(s);
+    for (CettaIndex i = 0; i < logical_len; i++) {
+        Atom *annotation = space_get_at64(s, i);
+        if (!annotation || annotation->kind != ATOM_EXPR ||
+            annotation->expr.len != 3)
+            continue;
+        if (!atom_is_symbol_id(annotation->expr.elems[0],
+                               g_builtin_syms.colon))
+            continue;
+        Atom *subject = annotation->expr.elems[1];
+        if (!subject || !atom_is_symbol_id(subject, head))
+            continue;
+        Atom *type = annotation->expr.elems[2];
+        if (type && type->kind == ATOM_EXPR &&
+            type->expr.len == (CettaExprLen)(arity + 2u) &&
+            atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+            return true;
+    }
+    return false;
+}
+
+bool space_prepare_single_equation(Space *s, SymbolId head,
+                                   SpacePreparedEquation *out) {
+    SpacePreparedEquation plan;
+    CettaIndex logical_index = 0u;
+    Atom *equation;
+    Atom *lhs = NULL;
+    Atom *rhs = NULL;
+
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!s || !out || head == SYMBOL_ID_NONE)
+        return false;
+    equation = space_single_linear_equation_at(s, head, &logical_index);
+    if (!equation || !is_equation_atom(equation, &lhs, &rhs) ||
+        !lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
+        !atom_is_symbol_id(lhs->expr.elems[0], head)) {
+        return false;
+    }
+    CettaExprLen arity = lhs->expr.len - 1u;
+    if (arity > SPACE_PREPARED_EQUATION_MAX_REGISTERS)
+        return false;
+
+    memset(&plan, 0, sizeof(plan));
+    plan.occurrence.read = space_read_token(s);
+    plan.occurrence.logical_index = logical_index;
+    plan.equation = equation;
+    plan.lhs = lhs;
+    plan.rhs = rhs;
+    plan.head = head;
+    plan.arity = arity;
+    plan.evidence = CETTA_GSLT_EVIDENCE_SINGLETON_HEAD;
+    for (CettaExprIndex i = 0u; i < arity; i++) {
+        Atom *argument = lhs->expr.elems[i + 1u];
+        if (!argument || argument->kind != ATOM_VAR)
+            return false;
+        for (CettaExprIndex j = 0u; j < i; j++)
+            if (plan.registers[j] == argument->var_id)
+                return false;
+        plan.registers[i] = argument->var_id;
+    }
+    plan.evidence |= CETTA_GSLT_EVIDENCE_FLAT_LINEAR_LHS;
+    if (!prepared_rhs_is_range_restricted(rhs, &plan))
+        return false;
+    plan.evidence |= CETTA_GSLT_EVIDENCE_RANGE_RESTRICTED_RHS;
+    if (space_read_token_is_current(plan.occurrence.read))
+        plan.evidence |= CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    if (CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(s, head, arity))
+        plan.evidence |= CETTA_GSLT_EVIDENCE_CALL_POLICY_SUPPORTED;
+    if (!cetta_gslt_prepared_equation_plan_admitted(plan.evidence))
+        return false;
+    (void)prepared_register_compile_guarded_step(&plan);
+    CettaGsltRegisterResultKind recursive_kind;
+    bool saw_self_call = false;
+    if (prepared_register_recursive_template_kind(
+            &plan, plan.rhs, 0u, &recursive_kind, &saw_self_call) &&
+        saw_self_call &&
+        recursive_kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+        plan.evidence |= CETTA_GSLT_EVIDENCE_REGISTER_RECURSIVE;
+    }
+    *out = plan;
+    return true;
+}
+
+static Atom *prepared_equation_instantiate_rec(
+    const SpacePreparedEquation *plan, Atom *source,
+    Atom *const *register_values, Arena *arena) {
+    if (!source || !plan || !arena)
+        return NULL;
+    if (!atom_has_vars(source))
+        return source;
+    if (source->kind == ATOM_VAR) {
+        for (CettaExprIndex i = 0u; i < plan->arity; i++)
+            if (plan->registers[i] == source->var_id)
+                return register_values[i];
+        return NULL;
+    }
+    if (source->kind != ATOM_EXPR)
+        return source;
+
+    Atom **children = arena_alloc(
+        arena, sizeof(*children) * (size_t)source->expr.len);
+    if (!children)
+        return NULL;
+    for (CettaExprIndex i = 0u; i < source->expr.len; i++) {
+        children[i] = prepared_equation_instantiate_rec(
+            plan, source->expr.elems[i], register_values, arena);
+        if (!children[i])
+            return NULL;
+    }
+    return atom_expr(arena, children, source->expr.len);
+}
+
+Atom *space_prepared_equation_instantiate_ground(
+    const SpacePreparedEquation *plan, Atom *call, Arena *arena) {
+    if (!plan || !call || !arena ||
+        call->kind != ATOM_EXPR || call->expr.len != plan->arity + 1u ||
+        !atom_is_symbol_id(call->expr.elems[0], plan->head)) {
+        return NULL;
+    }
+    uint32_t evidence =
+        plan->evidence & ~CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    if (space_read_token_is_current(plan->occurrence.read))
+        evidence |= CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    Atom *register_values[SPACE_PREPARED_EQUATION_MAX_REGISTERS];
+    bool ground_call = true;
+    for (CettaExprIndex i = 0u; i < plan->arity; i++) {
+        Atom *value = call->expr.elems[i + 1u];
+        if (!value || atom_has_vars(value))
+            ground_call = false;
+        register_values[i] = value;
+    }
+    if (ground_call)
+        evidence |= CETTA_GSLT_EVIDENCE_GROUND_CALL;
+    if (!cetta_gslt_prepared_equation_call_admitted(evidence))
+        return NULL;
+    return prepared_equation_instantiate_rec(
+        plan, plan->rhs, register_values, arena);
+}
+
+static bool prepared_register_exact_integer(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           (atom->ground.gkind == GV_INT ||
+            atom->ground.gkind == GV_BIGINT);
+}
+
+static Atom *prepared_register_execute_expression(
+    const SpacePreparedEquation *plan, Atom *source,
+    Atom *const *register_values, Arena *arena, uint32_t depth,
+    CettaGsltRegisterResultKind *kind_out) {
+    if (!plan || !source || !register_values || !arena || !kind_out ||
+        depth > 64u) {
+        return NULL;
+    }
+    if (source->kind == ATOM_VAR) {
+        for (CettaExprIndex i = 0u; i < plan->arity; i++) {
+            if (plan->registers[i] == source->var_id) {
+                Atom *value = register_values[i];
+                if (!prepared_register_exact_integer(value))
+                    return NULL;
+                *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+                return value;
+            }
+        }
+        return NULL;
+    }
+    if (prepared_register_exact_integer(source)) {
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        return source;
+    }
+    if (source->kind != ATOM_EXPR || source->expr.len == 0u)
+        return NULL;
+    Atom *head = source->expr.elems[0];
+    CettaExprLen nargs = source->expr.len - 1u;
+    CettaGsltRegisterResultKind result_kind;
+    if (!head || head->kind != ATOM_SYMBOL ||
+        !prepared_register_head_kind(head->sym_id, nargs, &result_kind) ||
+        nargs > CETTA_GSLT_PREPARED_EQUATION_MAX_REGISTERS) {
+        return NULL;
+    }
+    Atom *args[CETTA_GSLT_PREPARED_EQUATION_MAX_REGISTERS];
+    for (CettaExprIndex i = 0u; i < nargs; i++) {
+        CettaGsltRegisterResultKind child_kind;
+        args[i] = prepared_register_execute_expression(
+            plan, source->expr.elems[i + 1u], register_values,
+            arena, depth + 1u, &child_kind);
+        if (!args[i] ||
+            child_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+            return NULL;
+        }
+    }
+    Atom *result = grounded_dispatch(arena, head, args, (uint32_t)nargs);
+    if (!result)
+        return NULL;
+    if ((result_kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER &&
+         !prepared_register_exact_integer(result)) ||
+        (result_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN &&
+         !(result->kind == ATOM_GROUNDED &&
+           result->ground.gkind == GV_BOOL))) {
+        return NULL;
+    }
+    *kind_out = result_kind;
+    return result;
+}
+
+SpacePreparedRegisterStep space_prepared_equation_execute_register_step(
+    const SpacePreparedEquation *plan, Atom *call, Arena *arena,
+    Atom **result_out) {
+    if (result_out)
+        *result_out = NULL;
+    if (!plan || !call || !arena || !result_out ||
+        !plan->register_guard || !plan->register_base ||
+        !plan->register_tail || call->kind != ATOM_EXPR ||
+        call->expr.len != plan->arity + 1u ||
+        !atom_is_symbol_id(call->expr.elems[0], plan->head)) {
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    }
+    uint32_t evidence =
+        plan->evidence & ~CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    if (space_read_token_is_current(plan->occurrence.read))
+        evidence |= CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    Atom *register_values[SPACE_PREPARED_EQUATION_MAX_REGISTERS];
+    for (CettaExprIndex i = 0u; i < plan->arity; i++) {
+        Atom *value = call->expr.elems[i + 1u];
+        if (!prepared_register_exact_integer(value))
+            return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+        register_values[i] = value;
+    }
+    evidence |= CETTA_GSLT_EVIDENCE_GROUND_CALL;
+    if (!cetta_gslt_prepared_register_step_admitted(evidence))
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+
+    CettaGsltRegisterResultKind guard_kind;
+    Atom *guard = prepared_register_execute_expression(
+        plan, plan->register_guard, register_values,
+        arena, 0u, &guard_kind);
+    if (!guard || guard_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN)
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    bool take_base = guard->ground.bval == plan->register_base_when_true;
+    if (take_base) {
+        CettaGsltRegisterResultKind base_kind;
+        Atom *base = prepared_register_execute_expression(
+            plan, plan->register_base, register_values,
+            arena, 0u, &base_kind);
+        if (!base || base_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER)
+            return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+        *result_out = base;
+        return SPACE_PREPARED_REGISTER_VALUE;
+    }
+
+    Atom **tail_elems = arena_alloc(
+        arena, sizeof(*tail_elems) * (size_t)(plan->arity + 1u));
+    tail_elems[0] = plan->register_tail->expr.elems[0];
+    for (CettaExprIndex i = 0u; i < plan->arity; i++) {
+        CettaGsltRegisterResultKind argument_kind;
+        tail_elems[i + 1u] = prepared_register_execute_expression(
+            plan, plan->register_tail->expr.elems[i + 1u],
+            register_values, arena, 0u, &argument_kind);
+        if (!tail_elems[i + 1u] ||
+            argument_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+            return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+        }
+    }
+    *result_out = atom_expr(arena, tail_elems, plan->arity + 1u);
+    return *result_out ? SPACE_PREPARED_REGISTER_TAIL_CALL
+                       : SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+}
+
+#if CETTA_BUILD_WITH_GMP
+#define PREPARED_MPZ_SCRATCH_CAP 192u
+
+typedef struct {
+    mpz_t values[PREPARED_MPZ_SCRATCH_CAP];
+    size_t initialized;
+    size_t used;
+} PreparedMpzScratch;
+
+typedef struct {
+    mpz_srcptr source;
+    mpz_ptr temporary;
+} PreparedMpzValue;
+
+static mpz_ptr prepared_mpz_scratch_take(PreparedMpzScratch *scratch) {
+    if (!scratch || scratch->used >= PREPARED_MPZ_SCRATCH_CAP)
+        return NULL;
+    if (scratch->used == scratch->initialized) {
+        mpz_init(scratch->values[scratch->initialized]);
+        scratch->initialized++;
+    }
+    return scratch->values[scratch->used++];
+}
+
+static void prepared_mpz_scratch_reset(PreparedMpzScratch *scratch) {
+    if (scratch)
+        scratch->used = 0u;
+}
+
+static void prepared_mpz_scratch_clear(PreparedMpzScratch *scratch) {
+    if (!scratch)
+        return;
+    for (size_t i = 0u; i < scratch->initialized; i++)
+        mpz_clear(scratch->values[i]);
+    scratch->initialized = 0u;
+    scratch->used = 0u;
+}
+
+static void prepared_mpz_set_i64(mpz_ptr out, int64_t value) {
+    uint64_t magnitude = value < 0
+        ? (uint64_t)(-(value + 1)) + 1u
+        : (uint64_t)value;
+    mpz_import(out, 1, -1, sizeof(magnitude), 0, 0, &magnitude);
+    if (value < 0)
+        mpz_neg(out, out);
+}
+
+static bool prepared_mpz_set_atom(mpz_ptr out, const Atom *atom) {
+    if (!out || !prepared_register_exact_integer(atom))
+        return false;
+    if (atom->ground.gkind == GV_INT) {
+        prepared_mpz_set_i64(out, atom->ground.ival);
+        return true;
+    }
+    mpz_srcptr source = atom_bigint_mpz_view(atom);
+    if (!source)
+        return false;
+    mpz_set(out, source);
+    return true;
+}
+
+static bool prepared_mpz_register_index(
+    const SpacePreparedEquation *plan, const Atom *atom,
+    CettaExprIndex *index_out) {
+    if (!plan || !atom || atom->kind != ATOM_VAR)
+        return false;
+    for (CettaExprIndex i = 0u; i < plan->arity; i++) {
+        if (plan->registers[i] == atom->var_id) {
+            if (index_out)
+                *index_out = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool prepared_mpz_eval_integer(
+    const SpacePreparedEquation *plan, const Atom *source,
+    mpz_t *registers, PreparedMpzScratch *scratch,
+    uint32_t depth, PreparedMpzValue *value_out) {
+    if (!plan || !source || !registers || !scratch || !value_out ||
+        depth > 64u) {
+        return false;
+    }
+    CettaExprIndex register_index = 0u;
+    if (prepared_mpz_register_index(plan, source, &register_index)) {
+        value_out->source = registers[register_index];
+        value_out->temporary = NULL;
+        return true;
+    }
+    if (prepared_register_exact_integer(source)) {
+        if (source->ground.gkind == GV_BIGINT) {
+            value_out->source = atom_bigint_mpz_view(source);
+            value_out->temporary = NULL;
+            return value_out->source != NULL;
+        }
+        mpz_ptr literal = prepared_mpz_scratch_take(scratch);
+        if (!literal)
+            return false;
+        prepared_mpz_set_i64(literal, source->ground.ival);
+        value_out->source = literal;
+        value_out->temporary = literal;
+        return true;
+    }
+    if (source->kind != ATOM_EXPR || source->expr.len != 3u ||
+        !source->expr.elems[0] ||
+        source->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    CettaGsltRegisterResultKind result_kind;
+    SymbolId head = source->expr.elems[0]->sym_id;
+    if (!prepared_register_head_kind(head, 2u, &result_kind) ||
+        result_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+        return false;
+    }
+    PreparedMpzValue left = {0};
+    PreparedMpzValue right = {0};
+    if (!prepared_mpz_eval_integer(
+            plan, source->expr.elems[1], registers, scratch,
+            depth + 1u, &left) ||
+        !prepared_mpz_eval_integer(
+            plan, source->expr.elems[2], registers, scratch,
+            depth + 1u, &right)) {
+        return false;
+    }
+    mpz_ptr result = prepared_mpz_scratch_take(scratch);
+    if (!result)
+        return false;
+    if (head == g_builtin_syms.op_plus)
+        mpz_add(result, left.source, right.source);
+    else if (head == g_builtin_syms.op_minus)
+        mpz_sub(result, left.source, right.source);
+    else if (head == g_builtin_syms.op_mul)
+        mpz_mul(result, left.source, right.source);
+    else
+        return false;
+    value_out->source = result;
+    value_out->temporary = result;
+    return true;
+}
+
+static bool prepared_mpz_eval_guard(
+    const SpacePreparedEquation *plan, mpz_t *registers,
+    PreparedMpzScratch *scratch, bool *value_out) {
+    Atom *guard = plan ? plan->register_guard : NULL;
+    if (!guard || guard->kind != ATOM_EXPR || guard->expr.len != 3u ||
+        !guard->expr.elems[0] || guard->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    CettaGsltRegisterResultKind result_kind;
+    SymbolId head = guard->expr.elems[0]->sym_id;
+    if (!prepared_register_head_kind(head, 2u, &result_kind) ||
+        result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
+        head != g_builtin_syms.op_eq) {
+        return false;
+    }
+    prepared_mpz_scratch_reset(scratch);
+    PreparedMpzValue left = {0};
+    PreparedMpzValue right = {0};
+    if (!prepared_mpz_eval_integer(
+            plan, guard->expr.elems[1], registers, scratch, 0u, &left) ||
+        !prepared_mpz_eval_integer(
+            plan, guard->expr.elems[2], registers, scratch, 0u, &right)) {
+        return false;
+    }
+    *value_out = mpz_cmp(left.source, right.source) == 0;
+    return true;
+}
+
+static Atom *prepared_mpz_materialize_call(
+    const SpacePreparedEquation *plan, mpz_t *registers, Arena *arena) {
+    if (!plan || !registers || !arena)
+        return NULL;
+    Atom **elems = arena_alloc(
+        arena, sizeof(*elems) * (size_t)(plan->arity + 1u));
+    elems[0] = atom_symbol_id(arena, plan->head);
+    for (CettaExprIndex i = 0u; i < plan->arity; i++)
+        elems[i + 1u] = atom_bigint_from_mpz(arena, registers[i]);
+    return atom_expr(arena, elems, plan->arity + 1u);
+}
+
+static SpacePreparedRegisterStep prepared_mpz_run_register_loop(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_steps, Atom **result_out) {
+    if (!plan || !call || !result_arena || !result_out || max_steps == 0u ||
+        !plan->register_guard || !plan->register_base ||
+        !plan->register_tail || call->kind != ATOM_EXPR ||
+        call->expr.len != plan->arity + 1u ||
+        !atom_is_symbol_id(call->expr.elems[0], plan->head)) {
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    }
+    uint32_t evidence = plan->evidence;
+    if (space_read_token_is_current(plan->occurrence.read))
+        evidence |= CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    else
+        evidence &= ~CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    evidence |= CETTA_GSLT_EVIDENCE_GROUND_CALL;
+    if (!cetta_gslt_prepared_register_step_admitted(evidence))
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+
+    mpz_t banks[2][SPACE_PREPARED_EQUATION_MAX_REGISTERS];
+    for (unsigned bank = 0u; bank < 2u; bank++)
+        for (CettaExprIndex i = 0u; i < plan->arity; i++)
+            mpz_init(banks[bank][i]);
+    bool initialized = true;
+    for (CettaExprIndex i = 0u; i < plan->arity; i++) {
+        if (!prepared_mpz_set_atom(banks[0][i], call->expr.elems[i + 1u])) {
+            initialized = false;
+            break;
+        }
+    }
+    if (!initialized) {
+        for (unsigned bank = 0u; bank < 2u; bank++)
+            for (CettaExprIndex i = 0u; i < plan->arity; i++)
+                mpz_clear(banks[bank][i]);
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    }
+
+    PreparedMpzScratch scratch = {0};
+    unsigned active = 0u;
+    size_t completed = 0u;
+    SpacePreparedRegisterStep outcome = SPACE_PREPARED_REGISTER_TAIL_CALL;
+    while (completed < max_steps) {
+        if (!space_read_token_is_current(plan->occurrence.read))
+            break;
+        bool guard = false;
+        if (!prepared_mpz_eval_guard(
+                plan, banks[active], &scratch, &guard)) {
+            outcome = completed == 0u
+                ? SPACE_PREPARED_REGISTER_NOT_APPLICABLE
+                : SPACE_PREPARED_REGISTER_TAIL_CALL;
+            break;
+        }
+        completed++;
+        bool take_base = guard == plan->register_base_when_true;
+        if (take_base) {
+            prepared_mpz_scratch_reset(&scratch);
+            PreparedMpzValue base = {0};
+            if (!prepared_mpz_eval_integer(
+                    plan, plan->register_base, banks[active],
+                    &scratch, 0u, &base)) {
+                outcome = SPACE_PREPARED_REGISTER_TAIL_CALL;
+                break;
+            }
+            *result_out = atom_bigint_from_mpz(result_arena, base.source);
+            outcome = *result_out
+                ? SPACE_PREPARED_REGISTER_VALUE
+                : SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+            goto prepared_mpz_done;
+        }
+
+        unsigned next = active ^ 1u;
+        for (CettaExprIndex i = 0u; i < plan->arity; i++) {
+            prepared_mpz_scratch_reset(&scratch);
+            PreparedMpzValue argument = {0};
+            if (!prepared_mpz_eval_integer(
+                    plan, plan->register_tail->expr.elems[i + 1u],
+                    banks[active], &scratch, 0u, &argument)) {
+                outcome = SPACE_PREPARED_REGISTER_TAIL_CALL;
+                goto prepared_mpz_materialize;
+            }
+            if (argument.temporary)
+                mpz_swap(banks[next][i], argument.temporary);
+            else
+                mpz_set(banks[next][i], argument.source);
+        }
+        active = next;
+    }
+
+prepared_mpz_materialize:
+    if (outcome != SPACE_PREPARED_REGISTER_NOT_APPLICABLE)
+        *result_out = prepared_mpz_materialize_call(
+            plan, banks[active], result_arena);
+prepared_mpz_done:
+    prepared_mpz_scratch_clear(&scratch);
+    for (unsigned bank = 0u; bank < 2u; bank++)
+        for (CettaExprIndex i = 0u; i < plan->arity; i++)
+            mpz_clear(banks[bank][i]);
+    return *result_out ? outcome
+                       : SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+}
+
+typedef struct {
+    mpz_t registers[SPACE_PREPARED_EQUATION_MAX_REGISTERS];
+} PreparedRecursiveEnvironment;
+
+typedef struct {
+    mpz_t integer;
+    CettaGsltRegisterResultKind kind;
+    bool boolean;
+} PreparedRecursiveValue;
+
+typedef enum {
+    PREPARED_RECURSIVE_ENTER = 0,
+    PREPARED_RECURSIVE_ARGUMENTS,
+    PREPARED_RECURSIVE_IF_CONDITION,
+    PREPARED_RECURSIVE_IF_BRANCH,
+    PREPARED_RECURSIVE_SELF_RESULT,
+} PreparedRecursiveFrameState;
+
+typedef struct {
+    const Atom *source;
+    size_t environment;
+    size_t value_base;
+    CettaExprIndex next_argument;
+    CettaExprLen argument_count;
+    SymbolId head;
+    CettaGsltRegisterResultKind result_kind;
+    CettaGsltRegisterInstruction instruction;
+    PreparedRecursiveFrameState state;
+} PreparedRecursiveFrame;
+
+typedef struct {
+    const SpacePreparedEquation *plan;
+    PreparedRecursiveEnvironment **environments;
+    size_t environment_len;
+    size_t environment_pool_len;
+    size_t environment_cap;
+    PreparedRecursiveValue **values;
+    size_t value_len;
+    size_t value_pool_len;
+    size_t value_cap;
+    PreparedRecursiveFrame *frames;
+    size_t frame_len;
+    size_t frame_cap;
+    size_t calls;
+    size_t max_calls;
+} PreparedRecursiveMachine;
+
+static bool prepared_recursive_grow_pointer_array(
+    void ***items, size_t *capacity, size_t needed) {
+    if (!items || !capacity)
+        return false;
+    if (needed <= *capacity)
+        return true;
+    size_t next = *capacity ? *capacity : 32u;
+    while (next < needed) {
+        if (next > SIZE_MAX / 2u)
+            return false;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / sizeof(**items))
+        return false;
+    *items = cetta_realloc(*items, sizeof(**items) * next);
+    *capacity = next;
+    return true;
+}
+
+static PreparedRecursiveEnvironment *
+prepared_recursive_push_environment(PreparedRecursiveMachine *machine) {
+    if (!machine)
+        return NULL;
+    if (machine->environment_len == machine->environment_pool_len) {
+        if (!prepared_recursive_grow_pointer_array(
+                (void ***)&machine->environments,
+                &machine->environment_cap,
+                machine->environment_pool_len + 1u)) {
+            return NULL;
+        }
+        PreparedRecursiveEnvironment *environment =
+            cetta_malloc(sizeof(*environment));
+        for (CettaExprIndex i = 0u; i < machine->plan->arity; i++)
+            mpz_init(environment->registers[i]);
+        machine->environments[machine->environment_pool_len++] =
+            environment;
+    }
+    return machine->environments[machine->environment_len++];
+}
+
+static PreparedRecursiveValue *
+prepared_recursive_push_value(PreparedRecursiveMachine *machine) {
+    if (!machine)
+        return NULL;
+    if (machine->value_len == machine->value_pool_len) {
+        if (!prepared_recursive_grow_pointer_array(
+                (void ***)&machine->values, &machine->value_cap,
+                machine->value_pool_len + 1u)) {
+            return NULL;
+        }
+        PreparedRecursiveValue *value = cetta_malloc(sizeof(*value));
+        mpz_init(value->integer);
+        value->kind = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        value->boolean = false;
+        machine->values[machine->value_pool_len++] = value;
+    }
+    return machine->values[machine->value_len++];
+}
+
+static bool prepared_recursive_push_integer(
+    PreparedRecursiveMachine *machine, mpz_srcptr source) {
+    if (!source)
+        return false;
+    PreparedRecursiveValue *value =
+        prepared_recursive_push_value(machine);
+    if (!value)
+        return false;
+    mpz_set(value->integer, source);
+    value->kind = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+    value->boolean = false;
+    return true;
+}
+
+static bool prepared_recursive_push_atom_integer(
+    PreparedRecursiveMachine *machine, const Atom *source) {
+    PreparedRecursiveValue *value =
+        prepared_recursive_push_value(machine);
+    if (!value)
+        return false;
+    if (!prepared_mpz_set_atom(value->integer, source)) {
+        machine->value_len--;
+        return false;
+    }
+    value->kind = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+    value->boolean = false;
+    return true;
+}
+
+static bool prepared_recursive_push_frame(
+    PreparedRecursiveMachine *machine, const Atom *source,
+    size_t environment) {
+    if (!machine || !source || environment >= machine->environment_len)
+        return false;
+    if (machine->frame_len == machine->frame_cap) {
+        size_t next = machine->frame_cap ? machine->frame_cap * 2u : 64u;
+        if (next < machine->frame_cap ||
+            next > SIZE_MAX / sizeof(*machine->frames)) {
+            return false;
+        }
+        machine->frames = cetta_realloc(
+            machine->frames, sizeof(*machine->frames) * next);
+        machine->frame_cap = next;
+    }
+    PreparedRecursiveFrame *frame =
+        &machine->frames[machine->frame_len++];
+    memset(frame, 0, sizeof(*frame));
+    frame->source = source;
+    frame->environment = environment;
+    frame->state = PREPARED_RECURSIVE_ENTER;
+    return true;
+}
+
+static void prepared_recursive_machine_free(
+    PreparedRecursiveMachine *machine) {
+    if (!machine)
+        return;
+    for (size_t i = 0u; i < machine->environment_pool_len; i++) {
+        PreparedRecursiveEnvironment *environment =
+            machine->environments[i];
+        for (CettaExprIndex j = 0u; j < machine->plan->arity; j++)
+            mpz_clear(environment->registers[j]);
+        free(environment);
+    }
+    for (size_t i = 0u; i < machine->value_pool_len; i++) {
+        mpz_clear(machine->values[i]->integer);
+        free(machine->values[i]);
+    }
+    free(machine->environments);
+    free(machine->values);
+    free(machine->frames);
+    memset(machine, 0, sizeof(*machine));
+}
+
+static bool prepared_recursive_apply_instruction(
+    PreparedRecursiveMachine *machine,
+    const PreparedRecursiveFrame *frame) {
+    if (!machine || !frame || frame->argument_count != 2u ||
+        machine->value_len != frame->value_base + 2u) {
+        return false;
+    }
+    PreparedRecursiveValue *left =
+        machine->values[frame->value_base];
+    PreparedRecursiveValue *right =
+        machine->values[frame->value_base + 1u];
+    if (left->kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER ||
+        right->kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+        return false;
+    }
+    bool boolean = false;
+    CettaGsltRegisterResultKind result_kind;
+    if (!cetta_gslt_register_execute_binary(
+            frame->instruction, left->integer, &boolean,
+            left->integer, right->integer, &result_kind) ||
+        result_kind != frame->result_kind) {
+        return false;
+    }
+    left->kind = result_kind;
+    left->boolean = boolean;
+    machine->value_len = frame->value_base + 1u;
+    return true;
+}
+
+static bool prepared_recursive_start_self_call(
+    PreparedRecursiveMachine *machine,
+    PreparedRecursiveFrame *frame) {
+    if (!machine || !frame ||
+        frame->argument_count != machine->plan->arity ||
+        machine->value_len !=
+            frame->value_base + (size_t)frame->argument_count ||
+        machine->calls >= machine->max_calls ||
+        !space_read_token_is_current(machine->plan->occurrence.read)) {
+        return false;
+    }
+    for (CettaExprIndex i = 0u; i < frame->argument_count; i++)
+        if (machine->values[frame->value_base + (size_t)i]->kind !=
+            CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER)
+            return false;
+    PreparedRecursiveEnvironment *environment =
+        prepared_recursive_push_environment(machine);
+    if (!environment)
+        return false;
+    for (CettaExprIndex i = 0u; i < frame->argument_count; i++) {
+        mpz_set(
+            environment->registers[i],
+            machine->values[frame->value_base + (size_t)i]->integer);
+    }
+    machine->value_len = frame->value_base;
+    machine->calls++;
+    frame->state = PREPARED_RECURSIVE_SELF_RESULT;
+    return prepared_recursive_push_frame(
+        machine, machine->plan->rhs, machine->environment_len - 1u);
+}
+
+static bool prepared_recursive_run(
+    PreparedRecursiveMachine *machine) {
+    while (machine && machine->frame_len > 0u) {
+        PreparedRecursiveFrame *frame =
+            &machine->frames[machine->frame_len - 1u];
+        if (frame->state == PREPARED_RECURSIVE_ENTER) {
+            const Atom *source = frame->source;
+            CettaExprIndex register_index = 0u;
+            if (prepared_mpz_register_index(
+                    machine->plan, source, &register_index)) {
+                if (!prepared_recursive_push_integer(
+                        machine,
+                        machine->environments[frame->environment]
+                            ->registers[register_index])) {
+                    return false;
+                }
+                machine->frame_len--;
+                continue;
+            }
+            if (prepared_register_exact_integer(source)) {
+                if (!prepared_recursive_push_atom_integer(machine, source))
+                    return false;
+                machine->frame_len--;
+                continue;
+            }
+            if (source->kind != ATOM_EXPR || source->expr.len == 0u ||
+                !source->expr.elems[0] ||
+                source->expr.elems[0]->kind != ATOM_SYMBOL) {
+                return false;
+            }
+            frame->head = source->expr.elems[0]->sym_id;
+            frame->argument_count = source->expr.len - 1u;
+            frame->value_base = machine->value_len;
+            if (frame->head == g_builtin_syms.if_text) {
+                if (frame->argument_count != 3u)
+                    return false;
+                frame->state = PREPARED_RECURSIVE_IF_CONDITION;
+                if (!prepared_recursive_push_frame(
+                        machine, source->expr.elems[1],
+                        frame->environment)) {
+                    return false;
+                }
+                continue;
+            }
+            if (frame->head == machine->plan->head) {
+                if (frame->argument_count != machine->plan->arity)
+                    return false;
+                frame->result_kind =
+                    CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+            } else if (!prepared_register_head_program(
+                           frame->head, frame->argument_count,
+                           &frame->result_kind, &frame->instruction)) {
+                return false;
+            }
+            frame->next_argument = 0u;
+            frame->state = PREPARED_RECURSIVE_ARGUMENTS;
+            if (frame->argument_count == 0u) {
+                if (frame->head != machine->plan->head ||
+                    !prepared_recursive_start_self_call(machine, frame)) {
+                    return false;
+                }
+                continue;
+            }
+            if (!prepared_recursive_push_frame(
+                    machine, source->expr.elems[1],
+                    frame->environment)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (frame->state == PREPARED_RECURSIVE_ARGUMENTS) {
+            if (machine->value_len !=
+                    frame->value_base +
+                    (size_t)frame->next_argument + 1u ||
+                machine->values[machine->value_len - 1u]->kind !=
+                    CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+                return false;
+            }
+            frame->next_argument++;
+            if (frame->next_argument < frame->argument_count) {
+                if (!prepared_recursive_push_frame(
+                        machine,
+                        frame->source->expr.elems[
+                            frame->next_argument + 1u],
+                        frame->environment)) {
+                    return false;
+                }
+                continue;
+            }
+            if (frame->head == machine->plan->head) {
+                if (!prepared_recursive_start_self_call(machine, frame))
+                    return false;
+                continue;
+            }
+            if (!prepared_recursive_apply_instruction(machine, frame))
+                return false;
+            machine->frame_len--;
+            continue;
+        }
+
+        if (frame->state == PREPARED_RECURSIVE_IF_CONDITION) {
+            if (machine->value_len != frame->value_base + 1u)
+                return false;
+            PreparedRecursiveValue *condition =
+                machine->values[frame->value_base];
+            if (condition->kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN)
+                return false;
+            const Atom *branch = frame->source->expr.elems[
+                condition->boolean ? 2u : 3u];
+            machine->value_len = frame->value_base;
+            frame->state = PREPARED_RECURSIVE_IF_BRANCH;
+            if (!prepared_recursive_push_frame(
+                    machine, branch, frame->environment)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (frame->state == PREPARED_RECURSIVE_IF_BRANCH) {
+            if (machine->value_len != frame->value_base + 1u ||
+                machine->values[frame->value_base]->kind !=
+                    CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+                return false;
+            }
+            machine->frame_len--;
+            continue;
+        }
+
+        if (frame->state == PREPARED_RECURSIVE_SELF_RESULT) {
+            if (machine->environment_len != frame->environment + 2u ||
+                machine->value_len != frame->value_base + 1u ||
+                machine->values[frame->value_base]->kind !=
+                    CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
+                return false;
+            }
+            machine->environment_len--;
+            machine->frame_len--;
+            continue;
+        }
+        return false;
+    }
+    return machine && machine->environment_len == 1u &&
+           machine->value_len == 1u &&
+           machine->values[0]->kind ==
+               CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+}
+
+static SpacePreparedRegisterStep prepared_mpz_run_register_recursion(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_calls, Atom **result_out) {
+    if (!plan || !call || !result_arena || !result_out ||
+        max_calls == 0u || call->kind != ATOM_EXPR ||
+        call->expr.len != plan->arity + 1u ||
+        !atom_is_symbol_id(call->expr.elems[0], plan->head)) {
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    }
+    uint32_t evidence = plan->evidence;
+    if (space_read_token_is_current(plan->occurrence.read))
+        evidence |= CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    else
+        evidence &= ~CETTA_GSLT_EVIDENCE_REVISION_CURRENT;
+    evidence |= CETTA_GSLT_EVIDENCE_GROUND_CALL;
+    if (!cetta_gslt_prepared_register_recursion_admitted(evidence))
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+
+    PreparedRecursiveMachine machine = {
+        .plan = plan,
+        .max_calls = max_calls,
+        .calls = 1u,
+    };
+    PreparedRecursiveEnvironment *initial =
+        prepared_recursive_push_environment(&machine);
+    bool initialized = initial != NULL;
+    for (CettaExprIndex i = 0u; initialized && i < plan->arity; i++) {
+        initialized = prepared_mpz_set_atom(
+            initial->registers[i], call->expr.elems[i + 1u]);
+    }
+    bool completed = initialized &&
+        prepared_recursive_push_frame(&machine, plan->rhs, 0u) &&
+        prepared_recursive_run(&machine);
+    if (completed)
+        *result_out = atom_bigint_from_mpz(
+            result_arena, machine.values[0]->integer);
+    prepared_recursive_machine_free(&machine);
+    return *result_out ? SPACE_PREPARED_REGISTER_VALUE
+                       : SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+}
+#endif
+
+/* Execute a bounded run of the same proved register instruction in a private
+ * nursery.  GMP builds keep exact numerics in reusable machine registers;
+ * the arena semispace below is the representation-independent fallback. */
+SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_steps, Atom **result_out) {
+    enum { REGISTER_LOOP_NURSERY_BYTES = 8u * 1024u * 1024u };
+    if (result_out)
+        *result_out = NULL;
+    if (!plan || !call || !result_arena || !result_out || max_steps == 0u)
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+
+#if CETTA_BUILD_WITH_GMP
+    SpacePreparedRegisterStep mpz_outcome =
+        prepared_mpz_run_register_loop(
+            plan, call, result_arena, max_steps, result_out);
+    if (mpz_outcome != SPACE_PREPARED_REGISTER_NOT_APPLICABLE)
+        return mpz_outcome;
+#endif
+
+    Arena semispaces[2];
+    arena_init(&semispaces[0]);
+    arena_init(&semispaces[1]);
+    arena_set_hashcons(&semispaces[0], NULL);
+    arena_set_hashcons(&semispaces[1], NULL);
+    arena_set_runtime_kind(
+        &semispaces[0], CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_runtime_kind(
+        &semispaces[1], CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+
+    unsigned active = 0u;
+    Atom *current = call;
+    SpacePreparedRegisterStep outcome =
+        SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    size_t completed = 0u;
+    while (completed < max_steps) {
+        Atom *next = NULL;
+        SpacePreparedRegisterStep step =
+            space_prepared_equation_execute_register_step(
+                plan, current, &semispaces[active], &next);
+        if (step == SPACE_PREPARED_REGISTER_NOT_APPLICABLE) {
+            /* A revision change or a value outside the proved fragment falls
+             * back at the exact current call, never at the stale entry call. */
+            outcome = completed == 0u
+                ? SPACE_PREPARED_REGISTER_NOT_APPLICABLE
+                : SPACE_PREPARED_REGISTER_TAIL_CALL;
+            break;
+        }
+        completed++;
+        current = next;
+        outcome = step;
+        if (step == SPACE_PREPARED_REGISTER_VALUE)
+            break;
+
+        if (arena_accounted_live_bytes(&semispaces[active]) >=
+            REGISTER_LOOP_NURSERY_BYTES) {
+            unsigned destination = active ^ 1u;
+            arena_free(&semispaces[destination]);
+            arena_init(&semispaces[destination]);
+            arena_set_hashcons(&semispaces[destination], NULL);
+            arena_set_runtime_kind(
+                &semispaces[destination],
+                CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+            Atom *evacuated = atom_deep_copy(
+                &semispaces[destination], current);
+            if (!evacuated) {
+                fputs("fatal: prepared register-loop evacuation failed\n",
+                      stderr);
+                abort();
+            }
+            arena_free(&semispaces[active]);
+            arena_init(&semispaces[active]);
+            arena_set_hashcons(&semispaces[active], NULL);
+            arena_set_runtime_kind(
+                &semispaces[active], CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+            active = destination;
+            current = evacuated;
+        }
+    }
+
+    if (outcome != SPACE_PREPARED_REGISTER_NOT_APPLICABLE) {
+        *result_out = atom_deep_copy(result_arena, current);
+        if (!*result_out)
+            outcome = SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    }
+    arena_free(&semispaces[0]);
+    arena_free(&semispaces[1]);
+    return outcome;
+}
+
+/* Execute the generated pure recursive-register program on explicit
+ * environments, work frames, and value slots.  The machine owns no arena
+ * pointers other than the revision-pinned source plan; exact numerics remain
+ * in reusable GMP cells and only the final value is materialized. */
+SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_calls, Atom **result_out) {
+    if (result_out)
+        *result_out = NULL;
+    if (!plan || !call || !result_arena || !result_out || max_calls == 0u)
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+#if CETTA_BUILD_WITH_GMP
+    return prepared_mpz_run_register_recursion(
+        plan, call, result_arena, max_calls, result_out);
+#else
+    return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+#endif
 }
 
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,

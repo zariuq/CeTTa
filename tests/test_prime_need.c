@@ -206,6 +206,15 @@ int main(void) {
               prime_need_ref_belongs_to(ref, &thunk, &parsed_id) &&
               parsed_id == thunk_id && parsed_authority == cell.authority_id,
           "opaque capability round-trips within its session");
+    Atom *ordinary_graph = atom_expr2(
+        &arena, atom_int(&arena, 1), atom_int(&arena, 2));
+    CHECK(ordinary_graph && !atom_has_registry_refs(ordinary_graph),
+          "ordinary immutable data proves it contains no private reference");
+    Atom *capability_graph = atom_expr2(
+        &arena, atom_symbol(&arena, "box"), ref);
+    CHECK(capability_graph && atom_has_registry_refs(ref) &&
+              atom_has_registry_refs(capability_graph),
+          "private-reference reachability propagates through its container");
     PrimeNeedSnapshot other_root;
     prime_need_snapshot_init(&other_root);
     CHECK(prime_need_snapshot_begin(&other_root) &&

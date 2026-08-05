@@ -22,6 +22,14 @@ typedef struct {
 
 typedef struct BindingsLookupIndex BindingsLookupIndex;
 
+/*
+ * Small environments use this inline identity cache.  Larger environments
+ * acquire the complete lookup index at the threshold in match.c, so keeping
+ * two recent identities here preserves the common producer/consumer pair
+ * without widening every branch-local environment.
+ */
+#define CETTA_BINDINGS_LOOKUP_CACHE_SLOTS 2u
+
 typedef struct {
     Binding *entries;
     uint32_t len;
@@ -29,10 +37,17 @@ typedef struct {
     BindingConstraint *constraints;
     uint32_t eq_len;
     uint32_t eq_cap;
-    VarId lookup_cache_ids[4];
-    uint32_t lookup_cache_indices[4];
+    VarId lookup_cache_ids[CETTA_BINDINGS_LOOKUP_CACHE_SLOTS];
+    uint32_t lookup_cache_indices[CETTA_BINDINGS_LOOKUP_CACHE_SLOTS];
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
+    /*
+     * Derived certificate for the substitution graph in `entries`.
+     * Zero means unknown, one means proved acyclic, and two means a cycle was
+     * witnessed.  The entries remain authoritative; the full checker handles
+     * unknown state.
+     */
+    uint8_t cycle_state;
     /*
      * Derived count of entries that participate in the legacy spelling-keyed
      * lookup relation.  Modern VarId-only environments keep this at zero, so
@@ -42,13 +57,6 @@ typedef struct {
     uint32_t legacy_fallback_count;
     uint32_t private_entry_count;
     uint32_t private_constraint_count;
-    /*
-     * Derived certificate for the substitution graph in `entries`.
-     * Zero means unknown, one means proved acyclic, and two means a cycle was
-     * witnessed.  The entries remain authoritative; the full checker handles
-     * unknown state.
-     */
-    uint8_t cycle_state;
     /*
      * Derived VarId -> newest-entry accelerator.  `entries` remains the
      * semantic authority: clones may share this immutable index, while the
@@ -75,9 +83,8 @@ typedef struct {
     uint32_t len;
     uint32_t eq_len;
     uint8_t cycle_state;
-    uint32_t legacy_fallback_count;
-    uint32_t private_entry_count;
-    uint32_t private_constraint_count;
+    /* Bit set iff the corresponding derived count was nonzero. */
+    uint8_t derived_nonzero;
     PrimeNeedSnapshot prime_need;
     PrimeNeedReceipt prime_receipt;
 } BindingsBuilderTrailEntry;
@@ -235,6 +242,11 @@ Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
+/* Epoch-aware matcher over an existing trail-backed environment.  The caller
+ * owns the save/rollback boundary when failure must be transactional. */
+bool match_atoms_epoch_builder(Atom *left, Atom *right,
+                               BindingsBuilder *bb, Arena *a,
+                               uint32_t epoch);
 /* Leaf-patch view (env CETTA_LEAF_PATCH_VIEW=1, OFF by default). */
 bool match_leaf_patch_view_enabled(void);
 /* Positional bind for a flat linear pattern (lhs) vs a non-variable-arg query;

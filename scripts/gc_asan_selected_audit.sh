@@ -69,6 +69,41 @@ for test_path in "${TESTS[@]}"; do
     fi
 done
 
+set +e
+prime_observation="$(timeout "$TIMEOUT_SEC" \
+    env CETTA_GC=1 CETTA_GC_BUDGET_MB="$BUDGET_MB" \
+    "$BIN" --lang prime --count-only \
+    "$ROOT/tests/prime/prepared_pure_observation_stack.metta" 2>&1 | normalize)"
+prime_status=$?
+set -e
+if [ "$prime_status" -eq 0 ] && [ "$prime_observation" = 1 ]; then
+    echo "PASS: tests/prime/prepared_pure_observation_stack.metta"
+    pass=$((pass + 1))
+else
+    echo "FAIL: tests/prime/prepared_pure_observation_stack.metta" >&2
+    printf '%s\n' "$prime_observation" | head -80 >&2
+    fail=$((fail + 1))
+fi
+
+prime_update_test="tests/prime/prepared_pure_need_sharing.metta"
+prime_update_expected="tests/prime/prepared_pure_need_sharing.expected"
+set +e
+prime_update_result="$(timeout "$TIMEOUT_SEC" \
+    env CETTA_GC=1 CETTA_GC_BUDGET_MB="$BUDGET_MB" \
+    "$BIN" --lang prime "$ROOT/$prime_update_test" 2>&1 | normalize)"
+prime_update_status=$?
+set -e
+if [ "$prime_update_status" -eq 0 ] &&
+   [ "$prime_update_result" = "$(normalize < "$ROOT/$prime_update_expected")" ]; then
+    echo "PASS: $prime_update_test"
+    pass=$((pass + 1))
+else
+    echo "FAIL: $prime_update_test (exit $prime_update_status)" >&2
+    diff <(normalize < "$ROOT/$prime_update_expected") \
+         <(printf '%s\n' "$prime_update_result") | head -80 >&2 || true
+    fail=$((fail + 1))
+fi
+
 echo "---"
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

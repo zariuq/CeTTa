@@ -28,7 +28,6 @@
 #define BINDINGS_SEEN_STACK_CAP 32
 #define BINDINGS_TEMP_STACK_CAP 32
 #define BINDINGS_POOL_CLASS_COUNT 4
-#define BINDINGS_LOOKUP_CACHE_SLOTS 4
 #define BINDINGS_MEMO_STACK_CAP 32
 #define BINDINGS_LOOKUP_CACHE_MISS UINT32_MAX
 #define BINDINGS_LOOKUP_INDEX_THRESHOLD 16u
@@ -38,6 +37,12 @@ enum {
     BINDINGS_CYCLE_UNKNOWN = 0u,
     BINDINGS_CYCLE_ACYCLIC = 1u,
     BINDINGS_CYCLE_PRESENT = 2u,
+};
+
+enum {
+    BINDINGS_DERIVED_LEGACY_NONZERO = 1u << 0,
+    BINDINGS_DERIVED_PRIVATE_ENTRY_NONZERO = 1u << 1,
+    BINDINGS_DERIVED_PRIVATE_CONSTRAINT_NONZERO = 1u << 2,
 };
 
 typedef enum {
@@ -202,6 +207,50 @@ static uint32_t bindings_legacy_fallback_count_slow(
             count += bindings->entries[i].legacy_name_fallback ? 1u : 0u;
     }
     return count;
+}
+
+static uint8_t bindings_derived_nonzero(const Bindings *bindings) {
+    if (!bindings)
+        return 0u;
+    uint8_t flags = 0u;
+    if (bindings->legacy_fallback_count != 0u)
+        flags |= BINDINGS_DERIVED_LEGACY_NONZERO;
+    if (bindings->private_entry_count != 0u)
+        flags |= BINDINGS_DERIVED_PRIVATE_ENTRY_NONZERO;
+    if (bindings->private_constraint_count != 0u)
+        flags |= BINDINGS_DERIVED_PRIVATE_CONSTRAINT_NONZERO;
+    return flags;
+}
+
+/*
+ * A builder trail restores logical lengths.  These counts are accelerators,
+ * not logical state, so the compact trail remembers only whether a scan can
+ * be necessary and rebuilds exact values on that cold rollback path.
+ */
+static void bindings_restore_derived_counts(
+    Bindings *bindings, uint8_t nonzero) {
+    bindings->legacy_fallback_count =
+        (nonzero & BINDINGS_DERIVED_LEGACY_NONZERO)
+            ? bindings_legacy_fallback_count_slow(bindings)
+            : 0u;
+    if (nonzero & (BINDINGS_DERIVED_PRIVATE_ENTRY_NONZERO |
+                   BINDINGS_DERIVED_PRIVATE_CONSTRAINT_NONZERO)) {
+        uint32_t entries = 0u;
+        uint32_t constraints = 0u;
+        bindings_private_counts_slow(
+            bindings, &entries, &constraints);
+        bindings->private_entry_count =
+            (nonzero & BINDINGS_DERIVED_PRIVATE_ENTRY_NONZERO)
+                ? entries
+                : 0u;
+        bindings->private_constraint_count =
+            (nonzero & BINDINGS_DERIVED_PRIVATE_CONSTRAINT_NONZERO)
+                ? constraints
+                : 0u;
+    } else {
+        bindings->private_entry_count = 0u;
+        bindings->private_constraint_count = 0u;
+    }
 }
 
 static bool bindings_private_audit_enabled(void) {
@@ -644,13 +693,16 @@ static inline void bindings_lookup_cache_note(Bindings *b, VarId var_id,
             return;
         }
     }
-    uint32_t slot = b->lookup_cache_count < BINDINGS_LOOKUP_CACHE_SLOTS
+    uint32_t slot =
+        b->lookup_cache_count < CETTA_BINDINGS_LOOKUP_CACHE_SLOTS
         ? b->lookup_cache_count++
         : b->lookup_cache_next;
     b->lookup_cache_ids[slot] = var_id;
     b->lookup_cache_indices[slot] = index;
-    if (b->lookup_cache_count == BINDINGS_LOOKUP_CACHE_SLOTS)
-        b->lookup_cache_next = (uint8_t)((slot + 1) % BINDINGS_LOOKUP_CACHE_SLOTS);
+    if (b->lookup_cache_count == CETTA_BINDINGS_LOOKUP_CACHE_SLOTS) {
+        b->lookup_cache_next = (uint8_t)(
+            (slot + 1u) % CETTA_BINDINGS_LOOKUP_CACHE_SLOTS);
+    }
 }
 
 static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
@@ -2133,11 +2185,7 @@ static bool bindings_builder_snapshot(BindingsBuilder *bb) {
         .len = bb->current.len,
         .eq_len = bb->current.eq_len,
         .cycle_state = bb->current.cycle_state,
-        .legacy_fallback_count =
-            bb->current.legacy_fallback_count,
-        .private_entry_count = bb->current.private_entry_count,
-        .private_constraint_count =
-            bb->current.private_constraint_count,
+        .derived_nonzero = bindings_derived_nonzero(&bb->current),
         .prime_need = *bindings_need_view(&bb->current),
         .prime_receipt = *bindings_receipt_view(&bb->current),
     };
@@ -2187,21 +2235,24 @@ uint32_t bindings_builder_save(const BindingsBuilder *bb) {
 
 void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
     uint32_t old_len = bb->current.len;
+    uint8_t restored_derived_nonzero = 0u;
+    bool restored = false;
     while (bb->trail_len > mark) {
         BindingsBuilderTrailEntry *entry = &bb->trail[--bb->trail_len];
         bb->current.len = entry->len;
         bb->current.eq_len = entry->eq_len;
         bb->current.cycle_state = entry->cycle_state;
-        bb->current.legacy_fallback_count =
-            entry->legacy_fallback_count;
-        bb->current.private_entry_count = entry->private_entry_count;
-        bb->current.private_constraint_count =
-            entry->private_constraint_count;
+        restored_derived_nonzero = entry->derived_nonzero;
+        restored = true;
         bindings_prime_set(&bb->current, &entry->prime_need,
                            &entry->prime_receipt);
     }
+    if (restored) {
+        bindings_restore_derived_counts(
+            &bb->current, restored_derived_nonzero);
+    }
     /*
-     * The four-slot cache is only an accelerator and its payload is not
+     * The inline cache is only an accelerator and its payload is not
      * trailed.  Clearing it is both cheaper and safer than restoring stale
      * count metadata.  The full index removes only rolled-back suffix entries.
      */
@@ -3366,12 +3417,8 @@ bool bindings_builder_compact_reachable(
                       .len = bb->current.len,
                       .eq_len = bb->current.eq_len,
                       .cycle_state = bb->current.cycle_state,
-                      .legacy_fallback_count =
-                          bb->current.legacy_fallback_count,
-                      .private_entry_count =
-                          bb->current.private_entry_count,
-                      .private_constraint_count =
-                          bb->current.private_constraint_count,
+                      .derived_nonzero =
+                          bindings_derived_nonzero(&bb->current),
                       .prime_need =
                           *bindings_need_view(&bb->current),
                       .prime_receipt =
@@ -3383,23 +3430,23 @@ bool bindings_builder_compact_reachable(
             valid = false;
             break;
         }
+        uint32_t original_len = state.len;
+        uint32_t original_eq_len = state.eq_len;
         state.len = entry_prefix[state.len];
         state.eq_len = constraint_prefix[state.eq_len];
-        state.legacy_fallback_count =
-            legacy_prefix[
-                mark == old_trail_len
-                    ? bb->current.len
-                    : bb->trail[mark].len];
-        state.private_entry_count =
-            private_entry_prefix[
-                mark == old_trail_len
-                    ? bb->current.len
-                    : bb->trail[mark].len];
-        state.private_constraint_count =
-            private_constraint_prefix[
-                mark == old_trail_len
-                    ? bb->current.eq_len
-                    : bb->trail[mark].eq_len];
+        state.derived_nonzero = 0u;
+        if (legacy_prefix[original_len] != 0u) {
+            state.derived_nonzero |=
+                BINDINGS_DERIVED_LEGACY_NONZERO;
+        }
+        if (private_entry_prefix[original_len] != 0u) {
+            state.derived_nonzero |=
+                BINDINGS_DERIVED_PRIVATE_ENTRY_NONZERO;
+        }
+        if (private_constraint_prefix[original_eq_len] != 0u) {
+            state.derived_nonzero |=
+                BINDINGS_DERIVED_PRIVATE_CONSTRAINT_NONZERO;
+        }
         state.cycle_state =
             state.len == 0u ||
                     state.cycle_state == BINDINGS_CYCLE_ACYCLIC
@@ -4308,7 +4355,9 @@ bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
-static bool match_atoms_epoch_worklist(Atom *left, Atom *right, Bindings *b,
+static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
+                                       Bindings *bindings,
+                                       BindingsBuilder *builder,
                                        Arena *a, uint32_t epoch);
 static bool match_atoms_atom_id_epoch_worklist(
     Atom *left, const TermUniverse *candidate_universe, AtomId right_id,
@@ -4396,7 +4445,13 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
 }
 
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {
-    return match_atoms_epoch_worklist(left, right, b, a, epoch);
+    return match_atoms_epoch_worklist(left, right, b, NULL, a, epoch);
+}
+
+bool match_atoms_epoch_builder(Atom *left, Atom *right,
+                               BindingsBuilder *bb, Arena *a,
+                               uint32_t epoch) {
+    return match_atoms_epoch_worklist(left, right, NULL, bb, a, epoch);
 }
 
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
@@ -4539,7 +4594,9 @@ static bool epoch_match_push_exit(EpochMatchWorklist *work, Atom *left,
     return true;
 }
 
-static bool match_atoms_epoch_worklist(Atom *left, Atom *right, Bindings *b,
+static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
+                                       Bindings *bindings,
+                                       BindingsBuilder *builder,
                                        Arena *a, uint32_t epoch) {
     EpochMatchWorklist work;
     MatchPathSet path;
@@ -4559,12 +4616,13 @@ static bool match_atoms_epoch_worklist(Atom *left, Atom *right, Bindings *b,
         left = pair.left;
         right = pair.right;
         bool right_original = pair.right_original;
+        Bindings *current = builder ? &builder->current : bindings;
         size_t dereferences = 0;
-        size_t dereference_limit = bindings_dereference_limit(b);
+        size_t dereference_limit = bindings_dereference_limit(current);
 
 retry_pair:
         if (left->kind == ATOM_VAR) {
-            Atom *existing = bindings_lookup_var(b, left);
+            Atom *existing = bindings_lookup_var(current, left);
             if (existing) {
                 if (++dereferences > dereference_limit) goto fail;
                 left = existing;
@@ -4575,7 +4633,7 @@ retry_pair:
                     ? var_epoch_id(right->var_id, epoch) : right->var_id;
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-                Atom *right_existing = bindings_lookup_id(b, right_id);
+                Atom *right_existing = bindings_lookup_id(current, right_id);
                 if (right_existing) {
                     if (++dereferences > dereference_limit) goto fail;
                     right = right_existing;
@@ -4585,12 +4643,18 @@ retry_pair:
                 if (left->var_id == right_id) continue;
                 Atom *value = right_original
                     ? epoch_var_atom(a, right, epoch) : right;
-                if (!value || !bindings_add_var(b, left, value)) goto fail;
+                bool added = value && (builder
+                    ? bindings_builder_add_var_fresh(builder, left, value)
+                    : bindings_add_var(bindings, left, value));
+                if (!added) goto fail;
                 continue;
             }
             Atom *value = right_original
-                ? bindings_apply_epoch(b, a, right, epoch) : right;
-            if (!value || !bindings_add_var(b, left, value)) goto fail;
+                ? bindings_apply_epoch(current, a, right, epoch) : right;
+            bool added = value && (builder
+                ? bindings_builder_add_var_fresh(builder, left, value)
+                : bindings_add_var(bindings, left, value));
+            if (!added) goto fail;
             continue;
         }
         if (right->kind == ATOM_VAR) {
@@ -4598,7 +4662,7 @@ retry_pair:
                 ? var_epoch_id(right->var_id, epoch) : right->var_id;
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-            Atom *existing = bindings_lookup_id(b, right_id);
+            Atom *existing = bindings_lookup_id(current, right_id);
             if (existing) {
                 if (++dereferences > dereference_limit) goto fail;
                 right = existing;
@@ -4607,8 +4671,10 @@ retry_pair:
             }
             Atom *binding_var = right_original
                 ? epoch_var_atom(a, right, epoch) : right;
-            if (!binding_var || !bindings_add_var(b, binding_var, left))
-                goto fail;
+            bool added = binding_var && (builder
+                ? bindings_builder_add_var_fresh(builder, binding_var, left)
+                : bindings_add_var(bindings, binding_var, left));
+            if (!added) goto fail;
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
@@ -4740,7 +4806,7 @@ retry_pair:
             Atom *right = term_universe_get_atom(
                 (TermUniverse *)candidate_universe, right_id);
             if (!right || !match_atoms_epoch_worklist(
-                    left, right, b, a, epoch))
+                    left, right, b, NULL, a, epoch))
                 goto fail;
             continue;
         }

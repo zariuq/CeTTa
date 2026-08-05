@@ -167,7 +167,7 @@ bool petta_program_predeclare_equation(
            petta_head_insert(&program->predeclared_heads, head);
 }
 
-static bool petta_plan_intrinsic_head(SymbolId head) {
+bool petta_program_head_is_intrinsic(SymbolId head) {
     const char *name =
         head == SYMBOL_ID_NONE
             ? NULL : symbol_bytes(g_symbols, head);
@@ -307,7 +307,7 @@ static const PettaPlanNode *petta_plan_build(
                 petta_semantics_form(head) ==
                     PETTA_FORM_LENGTH;
             node->role =
-                petta_plan_intrinsic_head(head) ||
+                petta_program_head_is_intrinsic(head) ||
                 petta_head_contains(heads, head)
                     ? PETTA_PLAN_STATIC_CALL
                     : PETTA_PLAN_DATA;
@@ -697,9 +697,12 @@ static bool petta_clause_head_matches(
            lhs_head->sym_id == head;
 }
 
-bool petta_program_clause_snapshot(
+bool petta_program_clause_snapshot_profiled(
     PettaProgram *program, Space *space, SymbolId head,
-    PettaClauseCandidate **candidates, size_t *candidate_count) {
+    PettaClauseCandidate **candidates, size_t *candidate_count,
+    PettaClauseSnapshotStats *stats) {
+    if (stats)
+        memset(stats, 0, sizeof(*stats));
     if (candidates)
         *candidates = NULL;
     if (candidate_count)
@@ -708,6 +711,8 @@ bool petta_program_clause_snapshot(
         !candidates || !candidate_count) {
         return false;
     }
+    if (stats)
+        stats->snapshots = 1u;
 
     PettaProgramSpace *entry =
         petta_program_find_space(program, space);
@@ -732,6 +737,8 @@ bool petta_program_clause_snapshot(
             free(actual);
             return false;
         }
+        if (stats)
+            stats->live_occurrences_scanned++;
         if (!petta_program_reserve(
                 (void **)&actual, &actual_cap, actual_len + 1u,
                 sizeof(*actual))) {
@@ -762,15 +769,20 @@ bool petta_program_clause_snapshot(
              record_index < entry->clause_len; record_index++) {
             PettaProgramClause *record =
                 &entry->clauses[record_index];
+            if (stats)
+                stats->declaration_records_examined++;
             if (!petta_clause_head_matches(
                     record->equation, head)) {
                 continue;
             }
             size_t matched = SIZE_MAX;
             for (size_t index = 0u; index < actual_len; index++) {
-                if (!used[index] &&
-                    (record->equation == actual[index] ||
-                     atom_eq(record->equation, actual[index]))) {
+                if (used[index])
+                    continue;
+                if (stats)
+                    stats->structural_equality_checks++;
+                if (record->equation == actual[index] ||
+                    atom_eq(record->equation, actual[index])) {
                     matched = index;
                     break;
                 }
@@ -778,8 +790,11 @@ bool petta_program_clause_snapshot(
             if (matched == SIZE_MAX) {
                 for (size_t index = 0u;
                      index < actual_len; index++) {
-                    if (!used[index] &&
-                        atom_alpha_eq(
+                    if (used[index])
+                        continue;
+                    if (stats)
+                        stats->alpha_equality_checks++;
+                    if (atom_alpha_eq(
                             record->equation, actual[index])) {
                         matched = index;
                         break;
@@ -823,7 +838,16 @@ bool petta_program_clause_snapshot(
     free(actual);
     *candidates = items;
     *candidate_count = length;
+    if (stats)
+        stats->candidates_emitted = length;
     return true;
+}
+
+bool petta_program_clause_snapshot(
+    PettaProgram *program, Space *space, SymbolId head,
+    PettaClauseCandidate **candidates, size_t *candidate_count) {
+    return petta_program_clause_snapshot_profiled(
+        program, space, head, candidates, candidate_count, NULL);
 }
 
 typedef struct {
@@ -1082,7 +1106,7 @@ static bool petta_table_safety_scan_relation(
             continue;
         }
 
-        if (petta_plan_intrinsic_head(call_head) ||
+        if (petta_program_head_is_intrinsic(call_head) ||
             !petta_table_safety_add_relation(
                 relations, relation_len, relation_cap,
                 call_head, atom->expr.len - 1u)) {

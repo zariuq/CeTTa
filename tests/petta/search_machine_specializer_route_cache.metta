@@ -1,3 +1,8 @@
+; Declared arrow signatures on the leaf callables make the prepared lanes
+; decline the whole program (inner calls hit declared heads), so the machine
+; and its specializer run; Number parameters keep every answer unchanged.
+(: route-inc (-> Number Number))
+(: route-double (-> Number Number))
 (= (route-inc $x) (+ $x 1))
 (= (route-double $x) (* $x 2))
 

@@ -38,7 +38,12 @@ static int test_atom_hashflags_soundness(void) {
     arena_set_hashcons(&arena, &hashcons);
 
     Atom *pair = atom_symbol(&arena, "pair");
-    Atom *one = atom_int(&arena, 1);
+    Atom *transient_one = atom_int(&arena, 1);
+    if (!transient_one || transient_one->arena_id == 0u)
+        return fail("numeric construction was ambiently hash-consed");
+    Atom *one = atom_deep_copy_shared(&arena, transient_one);
+    if (!one || one->arena_id != 0u)
+        return fail("explicit numeric publication was not hash-consed");
     Atom *stable_elems[2] = {pair, one};
     Atom *stable_expr_a = atom_expr(&arena, stable_elems, 2);
     Atom *stable_expr_b = atom_expr(&arena, stable_elems, 2);

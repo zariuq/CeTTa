@@ -46,6 +46,8 @@ Primary storage/query surface:
   bridge expr-byte span directly and bypass UTF-8 parsing.
 - mork_space_add_expr_bytes_batch() accepts a packed length-prefixed sequence
   of stable bridge expr-byte spans and keeps bulk mutation on the same low ABI.
+- mork_space_remove_expr_bytes_batch() accepts the same packet and removes at
+  most one occurrence per packet item, transactionally for counted storage.
 - mork_space_unique_size() reports unique structural support count.
 - query traffic crosses the bridge as binding/debug packets, not mirrored row
   ids or candidate-slot packets.
@@ -118,6 +120,9 @@ MorkStatus mork_space_add_logical_rows_from(MorkSpace *dst,
 MorkStatus mork_space_remove_expr_bytes(MorkSpace *space,
                                         const uint8_t *expr_bytes,
                                         size_t len);
+MorkStatus mork_space_remove_expr_bytes_batch(MorkSpace *space,
+                                              const uint8_t *packet,
+                                              size_t len);
 MorkStatus mork_space_remove_contextual_exact_expr_bytes(MorkSpace *space,
                                                          const uint8_t *expr_bytes,
                                                          size_t len,

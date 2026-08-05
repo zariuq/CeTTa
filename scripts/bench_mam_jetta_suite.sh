@@ -6,6 +6,7 @@ CETTA_BIN="${CETTA_BIN:-$ROOT/cetta}"
 MANIFEST="$ROOT/benchmarks/mam_jetta/manifest.tsv"
 SCALE="${MAM_JETTA_SCALE:-smoke}"
 LANGUAGES="${MAM_JETTA_LANGUAGES:-he prime}"
+HE_PROFILE="${MAM_JETTA_HE_PROFILE:-}"
 CASES="${MAM_JETTA_CASES:-}"
 TIMEOUT_SECONDS="${MAM_JETTA_TIMEOUT:-120}"
 REQUIRE_PASS="${MAM_JETTA_REQUIRE_PASS:-0}"
@@ -102,10 +103,14 @@ run_one() {
   sed "s/@N@/$n/g" "$ROOT/benchmarks/mam_jetta/$template" >"$source"
 
   local rc=0
+  local -a language_args=(--lang "$language")
+  if [[ "$language" == "he" && -n "$HE_PROFILE" ]]; then
+    language_args+=(--profile "$HE_PROFILE")
+  fi
   set +e
   timeout "$TIMEOUT_SECONDS" \
     /usr/bin/time -f '%e\t%M' -o "$timing" \
-    "$CETTA_BIN" --lang "$language" "$source" >"$log" 2>&1
+    "$CETTA_BIN" "${language_args[@]}" "$source" >"$log" 2>&1
   rc=$?
   set -e
 
@@ -124,10 +129,17 @@ run_one() {
 
   local actual="NA"
   if [[ "$status" == "ok" ]]; then
-    actual="$(
-      sed -n 's/^\[\(-\{0,1\}[0-9][0-9]*\)\]$/\1/p' "$log" |
-        tail -n 1
-    )"
+    if [[ "$language" == "petta" ]]; then
+      actual="$(
+        sed -n 's/^\(-\{0,1\}[0-9][0-9]*\)$/\1/p' "$log" |
+          tail -n 1
+      )"
+    else
+      actual="$(
+        sed -n 's/^\[\(-\{0,1\}[0-9][0-9]*\)\]$/\1/p' "$log" |
+          tail -n 1
+      )"
+    fi
     if [[ "$actual" != "$expected" ]]; then
       status="wrong-answer"
     fi

@@ -2,6 +2,7 @@
 #define CETTA_SPACE_H
 
 #include "atom.h"
+#include "generated/cetta_execution_contracts.generated.h"
 #include "name_key.h"
 #include "match.h"
 #include "subst_tree.h"
@@ -179,7 +180,13 @@ void space_free(Space *s);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_add_atom_id(Space *s, AtomId atom_id);
+/* Replay one ordered declaration block.  Backends may apply it transactionally
+   as one publication; unsupported fragments retain singular semantics. */
+bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
+                              CettaCount atom_count);
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
+bool space_admit_atom_from_source_arena(
+    Space *s, Arena *fallback, const Arena *source_arena, Atom *atom);
 TermUniverseError space_term_universe_last_error_code(const Space *s);
 void space_linearize(Space *s);
 void space_mark_derived_state_dirty(Space *s);
@@ -328,6 +335,17 @@ void query_results_free(QueryResults *qr);
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 bool space_equations_may_match_known_head(Space *s, SymbolId head);
+/* Revision-pinned least fixed point of the generated relational-effect
+ * algebra over user-equation dependencies.  A named symbol with no visible
+ * equation is inert at the pinned revision; malformed, variable-headed, or
+ * higher-order dependencies conservatively carry the generated uncertain
+ * effect. */
+CettaGsltQueryEffect space_query_effect_for_head(
+    Space *s, SymbolId head, bool *out_defined);
+/* Eagerly drops this thread's derived entries.  Revision tokens remain the
+ * cross-thread authority, so a mutation cannot revive stale analysis even
+ * when it originates on another evaluator thread. */
+void space_execution_analysis_note_mutation(Space *s);
 /* Exact explicit-head arities admitted by (= (head ...) rhs) equations.
  * Wildcard/expression-headed rules are excluded: they do not register a
  * named PeTTa callable. */
@@ -342,6 +360,56 @@ bool space_head_has_single_equation(Space *s, SymbolId head);
 /* Resolve that single linear equation (or NULL) -- shared by the guard and the
  * revision-keyed view cache. */
 Atom *space_single_linear_equation(Space *s, SymbolId head);
+
+/*
+ * Register form of a determinate equation.
+ *
+ * This is deliberately narrower than `space_single_linear_equation`: the LHS
+ * must be `(head $r0 ... $rn)` with distinct registers, every RHS variable
+ * must name one of those registers, and the plan is pinned to one Space
+ * revision. Such a rule can be instantiated from a ground call without
+ * freshening, matching, or constructing an intermediate Bindings object.
+ * Everything outside this proved fragment stays on the general equation
+ * path.
+ */
+#define SPACE_PREPARED_EQUATION_MAX_REGISTERS \
+    CETTA_GSLT_PREPARED_EQUATION_MAX_REGISTERS
+typedef struct {
+    SpaceEquationOccurrenceId occurrence;
+    Atom *equation;
+    Atom *lhs;
+    Atom *rhs;
+    SymbolId head;
+    CettaExprLen arity;
+    uint32_t evidence;
+    VarId registers[SPACE_PREPARED_EQUATION_MAX_REGISTERS];
+    Atom *register_guard;
+    Atom *register_base;
+    Atom *register_tail;
+    bool register_base_when_true;
+} SpacePreparedEquation;
+
+typedef enum {
+    SPACE_PREPARED_REGISTER_NOT_APPLICABLE = 0,
+    SPACE_PREPARED_REGISTER_VALUE = 1,
+    SPACE_PREPARED_REGISTER_TAIL_CALL = 2,
+} SpacePreparedRegisterStep;
+
+bool space_head_has_arrow_signature(Space *s, SymbolId head,
+                                    CettaExprLen arity);
+bool space_prepare_single_equation(Space *s, SymbolId head,
+                                   SpacePreparedEquation *out);
+Atom *space_prepared_equation_instantiate_ground(
+    const SpacePreparedEquation *plan, Atom *call, Arena *arena);
+SpacePreparedRegisterStep space_prepared_equation_execute_register_step(
+    const SpacePreparedEquation *plan, Atom *call, Arena *arena,
+    Atom **result_out);
+SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_steps, Atom **result_out);
+SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_calls, Atom **result_out);
 
 /* ── Space Registry (named spaces) ─────────────────────────────────────── */
 
@@ -385,6 +453,9 @@ Space *resolve_space(Registry *r, Atom *ref);
 bool space_remove(Space *s, Atom *atom);
 bool space_contains_atom_id(const Space *s, AtomId atom_id);
 bool space_remove_atom_id(Space *s, AtomId atom_id);
+bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
+                                 CettaCount atom_count,
+                                 CettaCount *out_removed);
 
 /* ── Match Indexing ─────────────────────────────────────────────────────── */
 

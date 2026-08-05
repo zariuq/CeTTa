@@ -14,6 +14,8 @@ benchmarks/test_tilepuzzle.metta	he	metta	he-extended	main	native	test-heavy	gol
 benchmarks/test_tilepuzzle_pathmap.metta	he	metta	he-extended	pathmap	pathmap	test-heavy	diagnostic	heavy 8-puzzle BFS pathmap witness without golden oracle
 tests/gc/test_eval_gc_adversarial.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/gc/test_eval_gc_indirect_state_stream.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
+tests/gc/test_eval_gc_nested_outcome_roots.metta	he	metta	he-extended	main	native	test	golden	-
+tests/generated/semiring_query_laws.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_a1_symbols.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_a2_opencoggy.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_a3_twoside.metta	he	metta	he-extended	main	native	test	golden	-
@@ -347,6 +349,7 @@ tests/test_match_chain_imported_regression.metta	he	metta	he-extended	main	nativ
 tests/test_match_coref_fastpath.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_eager_double_apply_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_exact_bound_space_regression.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_match_query_disjunction.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_rule_reunify.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_self_mutation_snapshot_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_match_var_thread.metta	he	metta	he-extended	main	native	test	golden	-
@@ -424,11 +427,13 @@ tests/test_pathmap_backend_primary_growth_regression.metta	he	metta	he-extended	
 tests/test_pathmap_contextual_var_projection_remove.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_counted_space_surface.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_direct_store_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
+tests/test_pathmap_direct_transfer_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_pathmap_fc_depth3_count_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_imported_bridge_v2.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_pathmap_indexed_query_work.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_match_copy_var_identity_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_program_shadow_sync_work.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pathmap_pull_consumers_work.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pathmap_stored_variable_exact_query_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_typed_query_surface.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pln_portable_minmax_regression.metta	he	metta	he-extended	main	native	test	golden	-
@@ -516,6 +521,7 @@ tests/test_space_batch_copy_optimizer_guards.metta	he	metta	he-extended	pathmap	
 tests/test_space_batch_copy_petta_seam_repro.metta	he	metta	he-extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_space_batch_copy_surfaces.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_space_engine_backend.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_space_join_meet.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_space_ops.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_space_rematch_epoch_hygiene_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_space_type.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
