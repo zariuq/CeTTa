@@ -172,6 +172,16 @@ Registry *eval_current_registry(void);
 Arena *eval_current_persistent_arena(void);
 Space *eval_space_snapshot_clone(Space *src, Arena *a);
 
+/* Visit each distinct free variable of an executable expression in lexical
+ * occurrence order.  Binder policy is shared with evaluator closure/env
+ * projection so machines do not publish lexical locals as query answers. */
+typedef bool (*CettaFreeVariableVisitor)(
+    void *context, VarId var_id, SymbolId spelling,
+    Atom *name_key);
+bool eval_visit_lexical_free_variables(
+    Atom *expression, CettaFreeVariableVisitor visitor,
+    void *context);
+
 /* Internal: evaluate an atom fully (recursive).
    type is the expected type (NULL means %Undefined%). */
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs);
@@ -200,7 +210,6 @@ bool cetta_petta_profile_admits_typecheck_ops(void);
 bool cetta_petta_typecheck_op_applies(SymbolId head, CettaExprLen nargs);
 void cetta_petta_erase_typecheck_marks_document(
     TermUniverse *universe, AtomId *atom_ids, int atom_count);
-bool symbol_id_is_builtin_surface(SymbolId id);
 bool cetta_petta_source_head_resolves_in_engine(SymbolId head, CettaExprLen nargs);
 
 #endif /* CETTA_EVAL_H */

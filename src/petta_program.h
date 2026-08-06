@@ -38,6 +38,7 @@ typedef struct {
  */
 typedef struct {
     uint64_t snapshots;
+    uint64_t cache_hits;
     uint64_t live_occurrences_scanned;
     uint64_t declaration_records_examined;
     uint64_t structural_equality_checks;

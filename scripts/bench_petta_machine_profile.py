@@ -169,6 +169,7 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "invocations",
         "transitions",
         "clause_snapshot_calls",
+        "clause_snapshot_cache_hits",
         "clause_snapshot_equality_checks",
         "clause_candidates",
         "clause_match_allocated_bytes",

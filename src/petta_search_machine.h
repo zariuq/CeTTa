@@ -69,6 +69,9 @@ typedef struct {
      * Named-state arguments have already been evaluated by the PeTTa
      * machine.  The host owns only registry lookup/mutation; it must not
      * recursively reinterpret the ready value through another evaluator.
+     * Outcome environments may contain only substitutions learned by the
+     * operation.  The machine retains the input environment; legacy hosts
+     * that return it again are reduced to an exact-prefix delta before use.
      */
     bool (*named_state)(
         void *context, Space *space, Arena *arena, PeTTaForm form,
@@ -77,6 +80,11 @@ typedef struct {
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
+    /* Execute a closed, revision-pinned determinate pure call through the
+     * shared generated machine.  NULL declines to canonical clause search. */
+    Atom *(*execute_prepared_pure_call)(
+        void *context, Space *space, Arena *result_arena,
+        Atom *prepared_call);
     PeTTaNamedArity (*foreign_named_arity)(
         void *context, SymbolId head, CettaExprLen supplied);
     /* Same classification including plan-time auto-resolved engine names;
@@ -179,6 +187,7 @@ typedef struct {
     uint64_t host_goal_transitions;
     uint64_t other_goal_transitions;
     uint64_t clause_snapshot_calls;
+    uint64_t clause_snapshot_cache_hits;
     uint64_t clause_snapshot_live_occurrences;
     uint64_t clause_snapshot_records_examined;
     uint64_t clause_snapshot_equality_checks;
@@ -193,6 +202,18 @@ typedef struct {
     uint64_t unification_failures;
     uint64_t unification_binding_writes;
     uint64_t unification_allocated_bytes;
+    uint64_t clause_binding_merge_calls;
+    uint64_t clause_binding_merge_source_items;
+    uint64_t clause_binding_merge_logical_writes;
+    uint64_t clause_binding_merge_failures;
+    uint64_t outcome_binding_merge_calls;
+    uint64_t outcome_binding_merge_source_items;
+    uint64_t outcome_binding_merge_logical_writes;
+    uint64_t outcome_binding_merge_failures;
+    uint64_t outcome_prefix_factor_attempts;
+    uint64_t outcome_prefix_factor_successes;
+    uint64_t outcome_prefix_logical_items_elided;
+    uint64_t outcome_prefix_residual_items;
     uint64_t binding_apply_calls;
     uint64_t binding_apply_rewrites;
     uint64_t binding_apply_allocated_bytes;

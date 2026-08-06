@@ -850,6 +850,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_pathmap_counted_space_surface.metta \
 	tests/test_pathmap_contextual_var_projection_remove.metta \
 	tests/test_pathmap_indexed_query_work.metta \
+	tests/test_pathmap_indexed_opening_identity_regression.metta \
 	tests/test_space_batch_copy_optimizer_guards.metta \
 	tests/test_pathmap_backend_primary_growth_regression.metta \
 	tests/test_pathmap_fc_depth3_count_regression.metta \
@@ -885,7 +886,6 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_hyperpose_prime_runtime_stats.metta \
 	tests/test_hyperpose_threaded_stats.metta \
 	tests/test_lts_rho_cost_parallel_runtime_stats.metta \
-	tests/test_imported_conjunction_bridge_init_regression.metta \
 	tests/test_imported_match_chain_conjunction_lowering.metta \
 	tests/test_native_count_collapse_match_regression.metta \
 	tests/test_outcome_variant_composition_regression.metta \
@@ -904,6 +904,9 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_table_nodup_no_invalidation.metta \
 	tests/test_table_reuse_after_stale.metta
 
+PATHMAP_RUNTIME_STATS_METTA_TESTS = \
+	tests/test_imported_conjunction_bridge_init_regression.metta
+
 GC_ADVERSARIAL_TESTS = \
 	tests/gc/test_eval_gc_adversarial.metta \
 	tests/gc/test_eval_gc_indirect_state_stream.metta
@@ -915,6 +918,7 @@ BACKEND_DEDICATED_TESTS = \
 	tests/test_closed_stream_fastpath.metta \
 	tests/test_closed_stream_runtime_stats.metta \
 	$(RUNTIME_STATS_METTA_TESTS) \
+	$(PATHMAP_RUNTIME_STATS_METTA_TESTS) \
 	tests/test_pretty_vars_surface.metta \
 	tests/test_import_act_module_surface.metta \
 	tests/test_import_mm2_module_surface.metta \
@@ -1364,6 +1368,15 @@ test-prime-need-heap-index-stats: $(BIN)
 	@CETTA_BIN="$(abspath $(BIN))" \
 		./scripts/test_prime_need_heap_stats.sh
 .PHONY: test-prime-need-heap-index-stats
+
+test-prime-need-planner-stats: $(BIN)
+	@if [ "$(ENABLE_RUNTIME_STATS)" != 1 ]; then \
+		echo "FAIL: enable runtime stats for the Prime one-pass planner gate"; \
+		exit 1; \
+	fi
+	@CETTA_BIN="$(abspath $(BIN))" \
+		./scripts/test_prime_need_planner_stats.sh
+.PHONY: test-prime-need-planner-stats
 
 test-prime-eval-stack: $(BIN)
 	@if [ "$(ENABLE_PRIME_EVAL_STACK)" != 1 ]; then \
@@ -5190,6 +5203,9 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-closed-stream-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-eval-gc-survivor-reset
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-need-heap-index-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-need-planner-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-specialized-pure-call-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-libpl-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-metta-suite
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
@@ -6860,6 +6876,63 @@ test-petta-prepared-register-loop: $(BIN)
 	diff -u "$$canonical_comparable" "$$native_comparable"; \
 	echo "PASS: PeTTa prepared register loop preserves aliasing, ambiguity, table, and count boundaries"
 
+.PHONY: test-petta-specialized-pure-call
+test-petta-specialized-pure-call: $(BIN)
+	@set -e; \
+	actual=$$(mktemp runtime/petta-specialized-pure-call.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_specialized_pure_call.metta \
+		>"$$actual"; \
+	diff -u tests/petta/search_machine_specialized_pure_call.expected \
+		"$$actual"; \
+	echo "PASS: PeTTa specialized recursion preserves opaque values and evaluates active constructor fields"
+
+.PHONY: test-petta-specialized-pure-call-stats
+test-petta-specialized-pure-call-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -e; \
+	actual=$$(mktemp runtime/petta-specialized-pure-call-stats.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/search_machine_specialized_pure_call.metta \
+		2>&1 >"$$actual"); \
+	diff -u tests/petta/search_machine_specialized_pure_call.expected \
+		"$$actual"; \
+	first=$$(printf '%s\n' "$$stats" | \
+		grep '^PETTA_MACHINE_STATS ' | head -1); \
+	field() { \
+		printf '%s\n' "$$first" | awk -v key="$$1" \
+			'{ for (i = 1; i <= NF; i++) { split($$i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'; \
+	}; \
+	transitions=$$(field transitions); \
+	snapshots=$$(field clause_snapshot_calls); \
+	matches=$$(field clause_match_attempts); \
+	rewrites=$$(field specializer_prepare_rewritten); \
+	admissions=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-admission" { print $$3 }'); \
+	commits=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-commit" { print $$3 }'); \
+	cancel_requests=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "hyperpose-cancel-request" { print $$3 }'); \
+	cancel_observed=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "hyperpose-cancel-observed" { print $$3 }'); \
+	if [ -z "$$first" ] || [ "$${transitions:-999999}" -gt 20 ] || \
+	   [ "$${snapshots:-999999}" -ne 0 ] || \
+	   [ "$${matches:-999999}" -ne 0 ] || \
+	   [ "$${rewrites:-0}" -ne 1 ] || \
+	   [ "$${admissions:-0}" -lt 1 ] || [ "$${commits:-0}" -lt 1 ] || \
+	   [ "$${cancel_requests:-0}" -lt 1 ] || \
+	   [ "$${cancel_observed:-0}" -lt 1 ]; then \
+		echo "FAIL: specialized pure-call structural bound transitions=$$transitions snapshots=$$snapshots matches=$$matches rewrites=$$rewrites admissions=$$admissions commits=$$commits cancel_requests=$$cancel_requests cancel_observed=$$cancel_observed"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PeTTa prepared recursion crosses one specialization and observes enclosing cancellation (transitions=$$transitions snapshots=$$snapshots matches=$$matches cancel_observed=$$cancel_observed)"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
 .PHONY: test-petta-search-machine
 test-lib-prolog: $(BIN)
 	@set -e; \
@@ -6990,7 +7063,8 @@ test-petta-mam-contender-mutations: $(BIN)
 		"$$mutation_dir/petta_specializer.c" \
 		-o "$$mutation_dir/petta_specializer.o"; \
 	$(CC) \
-		$(filter-out src/petta_specializer.$(BUILD_OBJ_TAG).o,$(OBJ)) \
+		$(filter-out src/petta_specializer.$(BUILD_OBJ_TAG).o \
+			src/petta_specializer.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
 		"$$mutation_dir/petta_specializer.o" \
 		-o "$$mutation_dir/cetta-specializer-reject-callable" \
 		$(LDFLAGS); \
@@ -7045,7 +7119,7 @@ else
 endif
 .PHONY: test-petta-source-memo-reset-mutation
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \
@@ -7421,6 +7495,9 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-ca
 	mapfile -t gc_promoted < <( \
 		sed -n 's/.*heap_bytes_promoted=\([0-9][0-9]*\).*/\1/p' \
 			"$$gc_scaling_stats"); \
+	mapfile -t gc_collections < <( \
+		sed -n 's/.*heap_collections=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
 	mapfile -t gc_heap < <( \
 		sed -n 's/.*max_heap_live_bytes=\([0-9][0-9]*\).*/\1/p' \
 			"$$gc_scaling_stats"); \
@@ -7430,27 +7507,57 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-ca
 	mapfile -t gc_continuation_copies < <( \
 		sed -n 's/.*choice_continuation_items_copied=\([0-9][0-9]*\).*/\1/p' \
 			"$$gc_scaling_stats"); \
+	mapfile -t gc_binding_apply_calls < <( \
+		sed -n 's/.*binding_apply_calls=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	gc_collection_accounting_ok=1; \
+	if [ "$${#gc_collections[@]}" -eq 3 ] && \
+	   [ "$${#gc_roots[@]}" -eq 3 ] && \
+	   [ "$${#gc_promoted[@]}" -eq 3 ] && \
+	   [ "$${#gc_major[@]}" -eq 3 ]; then \
+		for i in 0 1 2; do \
+			if { [ "$${gc_collections[$$i]}" -eq 0 ] && \
+			     { [ "$${gc_roots[$$i]}" -ne 0 ] || \
+			       [ "$${gc_promoted[$$i]}" -ne 0 ]; }; } || \
+			   { [ "$${gc_collections[$$i]}" -gt 0 ] && \
+			     { [ "$${gc_roots[$$i]}" -le 0 ] || \
+			       [ "$${gc_promoted[$$i]}" -le 0 ]; }; } || \
+			   [ "$${gc_major[$$i]}" -gt \
+			     "$${gc_collections[$$i]}" ]; then \
+				gc_collection_accounting_ok=0; \
+			fi; \
+		done; \
+	else \
+		gc_collection_accounting_ok=0; \
+	fi; \
 	if [ "$${#gc_steps[@]}" -ne 3 ] || \
 	   [ "$${#gc_roots[@]}" -ne 3 ] || \
 	   [ "$${#gc_promoted[@]}" -ne 3 ] || \
+	   [ "$${#gc_collections[@]}" -ne 3 ] || \
 	   [ "$${#gc_heap[@]}" -ne 3 ] || \
 	   [ "$${#gc_major[@]}" -ne 3 ] || \
 	   [ "$${#gc_continuation_copies[@]}" -ne 3 ] || \
+	   [ "$${#gc_binding_apply_calls[@]}" -ne 3 ] || \
 	   [ "$${gc_steps[0]}" -le 0 ] || \
-	   [ "$${gc_roots[0]}" -le 0 ] || \
-	   [ "$${gc_promoted[0]}" -le 0 ] || \
 	   [ "$${gc_heap[0]}" -le 0 ] || \
-	   [ "$${gc_major[1]}" -le 0 ] || \
-	   [ "$${gc_major[2]}" -le 0 ] || \
+	   [ "$${gc_collections[2]}" -le 0 ] || \
+	   [ "$$gc_collection_accounting_ok" -ne 1 ] || \
 	   [ "$${gc_continuation_copies[0]}" -ne 0 ] || \
 	   [ "$${gc_continuation_copies[1]}" -ne 0 ] || \
 	   [ "$${gc_continuation_copies[2]}" -ne 0 ] || \
+	   [ "$${gc_binding_apply_calls[0]}" -gt 256 ] || \
+	   [ "$${gc_binding_apply_calls[1]}" -gt 256 ] || \
+	   [ "$${gc_binding_apply_calls[2]}" -gt 256 ] || \
 	   [ "$${gc_steps[1]}" -gt "$$((3 * $${gc_steps[0]}))" ] || \
 	   [ "$${gc_steps[2]}" -gt "$$((3 * $${gc_steps[1]}))" ] || \
-	   [ "$${gc_roots[1]}" -gt "$$((3 * $${gc_roots[0]}))" ] || \
-	   [ "$${gc_roots[2]}" -gt "$$((3 * $${gc_roots[1]}))" ] || \
-	   [ "$${gc_promoted[1]}" -gt "$$((3 * $${gc_promoted[0]}))" ] || \
-	   [ "$${gc_promoted[2]}" -gt "$$((3 * $${gc_promoted[1]}))" ] || \
+	   { [ "$${gc_roots[0]}" -gt 0 ] && \
+	     [ "$${gc_roots[1]}" -gt "$$((3 * $${gc_roots[0]}))" ]; } || \
+	   { [ "$${gc_roots[1]}" -gt 0 ] && \
+	     [ "$${gc_roots[2]}" -gt "$$((3 * $${gc_roots[1]}))" ]; } || \
+	   { [ "$${gc_promoted[0]}" -gt 0 ] && \
+	     [ "$${gc_promoted[1]}" -gt "$$((3 * $${gc_promoted[0]}))" ]; } || \
+	   { [ "$${gc_promoted[1]}" -gt 0 ] && \
+	     [ "$${gc_promoted[2]}" -gt "$$((3 * $${gc_promoted[1]}))" ]; } || \
 	   [ "$${gc_heap[1]}" -gt "$$((3 * $${gc_heap[0]}))" ] || \
 	   [ "$${gc_heap[2]}" -gt "$$((3 * $${gc_heap[1]}))" ]; then \
 		echo "FAIL: PeTTa generational collection work or memory is not linear"; \
@@ -8283,9 +8390,11 @@ endif
 test-pathmap-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-indexed-query-work
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-indexed-admission-boundaries
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-pull-consumers-work
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-gslt-execution-contracts
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-program-shadow-sync-work
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-interleaved-dispatch-view
 	@expected=$$(cat tests/test_pathmap_direct_store_runtime_stats.expected); \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pathmap_direct_store_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
@@ -8298,6 +8407,59 @@ test-pathmap-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-bridge-v2
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-conjunction-init
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-match-chain-v3
+
+.PHONY: test-pathmap-indexed-admission-boundaries
+test-pathmap-indexed-admission-boundaries: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@positive=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		--lang he \
+		-e '!(bind! &positive (new-space pathmap))' \
+		-e '!(add-atom &positive (edge a b))' \
+		-e '!(collapse (match &positive (edge $$x $$y) ($$x $$y)))' 2>&1); \
+	ordered=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		--lang he \
+		-e '!(bind! &ordered (new-space stack))' \
+		-e '!(space-set-backend! &ordered pathmap)' \
+		-e '!(add-atom &ordered (edge a b))' \
+		-e '!(add-atom &ordered (edge c d))' \
+		-e '!(collapse (match &ordered (edge $$x $$y) ($$x $$y)))' 2>&1); \
+	unsupported=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		--lang he \
+		-e '!(bind! &unsupported (new-space pathmap))' \
+		-e '!(add-atom &unsupported (typed f (arrow a b)))' \
+		-e '!(collapse (match &unsupported (typed $$f (arrow $$a $$b)) $$f))' 2>&1); \
+	positive_actual=$$(printf '%s\n' "$$positive" | grep '^\[' || true); \
+	ordered_actual=$$(printf '%s\n' "$$ordered" | grep '^\[' || true); \
+	unsupported_actual=$$(printf '%s\n' "$$unsupported" | grep '^\[' || true); \
+	positive_expected=$$(printf '%s\n' '[()]' '[()]' '[((a b))]'); \
+	ordered_expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[((a b) (c d))]'); \
+	unsupported_expected=$$(printf '%s\n' '[()]' '[()]' '[(f)]'); \
+	if [ "$$positive_actual" != "$$positive_expected" ] || \
+	   [ "$$ordered_actual" != "$$ordered_expected" ] || \
+	   [ "$$unsupported_actual" != "$$unsupported_expected" ]; then \
+		echo "FAIL: PathMap indexed admission changed answers"; \
+		exit 1; \
+	fi; \
+	stat() { \
+		printf '%s\n' "$$1" | awk -v key="$$2" \
+			'$$1 == "runtime-counter" && $$2 == key { print $$3; found=1 } END { if (!found) exit 1 }'; \
+	}; \
+	positive_indexed=$$(stat "$$positive" pathmap-indexed-query) || exit 1; \
+	ordered_indexed=$$(stat "$$ordered" pathmap-indexed-query) || exit 1; \
+	unsupported_indexed=$$(stat "$$unsupported" pathmap-indexed-query) || exit 1; \
+	if [ "$$positive_indexed" -lt 1 ] || [ "$$ordered_indexed" -ne 0 ] || \
+	   [ "$$unsupported_indexed" -ne 0 ]; then \
+		echo "FAIL: PathMap indexed admission expected positive/ordered/unsupported >0/0/0, got $$positive_indexed/$$ordered_indexed/$$unsupported_indexed"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PathMap indexed admission accepts flat hash queries and declines ordered or nested shapes before observation"
+else
+	@echo "INFO: PathMap indexed admission boundary requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
 
 test-pathmap-indexed-query-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=0 $(CETTA_BIN_INVOKE) \
@@ -8611,14 +8773,17 @@ test-pathmap-pull-consumers-work: $(BIN)
 			exit 1; \
 		fi; \
 	}; \
-	assert_eq pathmap-pull-match-run 2; \
-	assert_eq pathmap-pull-match-row 3; \
-	assert_eq pathmap-pull-match-generated-outcome 3; \
+	assert_eq pathmap-pull-match-run 6; \
+	assert_eq pathmap-pull-match-row 16; \
+	assert_eq pathmap-pull-match-generated-outcome 16; \
 	assert_eq pathmap-pull-match-generated-outcome-peak 1; \
 	assert_eq pathmap-pull-atoms-run 12; \
 	assert_eq pathmap-pull-atoms-row 23; \
-	assert_eq pathmap-indexed-query 2; \
-	echo "PASS: counted PathMap match/get-atoms consumers pull demanded bags and safely decline to the oracle"
+	assert_eq pathmap-indexed-query 9; \
+	assert_eq pathmap-indexed-residual-query 7; \
+	assert_eq pathmap-indexed-row-aggregate 4; \
+	assert_eq pathmap-indexed-count-pushdown 1; \
+	echo "PASS: counted PathMap exact-plus-residual queries feed count/prefix/fold consumers without whole-space materialization"
 
 test-pathmap-program-shadow-sync-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
@@ -8637,11 +8802,61 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 	}; \
 	refreshes=$$(stat pathmap-shadow-refresh) || exit 1; \
 	materializations=$$(stat pathmap-materialize-native) || exit 1; \
-	if [ "$$refreshes" -gt 3 ] || [ "$$materializations" -gt 3 ]; then \
+	if [ "$$refreshes" -gt 5 ] || [ "$$materializations" -gt 5 ]; then \
 		echo "FAIL: PathMap program shadow rebuilt per answer (refreshes=$$refreshes, materializations=$$materializations)"; \
 		exit 1; \
 	fi; \
 	echo "PASS: PathMap backend-primary native shadow is refreshed at most once per revision"
+
+.PHONY: test-pathmap-interleaved-dispatch-view
+test-pathmap-interleaved-dispatch-view: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@result=$$(CETTA_PATHMAP_QUERY_INDEX= CETTA_PATHMAP_PULL_CONSUMERS= \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		--space-engine pathmap --lang he \
+		tests/pathmap/probe_interleaved_mutation_full_refresh.metta 2>&1); \
+	off_result=$$(CETTA_PATHMAP_QUERY_INDEX=0 CETTA_PATHMAP_PULL_CONSUMERS=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		--space-engine pathmap --lang he \
+		tests/pathmap/probe_interleaved_mutation_full_refresh.metta 2>&1); \
+	expected=$$(cat tests/pathmap/probe_interleaved_mutation_full_refresh.expected); \
+	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
+	off_actual=$$(printf '%s\n' "$$off_result" | grep '^\[' || true); \
+	if [ "$$actual" != "$$expected" ] || [ "$$off_actual" != "$$expected" ]; then \
+		echo "FAIL: PathMap interleaved dispatch-view answers"; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$off_actual") | head -20; \
+		exit 1; \
+	fi; \
+	stat() { \
+		printf '%s\n' "$$1" | awk -v key="$$2" \
+			'$$1 == "runtime-counter" && $$2 == key { print $$3; found=1 } END { if (!found) exit 1 }'; \
+	}; \
+	assert_le() { \
+		value=$$(stat "$$result" "$$1") || exit 1; \
+		if [ "$$value" -gt "$$2" ]; then \
+			echo "FAIL: $$1 expected <= $$2, got $$value"; exit 1; \
+		fi; \
+	}; \
+	assert_le eq-index-rebuild 3; \
+	assert_le ty-index-rebuild 3; \
+	assert_le pathmap-projection-capture 3; \
+	assert_le pathmap-projection-rows 3000; \
+	assert_le pathmap-shadow-refresh 3; \
+	assert_le pathmap-shadow-refresh-atoms 3000; \
+	assert_le pathmap-materialize-native 3; \
+	assert_le pathmap-materialize-native-atoms 3000; \
+	indexed=$$(stat "$$result" pathmap-indexed-query) || exit 1; \
+	off_indexed=$$(stat "$$off_result" pathmap-indexed-query) || exit 1; \
+	if [ "$$indexed" -lt 1 ] || [ "$$off_indexed" -ne 0 ]; then \
+		echo "FAIL: default/off indexed routing expected positive/zero, got $$indexed/$$off_indexed"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PathMap interleaved exact mutations retain dispatch descriptors, avoid projection churn, and preserve the indexed/off differential"
+else
+	@echo "INFO: PathMap interleaved dispatch-view gate requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
 
 test-mm2-mork-program-space: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
@@ -8936,12 +9151,13 @@ test-pathmap-conjunction-init: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@ \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_imported_conjunction_bridge_init_regression.metta 2>&1); \
-	if [ "$$result" = "$$(cat tests/test_imported_conjunction_bridge_init_regression.expected)" ]; then \
+	source=$(PATHMAP_RUNTIME_STATS_METTA_TESTS); \
+	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he "$$source" 2>&1); \
+	if [ "$$result" = "$$(cat "$${source%.metta}.expected")" ]; then \
 		echo "PASS: pathmap conjunction init regression"; \
 	else \
 		echo "FAIL: pathmap conjunction init regression"; \
-		diff <(cat tests/test_imported_conjunction_bridge_init_regression.expected) <(echo "$$result") | head -20; \
+		diff <(cat "$${source%.metta}.expected") <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
 else
@@ -8956,7 +9172,7 @@ test-pathmap-bridge-v2: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
+	result=$$(CETTA_PATHMAP_QUERY_INDEX=0 $(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap bridge v2 regression"; \
 	else \

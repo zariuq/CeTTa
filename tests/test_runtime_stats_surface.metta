@@ -3,7 +3,7 @@
 !(assertEqualToResult (match &zero (runtime-counter bindings-merge $n) $n) (0))
 !(assertEqualToResult (match &zero (runtime-counter bindings-constraint-add $n) $n) (0))
 
-!(add-atom &self (= (probe A) ok))
+!(add-atom &self (= (probe A) (superpose (ok))))
 !(probe A)
 !(bind! &stats (runtime-stats!))
 !(assertEqualToResult
@@ -20,11 +20,11 @@
   (0))
 
 !(reset-runtime-stats!)
-!(add-atom &self (= (dispatch-probe A) one))
-!(add-atom &self (= (dispatch-probe B) two))
-!(add-atom &self (= (dispatch-probe C) three))
-!(add-atom &self (= (dispatch-probe D) four))
-!(add-atom &self (= (dispatch-probe E) five))
+!(add-atom &self (= (dispatch-probe A) (superpose (one))))
+!(add-atom &self (= (dispatch-probe B) (superpose (two))))
+!(add-atom &self (= (dispatch-probe C) (superpose (three))))
+!(add-atom &self (= (dispatch-probe D) (superpose (four))))
+!(add-atom &self (= (dispatch-probe E) (superpose (five))))
 !(assertEqual (dispatch-probe A) one)
 !(bind! &dispatch-stats (runtime-stats!))
 !(assertEqualToResult
@@ -36,7 +36,7 @@
   (0))
 
 !(add-atom &self (: typed Number))
-!(remove-atom &self (= (probe A) ok))
+!(remove-atom &self (= (probe A) (superpose (ok))))
 !(remove-atom &self (: typed Number))
 !(bind! &after-remove (runtime-stats!))
 !(assertEqualToResult

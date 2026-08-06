@@ -307,20 +307,17 @@ pub fn bridge_expr_packet_to_bytes(space: &Space, input: &[u8]) -> Result<Vec<u8
                     .ok_or_else(|| "bridge expr packet arity overflow".to_string())?;
             }
             BRIDGE_VALUE_TAG_SYMBOL => {
-                let symbol_len =
-                    usize::try_from(read_bridge_packet_u32(input, &mut offset)?)
-                        .map_err(|_| "bridge expr packet symbol length overflow".to_string())?;
+                let symbol_len = usize::try_from(read_bridge_packet_u32(input, &mut offset)?)
+                    .map_err(|_| "bridge expr packet symbol length overflow".to_string())?;
                 if symbol_len == 0 {
                     return Err("bridge expr packet symbols must not be empty".to_string());
                 }
                 let symbol_end = offset
                     .checked_add(symbol_len)
                     .ok_or_else(|| "bridge expr packet symbol length overflow".to_string())?;
-                let symbol = input
-                    .get(offset..symbol_end)
-                    .ok_or_else(|| {
-                        "bridge expr packet truncated while reading symbol bytes".to_string()
-                    })?;
+                let symbol = input.get(offset..symbol_end).ok_or_else(|| {
+                    "bridge expr packet truncated while reading symbol bytes".to_string()
+                })?;
                 offset = symbol_end;
                 if symbol_len < 64 {
                     compact.push(item_byte(Tag::SymbolSize(symbol_len as u8)));
@@ -343,7 +340,7 @@ pub fn bridge_expr_packet_to_bytes(space: &Space, input: &[u8]) -> Result<Vec<u8
             BRIDGE_VALUE_TAG_VARREF => {
                 let Some(index) = input.get(offset).copied() else {
                     return Err(
-                        "bridge expr packet truncated while reading variable reference".to_string()
+                        "bridge expr packet truncated while reading variable reference".to_string(),
                     );
                 };
                 offset += 1;
@@ -552,7 +549,10 @@ mod bridge_packet_tests {
         let expr = Expr {
             ptr: compact.as_ptr().cast_mut(),
         };
-        assert_eq!(stable_bridge_expr_packet_bytes(&space, expr).unwrap(), packet);
+        assert_eq!(
+            stable_bridge_expr_packet_bytes(&space, expr).unwrap(),
+            packet
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 34bac40d90cec5f0f60b2366d2195ce628dbed75219ab6aae072034a7cf68857
+ * Source SHA-256: c7e0e132e4e8838aa56020e4479476055e9451d3a8a2794bbe2329a724f4753e
  */
 
 #include <stdbool.h>
@@ -32,6 +32,7 @@ static inline CettaGsltQueryEffect cetta_gslt_query_effect_join(
 #define CETTA_GSLT_USER_HEAD_EFFECT_LEAST_FIXED_POINT 1
 #define CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD     CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY
 #define CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL     CETTA_GSLT_QUERY_EFFECT_PURE
+#define CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE 1
 
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X)     X(op_plus, 2u) \
     X(op_minus, 2u) \
@@ -91,6 +92,8 @@ typedef enum {
     CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_GREATER = 6,
     CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_LESS_EQUAL = 7,
     CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_GREATER_EQUAL = 8,
+    CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER = 9,
+    CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO = 10,
 } CettaGsltRegisterInstruction;
 
 typedef enum {
@@ -129,6 +132,12 @@ static inline bool cetta_gslt_register_operand_discipline(
         *discipline_out = CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_GREATER_EQUAL:
+        *discipline_out = CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS;
+        return true;
+    case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER:
+        *discipline_out = CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS;
+        return true;
+    case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO:
         *discipline_out = CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS;
         return true;
     default:
@@ -421,6 +430,14 @@ static inline bool cetta_gslt_register_execute_small_binary(
         *boolean_out = left >= right;
         *kind_out = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
         return true;
+    case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER:
+        if (right == 0) { return false; } *integer_out = (left == INT64_MIN && right == -1) ? 0 : left % right;
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        return true;
+    case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO:
+        if (right == 0) { return false; } if (left == INT64_MIN && right == -1) { *integer_out = 0; } else { *integer_out = left % right; if (*integer_out != 0 && ((*integer_out < 0) != (right < 0))) *integer_out += right; }
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        return true;
     default:
         return false;
     }
@@ -469,6 +486,14 @@ static inline bool cetta_gslt_register_execute_binary(
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_GREATER_EQUAL:
         *boolean_out = mpz_cmp(left, right) >= 0;
         *kind_out = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
+        return true;
+    case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER:
+        if (mpz_sgn(right) == 0) { return false; } mpz_tdiv_r(integer_out, left, right);
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+        return true;
+    case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO:
+        if (mpz_sgn(right) == 0) { return false; } mpz_fdiv_r(integer_out, left, right);
+        *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     default:
         return false;

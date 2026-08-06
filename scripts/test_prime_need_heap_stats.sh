@@ -13,6 +13,7 @@ fi
 scratch=$(mktemp -d "$ROOT/runtime/prime-need-heap-stats.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 
+declaration='(: need-index-depth (-> Number Symbol))'
 definition='(= (need-index-depth $n)
                 (if (<= $n 0)
                     done
@@ -26,13 +27,13 @@ run_probe() {
     if [[ "$mode" == "indexed" ]]; then
         CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
             "$BIN" --emit-runtime-stats --lang prime \
-                -e "$definition" -e "$query" \
+                -e "$declaration" -e "$definition" -e "$query" \
                 >"$stdout_file" 2>"$stderr_file"
     else
         CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
             CETTA_PRIME_NEED_HEAP_INDEX=0 \
             "$BIN" --emit-runtime-stats --lang prime \
-                -e "$definition" -e "$query" \
+                -e "$declaration" -e "$definition" -e "$query" \
                 >"$stdout_file" 2>"$stderr_file"
     fi
 }

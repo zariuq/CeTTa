@@ -1,8 +1,9 @@
 use crate::{
-    counted_entries, counted_exact_entry, stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes,
+    CountedEntry, CountedGeneralQueryCursor, counted_entries, counted_exact_entry,
+    stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes,
 };
 use mork::space::Space;
-use mork_expr::{Expr, ExprEnv};
+use mork_expr::{Expr, ExprEnv, unify};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -32,8 +33,15 @@ pub struct FlatCountedCursorStats {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlatCountedQueryAdmission {
-    Prepared { key: Vec<u8>, factor_count: u32 },
-    Unsupported { reason: String },
+    Prepared {
+        key: Vec<u8>,
+        factor_count: u32,
+        has_residual: bool,
+        has_exact_partition: bool,
+    },
+    Unsupported {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,6 +55,7 @@ type RowKey = Vec<Vec<u8>>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FlatFactRow {
     columns: RowKey,
+    expr_bytes: Vec<u8>,
     expr_packet: Vec<u8>,
     count: u32,
 }
@@ -54,6 +63,7 @@ struct FlatFactRow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FlatTerminal {
     row_key: RowKey,
+    expr_bytes: Vec<u8>,
     expr_packet: Vec<u8>,
     count: u32,
 }
@@ -98,6 +108,7 @@ impl FlatAccessPath {
         let was_empty = self.nodes[node].terminal.is_none();
         self.nodes[node].terminal = Some(FlatTerminal {
             row_key: row.columns.clone(),
+            expr_bytes: row.expr_bytes.clone(),
             expr_packet: row.expr_packet.clone(),
             count: row.count,
         });
@@ -135,6 +146,30 @@ impl FlatAccessPath {
                 break;
             }
         }
+    }
+
+    fn prefix_entries(&self, constant_values: &[Vec<u8>]) -> Vec<CountedEntry> {
+        let mut node = 0usize;
+        for value in constant_values {
+            let Some(next) = self.nodes[node].children.get(value).copied() else {
+                return Vec::new();
+            };
+            node = next;
+        }
+
+        let mut pending = vec![node];
+        let mut entries = Vec::new();
+        while let Some(next) = pending.pop() {
+            if let Some(terminal) = &self.nodes[next].terminal {
+                entries.push(CountedEntry {
+                    full_key: terminal.expr_bytes.clone(),
+                    atom_expr_bytes: terminal.expr_bytes.clone(),
+                    count: terminal.count,
+                });
+            }
+            pending.extend(self.nodes[next].children.values().copied());
+        }
+        entries
     }
 }
 
@@ -201,8 +236,8 @@ enum CatalogEntryClass {
 struct FlatCatalog {
     entries: BTreeMap<Vec<u8>, CatalogEntryClass>,
     relations: BTreeMap<RelationKey, FlatRelation>,
-    wildcard_any: usize,
-    wildcard_by_arity: BTreeMap<usize, usize>,
+    wildcard_any: BTreeMap<Vec<u8>, u32>,
+    wildcard_by_arity: BTreeMap<usize, BTreeMap<Vec<u8>, u32>>,
 }
 
 impl FlatCatalog {
@@ -230,11 +265,13 @@ impl FlatCatalog {
                     .insert(expr_key.clone(), count);
             }
             CatalogEntryClass::WildcardRelation { arity: Some(arity) } => {
-                let slot = self.wildcard_by_arity.entry(*arity).or_insert(0);
-                *slot = slot.saturating_add(1);
+                self.wildcard_by_arity
+                    .entry(*arity)
+                    .or_default()
+                    .insert(expr_key.clone(), count);
             }
             CatalogEntryClass::WildcardRelation { arity: None } => {
-                self.wildcard_any = self.wildcard_any.saturating_add(1);
+                self.wildcard_any.insert(expr_key.clone(), count);
             }
             CatalogEntryClass::Irrelevant => {}
         }
@@ -254,22 +291,57 @@ impl FlatCatalog {
                 }
             }
             CatalogEntryClass::WildcardRelation { arity: Some(arity) } => {
-                if let Some(slot) = self.wildcard_by_arity.get_mut(&arity) {
-                    *slot = slot.saturating_sub(1);
-                    if *slot == 0 {
+                if let Some(rows) = self.wildcard_by_arity.get_mut(&arity) {
+                    rows.remove(expr_key);
+                    if rows.is_empty() {
                         self.wildcard_by_arity.remove(&arity);
                     }
                 }
             }
             CatalogEntryClass::WildcardRelation { arity: None } => {
-                self.wildcard_any = self.wildcard_any.saturating_sub(1);
+                self.wildcard_any.remove(expr_key);
             }
             CatalogEntryClass::Irrelevant => {}
         }
     }
 
     fn has_wildcard_for_arity(&self, arity: usize) -> bool {
-        self.wildcard_any != 0 || self.wildcard_by_arity.get(&arity).copied().unwrap_or(0) != 0
+        !self.wildcard_any.is_empty()
+            || self
+                .wildcard_by_arity
+                .get(&arity)
+                .is_some_and(|rows| !rows.is_empty())
+    }
+
+    fn residual_entries_for(&self, relation: &RelationKey) -> Vec<CountedEntry> {
+        let mut rows = BTreeMap::<Vec<u8>, u32>::new();
+        if let Some(relation_rows) = self.relations.get(relation) {
+            rows.extend(
+                relation_rows
+                    .unsupported_rows
+                    .iter()
+                    .map(|(expr, count)| (expr.clone(), *count)),
+            );
+        }
+        rows.extend(
+            self.wildcard_any
+                .iter()
+                .map(|(expr, count)| (expr.clone(), *count)),
+        );
+        if let Some(arity_rows) = self.wildcard_by_arity.get(&relation.arity) {
+            rows.extend(
+                arity_rows
+                    .iter()
+                    .map(|(expr, count)| (expr.clone(), *count)),
+            );
+        }
+        rows.into_iter()
+            .map(|(atom_expr_bytes, count)| CountedEntry {
+                full_key: atom_expr_bytes.clone(),
+                atom_expr_bytes,
+                count,
+            })
+            .collect()
     }
 }
 
@@ -294,6 +366,7 @@ struct FlatQueryPlan {
     variable_order: Vec<u8>,
     output_slots: Vec<u8>,
     factors: Vec<FactorPlan>,
+    has_residual: bool,
     empty: bool,
 }
 
@@ -360,6 +433,7 @@ impl FlatCountedQueryIndex {
             .collect::<Result<Vec<_>, _>>()?;
         let row = FlatFactRow {
             columns: columns.clone(),
+            expr_bytes: expr_bytes.to_vec(),
             expr_packet: stable_bridge_expr_packet_bytes(space, expr)?,
             count,
         };
@@ -568,29 +642,20 @@ impl FlatCountedQueryIndex {
             .catalog
             .as_ref()
             .expect("flat query catalog was built above");
-        for factor in &factors {
-            if catalog.has_wildcard_for_arity(factor.relation.arity) {
-                return Ok(FlatCountedQueryAdmission::Unsupported {
-                    reason: "stored variable-headed facts can match this relation arity"
-                        .to_string(),
-                });
-            }
-            if catalog
-                .relations
-                .get(&factor.relation)
-                .map(|relation| !relation.unsupported_rows.is_empty())
-                .unwrap_or(false)
-            {
-                return Ok(FlatCountedQueryAdmission::Unsupported {
-                    reason: "stored non-ground facts require the general unifier".to_string(),
-                });
-            }
-        }
+        let has_residual = factors.iter().any(|factor| {
+            catalog.has_wildcard_for_arity(factor.relation.arity)
+                || catalog
+                    .relations
+                    .get(&factor.relation)
+                    .is_some_and(|relation| !relation.unsupported_rows.is_empty())
+        });
         if let Some(plan) = self.plans.get(&key) {
             self.stats.plan_cache_hits = self.stats.plan_cache_hits.saturating_add(1);
             return Ok(FlatCountedQueryAdmission::Prepared {
                 key,
                 factor_count: plan.factor_count,
+                has_residual: plan.has_residual,
+                has_exact_partition: !plan.empty,
             });
         }
 
@@ -599,15 +664,8 @@ impl FlatCountedQueryIndex {
             .flat_map(|factor| factor.variables.keys().copied())
             .collect::<BTreeSet<_>>();
         let variable_order = Self::choose_variable_order(catalog, &factors, &output_slots);
-        let empty = factors.iter().any(|factor| {
-            catalog
-                .relations
-                .get(&factor.relation)
-                .map(|relation| relation.rows.is_empty())
-                .unwrap_or(true)
-        });
-
         let mut factor_plans = Vec::with_capacity(factors.len());
+        let mut has_exact_partition = true;
         for factor in &factors {
             let constant_positions = factor.constants.keys().copied().collect::<Vec<_>>();
             let mut access_shape = constant_positions.clone();
@@ -633,13 +691,22 @@ impl FlatCountedQueryIndex {
                         .clone()
                 })
                 .collect::<Vec<_>>();
-            if let Some(relation) = self
+            let factor_has_exact = if let Some(relation) = self
                 .catalog
                 .as_mut()
                 .and_then(|catalog| catalog.relations.get_mut(&factor.relation))
             {
                 relation.ensure_access_path(&access_shape, &mut self.stats);
-            }
+                relation
+                    .access_paths
+                    .get(&access_shape)
+                    .is_some_and(|path| {
+                        !path.prefix_entries(&constant_values).is_empty()
+                    })
+            } else {
+                false
+            };
+            has_exact_partition &= factor_has_exact;
             factor_plans.push(FactorPlan {
                 relation: factor.relation.clone(),
                 access_shape,
@@ -653,13 +720,16 @@ impl FlatCountedQueryIndex {
             variable_order,
             output_slots: output_slots.into_iter().collect(),
             factors: factor_plans,
-            empty,
+            has_residual,
+            empty: !has_exact_partition,
         };
         self.stats.plan_builds = self.stats.plan_builds.saturating_add(1);
         self.plans.insert(key.clone(), plan);
         Ok(FlatCountedQueryAdmission::Prepared {
             key,
             factor_count: factor_count as u32,
+            has_residual,
+            has_exact_partition,
         })
     }
 
@@ -674,6 +744,69 @@ impl FlatCountedQueryIndex {
             .get(&factor.relation)?
             .access_paths
             .get(&factor.access_shape)
+    }
+
+    pub fn residual_candidate_lists(
+        &self,
+        _space: &Space,
+        pattern_expr_bytes: &[u8],
+        key: &[u8],
+    ) -> Result<Option<Vec<Vec<CountedEntry>>>, String> {
+        let Some(plan) = self.plan(key) else {
+            return Err("flat indexed residual query plan is unavailable".to_string());
+        };
+        if !plan.has_residual {
+            return Ok(None);
+        }
+        let catalog = self
+            .catalog
+            .as_ref()
+            .ok_or_else(|| "flat indexed residual catalog is unavailable".to_string())?;
+        let pattern_expr = Expr {
+            ptr: pattern_expr_bytes.as_ptr().cast_mut(),
+        };
+        let mut args = Vec::with_capacity(plan.factors.len() + 1);
+        ExprEnv::new(0, pattern_expr).args(&mut args);
+        let query_factors = &args[1..];
+        if query_factors.len() != plan.factors.len() {
+            return Err("flat indexed residual factor count drifted from its plan".to_string());
+        }
+
+        let mut candidate_lists = Vec::with_capacity(query_factors.len());
+        for (factor, factor_plan) in query_factors.iter().zip(&plan.factors) {
+            let mut candidates = self
+                .access_path(factor_plan)
+                .map(|path| path.prefix_entries(&factor_plan.constant_values))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|entry| (entry.atom_expr_bytes.clone(), entry))
+                .collect::<BTreeMap<_, _>>();
+            for entry in catalog.residual_entries_for(&factor_plan.relation) {
+                let atom_expr = Expr {
+                    ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
+                };
+                if unify(vec![(*factor, ExprEnv::new(1, atom_expr))]).is_ok() {
+                    candidates.insert(entry.atom_expr_bytes.clone(), entry);
+                }
+            }
+            candidate_lists.push(candidates.into_values().collect());
+        }
+        Ok(Some(candidate_lists))
+    }
+
+    pub fn residual_cursor(
+        &self,
+        space: &Space,
+        pattern_expr_bytes: &[u8],
+        key: &[u8],
+    ) -> Result<Option<CountedGeneralQueryCursor>, String> {
+        let Some(candidate_lists) =
+            self.residual_candidate_lists(space, pattern_expr_bytes, key)?
+        else {
+            return Ok(None);
+        };
+        CountedGeneralQueryCursor::new_residual_partition(pattern_expr_bytes, candidate_lists)
+            .map(Some)
     }
 
     fn prepare_source_for_plan(
@@ -1568,7 +1701,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_query_variables_and_non_ground_facts_use_the_oracle() {
+    fn nested_query_variables_decline_but_non_ground_facts_form_a_residual_partition() {
         let mut space = Space::new();
         let ground = parse(&mut space, "(typed f (arrow a b))");
         counted_insert_expr(&mut space, &ground).unwrap();
@@ -1587,7 +1720,101 @@ mod tests {
         let admission = index.prepare(&space, &query).unwrap();
         assert!(matches!(
             admission,
-            FlatCountedQueryAdmission::Unsupported { .. }
+            FlatCountedQueryAdmission::Prepared {
+                has_residual: true,
+                has_exact_partition: false,
+                ..
+            }
         ));
+        let key = prepared_key(admission);
+        let mut residual = index
+            .residual_cursor(&space, &query, &key)
+            .unwrap()
+            .expect("matching non-ground rows require a residual cursor");
+        assert!(residual.next_packet_row(&space).unwrap().is_some());
+        assert!(residual.next_packet_row(&space).unwrap().is_none());
+    }
+
+    #[test]
+    fn exact_and_residual_partitions_are_disjoint_and_preserve_counts() {
+        let mut space = Space::new();
+        for _ in 0..2 {
+            let exact = parse(&mut space, "(edge a ground)");
+            counted_insert_expr(&mut space, &exact).unwrap();
+        }
+        for _ in 0..3 {
+            let residual = parse(&mut space, "(edge $x residual)");
+            counted_insert_expr(&mut space, &residual).unwrap();
+        }
+        let query = parse(&mut space, "(, (edge a $value))");
+        let mut index = FlatCountedQueryIndex::default();
+        let admission = index.prepare(&space, &query).unwrap();
+        assert!(matches!(
+            admission,
+            FlatCountedQueryAdmission::Prepared {
+                has_residual: true,
+                has_exact_partition: true,
+                ..
+            }
+        ));
+        let key = prepared_key(admission);
+        let mut exact = FlatCountedQueryCursor::new(Arc::new(index.clone()), &key).unwrap();
+        let mut residual = index
+            .residual_cursor(&space, &query, &key)
+            .unwrap()
+            .expect("same-head stored variables require a residual cursor");
+
+        assert_eq!(exact.count_remaining().unwrap(), 2);
+        assert_eq!(residual.count_remaining().unwrap(), 3);
+        assert_eq!(residual.rows_aggregated(), 1);
+    }
+
+    #[test]
+    fn residual_conjunction_includes_mixed_products_without_replaying_all_ground_products() {
+        let mut space = Space::new();
+        for _ in 0..2 {
+            let exact_left = parse(&mut space, "(left a k)");
+            counted_insert_expr(&mut space, &exact_left).unwrap();
+        }
+        for _ in 0..3 {
+            let residual_left = parse(&mut space, "(left $x k)");
+            counted_insert_expr(&mut space, &residual_left).unwrap();
+        }
+        for _ in 0..5 {
+            let right = parse(&mut space, "(right k b)");
+            counted_insert_expr(&mut space, &right).unwrap();
+        }
+        let query = parse(&mut space, "(, (left $x $key) (right $key $value))");
+        let mut index = FlatCountedQueryIndex::default();
+        let admission = index.prepare(&space, &query).unwrap();
+        let key = prepared_key(admission);
+        let mut exact = FlatCountedQueryCursor::new(Arc::new(index.clone()), &key).unwrap();
+        let mut residual = index
+            .residual_cursor(&space, &query, &key)
+            .unwrap()
+            .expect("mixed conjunction requires a residual cursor");
+
+        assert_eq!(exact.count_remaining().unwrap(), 10);
+        assert_eq!(residual.count_remaining().unwrap(), 15);
+    }
+
+    #[test]
+    fn variable_head_rows_enter_the_residual_partition() {
+        let mut space = Space::new();
+        let exact = parse(&mut space, "(edge a ground)");
+        let wildcard = parse(&mut space, "($relation a residual)");
+        counted_insert_expr(&mut space, &exact).unwrap();
+        counted_insert_expr(&mut space, &wildcard).unwrap();
+        let query = parse(&mut space, "(, (edge a $value))");
+        let mut index = FlatCountedQueryIndex::default();
+        let admission = index.prepare(&space, &query).unwrap();
+        let key = prepared_key(admission);
+        let mut residual = index
+            .residual_cursor(&space, &query, &key)
+            .unwrap()
+            .expect("variable-headed rows require a residual cursor");
+
+        assert!(residual.next_packet_row(&space).unwrap().is_some());
+        assert!(residual.next_packet_row(&space).unwrap().is_none());
     }
 }

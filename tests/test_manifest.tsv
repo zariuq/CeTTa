@@ -281,7 +281,7 @@ tests/test_import_partial_arity.metta	he	metta	he-extended	main	native	test	gold
 tests/test_import_registered_nested_parent.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_import_transaction.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_imported_bridge_string_grounding_regression.metta	he	metta	he-extended	main	native	test	golden	-
-tests/test_imported_conjunction_bridge_init_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
+tests/test_imported_conjunction_bridge_init_regression.metta	he	metta	he-extended	runtime-stats	pathmap	test-pathmap-runtime-stats-lane	golden	PathMap conjunction bridge initialization and indexed-hit regression
 tests/test_imported_fallback_late_add_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_imported_match_chain_conjunction_lowering.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_include_arity.metta	he	metta	he-extended	main	native	test	golden	-
@@ -430,6 +430,7 @@ tests/test_pathmap_direct_store_runtime_stats.metta	he	metta	he-extended	runtime
 tests/test_pathmap_direct_transfer_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_pathmap_fc_depth3_count_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_imported_bridge_v2.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
+tests/test_pathmap_indexed_opening_identity_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_indexed_query_work.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_match_copy_var_identity_regression.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_program_shadow_sync_work.metta	he	metta	he-extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression

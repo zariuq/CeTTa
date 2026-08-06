@@ -49,3 +49,11 @@
 ; Removal invalidates it again; the unknown application becomes inert.
 !(remove-atom &self (= (shadow-f token) changed))
 !(assertEqualToResult (shadow-f token) ((shadow-f token)))
+
+; Type annotations are the other dispatch-descriptor row class.  Adding and
+; removing one must invalidate that descriptor even when exact fact mutations
+; retain it.
+!(add-atom &self (: shadow-typed ShadowType))
+!(assertEqual (get-type shadow-typed) ShadowType)
+!(remove-atom &self (: shadow-typed ShadowType))
+!(assertEqual (get-type shadow-typed) %Undefined%)

@@ -508,7 +508,10 @@ static SymbolId eq_head_symbol(Atom *lhs);
 static SymbolId eq_head_symbol_id(const Space *s, AtomId lhs_id);
 
 static void eq_bucket_init(EqBucket *b) {
-    b->atom_indices = NULL; b->len = 0; b->cap = 0;
+    b->atom_indices = NULL;
+    b->atom_ids = NULL;
+    b->len = 0;
+    b->cap = 0;
     b->trie = NULL;
     stree_bucket_init(&b->subst);
     b->head = SYMBOL_ID_NONE;
@@ -526,15 +529,18 @@ static void eq_bucket_note_head(EqBucket *b, SymbolId head) {
     }
 }
 
-static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx) {
+static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx,
+                          AtomId equation_id) {
     CettaIndex idx = b->len;
     SymbolId head = eq_head_symbol(lhs);
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 8;
         b->atom_indices =
             cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
+        b->atom_ids = cetta_realloc(b->atom_ids, sizeof(AtomId) * b->cap);
     }
     b->atom_indices[b->len] = atom_idx;
+    b->atom_ids[b->len] = equation_id;
     b->len++;
     eq_bucket_note_head(b, head);
     /* Add to discrimination trie */
@@ -545,7 +551,7 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx) {
 }
 
 static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
-                             CettaIndex atom_idx) {
+                             CettaIndex atom_idx, AtomId equation_id) {
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (!b || !s || !s->native.universe || lhs_id == CETTA_ATOM_ID_NONE ||
         !tu_hdr(s->native.universe, lhs_id)) {
@@ -553,7 +559,7 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
                         ? term_universe_get_atom(s->native.universe, lhs_id)
                         : NULL;
         if (lhs)
-            eq_bucket_add(b, lhs, atom_idx);
+            eq_bucket_add(b, lhs, atom_idx, equation_id);
         return;
     }
     CettaIndex idx = b->len;
@@ -561,8 +567,10 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
         b->cap = b->cap ? b->cap * 2 : 8;
         b->atom_indices =
             cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
+        b->atom_ids = cetta_realloc(b->atom_ids, sizeof(AtomId) * b->cap);
     }
     b->atom_indices[b->len] = atom_idx;
+    b->atom_ids[b->len] = equation_id;
     b->len++;
     eq_bucket_note_head(b, head);
     if (!b->trie)
@@ -582,9 +590,13 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
 
 static void eq_bucket_free(EqBucket *b) {
     free(b->atom_indices);
+    free(b->atom_ids);
     disc_node_free(b->trie); b->trie = NULL;
     stree_bucket_free(&b->subst);
-    b->atom_indices = NULL; b->len = 0; b->cap = 0;
+    b->atom_indices = NULL;
+    b->atom_ids = NULL;
+    b->len = 0;
+    b->cap = 0;
     b->head = SYMBOL_ID_NONE;
     b->mixed_heads = false;
     b->subst_safe = true;
@@ -683,42 +695,55 @@ static void eq_index_free(EqIndex *idx) {
     eq_bucket_free(&idx->wildcard);
 }
 
-static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx) {
+static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
+                         AtomId equation_id) {
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
-        eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx);
+        eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx,
+                      equation_id);
     } else {
-        eq_bucket_add(&idx->wildcard, lhs, atom_idx);
+        eq_bucket_add(&idx->wildcard, lhs, atom_idx, equation_id);
     }
 }
 
 static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
-                            CettaIndex atom_idx) {
+                            CettaIndex atom_idx, AtomId equation_id) {
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
-        eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx);
+        eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx,
+                         equation_id);
     } else {
-        eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx);
+        eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx, equation_id);
     }
 }
 
 /* ── Type Annotation Index ──────────────────────────────────────────────── */
 
 static void ty_ann_bucket_init(TypeAnnBucket *b) {
-    b->atom_indices = NULL; b->len = 0; b->cap = 0;
+    b->atom_indices = NULL;
+    b->atom_ids = NULL;
+    b->len = 0;
+    b->cap = 0;
 }
-static void ty_ann_bucket_add(TypeAnnBucket *b, CettaIndex atom_idx) {
+static void ty_ann_bucket_add(TypeAnnBucket *b, CettaIndex atom_idx,
+                              AtomId annotation_id) {
     if (b->len >= b->cap) {
         b->cap = b->cap ? b->cap * 2 : 4;
         b->atom_indices =
             cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
+        b->atom_ids = cetta_realloc(b->atom_ids, sizeof(AtomId) * b->cap);
     }
     b->atom_indices[b->len] = atom_idx;
+    b->atom_ids[b->len] = annotation_id;
     b->len++;
 }
 static void ty_ann_bucket_free(TypeAnnBucket *b) {
     free(b->atom_indices);
-    b->atom_indices = NULL; b->len = 0; b->cap = 0;
+    free(b->atom_ids);
+    b->atom_indices = NULL;
+    b->atom_ids = NULL;
+    b->len = 0;
+    b->cap = 0;
 }
 
 static uint32_t atom_hash_for_index(Atom *a) {
@@ -754,14 +779,17 @@ static void ty_ann_index_free(TypeAnnIndex *idx) {
     for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
         ty_ann_bucket_free(&idx->buckets[i]);
 }
-static void ty_ann_index_add(TypeAnnIndex *idx, Atom *ann_atom, CettaIndex atom_idx) {
+static void ty_ann_index_add(TypeAnnIndex *idx, Atom *ann_atom,
+                             CettaIndex atom_idx, AtomId annotation_id) {
     uint32_t h = atom_hash_for_index(ann_atom);
-    ty_ann_bucket_add(&idx->buckets[h], atom_idx);
+    ty_ann_bucket_add(&idx->buckets[h], atom_idx, annotation_id);
 }
 
 static void ty_ann_index_add_id(TypeAnnIndex *idx, const Space *s,
-                                AtomId subject_id, CettaIndex atom_idx) {
-    ty_ann_bucket_add(&idx->buckets[atom_hash_for_index_id(s, subject_id)], atom_idx);
+                                AtomId subject_id, CettaIndex atom_idx,
+                                AtomId annotation_id) {
+    ty_ann_bucket_add(&idx->buckets[atom_hash_for_index_id(s, subject_id)],
+                      atom_idx, annotation_id);
 }
 
 static void exact_atom_bucket_init(ExactAtomBucket *b) {
@@ -1489,7 +1517,7 @@ static void space_mark_indexes_dirty(Space *s) {
     space_mark_derived_state_dirty(s);
 }
 
-void space_discard_native_logical_view(Space *s) {
+static void space_clear_native_logical_view(Space *s) {
     if (!s)
         return;
     free(s->native.atom_ids);
@@ -1498,7 +1526,60 @@ void space_discard_native_logical_view(Space *s) {
     s->native.len = 0;
     s->native.cap = 0;
     s->native.has_non_exact_atoms = false;
+}
+
+void space_discard_native_logical_view(Space *s) {
+    if (!s)
+        return;
+    space_clear_native_logical_view(s);
     space_mark_derived_state_dirty(s);
+}
+
+void space_discard_native_logical_view_preserving_dispatch(Space *s) {
+    if (!s)
+        return;
+    space_clear_native_logical_view(s);
+    s->native.exact_idx_dirty = true;
+    s->native.has_non_exact_atoms_dirty = true;
+    s->native.id_present_dirty = true;
+}
+
+static bool space_atom_form_is(Atom *atom, SymbolId head,
+                               CettaExprLen arity) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == arity &&
+           atom_is_symbol_id(atom->expr.elems[0], head);
+}
+
+static bool space_atom_id_form_is(const Space *s, AtomId atom_id,
+                                  Atom *atom, SymbolId head,
+                                  CettaExprLen arity) {
+    if (s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE) {
+        const CettaTermHdr *hdr = tu_hdr(s->native.universe, atom_id);
+        if (hdr) {
+            return tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
+                   tu_arity(s->native.universe, atom_id) == arity &&
+                   tu_head_sym(s->native.universe, atom_id) == head;
+        }
+        if (!atom)
+            atom = term_universe_get_atom(s->native.universe, atom_id);
+    }
+    return space_atom_form_is(atom, head, arity);
+}
+
+/* The counted PathMap remains the occurrence authority. Its full tuple view
+ * is disposable, while these two dispatch descriptors are stable across a
+ * mutation that cannot add or remove their row class. */
+static void space_mark_backend_primary_atom_mutation(
+    Space *s, AtomId atom_id, Atom *atom) {
+    if (!s)
+        return;
+    if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals, 3u))
+        s->native.eq_idx_dirty = true;
+    if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.colon, 3u))
+        s->native.ty_idx_dirty = true;
+    s->native.exact_idx_dirty = true;
+    s->native.has_non_exact_atoms_dirty = true;
+    s->native.id_present_dirty = true;
 }
 
 static bool space_store_via_backend_primary(Space *s, AtomId atom_id, Atom *atom) {
@@ -1515,7 +1596,7 @@ static bool space_store_via_backend_primary(Space *s, AtomId atom_id, Atom *atom
     atom_exact_indexable = atom_id_is_exact_indexable(s, atom_id);
     if (!space_match_backend_store_atom_id_direct(s, atom_id, atom))
         return false;
-    space_mark_indexes_dirty(s);
+    space_mark_backend_primary_atom_mutation(s, atom_id, atom);
     if (keep_pathmap_exact_metadata) {
         s->native.has_non_exact_atoms =
             had_non_exact_atom || !atom_exact_indexable;
@@ -1539,7 +1620,8 @@ static bool space_store_atom_via_backend_primary(Space *s, Atom *atom) {
     atom_exact_indexable = atom_is_exact_indexable(atom);
     if (!space_match_backend_store_atom_direct(s, atom))
         return false;
-    space_mark_indexes_dirty(s);
+    space_mark_backend_primary_atom_mutation(
+        s, CETTA_ATOM_ID_NONE, atom);
     if (keep_pathmap_exact_metadata) {
         s->native.has_non_exact_atoms =
             had_non_exact_atom || !atom_exact_indexable;
@@ -1563,7 +1645,7 @@ static bool space_remove_via_backend_primary(Space *s, AtomId atom_id) {
     atom_exact_indexable = atom_id_is_exact_indexable(s, atom_id);
     if (!space_match_backend_remove_atom_id_direct(s, atom_id))
         return false;
-    space_mark_indexes_dirty(s);
+    space_mark_backend_primary_atom_mutation(s, atom_id, NULL);
     if (keep_pathmap_exact_metadata) {
         s->native.has_non_exact_atoms = had_non_exact_atom;
         s->native.has_non_exact_atoms_dirty =
@@ -1587,7 +1669,8 @@ static bool space_remove_atom_via_backend_primary(Space *s, Atom *atom) {
     atom_exact_indexable = atom_is_exact_indexable(atom);
     if (!space_match_backend_remove_atom_direct(s, atom))
         return false;
-    space_mark_indexes_dirty(s);
+    space_mark_backend_primary_atom_mutation(
+        s, CETTA_ATOM_ID_NONE, atom);
     if (keep_pathmap_exact_metadata) {
         s->native.has_non_exact_atoms = had_non_exact_atom;
         s->native.has_non_exact_atoms_dirty =
@@ -1766,6 +1849,11 @@ void space_init(Space *s) {
 void space_free(Space *s) {
     if (!s)
         return;
+    /* A read token may retain this address after the object lifetime ends.
+       Retire thread-local execution-analysis entries while the identity is
+       still readable; cache lookup also validates against its live query
+       Space before consulting a token. */
+    space_execution_analysis_note_mutation(s);
     space_detach_from_universe(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
@@ -1820,15 +1908,47 @@ bool space_read_token_is_current(SpaceReadToken token) {
            token.revision == space_revision(token.space);
 }
 
+bool space_read_token_matches_live_space(SpaceReadToken token,
+                                         const Space *live_space) {
+    return live_space && token.space == live_space &&
+           token.instance_id != 0u &&
+           token.instance_id == space_instance_id(live_space) &&
+           token.revision == space_revision(live_space);
+}
+
+static AtomId space_indexed_occurrence_atom_id(
+    const Space *s, const CettaIndex *indices, const AtomId *atom_ids,
+    CettaIndex position) {
+    if (atom_ids && atom_ids[position] != CETTA_ATOM_ID_NONE)
+        return atom_ids[position];
+    if (!s || !indices || indices[position] >= space_length64(s))
+        return CETTA_ATOM_ID_NONE;
+    return space_get_atom_id_at64(s, indices[position]);
+}
+
+static Atom *space_indexed_occurrence_atom(
+    Space *s, const CettaIndex *indices, const AtomId *atom_ids,
+    CettaIndex position) {
+    AtomId atom_id = space_indexed_occurrence_atom_id(
+        s, indices, atom_ids, position);
+    return atom_id != CETTA_ATOM_ID_NONE
+        ? term_universe_get_atom(s ? s->native.universe : NULL, atom_id)
+        : NULL;
+}
+
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out) {
     if (out)
         memset(out, 0, sizeof(*out));
-    if (!out || !space_read_token_is_current(id.read) ||
-        id.logical_index >= space_length64(id.read.space)) {
+    if (!out || !space_read_token_is_current(id.read)) {
         return false;
     }
-    Atom *equation = space_get_at64(id.read.space, id.logical_index);
+    Atom *equation = id.has_equation_id
+        ? term_universe_get_atom(
+              id.read.space->native.universe, id.equation_id)
+        : (id.logical_index < space_length64(id.read.space)
+               ? space_get_at64(id.read.space, id.logical_index)
+               : NULL);
     Atom *lhs = NULL;
     Atom *rhs = NULL;
     if (!equation || !is_equation_atom(equation, &lhs, &rhs) ||
@@ -1843,13 +1963,19 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
 }
 
 static bool space_equation_cursor_index_matches(
-    const SpaceEquationCursor *cursor, CettaIndex logical_index,
-    bool wildcard) {
-    if (!cursor || !cursor->read.space ||
-        logical_index >= space_length64(cursor->read.space)) {
+    const SpaceEquationCursor *cursor, const EqBucket *bucket,
+    CettaIndex position, bool wildcard) {
+    if (!cursor || !cursor->read.space || !bucket ||
+        position >= bucket->len) {
         return false;
     }
-    Atom *equation = space_get_at64(cursor->read.space, logical_index);
+    AtomId equation_id = space_indexed_occurrence_atom_id(
+        cursor->read.space, bucket->atom_indices, bucket->atom_ids,
+        position);
+    Atom *equation = equation_id != CETTA_ATOM_ID_NONE
+        ? term_universe_get_atom(
+              cursor->read.space->native.universe, equation_id)
+        : NULL;
     Atom *lhs = NULL;
     Atom *rhs = NULL;
     if (!equation || !is_equation_atom(equation, &lhs, &rhs))
@@ -1862,14 +1988,18 @@ static bool space_equation_cursor_index_matches(
 
 static bool space_equation_cursor_peek_bucket(
     SpaceEquationCursor *cursor, const EqBucket *bucket,
-    CettaIndex *position, bool wildcard, CettaIndex *logical_index) {
-    if (!cursor || !bucket || !position || !logical_index)
+    CettaIndex *position, bool wildcard, CettaIndex *logical_index,
+    AtomId *equation_id) {
+    if (!cursor || !bucket || !position || !logical_index || !equation_id)
         return false;
     while (*position < bucket->len) {
         CettaIndex candidate = bucket->atom_indices[*position];
         if (space_equation_cursor_index_matches(
-                cursor, candidate, wildcard)) {
+                cursor, bucket, *position, wildcard)) {
             *logical_index = candidate;
+            *equation_id = space_indexed_occurrence_atom_id(
+                cursor->read.space, bucket->atom_indices,
+                bucket->atom_ids, *position);
             return true;
         }
         (*position)++;
@@ -1913,6 +2043,8 @@ SpaceEquationCursorStep space_equation_cursor_next(
                 continue;
             out->read = cursor->read;
             out->logical_index = logical_index;
+            out->equation_id = CETTA_ATOM_ID_NONE;
+            out->has_equation_id = false;
             return SPACE_EQUATION_CURSOR_ITEM;
         }
         return SPACE_EQUATION_CURSOR_END;
@@ -1923,29 +2055,38 @@ SpaceEquationCursorStep space_equation_cursor_next(
     EqBucket *wildcard = &s->native.eq_idx.wildcard;
     CettaIndex exact_index = 0u;
     CettaIndex wildcard_index = 0u;
+    AtomId exact_id = CETTA_ATOM_ID_NONE;
+    AtomId wildcard_id = CETTA_ATOM_ID_NONE;
     bool has_exact = space_equation_cursor_peek_bucket(
-        cursor, exact, &cursor->exact_position, false, &exact_index);
+        cursor, exact, &cursor->exact_position, false, &exact_index,
+        &exact_id);
     bool has_wildcard = space_equation_cursor_peek_bucket(
         cursor, wildcard, &cursor->wildcard_position, true,
-        &wildcard_index);
+        &wildcard_index, &wildcard_id);
     if (!has_exact && !has_wildcard)
         return SPACE_EQUATION_CURSOR_END;
 
     CettaIndex logical_index;
+    AtomId equation_id;
     if (has_exact && (!has_wildcard || exact_index < wildcard_index)) {
         logical_index = exact_index;
+        equation_id = exact_id;
         cursor->exact_position++;
     } else if (has_wildcard &&
                (!has_exact || wildcard_index < exact_index)) {
         logical_index = wildcard_index;
+        equation_id = wildcard_id;
         cursor->wildcard_position++;
     } else {
         logical_index = exact_index;
+        equation_id = exact_id;
         cursor->exact_position++;
         cursor->wildcard_position++;
     }
     out->read = cursor->read;
     out->logical_index = logical_index;
+    out->equation_id = equation_id;
+    out->has_equation_id = equation_id != CETTA_ATOM_ID_NONE;
     return SPACE_EQUATION_CURSOR_ITEM;
 }
 
@@ -2102,20 +2243,26 @@ static bool space_effect_scan_rhs(
             graph->nodes[node_index].base_effect =
                 CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
         } else {
+            bool grounded = is_grounded_op(head->sym_id);
+            bool builtin = symbol_id_is_builtin_surface(head->sym_id);
+            bool defined = space_equations_may_match_known_head(
+                graph->space, head->sym_id);
             CettaGsltQueryEffect direct =
                 space_generated_query_head_effect(head->sym_id);
             graph->nodes[node_index].base_effect =
                 cetta_gslt_query_effect_join(
                     graph->nodes[node_index].base_effect, direct);
             if (direct == CETTA_GSLT_QUERY_EFFECT_PURE &&
-                !is_grounded_op(head->sym_id) &&
-                space_equations_may_match_known_head(
-                    graph->space, head->sym_id) &&
+                !grounded && defined &&
                 !space_effect_node_add_dependency(
                     graph, node_index, head->sym_id)) {
                 if (stack != inline_stack)
                     free(stack);
                 return false;
+            }
+            if (CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE &&
+                !grounded && !builtin && !defined) {
+                continue;
             }
         }
         for (CettaExprIndex i = 1u; i < current->expr.len; i++) {
@@ -2238,7 +2385,7 @@ CettaGsltQueryEffect space_query_effect_for_head(
     SpaceEffectCacheEntry *slot =
         &g_space_effect_cache[slot_index];
     if (slot->valid && slot->head == head &&
-        space_read_token_is_current(slot->read)) {
+        space_read_token_matches_live_space(slot->read, space)) {
         if (out_defined)
             *out_defined = slot->defined;
         return slot->effect;
@@ -2370,12 +2517,12 @@ static void eq_index_rebuild(Space *s) {
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
-            eq_index_add_id(&s->native.eq_idx, s, lhs_id, i);
+            eq_index_add_id(&s->native.eq_idx, s, lhs_id, i, atom_id);
             continue;
         }
         Atom *lhs, *rhs;
         if (space_equation_children_at_id(s, atom_id, &lhs, &rhs))
-            eq_index_add(&s->native.eq_idx, lhs, i);
+            eq_index_add(&s->native.eq_idx, lhs, i, atom_id);
     }
     s->native.eq_idx_dirty = false;
 }
@@ -2390,12 +2537,13 @@ static void ty_ann_index_rebuild(Space *s) {
         AtomId subject_id = CETTA_ATOM_ID_NONE;
         AtomId type_id = CETTA_ATOM_ID_NONE;
         if (space_type_annotation_child_ids_at_id(s, atom_id, &subject_id, &type_id)) {
-            ty_ann_index_add_id(&s->native.ty_idx, s, subject_id, i);
+            ty_ann_index_add_id(&s->native.ty_idx, s, subject_id, i,
+                                atom_id);
             continue;
         }
         Atom *subject = space_type_annotation_subject_at_id(s, atom_id);
         if (subject)
-            ty_ann_index_add(&s->native.ty_idx, subject, i);
+            ty_ann_index_add(&s->native.ty_idx, subject, i, atom_id);
     }
     s->native.ty_idx_dirty = false;
 }
@@ -2565,11 +2713,11 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
             AtomId lhs_id = CETTA_ATOM_ID_NONE;
             AtomId rhs_id = CETTA_ATOM_ID_NONE;
             if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
-                eq_index_add_id(&s->native.eq_idx, s, lhs_id, idx);
+                eq_index_add_id(&s->native.eq_idx, s, lhs_id, idx, atom_id);
             } else {
                 Atom *lhs, *rhs;
                 if (space_equation_children_at_id(s, atom_id, &lhs, &rhs))
-                    eq_index_add(&s->native.eq_idx, lhs, idx);
+                    eq_index_add(&s->native.eq_idx, lhs, idx, atom_id);
             }
         }
         /* Index type annotations (: atom type) */
@@ -2577,11 +2725,12 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
             AtomId subject_id = CETTA_ATOM_ID_NONE;
             AtomId type_id = CETTA_ATOM_ID_NONE;
             if (space_type_annotation_child_ids_at_id(s, atom_id, &subject_id, &type_id)) {
-                ty_ann_index_add_id(&s->native.ty_idx, s, subject_id, idx);
+                ty_ann_index_add_id(&s->native.ty_idx, s, subject_id, idx,
+                                    atom_id);
             } else {
                 Atom *subject = space_type_annotation_subject_at_id(s, atom_id);
                 if (subject)
-                    ty_ann_index_add(&s->native.ty_idx, subject, idx);
+                    ty_ann_index_add(&s->native.ty_idx, subject, idx, atom_id);
             }
         }
         if (!s->native.exact_idx_dirty && atom_id_is_exact_indexable(s, atom_id)) {
@@ -2647,7 +2796,9 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
     if (batch_result == SPACE_BACKEND_BATCH_APPLIED) {
         if (added != (uint64_t)atom_count)
             return false;
-        space_mark_indexes_dirty(s);
+        for (CettaCount i = 0; i < atom_count; i++)
+            space_mark_backend_primary_atom_mutation(
+                s, atom_ids[i], NULL);
         if (keep_pathmap_exact_metadata) {
             s->native.has_non_exact_atoms =
                 had_non_exact_atom || batch_has_non_exact_atom;
@@ -3610,7 +3761,9 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
         return false;
     if (batch_result == SPACE_BACKEND_BATCH_APPLIED) {
         if (removed != 0) {
-            space_mark_indexes_dirty(s);
+            for (CettaCount i = 0; i < atom_count; i++)
+                space_mark_backend_primary_atom_mutation(
+                    s, atom_ids[i], NULL);
             space_bump_revision(s);
         }
         if (out_removed)
@@ -4218,10 +4371,8 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     uint32_t count = 0, cap = 0;
     for (CettaIndex i = 0; i < bucket->len; i++) {
         if (!type_inference_step(budget, 1)) break;
-        CettaIndex idx = bucket->atom_indices[i];
-        if (idx >= s->native.len)
-            continue;
-        AtomId annotation_id = space_get_atom_id_at64(s, idx);
+        AtomId annotation_id = space_indexed_occurrence_atom_id(
+            s, bucket->atom_indices, bucket->atom_ids, i);
         AtomId subject_id = CETTA_ATOM_ID_NONE;
         AtomId type_id = CETTA_ATOM_ID_NONE;
         if (space_type_annotation_child_ids_at_id(s, annotation_id,
@@ -4240,7 +4391,8 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                 }
             }
         }
-        Atom *annotation = space_get_at(s, idx);
+        Atom *annotation = space_indexed_occurrence_atom(
+            s, bucket->atom_indices, bucket->atom_ids, i);
         if (!annotation || annotation->kind != ATOM_EXPR || annotation->expr.len != 3)
             continue;
         if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
@@ -4692,10 +4844,8 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         for (CettaIndex ci = 0; ci < ncand; ci++) {
             CettaIndex i = candidates[ci];
             if (i >= bucket->len) continue;
-            CettaIndex atom_idx = bucket->atom_indices[i];
-            if (atom_idx >= s->native.len)
-                continue;
-            AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
+            AtomId equation_id = space_indexed_occurrence_atom_id(
+                s, bucket->atom_indices, bucket->atom_ids, i);
             AtomId lhs_id = CETTA_ATOM_ID_NONE;
             AtomId rhs_id = CETTA_ATOM_ID_NONE;
             if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
@@ -4736,10 +4886,8 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
 
     uint32_t considered = 0;
     for (CettaIndex i = 0; i < bucket->len; i++) {
-        CettaIndex atom_idx = bucket->atom_indices[i];
-        if (atom_idx >= s->native.len)
-            continue;
-        AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
+        AtomId equation_id = space_indexed_occurrence_atom_id(
+            s, bucket->atom_indices, bucket->atom_ids, i);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
@@ -4881,10 +5029,8 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         const SubstMatch *sm = &matches.items[mi];
         if (sm->atom_idx >= bucket->len)
             continue;
-        CettaIndex atom_idx = bucket->atom_indices[sm->atom_idx];
-        if (atom_idx >= s->native.len)
-            continue;
-        AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
+        AtomId equation_id = space_indexed_occurrence_atom_id(
+            s, bucket->atom_indices, bucket->atom_ids, sm->atom_idx);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
@@ -5072,9 +5218,8 @@ static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
     if (!(b->head == head && !b->mixed_heads && b->len == 1))
         return NULL;
     CettaIndex idx = b->atom_indices[0];
-    if (idx >= s->native.len)
-        return NULL;
-    Atom *equation = space_get_at64(s, idx);
+    Atom *equation = space_indexed_occurrence_atom(
+        s, b->atom_indices, b->atom_ids, 0u);
     Atom *lhs = NULL;
     Atom *rhs = NULL;
     if (!equation || !is_equation_atom(equation, &lhs, &rhs))
@@ -5323,8 +5468,10 @@ static bool prepared_register_compile_guarded_step(
  * arguments whose declared parameter types keep them syntax. */
 bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
     /* The consult runs on hot accelerator admissions (eager closed-call
-     * compiles ask once per call), so the linear annotation scan is memoized
+     * compiles ask once per call), so the indexed annotation consult is memoized
      * per (space instance, revision, head, arity).  Any space mutation
      * advances the revision and naturally invalidates the entry. */
     typedef struct {
@@ -5348,24 +5495,67 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
         return entry->shadowed;
     }
     bool shadowed = false;
-    CettaCount logical_len = space_length64(s);
-    for (CettaIndex i = 0; i < logical_len; i++) {
-        Atom *annotation = space_get_at64(s, i);
-        if (!annotation || annotation->kind != ATOM_EXPR ||
-            annotation->expr.len != 3)
-            continue;
-        if (!atom_is_symbol_id(annotation->expr.elems[0],
-                               g_builtin_syms.colon))
-            continue;
-        Atom *subject = annotation->expr.elems[1];
-        if (!subject || !atom_is_symbol_id(subject, head))
-            continue;
-        Atom *type = annotation->expr.elems[2];
-        if (type && type->kind == ATOM_EXPR &&
-            type->expr.len == (CettaExprLen)(arity + 2u) &&
-            atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)) {
-            shadowed = true;
-            break;
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex i = 0; i < logical_len; i++) {
+            Atom *annotation = space_get_at64(s, i);
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3u ||
+                !atom_is_symbol_id(annotation->expr.elems[0],
+                                   g_builtin_syms.colon) ||
+                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
+                continue;
+            }
+            Atom *type = annotation->expr.elems[2];
+            if (type && type->kind == ATOM_EXPR &&
+                type->expr.len == (CettaExprLen)(arity + 2u) &&
+                atom_is_symbol_id(type->expr.elems[0],
+                                  g_builtin_syms.arrow)) {
+                shadowed = true;
+                break;
+            }
+        }
+    } else {
+        ensure_ty_ann_index(s);
+        TypeAnnBucket *bucket =
+            &s->native.ty_idx.buckets[symbol_hash(head)];
+        for (CettaIndex i = 0; i < bucket->len; i++) {
+            AtomId annotation_id = space_indexed_occurrence_atom_id(
+                s, bucket->atom_indices, bucket->atom_ids, i);
+            AtomId subject_id = CETTA_ATOM_ID_NONE;
+            AtomId type_id = CETTA_ATOM_ID_NONE;
+            if (space_type_annotation_child_ids_at_id(
+                    s, annotation_id, &subject_id, &type_id) &&
+                tu_hdr(s->native.universe, subject_id) &&
+                tu_kind(s->native.universe, subject_id) == ATOM_SYMBOL &&
+                tu_sym(s->native.universe, subject_id) == head &&
+                tu_hdr(s->native.universe, type_id) &&
+                tu_kind(s->native.universe, type_id) == ATOM_EXPR &&
+                tu_arity(s->native.universe, type_id) ==
+                    (CettaExprLen)(arity + 2u) &&
+                tu_head_sym(s->native.universe, type_id) ==
+                    g_builtin_syms.arrow) {
+                shadowed = true;
+                break;
+            }
+
+            Atom *annotation = space_indexed_occurrence_atom(
+                s, bucket->atom_indices, bucket->atom_ids, i);
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3u ||
+                !atom_is_symbol_id(annotation->expr.elems[0],
+                                   g_builtin_syms.colon) ||
+                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
+                continue;
+            }
+            Atom *type = annotation->expr.elems[2];
+            if (type && type->kind == ATOM_EXPR &&
+                type->expr.len == (CettaExprLen)(arity + 2u) &&
+                atom_is_symbol_id(type->expr.elems[0],
+                                  g_builtin_syms.arrow)) {
+                shadowed = true;
+                break;
+            }
         }
     }
     *entry = (ArrowSignatureMemo){
@@ -6521,10 +6711,8 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
         return bucket->head == head;
 
     for (CettaIndex i = 0; i < bucket->len; i++) {
-        CettaIndex atom_idx = bucket->atom_indices[i];
-        if (atom_idx >= s->native.len)
-            continue;
-        AtomId equation_id = space_get_atom_id_at64(s, atom_idx);
+        AtomId equation_id = space_indexed_occurrence_atom_id(
+            s, bucket->atom_indices, bucket->atom_ids, i);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
@@ -6590,11 +6778,10 @@ bool space_equation_head_arity_bounds(
     EqBucket *bucket =
         &s->native.eq_idx.buckets[symbol_hash(head)];
     for (CettaIndex index = 0u; index < bucket->len; index++) {
-        CettaIndex logical_index = bucket->atom_indices[index];
-        if (logical_index >= s->native.len)
-            continue;
         space_equation_note_head_arity(
-            space_get_at64(s, logical_index), head, query_arity,
+            space_indexed_occurrence_atom(
+                s, bucket->atom_indices, bucket->atom_ids, index),
+            head, query_arity,
             &found, minimum, maximum, has_exact);
     }
     return found;

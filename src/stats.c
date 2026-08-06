@@ -363,6 +363,11 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-pure-call-thunk-path-compression",
     "prepared-pure-call-total-normalization",
     "prepared-pure-call-tail-reentry",
+    "pathmap-indexed-residual-query",
+    "prime-need-plan-call",
+    "prime-need-plan-candidate-scan",
+    "prime-need-plan-demand-analysis",
+    "prime-need-plan-admission",
 };
 
 static int64_t clamp_counter(uint64_t value) {

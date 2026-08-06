@@ -552,6 +552,10 @@ int main(void) {
         uint64_t occurrence_instance =
             space_instance_id(&occurrence_space);
         assert(space_read_token_is_current(occurrence_read));
+        assert(space_read_token_matches_live_space(
+            occurrence_read, &occurrence_space));
+        assert(!space_read_token_matches_live_space(
+            occurrence_read, &equation_space));
         SpaceEquationOccurrence first_occurrence;
         SpaceEquationOccurrence second_occurrence;
         SpaceEquationOccurrenceId first_id = {
@@ -578,6 +582,8 @@ int main(void) {
         space_add(&occurrence_space,
                   atom_symbol(&equation_scratch, "not-an-equation"));
         assert(!space_read_token_is_current(occurrence_read));
+        assert(!space_read_token_matches_live_space(
+            occurrence_read, &occurrence_space));
         assert(!space_equation_occurrence_resolve(first_id,
                                                   &first_occurrence));
         assert(first_occurrence.equation == NULL);
@@ -598,6 +604,8 @@ int main(void) {
         space_init_with_universe(&occurrence_space, &equation_universe);
         assert(space_instance_id(&occurrence_space) != occurrence_instance);
         assert(!space_read_token_is_current(current_read));
+        assert(!space_read_token_matches_live_space(
+            current_read, &occurrence_space));
         space_free(&occurrence_space);
 
         {

@@ -70,6 +70,10 @@ class AuditCase(NamedTuple):
     expr: str
 
 
+class AuditExecutionError(RuntimeError):
+    """The oracle process failed before producing a semantic observation."""
+
+
 def maybe_wrap(wrappers, name, expr, wrap):
     if not wrap:
         return expr
@@ -236,6 +240,13 @@ def fixture_case(name):
                                ("(match &self (k $v) $v)", False)],
         "triple-hidden":      [("(remove-atom &g (foo))", True), ("(change-state! &c 5)", True),
                                ("(match &g (foo) found)", True)],
+        # Repeated payload overlays must retire every revision-pinned cache
+        # entry before the next sibling evaluation.  This exact shape exposed
+        # a stale SpaceReadToken under ASan in the quiet macro path.
+        "overlay-cache-lifetime":[("(match &g (foo) found)", False),
+                                  ("(+ 1 2)", True),
+                                  ("(match &g (foo) found)", True),
+                                  ("(change-state! &c 1)", False)],
     }
     if name in specs:
         return quiet_farm_case(specs[name])
@@ -294,6 +305,7 @@ NAMED_FIXTURES = [
     "ground-state-owned",
     "mixed-hidden",
     "triple-hidden",
+    "overlay-cache-lifetime",
     "contention-direct",
     "contention-wrapped",
     "chaining-direct",
@@ -384,16 +396,32 @@ def mayset(out):
         inner = inner[1:-1]
     return sorted(split_top(inner))
 
+
+def observed_mayset(cetta, case, macro_on, timeout):
+    proc = run_text(cetta, render_run_source(case), macro_on, timeout)
+    mode = "macro-on" if macro_on else "exact-reference"
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise AuditExecutionError(
+            f"{mode} process exited {proc.returncode}\n{detail}"
+        )
+    observation = mayset(proc.stdout)
+    if observation is None:
+        raise AuditExecutionError(
+            f"{mode} process produced no rho may-set\n{proc.stdout.strip()}"
+        )
+    return observation
+
 def diverges(cetta, specs, timeout):
     case = quiet_farm_case(specs)
-    a = mayset(run_text(cetta, render_run_source(case), True, timeout).stdout)
-    b = mayset(run_text(cetta, render_run_source(case), False, timeout).stdout)
+    a = observed_mayset(cetta, case, True, timeout)
+    b = observed_mayset(cetta, case, False, timeout)
     return (a != b), a, b
 
 
 def diverges_case(cetta, case, timeout):
-    a = mayset(run_text(cetta, render_run_source(case), True, timeout).stdout)
-    b = mayset(run_text(cetta, render_run_source(case), False, timeout).stdout)
+    a = observed_mayset(cetta, case, True, timeout)
+    b = observed_mayset(cetta, case, False, timeout)
     return (a != b), a, b
 
 
@@ -475,69 +503,73 @@ def main():
     cetta = os.path.abspath(a.cetta)
     found = 0
 
-    # 1. Named fixtures -- the scary classes, always checked.
-    for name in NAMED_FIXTURES:
-        case = fixture_case(name)
-        div, ma, mb = diverges_case(cetta, case, a.timeout)
-        if div:
-            found += 1
-            report(f"fixture {name}", case.expr, ma, mb)
-        stats_ok, stats_msg = stats_match(cetta, name, case, a.timeout)
-        if not stats_ok:
-            found += 1
-            print(f"[DIVERGENCE] fixture {name}: runtime-stats expectation failed")
-            print(f"  {stats_msg}\n")
+    try:
+        # 1. Named fixtures -- the scary classes, always checked.
+        for name in NAMED_FIXTURES:
+            case = fixture_case(name)
+            div, ma, mb = diverges_case(cetta, case, a.timeout)
+            if div:
+                found += 1
+                report(f"fixture {name}", case.expr, ma, mb)
+            stats_ok, stats_msg = stats_match(cetta, name, case, a.timeout)
+            if not stats_ok:
+                found += 1
+                print(f"[DIVERGENCE] fixture {name}: runtime-stats expectation failed")
+                print(f"  {stats_msg}\n")
 
-    # 2. Random corpus -- quiet independent frontiers plus mixed families that
-    #    should now exhibit partial fire rather than whole-frontier bail.
-    for t in range(a.n):
-        family = rng.choices(
-            ("quiet", "contention", "chaining", "mixed-contention", "mixed-unsafe"),
-            weights=(0.55, 0.1, 0.15, 0.1, 0.1),
-            k=1,
-        )[0]
-        if family == "quiet":
-            k = rng.randint(2, 4)
-            specs = [(rng.choice(PALETTE), rng.random() < 0.4) for _ in range(k)]
-            case = quiet_farm_case(specs)
-            shrunk_specs = specs
-        elif family == "contention":
-            specs = [(rng.choice(PALETTE), rng.random() < 0.5)]
-            case = contention_case(specs[0][0], specs[0][1])
-            shrunk_specs = specs
-        elif family == "chaining":
-            specs = [
-                (rng.choice(PALETTE), rng.random() < 0.5),
-                (rng.choice(PALETTE), rng.random() < 0.5),
-            ]
-            case = chaining_case(specs[0][0], specs[0][1], specs[1][0], specs[1][1])
-            shrunk_specs = specs
-        elif family == "mixed-contention":
-            specs = [
-                (rng.choice(PURE), rng.random() < 0.4),
-                (rng.choice(PURE), rng.random() < 0.4),
-                (rng.choice(PALETTE), rng.random() < 0.5),
-            ]
-            case = mixed_contention_case(specs[:2], specs[2][0], specs[2][1])
-            shrunk_specs = specs
-        else:
-            specs = [
-                (rng.choice(PURE), rng.random() < 0.4),
-                (rng.choice(PURE), rng.random() < 0.4),
-                (rng.choice(EFFECT), rng.random() < 0.5),
-            ]
-            case = mixed_unsafe_case(specs[:2], specs[2][0], specs[2][1])
-            shrunk_specs = specs
-        div, ma, mb = diverges_case(cetta, case, a.timeout)
-        if div:
-            found += 1
-            if found <= 3 and family == "quiet":
-                shrunk_specs = shrink(cetta, specs, a.timeout)
-                shrunk_case = quiet_farm_case(shrunk_specs)
-                _, sa, sb = diverges_case(cetta, shrunk_case, a.timeout)
-                report(f"random trial {t} ({family})", shrunk_specs, sa, sb)
-            elif found <= 3:
-                report(f"random trial {t} ({family})", case.expr, ma, mb)
+        # 2. Random corpus -- quiet independent frontiers plus mixed families
+        #    that should now exhibit partial fire rather than whole-frontier bail.
+        for t in range(a.n):
+            family = rng.choices(
+                ("quiet", "contention", "chaining", "mixed-contention", "mixed-unsafe"),
+                weights=(0.55, 0.1, 0.15, 0.1, 0.1),
+                k=1,
+            )[0]
+            if family == "quiet":
+                k = rng.randint(2, 4)
+                specs = [(rng.choice(PALETTE), rng.random() < 0.4) for _ in range(k)]
+                case = quiet_farm_case(specs)
+                shrunk_specs = specs
+            elif family == "contention":
+                specs = [(rng.choice(PALETTE), rng.random() < 0.5)]
+                case = contention_case(specs[0][0], specs[0][1])
+                shrunk_specs = specs
+            elif family == "chaining":
+                specs = [
+                    (rng.choice(PALETTE), rng.random() < 0.5),
+                    (rng.choice(PALETTE), rng.random() < 0.5),
+                ]
+                case = chaining_case(specs[0][0], specs[0][1], specs[1][0], specs[1][1])
+                shrunk_specs = specs
+            elif family == "mixed-contention":
+                specs = [
+                    (rng.choice(PURE), rng.random() < 0.4),
+                    (rng.choice(PURE), rng.random() < 0.4),
+                    (rng.choice(PALETTE), rng.random() < 0.5),
+                ]
+                case = mixed_contention_case(specs[:2], specs[2][0], specs[2][1])
+                shrunk_specs = specs
+            else:
+                specs = [
+                    (rng.choice(PURE), rng.random() < 0.4),
+                    (rng.choice(PURE), rng.random() < 0.4),
+                    (rng.choice(EFFECT), rng.random() < 0.5),
+                ]
+                case = mixed_unsafe_case(specs[:2], specs[2][0], specs[2][1])
+                shrunk_specs = specs
+            div, ma, mb = diverges_case(cetta, case, a.timeout)
+            if div:
+                found += 1
+                if found <= 3 and family == "quiet":
+                    shrunk_specs = shrink(cetta, specs, a.timeout)
+                    shrunk_case = quiet_farm_case(shrunk_specs)
+                    _, sa, sb = diverges_case(cetta, shrunk_case, a.timeout)
+                    report(f"random trial {t} ({family})", shrunk_specs, sa, sb)
+                elif found <= 3:
+                    report(f"random trial {t} ({family})", case.expr, ma, mb)
+    except AuditExecutionError as exc:
+        print(f"[EXECUTION FAILURE] {exc}", file=sys.stderr)
+        return 2
 
     total = a.n + len(NAMED_FIXTURES)
     print(f"=== {found}/{total} programs diverged (macro-set != exact-set); "

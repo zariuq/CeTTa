@@ -328,7 +328,13 @@ static void test_contextual_exact_remove_keeps_requested_identity(void) {
         space, expr, sizeof(expr), context_x, sizeof(context_x), &changed));
     assert(changed == 1);
     assert(cetta_mork_bridge_space_add_contextual_exact_expr_bytes(
+        space, expr, sizeof(expr), context_x, sizeof(context_x), &changed));
+    assert(changed == 1);
+    assert(cetta_mork_bridge_space_add_contextual_exact_expr_bytes(
         space, expr, sizeof(expr), context_y, sizeof(context_y), &changed));
+    assert(changed == 1);
+    assert(cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
+        space, expr, sizeof(expr), context_x, sizeof(context_x), &changed));
     assert(changed == 1);
     assert(cetta_mork_bridge_space_remove_contextual_exact_expr_bytes(
         space, expr, sizeof(expr), context_x, sizeof(context_x), &changed));
