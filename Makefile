@@ -5206,6 +5206,8 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-need-planner-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-specialized-pure-call-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-program-cache-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-collection-pull-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-libpl-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-metta-suite
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
@@ -6933,6 +6935,82 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
+.PHONY: test-petta-prepared-program-cache-stats
+test-petta-prepared-program-cache-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -e; \
+	actual=$$(mktemp runtime/petta-prepared-program-cache.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/search_machine_prepared_program_cache.metta \
+		2>&1 >"$$actual"); \
+	diff -u tests/petta/search_machine_prepared_program_cache.expected \
+		"$$actual"; \
+	hits=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-program-cache-hit" { print $$3 }'); \
+	stores=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-program-cache-store" { print $$3 }'); \
+	if [ "$${hits:-0}" -ne 1 ] || [ "$${stores:-0}" -ne 2 ]; then \
+		echo "FAIL: PeTTa prepared-program revision cache hits=$$hits stores=$$stores"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PeTTa reuses one prepared program and recompiles after semantic mutation"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-petta-prepared-collection-pull
+test-petta-prepared-collection-pull: $(BIN)
+	@set -e; \
+	actual=$$(mktemp runtime/petta-prepared-collection-pull.XXXXXX); \
+	oracle=$$(mktemp runtime/petta-prepared-collection-pull-oracle.XXXXXX); \
+	trap 'rm -f "$$actual" "$$oracle"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_prepared_collection_pull.metta \
+		>"$$actual"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_LET_COUNT_FUSION=0 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_prepared_collection_pull.metta \
+		>"$$oracle"; \
+	diff -u tests/petta/search_machine_prepared_collection_pull.expected \
+		"$$actual"; \
+	diff -u "$$oracle" "$$actual"; \
+	echo "PASS: PeTTa producer pull preserves pure, materialized, nondeterminate, effect, and fault boundaries"
+
+.PHONY: test-petta-prepared-collection-pull-stats
+test-petta-prepared-collection-pull-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -e; \
+	actual=$$(mktemp runtime/petta-prepared-collection-pull-stats.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/search_machine_prepared_collection_pull.metta \
+		2>&1 >"$$actual"); \
+	diff -u tests/petta/search_machine_prepared_collection_pull.expected \
+		"$$actual"; \
+	field() { \
+		printf '%s\n' "$$stats" | awk -v name="$$1" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	admissions=$$(field prepared-collection-pull-admission); \
+	items=$$(field prepared-collection-pull-item); \
+	commits=$$(field prepared-collection-pull-commit); \
+	declines=$$(field prepared-collection-pull-decline); \
+	if [ "$${admissions:-0}" -lt 7 ] || \
+	   [ "$${items:-0}" -lt 11 ] || \
+	   [ "$${commits:-0}" -ne 4 ] || \
+	   [ "$${declines:-0}" -lt 3 ] || \
+	   [ "$$admissions" -ne $$((commits + declines)) ]; then \
+		echo "FAIL: prepared collection pull admissions=$$admissions items=$$items commits=$$commits declines=$$declines"; \
+		exit 1; \
+	fi; \
+	echo "PASS: prepared collection pull commits four certified folds and declines every unsafe boundary"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
 .PHONY: test-petta-search-machine
 test-lib-prolog: $(BIN)
 	@set -e; \
@@ -7478,6 +7556,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-ca
 		exit 1; \
 	fi; \
 	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		CETTA_PETTA_LET_COUNT_FUSION=0 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_gc_scaling.metta \
 		>"$$gc_scaling_out" 2>"$$gc_scaling_stats"; \
@@ -8646,12 +8725,16 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-decline" { print $$3 }'); \
 	collections=$$(printf '%s\n' "$$result" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-gc-collection" { print $$3 }'); \
+	evacuated=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-gc-evacuated-bytes" { print $$3 }'); \
 	reclaimed=$$(printf '%s\n' "$$result" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-gc-reclaimed-bytes" { print $$3 }'); \
 	if [ "$${admissions:-0}" -lt 2 ] || [ "$${commits:-0}" -lt 1 ] || \
 	   [ "$${declines:-0}" -lt 1 ] || [ "$${collections:-0}" -lt 1 ] || \
+	   [ "$${collections:-0}" -gt 10 ] || \
+	   [ "$${evacuated:-0}" -gt 1048576 ] || \
 	   [ "$${reclaimed:-0}" -lt 1 ]; then \
-		echo "FAIL: pure-call mechanism witness admission=$$admissions commit=$$commits decline=$$declines collections=$$collections reclaimed=$$reclaimed"; \
+		echo "FAIL: pure-call mechanism witness admission=$$admissions commit=$$commits decline=$$declines collections=$$collections evacuated=$$evacuated reclaimed=$$reclaimed"; \
 		exit 1; \
 	fi; \
 	need_result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
@@ -8686,7 +8769,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		echo "FAIL: Need update-cell witness stores=$$memo_stores hits=$$memo_hits blackholes=$$blackholes collections=$$need_collections ephemeron-reclaimed=$$ephemeron_reclaimed path-compressions=$$path_compressions total-normalizations=$$total_normalizations tail-reentries=$$tail_reentries"; \
 		exit 1; \
 	fi; \
-	echo "PASS: pure-call mechanism witnesses commit, conservative decline, generated-root reclamation, shared Need updates, total normalization, and tail reentry"
+	echo "PASS: pure-call mechanism witnesses commit, conservative decline, bounded collection sampling, generated-root reclamation, shared Need updates, total normalization, and tail reentry"
 else
 	@echo "INFO: pure-call mechanism witness requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
