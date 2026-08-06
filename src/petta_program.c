@@ -1,5 +1,6 @@
 #include "petta_program.h"
 
+#include "eval.h"
 #include "grounded.h"
 #include "petta_semantics.h"
 #include "symbol.h"
@@ -181,11 +182,20 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
          strcmp(name, "max") == 0 ||
          strcmp(name, "transaction") == 0 ||
          strcmp(name, "with_mutex") == 0);
+    /*
+     * The typecheck-v2 `data` tuple is machine-owned only under the
+     * extended profile (its erased siblings brand/the are rewritten away at
+     * document ingestion and never reach a plan).
+     */
+    bool typecheck_named =
+        name && cetta_petta_profile_admits_typecheck_ops() &&
+        strcmp(name, "data") == 0;
     return head != SYMBOL_ID_NONE &&
            (petta_semantics_form(head) != PETTA_FORM_NONE ||
             head <= g_builtin_syms.native_handle ||
             is_grounded_op(head) ||
-            machine_named);
+            machine_named ||
+            typecheck_named);
 }
 
 typedef struct {
@@ -308,7 +318,9 @@ static const PettaPlanNode *petta_plan_build(
                     PETTA_FORM_LENGTH;
             node->role =
                 petta_program_head_is_intrinsic(head) ||
-                petta_head_contains(heads, head)
+                petta_head_contains(heads, head) ||
+                cetta_petta_source_head_resolves_in_engine(
+                    head, atom->expr.len - 1u)
                     ? PETTA_PLAN_STATIC_CALL
                     : PETTA_PLAN_DATA;
         } else {

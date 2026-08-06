@@ -234,6 +234,12 @@ Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
    unchanged, or NULL for a malformed cyclic variable-bearing graph. */
 Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec);
 
+/* Complement of rename_vars_except: rename ONLY the variables mentioned
+   anywhere inside `listed_spec` (freshened consistently per original
+   identity); every other variable keeps its identity — SWI copy_term/4's
+   sharing contract.  An empty listed_spec is the identity. */
+Atom *rename_vars_only(Arena *a, Atom *atom, Atom *listed_spec);
+
 /* ── Bidirectional matching (match_atoms from HE spec) ─────────────────── */
 
 /* Match left against right. Variables on EITHER side can bind.

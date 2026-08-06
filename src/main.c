@@ -2532,6 +2532,10 @@ int main(int argc, char **argv) {
                   filename, &libraries.term_universe, &atom_ids,
                   document_reader_error, sizeof(document_reader_error));
         cleanup.atom_ids = atom_ids;
+        if (n >= 0 && lang->id == CETTA_LANGUAGE_PETTA) {
+            cetta_petta_erase_typecheck_marks_document(
+                &libraries.term_universe, atom_ids, n);
+        }
         if (n < 0) {
             if (document_reader_error[0]) {
                 const char *reader_name =

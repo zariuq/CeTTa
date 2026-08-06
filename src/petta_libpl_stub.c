@@ -18,6 +18,11 @@ void cetta_lib_prolog_runtime_free(
     free(runtime);
 }
 
+bool cetta_lib_prolog_runtime_set_working_dir(
+    CettaLibPrologRuntime *runtime, const char *path) {
+    return runtime && path && path[0] != '\0';
+}
+
 void cetta_lib_prolog_global_shutdown(void) {
 }
 
@@ -39,6 +44,24 @@ CettaLibPrologQueryStatus cetta_lib_prolog_query(
 }
 
 PeTTaNamedArity petta_libpl_named_arity(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied) {
+    (void)runtime;
+    (void)head;
+    (void)supplied;
+    return (PeTTaNamedArity){0};
+}
+
+PeTTaNamedArity petta_libpl_named_arity_including_resolved(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied) {
+    (void)runtime;
+    (void)head;
+    (void)supplied;
+    return (PeTTaNamedArity){0};
+}
+
+PeTTaNamedArity petta_libpl_named_arity_resolving(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {
     (void)runtime;

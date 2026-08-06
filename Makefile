@@ -716,6 +716,9 @@ PETTA_ORACLE_ROOT ?= $(GSLT2PARSE_PETTA_ROOT)
 PETTA_CORPUS_MANIFEST = tests/petta/corpus/manifest.json
 PETTA_CORPUS_RESULTS ?= runtime/petta-corpus-differential
 PETTA_CORPUS_TIMEOUT ?= 30
+PETTA_CHAINER_ROOT ?=
+PETTA_CHAINER_COMPAT_MANIFEST = tests/petta/chainer_compat/manifest.json
+PETTA_CHAINER_COMPAT_RESULTS ?= runtime/petta-chainer-compat
 GSLT2PARSE_HE_ROOT ?=
 GSLT2PARSE_HE_GENERATED_C_OUTPUT ?=
 GSLT2PARSE_HE_CURSOR_GENERATED_C = src/generated/he_reader_cursor_v1.generated.c
@@ -3436,7 +3439,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -6826,6 +6829,9 @@ test-petta-extended-query-algebra: $(BIN)
 		echo "FAIL: default PeTTa silently acquired extended query choice"; \
 		cat "$$plain"; exit 1; \
 	fi; \
+	./$(BIN) --lang petta --profile extended \
+		tests/petta/as_pattern_capacity.metta > "$$actual"; \
+	diff -u tests/petta/as_pattern_capacity.expected "$$actual"; \
 	echo "PASS: PeTTa extended query/space algebra is executable and profile-local"
 
 .PHONY: test-petta-capability-ledger
@@ -6901,10 +6907,31 @@ test-petta-libpl: $(BIN)
 		if ! diff -u tests/petta/foreign_predicate_hyperpose.expected \
 				"$$actual"; then \
 			echo "FAIL: PeTTa pooled libpl worker boundary"; \
+				exit 1; \
+			fi; \
+		for fixture in libpl_clause_ref_lifetime \
+				token_space_clause_ref_lifetime \
+				logical_list_capacity \
+				generic_goal_revision; do \
+			CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+				--profile extended "tests/petta/$$fixture.metta" \
+				> "$$actual"; \
+			if ! diff -u "tests/petta/$$fixture.expected" \
+					"$$actual"; then \
+				echo "FAIL: PeTTa/libpl boundary fixture ($$fixture)"; \
+				exit 1; \
+			fi; \
+		done; \
+		expected_dir=$$(realpath tests/petta); \
+		(cd runtime && CETTA_PETTA_SEARCH_MACHINE=1 ../$(BIN) \
+			--lang petta --profile extended \
+			../tests/petta/working_dir_source.metta) > "$$actual"; \
+		if [ "$$(cat "$$actual")" != "$$(printf 'true\n%s' "$$expected_dir")" ]; then \
+			echo "FAIL: PeTTa working_dir is not the source directory"; \
 			exit 1; \
 		fi; \
 	fi; \
-	echo "PASS: optional PeTTa libpl boundary"
+	echo "PASS: optional PeTTa/libpl boundary invariants"
 .PHONY: test-petta-libpl
 
 test-petta-process-text: $(BIN)
@@ -6989,7 +7016,7 @@ test-petta-mam-contender-mutations: $(BIN)
 	echo "PASS: PeTTa MAM contender mutations are killed"
 .PHONY: test-petta-mam-contender-mutations
 
-test-petta-source-memo-reset-mutation:
+test-petta-source-memo-reset-mutation: $(BUILD_CONFIG_HEADER)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -e; \
 	mutation_dir=runtime/petta-mam-contender-mutations; \
@@ -7808,6 +7835,29 @@ test-petta-semantics: $(BIN)
 test-petta-corpus-manifest-unit:
 	@PYTHONDONTWRITEBYTECODE=1 \
 		python3 tests/petta/test_corpus_manifest.py
+
+.PHONY: test-petta-chainer-manifest-unit test-petta-chainer-compat
+test-petta-chainer-manifest-unit:
+	@PYTHONDONTWRITEBYTECODE=1 \
+		python3 tests/petta/test_chainer_compat_manifest.py
+
+test-petta-chainer-compat: $(BIN) test-petta-chainer-manifest-unit
+	@if [[ -z "$(strip $(PETTA_CHAINER_ROOT))" ]]; then \
+		echo 'set PETTA_CHAINER_ROOT to a PeTTaChainer Git checkout'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa checkout'; \
+		exit 1; \
+	fi
+	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
+		python3 scripts/petta_chainer_compat.py \
+		--cetta "./$(BIN)" \
+		--chainer-repo "$(PETTA_CHAINER_ROOT)" \
+		--petta-root "$(PETTA_ORACLE_ROOT)" \
+		--manifest "$(PETTA_CHAINER_COMPAT_MANIFEST)" \
+		--out "$(PETTA_CHAINER_COMPAT_RESULTS)" \
+		--reference
 
 probe-petta-corpus-manifest: test-petta-corpus-manifest-unit
 	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \

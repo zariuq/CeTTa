@@ -7,6 +7,12 @@
 #include "term_canon.h"
 #include "variant_instance.h"
 typedef struct CettaLibraryContext CettaLibraryContext;
+struct CettaPettaTokenSpaceClauseRegistry;
+
+struct CettaPettaTokenSpaceClauseRegistry *
+cetta_petta_token_space_clause_registry_new(void);
+void cetta_petta_token_space_clause_registry_free(
+    struct CettaPettaTokenSpaceClauseRegistry *registry);
 
 /* ── Outcome: the unified result type for all evaluator functions ───────── */
 /* Every evaluator function returns a set of outcomes (atom + bindings).
@@ -188,5 +194,13 @@ static inline void rb_set_add(ResultBindSet *rbs, Atom *atom, Bindings *b) {
     outcome_set_add(rbs, atom, b);
 }
 static inline void rb_set_free(ResultBindSet *rbs) { outcome_set_free(rbs); }
+
+bool cetta_petta_profile_admits_arrow_modes(void);
+bool cetta_petta_profile_admits_typecheck_ops(void);
+bool cetta_petta_typecheck_op_applies(SymbolId head, CettaExprLen nargs);
+void cetta_petta_erase_typecheck_marks_document(
+    TermUniverse *universe, AtomId *atom_ids, int atom_count);
+bool symbol_id_is_builtin_surface(SymbolId id);
+bool cetta_petta_source_head_resolves_in_engine(SymbolId head, CettaExprLen nargs);
 
 #endif /* CETTA_EVAL_H */

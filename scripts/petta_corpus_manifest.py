@@ -31,6 +31,9 @@ PYTHON_RUNTIME_WARNING = (
 )
 VARIABLE_TERMINATORS = frozenset(" \t\r\n()[]{}\",")
 TEST_DIAGNOSTIC_SUFFIXES = (". ✅ ", ". ❌ ")
+SPECIALIZER_DIAGNOSTIC_RE = re.compile(
+    r"Not specialized [^\r\n]+/[0-9]+"
+)
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 
 CONTROLLED_CASES: dict[str, dict[str, Any]] = {
@@ -258,6 +261,24 @@ def normalize_cetta_stdout(
     )
 
 
+def semantic_stdout(text: str) -> str:
+    """Remove the optional engine diagnostic from stdout comparison.
+
+    PeTTa historically printed unsuccessful specialization attempts on
+    stdout.  They are neither program answers nor test verdicts, and CeTTa
+    now exposes the same information only through its opt-in trace.  Keep
+    the pinned oracle byte record intact, but quotient this one precisely
+    shaped diagnostic on both sides of the semantic comparison.
+    """
+    kept: list[str] = []
+    for line_with_ending in text.splitlines(keepends=True):
+        line = line_with_ending.rstrip("\r\n")
+        if SPECIALIZER_DIAGNOSTIC_RE.fullmatch(line):
+            continue
+        kept.append(line_with_ending)
+    return "".join(kept)
+
+
 def normalize_oracle_stderr(
     text: str, petta_dir: Path, extra_roots: tuple[Path, ...] = ()
 ) -> str:
@@ -273,6 +294,9 @@ def normalization_contract() -> dict[str, Any]:
         "strip_ansi_csi": True,
         "replace_petta_root": "<PETTA_ROOT>",
         "alpha_canonicalize_printed_variables": True,
+        "comparison_stdout_quotients": [
+            "Not specialized <generated-head>/<arity>"
+        ],
         "drop_exact_leading_oracle_stdout": [MORK_READY_BANNER],
         "drop_exact_leading_python_stderr": [
             PYTHON_RUNTIME_WARNING
@@ -1216,7 +1240,10 @@ def compare_manifest(
             FIXTURE_CASES.get(name),
         )
         elapsed = time.monotonic() - started
-        stdout_equal = cetta_stdout == oracle["stdout"]
+        stdout_equal = (
+            semantic_stdout(cetta_stdout)
+            == semantic_stdout(oracle["stdout"])
+        )
         stderr_equal = cetta_stderr == oracle["stderr"]
 
         (actual_dir / f"{name}.stdout").write_text(
