@@ -514,6 +514,11 @@ typedef struct {
 extern SymbolTable *g_symbols;
 extern BuiltinSyms g_builtin_syms;
 
+/* Builtin surface symbols occupy the table's initial contiguous interval.
+ * This distinguishes evaluator syntax from later interned constructor/data
+ * heads without spelling the builtin set again in each consumer. */
+bool symbol_id_is_builtin_surface(SymbolId id);
+
 void symbol_table_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins);

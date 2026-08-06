@@ -240,6 +240,10 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id) {
     return entry ? entry->len : 0;
 }
 
+bool symbol_id_is_builtin_surface(SymbolId id) {
+    return id != SYMBOL_ID_NONE && id <= g_builtin_syms.native_handle;
+}
+
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
     if (!st || id == SYMBOL_ID_NONE) return (uint64_t)id;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);

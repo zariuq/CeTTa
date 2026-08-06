@@ -18,7 +18,7 @@
 
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
 use cetta_space::{
-    CountedGeneralQueryCursor, FlatCountedCursorStats, FlatCountedIndexStats,
+    CountedEntry, CountedGeneralQueryCursor, FlatCountedCursorStats, FlatCountedIndexStats,
     FlatCountedQueryAdmission, FlatCountedQueryCursor, FlatCountedQueryIndex,
     FlatSemiNaiveQueryCursor, bridge_expr_env_text, bridge_expr_packet_to_bytes, bridge_expr_text,
     bridge_parse_expr_chunk, bridge_parse_single_expr, counted_contains_expr, counted_entries,
@@ -128,8 +128,12 @@ struct BridgeQueryCursor {
     kind: BridgeQueryCursorKind,
     source: BridgeQueryCursorSource,
     pending_row: Option<Vec<u8>>,
+    pending_contextual_row: Option<ContextualResidualRow>,
     indexed_setup_stats: Option<FlatCountedIndexStats>,
     indexed_query_revision: u64,
+    indexed_has_residual: bool,
+    indexed_has_exact_partition: bool,
+    indexed_rows_available: bool,
     replay_hit: bool,
     replay_capture: Option<QueryReplayCapture>,
 }
@@ -200,6 +204,12 @@ enum BridgeQueryCursorSource {
         next_row: usize,
     },
     Flat(FlatCountedQueryCursor),
+    IndexedExactResidual {
+        exact: FlatCountedQueryCursor,
+        exact_done: bool,
+        residual_space: Space,
+        residual: ContextualResidualQueryCursor,
+    },
     GeneralCounted {
         space: Space,
         cursor: CountedGeneralQueryCursor,
@@ -273,11 +283,14 @@ const QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
 const QUERY_ONLY_V2_FLAG_WIDE_TOKENS: u16 = 1 << 4;
 const CONTEXTUAL_ROWS_WIRE_VERSION: u16 = 6;
+const CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION: u16 = 9;
 const CONTEXTUAL_EXACT_ROWS_FLAGS: u16 = 0;
 const OPEN_VAR_REF_EXACT: u8 = 0;
 const OPEN_VAR_REF_QUERY_SLOT: u8 = 1;
 const OPEN_VAR_REF_MATCHED_EXACT: u8 = 2;
+const OPEN_VAR_REF_MATCHED_INSTANCE: u8 = 3;
 const CONTEXTUAL_QUERY_ROWS_FLAGS: u16 = 0;
+const CONTEXTUAL_INDEXED_QUERY_ROWS_FLAGS: u16 = 1 << 0;
 const BRIDGE_EXPR_TAG_ARITY: u8 = 0x00;
 const BRIDGE_EXPR_TAG_SYMBOL: u8 = 0x01;
 const BRIDGE_EXPR_TAG_NEWVAR: u8 = 0x02;
@@ -312,6 +325,9 @@ const INDEXED_CURSOR_STAT_ROWS_EMITTED: u32 = 9;
 const INDEXED_CURSOR_STAT_MAX_FRAME_CELLS: u32 = 10;
 const INDEXED_CURSOR_STAT_ROWS_AGGREGATED: u32 = 11;
 const INDEXED_CURSOR_STAT_REPLAY_HIT: u32 = 12;
+const INDEXED_CURSOR_STAT_HAS_RESIDUAL: u32 = 13;
+const INDEXED_CURSOR_STAT_HAS_EXACT_PARTITION: u32 = 14;
+const INDEXED_CURSOR_STAT_ROWS_AVAILABLE: u32 = 15;
 #[repr(i32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MorkStatusCode {
@@ -2053,7 +2069,6 @@ fn append_contextual_exact_row(
     Ok(())
 }
 
-#[cfg(feature = "pathmap-space")]
 #[derive(Debug, Clone)]
 struct ContextualQueryBinding {
     query_slot: u16,
@@ -2062,7 +2077,6 @@ struct ContextualQueryBinding {
     context: Vec<u8>,
 }
 
-#[cfg(feature = "pathmap-space")]
 #[derive(Debug, Clone)]
 struct ContextualQueryCandidate {
     atom_expr_bytes: Vec<u8>,
@@ -2070,11 +2084,51 @@ struct ContextualQueryCandidate {
     exact_context: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone)]
+struct ContextualResidualRow {
+    multiplicity: u64,
+    bindings: Vec<ContextualQueryBinding>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ContextualResidualFactorEnv {
+    namespace: u8,
+    variable_offset: u8,
+    byte_offset: u32,
+}
+
+struct ContextualResidualQueryCursor {
+    pattern_expr_bytes: Vec<u8>,
+    factor_envs: Vec<ContextualResidualFactorEnv>,
+    candidate_lists: Vec<Vec<ContextualQueryCandidate>>,
+    candidate_residual: Vec<Vec<bool>>,
+    indices: Vec<usize>,
+    occurrence_indices: Vec<u32>,
+    opening_groups: Vec<u32>,
+    next_opening_group: u32,
+    rows_available: bool,
+    exhausted: bool,
+    rows_emitted: u64,
+    rows_aggregated: u64,
+}
+
 #[cfg(feature = "pathmap-space")]
 fn append_contextual_query_rows_header(out: &mut Vec<u8>, row_count: u64, context_count: u32) {
     append_u32_be(out, QUERY_ONLY_V2_MAGIC);
     append_u16_be(out, CONTEXTUAL_ROWS_WIRE_VERSION);
     append_u16_be(out, CONTEXTUAL_QUERY_ROWS_FLAGS);
+    append_u64_be(out, row_count);
+    append_u32_be(out, context_count);
+}
+
+fn append_contextual_indexed_query_rows_header(
+    out: &mut Vec<u8>,
+    row_count: u64,
+    context_count: u32,
+) {
+    append_u32_be(out, QUERY_ONLY_V2_MAGIC);
+    append_u16_be(out, CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION);
+    append_u16_be(out, CONTEXTUAL_INDEXED_QUERY_ROWS_FLAGS);
     append_u64_be(out, row_count);
     append_u32_be(out, context_count);
 }
@@ -2129,6 +2183,62 @@ fn append_matched_exact_context_entry_remapped(
             out.push(0);
             out.push(source_env);
             out.push(0);
+            out.extend_from_slice(var_id_bytes);
+            append_u32_be(out, spelling_len as u32);
+            out.extend_from_slice(spelling);
+            return Ok(());
+        }
+    }
+    if offset != exact_context.len() {
+        return Err("stored exact context contains trailing data".to_string());
+    }
+    Err(format!(
+        "stored exact context does not cover matched value slot {source_slot}"
+    ))
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_matched_instance_context_entry_remapped(
+    out: &mut Vec<u8>,
+    target_slot: u16,
+    opening_group: u32,
+    exact_context: &[u8],
+    source_slot: u16,
+) -> Result<(), String> {
+    if opening_group == 0 {
+        return Err("matched opening instance requires a nonzero group".to_string());
+    }
+    let mut offset = 0usize;
+    let entry_count = read_u32_be_at(exact_context, &mut offset)?;
+    for _ in 0..entry_count {
+        let slot = read_u16_be_at(exact_context, &mut offset)?;
+        let kind = read_u8_at(exact_context, &mut offset)?;
+        let reserved = read_u8_at(exact_context, &mut offset)?;
+        if reserved != 0 {
+            return Err(
+                "contextual query value context entry has nonzero reserved byte".to_string(),
+            );
+        }
+        if kind != OPEN_VAR_REF_EXACT {
+            return Err("stored exact context contains non-exact ref kind".to_string());
+        }
+        if exact_context.len().saturating_sub(offset) < 8 {
+            return Err("stored exact context truncated while reading VarId".to_string());
+        }
+        let var_id_bytes = &exact_context[offset..offset + 8];
+        offset += 8;
+        let spelling_len = read_u32_be_at(exact_context, &mut offset)? as usize;
+        if exact_context.len().saturating_sub(offset) < spelling_len {
+            return Err("stored exact context truncated while reading spelling".to_string());
+        }
+        let spelling = &exact_context[offset..offset + spelling_len];
+        offset += spelling_len;
+        if slot == source_slot {
+            append_u16_be(out, target_slot);
+            out.push(OPEN_VAR_REF_MATCHED_INSTANCE);
+            out.push(0);
+            append_u32_be(out, opening_group);
+            append_u16_be(out, source_slot);
             out.extend_from_slice(var_id_bytes);
             append_u32_be(out, spelling_len as u32);
             out.extend_from_slice(spelling);
@@ -2210,9 +2320,431 @@ fn contextual_query_candidates_for_factor(
 }
 
 #[cfg(feature = "pathmap-space")]
+fn contextual_query_candidates_from_counted_entries(
+    space: &BridgeSpace,
+    entries: Vec<CountedEntry>,
+) -> Result<Vec<ContextualQueryCandidate>, String> {
+    let mut out = Vec::new();
+    for entry in entries {
+        let expr = Expr {
+            ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
+        };
+        let encoded = stable_bridge_expr_packet_bytes(&space.inner, expr)?;
+        let var_count = bridge_expr_packet_var_count(&encoded)?;
+        if let Some(per_expr) = space.exact_contexts.get(&entry.atom_expr_bytes) {
+            let mut covered = 0u32;
+            for (context, count) in per_expr {
+                if *count == 0 {
+                    return Err("indexed contextual candidate has zero multiplicity".to_string());
+                }
+                validate_contextual_exact_context(context, var_count)?;
+                covered = covered.checked_add(*count).ok_or_else(|| {
+                    "indexed contextual candidate multiplicity overflow".to_string()
+                })?;
+                out.push(ContextualQueryCandidate {
+                    atom_expr_bytes: entry.atom_expr_bytes.clone(),
+                    count: *count,
+                    exact_context: Some(context.clone()),
+                });
+            }
+            if covered > entry.count {
+                return Err(
+                    "indexed contextual candidate contexts exceed structural multiplicity"
+                        .to_string(),
+                );
+            }
+            if covered < entry.count {
+                out.push(ContextualQueryCandidate {
+                    atom_expr_bytes: entry.atom_expr_bytes,
+                    count: entry.count - covered,
+                    exact_context: None,
+                });
+            }
+        } else {
+            out.push(ContextualQueryCandidate {
+                atom_expr_bytes: entry.atom_expr_bytes,
+                count: entry.count,
+                exact_context: None,
+            });
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "pathmap-space")]
+fn contextual_value_depends_on_namespace(
+    expr_env: ExprEnv,
+    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    namespace: u8,
+    resolving: &mut Vec<(u8, u8)>,
+) -> bool {
+    if let Some(var) = expr_env.var_opt() {
+        if let Some(rhs) = bindings.get(&var) {
+            if resolving.contains(&var) {
+                return true;
+            }
+            resolving.push(var);
+            let depends =
+                contextual_value_depends_on_namespace(*rhs, bindings, namespace, resolving);
+            resolving.pop();
+            return depends;
+        }
+        return var.0 == namespace;
+    }
+    if expr_env.subsexpr().arity().is_none() {
+        return false;
+    }
+    let mut args = Vec::new();
+    expr_env.args(&mut args);
+    args.into_iter()
+        .any(|arg| contextual_value_depends_on_namespace(arg, bindings, namespace, resolving))
+}
+
+#[cfg(feature = "pathmap-space")]
+fn contextless_candidate_can_escape(
+    factor: ContextualResidualFactorEnv,
+    candidate: &ContextualQueryCandidate,
+    factor_idx: usize,
+    pattern_expr: Expr,
+) -> bool {
+    let atom_expr = Expr {
+        ptr: candidate.atom_expr_bytes.as_ptr().cast_mut(),
+    };
+    if atom_expr.is_ground() || candidate.exact_context.is_some() {
+        return false;
+    }
+    let candidate_namespace = (factor_idx + 1) as u8;
+    let stack = vec![(
+        ExprEnv {
+            n: factor.namespace,
+            v: factor.variable_offset,
+            offset: factor.byte_offset,
+            base: pattern_expr,
+        },
+        ExprEnv::new(candidate_namespace, atom_expr),
+    )];
+    let Ok(bindings) = unify(stack) else {
+        return false;
+    };
+    bindings.iter().any(|(&(side, _), value)| {
+        side == 0
+            && contextual_value_depends_on_namespace(
+                *value,
+                &bindings,
+                candidate_namespace,
+                &mut Vec::new(),
+            )
+    })
+}
+
+#[cfg(feature = "pathmap-space")]
+impl ContextualResidualQueryCursor {
+    fn new(
+        pattern_expr_bytes: &[u8],
+        candidate_lists: Vec<Vec<ContextualQueryCandidate>>,
+    ) -> Result<Self, String> {
+        let owned_pattern = pattern_expr_bytes.to_vec();
+        let pattern_expr = Expr {
+            ptr: owned_pattern.as_ptr().cast_mut(),
+        };
+        let factor_count = pattern_expr
+            .arity()
+            .ok_or_else(|| "indexed contextual cursor expected a wrapped query".to_string())?
+            .checked_sub(1)
+            .ok_or_else(|| "indexed contextual cursor expected a wrapped query".to_string())?;
+        if factor_count == 0 || factor_count as usize != candidate_lists.len() {
+            return Err("indexed contextual cursor factor-source count mismatch".to_string());
+        }
+        if factor_count == u8::MAX {
+            return Err("indexed contextual cursor exceeded factor namespace capacity".to_string());
+        }
+        let mut pat_args = Vec::with_capacity((factor_count as usize) + 1);
+        ExprEnv::new(0, pattern_expr).args(&mut pat_args);
+        let factor_envs = pat_args[1..]
+            .iter()
+            .map(|factor| ContextualResidualFactorEnv {
+                namespace: factor.n,
+                variable_offset: factor.v,
+                byte_offset: factor.offset,
+            })
+            .collect::<Vec<_>>();
+        let rows_available = !factor_envs.iter().zip(&candidate_lists).enumerate().any(
+            |(factor_idx, (factor, candidates))| {
+                candidates.iter().any(|candidate| {
+                    contextless_candidate_can_escape(*factor, candidate, factor_idx, pattern_expr)
+                })
+            },
+        );
+        let candidate_residual = candidate_lists
+            .iter()
+            .map(|candidates| {
+                candidates
+                    .iter()
+                    .map(|entry| {
+                        !Expr {
+                            ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
+                        }
+                        .is_ground()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let exhausted = candidate_lists.iter().any(Vec::is_empty);
+        let opening_groups = (1..=factor_envs.len())
+            .map(|group| u32::try_from(group).expect("factor count fits u32"))
+            .collect::<Vec<_>>();
+        let next_opening_group = u32::try_from(factor_envs.len())
+            .map_err(|_| "indexed contextual cursor factor count exceeded u32".to_string())?
+            .checked_add(1)
+            .ok_or_else(|| "indexed contextual opening group overflow".to_string())?;
+        Ok(Self {
+            indices: vec![0; factor_envs.len()],
+            occurrence_indices: vec![0; factor_envs.len()],
+            pattern_expr_bytes: owned_pattern,
+            factor_envs,
+            candidate_lists,
+            candidate_residual,
+            opening_groups,
+            next_opening_group,
+            rows_available,
+            exhausted,
+            rows_emitted: 0,
+            rows_aggregated: 0,
+        })
+    }
+
+    fn rows_emitted(&self) -> u64 {
+        self.rows_emitted
+    }
+
+    fn rows_aggregated(&self) -> u64 {
+        self.rows_aggregated
+    }
+
+    fn rows_available(&self) -> bool {
+        self.rows_available
+    }
+
+    fn chosen_contains_residual(&self) -> bool {
+        self.indices.iter().enumerate().any(|(factor_idx, index)| {
+            self.candidate_residual
+                .get(factor_idx)
+                .and_then(|flags| flags.get(*index))
+                .copied()
+                .unwrap_or(false)
+        })
+    }
+
+    fn chosen_row_multiplicity(&self) -> Result<u64, String> {
+        let mut multiplicity = 1u64;
+        for factor_idx in 0..self.indices.len() {
+            let candidate_idx = self.indices[factor_idx];
+            let chosen = &self.candidate_lists[factor_idx][candidate_idx];
+            if !self.candidate_residual[factor_idx][candidate_idx] {
+                multiplicity = multiplicity
+                    .checked_mul(u64::from(chosen.count))
+                    .ok_or_else(|| {
+                        "indexed contextual row multiplicity overflowed u64".to_string()
+                    })?;
+            }
+        }
+        Ok(multiplicity)
+    }
+
+    fn remaining_opening_activations(&self) -> Result<u64, String> {
+        let mut total = 1u64;
+        let mut position = 0u64;
+        for factor_idx in 0..self.indices.len() {
+            let candidate_idx = self.indices[factor_idx];
+            let radix = if self.candidate_residual[factor_idx][candidate_idx] {
+                u64::from(self.candidate_lists[factor_idx][candidate_idx].count)
+            } else {
+                1u64
+            };
+            let occurrence = u64::from(self.occurrence_indices[factor_idx]);
+            if radix == 0 || occurrence >= radix {
+                return Err("indexed contextual occurrence state is invalid".to_string());
+            }
+            total = total
+                .checked_mul(radix)
+                .ok_or_else(|| "indexed contextual activation count overflowed u64".to_string())?;
+            position = position
+                .checked_mul(radix)
+                .and_then(|prefix| prefix.checked_add(occurrence))
+                .ok_or_else(|| {
+                    "indexed contextual activation position overflowed u64".to_string()
+                })?;
+        }
+        total
+            .checked_sub(position)
+            .ok_or_else(|| "indexed contextual activation position exceeded count".to_string())
+    }
+
+    fn assign_opening_groups_from(&mut self, first_factor: usize) -> Result<(), String> {
+        for group in self.opening_groups.iter_mut().skip(first_factor) {
+            *group = self.next_opening_group;
+            self.next_opening_group = self
+                .next_opening_group
+                .checked_add(1)
+                .ok_or_else(|| "indexed contextual opening group overflow".to_string())?;
+        }
+        Ok(())
+    }
+
+    fn advance(&mut self) -> Result<(), String> {
+        for factor_idx in (0..self.indices.len()).rev() {
+            let candidate_idx = self.indices[factor_idx];
+            let occurrence_count = if self.candidate_residual[factor_idx][candidate_idx] {
+                self.candidate_lists[factor_idx][candidate_idx].count
+            } else {
+                1u32
+            };
+            self.occurrence_indices[factor_idx] += 1;
+            if self.occurrence_indices[factor_idx] < occurrence_count {
+                self.assign_opening_groups_from(factor_idx)?;
+                return Ok(());
+            }
+            self.occurrence_indices[factor_idx] = 0;
+            self.indices[factor_idx] += 1;
+            if self.indices[factor_idx] < self.candidate_lists[factor_idx].len() {
+                self.assign_opening_groups_from(factor_idx)?;
+                return Ok(());
+            }
+            self.indices[factor_idx] = 0;
+        }
+        self.exhausted = true;
+        Ok(())
+    }
+
+    fn advance_candidate_combination(&mut self) {
+        self.occurrence_indices.fill(0);
+        for factor_idx in (0..self.indices.len()).rev() {
+            self.indices[factor_idx] += 1;
+            if self.indices[factor_idx] < self.candidate_lists[factor_idx].len() {
+                return;
+            }
+            self.indices[factor_idx] = 0;
+        }
+        self.exhausted = true;
+    }
+
+    fn next_row(&mut self, space: &Space) -> Result<Option<ContextualResidualRow>, String> {
+        if !self.rows_available {
+            return Err("indexed cursor supports aggregation but not row emission".to_string());
+        }
+        while !self.exhausted {
+            if !self.chosen_contains_residual() {
+                self.advance()?;
+                continue;
+            }
+            let pattern_expr = Expr {
+                ptr: self.pattern_expr_bytes.as_ptr().cast_mut(),
+            };
+            let mut stack = Vec::with_capacity(self.factor_envs.len());
+            let mut chosen_entries = Vec::with_capacity(self.factor_envs.len());
+            let multiplicity = self.chosen_row_multiplicity()?;
+            for factor_idx in 0..self.factor_envs.len() {
+                let factor = self.factor_envs[factor_idx];
+                let factor_expr_env = ExprEnv {
+                    n: factor.namespace,
+                    v: factor.variable_offset,
+                    offset: factor.byte_offset,
+                    base: pattern_expr,
+                };
+                let chosen = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
+                let atom_expr = Expr {
+                    ptr: chosen.atom_expr_bytes.as_ptr().cast_mut(),
+                };
+                stack.push((
+                    factor_expr_env,
+                    ExprEnv::new((factor_idx + 1) as u8, atom_expr),
+                ));
+                chosen_entries.push(chosen);
+            }
+            let row = if let Ok(bindings) = unify(stack) {
+                let mut encoded = Vec::new();
+                for (&(side, idx), expr_env) in bindings.iter() {
+                    if side == 0 {
+                        encoded.push(encode_contextual_query_binding(
+                            space,
+                            idx,
+                            *expr_env,
+                            &bindings,
+                            &chosen_entries,
+                            Some(&self.opening_groups),
+                        )?);
+                    }
+                }
+                Some(ContextualResidualRow {
+                    multiplicity,
+                    bindings: encoded,
+                })
+            } else {
+                None
+            };
+            self.advance()?;
+            if row.is_some() {
+                self.rows_emitted = self.rows_emitted.saturating_add(1);
+                return Ok(row);
+            }
+        }
+        Ok(None)
+    }
+
+    fn count_remaining(&mut self) -> Result<u64, String> {
+        let mut total = 0u64;
+        while !self.exhausted {
+            if !self.chosen_contains_residual() {
+                self.advance_candidate_combination();
+                continue;
+            }
+            let pattern_expr = Expr {
+                ptr: self.pattern_expr_bytes.as_ptr().cast_mut(),
+            };
+            let mut stack = Vec::with_capacity(self.factor_envs.len());
+            let multiplicity = self.chosen_row_multiplicity()?;
+            let remaining_activations = self.remaining_opening_activations()?;
+            for factor_idx in 0..self.factor_envs.len() {
+                let factor = self.factor_envs[factor_idx];
+                let chosen = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
+                stack.push((
+                    ExprEnv {
+                        n: factor.namespace,
+                        v: factor.variable_offset,
+                        offset: factor.byte_offset,
+                        base: pattern_expr,
+                    },
+                    ExprEnv::new(
+                        (factor_idx + 1) as u8,
+                        Expr {
+                            ptr: chosen.atom_expr_bytes.as_ptr().cast_mut(),
+                        },
+                    ),
+                ));
+            }
+            if unify(stack).is_ok() {
+                let remaining =
+                    multiplicity
+                        .checked_mul(remaining_activations)
+                        .ok_or_else(|| {
+                            "indexed contextual count multiplicity overflowed u64".to_string()
+                        })?;
+                total = total.checked_add(remaining).ok_or_else(|| {
+                    "indexed contextual count exceeds u64 aggregate capacity".to_string()
+                })?;
+                self.rows_aggregated = self.rows_aggregated.saturating_add(1);
+            }
+            self.advance_candidate_combination();
+        }
+        Ok(total)
+    }
+}
+
+#[cfg(feature = "pathmap-space")]
 fn build_contextual_query_value_context(
     origins: &BTreeMap<u8, (u8, u8)>,
     chosen_entries: &[&ContextualQueryCandidate],
+    opening_groups: Option<&[u32]>,
 ) -> Result<Vec<u8>, String> {
     let mut context = Vec::new();
     let entry_count = u32::try_from(origins.len())
@@ -2236,13 +2768,26 @@ fn build_contextual_query_value_context(
         let exact_context = entry.exact_context.as_deref().ok_or_else(|| {
             "contextual query rows need exact context for matched variable value".to_string()
         })?;
-        append_matched_exact_context_entry_remapped(
-            &mut context,
-            u16::from(value_slot),
-            source_env,
-            exact_context,
-            u16::from(source_slot),
-        )?;
+        if let Some(groups) = opening_groups {
+            let opening_group = *groups.get(factor_idx).ok_or_else(|| {
+                format!("contextual query rows lack opening group for factor {factor_idx}")
+            })?;
+            append_matched_instance_context_entry_remapped(
+                &mut context,
+                u16::from(value_slot),
+                opening_group,
+                exact_context,
+                u16::from(source_slot),
+            )?;
+        } else {
+            append_matched_exact_context_entry_remapped(
+                &mut context,
+                u16::from(value_slot),
+                source_env,
+                exact_context,
+                u16::from(source_slot),
+            )?;
+        }
     }
     Ok(context)
 }
@@ -2432,6 +2977,7 @@ fn encode_contextual_query_binding(
     expr_env: ExprEnv,
     bindings: &BTreeMap<(u8, u8), ExprEnv>,
     chosen_entries: &[&ContextualQueryCandidate],
+    opening_groups: Option<&[u32]>,
 ) -> Result<ContextualQueryBinding, String> {
     let mut row_vars = BTreeMap::<(u8, u8), u8>::new();
     let mut origins = BTreeMap::<u8, (u8, u8)>::new();
@@ -2452,7 +2998,7 @@ fn encode_contextual_query_binding(
     if usize::from(var_count) != origins.len() {
         return Err("contextual query value context does not cover every value slot".to_string());
     }
-    let context = build_contextual_query_value_context(&origins, chosen_entries)?;
+    let context = build_contextual_query_value_context(&origins, chosen_entries, opening_groups)?;
     Ok(ContextualQueryBinding {
         query_slot: u16::from(query_slot),
         value_flags: 0,
@@ -2484,6 +3030,35 @@ fn append_contextual_query_packet_row(
         append_contextual_query_binding(out, binding, context_id)?;
     }
     Ok(())
+}
+
+#[cfg(feature = "pathmap-space")]
+fn append_contextual_indexed_query_packet_row(
+    out: &mut Vec<u8>,
+    row: &ContextualResidualRow,
+    context_ids: &mut BTreeMap<Vec<u8>, u32>,
+    contexts: &mut Vec<Vec<u8>>,
+) -> Result<(), String> {
+    if row.multiplicity == 0 {
+        return Err("indexed contextual row requires positive multiplicity".to_string());
+    }
+    append_u64_be(out, row.multiplicity);
+    append_contextual_query_packet_row(out, &row.bindings, context_ids, contexts)
+}
+
+#[cfg(feature = "pathmap-space")]
+fn rollback_contextual_packet_contexts(
+    context_ids: &mut BTreeMap<Vec<u8>, u32>,
+    contexts: &mut Vec<Vec<u8>>,
+    mark: usize,
+) {
+    while contexts.len() > mark {
+        let context = contexts
+            .pop()
+            .expect("context length was checked before rollback");
+        let removed = context_ids.remove(&context);
+        debug_assert!(removed.is_some());
+    }
 }
 
 fn query_bindings_packet(
@@ -2738,6 +3313,7 @@ fn accumulate_contextual_query_rows(
                     *expr_env,
                     &bindings,
                     &chosen_entries,
+                    None,
                 )?);
             }
             let repeat = usize::try_from(multiplicity)
@@ -2956,6 +3532,159 @@ fn query_cursor_publish_completed_replay(cursor: &mut BridgeQueryCursor) {
     replay.rows_stored = replay.rows_stored.saturating_add(row_count);
 }
 
+#[cfg(feature = "pathmap-space")]
+fn query_cursor_next_indexed_exact_residual_packet(
+    cursor: &mut BridgeQueryCursor,
+    max_rows: u64,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, u64), String> {
+    let BridgeQueryCursorSource::IndexedExactResidual {
+        exact,
+        exact_done,
+        residual_space,
+        residual,
+    } = &mut cursor.source
+    else {
+        return Err("indexed exact-residual packet requested for another cursor kind".to_string());
+    };
+
+    if !*exact_done || cursor.pending_row.is_some() {
+        let header_len = 20usize;
+        if max_bytes <= header_len {
+            return Err("query-row batch max_bytes is smaller than the packet header".to_string());
+        }
+        let mut rows = Vec::<Vec<u8>>::new();
+        let mut packet_len = header_len;
+        while rows.len() < usize::try_from(max_rows).unwrap_or(usize::MAX) {
+            let row = if let Some(row) = cursor.pending_row.take() {
+                Some(row)
+            } else {
+                exact.next_packet_row()?
+            };
+            let Some(row) = row else {
+                *exact_done = true;
+                break;
+            };
+            if query_cursor_packet_would_exceed(packet_len, row.len(), max_bytes) {
+                cursor.pending_row = Some(row);
+                if rows.is_empty() {
+                    return Err("query-row batch row exceeds max_bytes".to_string());
+                }
+                break;
+            }
+            packet_len += row.len();
+            rows.push(row);
+        }
+        if !rows.is_empty() {
+            let row_count = checked_packet_count(rows.len(), "indexed exact cursor batch rows")?;
+            let factor_count = match cursor.kind {
+                BridgeQueryCursorKind::MultiRefV3 { factor_count } => factor_count,
+                BridgeQueryCursorKind::QueryOnlyV2 => {
+                    return Err("indexed exact-residual cursor lost its factor count".to_string());
+                }
+            };
+            let mut packet = Vec::with_capacity(packet_len);
+            append_multi_ref_v3_header(
+                &mut packet,
+                MULTI_REF_V3_FLAG_QUERY_KEYS_ONLY
+                    | MULTI_REF_V3_FLAG_RAW_EXPR_BYTES
+                    | MULTI_REF_V3_FLAG_DIRECT_MULTIPLICITIES
+                    | MULTI_REF_V3_FLAG_WIDE_TOKENS,
+                factor_count,
+                row_count,
+            );
+            for row in rows {
+                packet.extend_from_slice(&row);
+            }
+            return Ok((packet, row_count));
+        }
+    }
+
+    let header_len = 20usize;
+    if max_bytes <= header_len {
+        return Err("query-row batch max_bytes is smaller than the packet header".to_string());
+    }
+    let mut context_ids = BTreeMap::<Vec<u8>, u32>::new();
+    let mut contexts = Vec::<Vec<u8>>::new();
+    let mut encoded_rows = Vec::<Vec<u8>>::new();
+    let mut packet_len = header_len;
+    while encoded_rows.len() < usize::try_from(max_rows).unwrap_or(usize::MAX) {
+        let row = if let Some(row) = cursor.pending_contextual_row.take() {
+            Some(row)
+        } else {
+            residual.next_row(residual_space)?
+        };
+        let Some(row) = row else {
+            break;
+        };
+
+        let context_mark = contexts.len();
+        let mut encoded = Vec::new();
+        if let Err(error) = append_contextual_indexed_query_packet_row(
+            &mut encoded,
+            &row,
+            &mut context_ids,
+            &mut contexts,
+        ) {
+            rollback_contextual_packet_contexts(&mut context_ids, &mut contexts, context_mark);
+            return Err(error);
+        }
+        let new_context_bytes =
+            contexts[context_mark..]
+                .iter()
+                .try_fold(0usize, |total, context| {
+                    total
+                        .checked_add(4usize)
+                        .and_then(|value| value.checked_add(context.len()))
+                        .ok_or_else(|| "indexed contextual packet size overflow".to_string())
+                });
+        let trial_len = new_context_bytes.and_then(|context_bytes| {
+            packet_len
+                .checked_add(context_bytes)
+                .and_then(|value| value.checked_add(encoded.len()))
+                .ok_or_else(|| "indexed contextual packet size overflow".to_string())
+        });
+        let trial_len = match trial_len {
+            Ok(len) => len,
+            Err(error) => {
+                rollback_contextual_packet_contexts(&mut context_ids, &mut contexts, context_mark);
+                return Err(error);
+            }
+        };
+        if trial_len > max_bytes {
+            rollback_contextual_packet_contexts(&mut context_ids, &mut contexts, context_mark);
+            cursor.pending_contextual_row = Some(row);
+            if encoded_rows.is_empty() {
+                return Err("indexed contextual query row exceeds max_bytes".to_string());
+            }
+            break;
+        }
+        packet_len = trial_len;
+        encoded_rows.push(encoded);
+    }
+
+    if encoded_rows.is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+    let row_count = checked_packet_count(
+        encoded_rows.len(),
+        "indexed contextual cursor batch row count",
+    )?;
+    let context_count = u32::try_from(contexts.len())
+        .map_err(|_| "indexed contextual packet exceeded u32 context count".to_string())?;
+    let mut packet = Vec::with_capacity(packet_len);
+    append_contextual_indexed_query_rows_header(&mut packet, row_count, context_count);
+    for (id, context) in contexts.iter().enumerate() {
+        let context_id = u32::try_from(id)
+            .map_err(|_| "indexed contextual packet exceeded u32 context id".to_string())?;
+        append_opening_context(&mut packet, context_id, context);
+    }
+    for row in encoded_rows {
+        packet.extend_from_slice(&row);
+    }
+    Ok((packet, row_count))
+}
+
 fn query_cursor_next_packet(
     cursor: &mut BridgeQueryCursor,
     max_rows: u64,
@@ -2967,7 +3696,17 @@ fn query_cursor_next_packet(
     if max_bytes == 0 {
         return Err("query-row batch max_bytes must be positive".to_string());
     }
+    if cursor.indexed_setup_stats.is_some() && !cursor.indexed_rows_available {
+        return Err("indexed cursor supports aggregation but not row emission".to_string());
+    }
     let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
+    #[cfg(feature = "pathmap-space")]
+    if matches!(
+        &cursor.source,
+        BridgeQueryCursorSource::IndexedExactResidual { .. }
+    ) {
+        return query_cursor_next_indexed_exact_residual_packet(cursor, max_rows, max_bytes);
+    }
     let header_len = match cursor.kind {
         BridgeQueryCursorKind::QueryOnlyV2 => 16usize,
         BridgeQueryCursorKind::MultiRefV3 { .. } => 20usize,
@@ -3000,6 +3739,11 @@ fn query_cursor_next_packet(
                     let row = flat.next_packet_row()?;
                     capture_fresh_row = row.is_some();
                     row
+                }
+                BridgeQueryCursorSource::IndexedExactResidual { .. } => {
+                    return Err(
+                        "indexed exact-residual cursor bypassed its packet protocol".to_string()
+                    );
                 }
                 BridgeQueryCursorSource::GeneralCounted { space, cursor } => {
                     cursor.next_packet_row(space)?
@@ -5640,8 +6384,12 @@ pub extern "C" fn mork_query_cursor_new_query_only_v2(
             kind: BridgeQueryCursorKind::QueryOnlyV2,
             source: BridgeQueryCursorSource::Materialized { rows, next_row: 0 },
             pending_row: None,
+            pending_contextual_row: None,
             indexed_setup_stats: None,
             indexed_query_revision: 0,
+            indexed_has_residual: false,
+            indexed_has_exact_partition: false,
+            indexed_rows_available: false,
             replay_hit: false,
             replay_capture: None,
         });
@@ -5688,8 +6436,12 @@ pub extern "C" fn mork_query_cursor_new_multi_ref_v3(
                 cursor: general,
             },
             pending_row: None,
+            pending_contextual_row: None,
             indexed_setup_stats: None,
             indexed_query_revision: 0,
+            indexed_has_residual: false,
+            indexed_has_exact_partition: false,
+            indexed_rows_available: false,
             replay_hit: false,
             replay_capture: None,
         });
@@ -5698,8 +6450,10 @@ pub extern "C" fn mork_query_cursor_new_multi_ref_v3(
 }
 
 /// Creates a genuinely pull-based counted-PathMap cursor for the admitted flat
-/// relational fragment. A null result means that the exact general-query path
-/// must be used; it is not a query failure.
+/// relational fragment. A non-null cursor may support aggregation without row
+/// emission; row consumers must inspect `MORK_INDEXED_CURSOR_STAT_ROWS_AVAILABLE`.
+/// A null result means that the exact general-query path must be used; it is not
+/// a query failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn mork_query_cursor_new_indexed_multi_ref_v4(
     space: *mut MorkSpace,
@@ -5733,12 +6487,21 @@ pub extern "C" fn mork_query_cursor_new_indexed_multi_ref_v4(
                 return ptr::null_mut();
             }
         };
-        let (key, factor_count) = match admission {
-            FlatCountedQueryAdmission::Prepared { key, factor_count } => (key, factor_count),
+        let (key, factor_count, has_residual, has_exact_partition) = match admission {
+            FlatCountedQueryAdmission::Prepared {
+                key,
+                factor_count,
+                has_residual,
+                has_exact_partition,
+            } => (key, factor_count, has_residual, has_exact_partition),
             FlatCountedQueryAdmission::Unsupported { .. } => return ptr::null_mut(),
         };
         let replay_key = (bridge.query_revision, key.clone());
-        let replay_rows = query_replay_lookup(&bridge.query_replay_cache, &replay_key);
+        let replay_rows = if has_residual {
+            None
+        } else {
+            query_replay_lookup(&bridge.query_replay_cache, &replay_key)
+        };
         let (source, replay_hit, replay_capture) = if let Some(rows) = replay_rows {
             (
                 BridgeQueryCursorSource::Replay {
@@ -5754,17 +6517,51 @@ pub extern "C" fn mork_query_cursor_new_indexed_multi_ref_v4(
                 Ok(cursor) => cursor,
                 Err(_) => return ptr::null_mut(),
             };
-            (
-                BridgeQueryCursorSource::Flat(flat),
-                false,
+            let source = if has_residual {
+                let residual_lists = match bridge.flat_query_index.residual_candidate_lists(
+                    &bridge.inner,
+                    &pattern_bytes,
+                    &key,
+                ) {
+                    Ok(Some(lists)) => lists,
+                    Ok(None) | Err(_) => return ptr::null_mut(),
+                };
+                let contextual_lists = match residual_lists
+                    .into_iter()
+                    .map(|entries| {
+                        contextual_query_candidates_from_counted_entries(bridge, entries)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    Ok(lists) => lists,
+                    Err(_) => return ptr::null_mut(),
+                };
+                let residual =
+                    match ContextualResidualQueryCursor::new(&pattern_bytes, contextual_lists) {
+                        Ok(cursor) => cursor,
+                        Err(_) => return ptr::null_mut(),
+                    };
+                BridgeQueryCursorSource::IndexedExactResidual {
+                    exact: flat,
+                    exact_done: false,
+                    residual_space: clone_space_inner(&bridge.inner),
+                    residual,
+                }
+            } else {
+                BridgeQueryCursorSource::Flat(flat)
+            };
+            let capture = if has_residual {
+                None
+            } else {
                 Some(QueryReplayCapture {
                     cache: bridge.query_replay_cache.clone(),
                     key: replay_key,
                     rows: Vec::new(),
                     bytes: 0,
                     eligible: true,
-                }),
-            )
+                })
+            };
+            (source, false, capture)
         };
         let after = bridge.flat_query_index.stats();
         let indexed_setup_stats = FlatCountedIndexStats {
@@ -5784,12 +6581,22 @@ pub extern "C" fn mork_query_cursor_new_indexed_multi_ref_v4(
             plan_builds: after.plan_builds.saturating_sub(before.plan_builds),
             plan_cache_hits: after.plan_cache_hits.saturating_sub(before.plan_cache_hits),
         };
+        let indexed_rows_available = match &source {
+            BridgeQueryCursorSource::IndexedExactResidual { residual, .. } => {
+                residual.rows_available()
+            }
+            _ => true,
+        };
         let cursor = Box::new(BridgeQueryCursor {
             kind: BridgeQueryCursorKind::MultiRefV3 { factor_count },
             source,
             pending_row: None,
+            pending_contextual_row: None,
             indexed_setup_stats: Some(indexed_setup_stats),
             indexed_query_revision: bridge.query_revision,
+            indexed_has_residual: has_residual,
+            indexed_has_exact_partition: has_exact_partition,
+            indexed_rows_available,
             replay_hit,
             replay_capture,
         });
@@ -5904,7 +6711,15 @@ pub extern "C" fn mork_query_cursor_new_indexed_semi_naive_multi_ref_v4(
             }
         };
         let (key, factor_count) = match admission {
-            FlatCountedQueryAdmission::Prepared { key, factor_count } => (key, factor_count),
+            FlatCountedQueryAdmission::Prepared {
+                key,
+                factor_count,
+                has_residual: false,
+                ..
+            } => (key, factor_count),
+            FlatCountedQueryAdmission::Prepared {
+                has_residual: true, ..
+            } => return ptr::null_mut(),
             FlatCountedQueryAdmission::Unsupported { .. } => return ptr::null_mut(),
         };
         let known_index = known.flat_query_index.clone();
@@ -5933,8 +6748,12 @@ pub extern "C" fn mork_query_cursor_new_indexed_semi_naive_multi_ref_v4(
             kind: BridgeQueryCursorKind::MultiRefV3 { factor_count },
             source: BridgeQueryCursorSource::SemiNaive(semi_naive),
             pending_row: None,
+            pending_contextual_row: None,
             indexed_setup_stats: Some(setup),
             indexed_query_revision: known.query_revision,
+            indexed_has_residual: false,
+            indexed_has_exact_partition: true,
+            indexed_rows_available: true,
             replay_hit: false,
             replay_capture: None,
         });
@@ -6010,9 +6829,19 @@ pub extern "C" fn mork_query_cursor_indexed_stat(
             Err(err) => return err,
         };
         let traversal = match &cursor.source {
-            BridgeQueryCursorSource::Flat(flat) => flat.stats(),
-            BridgeQueryCursorSource::SemiNaive(semi_naive) => semi_naive.stats(),
-            BridgeQueryCursorSource::Replay { stats, .. } => stats,
+            BridgeQueryCursorSource::Flat(flat) => flat.stats().clone(),
+            BridgeQueryCursorSource::IndexedExactResidual {
+                exact, residual, ..
+            } => {
+                let mut stats = exact.stats().clone();
+                stats.rows_emitted = stats.rows_emitted.saturating_add(residual.rows_emitted());
+                stats.rows_aggregated = stats
+                    .rows_aggregated
+                    .saturating_add(residual.rows_aggregated());
+                stats
+            }
+            BridgeQueryCursorSource::SemiNaive(semi_naive) => semi_naive.stats().clone(),
+            BridgeQueryCursorSource::Replay { stats, .. } => stats.clone(),
             BridgeQueryCursorSource::Materialized { .. }
             | BridgeQueryCursorSource::GeneralCounted { .. } => {
                 return MorkStatus::err(
@@ -6041,6 +6870,11 @@ pub extern "C" fn mork_query_cursor_indexed_stat(
             }
             INDEXED_CURSOR_STAT_ROWS_AGGREGATED => traversal.rows_aggregated,
             INDEXED_CURSOR_STAT_REPLAY_HIT => u64::from(cursor.replay_hit),
+            INDEXED_CURSOR_STAT_HAS_RESIDUAL => u64::from(cursor.indexed_has_residual),
+            INDEXED_CURSOR_STAT_HAS_EXACT_PARTITION => {
+                u64::from(cursor.indexed_has_exact_partition)
+            }
+            INDEXED_CURSOR_STAT_ROWS_AVAILABLE => u64::from(cursor.indexed_rows_available),
             _ => {
                 return MorkStatus::err(
                     MorkStatusCode::Internal,
@@ -6098,8 +6932,43 @@ pub extern "C" fn mork_query_cursor_count_remaining(cursor: *mut MorkQueryCursor
                 );
             }
         };
+        let pending_contextual_row = &mut cursor.pending_contextual_row;
         let count = match &mut cursor.source {
             BridgeQueryCursorSource::Flat(flat) => flat.count_remaining(),
+            BridgeQueryCursorSource::IndexedExactResidual {
+                exact,
+                exact_done,
+                residual,
+                ..
+            } => {
+                let pending_count = pending_contextual_row
+                    .as_ref()
+                    .map(|row| row.multiplicity)
+                    .unwrap_or(0);
+                let exact_count = if *exact_done {
+                    Ok(0)
+                } else {
+                    *exact_done = true;
+                    exact.count_remaining()
+                };
+                exact_count
+                    .and_then(|exact_count| {
+                        residual.count_remaining().and_then(|residual_count| {
+                            exact_count
+                                .checked_add(pending_count)
+                                .and_then(|count| count.checked_add(residual_count))
+                                .ok_or_else(|| {
+                                    "indexed exact-residual count exceeds u64 aggregate capacity"
+                                        .to_string()
+                                })
+                        })
+                    })
+                    .inspect(|_| {
+                        if pending_contextual_row.take().is_some() {
+                            residual.rows_aggregated = residual.rows_aggregated.saturating_add(1);
+                        }
+                    })
+            }
             BridgeQueryCursorSource::SemiNaive(semi_naive) => semi_naive.count_remaining(),
             BridgeQueryCursorSource::Replay {
                 rows,
@@ -6678,6 +7547,41 @@ mod tests {
                 .try_into()
                 .expect("test packet has enough bytes for u16"),
         )
+    }
+
+    fn indexed_contextual_row_offset(data: &[u8]) -> usize {
+        assert_eq!(read_u16_be(data, 4), CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION);
+        let mut offset = 20usize;
+        for _ in 0..read_u32_be(data, 16) {
+            offset += 4;
+            let entry_count = read_u32_be(data, offset);
+            offset += 4;
+            for _ in 0..entry_count {
+                offset += 2;
+                let kind = data[offset];
+                offset += 2;
+                match kind {
+                    OPEN_VAR_REF_QUERY_SLOT => offset += 2,
+                    OPEN_VAR_REF_EXACT => {
+                        offset += 8;
+                        let spelling_len = read_u32_be(data, offset) as usize;
+                        offset += 4 + spelling_len;
+                    }
+                    OPEN_VAR_REF_MATCHED_EXACT => {
+                        offset += 2 + 8;
+                        let spelling_len = read_u32_be(data, offset) as usize;
+                        offset += 4 + spelling_len;
+                    }
+                    OPEN_VAR_REF_MATCHED_INSTANCE => {
+                        offset += 4 + 2 + 8;
+                        let spelling_len = read_u32_be(data, offset) as usize;
+                        offset += 4 + spelling_len;
+                    }
+                    _ => panic!("unknown opening-context ref kind {kind}"),
+                }
+            }
+        }
+        offset
     }
 
     #[test]
@@ -7618,6 +8522,9 @@ mod tests {
             cursor_view.source,
             BridgeQueryCursorSource::Flat(_)
         ));
+        let has_residual = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_HAS_RESIDUAL);
+        assert!(status_ok(&has_residual));
+        assert_eq!(has_residual.value, 0);
 
         let too_small = mork_query_cursor_next(cursor, 1, 21);
         assert_eq!(too_small.code, MorkStatusCode::Internal as i32);
@@ -7844,6 +8751,581 @@ mod tests {
         assert_eq!(denied.code, MorkStatusCode::Internal as i32);
         mork_bytes_free(denied.message, denied.message_len);
         mork_query_cursor_free(materialized);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_multi_ref_v4_unions_exact_and_residual_partitions_without_duplicates() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        for _ in 0..2 {
+            let fact = b"(edge a ground)";
+            let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+            assert!(status_ok(&add));
+        }
+        for _ in 0..3 {
+            let fact = b"(edge $x residual)";
+            let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+            assert!(status_ok(&add));
+        }
+        let wildcard = b"($relation a wildcard)";
+        let add = mork_space_add_sexpr(counted, wildcard.as_ptr(), wildcard.len());
+        assert!(status_ok(&add));
+
+        let query = b"(, (edge a $value))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let cursor_view = unsafe { bridge_query_cursor_ref(cursor).unwrap() };
+        assert!(matches!(
+            cursor_view.source,
+            BridgeQueryCursorSource::IndexedExactResidual { .. }
+        ));
+        let has_residual = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_HAS_RESIDUAL);
+        assert!(status_ok(&has_residual));
+        assert_eq!(has_residual.value, 1);
+        let has_exact_partition =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_HAS_EXACT_PARTITION);
+        assert!(status_ok(&has_exact_partition));
+        assert_eq!(has_exact_partition.value, 1);
+
+        let mut versions = Vec::new();
+        let mut multiplicities = Vec::new();
+        loop {
+            let packet = mork_query_cursor_next(cursor, 1, 4096);
+            assert!(buffer_ok(&packet));
+            if packet.count == 0 {
+                break;
+            }
+            assert_eq!(packet.count, 1);
+            let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+            let version = read_u16_be(data, 4);
+            versions.push(version);
+            multiplicities.push(if version == MULTI_REF_V3_VERSION {
+                u64::from(read_u32_be(data, 20))
+            } else {
+                read_u64_be(data, indexed_contextual_row_offset(data))
+            });
+            mork_bytes_free(packet.data, packet.len);
+        }
+        assert_eq!(
+            versions,
+            vec![
+                MULTI_REF_V3_VERSION,
+                CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION,
+                CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION,
+                CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION,
+                CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION,
+            ]
+        );
+        assert_eq!(multiplicities, vec![2, 1, 1, 1, 1]);
+        let emitted = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_EMITTED);
+        assert!(status_ok(&emitted));
+        assert_eq!(emitted.value, 5);
+        mork_query_cursor_free(cursor);
+
+        let count_cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!count_cursor.is_null());
+        let count = mork_query_cursor_count_remaining(count_cursor);
+        assert!(status_ok(&count));
+        assert_eq!(count.value, 6);
+        let emitted =
+            mork_query_cursor_indexed_stat(count_cursor, INDEXED_CURSOR_STAT_ROWS_EMITTED);
+        assert!(status_ok(&emitted));
+        assert_eq!(emitted.value, 0);
+        let aggregated =
+            mork_query_cursor_indexed_stat(count_cursor, INDEXED_CURSOR_STAT_ROWS_AGGREGATED);
+        assert!(status_ok(&aggregated));
+        assert_eq!(aggregated.value, 3);
+        mork_query_cursor_free(count_cursor);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_residual_packet_preserves_stored_variable_context_and_weight() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let mut scratch = Space::new();
+        let expr_bytes =
+            parse_single_expr(&mut scratch, b"(schema $stored (wrap $stored))").unwrap();
+        let mut context = Vec::new();
+        append_u32_be(&mut context, 1);
+        append_u16_be(&mut context, 0);
+        context.push(OPEN_VAR_REF_EXACT);
+        context.push(0);
+        let stored_var_id = 0x1122_3344_5566_7788u64;
+        context.extend_from_slice(&stored_var_id.to_be_bytes());
+        let spelling = b"stored";
+        append_u32_be(&mut context, spelling.len() as u32);
+        context.extend_from_slice(spelling);
+        for _ in 0..2 {
+            let add = mork_space_add_contextual_exact_expr_bytes(
+                counted,
+                expr_bytes.as_ptr(),
+                expr_bytes.len(),
+                context.as_ptr(),
+                context.len(),
+            );
+            assert!(status_ok(&add));
+        }
+
+        let query = b"(, (schema $q $body))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let has_residual = mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_HAS_RESIDUAL);
+        assert!(status_ok(&has_residual));
+        assert_eq!(has_residual.value, 1);
+        let has_exact_partition =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_HAS_EXACT_PARTITION);
+        assert!(status_ok(&has_exact_partition));
+        assert_eq!(has_exact_partition.value, 0);
+        let packet = mork_query_cursor_next(cursor, 8, 4096);
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 2);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(read_u16_be(data, 4), CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION);
+        assert_eq!(read_u16_be(data, 6), CONTEXTUAL_INDEXED_QUERY_ROWS_FLAGS);
+        assert_eq!(read_u32_be(data, 16), 2);
+        let mut offset = 20usize;
+        let mut opening_groups = Vec::new();
+        for expected_context_id in 0..2u32 {
+            assert_eq!(read_u32_be(data, offset), expected_context_id);
+            offset += 4;
+            assert_eq!(read_u32_be(data, offset), 1);
+            offset += 4;
+            assert_eq!(read_u16_be(data, offset), 0);
+            offset += 2;
+            assert_eq!(data[offset], OPEN_VAR_REF_MATCHED_INSTANCE);
+            assert_eq!(data[offset + 1], 0);
+            offset += 2;
+            opening_groups.push(read_u32_be(data, offset));
+            offset += 4;
+            assert_eq!(read_u16_be(data, offset), 0);
+            offset += 2;
+            assert_eq!(read_u64_be(data, offset), stored_var_id);
+            offset += 8;
+            let spelling_len = read_u32_be(data, offset) as usize;
+            offset += 4;
+            assert_eq!(&data[offset..offset + spelling_len], spelling);
+            offset += spelling_len;
+        }
+        assert_ne!(opening_groups[0], opening_groups[1]);
+        for _ in 0..2 {
+            assert_eq!(read_u64_be(data, offset), 1);
+            offset += 8;
+            let binding_count = read_u32_be(data, offset);
+            offset += 4;
+            for _ in 0..binding_count {
+                offset += 2 + 4 + 4;
+                let expr_len = read_u32_be(data, offset) as usize;
+                offset += 4 + expr_len;
+            }
+        }
+        assert_eq!(offset, data.len());
+        assert!(
+            data.windows(8)
+                .any(|bytes| bytes == stored_var_id.to_be_bytes())
+        );
+        assert!(data.windows(spelling.len()).any(|bytes| bytes == spelling));
+        mork_bytes_free(packet.data, packet.len);
+        let exhausted = mork_query_cursor_next(cursor, 8, 4096);
+        assert!(buffer_ok(&exhausted));
+        assert_eq!(exhausted.count, 0);
+        mork_query_cursor_free(cursor);
+
+        let partial =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!partial.is_null());
+        let first = mork_query_cursor_next(partial, 1, 4096);
+        assert!(buffer_ok(&first));
+        assert_eq!(first.count, 1);
+        mork_bytes_free(first.data, first.len);
+        let remaining = mork_query_cursor_count_remaining(partial);
+        assert!(status_ok(&remaining));
+        assert_eq!(remaining.value, 1);
+        mork_query_cursor_free(partial);
+
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_context_packet_cut_rolls_back_rejected_row_interns() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let mut scratch = Space::new();
+        for (source, stored_var_id) in [
+            (
+                b"(schema $stored first)".as_slice(),
+                0x1122_3344_0000_0001u64,
+            ),
+            (
+                b"(schema $stored second)".as_slice(),
+                0x1122_3344_0000_0002u64,
+            ),
+        ] {
+            let expr_bytes = parse_single_expr(&mut scratch, source).unwrap();
+            let mut context = Vec::new();
+            append_u32_be(&mut context, 1);
+            append_u16_be(&mut context, 0);
+            context.push(OPEN_VAR_REF_EXACT);
+            context.push(0);
+            context.extend_from_slice(&stored_var_id.to_be_bytes());
+            append_u32_be(&mut context, 6);
+            context.extend_from_slice(b"stored");
+            let add = mork_space_add_contextual_exact_expr_bytes(
+                counted,
+                expr_bytes.as_ptr(),
+                expr_bytes.len(),
+                context.as_ptr(),
+                context.len(),
+            );
+            assert!(status_ok(&add));
+        }
+
+        let query = b"(, (schema $q $body))";
+        let sizing_cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!sizing_cursor.is_null());
+        let sizing_packet = mork_query_cursor_next(sizing_cursor, 1, 4096);
+        assert!(buffer_ok(&sizing_packet));
+        assert_eq!(sizing_packet.count, 1);
+        let one_row_packet_len = sizing_packet.len;
+        let sizing_data =
+            unsafe { std::slice::from_raw_parts(sizing_packet.data, sizing_packet.len) };
+        assert_eq!(read_u32_be(sizing_data, 16), 2);
+        mork_bytes_free(sizing_packet.data, sizing_packet.len);
+        mork_query_cursor_free(sizing_cursor);
+
+        let retry_cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!retry_cursor.is_null());
+        let too_small = mork_query_cursor_next(
+            retry_cursor,
+            8,
+            u64::try_from(one_row_packet_len - 1).expect("packet length fits u64"),
+        );
+        assert_eq!(too_small.code, MorkStatusCode::Internal as i32);
+        assert_eq!(too_small.count, 0);
+        assert!(too_small.data.is_null());
+        mork_bytes_free(too_small.message, too_small.message_len);
+        let retried = mork_query_cursor_next(retry_cursor, 1, 4096);
+        assert!(buffer_ok(&retried));
+        assert_eq!(retried.count, 1);
+        mork_bytes_free(retried.data, retried.len);
+        mork_query_cursor_free(retry_cursor);
+
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let first = mork_query_cursor_next(
+            cursor,
+            8,
+            u64::try_from(one_row_packet_len).expect("packet length fits u64"),
+        );
+        assert!(buffer_ok(&first));
+        assert_eq!(first.count, 1);
+        let first_data = unsafe { std::slice::from_raw_parts(first.data, first.len) };
+        assert_eq!(read_u32_be(first_data, 16), 2);
+        mork_bytes_free(first.data, first.len);
+
+        let second = mork_query_cursor_next(cursor, 8, 4096);
+        assert!(buffer_ok(&second));
+        assert_eq!(second.count, 1);
+        let second_data = unsafe { std::slice::from_raw_parts(second.data, second.len) };
+        assert_eq!(read_u32_be(second_data, 16), 2);
+        mork_bytes_free(second.data, second.len);
+
+        let exhausted = mork_query_cursor_next(cursor, 8, 4096);
+        assert!(buffer_ok(&exhausted));
+        assert_eq!(exhausted.count, 0);
+        mork_query_cursor_free(cursor);
+
+        let count_cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!count_cursor.is_null());
+        let first = mork_query_cursor_next(
+            count_cursor,
+            8,
+            u64::try_from(one_row_packet_len).expect("packet length fits u64"),
+        );
+        assert!(buffer_ok(&first));
+        assert_eq!(first.count, 1);
+        mork_bytes_free(first.data, first.len);
+        let remaining = mork_query_cursor_count_remaining(count_cursor);
+        assert!(status_ok(&remaining));
+        assert_eq!(
+            remaining.value, 1,
+            "COUNT after a packet cut must include the pending contextual row"
+        );
+        mork_query_cursor_free(count_cursor);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn matched_instance_context_rejects_zero_opening_identity() {
+        let mut exact_context = Vec::new();
+        append_u32_be(&mut exact_context, 1);
+        append_u16_be(&mut exact_context, 0);
+        exact_context.push(OPEN_VAR_REF_EXACT);
+        exact_context.push(0);
+        exact_context.extend_from_slice(&0x1122_3344_5566_7788u64.to_be_bytes());
+        append_u32_be(&mut exact_context, 6);
+        exact_context.extend_from_slice(b"stored");
+
+        let mut encoded = Vec::new();
+        let error =
+            append_matched_instance_context_entry_remapped(&mut encoded, 0, 0, &exact_context, 0)
+                .unwrap_err();
+        assert!(error.contains("nonzero group"));
+        assert!(encoded.is_empty());
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_residual_packet_preserves_distinct_same_spelling_stored_variables() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let mut scratch = Space::new();
+        let expr_bytes = parse_single_expr(
+            &mut scratch,
+            b"(: theorem (-> $outer (-> $middle (-> $inner $middle))))",
+        )
+        .unwrap();
+
+        let stored_vars = [
+            (0u16, 0x0000_0001_0000_0101u64, b"psi".as_slice()),
+            (1u16, 0x0000_0001_0000_0202u64, b"phi".as_slice()),
+            (2u16, 0x0000_0003_0000_0101u64, b"psi".as_slice()),
+        ];
+        let mut context = Vec::new();
+        append_u32_be(&mut context, stored_vars.len() as u32);
+        for (slot, var_id, spelling) in stored_vars {
+            append_u16_be(&mut context, slot);
+            context.push(OPEN_VAR_REF_EXACT);
+            context.push(0);
+            context.extend_from_slice(&var_id.to_be_bytes());
+            append_u32_be(&mut context, spelling.len() as u32);
+            context.extend_from_slice(spelling);
+        }
+        let add = mork_space_add_contextual_exact_expr_bytes(
+            counted,
+            expr_bytes.as_ptr(),
+            expr_bytes.len(),
+            context.as_ptr(),
+            context.len(),
+        );
+        assert!(status_ok(&add));
+
+        let query = b"(, (: theorem $result))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let packet = mork_query_cursor_next(cursor, 1, 4096);
+        assert!(buffer_ok(&packet));
+        assert_eq!(packet.count, 1);
+        let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+        assert_eq!(read_u16_be(data, 4), CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION);
+        assert_eq!(read_u32_be(data, 16), 1);
+
+        let mut offset = 20usize;
+        assert_eq!(read_u32_be(data, offset), 0);
+        offset += 4;
+        assert_eq!(read_u32_be(data, offset), 3);
+        offset += 4;
+        let mut decoded = Vec::new();
+        for expected_slot in 0..3u16 {
+            assert_eq!(read_u16_be(data, offset), expected_slot);
+            offset += 2;
+            assert_eq!(data[offset], OPEN_VAR_REF_MATCHED_INSTANCE);
+            assert_eq!(data[offset + 1], 0);
+            offset += 2;
+            let opening_group = read_u32_be(data, offset);
+            offset += 4;
+            assert_eq!(read_u16_be(data, offset), expected_slot);
+            offset += 2;
+            let var_id = read_u64_be(data, offset);
+            offset += 8;
+            let spelling_len = read_u32_be(data, offset) as usize;
+            offset += 4;
+            let spelling = data[offset..offset + spelling_len].to_vec();
+            offset += spelling_len;
+            decoded.push((opening_group, var_id, spelling));
+        }
+        assert_eq!(decoded[0].0, decoded[1].0);
+        assert_eq!(decoded[1].0, decoded[2].0);
+        assert_eq!(decoded[0].2, b"psi");
+        assert_eq!(decoded[1].2, b"phi");
+        assert_eq!(decoded[2].2, b"psi");
+        assert_ne!(decoded[0].1, decoded[2].1);
+        assert_eq!(decoded[0].1, 0x0000_0001_0000_0101u64);
+        assert_eq!(decoded[1].1, 0x0000_0001_0000_0202u64);
+        assert_eq!(decoded[2].1, 0x0000_0003_0000_0101u64);
+
+        mork_bytes_free(packet.data, packet.len);
+        mork_query_cursor_free(cursor);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_cursor_separates_contextless_count_from_row_emission() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+
+        let fact = b"(schema $stored (wrap $stored))";
+        let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+        assert!(status_ok(&add));
+        let exact = b"(schema exact value)";
+        let add = mork_space_add_sexpr(counted, exact.as_ptr(), exact.len());
+        assert!(status_ok(&add));
+
+        let query = b"(, (schema $q $body))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let rows_available =
+            mork_query_cursor_indexed_stat(cursor, INDEXED_CURSOR_STAT_ROWS_AVAILABLE);
+        assert!(status_ok(&rows_available));
+        assert_eq!(rows_available.value, 0);
+
+        let packet = mork_query_cursor_next(cursor, 1, 4096);
+        assert_eq!(packet.code, MorkStatusCode::Internal as i32);
+        assert_eq!(packet.count, 0);
+        assert!(packet.data.is_null());
+        mork_bytes_free(packet.message, packet.message_len);
+
+        let count = mork_query_cursor_count_remaining(cursor);
+        assert!(status_ok(&count));
+        assert_eq!(count.value, 2);
+
+        mork_query_cursor_free(cursor);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_opening_instances_survive_packet_cuts_and_separate_activations() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        let mut scratch = Space::new();
+        let outer = parse_single_expr(&mut scratch, b"(outer $stored)").unwrap();
+        for var_id in [0x0000_0001_0000_0101u64, 0x0000_0002_0000_0101u64] {
+            let mut context = Vec::new();
+            append_u32_be(&mut context, 1);
+            append_u16_be(&mut context, 0);
+            context.push(OPEN_VAR_REF_EXACT);
+            context.push(0);
+            context.extend_from_slice(&var_id.to_be_bytes());
+            append_u32_be(&mut context, 6);
+            context.extend_from_slice(b"stored");
+            let add = mork_space_add_contextual_exact_expr_bytes(
+                counted,
+                outer.as_ptr(),
+                outer.len(),
+                context.as_ptr(),
+                context.len(),
+            );
+            assert!(status_ok(&add));
+        }
+        for inner in [b"(inner a)".as_slice(), b"(inner b)".as_slice()] {
+            let add = mork_space_add_sexpr(counted, inner.as_ptr(), inner.len());
+            assert!(status_ok(&add));
+        }
+
+        let query = b"(, (outer $x) (inner $y))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let mut opening_groups = Vec::new();
+        for _ in 0..4 {
+            let packet = mork_query_cursor_next(cursor, 1, 4096);
+            assert!(buffer_ok(&packet));
+            assert_eq!(packet.count, 1);
+            let data = unsafe { std::slice::from_raw_parts(packet.data, packet.len) };
+            assert_eq!(read_u16_be(data, 4), CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION);
+            let mut offset = 20usize;
+            let mut packet_groups = Vec::new();
+            for _ in 0..read_u32_be(data, 16) {
+                offset += 4;
+                let entry_count = read_u32_be(data, offset);
+                offset += 4;
+                for _ in 0..entry_count {
+                    offset += 2;
+                    let kind = data[offset];
+                    offset += 2;
+                    match kind {
+                        OPEN_VAR_REF_QUERY_SLOT => offset += 2,
+                        OPEN_VAR_REF_EXACT => {
+                            offset += 8;
+                            let spelling_len = read_u32_be(data, offset) as usize;
+                            offset += 4 + spelling_len;
+                        }
+                        OPEN_VAR_REF_MATCHED_EXACT => {
+                            offset += 2 + 8;
+                            let spelling_len = read_u32_be(data, offset) as usize;
+                            offset += 4 + spelling_len;
+                        }
+                        OPEN_VAR_REF_MATCHED_INSTANCE => {
+                            packet_groups.push(read_u32_be(data, offset));
+                            offset += 4 + 2 + 8;
+                            let spelling_len = read_u32_be(data, offset) as usize;
+                            offset += 4 + spelling_len;
+                        }
+                        _ => panic!("unknown opening-context ref kind {kind}"),
+                    }
+                }
+            }
+            assert_eq!(packet_groups.len(), 1);
+            opening_groups.push(packet_groups[0]);
+            mork_bytes_free(packet.data, packet.len);
+        }
+        assert_eq!(opening_groups[0], opening_groups[1]);
+        assert_eq!(opening_groups[2], opening_groups[3]);
+        assert_ne!(opening_groups[0], opening_groups[2]);
+        let exhausted = mork_query_cursor_next(cursor, 1, 4096);
+        assert!(buffer_ok(&exhausted));
+        assert_eq!(exhausted.count, 0);
+
+        mork_query_cursor_free(cursor);
+        mork_space_free(counted);
+    }
+
+    #[cfg(feature = "pathmap-space")]
+    #[test]
+    fn indexed_multi_ref_v4_count_pushdown_includes_mixed_conjunction_products() {
+        let _guard = test_guard();
+        let counted = mork_space_new_pathmap();
+        assert!(!counted.is_null());
+        for (fact, copies) in [
+            (b"(left a k)".as_slice(), 2),
+            (b"(left $x k)".as_slice(), 3),
+            (b"(right k b)".as_slice(), 5),
+        ] {
+            for _ in 0..copies {
+                let add = mork_space_add_sexpr(counted, fact.as_ptr(), fact.len());
+                assert!(status_ok(&add));
+            }
+        }
+        let query = b"(, (left $x $key) (right $key $value))";
+        let cursor =
+            mork_query_cursor_new_indexed_multi_ref_v4(counted, query.as_ptr(), query.len());
+        assert!(!cursor.is_null());
+        let count = mork_query_cursor_count_remaining(cursor);
+        assert!(status_ok(&count));
+        assert_eq!(count.value, 25);
+        mork_query_cursor_free(cursor);
         mork_space_free(counted);
     }
 
@@ -8168,6 +9650,7 @@ mod tests {
             ExprEnv::new(0, expr),
             &BTreeMap::new(),
             &[],
+            None,
         )
         .unwrap();
 

@@ -18,6 +18,13 @@
 (= (sharing:duplicate $x) (sharing:use-twice $x $x))
 !(sharing:duplicate (sharing:inc 10))
 
+; A total integer expression arriving through the dynamic entry boundary is
+; normalized before clause selection.  Arithmetic written directly in a
+; compiled clause body is already handled by normalize-before-delay, so it is
+; not a witness for this runtime path.
+(= (sharing:identity $x) $x)
+!(sharing:identity (+ (+ 20 1) 1))
+
 ; User-defined suspension wrappers are deliberately outside the generated
 ; total-integer normalization fragment.  This ladder therefore exercises
 ; ephemeron collection and update-path compression rather than eager GMP
@@ -26,4 +33,4 @@
    (if (== $n 0)
        $value
        (sharing:delay-loop (- $n 1) (sharing:inc $value))))
-!(< (sharing:delay-loop 20000 0) 0)
+!(< (sharing:delay-loop 40000 0) 0)

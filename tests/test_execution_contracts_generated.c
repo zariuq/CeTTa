@@ -229,6 +229,49 @@ static void test_generated_register_program(void) {
         CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_ADD, &discipline));
     assert(discipline ==
            CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS);
+    assert(cetta_gslt_register_operand_discipline(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER, &discipline));
+    assert(discipline ==
+           CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS);
+    assert(cetta_gslt_register_operand_discipline(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO, &discipline));
+    assert(discipline ==
+           CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS);
+    int64_t small_integer = 0;
+    bool small_boolean = false;
+    bool promote = false;
+    CettaGsltRegisterResultKind small_kind =
+        CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
+    assert(cetta_gslt_register_execute_small_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER,
+        &small_integer, &small_boolean, -17, 5,
+        &small_kind, &promote));
+    assert(!promote);
+    assert(small_kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER);
+    assert(small_integer == -2);
+    assert(cetta_gslt_register_execute_small_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO,
+        &small_integer, &small_boolean, -17, 5,
+        &small_kind, &promote));
+    assert(small_integer == 3);
+    assert(cetta_gslt_register_execute_small_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO,
+        &small_integer, &small_boolean, 17, -5,
+        &small_kind, &promote));
+    assert(small_integer == -3);
+    assert(cetta_gslt_register_execute_small_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER,
+        &small_integer, &small_boolean, INT64_MIN, -1,
+        &small_kind, &promote));
+    assert(small_integer == 0);
+    assert(!cetta_gslt_register_execute_small_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER,
+        &small_integer, &small_boolean, 17, 0,
+        &small_kind, &promote));
+    assert(!cetta_gslt_register_execute_small_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO,
+        &small_integer, &small_boolean, 17, 0,
+        &small_kind, &promote));
 #if CETTA_BUILD_WITH_GMP
     mpz_t left;
     mpz_t right;
@@ -249,6 +292,21 @@ static void test_generated_register_program(void) {
         output, &boolean, left, right, &kind));
     assert(kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN);
     assert(boolean);
+    mpz_set_si(left, -17);
+    mpz_set_si(right, 5);
+    assert(cetta_gslt_register_execute_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER,
+        output, &boolean, left, right, &kind));
+    assert(kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER);
+    assert(mpz_cmp_si(output, -2) == 0);
+    assert(cetta_gslt_register_execute_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO,
+        output, &boolean, left, right, &kind));
+    assert(mpz_cmp_si(output, 3) == 0);
+    mpz_set_ui(right, 0u);
+    assert(!cetta_gslt_register_execute_binary(
+        CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER,
+        output, &boolean, left, right, &kind));
     mpz_clear(output);
     mpz_clear(right);
     mpz_clear(left);

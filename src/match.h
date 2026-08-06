@@ -120,6 +120,19 @@ bool      bindings_project_reachable(const Bindings *src,
                                      Atom *const *roots,
                                      size_t root_count,
                                      Bindings *dst);
+/*
+ * Replace `full` by the branch-relative suffix beyond `base` when `base` is
+ * an exact ordered prefix of its logical bindings and constraints.
+ *
+ * The prefix test is a certificate, not a semantic guess: any mismatch leaves
+ * `full` unchanged and reports `factored == false`.  Prime occurrence state is
+ * orthogonal to the logical prefix and is retained whenever it differs from
+ * the base.  This lets evaluator boundaries carry only newly learned logical
+ * substitutions while preserving the canonical full-environment fallback.
+ */
+bool      bindings_factor_prefix(Bindings *full, const Bindings *base,
+                                 bool *factored,
+                                 uint64_t *logical_items_elided);
 bool      bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst);
 bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
                                                    Arena *dst);

@@ -1066,6 +1066,100 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
     return true;
 }
 
+static bool binding_prefix_item_equal(const Binding *left,
+                                      const Binding *right) {
+    if (!left || !right ||
+        left->var_id != right->var_id ||
+        left->spelling != right->spelling ||
+        left->legacy_name_fallback != right->legacy_name_fallback) {
+        return false;
+    }
+    if ((left->name_key || right->name_key) &&
+        (!left->name_key || !right->name_key ||
+         !atom_eq(left->name_key, right->name_key))) {
+        return false;
+    }
+    return left->val && right->val && atom_eq(left->val, right->val);
+}
+
+bool bindings_factor_prefix(Bindings *full, const Bindings *base,
+                            bool *factored,
+                            uint64_t *logical_items_elided) {
+    if (factored)
+        *factored = false;
+    if (logical_items_elided)
+        *logical_items_elided = 0u;
+    if (!full || !base || full == base || !factored)
+        return false;
+    if ((base->len == 0u && base->eq_len == 0u) ||
+        full->len < base->len || full->eq_len < base->eq_len) {
+        return true;
+    }
+    for (uint32_t i = 0u; i < base->len; i++) {
+        if (!binding_prefix_item_equal(
+                &full->entries[i], &base->entries[i])) {
+            return true;
+        }
+    }
+    for (uint32_t i = 0u; i < base->eq_len; i++) {
+        if (!constraint_pair_eq(
+                &full->constraints[i], &base->constraints[i])) {
+            return true;
+        }
+    }
+
+    Bindings suffix;
+    bindings_init(&suffix);
+    uint32_t suffix_len = full->len - base->len;
+    uint32_t suffix_eq_len = full->eq_len - base->eq_len;
+    if (suffix_len > 0u &&
+        !bindings_reserve_entries(&suffix, suffix_len)) {
+        bindings_free(&suffix);
+        return false;
+    }
+    if (suffix_eq_len > 0u &&
+        !bindings_reserve_constraints(&suffix, suffix_eq_len)) {
+        bindings_free(&suffix);
+        return false;
+    }
+    for (uint32_t i = base->len; i < full->len; i++) {
+        Binding item = full->entries[i];
+        suffix.entries[suffix.len++] = item;
+        if (item.legacy_name_fallback)
+            suffix.legacy_fallback_count++;
+        if (binding_contains_private_variant_slot(&item))
+            suffix.private_entry_count++;
+    }
+    for (uint32_t i = base->eq_len; i < full->eq_len; i++) {
+        BindingConstraint item = full->constraints[i];
+        suffix.constraints[suffix.eq_len++] = item;
+        if (constraint_contains_private_variant_slot(&item))
+            suffix.private_constraint_count++;
+    }
+    suffix.cycle_state =
+        suffix.len == 0u || full->cycle_state == BINDINGS_CYCLE_ACYCLIC
+            ? BINDINGS_CYCLE_ACYCLIC
+            : BINDINGS_CYCLE_UNKNOWN;
+
+    bool same_need =
+        prime_need_snapshot_is_ancestor(bindings_need_view(base),
+                                        bindings_need_view(full)) &&
+        prime_need_snapshot_is_ancestor(bindings_need_view(full),
+                                        bindings_need_view(base));
+    bool same_receipt =
+        prime_need_receipt_equal(bindings_receipt_view(base),
+                                 bindings_receipt_view(full));
+    if (!same_need || !same_receipt)
+        bindings_prime_assign(&suffix, full);
+
+    uint64_t elided = (uint64_t)base->len + (uint64_t)base->eq_len;
+    bindings_replace(full, &suffix);
+    *factored = true;
+    if (logical_items_elided)
+        *logical_items_elided = elided;
+    return true;
+}
+
 bool bindings_copy(Bindings *dst, const Bindings *src) {
     if (dst == src) return true;
     Bindings tmp;

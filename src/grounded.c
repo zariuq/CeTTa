@@ -669,6 +669,11 @@ static Atom *grounded_rational_unavailable(Arena *a, Atom *head,
                       atom_symbol(a, "RationalArithmeticUnavailable"));
 }
 
+static bool grounded_mod_uses_floor_division(void) {
+    return eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
 #if CETTA_BUILD_WITH_GMP
 static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
                                      Atom **args, uint32_t nargs,
@@ -778,7 +783,10 @@ static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
         if (mpz_sgn(bi.value) == 0) {
             result = grounded_division_by_zero(a, head, args, nargs);
         } else {
-            mpz_tdiv_r(ri, ai.value, bi.value);
+            if (grounded_mod_uses_floor_division())
+                mpz_fdiv_r(ri, ai.value, bi.value);
+            else
+                mpz_tdiv_r(ri, ai.value, bi.value);
             result = atom_bigint_take_mpz(a, ri);
         }
     } else {
@@ -862,6 +870,15 @@ static int64_t floor_div_i64(int64_t lhs, int64_t rhs) {
     if (r != 0 && ((r > 0) != (rhs > 0)))
         q -= 1;
     return q;
+}
+
+static int64_t floor_mod_i64(int64_t lhs, int64_t rhs) {
+    if (lhs == INT64_MIN && rhs == -1)
+        return 0;
+    int64_t remainder = lhs % rhs;
+    if (remainder != 0 && ((remainder < 0) != (rhs < 0)))
+        remainder += rhs;
+    return remainder;
 }
 
 /* ── Boolean arg extraction (True/False symbols) ──────────────────────── */
@@ -2124,9 +2141,10 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (head_id == g_builtin_syms.op_mod) {
             if (bi == 0)
                 return grounded_division_by_zero(a, head, args, nargs);
-            if (ai == INT64_MIN && bi == -1)
-                return atom_int(a, 0);
-            return atom_int(a, ai % bi);
+            if (grounded_mod_uses_floor_division())
+                return atom_int(a, floor_mod_i64(ai, bi));
+            return atom_int(a,
+                            ai == INT64_MIN && bi == -1 ? 0 : ai % bi);
         }
         if (head_id == g_builtin_syms.op_lt)  return ai < bi  ? atom_true(a) : atom_false(a);
         if (head_id == g_builtin_syms.op_gt)  return ai > bi  ? atom_true(a) : atom_false(a);

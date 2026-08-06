@@ -80,6 +80,9 @@ typedef struct {
     SymbolId value_let;
     SymbolId value_chain;
     SymbolId open_cons;
+    uint32_t open_cons_tag_arena_id;
+    uint64_t open_cons_tag_arena_reset_epoch;
+    Atom *open_cons_tag;
 } PeTTaSymbolIds;
 
 static _Thread_local PeTTaSymbolIds g_petta_symbol_ids;
@@ -666,8 +669,25 @@ Atom *petta_semantics_open_cons_value(
     const PeTTaSymbolIds *ids = petta_symbol_ids();
     if (!arena || !head || !tail || !ids->table)
         return NULL;
+
+    /* The carrier tag is immutable structural data.  Sharing one tag within
+     * an arena epoch avoids allocating an identical Atom for every logical
+     * list cell.  Arena identity plus reset epoch is the lifetime proof: a
+     * reset or a different arena forces a fresh tag before reuse. */
+    if (g_petta_symbol_ids.open_cons_tag_arena_id != arena->identity ||
+        g_petta_symbol_ids.open_cons_tag_arena_reset_epoch !=
+            arena->reset_epoch ||
+        !g_petta_symbol_ids.open_cons_tag) {
+        g_petta_symbol_ids.open_cons_tag =
+            atom_symbol_id(arena, ids->open_cons);
+        if (!g_petta_symbol_ids.open_cons_tag)
+            return NULL;
+        g_petta_symbol_ids.open_cons_tag_arena_id = arena->identity;
+        g_petta_symbol_ids.open_cons_tag_arena_reset_epoch =
+            arena->reset_epoch;
+    }
     return atom_expr3(
-        arena, atom_symbol_id(arena, ids->open_cons),
+        arena, g_petta_symbol_ids.open_cons_tag,
         head, tail);
 }
 
@@ -695,6 +715,222 @@ Atom *petta_semantics_flat_list_spine(
             return NULL;
     }
     return tail;
+}
+
+Atom *petta_semantics_construct_value(
+    Arena *arena, Atom **elements, CettaExprLen length) {
+    if (!arena || (length > 0u && !elements))
+        return NULL;
+    if (length == 3u && elements[0] &&
+        elements[0]->kind == ATOM_SYMBOL &&
+        petta_semantics_form(elements[0]->sym_id) == PETTA_FORM_CONS) {
+        return petta_semantics_open_cons_value(
+            arena, elements[1], elements[2]);
+    }
+    return atom_expr(arena, elements, length);
+}
+
+typedef struct {
+    Atom *source;
+    Atom **source_children;
+    Atom **result_children;
+    CettaExprLen length;
+    CettaExprIndex next;
+    Atom **result_slot;
+    bool owns_source_children;
+} PeTTaMaterializeFrame;
+
+static bool petta_materialize_frame_reserve(
+    PeTTaMaterializeFrame **frames,
+    size_t *capacity, size_t required) {
+    if (required <= *capacity)
+        return true;
+    size_t next = *capacity ? *capacity * 2u : 32u;
+    while (next < required) {
+        if (next > SIZE_MAX / 2u)
+            return false;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / sizeof(**frames))
+        return false;
+    void *grown = realloc(*frames, sizeof(**frames) * next);
+    if (!grown)
+        return false;
+    *frames = grown;
+    *capacity = next;
+    return true;
+}
+
+static bool petta_materialize_list_sources(
+    Atom *value, Atom ***items_out, CettaExprLen *length_out) {
+    if (items_out)
+        *items_out = NULL;
+    if (length_out)
+        *length_out = 0u;
+    if (!value || !items_out || !length_out ||
+        !petta_semantics_is_open_cons_value(value))
+        return false;
+    Atom **items = NULL;
+    size_t length = 0u;
+    size_t capacity = 0u;
+    Atom *cursor = value;
+    while (petta_semantics_is_open_cons_value(cursor)) {
+        if (length == capacity) {
+            size_t next = capacity ? capacity * 2u : 64u;
+            if (next <= capacity || next > SIZE_MAX / sizeof(*items)) {
+                free(items);
+                return false;
+            }
+            void *grown = realloc(items, sizeof(*items) * next);
+            if (!grown) {
+                free(items);
+                return false;
+            }
+            items = grown;
+            capacity = next;
+        }
+        items[length++] = cursor->expr.elems[1];
+        cursor = cursor->expr.elems[2];
+        if (!cursor) {
+            free(items);
+            return false;
+        }
+    }
+    if (cursor->kind != ATOM_EXPR ||
+        (uint64_t)cursor->expr.len > (uint64_t)(SIZE_MAX - length)) {
+        free(items);
+        return false;
+    }
+    size_t total = length + (size_t)cursor->expr.len;
+    if (total > capacity) {
+        if (total > SIZE_MAX / sizeof(*items)) {
+            free(items);
+            return false;
+        }
+        void *grown = realloc(items, sizeof(*items) * total);
+        if (!grown && total > 0u) {
+            free(items);
+            return false;
+        }
+        items = grown;
+    }
+    if (cursor->expr.len > 0u) {
+        memcpy(items + length, cursor->expr.elems,
+               sizeof(*items) * (size_t)cursor->expr.len);
+    }
+    if (!cetta_expr_len_fits_size((CettaExprLen)total)) {
+        free(items);
+        return false;
+    }
+    *items_out = items;
+    *length_out = (CettaExprLen)total;
+    return true;
+}
+
+bool petta_semantics_is_opaque_runtime_value(const Atom *value) {
+    if (!value || value->kind != ATOM_EXPR || value->expr.len == 0u)
+        return false;
+    Atom *body = NULL;
+    return petta_semantics_lambda_body(value, &body) ||
+           petta_semantics_nullary_lambda_body(value, &body) ||
+           petta_semantics_partial_view(value, NULL, NULL);
+}
+
+static bool petta_materialize_opaque_value(const Atom *value) {
+    if (!value || value->kind != ATOM_EXPR || value->expr.len == 0u)
+        return false;
+    return petta_semantics_is_opaque_runtime_value(value) ||
+           atom_is_symbol_id(value->expr.elems[0], g_builtin_syms.quote);
+}
+
+Atom *petta_semantics_materialize_value(
+    Arena *arena, Atom *value) {
+    if (!arena || !value)
+        return NULL;
+    Atom *result = NULL;
+    PeTTaMaterializeFrame *frames = NULL;
+    size_t length = 0u;
+    size_t capacity = 0u;
+
+#define PETTA_MATERIALIZE_PUSH(source_atom, destination_slot) do { \
+    Atom *petta_source__ = (source_atom); \
+    Atom **petta_slot__ = (destination_slot); \
+    if (!petta_source__ || !petta_slot__) \
+        goto fail; \
+    if (petta_source__->kind != ATOM_EXPR || \
+        petta_materialize_opaque_value(petta_source__)) { \
+        *petta_slot__ = atom_deep_copy(arena, petta_source__); \
+        if (!*petta_slot__) \
+            goto fail; \
+        break; \
+    } \
+    Atom **petta_sources__ = petta_source__->expr.elems; \
+    CettaExprLen petta_count__ = petta_source__->expr.len; \
+    bool petta_owned__ = false; \
+    if (petta_semantics_is_open_cons_value(petta_source__)) { \
+        if (!petta_materialize_list_sources( \
+                petta_source__, &petta_sources__, &petta_count__)) \
+            goto fail; \
+        petta_owned__ = true; \
+    } \
+    if (!cetta_expr_len_mul_fits_size( \
+            petta_count__, sizeof(Atom *)) || \
+        !petta_materialize_frame_reserve( \
+            &frames, &capacity, length + 1u)) { \
+        if (petta_owned__) \
+            free(petta_sources__); \
+        goto fail; \
+    } \
+    Atom **petta_results__ = petta_count__ \
+        ? arena_alloc( \
+              arena, sizeof(*petta_results__) * (size_t)petta_count__) \
+        : NULL; \
+    if (petta_count__ > 0u && !petta_results__) { \
+        if (petta_owned__) \
+            free(petta_sources__); \
+        goto fail; \
+    } \
+    frames[length++] = (PeTTaMaterializeFrame){ \
+        .source = petta_source__, \
+        .source_children = petta_sources__, \
+        .result_children = petta_results__, \
+        .length = petta_count__, \
+        .result_slot = petta_slot__, \
+        .owns_source_children = petta_owned__, \
+    }; \
+} while (0)
+
+    PETTA_MATERIALIZE_PUSH(value, &result);
+    while (length > 0u) {
+        PeTTaMaterializeFrame *frame = &frames[length - 1u];
+        if (frame->next < frame->length) {
+            CettaExprIndex index = frame->next++;
+            Atom *child = frame->source_children[index];
+            Atom **slot = &frame->result_children[index];
+            PETTA_MATERIALIZE_PUSH(child, slot);
+            continue;
+        }
+        Atom *built = atom_expr(
+            arena, frame->result_children, frame->length);
+        if (!built)
+            goto fail;
+        *frame->result_slot = built;
+        if (frame->owns_source_children)
+            free(frame->source_children);
+        length--;
+    }
+    free(frames);
+#undef PETTA_MATERIALIZE_PUSH
+    return result;
+
+fail:
+    for (size_t index = 0u; index < length; index++) {
+        if (frames[index].owns_source_children)
+            free(frames[index].source_children);
+    }
+    free(frames);
+#undef PETTA_MATERIALIZE_PUSH
+    return NULL;
 }
 
 typedef struct {

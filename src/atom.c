@@ -2543,7 +2543,12 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     temp.expr.elems = elems;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
-    Atom *at = arena_alloc(a, sizeof(Atom));
+    if (elems_bytes > SIZE_MAX - sizeof(Atom))
+        cetta_oom(SIZE_MAX);
+    /* The expression header and its immutable child vector have exactly the
+     * same arena lifetime.  Keep them in one allocation so construction and
+     * copying do not pay two allocator traversals per expression node. */
+    Atom *at = arena_alloc(a, sizeof(Atom) + elems_bytes);
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
@@ -2551,7 +2556,7 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->expr.len = len;
-    at->expr.elems = arena_alloc(a, elems_bytes);
+    at->expr.elems = elems_bytes ? (Atom **)(at + 1) : NULL;
     if (elems && elems_bytes > 0) memcpy(at->expr.elems, elems, elems_bytes);
     return at;
 }

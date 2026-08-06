@@ -9,6 +9,8 @@
 (: math:max (-> Number Number Number))
 (: math:clamp (-> Number Number Number Number))
 (: math:mod (-> Number Number Number))
+(: math:rem (-> Number Number Number))
+(: math:floor-mod (-> Number Number Number))
 (: math:pow (-> Number Number Number))
 (: math:sqrt (-> Number Number))
 (: math:abs (-> Number Number))
@@ -50,6 +52,20 @@
     (@param "Dividend")
     (@param "Divisor")))
   (@return "Non-negative remainder less than the absolute divisor"))
+
+(@doc math:rem
+  (@desc "Truncating remainder in the math: namespace. The quotient is rounded toward zero, so a nonzero result has the dividend's sign.")
+  (@params (
+    (@param "Dividend")
+    (@param "Divisor")))
+  (@return "Remainder from truncating division"))
+
+(@doc math:floor-mod
+  (@desc "Floor-division modulo in the math: namespace. A nonzero result has the divisor's sign.")
+  (@params (
+    (@param "Dividend")
+    (@param "Divisor")))
+  (@return "Remainder from floor division"))
 
 (@doc math:pow
   (@desc "Namespaced wrapper over CeTTa's grounded pow-math surface.")
@@ -136,6 +152,18 @@
 
 (= (math:mod $a $b)
    (- $a (* (math:abs $b) (// $a (math:abs $b)))))
+
+(= (math:rem $a $b)
+   (let $r (math:mod $a $b)
+     (if (< $a 0)
+         (if (== $r 0) 0 (- $r (math:abs $b)))
+         $r)))
+
+(= (math:floor-mod $a $b)
+   (let $r (math:mod $a $b)
+     (if (< $b 0)
+         (if (== $r 0) 0 (- $r (math:abs $b)))
+         $r)))
 
 (= (math:pow $base $exponent)
    (pow-math $base $exponent))

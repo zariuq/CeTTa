@@ -137,6 +137,15 @@ bool petta_semantics_logical_list_length(
 Atom *petta_semantics_materialize_closed_logical_list(
     Arena *arena, Atom *list);
 
+/* Constructor and observation policies used by generated machines.  An
+ * evaluated `(cons Head Tail)` becomes the internal O(1) list carrier;
+ * unrelated constructors remain ordinary expressions.  Observation copies
+ * a closed carrier graph to an arena-owned flat PeTTa value and rejects an
+ * unresolved open tail. */
+Atom *petta_semantics_construct_value(
+    Arena *arena, Atom **elements, CettaExprLen length);
+Atom *petta_semantics_materialize_value(
+    Arena *arena, Atom *value);
 bool petta_semantics_contains_cons_constraint(const Atom *atom);
 /*
  * Conservative clause-index discriminator for PeTTa list patterns.
@@ -218,6 +227,10 @@ Atom *petta_semantics_partial_value(
     Arena *arena, Atom *base, Atom *const *arguments, CettaExprLen nargs);
 bool petta_semantics_partial_view(
     const Atom *atom, Atom **base, Atom **arguments);
+
+/* Closed callable carriers are already PeTTa values.  A generated evaluator
+ * must not reinterpret their representation as a fresh call. */
+bool petta_semantics_is_opaque_runtime_value(const Atom *value);
 
 /*
  * A CLOSED open-cons chain denotes exactly the flat list it spells — the

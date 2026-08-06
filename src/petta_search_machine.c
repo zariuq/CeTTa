@@ -465,6 +465,24 @@ static Atom *petta_machine_apply_bindings(
     return result;
 }
 
+/*
+ * A structural observer needs a value together with its environment, not a
+ * recursively substituted copy of the value.  Follow only a root variable
+ * chain here; consumers such as the logical-list shape walker then resolve
+ * the next spine node on demand.  Element payloads remain untouched until a
+ * consumer actually observes them, and the ordinary deep application path
+ * remains authoritative at materialization boundaries.
+ */
+static Atom *petta_machine_resolve_root(
+    const Bindings *bindings, Atom *atom) {
+    if (!bindings || bindings->len == 0u || !atom ||
+        atom->kind != ATOM_VAR) {
+        return atom;
+    }
+    return bindings_resolve_atom_preview(
+        (Bindings *)bindings, atom);
+}
+
 static Atom *petta_machine_copy_atom(
     PettaMachineImpl *machine, Arena *arena, Atom *atom) {
     if (!machine)
@@ -1196,29 +1214,26 @@ static bool petta_visible_contains(
     return false;
 }
 
-static bool petta_collect_visible(
-    PettaMachineImpl *machine, Atom *atom) {
-    if (!atom)
+static bool petta_collect_visible_variable(
+    void *context, VarId var_id, SymbolId spelling,
+    Atom *name_key) {
+    PettaMachineImpl *machine = context;
+    if (!machine || var_id == VAR_ID_NONE)
+        return false;
+    if (petta_visible_contains(machine, var_id))
         return true;
-    if (atom->kind == ATOM_VAR) {
-        if (petta_visible_contains(machine, atom->var_id))
-            return true;
-        if (!petta_machine_reserve(
-                (void **)&machine->visible, &machine->visible_cap,
-                machine->visible_len + 1u,
-                sizeof(*machine->visible))) {
-            return false;
-        }
-        machine->visible[machine->visible_len++] =
-            (PettaVisibleVariable){atom->var_id, atom};
-        return true;
+    Atom *variable = atom_var_with_presentation(
+        &machine->heap, spelling, name_key, var_id);
+    if (!variable)
+        return false;
+    if (!petta_machine_reserve(
+            (void **)&machine->visible, &machine->visible_cap,
+            machine->visible_len + 1u,
+            sizeof(*machine->visible))) {
+        return false;
     }
-    if (atom->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex index = 0u; index < atom->expr.len; index++) {
-        if (!petta_collect_visible(machine, atom->expr.elems[index]))
-            return false;
-    }
+    machine->visible[machine->visible_len++] =
+        (PettaVisibleVariable){var_id, variable};
     return true;
 }
 
@@ -2114,10 +2129,75 @@ static bool petta_machine_unify(
                machine, left, right);
 }
 
+typedef enum {
+    PETTA_BINDING_MERGE_CLAUSE = 0,
+    PETTA_BINDING_MERGE_OUTCOME,
+} PettaBindingMergeKind;
+
 static bool petta_machine_merge(
-    PettaMachineImpl *machine, const Bindings *environment) {
-    return bindings_builder_try_merge(
-        search_context_builder(&machine->search), environment);
+    PettaMachineImpl *machine, const Bindings *environment,
+    PettaBindingMergeKind kind) {
+    BindingsBuilder *builder =
+        search_context_builder(&machine->search);
+    uint64_t growth_before = builder->growth_count;
+    uint64_t source_items = environment
+        ? (uint64_t)environment->len + (uint64_t)environment->eq_len
+        : 0u;
+    bool merged = bindings_builder_try_merge(builder, environment);
+    uint64_t logical_writes = builder->growth_count >= growth_before
+        ? builder->growth_count - growth_before
+        : UINT64_MAX;
+
+    uint64_t *calls = kind == PETTA_BINDING_MERGE_CLAUSE
+        ? &machine->stats.clause_binding_merge_calls
+        : &machine->stats.outcome_binding_merge_calls;
+    uint64_t *items = kind == PETTA_BINDING_MERGE_CLAUSE
+        ? &machine->stats.clause_binding_merge_source_items
+        : &machine->stats.outcome_binding_merge_source_items;
+    uint64_t *writes = kind == PETTA_BINDING_MERGE_CLAUSE
+        ? &machine->stats.clause_binding_merge_logical_writes
+        : &machine->stats.outcome_binding_merge_logical_writes;
+    uint64_t *failures = kind == PETTA_BINDING_MERGE_CLAUSE
+        ? &machine->stats.clause_binding_merge_failures
+        : &machine->stats.outcome_binding_merge_failures;
+    petta_machine_add_u64(calls, 1u);
+    petta_machine_add_u64(items, source_items);
+    petta_machine_add_u64(writes, logical_writes);
+    if (!merged)
+        petta_machine_add_u64(failures, 1u);
+    return merged;
+}
+
+static bool petta_machine_factor_outcome_prefixes(
+    PettaMachineImpl *machine, OutcomeSet *outcomes,
+    const Bindings *base) {
+    if (!machine || !outcomes || !base)
+        return machine && outcomes && base;
+    if (base->len == 0u && base->eq_len == 0u)
+        return true;
+    for (CettaCount i = 0u; i < outcomes->len; i++) {
+        bool factored = false;
+        uint64_t elided = 0u;
+        petta_machine_add_u64(
+            &machine->stats.outcome_prefix_factor_attempts, 1u);
+        if (!bindings_factor_prefix(
+                &outcomes->items[i].env, base,
+                &factored, &elided)) {
+            return false;
+        }
+        if (factored) {
+            petta_machine_add_u64(
+                &machine->stats.outcome_prefix_factor_successes, 1u);
+            petta_machine_add_u64(
+                &machine->stats.outcome_prefix_logical_items_elided,
+                elided);
+        }
+        petta_machine_add_u64(
+            &machine->stats.outcome_prefix_residual_items,
+            (uint64_t)outcomes->items[i].env.len +
+                (uint64_t)outcomes->items[i].env.eq_len);
+    }
+    return true;
 }
 
 static bool petta_push_solve(
@@ -2568,9 +2648,8 @@ static PettaListShape petta_machine_list_shape(
     *prefix_length = 0u;
     *open_tail = NULL;
     for (;;) {
-        list = petta_machine_apply_bindings(machine,
-            search_context_bindings(&machine->search),
-            &machine->heap, list);
+        list = petta_machine_resolve_root(
+            search_context_bindings(&machine->search), list);
         if (!list)
             return PETTA_LIST_INVALID;
         if (petta_semantics_is_cons_constraint(list)) {
@@ -3017,7 +3096,103 @@ static bool petta_machine_callable_root(
            (machine->host.classify &&
             machine->host.classify(
                 machine->host.context, machine->space, atom) !=
-                PETTA_MACHINE_HOST_NONE);
+                 PETTA_MACHINE_HOST_NONE);
+}
+
+typedef struct {
+    Atom *pattern;
+    Atom *value;
+    const PettaSpecializerPatternNode *pattern_role;
+} PettaClauseShapePair;
+
+/*
+ * Prove only rigid structural impossibility at the instant an alternative is
+ * attempted.  This timing is load-bearing: an earlier alternative may add a
+ * relation which turns a nested expression pattern into a callable goal.
+ * Callable, logical-list, open, or bounded-out shapes therefore retain the
+ * canonical matcher.  A false result is a proof that the current matcher
+ * would reject before producing a binding; true means possible or unknown.
+ */
+static bool petta_clause_pattern_may_match_now(
+    PettaMachineImpl *machine, Atom *pattern, Atom *value,
+    const PettaSpecializerPatternNode *pattern_role) {
+    enum {
+        PETTA_CLAUSE_SHAPE_STACK_CAPACITY = 128,
+        PETTA_CLAUSE_SHAPE_NODE_LIMIT = 512,
+    };
+    PettaClauseShapePair stack[
+        PETTA_CLAUSE_SHAPE_STACK_CAPACITY];
+    size_t length = 0u;
+    size_t visited = 0u;
+
+    if (!machine || !pattern || !value ||
+        pattern->kind != ATOM_EXPR ||
+        value->kind != ATOM_EXPR) {
+        return true;
+    }
+    CettaExprLen aligned = pattern->expr.len < value->expr.len
+        ? pattern->expr.len : value->expr.len;
+    if ((size_t)(aligned > 0u ? aligned - 1u : 0u) >
+        PETTA_CLAUSE_SHAPE_STACK_CAPACITY) {
+        return true;
+    }
+    for (CettaExprIndex index = 1u; index < aligned; index++) {
+        stack[length++] = (PettaClauseShapePair){
+            .pattern = pattern->expr.elems[index],
+            .value = value->expr.elems[index],
+            .pattern_role = petta_specializer_pattern_child(
+                pattern_role, index),
+        };
+    }
+
+    while (length > 0u) {
+        if (visited++ >= PETTA_CLAUSE_SHAPE_NODE_LIMIT)
+            return true;
+        PettaClauseShapePair pair = stack[--length];
+        Atom *left = pair.pattern;
+        Atom *right = pair.value;
+        if (!left || !right || left->kind == ATOM_VAR ||
+            right->kind == ATOM_VAR) {
+            continue;
+        }
+        if (petta_semantics_is_open_cons_value(left) ||
+            petta_semantics_is_open_cons_value(right)) {
+            continue;
+        }
+        if (petta_semantics_is_cons_constraint(left)) {
+            if (!petta_semantics_cons_pattern_may_match(left, right))
+                return false;
+            continue;
+        }
+        if (left->kind == ATOM_EXPR &&
+            petta_machine_callable_root(
+                machine, left, pair.pattern_role)) {
+            continue;
+        }
+        if (left->kind != right->kind)
+            return false;
+        if (left->kind != ATOM_EXPR) {
+            if (!atom_eq(left, right))
+                return false;
+            continue;
+        }
+        if (left->expr.len != right->expr.len)
+            return false;
+        if ((size_t)left->expr.len >
+            PETTA_CLAUSE_SHAPE_STACK_CAPACITY - length) {
+            return true;
+        }
+        for (CettaExprIndex index = 0u;
+             index < left->expr.len; index++) {
+            stack[length++] = (PettaClauseShapePair){
+                .pattern = left->expr.elems[index],
+                .value = right->expr.elems[index],
+                .pattern_role = petta_specializer_pattern_child(
+                    pair.pattern_role, index),
+            };
+        }
+    }
+    return true;
 }
 
 /*
@@ -3939,6 +4114,8 @@ static void petta_machine_stats_accumulate(
         source->other_goal_transitions;
     target->clause_snapshot_calls +=
         source->clause_snapshot_calls;
+    target->clause_snapshot_cache_hits +=
+        source->clause_snapshot_cache_hits;
     target->clause_snapshot_live_occurrences +=
         source->clause_snapshot_live_occurrences;
     target->clause_snapshot_records_examined +=
@@ -3964,6 +4141,30 @@ static void petta_machine_stats_accumulate(
         source->unification_binding_writes;
     target->unification_allocated_bytes +=
         source->unification_allocated_bytes;
+    target->clause_binding_merge_calls +=
+        source->clause_binding_merge_calls;
+    target->clause_binding_merge_source_items +=
+        source->clause_binding_merge_source_items;
+    target->clause_binding_merge_logical_writes +=
+        source->clause_binding_merge_logical_writes;
+    target->clause_binding_merge_failures +=
+        source->clause_binding_merge_failures;
+    target->outcome_binding_merge_calls +=
+        source->outcome_binding_merge_calls;
+    target->outcome_binding_merge_source_items +=
+        source->outcome_binding_merge_source_items;
+    target->outcome_binding_merge_logical_writes +=
+        source->outcome_binding_merge_logical_writes;
+    target->outcome_binding_merge_failures +=
+        source->outcome_binding_merge_failures;
+    target->outcome_prefix_factor_attempts +=
+        source->outcome_prefix_factor_attempts;
+    target->outcome_prefix_factor_successes +=
+        source->outcome_prefix_factor_successes;
+    target->outcome_prefix_logical_items_elided +=
+        source->outcome_prefix_logical_items_elided;
+    target->outcome_prefix_residual_items +=
+        source->outcome_prefix_residual_items;
     target->binding_apply_calls += source->binding_apply_calls;
     target->binding_apply_rewrites +=
         source->binding_apply_rewrites;
@@ -4566,6 +4767,29 @@ static bool petta_machine_advance_choice(
                 choice->as.clause.candidates[
                     choice->as.clause.next_equation++];
             Atom *equation = candidate.equation;
+            Atom *query = petta_machine_apply_bindings(machine,
+                search_context_bindings(&machine->search),
+                &machine->heap, choice->as.clause.query);
+            Atom *lhs_shape =
+                equation->kind == ATOM_EXPR &&
+                equation->expr.len == 3u
+                    ? equation->expr.elems[1]
+                    : NULL;
+            const PettaSpecializerPatternNode *pattern_root =
+                petta_specializer_pattern_root(
+                    machine->space, equation);
+            if (!petta_clause_pattern_may_match_now(
+                    machine, lhs_shape, query, pattern_root)) {
+                machine->stats.clause_candidates_shape_pruned++;
+                if (petta_machine_trace_enabled()) {
+                    fputs(
+                        "[petta-machine] clause shape-pruned ",
+                        stderr);
+                    atom_print(equation, stderr);
+                    fputc('\n', stderr);
+                }
+                continue;
+            }
             machine->stats.clause_candidates++;
             machine->stats.clause_match_attempts++;
             if (petta_machine_trace_enabled()) {
@@ -4577,14 +4801,6 @@ static bool petta_machine_advance_choice(
                 atom_print(equation, stderr);
                 fputc('\n', stderr);
             }
-            Atom *query = petta_machine_apply_bindings(machine,
-                search_context_bindings(&machine->search),
-                &machine->heap, choice->as.clause.query);
-            Atom *lhs_shape =
-                equation->kind == ATOM_EXPR &&
-                equation->expr.len == 3u
-                    ? equation->expr.elems[1]
-                    : NULL;
             bool extends =
                 choice->as.clause.evaluate_result &&
                 petta_machine_equation_extends_query(
@@ -4607,9 +4823,6 @@ static bool petta_machine_advance_choice(
             }
             PettaClauseMatch match = {0};
             bindings_init(&match.environment);
-            const PettaSpecializerPatternNode *pattern_root =
-                petta_specializer_pattern_root(
-                    machine->space, equation);
             bool relational_head =
                 equation->kind == ATOM_EXPR &&
                 equation->expr.len == 3u &&
@@ -4643,7 +4856,9 @@ static bool petta_machine_advance_choice(
                     "[petta-machine] clause result ",
                     match.result);
                 bool merged =
-                    petta_machine_merge(machine, &match.environment);
+                    petta_machine_merge(
+                        machine, &match.environment,
+                        PETTA_BINDING_MERGE_CLAUSE);
                 bindings_free(&match.environment);
                 if (!merged)
                     continue;
@@ -4764,7 +4979,9 @@ static bool petta_machine_advance_choice(
                 ? outcome->materialized_atom : outcome->atom;
             if (!value)
                 continue;
-            if (!petta_machine_merge(machine, &outcome->env))
+            if (!petta_machine_merge(
+                    machine, &outcome->env,
+                    PETTA_BINDING_MERGE_OUTCOME))
                 continue;
             if (!petta_push_unify(
                     machine, value, choice->as.outcomes.expected,
@@ -5441,6 +5658,9 @@ static bool petta_machine_start_clause_choice(
     petta_machine_add_u64(
         &machine->stats.clause_snapshot_calls,
         snapshot_stats.snapshots);
+    petta_machine_add_u64(
+        &machine->stats.clause_snapshot_cache_hits,
+        snapshot_stats.cache_hits);
     petta_machine_add_u64(
         &machine->stats.clause_snapshot_live_occurrences,
         snapshot_stats.live_occurrences_scanned);
@@ -9041,7 +9261,9 @@ static bool petta_machine_dispatch_goal(
             machine->host.context, machine->space,
             &machine->heap, (PeTTaForm)goal.choice_index,
             first, second, environment, outcomes);
-        if (!applied) {
+        if (!applied ||
+            !petta_machine_factor_outcome_prefixes(
+                machine, outcomes, environment)) {
             outcome_set_free(outcomes);
             free(outcomes);
             *failure = PETTA_MACHINE_STEP_HOST_ERROR;
@@ -9656,14 +9878,13 @@ static bool petta_machine_dispatch_goal(
             first && first->kind == ATOM_EXPR &&
                     first->expr.len > 0u
                 ? first->expr.len - 1u : 0u;
-        bool relation_tabled =
-            count_collection_result &&
+        bool relation_declared_tabled =
             prepared_head != SYMBOL_ID_NONE &&
             machine->host.tabled_relation_contains &&
             machine->host.tabled_relation_contains(
                 machine->host.context,
                 prepared_head, prepared_arity);
-        if (relation_tabled) {
+        if (count_collection_result && relation_declared_tabled) {
             Atom *value = petta_fresh_variable(machine);
             if (!value ||
                 !petta_goal_push(
@@ -9699,14 +9920,43 @@ static bool petta_machine_dispatch_goal(
         }
         /* The same revision-pinned register instruction used by HE and Prime
          * can consume a strict PeTTa singleton once its arguments reach this
-         * ready continuation.  Tabled/counting and translator-rule calls keep
-         * their ordinary proof/multiplicity machinery. */
+         * ready continuation.  A table generator deliberately bypasses the
+         * table once to evaluate its root clauses; that bypass must not admit
+         * either direct accelerator, because recursive calls and answer
+         * publication still belong to the SLG protocol.  Counting,
+         * translator-rule, and declared-tabled calls therefore keep their
+         * ordinary proof/multiplicity machinery. */
         bool translated =
             prepared_head != SYMBOL_ID_NONE &&
             machine->host.translator_rule_contains &&
             machine->host.translator_rule_contains(
                 machine->host.context, prepared_head);
+        if (petta_machine_trace_enabled()) {
+            fprintf(
+                stderr,
+                "[petta-machine] ready kind=%u translated=%u "
+                "prepared-pure=%u head=%s\n",
+                (unsigned)goal.kind, translated ? 1u : 0u,
+                machine->host.execute_prepared_pure_call ? 1u : 0u,
+                prepared_head == SYMBOL_ID_NONE
+                    ? "<none>"
+                    : symbol_bytes(g_symbols, prepared_head));
+        }
         if (!count_collection_result && !translated &&
+            !relation_declared_tabled &&
+            goal.kind == PETTA_GOAL_CALL_READY &&
+            machine->host.execute_prepared_pure_call) {
+            Atom *pure_result =
+                machine->host.execute_prepared_pure_call(
+                    machine->host.context, machine->space,
+                    &machine->heap, first);
+            if (pure_result) {
+                return petta_machine_unify_resolved(
+                    machine, pure_result, second);
+            }
+        }
+        if (!count_collection_result && !translated &&
+            !relation_declared_tabled &&
             goal.kind == PETTA_GOAL_CALL_READY &&
             prepared_head != SYMBOL_ID_NONE) {
             SpacePreparedEquation prepared_equation;
@@ -9912,6 +10162,10 @@ static bool petta_machine_dispatch_goal(
     bool evaluated = machine->host.evaluate(
             machine->host.context, machine->space, &machine->heap,
             first, &host_environment, outcomes);
+    if (evaluated) {
+        evaluated = petta_machine_factor_outcome_prefixes(
+            machine, outcomes, &host_environment);
+    }
     bindings_free(&host_environment);
     if (!evaluated) {
         outcome_set_free(outcomes);
@@ -10027,7 +10281,8 @@ static bool petta_machine_init_internal(
         impl, &impl->heap, query);
     impl->answer_variable = petta_fresh_variable(impl);
     if (!impl->query || !impl->answer_variable ||
-        !petta_collect_visible(impl, impl->query) ||
+        !eval_visit_lexical_free_variables(
+            impl->query, petta_collect_visible_variable, impl) ||
         !petta_push_solve_planned(
             impl, impl->query, impl->answer_variable, 0u,
             query_plan)) {
